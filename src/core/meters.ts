@@ -36,6 +36,25 @@ export interface MeterTap {
  *  "meter this point as L/R" predicate — the console builds one bar column per channel. */
 export const isStereoTap = (tap: MeterTap | null | undefined): boolean => tap?.r !== undefined;
 
+/**
+ * The SSMCS compressor's side-chain tap (`109`) for a mono channel.
+ *
+ * Deliberately NOT in `monoTaps`, which is the chain the console offers as meter points:
+ * this one is not a point the signal passes through. It carries what the strip's
+ * side-chain filter produced — the key signal the compressor's detector listens to — and
+ * reads its floor unless the channel is SSMCS with both the strip's compressor and its
+ * side chain on, so as a console meter point it would be a black column on almost every
+ * channel. Confirmed on a URX44V, over the broker's whole 161-address meter catalogue.
+ *
+ * The channel index comes from the channel's own PRE COMP tap rather than from a second
+ * table, because the two are the same point of the same channel: the filter's input is
+ * exactly what `108` meters, measured as `109` - `108` = 0.0 dB with the filter flat.
+ */
+export function sidechainTap(nodeId: string, modelId?: string): MeterTap | undefined {
+  const pre = tapFor(nodeId, "precomp", modelId);
+  return pre && { key: "sidechain", label: "SIDE CHAIN", l: [109, pre.l[1]] };
+}
+
 // Mono input channel CH1-4 (x = channel index 0..3): the full processing chain.
 // meter_id per tap confirmed on URX44V (reference/work/vd vd-meters.md stage probe).
 const monoTaps = (i: number): MeterTap[] => [

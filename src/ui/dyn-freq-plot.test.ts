@@ -49,4 +49,19 @@ describe("the frequency axis maps both ways", () => {
     expect(onGainScale(top + 0.1)).toBe(false);
     expect(onGainScale(bottom - 0.1)).toBe(false);
   });
+
+  // A band set to the gain range's own maximum evaluates to the maximum give or take the
+  // last bit of a double, and which side it lands on is arithmetic: the 4-band bell at
+  // +18 dB comes out 17.999999999999986, the morphing strip's 18.000000000000004. Before
+  // the tolerance the second lost its marker outright, which is a band at full boost
+  // drawn with nothing pointing at it.
+  it("keeps a marker whose value is the scale's own edge to within a double's last bit", () => {
+    const top = GAIN_TICKS[0];
+    const bottom = GAIN_TICKS[GAIN_TICKS.length - 1];
+    expect(onGainScale(18.000000000000004)).toBe(true);
+    expect(onGainScale(-18.000000000000004)).toBe(true);
+    // And it is slop, not a widened axis: a value a reader could see is still off scale.
+    expect(onGainScale(top + 0.001)).toBe(false);
+    expect(onGainScale(bottom - 0.001)).toBe(false);
+  });
 });

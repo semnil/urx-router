@@ -10,9 +10,11 @@
 //           on those screens whichever of its three display languages is selected (read off
 //           the hardware with its Language set to Japanese), so every catalogue repeats the
 //           same characters — the literal type below is what forces that.
-//   fixed() identical in every language for a reason that is not the device. Only the CONSOLE
-//           strip group separators, which are set in vertical writing mode where a full-width
-//           glyph widens the column and so moves the rack's geometry.
+//   fixed() identical in every language for a reason that is not the device. All of them are on
+//           the CONSOLE strip: the group separators, which are set in vertical writing mode where
+//           a full-width glyph widens the column and so moves the rack's geometry, and the two
+//           readout captions beside them, which follow the separators so that the strip does not
+//           carry one translated word among English ones.
 //   tr()    this app's own copy. Each language supplies its own wording.
 //
 // Which of the three a new key takes is a judgement the author has to make and a reviewer has
@@ -109,9 +111,14 @@ export const en = {
     master: fixed("MASTER"),
     meterPoint: tr("METER POINT"),
     meterPointHint: tr("Only taps the device meters are listed."),
-    // Readout captions: the set fader level vs the live signal meter.
-    readFader: tr("FADER"),
-    readMeter: tr("METER"),
+    // Readout captions: the set fader level vs the live signal meter. Both are `fixed` for
+    // the surface's sake rather than the device's — every label on a strip is English here,
+    // the separators above because a full-width glyph moves the rack's geometry, and the
+    // rest so that one katakana word does not stand alone among them. The tuning screens'
+    // heading is the same item and IS translated (「メーター」, after the user guide): it sits
+    // in a modal that is Japanese throughout, where the reverse argument applies.
+    readFader: fixed("FADER"),
+    readMeter: fixed("METER"),
     groupInputs: fixed("INPUTS"),
     groupBus: fixed("BUS / FX"),
     groupMon: fixed("MONITOR"),
@@ -553,16 +560,30 @@ export const en = {
       recPoint: tr("Rec Point tap"),
     },
   },
-  // Dynamics tuning screens (GATE / COMP). The meter captions carry the device's
-  // own tap vocabulary and stay English in every language, like the CONSOLE
-  // meter-point badges that name the same points.
+  // Dynamics tuning screens (GATE / COMP). The LANE captions carry the device's own tap
+  // vocabulary and stay English in every language, like the CONSOLE meter-point badges that
+  // name the same points. The heading over them does not — see `readouts`.
   dynTuning: {
     close: tr("Close"),
     display: tr("Display"),
-    modeLadder: tr("Ladder"),
-    modeCurve: tr("Curve"),
     parameters: tr("Parameters"),
-    readouts: tr("Readouts"),
+    // The lane captions. Every rack is one pair — what goes into the processor and what comes
+    // out — so the caption names the POSITION and the tile below names the tap, instead of
+    // both naming the tap and neither saying which end it is. The unit's own dynamics screens
+    // meter the same pair: the user guide calls the item "Input/output meter" / 「入出力メーター」,
+    // and "Input meter" / 「インプットメーター」 and "Output meter" / 「アウトプットメーター」 where
+    // it names the halves (D0). Latin in every language, like the tap names they replaced.
+    laneIn: fixed("Input"),
+    laneOut: fixed("Output"),
+    // The tiles under this heading are the taps' meters as numbers, and the word is the user
+    // guide's: it names the item in both languages — "Channel meter" / "チャンネルメーター",
+    // "stereo meter" / "ステレオメーター", "LEVEL meter" / "LEVELメーター" (D0, Channel view
+    // and Dedicated channel screen). Translated rather than fixed, because the guide's own
+    // Japanese is katakana; the unit has no screen printing METER, so there is nothing to
+    // match letter for letter. The guide qualifies it per screen (LEVEL メーター, チャンネル
+    // メーター) and this heading does not: one word covers every tap the tiles carry, and a
+    // qualifier would have to be picked per surface and would cost width on all of them.
+    readouts: tr("METER"),
     peakPrefix: tr("pk"),
     noReading: tr("—"),
     driven: tr("Device-driven"),
@@ -580,12 +601,19 @@ export const en = {
       tapIn: dev("Pre Comp"),
       tapGr: dev("Comp GR"),
       tapOut: dev("Pre EQ"),
-      curveHint: tr("The curve is what the sliders do to the signal; the dot is the live level."),
+      // The second sentence is the whole of what two rejected visual aids were built to
+      // say. Measured on a URX44V: a 50 ms burst 11 dB over the corner takes 10 dB of
+      // reduction at Attack 0.09 ms and none at 80 ms, while the SETTLED reduction for the
+      // same level moves 3 dB across that range — so the curve is right and the signal is
+      // what does not reach it. Release is named beside Attack because it widens the same
+      // gap and only Attack was swept.
+      curveHint: tr(
+        "The curve is what the sliders do to the signal, the dot the live level. Attack and Release decide how close it gets.",
+      ),
     },
     eq: {
       title: dev("EQ"),
       open: tr("EQ screen"),
-      band: dev("Band"),
       unusedByType: tr("Unused by this type"),
       fixedBand: tr("Fixed on this band"),
       oneKnobDrives: tr(
@@ -605,6 +633,9 @@ export const en = {
       tapOut: dev("Pre Ins FX"),
       mainHint: tr(
         "Comp Drive moves the compressor's curve. Sweet Spot Data and Morphing move both, only while Live sync is up.",
+      ),
+      scHint: tr(
+        "The side-chain filter changes what the compressor reacts to, not the audio. The curve is the reduction it buys, so it dips where the compressor will clamp down hardest.",
       ),
     },
     ducker: {

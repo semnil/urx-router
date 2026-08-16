@@ -37,17 +37,20 @@ const CH1_POST: [number, number] = [115, 0];
 const CH2_POST: [number, number] = [115, 1];
 const CH1_PREEQ: [number, number] = [111, 0];
 const CH2_PREGATE: [number, number] = [106, 1];
-/** The GATE screen's three lanes on ch1: PRE GATE, GATE GR, PRE COMP. */
+/** The GATE screen's three lanes on ch1: PRE GATE, PRE COMP, GATE GR. Registered in the
+ *  RACK's order, which is not signal order — the reduction is merged into the output
+ *  column it was taken off, so it is built after it. */
 const GATE_TAPS: Array<[number, number]> = [
   [106, 0],
-  [107, 0],
   [108, 0],
+  [107, 0],
 ];
-/** The COMP screen's three lanes on ch1: PRE COMP, COMP GR, PRE EQ. */
+/** The COMP screen's three lanes on ch1: PRE COMP, PRE EQ, COMP GR — same order, same
+ *  reason. */
 const COMP_TAPS: Array<[number, number]> = [
   [108, 0],
-  [110, 0],
   [111, 0],
+  [110, 0],
 ];
 /** COMP_EQ_TYPE (21) on ch1. Writing SSMCS (1) takes the compressor away entirely,
  *  which is what makes a COMP screen's `rebind` return null and close it. */

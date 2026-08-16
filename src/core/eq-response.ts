@@ -83,11 +83,38 @@ function magDb(c: Coefs, hz: number, fs: number): number {
 }
 
 /** Displayed Q → biquad Q, per DSP block. Each is measured on its own block and neither
- *  may be used for the other: the 4-band PEQ's bell is half the width its number says,
- *  the SSMCS strip's is very nearly the width its number says. Kept adjacent so the two
- *  are read together — carrying the 4-band factor into SSMCS draws every bell at 0.5. */
+ *  may be used for the other: the 4-band PEQ's bell is half the width its number says.
+ *  Kept adjacent to the SSMCS law below so the two are read together — carrying the
+ *  4-band factor into SSMCS draws every bell at 0.5. */
 const PEQ_Q_TO_BIQUAD = 0.5;
-const SSMCS_Q_TO_BIQUAD = 0.82;
+
+/**
+ * The SSMCS strip's bell — ONE law for both of the places the strip puts one: the 3-band
+ * EQ's MID band and the compressor's side-chain filter. They are the same filter (measured
+ * through two different paths, agreeing at 60 of 61 frequencies), so a second law here
+ * would be two answers to one question.
+ *
+ * The unit's Q is NOT the biquad Q times a constant — the bell narrows as the gain set on
+ * it grows. Measured against the threshold ruler at 0.2 dB resolution, the ratio runs
+ * 0.3585 / 0.3085 / 0.2750 / 0.2615 at 18 / 12 / 6 / 3 dB, symmetric in the gain's sign,
+ * and independent of both the Q set (0.50 … 16.0, a 16:1 range, within ±1.6%) and the
+ * centre frequency (100 Hz / 1 kHz / 10 kHz). One law covers seven settings at an RMS of
+ * 0.064 dB, which is what fitting each gain on its own leaves.
+ *
+ * Three earlier sweeps could see the gain dependence and none could prove it: both meters
+ * quantize to 1 dB, and a 6 dB bell carries six steps of shape, so a synthetic bell of
+ * known width returns anywhere from 0.328 to 0.401 there from the quantizer's phase
+ * alone. Averaging the threshold across one full quantum is what settled it.
+ *
+ * A CONSTANT ratio of 0.82 stood here for the MID band before this law reached it, taken
+ * from a sweep that read the width between the points 3 dB below the PEAK. A biquad's Q is
+ * the width at HALF THE GAIN, and for an 18 dB bell the two differ by a factor of 2.78 —
+ * so the constant drew every MID bell about 2.3x too narrow. Against the same 61-point
+ * measurement it lands at an RMS of 2.2 dB over three states (worst 5.6 dB, always on the
+ * narrow side); this law lands at 0.47 dB (worst 1.0).
+ */
+const ssmcsBellQ = (displayedQ: number, gainDb: number): number =>
+  0.238 * displayedQ * Math.pow(10, (Math.abs(gainDb) / 40) * 0.39);
 
 /** `q` is the BIQUAD Q, already converted from the displayed one by the caller. */
 function peakingCoefs(hz: number, q: number, gainDb: number, fs: number): Coefs {
@@ -246,7 +273,7 @@ export interface SsmcsBandState {
 function ssmcsBandResponse(b: SsmcsBandState, fs: number): (hz: number) => number {
   if (!b.on || b.gain === 0) return FLAT;
   if (b.kind === "mid") {
-    const c = peakingCoefs(b.freq, b.q * SSMCS_Q_TO_BIQUAD, b.gain, fs);
+    const c = peakingCoefs(b.freq, ssmcsBellQ(b.q, b.gain), b.gain, fs);
     return (hz) => magDb(c, hz, fs);
   }
   const high = b.kind === "high";
@@ -254,7 +281,55 @@ function ssmcsBandResponse(b: SsmcsBandState, fs: number): (hz: number) => numbe
   return (hz) => magDb(c, hz, fs);
 }
 
-/** The SSMCS strip's EQ response: its three bands summed in dB. */
+/**
+ * The SSMCS strip's EQ response: its three bands summed in dB.
+ *
+ * Out Gain is NOT here, and that is a decision rather than an omission. The unit applies
+ * it after this block — stepping `117` between +18 and -18 dB moves tap `112` one-for-one
+ * and leaves `108` and `111` alone (URX44V, 2026-08-15), so the strip runs
+ * `108 → compressor → 111 → 3-band EQ → Out Gain → 112` — but this plot's gain axis IS the
+ * band gain range, so an offset of up to 18 dB pushes the response off the frame and takes
+ * the shape the operator came for with it. It is drawn on the compressor's transfer curve
+ * instead (`dyn-ssmcs.ts`), whose output axis has the room and where a lifted baseline is
+ * what a strip output gain looks like.
+ */
 export function ssmcsEqResponse(bands: readonly SsmcsBandState[], fs = EQ_RESPONSE_FS): (hz: number) => number {
   return sumDb(bands.map((b) => ssmcsBandResponse(b, fs)));
+}
+
+// ---------------------------------------------------------------- SSMCS side chain
+//
+// The filter in front of the morphing strip's compressor — the one that decides what the
+// compressor LISTENS to. It never touches the audio, which is why the screen that draws
+// it says so rather than looking like another EQ.
+//
+// It is the same bell as the strip's MID band, in a different instance: measured through
+// the compressor's own reduction (ratio at infinity makes GR the detector minus the
+// threshold, and the threshold is a 0.2 dB-per-step ruler) and, independently, off meter
+// `109`, which carries the filter's output. The two agreed at a median of 0.00 dB over
+// 488 paired readings.
+
+/** The side-chain filter in plan units — Hz / displayed Q / dB, as the descriptor
+ *  converts the broker's raw integers. One band, no type: the device offers a bell. */
+export interface SsmcsScState {
+  on: boolean;
+  freq: number;
+  q: number;
+  gain: number;
+}
+
+/**
+ * The side-chain filter's response in dB.
+ *
+ * Flat is a real state here and it arrives two ways, both measured: the filter switched
+ * out (`102` = 0), and the filter engaged at 0 dB, which is an EXACT bypass — 61 of 61
+ * frequencies read 0.0 dB. The screen tells the two apart with its marker rather than
+ * with the curve, since neither has a curve to tell them apart by.
+ */
+export function ssmcsScResponse(sc: SsmcsScState, fs = EQ_RESPONSE_FS): (hz: number) => number {
+  // Through the BAND path rather than beside it: the two are the same filter (measured
+  // through two different paths, agreeing at 60 of 61 frequencies), and a second call to
+  // `peakingCoefs` here would let a correction made at coefficient time reach one of them
+  // and not the other — silently, since the two are never drawn on one screen.
+  return ssmcsBandResponse({ ...sc, kind: "mid" }, fs);
 }

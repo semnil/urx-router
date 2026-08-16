@@ -6,8 +6,8 @@
 // not. Three grips on one plot means a press has to guess which value was meant,
 // and one that missed fell through to the threshold, so pressing the gain grip
 // moved the threshold. The sliders beside the plot are the editing path, and the
-// curve answers "what is this doing to my signal". LADDER is the same three-tap
-// ruler the gate screen uses.
+// curve answers "what is this doing to my signal". The lane rack beside it is the same
+// three-tap ruler the gate screen uses.
 //
 // Two device facts shape it, both measured on a URX44V (2026-07-29):
 //   - COMP GR (110) reports the reduction alone. Sweeping the makeup gain 0 →
@@ -19,13 +19,14 @@
 
 import { onOff, settingsChoice, settingsRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS, COMP_ONE_KNOB_DRIVEN } from "../core/control/params";
+import { COMP_EQ_COMP_FIRST, COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS, COMP_ONE_KNOB_DRIVEN } from "../core/control/params";
+import { channelDynamics } from "../core/control/translate";
 import { COMP_SCOPE, controlId } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
-import { bindChannelStrip, displayBar, subObjectIo } from "./dyn-chan";
-import { transferPlot } from "./dyn-plot";
-import { HI_DB, oneKnobLevelRow } from "./dyn-screen";
-import type { DynProcessor, DynValues } from "./dyn-screen";
+import { bindChannelStrip, subObjectIo } from "./dyn-chan";
+import { drawTransferCurve, transferPlot } from "./dyn-plot";
+import { oneKnobLevelRow } from "./dyn-screen";
+import type { DynCtx, DynProcessor, DynValues } from "./dyn-screen";
 
 /** Input axis = the threshold's own domain (-54…0 dB). Ticks every 6 dB. */
 const LO_DB = -54;
@@ -89,6 +90,16 @@ function responseOf(v: DynValues): (inDb: number) => number {
 
 const io = subObjectIo("comp");
 
+/** The makeup this curve carries, for the axes layer — which is handed the context rather
+ *  than the values, and so cannot ask `responseOf`. The default comes off the field table
+ *  rather than a literal, so the two cannot drift. */
+function makeupOf(ctx: DynCtx): number {
+  const dyn = channelDynamics(ctx.model, ctx.nodeId, ctx.plan.nodeParams[ctx.nodeId]?.compEqType ?? COMP_EQ_COMP_FIRST);
+  const def = dyn?.comp?.find((f) => f.key === "gain")?.def ?? 0;
+  const v = (ctx.plan.nodeParams[ctx.nodeId]?.comp as Record<string, unknown> | undefined)?.gain;
+  return typeof v === "number" ? v : def;
+}
+
 export const COMP_DYN: DynProcessor = {
   key: "comp",
   loDb: LO_DB,
@@ -101,11 +112,19 @@ export const COMP_DYN: DynProcessor = {
       inTapKey: "precomp",
       outTapKey: "preeq",
       cap: "threshold",
-      grFullDb: 24,
+      // The makeup reaches +18 dB here, and the overlap is `108` + makeup in dBFS — so a
+      // hot input runs the reduction into the level exactly as the SSMCS strip's does,
+      // just from a higher input. Merged means relative: the rule is one rule.
+      grNetDb: makeupOf(ctx),
     }),
-  bar: displayBar,
-  ...transferPlot({ loDb: LO_DB, outLoDb: OUT_LO_DB, outTicks: OUT_TICKS, hint: (m) => m.dynTuning.comp.curveHint }),
-  persistSel: true,
+  // No Display bar: see dyn-gate.ts.
+  ...transferPlot({
+    loDb: LO_DB,
+    outLoDb: OUT_LO_DB,
+    outTicks: OUT_TICKS,
+    hint: (m) => m.dynTuning.comp.curveHint,
+    unityOffsetDb: (ctx) => makeupOf(ctx),
+  }),
   read: io.read,
   patch: io.patch,
   // Knee is a three-value selector, which the catalog does not carry: a control
@@ -176,37 +195,7 @@ export const COMP_DYN: DynProcessor = {
     return { lead, tail };
   },
 
-  drawCurve: (c, g, v, tok) => {
-    const out = responseOf(v);
-    c.strokeStyle = tok["--led"];
-    c.lineWidth = 2;
-    c.beginPath();
-    // No clamp: the axes were chosen to contain the whole response (makeup gain only adds,
-    // and the knee interpolation only subtracts, so out(x) stays inside -54…+18 for every
-    // setting), and the host clips the plot area anyway — so a response that did leave the
-    // frame would leave it rather than being flattened onto the edge.
-    for (let i = 0; i <= 120; i++) {
-      const x = LO_DB + ((HI_DB - LO_DB) * i) / 120;
-      if (i) c.lineTo(g.px(x), g.py(out(x)));
-      else c.moveTo(g.px(x), g.py(out(x)));
-    }
-    c.stroke();
-
-    // The reduction at full scale, which is what the ratio buys: the gap between
-    // the curve and unity at 0 dBFS, labelled where it is widest.
-    const top = out(HI_DB) - v.get("gain");
-    if (top < -0.05) {
-      c.strokeStyle = tok["--gr"];
-      c.setLineDash([3, 3]);
-      c.beginPath();
-      c.moveTo(g.px(HI_DB) - 1, g.py(HI_DB));
-      c.lineTo(g.px(HI_DB) - 1, g.py(top));
-      c.stroke();
-      c.setLineDash([]);
-      c.fillStyle = tok["--gr"];
-      c.textAlign = "right";
-      // Inset from the axis so the label does not sit on the frame.
-      c.fillText(`${top.toFixed(1)} dB`, g.px(HI_DB) - 22, g.py((HI_DB + top) / 2) + 3);
-    }
-  },
+  // The curve and its reduction annotation are the drawing both compressor banks make, so
+  // both call one function; what differs is only the response each of them models.
+  drawCurve: (c, g, v, tok) => drawTransferCurve(c, g, tok, { out: responseOf(v), gainDb: v.get("gain"), loDb: LO_DB }),
 };

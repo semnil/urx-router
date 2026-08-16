@@ -18,7 +18,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
-import { dynHost } from "./dyn-screen.test-util";
+import { dynHost, pickBand } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import type { MidiLearnHooks } from "./midi-learn";
 import { deserialize, serialize } from "../core/plan";
@@ -94,10 +94,7 @@ function choose(label: string, text: string, within?: HTMLElement): void {
   btn.click();
 }
 
-/** The band bar — for the EQ the segmented bar selects the band. */
-const selectBand = (n: number): void => {
-  [...host.box.querySelectorAll<HTMLButtonElement>(".gt-modes button")][n].click();
-};
+const selectBand = (n: number): void => pickBand(host.box, n);
 
 const PARAMS = (): HTMLElement => section(t().dynTuning.parameters);
 const ONE_KNOB = (): HTMLElement => section(t().inspector.eqOneKnob);
@@ -105,7 +102,7 @@ const ONE_KNOB = (): HTMLElement => section(t().inspector.eqOneKnob);
 // The band's five rows, by the labels they actually carry. The band's own on/off row
 // is labelled "Band" rather than ON — the ON row belongs to the 1-knob section.
 const BAND_ROWS = [
-  t().dynTuning.eq.band,
+  t().inspector.bandOn,
   t().inspector.type,
   t().inspector.q,
   t().inspector.frequency,
@@ -289,10 +286,12 @@ describe("the 1-knob", () => {
     expect(locked(t().inspector.eqOneKnobLevel, ONE_KNOB())).toBe(false);
   });
 
+  // Scoped to the PARAMETERS section: the display column carries a reserved bar of its own
+  // on every screen that has no bar, which this one now is, and that reserve is not a row.
   it("has no reserved rows while it is off", () => {
     host = dynHost();
     open();
-    expect(host.box.querySelector(".gt-reserved")).toBeNull();
+    expect(PARAMS().querySelector(".gt-reserved")).toBeNull();
     expect(host.box.querySelector(".gt-reserved-note")).toBeNull();
   });
 });

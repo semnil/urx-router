@@ -55,7 +55,6 @@ import type { DynField } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
 import type { NodeParams, Plan } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
-import { migrateSel } from "./dyn-chan";
 
 /** Top of every meter ruler: a channel meter cannot read above 0 dBFS. */
 export const HI_DB = 0;
@@ -92,9 +91,6 @@ export interface DynLane {
   kind: "level" | "gr";
   tap?: MeterTap | null;
   gr?: readonly [number, number];
-  /** Full scale in dB for a reduction whose own domain is far shallower than the
-   *  level ruler. Undefined shares the ruler's dB per pixel. */
-  fullDb?: number;
   /** The value key this lane carries a fader cap for. Only a value in the ruler's own
    *  coordinate can be dragged on a meter (a GATE threshold in dB against the meter's
    *  dBFS); a lane with no such value leaves this unset. */
@@ -117,12 +113,43 @@ export interface DynLane {
    *  own, and give it no caption. Everything else stays per-lane — its readings, its
    *  peak hold and its readout cell are untouched — so this is placement only.
    *
-   *  The DUCKER pairs its reduction with the KEY level this way: the two are cause and
-   *  effect, and one column shows the key rising to the threshold cap while the
-   *  reduction hangs from the top of the same ruler. The cost is that a merged lane
-   *  cannot carry `fullDb` — it is on the shared ruler by construction — so the ruler
-   *  has to span the deeper of the two domains. */
+   *  Every reduction on every screen is drawn this way: it reads better against the level
+   *  it was taken off than as a column of its own. The DUCKER pairs its reduction with the
+   *  KEY level rather than the output, because there the two are cause and effect — one
+   *  column shows the key rising to the threshold cap while the reduction hangs from the
+   *  top of the same ruler. The cost is that the shared ruler has to span the deeper of the
+   *  two domains, since a merged lane cannot carry a scale of its own. */
   sameSlot?: true;
+  /**
+   * dB to take OFF this reduction before drawing it, which makes the BAR a different
+   * quantity from the lane's own reading — a relative indication of the reduction rather
+   * than the reduction. Declared, not incidental: the lane's readout goes on printing what
+   * the meter reports, and the two are not meant to agree.
+   *
+   * It exists for a lane merged into a level column, where the two are drawn from opposite
+   * ends of one ruler and a deep reduction runs into the level rising to meet it — and
+   * where they overlap, neither is readable. The overlap is `in + gain` in dBFS and does
+   * not depend on the reduction at all, so subtracting the processor's own gain leaves
+   * `in`, at or below zero for any real signal: they never meet, with the input's own
+   * headroom between them.
+   *
+   * A lane in a column of ITS OWN takes no offset. Nothing can run into it there, so it
+   * draws the reduction itself and agrees with its readout.
+   *
+   * A NUMBER, not the two taps the same quantity could be measured from. The first version
+   * drew `in - out`, and that is wrong to read frame by frame: the taps are separate meter
+   * addresses whose frames arrive at separate instants, so the difference is of two
+   * different moments — and each carries its own release, so a reduction coming OFF made
+   * the bar LENGTHEN before it shortened. This one is a parameter, constant until a slider
+   * moves.
+   */
+  grOffsetDb?: number;
+  /** What the BAR is captioned, where that is not the lane's own name. A rack is one pair —
+   *  into the processor and out of it — and the position is what a caption under a bar has to
+   *  say; which tap it reads stays on the readout tile, which has the room for it. A lane that
+   *  is neither end of the pair (the DUCKER's key, the SSMCS side chain) carries none and
+   *  keeps its name. */
+  caption?: string;
 }
 
 /** What a processor resolves for one node. Null from `bind` = the processor does not
@@ -160,11 +187,34 @@ export interface DynParts {
 export interface DynBar {
   /** The section heading the bar sits in ("Display", "Band"). */
   label: string;
-  items: readonly { label: string; id: string }[];
+  items: readonly DynBarItem[];
   /** Nothing is selected and nothing can be: the choice does not belong to the operator
    *  right now (the EQ's bands are the device's while 1-knob is on). The items keep their
    *  space — hiding them outright would shorten the heading they sit in. */
   inert?: boolean;
+}
+
+/** One segment. Pressing it selects `sel` on the current processor, or moves to `face` and
+ *  selects `sel` there — which is what lets one bar stand in front of a whole bank instead
+ *  of a bar per face plus a second bar to choose between them. */
+export interface DynBarItem {
+  label: string;
+  id: string;
+  face?: DynProcessor;
+  /** The segment to arrive on. Stated rather than taken from the item's own index: two
+   *  items can name one face, and then the index is the BAR's position rather than the
+   *  face's. */
+  sel: number;
+}
+
+/** What a plot offers a press. `count` is what the keyboard path needs — a canvas is one
+ *  focus stop, so the arrow keys move within it, and a marker reachable only by pointer is
+ *  a control half the operators cannot use. Zero = nothing is selectable right now (the
+ *  EQ's bands while 1-knob drives them), which also takes the canvas back out of the tab
+ *  order rather than leaving a focus stop that does nothing. */
+export interface DynPlotPicks {
+  count: number;
+  hit: (c: CanvasRenderingContext2D, g: DynPlotGeo, at: { x: number; y: number }) => number | null;
 }
 
 export interface DynRowCtx extends DynCtx {
@@ -197,14 +247,6 @@ export interface DynRows {
    *  Chain toggle that opens them is what tells the reader where one group ends. `lead`
    *  would put that toggle above rows it does not govern. */
   before?: Record<string, HTMLElement[]>;
-}
-
-/** One sibling face of a bank the screen moves between without closing. */
-export interface DynFace {
-  proc: DynProcessor;
-  label: (m: Messages) => string;
-  /** The segment button's element id, so a test and a launcher name the same thing. */
-  id: string;
 }
 
 export interface DynProcessor {
@@ -273,7 +315,7 @@ export interface DynProcessor {
    *  does not change, the same reservation the rows themselves get. */
   paramsTag?: (ctx: DynCtx) => { text: string; shown: boolean } | undefined;
   /** Arrange the parts into the display column. */
-  display: (parts: DynParts, ctx: DynCtx) => HTMLElement;
+  display: (parts: DynParts) => HTMLElement;
   plotGeo: (w: number, h: number, ctx: DynCtx) => DynPlotGeo;
   /** The plot's frame: grid, tick labels, axis names, any reference line. Drawn
    *  unclipped, because the tick labels belong in the gutters `geo.pad` reserves. */
@@ -298,31 +340,44 @@ export interface DynProcessor {
   ) => void;
   /** The live overlay (a dot at the current level), redrawn per frame that moves it.
    *  `read` answers with a lane's folded reading, or null with no feed. */
+  /** Whether `drawLive` draws anything on the segment showing. A descriptor whose plot IS
+   *  the overlay's subject on every segment omits it; one whose bar offers a segment
+   *  showing something else on the same canvas answers false there, and the paint loop
+   *  then leaves the canvas alone rather than clearing and blitting it for no pixel
+   *  change. Read once per render, not per frame. */
+  liveOn?: (ctx: DynCtx) => boolean;
   drawLive?: (
     c: CanvasRenderingContext2D,
     geo: DynPlotGeo,
     read: (laneKey: string) => number | null,
     tok: Record<string, string>,
+    ctx: DynCtx,
   ) => void;
   /** A press anywhere on the plot sets the value its lane carries a cap for, whose domain
    *  must therefore be the plot's x axis. Opt in only where the plot carries one editable
    *  value: with several, a press has to guess which one was meant, and one that missed a
    *  grip fell through to this drag (pressing COMP's gain grip moved the threshold). */
   plotDragsCap?: true;
+  /** A press on the plot selects a segment — what the EQ screens' band markers are. The
+   *  descriptor answers where the pickable things are, because only it knows what it drew.
+   *
+   *  It cannot coexist with `plotDragsCap`: one takes a press anywhere and the other takes
+   *  it only on a target, so a miss would have to mean two things at once. */
+  plotPicks?: (ctx: DynCtx) => DynPlotPicks;
   /**
-   * The faces of one bank, when a processor is more than the screen can show at once.
-   * A segment in the title row moves between them without closing, so the modal is not
-   * rebuilt and the meter slot is not handed back and taken again for what is one
-   * continuous piece of work on one channel.
+   * This processor is one face of a bank: more than the screen can show at once, moved
+   * between by the bar's own segments without closing, so the modal is not rebuilt and the
+   * meter slot is not handed back and taken again for what is one continuous piece of work
+   * on one channel. The host reserves one height for the whole bank off this.
    *
    * Absent for every processor that is a whole processor: GATE, COMP, the 4-band EQ and
    * DUCKER are separate things tuned at separate times, and closing one to open another
    * is what that is.
    *
-   * A thunk because the faces name each other, and a module's constants are not yet
-   * initialised while its first one is being built.
+   * Which faces there are is `bar`'s own item list — the one place they are named, since
+   * that is what the operator selects them from.
    */
-  faces?: () => readonly DynFace[];
+  banked?: true;
 }
 
 /** Peak hold, in notify frames (100 ms each). Nothing on the device sets this —
@@ -339,9 +394,16 @@ const FRAME_MS = 1000 / 30;
  *  cannot deliver more than 10 new values a second anyway. */
 const READOUT_EVERY = 5;
 
+/** Readout tile columns that are not the stylesheet's own default of three. The class is
+ *  what carries the count, so a descriptor asking for a number nothing styles gets the
+ *  default rather than a grid with no columns. */
+/** Readout tiles per row, where a descriptor asks for nothing else. Three is what most
+ *  racks carry; the stylesheet's own fallback is the same number, and both are stated once. */
+const READOUT_COLS_DEFAULT = 3;
+
 /** Persisted bar selection, per processor. Its own key, like `urx-sends-open` and
  *  `urx-metertap`: this is per-surface UI state, not a Preferences setting. */
-const SEL_STORE = "urx-dyn-display";
+const SEL_STORE = "urx-dyn-display2";
 
 export interface DynScreenHooks {
   getModel: () => DeviceModel;
@@ -443,6 +505,10 @@ export class DynScreen {
    *  paint loop runs 30×/s and this is the one place it would otherwise allocate. */
   private scratch: (number | null)[][] = [];
   private plotDirty = true;
+  /** Whether the segment on screen has a live overlay at all. Resolved on render rather
+   *  than per frame: `sel` and the processor only move through a path that re-renders, so
+   *  a cached answer cannot go stale, and the paint loop then costs no `ctx()`. */
+  private liveOverlay = false;
   /** A pending coalesced redraw, for when no meter loop is running. */
   private redrawRaf = 0;
   /** Watches the plot canvas for a size change while the screen is open.
@@ -469,7 +535,7 @@ export class DynScreen {
   private fields: DynField[] = [];
   private lanes: DynLane[] = [];
   /** What the binding declared about the readouts. Only the column count so far. */
-  private readoutCols = 3;
+  private readoutCols = READOUT_COLS_DEFAULT;
   private unsub: (() => void) | null = null;
   private raf = 0;
   /** The address set the current registration covers, and a counter that supersedes
@@ -593,7 +659,7 @@ export class DynScreen {
     this.sel = sel;
     this.fields = bound.fields;
     this.lanes = bound.lanes;
-    this.readoutCols = bound.readoutCols ?? 3;
+    this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     this.peaks.clear();
     this.render();
@@ -638,10 +704,7 @@ export class DynScreen {
     // stream — a bar at the floor and a readout at "—", which is the one reading this
     // screen must never show for a signal that is present. Checked before the grabbed
     // early return, since the rebuild is what waits for a gesture, not the feed.
-    if (this.hooks.isLive() && this.addrSig() !== this.subSig) {
-      this.stopMeters();
-      this.startMeters();
-    }
+    this.resubscribeIfMoved();
     // Device follow runs on its own clock, and under COMP 1-knob it runs on every
     // step of a drag — the unit recomputes threshold / ratio / gain and announces
     // them, which comes back here. Rebuilding then would replace the control being
@@ -672,7 +735,7 @@ export class DynScreen {
     }
     this.fields = bound.fields;
     this.lanes = bound.lanes;
-    this.readoutCols = bound.readoutCols ?? 3;
+    this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     return true;
   }
@@ -841,7 +904,7 @@ export class DynScreen {
   private laneFrac(lane: DynLane, db: number): number {
     if (lane.kind !== "gr") return this.frac(db);
     const p = this.p();
-    return clamp01(Math.abs(db) / (lane.fullDb ?? HI_DB - p.loDb));
+    return clamp01(Math.abs(db) / (HI_DB - p.loDb));
   }
 
   /** The reading a lane's readout prints when it has two bars: the louder side for a
@@ -863,6 +926,10 @@ export class DynScreen {
 
     for (const [index, lane] of this.lanes.entries()) {
       const sides = this.laneReadings(index, lane, live);
+      // dB off what the BAR is drawn from, where that is not the reading itself. The peak
+      // is shortened too, or it would hold at a depth the bar never reaches; the readout
+      // below still prints the reduction the meter reported.
+      const off = lane.grOffsetDb ?? 0;
       let value: number | null = null;
       let peak: number | null = null;
       for (let i = 0; i < sides.length; i++) {
@@ -877,7 +944,9 @@ export class DynScreen {
           p.db = db;
           p.age = 0;
         } else if (db !== null) p.age++;
-        this.setBar(lane, i, db === null ? 0 : this.laneFrac(lane, db), p.db === null ? 0 : this.laneFrac(lane, p.db));
+        const bar = db === null || !off ? db : Math.min(0, db + off);
+        const pk = p.db === null || !off ? p.db : Math.min(0, p.db + off);
+        this.setBar(lane, i, bar === null ? 0 : this.laneFrac(lane, bar), pk === null ? 0 : this.laneFrac(lane, pk));
         if (db !== null) value = value === null ? db : this.fold(lane, value, db);
         if (p.db !== null) peak = peak === null ? p.db : this.fold(lane, peak, p.db);
       }
@@ -890,10 +959,10 @@ export class DynScreen {
         );
       }
     }
-    // Only a descriptor with an overlay has anything to redraw when a reading moves; the
-    // EQ's plot is static, and repainting it per feed frame was ~10 full-canvas blits a
-    // second for no pixel change.
-    if (this.canvas && (this.plotDirty || (this.p().drawLive && this.liveDirty()))) this.drawPlot();
+    // Only a SEGMENT with an overlay has anything to redraw when a reading moves; the
+    // EQ's plot is static and the side-chain segment's is frequency, and repainting either
+    // per feed frame was ~10 full-canvas blits a second for no pixel change.
+    if (this.canvas && (this.plotDirty || (this.liveOverlay && this.liveDirty()))) this.drawPlot();
   }
 
   /** A lane's current reading per bar, into that lane's scratch: [L] or [L, R] for a level
@@ -1073,6 +1142,7 @@ export class DynScreen {
     this.capSlider = null;
     this.capVal = null;
     this.plotDirty = true;
+    this.liveOverlay = !!proc.drawLive && (proc.liveOn?.(this.ctx()) ?? true);
     this.plotSize = { w: 0, h: 0 };
     this.geoCache = null;
     this.liveLast = [];
@@ -1091,20 +1161,14 @@ export class DynScreen {
     const name = el("span", "");
     name.textContent = proc.title(m);
     title.append(ch, name);
-    // The face segment goes in the title ROW, beside the heading rather than inside it:
-    // `#dyn-screen-modal` names itself with `aria-labelledby="dyn-screen-title"`, so three
-    // buttons inside that heading would make the dialog announce itself as
-    // "CH 1 SSMCS MAIN COMP EQ" and put them in the heading's own subtree.
-    const faces = proc.faces?.();
-    const head = faces ? wrap("gt-head", title, this.faceBar(faces, proc, m)) : title;
 
     const grid = el("div", "prefs-grid");
     // A bank of faces reserves one height for all of them. Its faces carry different row
     // counts and different displays, so without the reserve the modal resizes under the
-    // pointer on every press of the segment that moves between them — and the segment
-    // itself is in the title row, which the resize then moves. What the reserve costs is
-    // blank space below the shorter faces; `--dyn-face-h` is where the measurement lives.
-    if (faces) grid.classList.add("gt-faced");
+    // pointer on every press of the segment that moves between them. What the reserve
+    // costs is blank space below the shorter faces; `--dyn-face-h` is where the
+    // measurement lives.
+    if (proc.banked) grid.classList.add("gt-faced");
     grid.append(this.displayColumn(proc), this.controlColumn(m));
 
     const actions = el("div", "consent-actions");
@@ -1113,7 +1177,7 @@ export class DynScreen {
     close.addEventListener("click", () => this.close());
     actions.append(close);
 
-    this.box.append(head, grid, actions);
+    this.box.append(title, grid, actions);
     this.syncCap();
     this.paint();
   }
@@ -1122,14 +1186,13 @@ export class DynScreen {
     const ctx = this.ctx();
     const bar = proc.bar?.(ctx);
     const col = el("div", "prefs-col");
-    if (bar) col.append(this.displayBar(bar));
-    // A bank's faces do not all carry a display bar, and the one that does not starts its
-    // panel a bar's height above its siblings: the black display jumps up the moment the
-    // segment moves to that face. Reserve the row through the same builder rather than
-    // with a margin, so the space is whatever the bars the other faces draw actually
-    // occupy — a constant would be measured once and then track nothing.
-    else if (proc.faces) col.append(this.reservedBar(proc, ctx.m));
-    col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
+    // Every display starts at the same height, whether its processor carries a bar or not.
+    // Across screens that is what keeps the plot and the lane rack in one place as the
+    // operator moves between GATE, COMP, DUCKER and the bank. Reserved through the same
+    // builder rather than with a margin, so the space is whatever a bar that does get
+    // drawn actually occupies — a constant would be measured once and then track nothing.
+    col.append(bar ? this.displayBar(bar) : this.reservedBar(proc, ctx.m));
+    col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }));
     col.append(this.hintLine(proc, ctx));
     return col;
   }
@@ -1138,27 +1201,13 @@ export class DynScreen {
    *  height: it keeps the box and takes the heading and the button out of the tab order
    *  and the accessibility tree, which is what an empty reserve has to do. */
   private reservedBar(proc: DynProcessor, m: Messages): HTMLElement {
-    const sec = this.displayBar({ label: proc.title(m), items: [{ label: proc.title(m), id: "" }], inert: true });
+    const sec = this.displayBar({
+      label: proc.title(m),
+      items: [{ label: proc.title(m), id: "", sel: 0 }],
+      inert: true,
+    });
     sec.classList.add("gt-reserved");
     return sec;
-  }
-
-  /**
-   * The face segment, in the title row rather than over the display: the EQ face's own
-   * bar selects a band, and two segmented bars in one heading is what a reader has to
-   * tell apart. Above the grid, so pressing one cannot move the row under the pointer.
-   */
-  private faceBar(faces: readonly DynFace[], proc: DynProcessor, m: Messages): HTMLElement {
-    const seg = el("span", "udk-banks gt-modes gt-faces");
-    for (const face of faces) {
-      const b = el("button", "") as HTMLButtonElement;
-      b.id = face.id;
-      b.textContent = face.label(m);
-      b.setAttribute("aria-pressed", String(face.proc === proc));
-      b.addEventListener("click", () => this.pressSegment(face.id, () => this.showFace(face.proc)));
-      seg.append(b);
-    }
-    return seg;
   }
 
   /**
@@ -1173,11 +1222,15 @@ export class DynScreen {
    * Answering here instead would leave a pressed segment doing nothing at all. The peak
    * holds go, because a lane key means a different tap on the next face and a hold carried
    * across would print one tap's peak under another's caption.
+   *
+   * `sel` is the segment to arrive on, where the bar names one — two of its items reach the
+   * same face and differ only in this. Without one the face takes what it always took: the
+   * remembered selection, or the first.
    */
-  private showFace(next: DynProcessor): void {
+  private showFace(next: DynProcessor, sel?: number): void {
     if (!this.proc || next === this.proc) return;
     this.proc = next;
-    this.sel = next.persistSel ? (this.sels[next.key] ?? 0) : 0;
+    this.sel = sel ?? (next.persistSel ? (this.sels[next.key] ?? 0) : 0);
     this.peaks.clear();
     this.refresh();
   }
@@ -1196,18 +1249,31 @@ export class DynScreen {
     if (refocus) document.getElementById(id)?.focus({ preventScroll: true });
   }
 
+  /**
+   * Which segment reads as pressed. A bar whose items stand in front of a whole bank is
+   * asking about the face AND the selection within it, and the host is the only place that
+   * knows both. The fallback to the face alone is what a face whose selection is something
+   * else entirely needs — the EQ face's `sel` is a band, so no item's `sel` ever equals it.
+   */
+  private currentSegment(bar: DynBar): number {
+    if (!bar.items.some((it) => it.face)) return this.sel;
+    const exact = bar.items.findIndex((it) => it.face === this.proc && it.sel === this.sel);
+    return exact >= 0 ? exact : bar.items.findIndex((it) => it.face === this.proc);
+  }
+
   /** The segmented bar over the display, in the heading of the section it sits in. */
   private displayBar(bar: DynBar): HTMLElement {
     const sec = settingsSection(bar.label);
     const h = sec.firstElementChild as HTMLElement;
     const seg = el("span", "udk-banks gt-modes");
+    const current = this.currentSegment(bar);
     for (const [i, item] of bar.items.entries()) {
       const b = el("button", "") as HTMLButtonElement;
       b.id = item.id;
       b.textContent = item.label;
-      b.setAttribute("aria-pressed", String(!bar.inert && this.sel === i));
+      b.setAttribute("aria-pressed", String(!bar.inert && current === i));
       if (bar.inert) b.disabled = true;
-      else b.addEventListener("click", () => this.pressSegment(item.id, () => this.select(i)));
+      else b.addEventListener("click", () => this.pressSegment(item.id, () => this.pickSegment(item)));
       seg.append(b);
     }
     if (bar.inert) seg.classList.add("inert");
@@ -1232,9 +1298,26 @@ export class DynScreen {
     return hint;
   }
 
-  /** The segmented bar picked something else. It can change the binding (the EQ's
-   *  fields differ per band — only LOW and HIGH carry a filter type), so it rebinds
-   *  before rebuilding. */
+  /** A segment was pressed. An item naming a face moves to it and arrives on the segment
+   *  the item names; one that does not is a selection within the face on screen. Pressing
+   *  the face already on screen falls through to the selection, which is what makes COMP
+   *  and Side Chain switch between each other rather than do nothing. */
+  private pickSegment(item: DynBarItem): void {
+    if (item.face && item.face !== this.proc) this.showFace(item.face, item.sel);
+    else this.select(item.sel);
+  }
+
+  /**
+   * The segmented bar picked something else. It can change the binding (the EQ's fields
+   * differ per band — only LOW and HIGH carry a filter type), so it rebinds before
+   * rebuilding.
+   *
+   * A segment can also change the LANES, and then the addresses: the SSMCS bank's COMP face
+   * carries the side-chain tap on its filter segment and not on its curve. So the same
+   * registration check `refresh` makes is made here — without it the lane a segment just
+   * put on screen asks the store for an address the broker was never told to stream, and
+   * shows a floor bar and a "—" for a signal that is present.
+   */
   private select(i: number): void {
     if (i === this.sel || !this.proc) return;
     this.sel = i;
@@ -1243,6 +1326,15 @@ export class DynScreen {
       saveJson(SEL_STORE, this.sels);
     }
     this.rebuild();
+  }
+
+  /** Re-register the meters when the lane set's addresses no longer match what the broker
+   *  was asked for. `open()` does not go through it — it registers unconditionally right
+   *  after its first bind — so every OTHER path that can move the addresses does. */
+  private resubscribeIfMoved(): void {
+    if (!this.hooks.isLive() || this.addrSig() === this.subSig) return;
+    this.stopMeters();
+    this.startMeters();
   }
 
   private laneRack(): HTMLElement {
@@ -1277,18 +1369,17 @@ export class DynScreen {
       tick.style.bottom = (place(db) * 100).toFixed(2) + "%";
       scale.append(tick);
     }
-    // An empty caption of the same two-line height as its neighbours, so the tick
-    // column's grid row matches the slots' and a tick lines up with a level.
+    // An empty caption of the same height as its neighbours, so the tick column's grid
+    // row matches the slots' and a tick lines up with a level.
     //
-    // The spaces are non-breaking on purpose. Ordinary ones collapse and a trailing
-    // <br> generates no line box, so this measured 12.75px — one line, not two —
-    // and `.gt-lcol`'s `1fr auto` handed the difference to the scale: it stood
-    // 12.75px taller than the slot beside it, so the two shared a top edge and
-    // drifted apart linearly down to the floor. A tick then pointed at a level it
-    // was not level with.
+    // The space is non-breaking on purpose: an ordinary one collapses to nothing, the
+    // element then generates no line box, and `.gt-lcol`'s `1fr auto` hands the difference
+    // to the scale — it stands taller than the slot beside it, the two share a top edge and
+    // drift apart linearly down to the floor, and a tick points at a level it is not level
+    // with. Measured at 12.75px of drift back when the caption was two lines.
     const spacer = el("span", "gt-cap-label");
     spacer.setAttribute("aria-hidden", "true");
-    spacer.append(document.createTextNode("\u00a0"), document.createElement("br"), document.createTextNode("\u00a0"));
+    spacer.textContent = "\u00a0";
     col.append(scale, spacer);
     return col;
   }
@@ -1316,37 +1407,30 @@ export class DynScreen {
     this.bars.set(lane.key, refs);
   }
 
-  /** One lane: its bars, its caption, its cap if it carries one, and its own tick
-   *  column if it declares its own scale. Returns the slot as well, so a lane that
+  /** One lane: its bars, its caption and its cap if it carries one. Returns the slot as
+   *  well, so a lane that
    *  merges into this one can be given it. */
   private laneColumn(lane: DynLane): { el: HTMLElement; slot: HTMLElement } {
-    const isGr = lane.kind === "gr";
+    // Never a reduction: every GR lane sets `sameSlot`, so `laneRack` draws it into the
+    // column before it and this builder is only ever asked for a level.
     const sides = laneSideCount(lane);
     const col = el("div", "gt-lcol");
-    const slot = el("div", `gt-slot${isGr ? " gt-slot-gr" : ""}${sides === 2 ? " stereo" : ""}`);
+    const slot = el("div", `gt-slot${sides === 2 ? " stereo" : ""}`);
     this.laneBars(lane, slot);
-    if (lane.cap) slot.append(this.capControl(slot));
-    col.append(slot, capLabel(lane.label, (lane.tap?.l ?? lane.gr)?.[0]));
-    // A reduction that runs the whole ruler (a gate's) reads off the shared tick
-    // column. One that occupies a few dB of it (a compressor's) would sit invisible
-    // there, so it gets a scale of its own — printed beside the lane and set apart
-    // from the level pair, never a second unlabelled scale under the shared ticks.
-    if (lane.fullDb === undefined) return { el: isGr ? wrap("gt-grwrap", col) : col, slot };
-    const full = lane.fullDb;
-    return {
-      el: wrap(
-        "gt-grwrap own",
-        this.tickColumn(-full, full / 4, (db) => 1 - Math.abs(db) / full),
-        col,
-      ),
-      slot,
-    };
+    // The cap goes BESIDE the slot, not in it. The slot clips — its level bar and its shade
+    // have to stay inside the rounded frame — and the cap's focus ring reaches past the cap
+    // on every side, so inside the slot the ring is drawn and never shown. The wrapper
+    // carries the slot's own box, so the cap's percentage position is unchanged.
+    const head = lane.cap ? el("div", "gt-capwrap") : slot;
+    if (head !== slot) head.append(slot, this.capControl(head));
+    col.append(head, capLabel(lane.caption ?? lane.label));
+    return { el: col, slot };
   }
 
   /** A value as a fader cap on its own meter. The one gesture the lane rack exists
    *  for — it works because the value's dB and the meter's dBFS are the same
    *  coordinate. */
-  private capControl(slot: HTMLElement): HTMLElement {
+  private capControl(track: HTMLElement): HTMLElement {
     const cap = el("div", "gt-cap");
     cap.id = "dyn-threshold-cap";
     cap.tabIndex = 0;
@@ -1367,14 +1451,14 @@ export class DynScreen {
     // neither scroll nor resize while a pointer is down.
     let rect: DOMRect | null = null;
     const fromY = (clientY: number): void => {
-      const r = (rect ??= slot.getBoundingClientRect());
+      const r = (rect ??= track.getBoundingClientRect());
       this.setCapFromFrac(1 - (clientY - r.top) / r.height);
     };
     let dragging = false;
     let pointer: number | null = null;
     cap.addEventListener("pointerdown", (e) => {
       cap.setPointerCapture(e.pointerId);
-      rect = slot.getBoundingClientRect();
+      rect = track.getBoundingClientRect();
       dragging = true;
       pointer = e.pointerId;
       this.endDrag = end;
@@ -1394,10 +1478,12 @@ export class DynScreen {
     };
     cap.addEventListener("pointerup", end);
     cap.addEventListener("pointercancel", end);
-    // A press on the track jumps the cap, matching the console faders.
-    slot.addEventListener("pointerdown", (e) => {
+    // A press on the track jumps the cap, matching the console faders. On the wrapper rather
+    // than on the meter, so the strip either side of the cap answers a press the same way the
+    // meter does — the cap is the wrapper's child and the slot's sibling.
+    track.addEventListener("pointerdown", (e) => {
       if (e.target === cap) return;
-      rect = slot.getBoundingClientRect();
+      rect = track.getBoundingClientRect();
       fromY(e.clientY);
     });
     cap.addEventListener("keydown", (e) => {
@@ -1450,6 +1536,9 @@ export class DynScreen {
     this.canvas = cv;
     box.append(cv);
 
+    const picks = this.p().plotPicks?.(this.ctx());
+    if (picks) this.wirePlotPicks(cv, picks);
+
     // A press anywhere on the plot sets one value, for the processors that opt in.
     // Grips labelled T / R / G on the curve were tried and removed: they read as the
     // unit's own screen, and a press that missed one fell through to this same drag,
@@ -1481,6 +1570,43 @@ export class DynScreen {
     cv.addEventListener("pointerup", end);
     cv.addEventListener("pointercancel", end);
     return box;
+  }
+
+  /**
+   * Make the plot's own targets selectable, by pointer and by keyboard.
+   *
+   * The keyboard half is not a nicety: these targets replaced a segmented bar, and a
+   * segmented bar is operable from the keyboard. A canvas is a single focus stop, so the
+   * arrow keys step within it and Home / End go to the ends — the same keys the bar's own
+   * buttons answer. With nothing selectable the canvas leaves the tab order rather than
+   * standing in it as a stop that does nothing.
+   */
+  private wirePlotPicks(cv: HTMLCanvasElement, picks: DynPlotPicks): void {
+    if (picks.count <= 0) return;
+    cv.tabIndex = 0;
+    cv.classList.add("gt-pickplot");
+    // Through `pressSegment` for the same reason the bar's buttons are: selecting rebuilds
+    // the column, so the canvas the key was pressed on is replaced and focus falls to the
+    // body — a keyboard user would land nowhere after one arrow press.
+    const go = (i: number): void => {
+      const next = Math.min(picks.count - 1, Math.max(0, i));
+      if (next !== this.sel) this.pressSegment(cv.id, () => this.select(next));
+    };
+    cv.addEventListener("click", (e) => {
+      const g = this.geoCache;
+      const c = cv.getContext("2d");
+      if (!g || !c) return;
+      const i = picks.hit(c, g, { x: e.offsetX, y: e.offsetY });
+      if (i !== null) go(i);
+    });
+    cv.addEventListener("keydown", (e) => {
+      const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
+      if (step !== undefined) go(this.sel + step);
+      else if (e.key === "Home") go(0);
+      else if (e.key === "End") go(picks.count - 1);
+      else return;
+      e.preventDefault();
+    });
   }
 
   private controlColumn(m: Messages): HTMLElement {
@@ -1533,7 +1659,12 @@ export class DynScreen {
     if (extra?.tail) params.append(...extra.tail);
 
     const ro = settingsSection(g.readouts);
-    const cells = el("div", `gt-readouts${this.readoutCols === 2 ? " two" : ""}`);
+    const cells = el("div", "gt-readouts");
+    // The count reaches the stylesheet as a VALUE rather than as a class per count, so a
+    // descriptor can ask for any number and nothing silently answers with three.
+    if (this.readoutCols !== READOUT_COLS_DEFAULT) {
+      cells.style.setProperty("--gt-ro-cols", String(this.readoutCols));
+    }
     for (const lane of this.lanes) cells.append(this.readoutCell(lane));
     ro.append(cells);
 
@@ -1576,6 +1707,11 @@ export class DynScreen {
    *  bands are the device's while 1-knob is on). */
   private rebuild(): void {
     if (!this.rebind()) return;
+    // A rebind can move the lane set, and then the addresses: the SSMCS bank's COMP face
+    // carries the side-chain tap on its filter segment and not on its curve. Without this
+    // the lane a rebuild just put on screen asks the store for an address the broker was
+    // never told to stream, and shows a floor bar and a "—" for a signal that is present.
+    this.resubscribeIfMoved();
     this.render();
     this.measure();
     // render() replaced the canvas, so the size watch has to be re-attached to it.
@@ -1713,7 +1849,7 @@ export class DynScreen {
     c.clearRect(0, 0, cv.width, cv.height);
     if (this.plotLayer) c.drawImage(this.plotLayer, 0, 0);
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.p().drawLive?.(c, this.geo(w, h), this.readLane, this.plotTokens);
+    this.p().drawLive?.(c, this.geo(w, h), this.readLane, this.plotTokens, this.ctx());
   }
 
   /** The static plot, rendered once per parameter / size / theme change. */
@@ -1762,35 +1898,27 @@ const PLOT_TOKENS = [
   "--m-red",
 ] as const;
 
-/** The persisted bar selection per processor, each value passed through its own bar's
- *  migration (the stored shape has changed once — see `migrateSel`). */
+/** The persisted bar selection per processor. A stored value is a segment INDEX, so it
+ *  means whatever that bar's item at that position means: renumbering a bar's segments
+ *  takes a new store key, since an old index and a new one are indistinguishable. */
 function loadSels(): Record<string, number> {
   const raw = loadJson<Record<string, unknown>>(SEL_STORE, {});
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(raw)) {
-    const n = migrateSel(v);
-    if (n !== undefined) out[k] = n;
+    if (typeof v === "number") out[k] = v;
   }
   return out;
-}
-
-function wrap(cls: string, ...kids: HTMLElement[]): HTMLElement {
-  const w = el("div", cls);
-  w.append(...kids);
-  return w;
 }
 
 export function channelLabel(model: DeviceModel, nodeId: string): string {
   return model.nodes.find((n: { id: string; label: string }) => n.id === nodeId)?.label ?? nodeId;
 }
 
-/** Two-line meter caption: the tap's own name over its broker meter id, matching
- *  the CONSOLE meter-point badges. */
-function capLabel(label: string, meterId: number | undefined): HTMLElement {
+/** A lane's caption: the tap's own name. The broker meter id used to be printed under it
+ *  in a second line, and is not any more — it is an address, of no use to an operator, and
+ *  the tick column's spacer has to match this element's height. */
+function capLabel(label: string): HTMLElement {
   const cap = el("span", "gt-cap-label");
-  cap.append(document.createTextNode(label), document.createElement("br"));
-  const sub = el("span", "sub");
-  sub.textContent = meterId === undefined ? "" : String(meterId);
-  cap.append(sub);
+  cap.textContent = label;
   return cap;
 }

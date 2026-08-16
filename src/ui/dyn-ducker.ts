@@ -128,19 +128,31 @@ export const DUCKER_DYN: DynProcessor = {
       readoutCols: 2,
       lanes: [
         key,
-        { key: "in", label: text.tapIn, kind: "level", tap: tapFor(host, "preducker", ctx.model.id) ?? null },
+        {
+          key: "in",
+          label: text.tapIn,
+          caption: ctx.m.dynTuning.laneIn,
+          kind: "level",
+          tap: tapFor(host, "preducker", ctx.model.id) ?? null,
+        },
         // In the PRE DUCKER lane's slot, not a column of its own. The reduction is
         // applied to THAT signal — the key only decides when — so the level going in
         // and the amount taken off it belong in one column, on one ruler. It keeps its
         // own readout tile.
-        { key: "out", label: text.tapOut, kind: "level", tap: tapFor(host, "post", ctx.model.id) ?? null },
+        {
+          key: "out",
+          label: text.tapOut,
+          caption: ctx.m.dynTuning.laneOut,
+          kind: "level",
+          tap: tapFor(host, "post", ctx.model.id) ?? null,
+        },
         { key: "gr", label: text.tapGr, kind: "gr", gr: grAddr("ducker", ctx.nodeId), sameSlot: true },
       ],
     };
   },
 
   // No bar. The envelope and the lanes are both on screen, so nothing chooses between
-  // them — the EQ is arranged the same way and for the same reason. It was a
+  // them — every screen is arranged that way now, and this is where it started. It was a
   // Ladder / Envelope toggle first, and the envelope's live overlay is what made that
   // wrong: the overlay is a reduction DEPTH, and a depth is far easier to read beside
   // the meter that carries the same quantity than in place of it.

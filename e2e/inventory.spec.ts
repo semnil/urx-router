@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { allItems, Inventory, itemsFor, itemsUnder, type Item } from "./inventory";
+import { pickBand } from "./dyn-helpers";
 import { en } from "../src/i18n/en";
 import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
 import { planParam } from "./plan-param";
@@ -428,11 +429,10 @@ test("the channel tuning screens show every processor, both displays and their n
   };
 
   for (const kind of ["gate", "comp"] as const) {
+    // One state, not two: the plot and the lane rack are both on screen from the open,
+    // so there is no display mode to walk.
     await openFromInspector(kind);
     await inv.take(page, "#dyn-screen-modal");
-    await page.click("#dyn-mode-curve");
-    await inv.take(page, "#dyn-screen-modal");
-    await page.click("#dyn-mode-ladder");
     // COMP's 1-knob hands three values over to the device, which is the one state
     // that tags a row as device-driven.
     if (kind === "comp") {
@@ -446,9 +446,9 @@ test("the channel tuning screens show every processor, both displays and their n
   await openFromInspector("eq");
   await inv.take(page, "#dyn-screen-modal");
   // A band whose filter type is fixed, and one whose type leaves Q unused, are
-  // both marked — the segmented bar is what reaches them.
-  for (const band of ["low", "lowmid", "highmid", "high"]) {
-    await page.click(`#dyn-band-${band}`);
+  // both marked — the markers on the response are what reach them.
+  for (let band = 0; band < 4; band++) {
+    await pickBand(page, band);
     await inv.take(page, "#dyn-screen-modal");
   }
   // The EQ's own 1-knob replaces the band block with the note explaining why.
@@ -486,12 +486,14 @@ test("the channel tuning screens show every processor, both displays and their n
   await inv.take(page, "#dyn-screen-modal");
   await page.click("#dyn-face-ssmcs-comp");
   await inv.take(page, "#dyn-screen-modal");
-  await page.click("#dyn-mode-curve");
+  // This face is two of the bank bar's segments: the transfer curve above, and the
+  // side-chain filter, whose hint is the only place its message is shown.
+  await page.click("#dyn-mode-sidechain");
   await inv.take(page, "#dyn-screen-modal");
   await page.click("#dyn-face-ssmcs-eq");
   // A shelf band is what tags a Q row as unread; MID is the one that reads it.
-  for (const band of ["low", "mid", "high"]) {
-    await page.click(`#dyn-ssmcs-band-${band}`);
+  for (let band = 0; band < 3; band++) {
+    await pickBand(page, band);
     await inv.take(page, "#dyn-screen-modal");
   }
 

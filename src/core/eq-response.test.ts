@@ -22,12 +22,13 @@ const band = (o: Partial<EqBandState> & { index: number }): EqBandState => ({
   ...o,
 });
 
-/** Worst absolute deviation between the model and a measured sweep. */
-function worst(
-  b: EqBandState,
+/** Worst absolute deviation between a modelled response and a measured sweep. Takes the
+ *  response rather than a band, so the two blocks in this file — the 4-band PEQ and the
+ *  SSMCS strip — measure their own filters through one function. */
+function worstOf(
+  f: (hz: number) => number,
   measured: Record<number, number>,
 ): { hz: number; want: number; got: number; err: number } {
-  const f = bandResponse(b);
   let out = { hz: 0, want: 0, got: 0, err: -1 };
   for (const [hzText, want] of Object.entries(measured)) {
     const hz = Number(hzText);
@@ -37,6 +38,9 @@ function worst(
   }
   return out;
 }
+
+const worst = (b: EqBandState, measured: Record<number, number>): ReturnType<typeof worstOf> =>
+  worstOf(bandResponse(b), measured);
 
 describe("EQ response against the device", () => {
   // A boost bell, and the dataset that proved the unit's Q is twice the biquad Q: at
@@ -275,29 +279,65 @@ describe("the SSMCS strip's three-band EQ", () => {
   });
 
   /**
-   * The bell's width is the device's, not a textbook biquad's.
+   * The bell IS the sweep, at every point of it.
    *
-   * `SSMCS_Q_TO_BIQUAD` scales the displayed Q before the filter is designed, and it is
-   * the 4-band block's neighbour in the same file so that neither is carried across. The
-   * bandwidth is what the constant IS, so it is asserted as a bandwidth rather than by
-   * reading the number back — a test that names the number is the number written twice.
+   * Three states of the MID band at 1002 Hz, read on a URX44V as `112` − `111`: every other
+   * frequency of the sweep's grid from 100 Hz to 10 kHz, so the two skirts are covered as
+   * well as the peak. Both meters quantize to 1 dB, so a point can be half a step out on
+   * each; 1.5 dB is that floor with a little room, and it is the whole tolerance — no
+   * per-point exceptions.
    *
-   * The window is the separation that was actually established, and no tighter: measured
-   * against this case, 1.0 (no scaling at all) and the 4-band block's 0.5 both fail, while
-   * 0.7 and 0.95 pass. Separating the constant from its own neighbourhood needs one more
-   * sweep, finely stepped around the bell; until that runs, a tighter bound here would be
-   * this file asserting a precision nothing measured.
+   * The three are what separate the LAW from a constant. +18 and +6 differ only in gain, so
+   * together they pin the gain dependence a constant ratio cannot carry; Q 2.83 against
+   * Q 1.00 pins that the ratio does NOT move with Q.
+   *
+   * Asserted point by point rather than as a summary: an RMS passes with one point 5 dB out
+   * if the rest are close, and one point 5 dB out is exactly what a wrong Q law looks like
+   * on a skirt.
+   *
+   * Keyed by frequency like every other sweep in this file, rather than by position against
+   * a shared grid: a table paired by index re-pairs silently the moment either list is
+   * reordered or gains a point.
    */
-  it("gives the bell the device's own width rather than a textbook biquad's", () => {
-    const r = only(band({ kind: "mid", freq: 1000, gain: 12, q: 1 }));
-    expect(r(1000)).toBeCloseTo(12, 1);
-    // Half-gain points, which a wider or narrower bell moves.
-    const halfLo = 1000 / 1.9;
-    const halfHi = 1000 * 1.9;
-    expect(r(halfLo)).toBeGreaterThan(4.5);
-    expect(r(halfLo)).toBeLessThan(7.5);
-    expect(r(halfHi)).toBeGreaterThan(4.5);
-    expect(r(halfHi)).toBeLessThan(7.5);
+  const MID_SWEEP: readonly { label: string; gain: number; q: number; db: Record<number, number> }[] = [
+    {
+      label: "+18 dB / Q 1.00",
+      gain: 18,
+      q: 1,
+      // prettier-ignore
+      db: {
+        100.2: 2, 126.2: 3, 158.9: 4, 200: 5, 251.8: 7, 317: 8, 399.1: 10, 502.4: 13, 632.5: 15, 796.2: 17,
+        1002.4: 18, 1261.9: 17, 1588.7: 15, 2000: 13, 2517.9: 10, 3169.8: 8, 3990.5: 6, 5023.8: 5, 6324.6: 3,
+        7962.1: 2, 10023.7: 1,
+      },
+    },
+    {
+      label: "+6 dB / Q 1.00",
+      gain: 6,
+      q: 1,
+      // prettier-ignore
+      db: {
+        100.2: 0, 126.2: 1, 158.9: 1, 200: 2, 251.8: 3, 317: 3, 399.1: 4, 502.4: 5, 632.5: 5, 796.2: 5,
+        1002.4: 6, 1261.9: 5, 1588.7: 5, 2000: 5, 2517.9: 4, 3169.8: 3, 3990.5: 2, 5023.8: 2, 6324.6: 1,
+        7962.1: 1, 10023.7: 0,
+      },
+    },
+    {
+      label: "+18 dB / Q 2.83",
+      gain: 18,
+      q: 2.83,
+      // prettier-ignore
+      db: {
+        100.2: 0, 126.2: 0, 158.9: 0, 200: 1, 251.8: 1, 317: 2, 399.1: 4, 502.4: 6, 632.5: 9, 796.2: 13,
+        1002.4: 18, 1261.9: 13, 1588.7: 9, 2000: 6, 2517.9: 4, 3169.8: 2, 3990.5: 1, 5023.8: 1, 6324.6: 0,
+        7962.1: 0, 10023.7: 0,
+      },
+    },
+  ];
+
+  it.each(MID_SWEEP)("draws the MID bell where the unit measured it ($label)", ({ gain, q, db }) => {
+    const w = worstOf(only(band({ kind: "mid", freq: 1002.4, gain, q })), db);
+    expect(w.err, `${w.hz} Hz: drew ${w.got.toFixed(1)}, unit read ${w.want}`).toBeLessThan(1.5);
   });
 
   it("sums the three bands and drops the ones switched off", () => {

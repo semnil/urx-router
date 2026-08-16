@@ -20,7 +20,7 @@ means two open at once could not both stream anyway.
 actually has (its fields and its meter lanes), reads and writes its own corner of the plan, and
 arranges its display column out of the parts the host offers. That division is why a processor with
 no gain-reduction meter, on nodes whose taps are stereo, whose values live in an array and whose
-segmented bar selects a band rather than a display mode, needed no special case in the host.
+band is selected by pressing a marker on its own plot, needed no special case in the host.
 
 ## Background
 
@@ -74,16 +74,15 @@ tokens only `--groove` is actually read here; `--strip-w` / `--head-h` are inher
 
 ```text
 ┌ [CH 1] Gate ─────────────────────────────────────────────────┐
-│ DISPLAY            [LADDER][CURVE] │ PARAMETERS               │
-│ ┌────────────────────────────────┐ │ Threshold  ──●──  -50.0 dB
-│ │   0 ─┐  ┌──┐ ┌──┐ ┌──┐         │ │ Range      ─●───  -56.0 dB
-│ │ -10 ─┤  │  │ │▨▨│ │  │         │ │ Attack     ──●──   20.2 ms
-│ │ -50 ─┤  │▬▬│ │▨▨│ │  │  ← cap  │ │ Hold       ●────   15.3 ms
-│ │ -72 ─┘  └──┘ └──┘ └──┘         │ │ Decay      ─●───  150.2 ms
-│ │       PRE   GATE  PRE          │ │                          │
-│ │       GATE   GR   COMP         │ │ READOUTS                 │
-│ │        106   107   108         │ │ [PRE GATE][GATE GR][PRE COMP]
-│ └────────────────────────────────┘ │                          │
+│ ┌────────────────────────┐ ┌──────┐│ PARAMETERS               │
+│ │  transfer curve        │ │0 ┌──┐││ Threshold  ──●──  -50.0 dB
+│ │                     ／ │ │  │  │││ Range      ─●───  -56.0 dB
+│ │                   ／   │ │-50──││← cap        ──●──   20.2 ms
+│ │  _______________／     │ │  │▬▬│││ Hold       ●────   15.3 ms
+│ │                        │ │  │▨▨│││ Decay      ─●───  150.2 ms
+│ │                        │ │-72└──┘│                          │
+│ └────────────────────────┘ │IN  OUT││ METER                   │
+│  The curve's knee is the threshold │ [PRE GATE][PRE COMP][GATE GR]
 │                                    │                   [Close]│
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -97,51 +96,102 @@ rest, in both languages. The cap is scoped to `#dyn-screen-box`, so Preferences 
 keep their halves. What it returns to the display column is 149 px: the 4-band EQ's plot goes
 369 → 518 px and the SSMCS MAIN face's canvas 547 → 696 px.
 
-The cost lands on the screens with no plot. GATE, COMP and the SSMCS COMP face in LADDER centre a lane
-rack inside a full-width frame, so a wider column widens the black either side of it. The frame's edges
-do not move and no value reads differently — a pull request that changes this carries a LADDER crop as
-well as a plot one.
+Every screen now spends that width on a plot and a rack side by side, so there is no longer one whose
+extra width only widens black. Where the width is still tight is the 960 px minimum window inside the
+SSMCS bank, and that is [The lane ruler](#the-lane-ruler-and-what-it-does-not-carry).
 
-### Display modes
+**The last column has 4 px of padding, for a focus ring.** `.prefs-grid` carries `overflow-y: auto`, so
+its horizontal axis computes to `auto` and the box clips sideways whether or not it ever scrolls that
+way — and every control in that column ends flush with its content edge, which drew their rings outside
+it and showed none of them. 4 px is the widest ring any of them draws: a select's outline reaches it
+(2 px at offset 2) and the white-ringed controls' halo reaches the same, against 3 px for a plain
+button. On the COLUMN rather than on the grid, which is the box that clips: padding on the grid comes
+off the plot column too, and 4 px there is enough to make the 960 px window wrap a row that fits.
 
-Two modes over one control set, switched from a tab in the section header — directly above the
-control it changes. They are **alternatives, not layers**: each owns the column, so neither has to
-shrink to make room for the other.
+### The display
 
-- **LADDER** — the three taps on one tick column, spanning -72..0 dB. Linear in dB, which is the
-  threshold's exact domain, so the cap's position and its value stay proportional. This is why it
-  does not reuse the CONSOLE's ruler, which is spaced by detent index.
-- **CURVE** — the static in/out transfer plot, where the threshold is the knee and the range is the
-  drop below it. Its **output axis is not the input axis**: it runs to the GR floor (-128 dB) while
-  the input spans -72..0. The closed shelf sits at threshold + range, which for most of the range
-  domain falls below -72 dB — at the factory settings -50 + -56 = -106 dB — so a shared floor pinned
-  every range past -22 dB to the same line and range was invisible. Only a -∞ range now reaches the
-  axis floor, and the drop is labelled with the range it represents.
+**The plot and the lane rack are both on screen, always.** They were alternatives once, chosen between
+by a LADDER / CURVE bar, and that bar is gone from every single-processor screen. What ended it is the
+reduction moving onto the output column: a rack that was three columns wide became two, and two fit
+beside a plot. Nothing chooses between them now — the arrangement the EQ and the DUCKER always had.
 
-The explanatory note under the display appears in CURVE only: a fader cap on a meter explains
-itself, dragging a curve's knee does not.
+The **plot** is the static in/out transfer curve, where the threshold is the knee and the range is the
+drop below it. Its **output axis is not the input axis**: it runs to the GR floor (-128 dB) while the
+input spans -72..0. The closed shelf sits at threshold + range, which for most of the range domain
+falls below -72 dB — at the factory settings -50 + -56 = -106 dB — so a shared floor pinned every range
+past -22 dB to the same line and range was invisible. Only a -∞ range reaches the axis floor, and the
+drop is labelled with the range it represents.
+
+The **rack** is the taps on one tick column, spanning the processor's own domain (-72..0 dB for the
+gate). Linear in dB, which is the threshold's exact domain, so the cap's position and its value stay
+proportional. This is why it does not reuse the CONSOLE's ruler, which is spaced by detent index.
+
+**Every display starts at one height**, whether its processor carries a bar or not: a screen without
+one reserves the row instead, through the same builder, so the space is whatever the bars that do get
+drawn occupy. Without it the black display sat a bar's height higher on those screens.
+
+The note under the display is always printed now, since the plot always is. Its box is a fixed height
+whatever it holds — three lines, everywhere — so a longer string is CUT rather than wrapped, and
+every string is measured against the 960 px window before it ships.
+
+**A bar survives in one place**: the SSMCS bank, where it selects a face rather than a display mode.
+
+### Lane captions
+
+**The caption under a bar names the POSITION — `Input` / `Output` — and the readout tile below names
+the tap.** Both used to name the tap, and neither said which end of the processor it was. The unit's
+own dynamics screens meter the same pair: the user guide calls the item "Input/output meter" /
+「入出力メーター」, and "Input meter" / 「インプットメーター」 and "Output meter" /
+「アウトプットメーター」 where it names the halves (D0). Latin in every language, because the caption
+row is a narrow one and translating it costs width there.
+
+**The SSMCS bank is the exception and keeps the tap names.** A position label works because a screen is
+one processor, so "the input" is unambiguous — and that bank is several effects behind one title, whose
+faces meter overlapping points of one strip. PRE EQ is the compressor's output on one face and the EQ's
+input on another, and on the side-chain face it is neither: that face's own output is the detector
+feed, which is not metered at all.
+
+The lane's own name still reaches the operator — the readout tile prints it — so nothing is lost, only
+moved to the surface with room for it. The meter-id numbers that used to sit under every bar (`108`,
+`111`, …) are gone from the screen: they address the protocol, not the signal.
 
 ### The GR lane
 
-Drawn at the **same dB per pixel as the level lanes**, so the one tick column reads for all three —
-a GR bar down to the -56 tick is 56 dB of reduction. Rose with a hatch, never the green/yellow/red
-signal zones, because a reduction is not a level. Two rejected alternatives are recorded below.
+Rose with a hatch, never the green/yellow/red signal zones, because a reduction is not a level. It no
+longer stands in a column of its own on any screen; the rule and its arithmetic are in
+[How a reduction is drawn](#how-a-reduction-is-drawn--one-rule-for-every-screen). Two rejected
+alternatives are recorded below.
 
-### Readouts
+### METER
 
-One cell per lane, printing the live value and the held peak — three for GATE / COMP, four for the
-DUCKER. A tap that has not reported prints `—`, never a floor value: a GR of `0.0` would claim the
-processor is passing everything, and a level at the floor would claim silence that was never
-measured.
+One cell per lane, printing the live value and the held peak. A tap that has not reported prints
+`—`, never a floor value: a GR of `0.0` would claim the processor is passing everything, and a level
+at the floor would claim silence that was never measured.
 
-Four on a three-column grid wrap to 3 + 1, so the host switches to two columns once a screen has
-four lanes (`.gt-readouts.two`). It does not narrow anything — a grid fills its column — it removes
-the ragged wrap.
+**The heading is the user guide's word for the item, translated.** The guide names it in both
+languages — "Channel meter" / 「チャンネルメーター」, "stereo meter" / 「ステレオメーター」,
+"LEVEL meter" / 「LEVELメーター」 (D0) — so the heading reads `METER` in English and 「メーター」 in
+Japanese. The unit has no screen printing METER, so there is nothing to match letter for letter, and
+the guide's qualifier is dropped: one word covers every tap the tiles carry, where LEVEL / CHANNEL
+would have to be picked per surface and would cost width on all of them.
+
+**The CONSOLE's own live cell keeps `METER` in Japanese, and that is the exception.** Its caption
+sits on a strip whose labels are English throughout — the group separators because they are set in
+vertical writing mode, where a full-width glyph widens the column and moves the rack's geometry —
+and one katakana word among them reads as a mistake. Both captions there are `fixed()`; this heading
+is `tr()`, and it sits in a modal that is Japanese throughout.
+
+The tiles take three columns unless a screen declares otherwise. Four on three columns wrap to
+3 + 1 — ragged, and wider than four need to be — so a screen with four lanes asks for two columns
+(a 2 x 2 block) or for four (one row). Inside a bank the count is load-bearing rather than
+cosmetic: the SSMCS COMP face takes four because a second row of tiles is 64px, which is enough to
+push that face past the height its three faces are held at. Declaring it does not narrow anything —
+a grid fills its column — it decides the wrap.
 
 ## COMP
 
 The same three-tap shape one stage downstream — PRE COMP (108) in, COMP GR (110), PRE EQ (111) out —
-and the same two modes. What the compressor changes:
+and the same display. What the compressor changes:
 
 **The curve is read, not dragged.** The unit's own COMP screen (user guide p.104) puts T
 (threshold), R (ratio) and G (gain) on the transfer curve and lets you drag them. That was built and
@@ -151,11 +201,12 @@ threshold. The sliders beside the plot are the editing path; the curve answers w
 doing to the signal. The gate's curve keeps its press-to-set-threshold, because it carries one
 editable value and the gesture cannot be misread.
 
-**The reduction gets a scale of its own.** A gate's reduction runs the whole ruler — range reaches
--∞ — so it reads off the shared tick column. A compressor's occupies a few dB of a 54 dB ruler: at
--8 dB it is 15% of the lane, visible but not readable. So the COMP lane is drawn on a 0…-24 dB scale
-**printed beside it** and set apart from the level pair. That is not the alternative rejected for
-the gate below, which was a second *unlabelled* scale under the *shared* ticks.
+**The reduction reads off the SHARED tick column**, on every screen. It used to get a scale of its
+own — a compressor's occupies a few dB of a 54 dB ruler, so at -8 dB it is 15% of the lane, visible
+but not readable — printed beside the lane and set apart from the level pair. Merging it into the
+level column it was taken off answered the same problem better, and a merged lane is on that
+column's ruler by construction: two rulers side by side would read as one, which is the alternative
+rejected for the gate below.
 
 **Some values belong to the device while it drives them.** With 1-knob on, the unit owns
 threshold / ratio / gain / knee — it computes the first three from a single level, and takes the
@@ -201,18 +252,32 @@ null, and neither entry point renders.
 The 4-band PEQ, on the same host with three things arranged differently — each for a reason the EQ
 has and the two dynamics processors do not.
 
-**There is no display-mode choice.** A gate is read either as a threshold on a meter or as a transfer
-curve, and those are alternatives. An EQ's response and its levels are not: the curve says what it is
-doing to the spectrum, the meters say whether the stage is clipping, and neither answers the other.
-So both are on screen at once — the plot taking the width, the lane rack beside it in its own frame —
-and **the segmented bar in the tabs' place selects a band** instead. It resets to LOW on every open,
-because it is a cursor into the parameters rather than a way of reading the processor (the display
-mode persists per processor; this deliberately does not).
+**The response and the levels are both on screen** — the plot taking the width, the lane rack beside it
+in its own frame. The curve says what the EQ is doing to the spectrum and the meters say whether the
+stage is clipping; neither answers the other. This screen was the first arranged that way and is now
+the only arrangement there is.
 
-**The plot's axes are frequency against gain**, so it carries no live dot and no press-to-set
-gesture. Each band gets a **marker** — a pill with its initials — because the operator needs to see
-where it sits; a marker and not a grip, since four grips on one plot cannot tell which value a press
-meant (the COMP screen established that with three), so the sliders stay the editing path. Off the
+**A band is selected by pressing its marker on the plot**, and there is no band bar. One marker is one
+band, so a press is unambiguous — which is what a row of four buttons was doing from a distance, while
+the band about to be edited is where the operator is already looking. The selection resets to LOW on
+every open, because it is a cursor into the parameters rather than a way of reading the processor.
+
+The hit test and the drawing go through one function, so a press cannot land somewhere other than
+where the letter is: a marker moves with its band's frequency AND with the composite curve under it,
+and a hit test written from the same numbers separately would drift the moment either changed. The
+box is the pill grown by 7 px on every side — the pill is 13–15 px tall, well under what a pointer
+target wants, and the plot carries nothing else a press means.
+
+**The plot is a focus stop and the arrow keys move the band.** The markers replaced a segmented bar,
+and a segmented bar is operable from the keyboard; a canvas is a single stop, so Left/Right step and
+Home/End go to the ends. Selecting rebuilds the column, so focus is restored onto the new canvas the
+same way the bars restore theirs. With 1-knob on nothing is selectable and the canvas leaves the tab
+order rather than standing in it as a stop that does nothing.
+
+**The plot's axes are frequency against gain**, so it carries no live dot. Each band gets a **marker** —
+a pill with its initials — a marker and not a grip: a grip would have to say which of the band's values
+a drag moved, and four of them on one plot cannot (the COMP screen established that with three). The
+sliders stay the editing path; the marker only selects. Off the
 scale is off the frame — see [Off the scale is off the frame](#off-the-scale-is-off-the-frame), which is
 the rule for every plot here; a high-pass passes the -18 dB floor within an octave of its corner, and
 the markers follow the same rule. Each marker sits at its band's own frequency and at the **composite**
@@ -397,30 +462,49 @@ The Sweet Spot Morphing Channel Strip is the bank a MONO IN channel's COMP/EQ ty
 place of the compressor and the 4-band PEQ. It is one processor with more in it than one screen can
 show, so it takes **three faces of one screen** rather than three screens:
 
-| Face | Bar | Display | Rows | Taps |
-| --- | --- | --- | --- | --- |
-| MAIN | none | the compressor's transfer curve and the EQ's response, side by side on one canvas | Sweet Spot Data / Comp Drive / Morphing / Out Gain | 108 → 110 → 111 → 112 |
-| COMP | LADDER / CURVE | the lane rack or the transfer curve | Attack / Release / Ratio / Knee / Side Chain / Q / Freq / Gain | 108 → 110 → 111 |
-| EQ | LOW / MID / HIGH | the response and the lanes at once | Band / Q / Freq / Gain | 111 → 112 |
+| Segment | Display | Rows | Lanes |
+| --- | --- | --- | --- |
+| MAIN | the compressor's transfer curve and the EQ's response, side by side on one canvas | Sweet Spot Data / Comp Drive / Morphing / Out Gain | none (the taps are still read, as tiles) |
+| COMP | the transfer curve, the rack beside it | Attack / Release / Ratio / Knee | PRE COMP / PRE EQ |
+| Side Chain | the filter's response, the rack beside it | Side Chain / Q / Freq / Gain | PRE COMP / SIDE CHAIN / PRE EQ |
+| EQ | the response, the rack beside it | Band / Q / Freq / Gain | PRE EQ / PRE INS FX |
 
-The faces are moved between from a segment at the right end of the **title row**, and the title stays
-`[CH 1] SSMCS` on all three. Naming each face would print `[CH 1] Comp` and `[CH 1] EQ` — the shipped
-COMP and EQ screens' titles exactly — and nothing would then say which of the channel's two banks is
-on screen. The title row is also the only row a face segment can sit in without colliding with the
-display column's own bar, which on the EQ face selects a band.
+**One bar selects all four, and it is the display column's own.** It carries four segments over three
+faces, because the COMP face's two plots answer different questions and are worth naming separately.
+It replaced a face bar in the title row plus a display bar under it: two segmented rows meant the
+operator had to know which of them held the thing they were looking for, and the title-row one was the
+harder of the two to find. A bar item names the face it reaches and the segment to arrive on, so two
+items can reach one face; which item reads as pressed is the host's own question, because it is the
+only place that knows both the face and the selection within it — and a face whose selection is
+something else entirely, as the EQ face's is a band, matches on the face alone.
+
+**The EQ face carries no band row.** The markers on its response ARE the band control, as on the
+shipped EQ screen, so the bank's is the only bar on any of the four.
+
+The title stays `[CH 1] SSMCS` on all four. Naming each face would print `[CH 1] Comp` and `[CH 1] EQ` —
+the shipped COMP and EQ screens' titles exactly — and nothing would then say which of the channel's
+two banks is on screen.
+
+**Each COMP-face segment carries the sliders whose effect is on the plot beside it** — the
+compressor's on CURVE, the filter's on SIDE CHAIN. A slider whose curve is not the one drawn moves
+nothing the operator can see. The two sets are four rows each, which is also what holds this face at
+the height its siblings are held at.
 
 Moving between faces does not close the screen. The three faces are one piece of work on one channel —
 turn Morphing, read the reduction, touch Mid, go back to Comp Drive — and closing and reopening between
 each step would rebuild the modal and hand the meter slot back and take it again.
 
-**The three faces are one height, with their display panels at one top edge.** The segment that moves
-between them is in the title row, so a modal that resized would move the very control that was just
-pressed, and a panel starting at a different y makes the plot jump under the eye reading it. Neither is
-free: the faces carry 4 / 8 / 4 rows, and MAIN has no display bar where COMP and EQ do. Both are
-reserved rather than tuned. The bar's row is built by the same builder the other faces use, hidden with
-`visibility` so it keeps its box and leaves the accessibility tree; the grid takes a `min-height`
-measured from the tallest face (the COMP face's eight rows: 489.4 px in English, 497.4 px in Japanese,
-Chromium/macOS at 960–1440 px windows) with the headroom a wider font stack takes.
+**The faces are one height, with their display panels at one top edge.** The bar that moves between
+them is above the display, so a modal that resized would move the very control that was just pressed,
+and a panel starting at a different y makes the plot jump under the eye reading it. Neither is free:
+the faces carry 4 / 4 / 4 / 4 rows now but differ in their readout tiles and in what their displays
+are. The grid takes a `min-height` measured from the tallest face, with the headroom a wider font
+stack takes.
+
+**The readout tiles' column count is load-bearing here rather than cosmetic.** Four tiles on three
+columns wrap to 3 + 1 — ragged, and wider than four need to be — so a face with four asks for two (a
+2 x 2 block) or for four (one row). The side-chain face takes four: a second row of tiles is 64 px,
+which is more than this reserve can absorb.
 
 **The reserve yields, and the grid scrolls under it.** `.consent-box` clamps itself to the viewport
 and hides its overflow, and the action row carrying Close is its last child, so a floor the box cannot
@@ -431,11 +515,23 @@ the 48 px the box keeps clear of the viewport, and the grid scrolls below it rat
 that then have nowhere to go. The equal height survives the yield: at 640 px every face is the clamped
 592 px, because the scroll absorbs what differs.
 
-Two more consequences follow. The faced bank's hint line gets three lines instead of the usual two —
-the MAIN line has to name Comp Drive, Sweet Spot Data and Morphing, which took a third line in Japanese
-at the 960 px minimum and was silently cut — and its EQ face keeps its plot beside its lanes all the
-way down to 960 px where the shipped 4-band screen wraps instead, since inside a bank that wrap is a
-269 px change on one of three faces. Measured after: **683 px with a panel top of 141 px** at viewport
+Two more consequences follow. The hint line is three lines on every screen — it was two, and the bank
+took three on its own because the MAIN line has to name Comp Drive, Sweet Spot Data and Morphing, which
+took a third line in Japanese at the 960 px minimum and was silently cut. Three became the base when the
+COMP note did the same thing on the CI image: **the font decides the wrap, and the runner's font is not
+this machine's** — two lines measured clean at 960 px on macOS for every note in both languages, and the
+Japanese COMP note was cut by 13 px in CI. Three costs almost nothing, measured: at 960x640 the panel
+does not move on any of the six language x screen pairs, and at 1280x800 only GATE grows, 610 to 634 px.
+And every face keeps its plot beside its lanes all the way
+down to 960 px, where the shipped 4-band screen wraps instead. Inside a bank that wrap is a 291 px
+change on one face, so a bank does not wrap at all: the row is `flex-wrap: nowrap`, the rack keeps its
+own width (a fixed number of fixed-width slots) and the plot takes what is left. A measured floor was
+tried first and is what the arrangement replaced — it has to be re-derived against the WIDEST rack any
+face carries every time a lane is added, and the side-chain face wrapped against a floor measured while
+the EQ face's two columns were the widest. Measured under the current rule at 960 px: the side-chain
+face's plot is 199 px beside its 223 px rack, COMP 264 / 158, EQ 252 / 170, no face wrapping and none
+overflowing sideways, at 960 / 1000 / 1280 / 1600 px. A narrow plot at the minimum window is the trade
+taken — a transfer curve carries little enough that width costs it least. Earlier measurements: **683 px with a panel top of 141 px** at viewport
 heights of 731 px and up, **592 px with the same 141 px** at the 640 px minimum, across 960 / 1000 /
 1100 / 1280 / 1440 px widths in both languages, with Close inside the box at each. `e2e/ssmcs.spec.ts`
 holds it at the default viewport and again at 960x640; jsdom lays nothing out, so there is nowhere
@@ -458,9 +554,56 @@ level. GATE and COMP use -72 / -54 because those are their thresholds' domains; 
 value in dBFS at all**, so there is nothing for a fader cap to ride and the rack has no gesture. The
 corner is driven by an internal value the unit never shows.
 
-The GR lane is the COMP screen's: address 110, its own 0…-24 dB scale, on the COMP face only. On MAIN
-the same reduction is the gap between the transfer curve and unity under the live dot, plus its readout
-tile.
+The reduction lane is the COMP screen's: address 110, its own 0…-24 dB scale, on the COMP face only. On
+MAIN the same reduction is the gap between the transfer curve and unity under the live dot, plus its
+readout tile.
+
+**The SSMCS COMP face's Side Chain segment carries a third lane: the side chain itself.** It reads address `109`, which is
+the side-chain filter's output — what this compressor's detector is listening to, and the one quantity on
+the unit's own COMP screen that moves only while the side chain is on. It stands between the input and
+the reduction, which is the causal order: the level arrives, the detector hears its own version of it,
+the reduction follows, the level leaves.
+
+**It is not a stage the audio passes through**, and the arrangement must not be read as a chain. Measured
+on a URX44V (2026-08-15): with the compressor held off its knee, sweeping the filter over 36 dB moved
+`109` against `108` by the full ±18 dB while `111` against `108` held at 5.0 dB throughout. The filter is
+a branch off the compressor's input, so `108` is both PRE COMP and the filter's input — they are one tap,
+not two — and `109` is a key signal rather than audio.
+
+`109` is therefore **not** one of the meter points the console offers. It reads its floor unless the
+channel is SSMCS with both the strip's compressor and its side chain on, so as a console tap it would be
+a black column nearly everywhere; `meters.ts` keeps it out of `monoTaps` and hands it out through
+`sidechainTap` instead. CURVE and SIDE CHAIN keep three lanes — they share the display with a plot.
+
+### How a reduction is drawn — one rule for every screen
+
+**A reduction in a column of its own is the reduction**: absolute, on a ruler that can be its own, and it
+agrees with the number in its readout tile. **A reduction merged into a level column is relative**: drawn
+shorter by whatever gain the processor adds, so it is an *indication* of the reduction, and its readout
+tile is deliberately not the number that bar is showing.
+
+The reason is legibility, and it is a trade taken knowingly. Merged, the two grow from opposite ends of
+one ruler, and where they overlap **neither** is readable. The overlap is `in + gain` in dBFS and does not
+depend on the reduction at all, so taking the gain off leaves `in` — at or below zero for any real signal.
+They then never meet, and the gap between them is the input's own headroom.
+
+**Every screen merges**, which is what the DUCKER has always done: GATE's reduction hangs on PRE COMP,
+COMP's and the SSMCS strip's on PRE EQ. The gain subtracted is the processor's own — the shipped
+compressor's makeup, the strip's `min(24, |corner| × makeup/200)` — and the gate subtracts nothing,
+because a gate has no makeup and so cannot overlap. The column-of-its-own arrangement is **gone from
+`bindChannelStrip`**, along with the per-lane scale it was the only carrier of: it was reached by no
+screen, and a rendering path no screen reaches is a second arrangement that has to be kept correct
+by reading rather than by running.
+
+The alternative to subtracting was to anchor the block to the level it was taken off, which is exact. It
+was built and dropped: it makes the block touch the bar, so the two read as one column, and it gives the
+eye two moving edges to read a length from instead of one.
+
+**The offset is a parameter, not a second measurement.** It was first computed as `108` - `111`, which is
+the same quantity — and is wrong to read frame by frame. Those are separate meter addresses whose frames
+arrive at separate instants, so the difference is of two different moments, and since each carries its own
+release, a reduction coming off made the bar *lengthen* before it shortened. Out Gain is excluded from it:
+that gain lands after the EQ (measured) and so reaches neither tap.
 
 ### The two curves
 
@@ -497,10 +640,81 @@ is the same assumption the shipped COMP curve carries.
   inside the region, so every knee that does not need it still joins its legs exactly.
 - **The EQ.** Three fixed bands: LOW shelving, MID peaking, HIGH shelving. The shelf convention is the
   4-band model's — the nominal frequency is the point 3 dB below the plateau — and the peaking Q is
-  **not**: the 4-band's "the unit's Q is twice the biquad Q" was refuted here, and the two factors sit
-  adjacent in `eq-response.ts` so neither can be carried to the other block by accident. A band switched
-  off leaves the response and keeps its marker, which sits on the composite curve at its own frequency:
-  selected-but-not-contributing is two states, and one picture reads both.
+  **not**: the 4-band's "the unit's Q is twice the biquad Q" was refuted here. MID takes the same
+  gain-dependent law as the side-chain filter below, because the two are the same filter; the 4-band's
+  constant sits adjacent to it in `eq-response.ts` so neither block's can be carried to the other by
+  accident. A band switched off leaves the response and keeps its marker, which sits on the composite
+  curve at its own frequency: selected-but-not-contributing is two states, and one picture reads both.
+- **Out Gain is drawn on the COMPRESSOR's baseline, and the unit applies it after the EQ.** Where the
+  unit applies it was measured: stepping `117` between +18 and -18 dB moved tap `112` one-for-one and
+  left `108` and `111` where they were (URX44V, 2026-08-15), so the strip runs
+  `108 → compressor → 111 → 3-band EQ → Out Gain → 112`. It is drawn on the other plot anyway, and the
+  reason is the axis: this one's gain scale IS the band gain range, so an offset of up to 18 dB pushes
+  the response off the frame and takes the shape the operator opened the screen for with it. The
+  transfer plot's output axis already runs to +18 because the drive and the makeup add, and a strip
+  output gain reads there as a lifted baseline. It reached NEITHER curve before this, so a slider worth
+  ±18 dB moved nothing on screen at all.
+  **The live dot is lifted to match.** The transfer plot's dot is the pair (`108`, `111`), and `111` is
+  upstream of Out Gain — so drawn raw it sat exactly Out Gain below the curve at every input level, which
+  an operator reported. The plot's `outOffsetDb` adds the plan's Out Gain to the output reading before
+  plotting it; the MAIN face's left half draws the same curve and takes the same lift, through the same
+  one function so the two dots cannot sit at different heights. The alternative was to take Out Gain off
+  the curve instead, which would leave it drawn nowhere — the EQ's plot cannot carry it for the reason
+  just above.
+
+### The second curve: the side chain
+
+The bank's bar carries a segment the shipped COMP screen has no counterpart for, because this compressor
+has an input that one does not: a filter in front of its **detector**. Its response is what the segment
+draws, from the three rows underneath it — the compressor's own sliders are on the other segment, since
+a slider whose curve is not the one drawn moves nothing the operator can see.
+
+**It is the same bell as the strip's MID band — one law draws both**, measured on a URX44V through two instruments that
+share the filter and nothing else — the compressor's own reduction with ratio at infinity and a Hard
+knee (where GR is the detector minus the threshold, and the threshold is a 0.2 dB-per-step ruler), and
+meter `109`, which carries the filter's output. The two agreed at a median of 0.00 dB over 488 paired
+readings, and the MID band read through the audio path came out identical to the side chain read
+through the detector path at 60 of 61 frequencies. Peak gain and centre frequency are exactly what is
+set; 0 dB is an exact bypass.
+
+**The Q the unit prints is not the biquad's, and the factor is not a constant** — the bell narrows as
+the gain grows: `Q(biquad) = 0.238 × Q(displayed) × A^0.39`, with `A = 10^(|gain|/40)`. Measured
+0.3585 / 0.3085 / 0.2750 / 0.2615 at 18 / 12 / 6 / 3 dB, symmetric in the gain's sign, independent of
+the Q set across a 16:1 range and of the centre frequency. A single ratio costs 0.160 dB RMS against
+0.064 dB for the law, which is what fitting each gain separately leaves.
+
+The MID band was drawn from a CONSTANT ratio of 0.82 until this law reached it. That number came from a
+sweep that read the width between the points 3 dB below the PEAK, where a biquad's Q is the width at
+half the gain — for an 18 dB bell the two differ by a factor of 2.78, so every MID bell was drawn about
+2.3x too narrow. Against the 61-point sweep the constant lands at 2.2 dB RMS over three states (worst
+5.6 dB, always on the narrow side) and this law at 0.47 dB (worst 1.0). `pnpm test eq-response` pins the
+law against those readings a point at a time, and the constant fails all three states.
+
+**The axis is inverted against the filter's own sign, and that is the point.** What the segment draws is
+the REDUCTION the filter buys, not the gain it applies: lifting a band in the detector makes the
+compressor hear more of it and clamp down harder, so a boost draws DOWNWARD. Drawn the other way the
+curve rose while the thing it produces fell, and it pointed the opposite way to the reduction lane a few
+pixels to its right. The model keeps the filter's true sign; only the drawing flips it.
+
+**This is the one plot in the app whose area is shaded.** Everywhere else the curve is audio, where the
+line already says what the operator will hear. Here the line is not audio at all, and the area is the
+reading: the band the compressor has been made to react to more, or less. The hint says the same thing
+in words, once.
+
+**The rack stands beside it, and each segment drops the lane its own plot does not answer for.** The
+transfer curve is the compressor's own pair, so the side-chain tap goes and the rack is two columns.
+Side Chain keeps all three: what the filter does is the DIFFERENCE between the input and what the detector hears, so
+dropping the input leaves that face unable to answer its own question — and the filter's own output is
+not metered at all, so there is no pair to reduce it to. COMP GR merges into the PRE EQ column it was
+taken off in both. The taps are the same in every segment, so moving between them re-arranges the rack
+without changing what is subscribed.
+
+**The marker carries what the curve cannot.** Flat arrives two ways — the filter switched out, and the
+filter engaged at 0 dB — and neither has a curve to be told apart by. `on` dims the marker for the
+first, the same treatment a switched-off EQ band gets. The pill is kept whole inside the frame: the
+host clips the plot to the axes and the top of that area IS the gain range's maximum, so a filter at
+full boost used to lose the upper half of its marker — rare enough to go unseen on a three-band EQ,
+ordinary on a one-band side chain.
 
 ### What the rows never do
 
@@ -793,9 +1007,11 @@ its inversion (it hangs from the top and is the bar rather than the cover over o
 `translate.ts` beside the field table that defines them, so a screen and the inspector cannot
 disagree about how a value prints or steps.
 
-The display mode is stored per processor (`urx-dyn-display`, a record keyed by processor). A gate and
-a compressor are not read the same way, and the pick is a way of reading a processor rather than a
-per-device mapping — so unlike the meter point it is not model-scoped.
+The bar's selection is stored per processor (`urx-dyn-display2`, a record keyed by processor), which is
+now the SSMCS bank alone. It is a way of reading a processor rather than a per-device mapping — so
+unlike the meter point it is not model-scoped. **The stored value is a segment INDEX**, so renumbering
+a bar's segments takes a new key — an old index and a new one are indistinguishable, and the previous
+key held a three-segment numbering in which 1 meant the transfer curve rather than the side chain.
 
 The curve is drawn as a cached static layer plus a live dot: everything but the dot depends only on
 the parameters, size and theme. Canvas size is measured on open and refresh, and the theme tokens
@@ -834,8 +1050,8 @@ capture.
 | A second instance of the screen for COMP | Both would bind the same modal host and the same single meter subscription; the processor is chosen per open instead |
 | T / R / G grips dragged on the COMP curve, as the unit does it | Built, then removed. A press that missed a grip fell through to the threshold drag beneath it, so pressing the gain grip moved the threshold; and the grips were drawn clamped inside the plot while hit-tested at their true position, which put the two ~13 px apart at the axis ends. Underneath both defects, three grips on one plot cannot tell which value a press meant |
 | All eighteen SSMCS rows on one screen | The rows alone are ~18 × 42 px ≈ 756 px against `.consent-box`'s `max-height: calc(100vh - 48px)`, which is 752 px at the 800 px default window and 592 px at the 640 px floor `tauri.conf.json` allows — over before the four headings, the title and the action row are added, and into the internal scroll every shipped screen avoids |
-| A fourth SSMCS face for the side chain, as the unit splits it | The unit splits it because its LCD is small. Eight rows fit one panel here, and the Side Chain toggle doubles as the divider the filter's three rows sit under |
-| The face switch in the display column's heading | It would take the same row as the EQ face's band bar, and again as a third bar once the COMP face has LADDER / CURVE. The title row has room and nothing to collide with |
+| Folding the side chain into the COMP face's rows | It was one panel of eight rows once, with the Side Chain toggle as the divider. Splitting the bar gave the filter its own segment, and the rows follow the plot: a slider whose curve is not the one drawn moves nothing the operator can see. Four rows each, which is also what holds the face at its siblings' height |
+| The face switch in the TITLE row | Two segmented rows meant the operator had to know which of them held what they were after, and the title-row one was the harder of the two to find. It is now one bar in the display column with a segment per face — with the COMP face split in two, since its two plots answer different questions — and the EQ face's band selector is gone from a bar entirely (its markers are the control) |
 | A lane rack on the SSMCS MAIN face | Two plots and a rack in one column leave each plot ~152 px of drawing area at a fixed 320 px height, so the same +6 dB bell reads at three times the slope it has on the EQ face. The lanes are still subscribed and still printed as readouts without one — the host builds lane elements only when a descriptor asks for them |
 | Widening the display column by giving the readout tiles fewer columns | Measured: the MAIN face's control column is 350 px with the tiles in two columns and 350 px with them in three. A grid of `1fr` tracks fills its parent; what asks for width is the parameter row's fixed-width slider. The observation that the column had slack was right and the lever was wrong — the split between the columns is the lever |
 | Merging the SSMCS GR into the OUT slot (`sameSlot`, as the DUCKER does) | The only way to fit a rack beside two plots before the column split changed; unnecessary once it did, and worse than useless here, since MAIN and COMP read the same address set and a rack that reassembled itself per face would move under a switch that is supposed to be a move |

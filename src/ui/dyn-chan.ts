@@ -33,11 +33,46 @@ export function bindChannelStrip(
      *  that with a missing option would read as an oversight in the caller that omits
      *  it, which is the one thing a lane rack's only gesture must not be. */
     cap: string | null;
-    /** GR lane full scale, when the reduction's own domain is far shallower than the
-     *  level ruler. */
-    grFullDb?: number;
+    /**
+     * dB to take off the merged bar so it cannot run into the level it
+     * shares a column with — which makes that bar an INDICATION of the reduction rather
+     * than the reduction. `DynLane.grOffsetDb` carries what it is, and why it is a number
+     * rather than a second pair of taps.
+     *
+     * ONE RULE across the screens: a reduction drawn in a column of its own is the
+     * reduction, absolute, and agrees with its readout; a reduction merged into a level
+     * column is relative, offset by whatever gain the processor adds, because two bars
+     * growing from opposite ends of one ruler are both unreadable where they overlap. So
+     * this is passed wherever there is a gain to subtract — the SSMCS strip's makeup, the
+     * shipped compressor's — and omitted where there is none, which is the gate.
+     */
+    grNetDb?: number;
+    /**
+     * A lane between the input and the reduction, for a processor whose detector listens
+     * to something other than the signal on the input lane.
+     *
+     * It stands there rather than at the end because that is where it belongs in the
+     * causal order — the level arrives, the detector hears its own version of it, the
+     * reduction follows, the level leaves — and NOT because it is a stage the audio
+     * passes through. On the SSMCS strip it is not: measured on a URX44V, sweeping the
+     * side-chain filter over 36 dB moved `109` against `108` by the full amount while
+     * `111` against `108` held at 5.0 dB with the compressor off its knee throughout.
+     */
+    keyLane?: DynLane;
     /** Extra lanes after the three, for a face that meters further down the strip. */
     extraLanes?: DynLane[];
+    /**
+     * Caption the pair with the TAP names rather than with Input / Output.
+     *
+     * Position captions work because a screen is one processor, so "the input" is
+     * unambiguous. The SSMCS bank is not: it is several effects behind one title, and its
+     * faces meter overlapping points of one strip — PRE EQ is the compressor's output on one
+     * face and the EQ's input on another, and on the side-chain face it is neither, since
+     * that face's own output is the detector feed and is not metered at all. Naming the tap
+     * says which point it is, and the face's own bar already says which processor is being
+     * read.
+     */
+    tapCaptions?: true;
   },
 ): DynBinding | null {
   const np = ctx.plan.nodeParams[ctx.nodeId];
@@ -45,20 +80,42 @@ export function bindChannelStrip(
   const fields = dyn && o.fields(dyn);
   if (!fields) return null;
   const text = ctx.m.dynTuning[o.grKind];
+  const inLane: DynLane = {
+    key: "in",
+    label: text.tapIn,
+    ...(o.tapCaptions ? {} : { caption: ctx.m.dynTuning.laneIn }),
+    kind: "level",
+    tap: tapFor(ctx.nodeId, o.inTapKey, ctx.model.id) ?? null,
+    // The threshold rides the input meter: its dB and the meter's dBFS are the
+    // same coordinate, which is what earns the rack its one gesture.
+    ...(o.cap ? { cap: o.cap } : {}),
+  };
+  const outLane: DynLane = {
+    key: "out",
+    label: text.tapOut,
+    ...(o.tapCaptions ? {} : { caption: ctx.m.dynTuning.laneOut }),
+    kind: "level",
+    tap: tapFor(ctx.nodeId, o.outTapKey, ctx.model.id) ?? null,
+  };
+  const grLane = (extra: Partial<DynLane>): DynLane => ({
+    key: "gr",
+    label: text.tapGr,
+    kind: "gr",
+    gr: grAddr(o.grKind, ctx.nodeId, ctx.model.id),
+    ...extra,
+  });
+  const key = o.keyLane ? [o.keyLane] : [];
   return {
     fields,
+    // The reduction hangs on the OUTPUT column rather than standing between the two — it
+    // reads better against the level it was taken off, which is what the DUCKER screen has
+    // always done, and one arrangement across every screen beats one per screen.
+    // `sameSlot` merges into the column built BEFORE it, so the order is in / out / gr.
     lanes: [
-      {
-        key: "in",
-        label: text.tapIn,
-        kind: "level",
-        tap: tapFor(ctx.nodeId, o.inTapKey, ctx.model.id) ?? null,
-        // The threshold rides the input meter: its dB and the meter's dBFS are the
-        // same coordinate, which is what earns the rack its one gesture.
-        ...(o.cap ? { cap: o.cap } : {}),
-      },
-      { key: "gr", label: text.tapGr, kind: "gr", gr: grAddr(o.grKind, ctx.nodeId, ctx.model.id), fullDb: o.grFullDb },
-      { key: "out", label: text.tapOut, kind: "level", tap: tapFor(ctx.nodeId, o.outTapKey, ctx.model.id) ?? null },
+      inLane,
+      ...key,
+      outLane,
+      grLane({ sameSlot: true, ...(o.grNetDb ? { grOffsetDb: o.grNetDb } : {}) }),
       ...(o.extraLanes ?? []),
     ],
   };
@@ -77,18 +134,6 @@ export function subObjectIo(key: "gate" | "comp"): {
   return {
     read: cur,
     patch: (ctx, patch) => ({ [key]: { ...cur(ctx), ...patch } }) as NodeParams,
-  };
-}
-
-/** The two-item display bar GATE and COMP share: the lane rack or the transfer plot. Both
- *  set `persistSel`, because which one you read a processor in is a lasting preference. */
-export function displayBar(ctx: DynCtx): { label: string; items: readonly { label: string; id: string }[] } {
-  return {
-    label: ctx.m.dynTuning.display,
-    items: [
-      { label: ctx.m.dynTuning.modeLadder, id: "dyn-mode-ladder" },
-      { label: ctx.m.dynTuning.modeCurve, id: "dyn-mode-curve" },
-    ],
   };
 }
 
@@ -111,19 +156,4 @@ export function enumRow(
     ),
     opts,
   );
-}
-
-/** LADDER is index 0, CURVE index 1. */
-export const LADDER_SEL = 0;
-export const CURVE_SEL = 1;
-
-/** The legacy shape of the persisted selection: this bar's choice was stored by name before
- *  a bar could select something other than a display mode, and a session that had chosen
- *  CURVE must not silently land back on LADDER. Lives here because the names and the index
- *  order are this bar's, not the host's. */
-export function migrateSel(v: unknown): number | undefined {
-  if (typeof v === "number") return v;
-  if (v === "curve") return CURVE_SEL;
-  if (v === "ladder") return LADDER_SEL;
-  return undefined;
 }

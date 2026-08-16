@@ -250,3 +250,30 @@ export function readouts(box: HTMLElement): Array<{ label: string; value: string
 export function barLevels(box: HTMLElement): number[] {
   return [...box.querySelectorAll<HTMLElement>(".gt-shade")].map((b) => Number(b.style.getPropertyValue("--lvl")));
 }
+
+/** The segmented bar's buttons, in the order they were built. Re-query after every press:
+ *  selecting rebuilds the column the bar is in, so a button held from before is no longer
+ *  in the document. */
+export function segments(box: HTMLElement): HTMLButtonElement[] {
+  return [...box.querySelectorAll<HTMLButtonElement>(".gt-modes button")];
+}
+
+/**
+ * Select a band by its index in the descriptor's own order.
+ *
+ * The markers ON the response are the band control on both EQ screens; there is no bar.
+ * The keyboard path is taken rather than a click because a click has to land on a marker
+ * and jsdom lays out no canvas for one to be at. `Home` first, so the walk starts from a
+ * known band whatever was selected before.
+ *
+ * Re-queried per press for the same reason `segments` is.
+ */
+export function pickBand(box: HTMLElement, index: number): void {
+  const press = (key: string): void => {
+    box
+      .querySelector<HTMLCanvasElement>("canvas.gt-pickplot")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  };
+  press("Home");
+  for (let i = 0; i < index; i++) press("ArrowRight");
+}

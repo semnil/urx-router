@@ -3270,6 +3270,21 @@ button.consent-btn-primary {
   overflow-y: auto;
   min-height: 0;
 }
+/* Room for a focus ring on the controls at the right edge. `overflow-y: auto` above makes
+   the horizontal axis compute to `auto` as well, so the grid clips sideways whether or not
+   it ever scrolls that way — and every control in the last column ends flush with its
+   content edge, which put their rings outside it and drew nothing. Measured at the widest
+   ring any of them draws: a select's outline reaches 4px (2px wide at offset 2) and the
+   white-ringed controls' halo reaches the same 4px, against 3px for a plain button.
+
+   On the COLUMN rather than on the grid, which is the box that clips: padding on the grid
+   comes off the OTHER column too, and the tuning screens' plot column is measured to the
+   pixel against the width its lane rack leaves — 4px there is enough to make the 960px
+   window wrap a row that fits today. Controls in a first column are already 32px clear of
+   the next one, so only the last needs this. */
+.prefs-grid > .prefs-col:last-child {
+  padding-right: 4px;
+}
 @media (max-width: 860px) {
   .prefs-grid {
     grid-template-columns: 1fr;
@@ -3883,26 +3898,6 @@ button.consent-btn-primary {
   align-items: center;
   gap: 10px;
 }
-/* The title ROW: the heading and, for a bank with faces, the segment that moves between
-   them. The segment is a sibling of the heading rather than a child, so the dialog's
-   accessible name (aria-labelledby -> #dyn-screen-title) stays the channel and the bank.
-   It sits at the right end, where it cannot collide with the display column's own bar
-   (the EQ face's selects a band). */
-.gt-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  /* The row stands exactly where the heading stood: the heading's own bottom margin moves
-     onto the row, so wrapping it costs no vertical space. Measured — without this the
-     panel below came up 12px. */
-  margin-bottom: 12px;
-}
-.gt-head > h2 {
-  margin: 0;
-}
-.gt-faces {
-  margin-left: auto;
-}
 /* Cap the control column rather than halving the modal. A parameter row is a
    fixed-width slider plus its label, and the readout tiles stretch to whatever column
    they are given, so the half the shared `.prefs-grid` hands these screens was standing
@@ -3940,26 +3935,24 @@ button.consent-btn-primary {
      losing the rows off the bottom. Inert at any window tall enough for the reserve. */
   overflow-y: auto;
 }
-/* Three lines for a faced bank's hint instead of two. The shortest face's display column
-   sits ~100px inside the reserve above, so the extra line costs no height at all here,
-   while on the single-face screens it would move the modal — which is why the two-line
-   reserve stays the default. The MAIN face needs it: its line has to name Comp Drive,
-   Sweet Spot Data and Morphing, and in Japanese those three took a third line at the
-   960px minimum window and were cut. */
-#dyn-screen-box .prefs-grid.gt-faced .gt-note {
-  height: 4.65em;
-}
 /* The EQ face keeps its plot beside its lanes all the way down to the 960px minimum
    window, where the shipped 4-band screen wraps instead. Wrapping is the right answer for
    a screen that is only ever itself — the plot takes the full width on its own row — but
-   inside a bank it is a 269px height change on one of three faces, which is the jump the
-   reserve above exists to remove. Measured: the row has 430px at a 960px window, the lane
-   rack takes 169.7 and the gap 8, so the plot's floor has to be at or below 252.3. The
-   FLEX BASIS is what decides a wrap — the hypothetical main size is the basis clamped by
-   min/max, so lowering `min-width` alone changes nothing and the row wraps at 300 anyway. */
+   inside a bank it is a 291px height change on one of three faces, which is the jump the
+   reserve above exists to remove. So a bank does not wrap at all, and the plot takes
+   whatever the row has left after the rack: the rack is the part with a width of its own
+   (a fixed number of fixed-width slots) and the plot is the part that can be any width.
+   A floor here would have to be re-measured against the WIDEST rack any face carries every
+   time a lane is added — which is how the side-chain face came to wrap, against a floor
+   measured while the EQ face's two-column rack was the widest. The plot is narrow at the
+   960px minimum window and that is the trade taken: a compressor's transfer curve carries
+   little enough that width costs it least, and only the minimum window pays it. */
+#dyn-screen-box .prefs-grid.gt-faced .gt-splitdisplay {
+  flex-wrap: nowrap;
+}
 #dyn-screen-box .prefs-grid.gt-faced .gt-splitdisplay > .gt-curvebox {
-  flex: 1 1 250px;
-  min-width: 250px;
+  flex: 1 1 0;
+  min-width: 0;
 }
 .gt-ch {
   font-size: 11px;
@@ -3969,7 +3962,7 @@ button.consent-btn-primary {
   padding: 1px 7px;
 }
 
-/* The two modes are alternatives, so each gets the whole column and the frame
+/* The display and the lane rack share the column, so each gets the frame
    keeps the same edges either way — the ladders centre inside it rather than the
    frame shrinking onto them. */
 .gt-ladderbox,
@@ -3987,20 +3980,25 @@ button.consent-btn-primary {
   height: 320px;
   touch-action: none;
 }
-/* The EQ shows both at once: its response and its levels are not alternatives the way
-   a gate's threshold-on-a-meter and transfer curve are. The plot takes the width it can
-   get and the rack takes what its lanes need, in signal order left to right. */
-/* A plot beside its meters, in signal order. The EQ and the DUCKER both use it; the
-   DUCKER is why it wraps. Its lane rack is four lanes wide (the EQ's is two), so at the
-   window's 960px minimum the row left the canvas 72px — a sliver, and the plot is half
-   of what the screen is for. `min-width` on the plot is what makes the row give up and
-   stack instead of squeezing: below it the two take a row each, full width.
+/* A plot whose own markers are the control (the EQ screens' bands). It is a focus stop, so
+   it needs a visible ring like every other control; the ring goes INSIDE, since the box
+   clips its overflow and an outline drawn outside the canvas would be cut off by it. */
+.gt-curvebox canvas.gt-pickplot {
+  cursor: pointer;
+}
+/* A plot beside its meters, in signal order: the plot takes the width it can get and the
+   rack takes what its lanes need. Every tuning screen uses it — response and levels are
+   read together, not as alternatives.
+   Outside a bank the row WRAPS when it runs out of width, rather than squeezing the plot
+   to a sliver: at the window's 960px minimum the DUCKER's four-lane rack left the canvas
+   72px, and the plot is half of what the screen is for. `min-width` on the plot is the
+   trigger — below it the two take a row each, full width.
    300px is measured, not chosen: at a 1440px window the DUCKER's row has 655px and its
    lanes take 331, so anything above 316 makes the pair wrap where it still fits side by
-   side. The EQ (168px of lanes) keeps its row down to about 1050px. Note what that
-   calibration depends on: the WIDEST lane rack using this class. A third consumer with a
-   wider one would squeeze its plot rather than wrap, quietly — re-measure when one
-   arrives rather than assuming the constant still holds. */
+   side. The EQ (168px of lanes) keeps its row down to about 1050px. What that calibration
+   depends on is the WIDEST lane rack that wraps — re-measure when a wider one arrives
+   rather than assuming the constant still holds. Inside a bank nothing wraps at all: see
+   `.gt-faced` above, where the rule is stated instead of measured. */
 .gt-splitdisplay {
   display: flex;
   flex-wrap: wrap;
@@ -4041,9 +4039,9 @@ button.consent-btn-primary {
      this it took the Close button's. */
   pointer-events: none;
 }
-/* An inert segmented bar (the EQ's bands while 1-knob drives them): nothing selected and
-   nothing selectable. It keeps its space for the same reason the rows do — the heading it
-   sits in is taller than its own text. */
+/* An inert segmented bar: nothing selected and nothing selectable. Every screen that has
+   nothing to pick builds one, so it starts at the same height as a screen that does — and
+   it keeps its space for the same reason the reserved rows do. */
 .gt-modes.inert {
   visibility: hidden;
 }
@@ -4056,26 +4054,21 @@ button.consent-btn-primary {
   padding: 8px;
   height: 320px;
 }
-/* The GR lane and, when it carries a scale of its own, its tick column. The extra
-   gap sets the pair apart from the level lanes: two rulers side by side must not
-   read as one, which is why a second unlabelled scale under the shared ticks was
-   rejected for the gate. */
-.gt-grwrap {
-  display: flex;
-  gap: 4px;
-}
-.gt-grwrap.own {
-  margin: 0 6px;
-}
-.gt-grwrap.own .gt-scale {
-  width: 22px;
-}
 .gt-lcol {
   display: grid;
   grid-template-rows: 1fr auto;
   gap: 6px;
   justify-items: center;
 }
+/* One lane's bar column width. A capped lane wraps its slot so the cap can escape the
+   slot's clip, and the wrapper stands in the rack in the slot's place — so both take this
+   or a capped lane silently becomes a different width from an uncapped one. Scoped to the
+   screen: this file's only other `:root` block is the palette, which CLAUDE.md names as
+   the half that has to stay in sync with `PALETTES` in graph.ts. */
+#dyn-screen-box {
+  --gt-slot-w: 46px;
+}
+
 /* A meter slot: one bar column, or one side of a stereo pair. Only the sizing differs. */
 .gt-slot,
 .gt-side {
@@ -4086,7 +4079,7 @@ button.consent-btn-primary {
   overflow: hidden;
 }
 .gt-slot {
-  width: 46px;
+  width: var(--gt-slot-w);
   height: 100%;
 }
 /* A stereo node's tap carries L and R, so its lane splits into two bars inside the one
@@ -4101,12 +4094,6 @@ button.consent-btn-primary {
 }
 .gt-side {
   flex: 1;
-}
-/* The level slots read as empty in --groove (their shade covers the bar); the GR
-   slot has no shade, so without this it sits a shade darker than its neighbours
-   and an idle gate looks like a dead element. */
-.gt-slot-gr {
-  background: var(--groove);
 }
 .gt-bar {
   position: absolute;
@@ -4158,6 +4145,26 @@ button.consent-btn-primary {
   cursor: ns-resize;
   z-index: 2;
 }
+/* The fader cap and the meter it rides, side by side rather than one inside the other.
+
+   The cap's focus ring reaches 4px past it and the slot clips — its level bar and its shade
+   have to stay inside the rounded frame — so a cap that was a CHILD of the slot had its ring
+   drawn on the left and right and shown on neither. As a sibling the ring is outside the
+   clip and lands over the slot's frame, at the cap's full width.
+
+   `overflow-clip-margin: 4px` on the slot was tried first and does the same thing in
+   Chromium; WebKit does not implement the property (measured: the ring came back 44px wide
+   there against 50px in Chromium, i.e. cut to the cap), and the desktop build renders in
+   WebKit. The narrower alternative — inset the cap by the ring instead — was measured beside
+   this one and dropped. */
+.gt-capwrap {
+  position: relative;
+  width: var(--gt-slot-w);
+  height: 100%;
+}
+.gt-capwrap > .gt-slot {
+  width: 100%;
+}
 .gt-cap.locked {
   filter: grayscale(1);
   opacity: 0.5;
@@ -4180,9 +4187,6 @@ button.consent-btn-primary {
   color: var(--plot-dim);
   text-align: center;
   line-height: 1.5;
-}
-.gt-cap-label .sub {
-  color: var(--plot-faint);
 }
 /* The tick column shares the slot's grid row, so a tick and a level sit in one
    coordinate space; its own height would put the labels a few percent off —
@@ -4218,20 +4222,27 @@ button.consent-btn-primary {
    grew the modal by its height, moving the Close action and the parameter rows
    under the pointer. One line exactly — a hint that wraps would bring the jump
    back, which is why the height is fixed rather than a minimum. */
-/* Two lines, reserved whether or not they are used. The height is FIXED because the
-   panel must not change height when the display mode or the band changes (three
-   tests pin that), and `overflow: hidden` is what holds it — so whatever does not
-   fit is cut with nothing to say it was.
-   It was one line, and one line is not enough: measured across both languages, the
-   COMP and EQ notes that shipped already wrapped below about 1150 px of window, and
-   the Japanese ones below about 1300 — they were being silently truncated on any
-   window narrower than a wide desktop. Two lines clears every note in both languages
-   at 960 px, the window's own configured minimum (tauri.conf.json), which is the
-   width that decides this. Shortening the copy instead only moves the width at which
-   the next one is cut. `pnpm test:e2e:app dyntuning` measures it. */
+/* Three lines, reserved whether or not they are used. The height is FIXED because the
+   panel must not change height when the band changes (three tests pin that), and
+   `overflow: hidden` is what holds it — so whatever does not fit is cut with nothing to
+   say it was.
+   It was one line, then two. One is not enough: the COMP and EQ notes that shipped already
+   wrapped below about 1150 px of window and the Japanese ones below about 1300, so they
+   were silently truncated on any window narrower than a wide desktop. Two is not enough
+   either, and how that was found is the point — **the font decides the wrap, and the font
+   is the runner's, not this machine's**. Two lines measured clean at 960 px on macOS for
+   every note in both languages; on the CI image the Japanese COMP note takes a third line
+   and was cut by 13 px. A local reading cannot settle this rule, so the guard that owns it
+   is `pnpm test:e2e:app dyntuning`, in CI.
+   Three lines costs almost nothing, measured: at the 960x640 minimum the panel does not
+   move at all on any of the six language x screen pairs (the grid already yields there and
+   the scroll absorbs it), and at 1280x800 only GATE grows — 610 to 634 px — because COMP's
+   and the EQ's parameter columns are already taller than their display columns. Close stays
+   23 px inside the box throughout. Shortening the copy is the other lever and it is worse:
+   it only moves the width, and the font, at which the next note is cut. */
 .gt-note {
   margin-left: 14px;
-  height: 3.1em;
+  height: 4.65em;
   overflow: hidden;
 }
 /* The Device setup brightness row's slider recipe, widened for "-72.0 dB". */
@@ -4240,15 +4251,15 @@ button.consent-btn-primary {
 }
 .gt-readouts {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* The count is the host's, written from the descriptor's own number; three is the
+     fallback for a rack that asks for nothing. Four tiles on three columns wrap to 3 + 1 —
+     ragged, and wider than four need to be — so a rack with four asks for two (a 2 x 2
+     block) or four (one row). One rack asks for four: the SSMCS bank's Side Chain segment,
+     where a second row of tiles measured 64px — enough to push that face past the height
+     its three siblings are held at. */
+  grid-template-columns: repeat(var(--gt-ro-cols, 3), 1fr);
   gap: 8px;
   margin: 10px 0 0 14px;
-}
-/* Four tiles on three columns wrap to 3 + 1 — ragged, and wider than four need to be.
-   Two columns makes them a 2 x 2 block. Set by the host once a screen has four lanes,
-   which today is the DUCKER alone. Overrides the column count and nothing else. */
-.gt-readouts.two {
-  grid-template-columns: repeat(2, 1fr);
 }
 .gt-ro {
   display: grid;
@@ -4415,10 +4426,13 @@ button.consent-btn-primary {
      to Canvas, so all four lanes rendered as empty outlined boxes. Not "the
      reduction cannot be told from the level" -- neither was drawn at all.
      forced-color-adjust inherits, so naming the slot covers the sides, the bar,
-     the shade, the peak and the threshold cap that rides them. */
+     the shade and the peak. The threshold cap is a SIBLING of the slot rather than
+     a child -- it is wrapped out of the slot's clip -- so the wrapper is named too,
+     which covers the cap and the slot inside it. */
   .con-scribble,
   .con-meter,
   .mtrcol,
+  .gt-capwrap,
   .gt-slot {
     forced-color-adjust: none;
   }

@@ -3,11 +3,11 @@
 // It is the same host as GATE and COMP with three things arranged differently, each for
 // a reason the EQ has and they do not:
 //
-//   - there is no LADDER/CURVE choice. A gate is read either as a threshold on a meter
-//     or as a transfer curve; an EQ's response and its levels are not alternatives, so
-//     the plot and the lane rack are both on screen and the segmented bar in the tabs'
-//     place selects a **band** instead. The bar resets to LOW per open: it is a cursor
-//     into the parameters, not a way of reading the processor.
+//   - the band is picked on the PLOT. Every screen shows its response and its levels at
+//     once, so no bar chooses between them and this one has none at all: the markers on
+//     the curve are the band control, and the canvas is one focus stop the arrows move
+//     within. The band resets to LOW per open — it is a cursor into the parameters, not a
+//     way of reading the processor.
 //   - the plot's axes are frequency against gain, not dBFS against dBFS, so it carries
 //     no live dot and no press-to-set gesture. Each band gets a marker, because the
 //     operator needs to see where it sits — a marker and not a grip: four grips on one
@@ -49,7 +49,8 @@ import type { EqBand, NodeParams } from "../core/plan";
 import { el, onOff, settingsRow, settingsSection } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { enumRow } from "./dyn-chan";
-import { drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo } from "./dyn-freq-plot";
+import { bandMarkers, drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo, pickBandMarker } from "./dyn-freq-plot";
+import type { BandMarker } from "./dyn-freq-plot";
 import { oneKnobLevelRow, splitDisplay } from "./dyn-screen";
 import type { DynCtx, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
 
@@ -109,21 +110,32 @@ export const EQ_DYN: DynProcessor = {
     // inapplicable ones lock and say why, which is the treatment the 1-knob's own rows
     // already get while 1-knob is off.
     const fields = eqBandFields(ctx.sel);
-    const lane = (key: string, tapKey: string): DynLane => {
+    const lane = (key: string, tapKey: string, caption: string): DynLane => {
       const tap = tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null;
       // No label rather than the internal key if a tap fails to resolve: the lane then
       // has no meter, and "preeq" is not a caption.
-      return { key, label: tap?.label ?? "", kind: "level", tap };
+      return { key, label: tap?.label ?? "", caption, kind: "level", tap };
     };
-    return { fields, lanes: [lane("in", keys.in), lane("out", keys.out)] };
+    return {
+      fields,
+      lanes: [lane("in", keys.in, ctx.m.dynTuning.laneIn), lane("out", keys.out, ctx.m.dynTuning.laneOut)],
+    };
   },
 
-  bar: (ctx) => ({
-    label: ctx.m.dynTuning.eq.band,
-    items: EQ_BAND_NAMES.map((k) => ({ label: ctx.m.inspector.eqBand[k], id: `dyn-band-${k.toLowerCase()}` })),
-    // No band is being edited while the device drives them all.
-    inert: oneKnobOn(ctx) || undefined,
-  }),
+  // No bar: the band markers ON the plot are the band control. One marker is one band and a
+  // press on it is unambiguous, which is what a bar of four buttons was doing from a
+  // distance — and the band the operator is about to edit is where they are already looking.
+  plotPicks: (ctx) => {
+    const bands = allBands(ctx);
+    return {
+      // Nothing is selectable while the device drives every band.
+      count: oneKnobOn(ctx) ? 0 : bands.length,
+      hit: (c, g, at) => {
+        const i = pickBandMarker(c, g, bandMarks(bands, ctx.sel), at);
+        return i === null ? null : bands[i].index;
+      },
+    };
+  },
   hint: (ctx) => ctx.m.dynTuning.eq.plotHint,
   // Named while a band is the operator's, reserved while the device drives them all.
   paramsTag: (ctx) => ({ text: ctx.m.inspector.eqBand[EQ_BAND_NAMES[ctx.sel]], shown: !oneKnobOn(ctx) }),
@@ -330,20 +342,14 @@ function drawResponse(
   if (inert) c.globalAlpha = 0.3;
   drawFreqCurve(c, g, tok, resp);
   c.restore();
-  drawBandMarkers(
-    c,
-    g,
-    tok,
-    bands.map((b) => ({
-      label: MARKER_LABELS[b.index],
-      hz: b.freq,
-      db: resp(b.freq),
-      on: b.on,
-      active: b.index === sel,
-    })),
-    inert,
-  );
+  drawBandMarkers(c, g, tok, bandMarksOf(bands, resp, sel), inert);
 }
+
+/** The markers, from the bands and which one is selected. */
+const bandMarks = (bands: EqBandState[], sel: number): BandMarker[] => bandMarksOf(bands, eqResponse(bands), sel);
+
+const bandMarksOf = (bands: EqBandState[], resp: (hz: number) => number, sel: number): BandMarker[] =>
+  bandMarkers(bands, resp, (b) => ({ label: MARKER_LABELS[b.index], active: b.index === sel }));
 
 /** Marker letters: LOW / LOW-MID / HIGH-MID / HIGH, initials only — the band's full
  *  name is already on the Parameters heading beside it. */
