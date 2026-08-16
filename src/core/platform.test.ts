@@ -275,6 +275,7 @@ describe("command wrappers", () => {
       { run: () => platform.vdGetStr(1, 2, 3), cmd: "vd_get_str", args: { paramId: 1, x: 2, y: 3 } },
       { run: () => platform.vdDisconnect(9), cmd: "vd_disconnect", args: { epoch: 9 } },
       { run: () => platform.appendLinkLog("line"), cmd: "append_link_log", args: { line: "line" } },
+      { run: () => platform.appendMidiLog(["a", "b"]), cmd: "append_midi_log", args: { lines: ["a", "b"] } },
       { run: platform.appBuildKind, cmd: "app_build_kind", args: {} },
       { run: () => platform.openMidiWindow("MIDI"), cmd: "open_midi_window", args: { title: "MIDI" } },
       { run: platform.closeMidiWindow, cmd: "close_midi_window", args: {} },

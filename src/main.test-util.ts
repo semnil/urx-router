@@ -97,6 +97,10 @@ const BASE_COMMANDS: Record<string, unknown> = {
   midi_open_ports: [null, null],
   midi_window_open: false,
   keep_awake: null,
+  // The MIDI trace's sink starts with the bridge, so a boot reaches it before any test
+  // has done anything. Left untaught it would reject, and the sink's own give-up would
+  // absorb the refusal this stub raises unknown commands to surface.
+  append_midi_log: "",
 };
 
 /** One parameter instance's address, as the key of the store below. */
