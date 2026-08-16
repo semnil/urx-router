@@ -497,18 +497,19 @@ test.describe("T4 midi", () => {
     await pushMidi(page, [cc7(118)]); // 0.929: again neither near nor crossing 0.85
     await expect(readout).toHaveText("+6.0"); // pos 37 — yanked back a second time
 
-    // Open the output port: runFeedback(true) resyncs every binding and deletes the
-    // pickup state with the emit.
+    // Open the output port. Nothing goes on the wire — the output side stays shut until
+    // a live readback establishes the plan — but the pass still RUNS, and deleting the
+    // pickup engagement is what it owes the receive side either way.
     const win = await openMidiWindow(page);
     await win.locator(".mw-out").selectOption("Fake Out");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.outPort)).toBe("Fake Out");
     await win.close();
-    // Polled, not read once: the address received input moments ago, so the resync
-    // pass defers behind RECENT_MS and lands on the 350 ms settle retry.
-    await expect
-      .poll(async () => (await midiSentOf(page)).filter((b) => b[0] === 0xb0 && b[1] === 7).length)
-      .toBeGreaterThan(0);
-    expect((await midiSentOf(page)).at(-1)).toEqual([0xb0, 7, 117]); // +6.0 dB = pos 37/40
+    // The address received input moments ago, so the pass defers behind RECENT_MS and
+    // lands on the 350 ms settle retry. Waited out rather than polled for a send: what
+    // shows the pass ran is the twitch below being swallowed, which is the case's own
+    // subject and fails loudly if it did not.
+    await page.waitForTimeout(700);
+    expect(await midiSentOf(page)).toEqual([]);
 
     await mark(page, "twitch-with-output");
     await pushMidi(page, [cc7(60)]); // 0.472 vs plan 0.925: swallowed now
