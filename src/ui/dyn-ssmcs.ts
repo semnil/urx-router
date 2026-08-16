@@ -629,8 +629,9 @@ export const SSMCS_COMP_DYN: DynProcessor = {
   banked: true,
   // The reduction hangs on the PRE EQ column it was taken off in every segment, the way
   // the DUCKER screen has always drawn its own — one arrangement rather than one per
-  // segment. Both segments carry the same three columns, so the rack does not change
-  // width under the pointer when the bar moves between them.
+  // segment. The rack is not the same width in both: SIDE CHAIN carries a third slot, so
+  // the plot beside it is the narrower of the two. The bar that moves between them sits
+  // above the grid, so nothing is resized under the pointer.
   bind: (ctx) => {
     // Each segment carries the sliders whose effect is on the plot beside them: the
     // compressor's on CURVE, the filter's on SIDE CHAIN. A slider whose curve is not the one
