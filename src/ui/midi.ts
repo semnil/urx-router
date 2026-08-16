@@ -145,6 +145,12 @@ export class MidiControl {
    *  the catalog now returns — and the stale sentence, in the old language, stays on
    *  screen saying feedback is stopped after it has restarted. */
   private outputStalled = false;
+  /** Whether the plan is the unit's own state, established by a Live-sync readback
+   *  that completed. The output side sends nothing while this is false. Held here
+   *  rather than read from a hook: what it answers is not "is Live sync on now" but
+   *  "did a complete read establish what this app is about to state", and the two
+   *  differ for the whole length of a starting readback. */
+  private deviceStateKnown = false;
   private settleTimer = 0;
   private learnFlushTimer = 0;
   /** True between the window's "ready" and its "closed": what makes a state push
@@ -339,6 +345,11 @@ export class MidiControl {
   /** The plan (and possibly the model) was replaced: reload that model's
    *  mappings and resync the controller to the new plan values. */
   onModelChanged(): void {
+    // The plan was replaced, so whatever a read established is about a document that
+    // is no longer loaded. Live sync is dropped before every wholesale replacement
+    // (loadPlan calls deactivateLive), which clears this too — stated here as well
+    // because the rule belongs to the replacement, not to the order of two callers.
+    this.deviceStateKnown = false;
     // An in-flight learn was armed against the old model; committing it now
     // would persist a mapping under the new model that may never bind.
     this.setLearn(false);
@@ -361,15 +372,28 @@ export class MidiControl {
     this.engine.gateReleased();
   }
 
-  /** Send every mapped value to the controller once, forgetting what it was last
-   *  told. Called when a broad device readback settles the plan: the plan has just
-   *  become the unit's own state, and the debounced pass only carries what CHANGED —
-   *  so every value the device confirmed unchanged would leave the controller showing
-   *  whatever it happens to hold (it may have been replugged, power-cycled or moved
-   *  to another bank since the sent cache was filled). Same pass as opening the
-   *  output port, which is the other moment nothing may be assumed about it. */
-  resyncFeedback(): void {
+  /** A Live-sync session came up and its readback completed: the plan is now the
+   *  unit's own state. This is the one thing that opens the output side — every pass
+   *  before it is skipped (see `runFeedback`) — and it re-sends every mapped value
+   *  once, forgetting what the controller was last told, because the debounced pass
+   *  only carries what CHANGED and a value the device confirmed unchanged is exactly
+   *  the one a controller that drifted (replugged, power-cycled, moved to another
+   *  bank) is still showing wrong.
+   *
+   *  Called only where the session is known to be up, never from a `finally` that a
+   *  cancelled or failed read also reaches: such a read leaves the plan part device
+   *  and part default, which is the state that must not go onto the wire. */
+  liveReadSettled(): void {
+    this.deviceStateKnown = true;
     this.runFeedback("readback");
+  }
+
+  /** Live sync ended, for any reason. The plan may still agree with the unit at this
+   *  instant, but nothing keeps the two together from here, so it stops being
+   *  something this app may state to a controller — or to whatever else shares the
+   *  bus. The next session's readback opens it again. */
+  liveEnded(): void {
+    this.deviceStateKnown = false;
   }
 
   /** Batch a feedback pass after a plan edit (debounced; called from the shared
@@ -596,6 +620,18 @@ export class MidiControl {
     // its own would sit immediately before this one with an empty tx window between them,
     // and `report()` attributes every send to the most recent mark.
     if (cause) this.probe?.mark(`midi:resync (${cause})`);
+    // Nothing goes out until a Live-sync readback has completed and the plan IS the
+    // unit's state. Before that the plan is whatever was loaded — a new document's
+    // defaults, a file, a partly applied read — and a pass would put those values on
+    // the wire as though the unit held them. That is not only wrong for the
+    // controller: on a loopback or shared bus another listener takes them for an
+    // operator's gesture, and a second instance of this app applies them to its own
+    // plan and writes them to the device. `liveEnded()` clears it again, so an offline
+    // stretch is one of the periods nothing is sent in.
+    if (!this.deviceStateKnown) {
+      this.probe?.note(`feedback skipped — device state not established (resync=${resync})`);
+      return;
+    }
     // Nothing goes out while a learn is armed. On a reflecting transport (the shared
     // IAC bus, or a controller that re-sends its state when feedback moves it — both
     // device classes the echo guard exists for) our own feedback comes straight back,

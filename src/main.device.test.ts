@@ -2120,3 +2120,75 @@ describe("the --reset-storage launch", () => {
     sessionStorage.clear();
   });
 });
+
+// What the app may state to a MIDI controller, and when. The values it would send are
+// the PLAN's, and until a Live-sync readback settles, the plan is whatever was loaded —
+// a new document's defaults, a file, a half-applied read. On a loopback or a shared bus
+// those go out as an operator's gesture to every other listener: a second instance of
+// this app took one for input and wrote it to the unit, putting CH 1's gain from +66 dB
+// to its minimum with the channel unmuted.
+//
+// The rule is wired here rather than only inside MidiControl, and this is the seam that
+// sees the wiring: the class cannot tell whether the session it was told about actually
+// came up.
+describe("MIDI feedback and the live session", () => {
+  const MIDI_PORT = { midi_list_outputs: ["Controller Out"], midi_open_output: null, midi_send: null };
+  const MIDI_SEED = {
+    "urx-midi": JSON.stringify({
+      output: "Controller Out",
+      // ch1/gain rather than a send level: the inspector edits it directly, which is how
+      // the live-off half below moves a MAPPED value and so has something a pass would
+      // carry — without that, a pass finding nothing to send looks like a closed output.
+      models: {
+        URX44V: [{ control: "ch1/gain", addr: { type: "cc", channel: 0, controller: 7 }, mode: "absolute" }],
+        URX88: [{ control: "ch1/gain", addr: { type: "cc", channel: 0, controller: 7 }, mode: "absolute" }],
+      },
+    }),
+  };
+
+  const bootWithController = async (over: Record<string, unknown> = {}): Promise<TauriShell> =>
+    (await bootApp({
+      seed: MIDI_SEED,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", ...MIDI_PORT, ...over }),
+    }))!;
+
+  it("sends nothing to the controller until a live readback settles, then sends", SLOW, async () => {
+    const shell = await bootWithController(connectAs("URX44V"));
+    // The port is open and the mapping resolves — so the silence below is this rule and
+    // not a controller the harness never connected.
+    await invoked(shell, "midi_open_output");
+    expect(shell.count("midi_send")).toBe(0);
+
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), SLOW);
+    await vi.waitFor(() => expect(shell.count("midi_send")).toBeGreaterThan(0));
+
+    // And closes again when the session ends. The edit below MOVES a mapped value, so a
+    // pass that ran would carry it: the count staying put is the output side being shut
+    // rather than a pass finding nothing.
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"));
+    const sentWhileLive = shell.count("midi_send");
+
+    selectNode("ch1");
+    const gain = row(t().inspector.gainAnalog).querySelector<HTMLInputElement>("input")!;
+    gain.value = String(Number(gain.value) === 20 ? 30 : 20);
+    gain.dispatchEvent(new Event("input", { bubbles: true }));
+    gain.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300)); // past the feedback debounce
+    expect(shell.count("midi_send")).toBe(sentWhileLive);
+  });
+
+  it("stays silent when the live session fails on the way up", SLOW, async () => {
+    // Unknown model: the read never runs, and the flow lands in the same `finally` a
+    // settled one does. What separates them is the session, which is why the re-send
+    // hangs off that rather than off reaching the block.
+    const shell = await bootWithController(connectAs("URX88"));
+    await invoked(shell, "midi_open_output");
+
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell)).toEqual([t().status.liveError(t().error.unknownModel("URX88"))]);
+    expect(shell.count("midi_send")).toBe(0);
+  });
+});

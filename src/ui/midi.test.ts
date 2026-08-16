@@ -504,6 +504,10 @@ describe("MidiControl learn and feedback", () => {
     await vi.waitFor(() => expect(lastState().outputs).toEqual(["Controller Out"]));
     dispatch({ type: "port", dir: "out", name: "Controller Out" });
     await vi.waitFor(() => expect(lastState().output).toBe("Controller Out"));
+    // Before the clear: the output side stays shut until a readback settles, and this
+    // case is about the learn suspension — with it left shut, the silence below would
+    // be the other rule's and the arming could stop working unnoticed.
+    control.liveReadSettled();
     mocks.midiSend.mockClear();
 
     // A plan edit from anywhere — this stands for a device-follow apply, an undo, or a

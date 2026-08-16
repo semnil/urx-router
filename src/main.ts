@@ -925,6 +925,9 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   // Before setLiveUi below, which repaints the group from whoever holds the link.
   releaseDeviceLink("live");
   midi?.probeMark("live:off");
+  // Nothing keeps the plan and the unit together from here, so the output side closes
+  // until the next session's readback settles.
+  midi?.liveEnded();
   follow?.end();
   live?.end();
   void releaseLive(liveEpoch, end);
@@ -1022,13 +1025,12 @@ function planValuesChanged(): void {
 // absorb), a reconcile's reset (reflectFollow's full branch).
 function planReadFromDevice(): void {
   planValuesChanged();
-  // A full re-send rather than the diffing pass planValuesChanged just scheduled: the
-  // plan has become the unit's own state, and a value the device confirmed UNCHANGED is
-  // exactly the one a controller that drifted from the sent cache — replugged,
-  // power-cycled, moved to another bank — is still showing wrong. The diff cannot speak
-  // for it, so this is the same pass opening the output port runs, at the other moment
-  // nothing may be assumed about what the controller holds.
-  midi?.resyncFeedback();
+  // No full re-send here. This funnel is reached by a cancelled fetch and a partly
+  // applied read as well as by a settled one — all three deliberately, since each may
+  // have applied device values the history has to re-baseline. What none of them
+  // establishes is that the plan IS the unit's state, and only that licenses putting
+  // every mapped value on the wire (MidiControl.liveReadSettled, called where the
+  // session is known to be up).
   planHistory?.rebase();
 }
 
@@ -2739,6 +2741,11 @@ if (!DEMO) {
         midi?.gateReleased();
         // In the finally: a partially failed readback still applied device values.
         planReadFromDevice();
+        // Gated on the session, not on reaching here: this block is also where a read
+        // that threw or was cancelled lands, and that leaves the plan part device and
+        // part default — the state whose values must not reach the controller or the
+        // bus it shares. With the session up, the plan is the unit's own.
+        if (liveSessionUp) midi?.liveReadSettled();
       }
     }
 

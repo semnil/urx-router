@@ -263,6 +263,12 @@ test.beforeEach(async ({ page }) => {
             return Promise.resolve();
           case "vd_get":
             return Promise.resolve(0);
+          // Feedback needs a live session to flow at all now, and an edit made inside
+          // one writes: left to the default arm the write would reject, drop the
+          // session, and take the feedback under test down with it.
+          case "vd_set":
+          case "vd_set_str":
+            return Promise.resolve();
           case "vd_get_str":
             return Promise.resolve("");
           case "plugin:dialog|message":
@@ -779,8 +785,18 @@ test("feedback follows UI edits out of the output port", async ({ page }) => {
   await learnBinding(page, win, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 64], [0xb0, 7, 65]);
   await setLearn(page, win, false);
 
-  // Opening the output resyncs every binding to the current plan value.
+  // Opening the output port sends nothing on its own: what a pass would carry is the
+  // PLAN's values, and until a Live-sync readback settles those are whatever was loaded
+  // rather than what the unit holds. On a shared bus that push is another listener's
+  // incoming gesture, which is how a second instance of this app rewrote CH 1's gain.
   await pickOutputPort(page, win);
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.__midiTest.sent.length)).toBe(0);
+
+  // The session's readback is what opens it, and every binding is resynced there.
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
   const synced = await page.evaluate(() => window.__midiTest.sent.at(-1));
   expect(synced?.[0]).toBe(0xb0);
