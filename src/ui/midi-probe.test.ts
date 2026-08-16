@@ -92,7 +92,42 @@ describe("midi probe", () => {
     probe.rx([0xbf, 80, 12]);
     const text = handle().report();
     expect(text).toContain("midi:resync: tx=2 dropped=0");
-    expect(text).toMatch(/first rx \+\d+\.\d\d ms \(CH 16 CC 80 = 12\)/);
+    // The decimals depend on what the clock offers (the two cases below pin both), so
+    // this asserts the measurement rather than the environment it was taken in.
+    expect(text).toMatch(/first rx \+\d+(\.\d\d)? ms \(CH 16 CC 80 = 12\)/);
+  });
+
+  // The engine's clock is `performance.now()`, and the shipping webview clamps it to
+  // whole milliseconds (measured on macOS WKWebView, 2026-08-16: 419 records over five
+  // launches, none carrying a fraction) while jsdom and Chromium keep sub-millisecond
+  // values. The same report is therefore read at two resolutions, so it states which one
+  // it is in: printing `.00` on every line of a real-device run claims a precision the
+  // reading does not have, and a 0 there means "below the clock", not "simultaneous".
+  it("drops the decimals, and says why, when the clock carries no fractions", () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(1000).mockReturnValueOnce(1002).mockReturnValueOnce(1004);
+    probe.mark("midi:resync (readback)");
+    probe.tx([0xbf, 80, 95]);
+    probe.rx([0xbf, 80, 12]);
+    now.mockRestore();
+
+    const text = handle().report();
+    expect(text).toContain("first rx +4 ms");
+    expect(text).toContain("clock: whole milliseconds");
+    expect(text).not.toMatch(/\d\.\d/);
+  });
+
+  it("keeps the decimals where the clock has them, and then claims nothing about it", () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(1000).mockReturnValueOnce(1000.5).mockReturnValueOnce(1004.25);
+    probe.mark("midi:resync (readback)");
+    probe.tx([0xbf, 80, 95]);
+    probe.rx([0xbf, 80, 12]);
+    now.mockRestore();
+
+    const text = handle().report();
+    expect(text).toContain("first rx +4.25 ms");
+    expect(text).not.toContain("clock: whole milliseconds");
   });
 
   it("says so when a mark's window drew no reply at all", () => {
