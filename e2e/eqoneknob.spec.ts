@@ -75,9 +75,8 @@ test("1-knob on takes the bands away entirely, without moving anything", async (
 
   await oneKnob(page).locator("button", { hasText: "ON" }).click();
 
-  // The device computes all four bands, so there is no band being edited: the rows go,
-  // the band bar goes with them (nothing selected, nothing selectable) and the band's
-  // name leaves the Parameters heading.
+  // The device computes all four bands, so there is no band being edited: the rows go and
+  // the band's name leaves the Parameters heading.
   const params = screenBox(page).locator(".prefs-section", { hasText: "Parameters" });
   for (const label of ["Band", "Type", "Q", "Freq", "Gain"]) {
     await expect(row(page, label)).toHaveCount(1); // still there…

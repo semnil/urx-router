@@ -1166,8 +1166,8 @@ export class DynScreen {
     // A bank of faces reserves one height for all of them. Its faces carry different row
     // counts and different displays, so without the reserve the modal resizes under the
     // pointer on every press of the segment that moves between them. What the reserve
-    // costs is blank space below the shorter faces; `--dyn-face-h` is where the
-    // measurement lives.
+    // costs is blank space below the shorter faces; `.gt-faced`'s `min-height` in
+    // style.css is where the measurement lives, along with what it yields to.
     if (proc.banked) grid.classList.add("gt-faced");
     grid.append(this.displayColumn(proc), this.controlColumn(m));
 

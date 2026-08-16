@@ -2,14 +2,16 @@
 
 > English: [../en/channel-tuning.md](../en/channel-tuning.md)
 
-**状態: GATE / COMP / EQ / DUCKER 実装済み (DUCKER は 2026-08-08)。** 1 つの処理のパラメーターを、
+**状態: GATE / COMP / EQ / DUCKER と SSMCS バンク実装済み。** 1 つの処理のパラメーターを、
 その効果を映すメーターの隣に置くノード単位の画面の仕様。insert FX のダイナミクス系にもゲインリダクション
-メーターがある ([対象範囲](#対象範囲)) ため、それが続くときも同じ画面形式になる。実装は
+メーターがある ([対象範囲](#対象範囲))。実装は
 `src/ui/dyn-screen.ts` (共通ホスト) / `src/ui/dyn-gate.ts`・`src/ui/dyn-comp.ts`・`src/ui/dyn-eq.ts`・
-`src/ui/dyn-ducker.ts` (処理ごとの差分) / `src/ui/dyn-chan.ts` (チャンネルストリップ 2 種が共有する束縛) /
-`src/ui/dyn-plot.ts` (dB×dB の伝達プロット) / `src/core/eq-response.ts` (実測フィルターモデル) /
+`src/ui/dyn-ducker.ts`・`src/ui/dyn-ssmcs.ts` (処理ごとの差分) / `src/ui/dyn-registry.ts` (どれが存在するか) /
+`src/ui/dyn-chan.ts` (チャンネルストリップ 2 種が共有する束縛) /
+`src/ui/dyn-plot.ts` (dB×dB の伝達プロット) / `src/ui/dyn-freq-plot.ts` (EQ 2 種が共有する周波数プロット) /
+`src/core/eq-response.ts` (実測フィルターモデル) /
 `src/core/meters.ts` (GR テーブルとデコード) / `src/style.css` (`.gt-*`)、カバレッジは
-`e2e/dyntuning.spec.ts` と `e2e/eqoneknob.spec.ts`。
+`e2e/dyntuning.spec.ts`・`e2e/ssmcs.spec.ts`・`e2e/eqoneknob.spec.ts`。
 
 **ホストは 1 つで、どの処理を出すかは open のたびに選ぶ。**どれを開いても相手を置き換える。
 インスタンスを 2 つ持つと同じ DOM を奪い合ううえ、セッションが持つメーター購読が 1 つしかない以上、
@@ -309,8 +311,8 @@ Parameters セクションは**どれを選んでも Band / Type / Q / Freq / Ga
 **1-knob ON 中はバンドのブロックごと消える**が、これも高さは変えない。そのとき編集中のバンドは
 存在しない (4 バンドをデバイスが 1 つのレベルから計算する) ので、バンド選択を出すのは効果の無い選択肢を
 提示することになる: 行は**その場に予約したまま非表示** (`visibility: hidden` = タブ順からも外れる。
-コントロール自体も disabled)、バンドバーは見出しの横で不活性、Parameters 見出しからバンド名が外れ、
-プロットのマーカーも「選択中」を描かない。予約領域には**その値の持ち主を示す 1 行**を置く — 見出しの下が
+コントロール自体も disabled)、プロットはバンドの押下を受け付けなくなり (タブ順からも外れ)、
+Parameters 見出しからバンド名が外れ、プロットのマーカーも「選択中」を描かない。予約領域には**その値の持ち主を示す 1 行**を置く — 見出しの下が
 5 行分の空白では描画不具合に見えるうえ、行を隠すと「この数値はデバイスのもの」と分かる唯一の場所が
 消えるため。消さずに予約するのが高さを保つ手段で、行はタグも (見えないまま) 保持する — タグピルは
 行を高くするので、落とすと 5 行で 3px 縮み、見出しのピルでさらに 3px 縮む (実測)。
