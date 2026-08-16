@@ -248,6 +248,17 @@ jobs:
           # Empty on a manual run, so tauri-action builds without uploading.
           releaseId: ${{ needs.create-release.outputs.releaseId }}
           args: ${{ matrix.args }}
+      # The one reading that says the link argument in src-tauri/.cargo/config.toml reached
+      # the binary this run is shipping. It is checked here rather than at build time because
+      # a RUSTFLAGS in the environment REPLACES that table rather than adding to it, and a
+      # dropped argument has no other symptom: the build succeeds and the window quietly wears
+      # the system's title bar again. Reads the packaged binary, so signing and notarization
+      # have already happened — neither touches a load command, and there is nothing earlier
+      # in this job that the argument could be read off.
+      - name: Verify the recorded macOS platform version
+        if: runner.os == 'macOS'
+        timeout-minutes: 2
+        run: node scripts/check-macho-platform.mjs "src-tauri/target/${{ matrix.rustTargets }}/release/bundle/macos/URX Router.app/Contents/MacOS/urx-router"
       # On a manual dispatch there is no release to attach to, so surface the
       # bundles as downloadable job artifacts instead.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

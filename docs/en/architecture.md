@@ -767,6 +767,15 @@ theme by default, or the fixed theme chosen in Preferences (the export clone ren
 palette; see the Preferences section). The PDF is a hand-built single-page document embedding one
 FlateDecode image (deflate via the platform `CompressionStream`), so no runtime dependency is added.
 
+**The macOS title bar is painted by the system rather than by this app, and which one it paints is
+decided by a value inside the binary.** macOS 26 reads the macOS SDK version recorded in
+`LC_BUILD_VERSION`: 26 or later gets a title bar that blends with the page beneath it, so it follows
+the theme; an older one gets the system's opaque bar, which does not. The linker fills that field
+from whichever SDK the build ran under, which makes it a property of the build machine rather than of
+the product — a `pnpm tauri dev` build under Xcode 26 and a release packaged on an older runner image
+then disagree, with nothing in the repository saying they should not. `src-tauri/.cargo/config.toml`
+states the value instead, and cargo applies it to both (see "Build and distribution").
+
 ## Windows high contrast (forced colors)
 
 A Windows contrast theme turns on the CSS `forced-colors` mode, which replaces every background and
@@ -3209,6 +3218,15 @@ turns a merged version bump into that tag — runs it **before** pushing anythin
 So a version the release path would decline is refused while it is still text in
 `package.json`, rather than after it has become a tag a published release could
 point at and which therefore cannot be moved.
+
+**The macOS platform version the binary records is stated in `src-tauri/.cargo/config.toml` rather
+than taken from the build machine.** A `-platform_version` link argument there sets both halves of
+`LC_BUILD_VERSION` — the deployment floor and the SDK version — and cargo applies it to the release
+build and to `pnpm tauri dev` alike, so the two agree whatever Xcode each ran under; what the SDK half
+decides is in "Display themes". `RUSTFLAGS` in the environment REPLACES that table rather than adding
+to it, which would drop the argument with no other symptom than a build that succeeds, so the `build`
+job reads the values back off the packaged binary (`scripts/check-macho-platform.mjs`) and fails the
+run when they disagree with the file. `pnpm check:platform <binary>` is the same check by hand.
 
 The `build` matrix restores its Rust cache read-only: a run can restore caches from its own ref or the
 default branch only, and every tag is its own scope, so a cache saved during a release is unreachable

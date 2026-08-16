@@ -102,6 +102,13 @@ const PROSE_TOKENS = new Map([
   ["test.describe.serial", "a Playwright declaration, named as itself"],
   ["(retry #1)", "the list reporter's retry suffix, quoted as the text a parser has to strip"],
   ["floor(weight × collected ÷ sum)", "Playwright's own shard-size arithmetic, written out"],
+  // The recorded macOS platform version: Mach-O and linker vocabulary, the Xcode tool that
+  // reads the field back, and the compiler flag whose output a guard fixture was recorded
+  // from. None of them is a file in any tree.
+  ["LC_BUILD_VERSION", "a Mach-O load command, named as itself"],
+  ["-platform_version", "a linker argument, named as itself"],
+  ["vtool", "an Xcode command line tool, named as the thing the guard parses the output of"],
+  ["-mmacosx-version-min=10.9", "a compiler flag, quoted as what produced a recorded fixture"],
 ]);
 
 // The same discipline for docs/{en,ja}, keyed `<document>|<token>`: the English and

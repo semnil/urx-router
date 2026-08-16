@@ -1,0 +1,18 @@
+# The macOS platform version recorded in the binary, written here rather than taken
+# from whichever Xcode the build happened to run under. macOS 26 reads the SDK field
+# of LC_BUILD_VERSION to decide which title bar the window wears: 26 or later gets one
+# that blends with the page beneath it and follows the app's theme, older gets the
+# system's opaque bar, which does not. The field is otherwise set by the linker from
+# the active SDK, so `pnpm tauri dev` on a machine with Xcode 26 and a release packaged
+# on an older runner image disagree with nothing in the repository to say they should not.
+#
+# `-platform_version <platform> <min> <sdk>` sets both halves, so this line owns the
+# deployment floor as well; 11.0 is what the aarch64-apple-darwin target defaults to.
+#
+# RUSTFLAGS in the environment REPLACES this table rather than adding to it. Nothing
+# here sets it, and scripts/check-macho-platform.mjs reads the values back off the
+# built binary so a future one cannot drop this silently.
+#
+# See docs/{en,ja}/architecture.md "Display themes".
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-platform_version,macos,11.0,26.5"]
