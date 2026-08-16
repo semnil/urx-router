@@ -134,6 +134,57 @@ export function drawLiveDot(
  * It is read off the CURVE rather than off the asymptote, so a knee still open at full
  * scale is labelled with what it actually does there.
  */
+/**
+ * A compressor's response, for both banks: two straight legs joined across a knee.
+ *
+ * `up` and `down` are how far the knee reaches either side of the threshold. A block whose
+ * knee was fitted as one symmetric width passes half of it as each — that is not an
+ * approximation here: for `up === down` the cubic below and the quadratic a symmetric
+ * model would use satisfy the same four constraints (both edges, both slopes) and are
+ * therefore the same polynomial.
+ *
+ * Between the edges: a cubic through both, carrying the slope each side already has — 1
+ * below, 1/ratio above — with the two slopes limited to the cubic's monotone region first.
+ * The limit stops an unlimited cubic overshooting, which draws an input increase as an
+ * output decrease; it scales both slopes by 3/hypot, which is 1 wherever the pair is
+ * already inside the region, so the join stays exact everywhere it can. On a symmetric
+ * knee it provably cannot engage: the worst reach over the whole ratio range is 2.0.
+ *
+ * `gain` is one offset over the whole curve. Which gain that is belongs to the caller —
+ * the two banks compute it from different parameters.
+ */
+export function kneeResponse(o: {
+  thr: number;
+  ratio: number;
+  up: number;
+  down: number;
+  gain: number;
+}): (inDb: number) => number {
+  const ratio = Math.max(1, o.ratio);
+  const lo = o.thr - o.down;
+  const hi = o.thr + o.up;
+  const width = hi - lo;
+  const hiOut = o.thr + o.up / ratio;
+  const secant = width > 0 ? (hiOut - lo) / width : 1;
+  const reach = secant > 0 ? Math.hypot(1 / secant, 1 / ratio / secant) : Number.POSITIVE_INFINITY;
+  const limit = reach > 3 ? 3 / reach : 1;
+  return (inDb) => {
+    if (width > 0 && inDb > lo && inDb < hi) {
+      const t = (inDb - lo) / width;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      return (
+        (2 * t3 - 3 * t2 + 1) * lo +
+        (t3 - 2 * t2 + t) * width * limit +
+        (-2 * t3 + 3 * t2) * hiOut +
+        (t3 - t2) * width * (limit / ratio) +
+        o.gain
+      );
+    }
+    return (inDb <= lo ? inDb : o.thr + (inDb - o.thr) / ratio) + o.gain;
+  };
+}
+
 export function drawTransferCurve(
   c: CanvasRenderingContext2D,
   g: DynPlotGeo,

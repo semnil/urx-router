@@ -70,7 +70,7 @@ import {
 } from "./dyn-freq-plot";
 import type { BandMarker } from "./dyn-freq-plot";
 import { fmtSsmcsGain, fmtSsmcsHz, fmtSsmcsMs, fmtSsmcsQ, fmtSsmcsRatio } from "./inspector-format";
-import { CURVE_PAD, dbGeo, drawDbAxes, drawLiveDot, drawTransferCurve, transferPlot } from "./dyn-plot";
+import { CURVE_PAD, dbGeo, drawDbAxes, drawLiveDot, drawTransferCurve, kneeResponse, transferPlot } from "./dyn-plot";
 import { PLOT_FONT, splitDisplay } from "./dyn-screen";
 import type { DynBar, DynCtx, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
 import type { Messages } from "../i18n/en";
@@ -158,17 +158,19 @@ function inSsmcsMode(ctx: DynCtx): boolean {
 
 /**
  * How far the knee reaches above and below the threshold, by knee setting (0 Soft /
- * 1 Medium / 2 Hard). It is NOT symmetric, so the shipped `KNEE_WIDTH_DB` in dyn-comp.ts
- * — one width per setting — cannot express this one and must not be reused here. The
- * other bank's constants are its own for the same reason: they are different DSP.
+ * 1 Medium / 2 Hard). The pair is asymmetric, so the shipped `KNEE_WIDTH_DB` in
+ * dyn-comp.ts — one width per setting — cannot express it and must not be reused here;
+ * that bank's constant is its own for the same reason.
  *
- * What stays an assumption is the shape BETWEEN the edges, which takes the cubic below;
- * the shipped COMP curve carries the same kind of assumption, and why neither curve is
- * drawn in a line style that would claim otherwise.
+ * Hard is a pair of zeroes, which is what keeps the cubic below out of it: there is no
+ * knee to interpolate across, and the legs meet at the corner.
+ *
+ * Where the numbers come from, and what they replaced, is in
+ * docs/{en,ja}/channel-tuning.md "The two curves".
  */
 const KNEE_REACH_DB: readonly (readonly [number, number])[] = [
-  [17.0, 11.0],
-  [5.4, 2.6],
+  [26.3, 24.3],
+  [10.0, 8.5],
   [0, 0],
 ];
 
@@ -218,15 +220,6 @@ function transferOf(v: StripValues): { out: (inDb: number) => number; gainDb: nu
   const thr = Math.max(CORNER_FLOOR_DB, 0.2 * (v.comp.threshold - drive) - 20);
   const ratio = Math.max(1, ssmcsRatio(v.comp.ratio));
   const [up, down] = kneeReach(v.comp.knee);
-  // The knee's two edges, which do not straddle the threshold evenly: below it the curve
-  // is still unity, above it the asymptote.
-  const lo = thr - down;
-  const hi = thr + up;
-  const width = hi - lo;
-  const hiOut = thr + up / ratio;
-  const inKnee = (inDb: number): boolean => width > 0 && inDb > lo && inDb < hi;
-  // How far through the knee an input is.
-  const frac = (inDb: number): number => (inDb - lo) / width;
   // One output gain over the whole curve, as the shipped COMP screen applies its makeup.
   // The makeup returns a FRACTION of the corner's own depth rather than a fixed number of
   // dB: at its maximum it lifts the corner to 0 dBFS, capped at MAKEUP_MAX_DB. Which is
@@ -242,41 +235,11 @@ function transferOf(v: StripValues): { out: (inDb: number) => number; gainDb: nu
   const outDb = ssmcsGainDb(v.outGain);
   const makeupDb = Math.min(MAKEUP_MAX_DB, -thr * (v.comp.makeup / MAKEUP_RAW_MAX));
   const gainDb = (drive === 0 ? 0 : makeupDb) + outDb;
-  /**
-   * Between the edges: a cubic through both, carrying the slope each side already has —
-   * 1 below, 1/ratio above — with the two slopes limited to the cubic's monotone region
-   * first.
-   *
-   * Both halves are load-bearing. A quadratic cannot do it at all: its endpoint is fixed
-   * by its two slopes, so for an ASYMMETRIC knee it lands (1 - 1/ratio)(up - down)/2 away
-   * from the asymptote — 0.84 dB at the factory settings, which the curve drew as a
-   * vertical step at the upper edge. (The shipped COMP screen's quadratic is not wrong for
-   * the same reason: that block's knee is one symmetric width, where the two agree.) And
-   * an unlimited cubic overshoots: a Medium knee at infinite ratio leaves the 1:1 leg's
-   * slope 3.08x the secant through the knee, past the 3 the monotone region allows, and
-   * the curve then rises above the plateau and comes back down — an input increase drawn
-   * as an output decrease. Limiting scales both slopes by 3/hypot, which is 1 wherever the
-   * pair is already inside the region, so the join stays exact everywhere it can.
-   */
-  const secant = width > 0 ? (hiOut - lo) / width : 1;
-  const reach = secant > 0 ? Math.hypot(1 / secant, 1 / ratio / secant) : Number.POSITIVE_INFINITY;
-  const limit = reach > 3 ? 3 / reach : 1;
-  const knee = (inDb: number): number => {
-    const t = frac(inDb);
-    const t2 = t * t;
-    const t3 = t2 * t;
-    return (
-      (2 * t3 - 3 * t2 + 1) * lo +
-      (t3 - 2 * t2 + t) * width * limit +
-      (-2 * t3 + 3 * t2) * hiOut +
-      (t3 - t2) * width * (limit / ratio)
-    );
-  };
-  const out = (inDb: number): number => {
-    if (drive === 0) return inDb;
-    if (inKnee(inDb)) return knee(inDb) + gainDb;
-    return (inDb <= lo ? inDb : thr + (inDb - thr) / ratio) + gainDb;
-  };
+  // The knee's two edges do not straddle the threshold evenly on this bank, which is the
+  // whole reason `kneeResponse` takes a pair. A drive of zero disables the compressor
+  // outright, so it returns the input rather than a curve with no reduction in it.
+  const curve = kneeResponse({ thr, ratio, up, down, gain: gainDb });
+  const out = (inDb: number): number => (drive === 0 ? inDb : curve(inDb));
   return { out, gainDb };
 }
 
