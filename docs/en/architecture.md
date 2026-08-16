@@ -460,7 +460,8 @@ carries a one-line map of the same directories and points here.
   `vd_params_subscribe/vd_params_unsubscribe`, and link-loss events `vd_watch_link` are delivered over Tauri
   Channels; `vd_link_stats` reads the session ledger straight off atomics rather than queueing a `Cmd`, so a
   reading taken during an ~800 command sweep reports now instead of reporting the sweep's start;
-  `append_link_log` appends one JSONL line to the app log directory; `--experimental` gate:
+  `append_link_log` appends one JSONL line to the app log directory and `append_midi_log` a batch of them
+  to the MIDI trace beside it (dev binaries only — it refuses outright otherwise); `--experimental` gate:
   `experimental_enabled`/`self_test_requested` are self-test only) + **the session teardown** (one epilogue
   every break lands on: unregister every address the session registered, then begin the orderly close the
   transport calls for — a replaced connection, an explicit disconnect, a dropped channel, the pump's own error and the
@@ -1275,7 +1276,18 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   carries `window.__urxMidiProbe` (`ui/midi-probe.ts`), which records the same stream **with timestamps** on
   the engine's own clock plus the live-sync marks, because the question a console trace cannot answer is a
   gap — how long after a burst goes out the controller answers, and whether that answer lands before or
-  after incoming MIDI stops being refused. Measured on macOS with a Stream Deck+ over one IAC bus
+  after incoming MIDI stops being refused. That recording is written to a **file** as well, because the ring
+  alone cannot answer a question spanning a page load: it lives in page memory and `performance.now()`
+  restarts with it, so a reload — in `tauri dev`, every HMR edit — empties it at the moment being
+  investigated and leaves two pages' entries with no common clock. Records go to `midi-trace.jsonl` in the
+  app's log directory, one JSON object per entry carrying an epoch stamp beside the page-relative one,
+  batched 250 ms at a time so a controller sweep does not put a round trip behind each message, and rotated
+  at 2 MiB keeping one previous generation — the link ledger's policy, through the same writer. Each page's
+  run opens with a `page:open` record; the `pagehide` flush that would close the previous one is
+  best-effort, for the reason the shell's own teardown is native, so what bounds a reload's lost tail is the
+  batch window and not that flush. It is a **dev build's** diagnostic on both sides — `import.meta.env.DEV`
+  drops the recorder from the bundle, and `debug_assertions` makes the `append_midi_log` command refuse — so
+  an installed app neither writes it nor can be asked to. Measured on macOS with a Stream Deck+ over one IAC bus
   (2026-08-09): the whole 8-address resync goes out inside 1 ms, the refusal window ends in the same
   millisecond, and the loopback returns 5 ms later — so that window protected none of it, and one sized to
   cover it would only discard genuine input for as long as it lasted. That measurement is why the resync is
