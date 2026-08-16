@@ -194,6 +194,35 @@ describe("feedback to the controller", () => {
     expect(mocks.midiSend).toHaveBeenCalled();
   });
 
+  // Feedback for an address that is still receiving is held back, so a snapped echo does
+  // not fight an in-progress sweep. The settle timer is the only thing that carries that
+  // value out afterwards — without it a deferred value never reaches the controller at
+  // all, and the fader sits wrong until the plan happens to move again.
+  it("carries a deferred pass out after the quiet gap", async () => {
+    seedMappings();
+    const { control, hooks } = install();
+    await attached();
+    await openOutput();
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+
+    vi.useFakeTimers();
+    // An incoming move on the mapped address. The engine records the receive, which is
+    // what makes the next pass defer; it also records what it applied as fed back, so
+    // the plan is moved separately below to give that pass something to carry.
+    mocks.inputReceiver!([0xb0, 7, 100]);
+    const conn = hooks.getPlan().connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    conn.params = { ...conn.params, level: -20 };
+    mocks.midiSend.mockClear();
+
+    control.scheduleFeedback();
+    await vi.advanceTimersByTimeAsync(120); // the debounced pass — inside the quiet gap
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(350); // the settle pass, past it
+    expect(mocks.midiSend).toHaveBeenCalled();
+  });
+
   // A failed send means the controller never got the value, so what the engine thinks
   // it has been told is dropped and another pass is scheduled: a one-off failure
   // self-heals. The persistent case is bounded — the three cases after this one.
