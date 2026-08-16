@@ -616,8 +616,24 @@ is the same assumption the shipped COMP curve carries.
 
 - **The compressor.** Its threshold is an internal value driven by Comp Drive, and the drive adds gain
   of its own — so that one knob moves the corner *and* lifts the output, which is what the operator
-  sees on the OUT lane. A drive of zero is not a threshold pushed out of range: it disables the
-  compressor. The knee is **asymmetric**, opening further above the threshold than below. **The knee
+  sees on the OUT lane. **Comp Drive has two regions, meeting at raw 31.** At and above it the
+  threshold parameter owns the corner and the drive slides it, both at 0.2 dB per raw. Below it the
+  corner is the drive's own: it runs from 0 dBFS at a drive of zero down to whatever the threshold
+  asks for at raw 31, so the threshold keeps only `drive / 31` of its 0.2 dB per raw there. Measured
+  on a URX44V (System 1.3.1.0) off the host's recording of the compressor's own output: the corner
+  falls 0.8468 dB per drive step below raw 31 against 0.2004 above it, the threshold moves it 0.1616 /
+  0.1745 / 0.1938 dB per raw at drives 25 / 27 / 30 against 0.2004 at drive 60, and the two regions
+  meet at drive 30.998. **The boundary is that one drive and not a curve across both parameters** —
+  sweeping the drive with the threshold held at raw 30 produces no kink at all, and the corner starts
+  at drive 31 as a single line of slope 0.2006 dB per step (RMS 0.0022 dB over 22 points). It also explains
+  what a low drive looks like: the corner is then above any real signal, so the compressor reads as
+  switched out rather than merely slack, and the reduction that is *drawn* stays with it. **A drive of
+  zero is still its own behaviour** rather than the ramp's bottom end — the ramp would leave the corner
+  at 0 dBFS, where a Soft knee reaches far enough down to draw 0.2 dB on a -19.9 dBFS tone, and the
+  unit produces none at any knee while the same tone at drive 10 already gets 1.9 dB. Corner and knee
+  together were then checked against the unit at Soft, Medium and Hard, at drives 10, 20, 24 and 28:
+  the drawn reduction and the measured one agree to 0.107 dB at worst over those twelve. The knee is
+  **asymmetric**, opening further above the threshold than below. **The knee
   model is one function for both banks** (`kneeResponse` in `dyn-plot.ts`), taking the two reaches as a
   pair; what stays per-bank is the DATA. `dyn-comp.ts`'s `KNEE_WIDTH_DB` is a measurement fitted as one
   symmetric width, so that bank passes `up = down = width/2` — and on a symmetric pair the cubic is the

@@ -1002,6 +1002,36 @@ describe("what the curves draw", () => {
     expect(gr.map((tx) => tx.text)).toEqual(["-12.0 dB"]);
   });
 
+  /** The strip at one Comp Drive and one threshold, everything else factory. */
+  const withDrive = (compDrive: number, threshold: number): void => {
+    h!.plan.nodeParams[ssmcsChannel] = {
+      ...h!.plan.nodeParams[ssmcsChannel],
+      ssmcs: { ...SSMCS_INITIAL, compDrive, comp: { ...SSMCS_INITIAL.comp, threshold } },
+    };
+  };
+
+  it("ramps the corner from full scale below the drive the threshold takes over at", () => {
+    // Drive raw 20 with the threshold at its minimum: the corner is 20/31 of the -26.2 dBFS
+    // the threshold asks for at the ramp's top, = -16.9, and 0 dBFS is past a Medium knee's
+    // 10.0 dB upper reach, so the asymptote puts it at -16.9 + 16.9/2.5. Reading the corner
+    // straight off the threshold instead — which is what the drive's whole range used to do
+    // — puts it at -24.0 and this label at -14.4.
+    withDrive(20, 0);
+    draw(SSMCS_COMP_DYN);
+    expect(h!.canvas.texts.filter((tx) => tx.style === "--gr").map((tx) => tx.text)).toEqual(["-10.1 dB"]);
+  });
+
+  it("leaves the factory threshold's whole drive range where it already was", () => {
+    // At threshold raw 100 — the factory value — the ramp asks for -0.2 x drive and so does
+    // the line above it, at every drive and for any ramp constant. So the region this adds
+    // is invisible along that one column, and a low drive there still draws what it drew.
+    // Not a check on the constant (the first test is that): a check that correcting the
+    // corner did not move the picture the operator starts from.
+    withDrive(20, 100);
+    draw(SSMCS_COMP_DYN);
+    expect(h!.canvas.texts.filter((tx) => tx.style === "--gr").map((tx) => tx.text)).toEqual(["-2.9 dB"]);
+  });
+
   /**
    * The curve has no step in it.
    *
