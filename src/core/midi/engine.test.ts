@@ -165,6 +165,21 @@ describe("incoming application", () => {
     expect(c.value).toBe(0.2);
   });
 
+  // The echo guard says "the next equal value on this address is my own feedback coming
+  // back". A held pass sent nothing, so there is no echo to expect — arming it there
+  // would eat the operator's next press instead.
+  it("does not arm the echo guard on a held pass", () => {
+    const c = fake("ch1/mute", "toggle", 0);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 20 });
+    c.value = 1; // a delivered pass would send 127 here, and arm on it
+    engine.feedback(false, false);
+    expect(sent).toEqual([]);
+
+    engine.onMessage(encodeCc(0, 20, 127)); // a real press carrying that same value
+    expect(c.value).toBe(0); // flipped: not swallowed as the echo of a message never sent
+  });
+
   it("assembles a 14-bit CC pair from both halves", () => {
     const c = fake("ch1/level", "continuous", 0, 1 / 16383);
     controls.set(c.id, c);

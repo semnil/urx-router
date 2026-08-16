@@ -197,6 +197,43 @@ describe("feedback to the controller", () => {
     expect(mocks.midiSend).toHaveBeenCalled();
   });
 
+  // The held pass still RUNS, and what it owes the receive side does not depend on the
+  // controller having heard: a plan value that moved un-engages a pickup binding, or the
+  // physical fader goes on tracking from wherever it stands and pulls the plan with it.
+  // Returning before the engine was what left it engaged for the whole offline stretch.
+  it("un-engages a pickup binding on a held pass", async () => {
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V: [{ ...MAPPING, mode: "pickup" }] } }));
+    const { control, hooks } = install();
+    await attached();
+    await openOutput();
+    await openInput();
+    // Installed before the first message, as sweptRig does: the engine reads the clock
+    // vitest fakes, and switching to it after a receive leaves that receive stamped on
+    // the real one — so every later pass defers behind a RECENT_MS that never elapses.
+    vi.useFakeTimers();
+    const level = (): number | undefined =>
+      hooks.getPlan().connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")?.params?.level;
+    const parked = level();
+
+    // Seed below the plan value, then cross it: pickup engages and tracks.
+    mocks.inputReceiver!([0xb0, 7, 20]);
+    expect(level()).toBe(parked); // swallowed, lastIn seeded
+    mocks.inputReceiver!([0xb0, 7, 127]);
+    const engagedAt = level();
+    expect(engagedAt).not.toBe(parked);
+
+    // The plan moves from elsewhere while the output side is shut.
+    const conn = hooks.getPlan().connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    conn.params = { ...conn.params, level: -20 };
+    control.scheduleFeedback();
+    await vi.advanceTimersByTimeAsync(600); // the debounce, then past RECENT_MS
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+
+    // Not engaged any more: a value neither near nor crossing -20 dB is swallowed.
+    mocks.inputReceiver!([0xb0, 7, 110]);
+    expect(level()).toBe(-20);
+  });
+
   // Live sync ending is not a claim that the plan is wrong, but nothing keeps the two
   // together from there — so the output side closes again rather than going on stating
   // values whose provenance has run out.
