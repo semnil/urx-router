@@ -188,6 +188,12 @@ export function classifyToken(token, { isProse = (t) => PROSE_TOKENS.has(t), isR
 // boundary where the shorter one ends.
 export const mentions = (hay, name) => new RegExp(String.raw`\b${name}\b`).test(hay);
 
+// Which files the environment-variable oracle reads. A workflow is one of them because the
+// section names variables a workflow sets and nothing under src/, e2e/ or scripts/ reads back,
+// and such a name answered as "appears nowhere in the repo". The documents are NOT in it: a
+// corpus that read them would be answered by the very sentence making the claim.
+export const ENV_CORPUS = /^(?:src|e2e|scripts|\.github)\/|^\.env|\.config\.ts$/;
+
 // --- the check --------------------------------------------------------------
 //
 // Guarded so a test can import the two above without the walk, the git spawn and the
@@ -480,14 +486,14 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   // One whole-tree walk, shared: the environment-variable oracle reads a few files out of
   // it, and the docs half indexes it by directory name and by basename.
   const repoFiles = walk(".");
-  const envText = repoFiles
-    .filter((f) => /^\.env/.test(f.replace(/^\.\//, "")) || /\.config\.ts$/.test(f))
+  // One corpus for the environment-variable oracle, built once from ENV_CORPUS above — it scans
+  // the whole of it, and rebuilding it per call flattened 5.4 MB again each time. THIS FILE is
+  // out of it for the same reason it is out of scriptsText: its own comments spell names.
+  const envHay = repoFiles
+    .map((f) => f.replace(/^\.\//, ""))
+    .filter((f) => f !== SELF && ENV_CORPUS.test(f))
     .map(read)
     .join("\n");
-  // Built once. The environment-variable oracle scans the whole of it, and rebuilding it per
-  // call flattened 5.4 MB again each time — measured at 4.5 ms of a ~100 ms run, which is paid
-  // on every CLAUDE.md edit through the hook.
-  const envHay = srcText + scriptsText + e2eText + envText;
 
   // Tauri launch flags, from the actual call sites. Truncated at the first
   // column-0 #[cfg(test)] per file: without it lib.rs's

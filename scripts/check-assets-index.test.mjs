@@ -10,8 +10,13 @@
 // inside the test worker — which is why the classifier could only ever be measured by
 // mutating the repository and reading a count.
 import { describe, expect, it } from "vitest";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { classifyToken, mentions } from "./check-assets-index.mjs";
+import { ENV_CORPUS, classifyToken, mentions } from "./check-assets-index.mjs";
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("classifyToken", () => {
   it("routes each shape the section writes to its own oracle", () => {
@@ -70,5 +75,56 @@ describe("mentions", () => {
     expect(mentions("  PWTEST_SHARD_WEIGHTS: ${{ needs.detect.outputs.weights }}", "PWTEST_SHARD_WEIGHTS")).toBe(true);
     expect(mentions('if [ -z "$PWTEST_SHARD_WEIGHTS" ]; then', "PWTEST_SHARD_WEIGHTS")).toBe(true);
     expect(mentions("process.env.VITE_TRACE", "VITE_TRACE")).toBe(true);
+  });
+});
+
+const SKIP = new Set(["node_modules", ".git", "dist", "dist-trace", "target", "gen", ".vite"]);
+function walk(dir, out = []) {
+  if (!existsSync(dir)) return out;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP.has(entry.name)) continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) walk(path, out);
+    else out.push(path);
+  }
+  return out;
+}
+
+describe("ENV_CORPUS", () => {
+  it("takes the places a variable is set or read, and nothing else", () => {
+    expect(ENV_CORPUS.test(".github/workflows/race.yml")).toBe(true);
+    expect(ENV_CORPUS.test("scripts/shard-weights.mjs")).toBe(true);
+    expect(ENV_CORPUS.test("src/core/env.ts")).toBe(true);
+    expect(ENV_CORPUS.test(".env.demo")).toBe(true);
+    expect(ENV_CORPUS.test("vitest.config.ts")).toBe(true);
+    // Not the whole tree: a corpus that reads the documents would be answered by the very
+    // sentence making the claim, which is the shape this oracle exists to refuse.
+    expect(ENV_CORPUS.test("docs/en/architecture.md")).toBe(false);
+    expect(ENV_CORPUS.test("CLAUDE.md")).toBe(false);
+    expect(ENV_CORPUS.test("package.json")).toBe(false);
+    expect(ENV_CORPUS.test("src-tauri/src/lib.rs")).toBe(false);
+  });
+
+  // Why the corpus was widened, computed from the tree rather than asserted: this derives the
+  // names a workflow carries and src/, e2e/ and scripts/ do not, and asserts there is at least
+  // one — while .github/ sat outside the corpus, such a name read as "appears nowhere in the
+  // repo". Derived rather than spelled, so a rename in a workflow cannot fail this for a
+  // reason it is not about.
+  it("reaches names that live only in a workflow", () => {
+    const files = walk(join(repo, ".github")).map((f) => f.slice(repo.length + 1));
+    const outside = walk(repo)
+      .map((f) => f.slice(repo.length + 1))
+      .filter((f) => ENV_CORPUS.test(f) && !f.startsWith(".github/"))
+      .map((f) => readFileSync(join(repo, f), "utf8"))
+      .join("\n");
+    const inWorkflows = new Set();
+    for (const f of files) {
+      for (const m of readFileSync(join(repo, f), "utf8").matchAll(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g)) {
+        inWorkflows.add(m[0]);
+      }
+    }
+    const onlyThere = [...inWorkflows].filter((name) => !mentions(outside, name));
+    expect(onlyThere.length).toBeGreaterThan(0);
+    expect(files.some((f) => ENV_CORPUS.test(f))).toBe(true);
   });
 });
