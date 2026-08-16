@@ -152,7 +152,7 @@ export const DUCKER_DYN: DynProcessor = {
   },
 
   // No bar. The envelope and the lanes are both on screen, so nothing chooses between
-  // them — the EQ is arranged the same way and for the same reason. It was a
+  // them — every screen is arranged that way now, and this is where it started. It was a
   // Ladder / Envelope toggle first, and the envelope's live overlay is what made that
   // wrong: the overlay is a reduction DEPTH, and a depth is far easier to read beside
   // the meter that carries the same quantity than in place of it.

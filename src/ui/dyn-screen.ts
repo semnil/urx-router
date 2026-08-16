@@ -315,7 +315,7 @@ export interface DynProcessor {
    *  does not change, the same reservation the rows themselves get. */
   paramsTag?: (ctx: DynCtx) => { text: string; shown: boolean } | undefined;
   /** Arrange the parts into the display column. */
-  display: (parts: DynParts, ctx: DynCtx) => HTMLElement;
+  display: (parts: DynParts) => HTMLElement;
   plotGeo: (w: number, h: number, ctx: DynCtx) => DynPlotGeo;
   /** The plot's frame: grid, tick labels, axis names, any reference line. Drawn
    *  unclipped, because the tick labels belong in the gutters `geo.pad` reserves. */
@@ -340,6 +340,12 @@ export interface DynProcessor {
   ) => void;
   /** The live overlay (a dot at the current level), redrawn per frame that moves it.
    *  `read` answers with a lane's folded reading, or null with no feed. */
+  /** Whether `drawLive` draws anything on the segment showing. A descriptor whose plot IS
+   *  the overlay's subject on every segment omits it; one whose bar offers a segment
+   *  showing something else on the same canvas answers false there, and the paint loop
+   *  then leaves the canvas alone rather than clearing and blitting it for no pixel
+   *  change. Read once per render, not per frame. */
+  liveOn?: (ctx: DynCtx) => boolean;
   drawLive?: (
     c: CanvasRenderingContext2D,
     geo: DynPlotGeo,
@@ -391,7 +397,9 @@ const READOUT_EVERY = 5;
 /** Readout tile columns that are not the stylesheet's own default of three. The class is
  *  what carries the count, so a descriptor asking for a number nothing styles gets the
  *  default rather than a grid with no columns. */
-const READOUT_COL_CLASS: Readonly<Record<number, string>> = { 2: " two", 4: " four" };
+/** Readout tiles per row, where a descriptor asks for nothing else. Three is what most
+ *  racks carry; the stylesheet's own fallback is the same number, and both are stated once. */
+const READOUT_COLS_DEFAULT = 3;
 
 /** Persisted bar selection, per processor. Its own key, like `urx-sends-open` and
  *  `urx-metertap`: this is per-surface UI state, not a Preferences setting. */
@@ -497,6 +505,10 @@ export class DynScreen {
    *  paint loop runs 30×/s and this is the one place it would otherwise allocate. */
   private scratch: (number | null)[][] = [];
   private plotDirty = true;
+  /** Whether the segment on screen has a live overlay at all. Resolved on render rather
+   *  than per frame: `sel` and the processor only move through a path that re-renders, so
+   *  a cached answer cannot go stale, and the paint loop then costs no `ctx()`. */
+  private liveOverlay = false;
   /** A pending coalesced redraw, for when no meter loop is running. */
   private redrawRaf = 0;
   /** Watches the plot canvas for a size change while the screen is open.
@@ -523,7 +535,7 @@ export class DynScreen {
   private fields: DynField[] = [];
   private lanes: DynLane[] = [];
   /** What the binding declared about the readouts. Only the column count so far. */
-  private readoutCols = 3;
+  private readoutCols = READOUT_COLS_DEFAULT;
   private unsub: (() => void) | null = null;
   private raf = 0;
   /** The address set the current registration covers, and a counter that supersedes
@@ -647,7 +659,7 @@ export class DynScreen {
     this.sel = sel;
     this.fields = bound.fields;
     this.lanes = bound.lanes;
-    this.readoutCols = bound.readoutCols ?? 3;
+    this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     this.peaks.clear();
     this.render();
@@ -723,7 +735,7 @@ export class DynScreen {
     }
     this.fields = bound.fields;
     this.lanes = bound.lanes;
-    this.readoutCols = bound.readoutCols ?? 3;
+    this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     return true;
   }
@@ -947,10 +959,10 @@ export class DynScreen {
         );
       }
     }
-    // Only a descriptor with an overlay has anything to redraw when a reading moves; the
-    // EQ's plot is static, and repainting it per feed frame was ~10 full-canvas blits a
-    // second for no pixel change.
-    if (this.canvas && (this.plotDirty || (this.p().drawLive && this.liveDirty()))) this.drawPlot();
+    // Only a SEGMENT with an overlay has anything to redraw when a reading moves; the
+    // EQ's plot is static and the side-chain segment's is frequency, and repainting either
+    // per feed frame was ~10 full-canvas blits a second for no pixel change.
+    if (this.canvas && (this.plotDirty || (this.liveOverlay && this.liveDirty()))) this.drawPlot();
   }
 
   /** A lane's current reading per bar, into that lane's scratch: [L] or [L, R] for a level
@@ -1130,6 +1142,7 @@ export class DynScreen {
     this.capSlider = null;
     this.capVal = null;
     this.plotDirty = true;
+    this.liveOverlay = !!proc.drawLive && (proc.liveOn?.(this.ctx()) ?? true);
     this.plotSize = { w: 0, h: 0 };
     this.geoCache = null;
     this.liveLast = [];
@@ -1179,7 +1192,7 @@ export class DynScreen {
     // builder rather than with a margin, so the space is whatever a bar that does get
     // drawn actually occupies — a constant would be measured once and then track nothing.
     col.append(bar ? this.displayBar(bar) : this.reservedBar(proc, ctx.m));
-    col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
+    col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }));
     col.append(this.hintLine(proc, ctx));
     return col;
   }
@@ -1244,7 +1257,7 @@ export class DynScreen {
    */
   private currentSegment(bar: DynBar): number {
     if (!bar.items.some((it) => it.face)) return this.sel;
-    const exact = bar.items.findIndex((it) => it.face === this.proc && (it.sel ?? 0) === this.sel);
+    const exact = bar.items.findIndex((it) => it.face === this.proc && it.sel === this.sel);
     return exact >= 0 ? exact : bar.items.findIndex((it) => it.face === this.proc);
   }
 
@@ -1260,7 +1273,7 @@ export class DynScreen {
       b.textContent = item.label;
       b.setAttribute("aria-pressed", String(!bar.inert && current === i));
       if (bar.inert) b.disabled = true;
-      else b.addEventListener("click", () => this.pressSegment(item.id, () => this.pickSegment(item, i)));
+      else b.addEventListener("click", () => this.pressSegment(item.id, () => this.pickSegment(item)));
       seg.append(b);
     }
     if (bar.inert) seg.classList.add("inert");
@@ -1289,9 +1302,9 @@ export class DynScreen {
    *  the item names; one that does not is a selection within the face on screen. Pressing
    *  the face already on screen falls through to the selection, which is what makes COMP
    *  and Side Chain switch between each other rather than do nothing. */
-  private pickSegment(item: DynBarItem, i: number): void {
+  private pickSegment(item: DynBarItem): void {
     if (item.face && item.face !== this.proc) this.showFace(item.face, item.sel);
-    else this.select(item.sel ?? i);
+    else this.select(item.sel);
   }
 
   /**
@@ -1394,14 +1407,15 @@ export class DynScreen {
     this.bars.set(lane.key, refs);
   }
 
-  /** One lane: its bars, its caption, its cap if it carries one, and its own tick
-   *  column if it declares its own scale. Returns the slot as well, so a lane that
+  /** One lane: its bars, its caption and its cap if it carries one. Returns the slot as
+   *  well, so a lane that
    *  merges into this one can be given it. */
   private laneColumn(lane: DynLane): { el: HTMLElement; slot: HTMLElement } {
-    const isGr = lane.kind === "gr";
+    // Never a reduction: every GR lane sets `sameSlot`, so `laneRack` draws it into the
+    // column before it and this builder is only ever asked for a level.
     const sides = laneSideCount(lane);
     const col = el("div", "gt-lcol");
-    const slot = el("div", `gt-slot${isGr ? " gt-slot-gr" : ""}${sides === 2 ? " stereo" : ""}`);
+    const slot = el("div", `gt-slot${sides === 2 ? " stereo" : ""}`);
     this.laneBars(lane, slot);
     // The cap goes BESIDE the slot, not in it. The slot clips — its level bar and its shade
     // have to stay inside the rounded frame — and the cap's focus ring reaches past the cap
@@ -1410,10 +1424,7 @@ export class DynScreen {
     const head = lane.cap ? el("div", "gt-capwrap") : slot;
     if (head !== slot) head.append(slot, this.capControl(head));
     col.append(head, capLabel(lane.caption ?? lane.label));
-    // Every reduction reads off the SHARED tick column: it is merged into the level column
-    // it was taken off, so it is on that ruler by construction and a scale of its own would
-    // be a second, unlabelled ruler under the same ticks.
-    return { el: isGr ? wrap("gt-grwrap", col) : col, slot };
+    return { el: col, slot };
   }
 
   /** A value as a fader cap on its own meter. The one gesture the lane rack exists
@@ -1648,7 +1659,12 @@ export class DynScreen {
     if (extra?.tail) params.append(...extra.tail);
 
     const ro = settingsSection(g.readouts);
-    const cells = el("div", `gt-readouts${READOUT_COL_CLASS[this.readoutCols] ?? ""}`);
+    const cells = el("div", "gt-readouts");
+    // The count reaches the stylesheet as a VALUE rather than as a class per count, so a
+    // descriptor can ask for any number and nothing silently answers with three.
+    if (this.readoutCols !== READOUT_COLS_DEFAULT) {
+      cells.style.setProperty("--gt-ro-cols", String(this.readoutCols));
+    }
     for (const lane of this.lanes) cells.append(this.readoutCell(lane));
     ro.append(cells);
 
@@ -1892,12 +1908,6 @@ function loadSels(): Record<string, number> {
     if (typeof v === "number") out[k] = v;
   }
   return out;
-}
-
-function wrap(cls: string, ...kids: HTMLElement[]): HTMLElement {
-  const w = el("div", cls);
-  w.append(...kids);
-  return w;
 }
 
 export function channelLabel(model: DeviceModel, nodeId: string): string {

@@ -3995,10 +3995,6 @@ button.consent-btn-primary {
 .gt-curvebox canvas.gt-pickplot {
   cursor: pointer;
 }
-.gt-curvebox canvas.gt-pickplot:focus-visible {
-  outline: 2px solid var(--led);
-  outline-offset: -2px;
-}
 /* A plot beside its meters, in signal order: the plot takes the width it can get and the
    rack takes what its lanes need. Every tuning screen uses it — response and levels are
    read together, not as alternatives.
@@ -4067,13 +4063,6 @@ button.consent-btn-primary {
   padding: 8px;
   height: 320px;
 }
-/* The GR lane's own wrapper. Every reduction is merged into the level column it was
-   taken off, so it reads against the shared ticks and carries no scale of its own —
-   two rulers side by side must not read as one. */
-.gt-grwrap {
-  display: flex;
-  gap: 4px;
-}
 .gt-lcol {
   display: grid;
   grid-template-rows: 1fr auto;
@@ -4082,8 +4071,10 @@ button.consent-btn-primary {
 }
 /* One lane's bar column width. A capped lane wraps its slot so the cap can escape the
    slot's clip, and the wrapper stands in the rack in the slot's place — so both take this
-   or a capped lane silently becomes a different width from an uncapped one. */
-:root {
+   or a capped lane silently becomes a different width from an uncapped one. Scoped to the
+   screen: this file's only other `:root` block is the palette, which CLAUDE.md names as
+   the half that has to stay in sync with `PALETTES` in graph.ts. */
+#dyn-screen-box {
   --gt-slot-w: 46px;
 }
 
@@ -4112,12 +4103,6 @@ button.consent-btn-primary {
 }
 .gt-side {
   flex: 1;
-}
-/* The level slots read as empty in --groove (their shade covers the bar); the GR
-   slot has no shade, so without this it sits a shade darker than its neighbours
-   and an idle gate looks like a dead element. */
-.gt-slot-gr {
-  background: var(--groove);
 }
 .gt-bar {
   position: absolute;
@@ -4268,20 +4253,15 @@ button.consent-btn-primary {
 }
 .gt-readouts {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* The count is the host's, written from the descriptor's own number; three is the
+     fallback for a rack that asks for nothing. Four tiles on three columns wrap to 3 + 1 —
+     ragged, and wider than four need to be — so a rack with four asks for two (a 2 x 2
+     block) or four (one row). One rack asks for four: the SSMCS bank's Side Chain segment,
+     where a second row of tiles measured 64px — enough to push that face past the height
+     its three siblings are held at. */
+  grid-template-columns: repeat(var(--gt-ro-cols, 3), 1fr);
   gap: 8px;
   margin: 10px 0 0 14px;
-}
-/* Four tiles on three columns wrap to 3 + 1 — ragged, and wider than four need to be.
-   Two columns makes them a 2 x 2 block, four puts them on one row. Set by the host from the
-   descriptor's own count; each overrides the column count and nothing else. A face inside a
-   bank takes the one row: a second row of tiles is 64px, which is enough to push that face
-   past the height its siblings are held at. */
-.gt-readouts.two {
-  grid-template-columns: repeat(2, 1fr);
-}
-.gt-readouts.four {
-  grid-template-columns: repeat(4, 1fr);
 }
 .gt-ro {
   display: grid;

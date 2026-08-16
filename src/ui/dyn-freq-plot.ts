@@ -120,6 +120,22 @@ export interface BandMarker {
 }
 
 /**
+ * The markers for a band set, with each one's `db` taken from the COMPOSITE response — the
+ * rule `BandMarker.db` states, in the one place both EQ screens go through, rather than
+ * once per descriptor. `of` supplies the two things a band set names for itself: the
+ * letter, and whether this is the selected one.
+ *
+ * One function, because the press that selects a band hit-tests exactly what was drawn.
+ */
+export function bandMarkers<B extends { freq: number; on: boolean }>(
+  bands: readonly B[],
+  resp: (hz: number) => number,
+  of: (b: B) => { label: string; active: boolean },
+): BandMarker[] {
+  return bands.map((b) => ({ hz: b.freq, db: resp(b.freq), on: b.on, ...of(b) }));
+}
+
+/**
  * The pill one marker occupies. Both the drawing and the hit test go through this, so a
  * press cannot land somewhere other than where the letter is — a marker moves with its
  * band's frequency and with the composite curve under it, so a hit test written from the

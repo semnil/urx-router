@@ -6,8 +6,8 @@
 // not. Three grips on one plot means a press has to guess which value was meant,
 // and one that missed fell through to the threshold, so pressing the gain grip
 // moved the threshold. The sliders beside the plot are the editing path, and the
-// curve answers "what is this doing to my signal". LADDER is the same three-tap
-// ruler the gate screen uses.
+// curve answers "what is this doing to my signal". The lane rack beside it is the same
+// three-tap ruler the gate screen uses.
 //
 // Two device facts shape it, both measured on a URX44V (2026-07-29):
 //   - COMP GR (110) reports the reduction alone. Sweeping the makeup gain 0 →

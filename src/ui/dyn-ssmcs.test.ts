@@ -180,7 +180,7 @@ describe("the MAIN face", () => {
       t().dynTuning.ssmcs.tapOut,
     ]);
     // Two columns, which is what four tiles take.
-    expect(h!.box.querySelector(".gt-readouts")?.classList.contains("two")).toBe(true);
+    expect(h!.box.querySelector<HTMLElement>(".gt-readouts")?.style.getPropertyValue("--gt-ro-cols")).toBe("2");
     expect(tiles.filter((r) => r.gr).length).toBe(1);
   });
 
@@ -759,12 +759,14 @@ describe("what the curves draw", () => {
   };
 
   /** The curve's own points, on a recorder nothing else has drawn into. */
-  const curveYs = (proc: DynProcessor, sel = 0): number[] => {
+  const recordCurve = (proc: DynProcessor, sel = 0): ReturnType<typeof recorder> => {
     const ctx = ctxOf(h!, sel);
     const rec = recorder();
     proc.drawCurve(rec.ctx, proc.plotGeo(700, 320, ctx), vals(), NAMED_TOKENS, ctx);
-    return rec.ys.slice(0, 121); // the 120-segment stroke, before any annotation
+    return rec;
   };
+  /** The 120-segment stroke, before any annotation. */
+  const curveYs = (proc: DynProcessor, sel = 0): number[] => recordCurve(proc, sel).ys.slice(0, 121);
 
   /** Put the strip's compressor at one setting, everything else factory. */
   const withComp = (comp: Partial<typeof SSMCS_INITIAL.comp>): void => {
@@ -939,15 +941,20 @@ describe("what the curves draw", () => {
     expect(shaded(SSMCS_COMP_DYN, 0)).toBe(0); // the transfer plot, this face's other segment
   });
 
+  // Two levels plotted against a frequency axis is a reading of nothing, so the side-chain
+  // segment carries no live dot. Asserted through `liveOn`, which is what the HOST reads —
+  // it decides whether to repaint the canvas at all, so a segment that answered true and
+  // then drew nothing would cost a full clear + blit per feed frame for no pixel change.
+  // The dot itself is asserted on the segment that has one, or "no dot" would pass against
+  // a `drawLive` that had stopped drawing anywhere.
   it("puts no live dot on the side chain's frequency axes", () => {
-    const dots = (sel: number): number => {
-      const rec = recorder();
-      const ctx = ctxOf(h!, sel);
-      SSMCS_COMP_DYN.drawLive?.(rec.ctx, SSMCS_COMP_DYN.plotGeo(700, 320, ctx), () => -12, NAMED_TOKENS, ctx);
-      return rec.faces.length;
-    };
-    expect(dots(0)).toBeGreaterThan(0); // the transfer curve: in against out, which the dot means
-    expect(dots(SC_SEL)).toBe(0);
+    expect(SSMCS_COMP_DYN.liveOn?.(ctxOf(h!, 0))).toBe(true);
+    expect(SSMCS_COMP_DYN.liveOn?.(ctxOf(h!, SC_SEL))).toBe(false);
+
+    const ctx = ctxOf(h!, 0);
+    const rec = recorder();
+    SSMCS_COMP_DYN.drawLive?.(rec.ctx, SSMCS_COMP_DYN.plotGeo(700, 320, ctx), () => -12, NAMED_TOKENS, ctx);
+    expect(rec.faces.length).toBeGreaterThan(0); // in against out, which the dot means
   });
 
   // Out Gain reached NEITHER curve before this, so a slider worth ±18 dB moved nothing on
@@ -963,12 +970,7 @@ describe("what the curves draw", () => {
         ssmcs: { ...SSMCS_INITIAL, outGain },
       };
     };
-    const eqYs = (proc: DynProcessor, sel = 0): number[] => {
-      const ctx = ctxOf(h!, sel);
-      const rec = recorder();
-      proc.drawCurve(rec.ctx, proc.plotGeo(700, 320, ctx), vals(), NAMED_TOKENS, ctx);
-      return rec.ys;
-    };
+    const eqYs = (proc: DynProcessor, sel = 0): number[] => recordCurve(proc, sel).ys;
     withOut(180); // 0.0 dB
     const eqFlat = eqYs(SSMCS_EQ_DYN);
     const compFlat = eqYs(SSMCS_COMP_DYN, 0);

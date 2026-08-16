@@ -3,11 +3,11 @@
 // It is the same host as GATE and COMP with three things arranged differently, each for
 // a reason the EQ has and they do not:
 //
-//   - there is no LADDER/CURVE choice. A gate is read either as a threshold on a meter
-//     or as a transfer curve; an EQ's response and its levels are not alternatives, so
-//     the plot and the lane rack are both on screen and the segmented bar in the tabs'
-//     place selects a **band** instead. The bar resets to LOW per open: it is a cursor
-//     into the parameters, not a way of reading the processor.
+//   - the band is picked on the PLOT. Every screen shows its response and its levels at
+//     once, so no bar chooses between them and this one has none at all: the markers on
+//     the curve are the band control, and the canvas is one focus stop the arrows move
+//     within. The band resets to LOW per open — it is a cursor into the parameters, not a
+//     way of reading the processor.
 //   - the plot's axes are frequency against gain, not dBFS against dBFS, so it carries
 //     no live dot and no press-to-set gesture. Each band gets a marker, because the
 //     operator needs to see where it sits — a marker and not a grip: four grips on one
@@ -49,7 +49,7 @@ import type { EqBand, NodeParams } from "../core/plan";
 import { el, onOff, settingsRow, settingsSection } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { enumRow } from "./dyn-chan";
-import { drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo, pickBandMarker } from "./dyn-freq-plot";
+import { bandMarkers, drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo, pickBandMarker } from "./dyn-freq-plot";
 import type { BandMarker } from "./dyn-freq-plot";
 import { oneKnobLevelRow, splitDisplay } from "./dyn-screen";
 import type { DynCtx, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
@@ -345,21 +345,11 @@ function drawResponse(
   drawBandMarkers(c, g, tok, bandMarksOf(bands, resp, sel), inert);
 }
 
-/** The markers, from the bands and which one is selected. One function, because the press
- *  that selects a band hit-tests exactly what was drawn. */
-function bandMarks(bands: EqBandState[], sel: number): BandMarker[] {
-  return bandMarksOf(bands, eqResponse(bands), sel);
-}
+/** The markers, from the bands and which one is selected. */
+const bandMarks = (bands: EqBandState[], sel: number): BandMarker[] => bandMarksOf(bands, eqResponse(bands), sel);
 
-function bandMarksOf(bands: EqBandState[], resp: (hz: number) => number, sel: number): BandMarker[] {
-  return bands.map((b) => ({
-    label: MARKER_LABELS[b.index],
-    hz: b.freq,
-    db: resp(b.freq),
-    on: b.on,
-    active: b.index === sel,
-  }));
-}
+const bandMarksOf = (bands: EqBandState[], resp: (hz: number) => number, sel: number): BandMarker[] =>
+  bandMarkers(bands, resp, (b) => ({ label: MARKER_LABELS[b.index], active: b.index === sel }));
 
 /** Marker letters: LOW / LOW-MID / HIGH-MID / HIGH, initials only — the band's full
  *  name is already on the Parameters heading beside it. */

@@ -1,15 +1,14 @@
 import { test, expect, type Page } from "./fixtures";
-import { panelHeight, pickBand } from "./dyn-helpers";
+import { panelHeight, pickBand, screenBox } from "./dyn-helpers";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 const typeSelect = (page: Page) => param(page, "COMP/EQ Type").locator("select");
 
-const box = (page: Page) => page.locator("#dyn-screen-box");
 /** A screen row by its EXACT label: "Q" substring-matches nothing else here, but
  *  "Gain" matches "Out Gain" and picking by DOM order would follow an inserted row. */
 const screenRow = (page: Page, label: string) =>
-  box(page)
+  screenBox(page)
     .locator(".prefs-row")
     .filter({ has: page.getByText(label, { exact: true }) });
 
@@ -20,7 +19,7 @@ const openFace = async (page: Page, kind: "ssmcs" | "ssmcsComp" | "ssmcsEq", sec
   const sec = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: section }) });
   if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
   await sec.locator(`#btn-${kind}-screen`).click();
-  await expect(box(page)).toBeVisible();
+  await expect(screenBox(page)).toBeVisible();
 };
 
 test.beforeEach(async ({ page }) => {
@@ -87,7 +86,7 @@ test("re-entering an SSMCS/COMP->EQ mode resets that bank to factory", async ({ 
   await expect(ssd).toHaveValue("1"); // factory "01 Basic"
   await ssd.selectOption("14"); // 08 MR Vocal
   await expect(ssd).toHaveValue("14");
-  await box(page).locator(".consent-btn-secondary").click();
+  await screenBox(page).locator(".consent-btn-secondary").click();
 
   // Leave SSMCS and come back: the morphing strip reloads factory, not "08 MR Vocal".
   await typeSelect(page).selectOption("0"); // COMP->EQ
@@ -130,11 +129,11 @@ test("SSMCS is a MONO IN feature — stereo channels have no COMP/EQ Type", asyn
 });
 
 test.describe("the tuning screen's three faces", () => {
-  const face = (page: Page, name: "main" | "comp" | "eq") => box(page).locator(`#dyn-face-ssmcs-${name}`);
+  const face = (page: Page, name: "main" | "comp" | "eq") => screenBox(page).locator(`#dyn-face-ssmcs-${name}`);
 
   test("moves between the faces from the title row, on one title and one channel", async ({ page }) => {
     await openFace(page, "ssmcs", /^SSMCS$/);
-    const title = box(page).locator("#dyn-screen-title");
+    const title = screenBox(page).locator("#dyn-screen-title");
     await expect(title).toContainText("CH 1");
     await expect(title).toContainText("SSMCS");
     await expect(face(page, "main")).toHaveAttribute("aria-pressed", "true");
@@ -174,35 +173,20 @@ test.describe("the tuning screen's three faces", () => {
     // The positive control, and it is what makes the two counts above mean anything: an
     // observer that never attached, or a close that this page reports some other way,
     // reads exactly like a screen that stayed open.
-    await box(page).locator(".consent-btn-secondary").click();
+    await screenBox(page).locator(".consent-btn-secondary").click();
     expect(await closes()).toBeGreaterThan(0);
   });
 
-  // The face segment is a SIBLING of the heading rather than a child, so the dialog's
-  // accessible name stays the channel and the bank. Wrapping the heading is free only if
-  // the row occupies what the heading did — measured, it came up 12px until the heading's
-  // own margin moved onto the row — so the space under the title is compared against a
-  // screen that has no faces and therefore no wrapper.
-  test("costs the panel no vertical space, and keeps the buttons out of the dialog's name", async ({ page }) => {
-    const gapUnderTitle = () =>
-      box(page).evaluate((el) => {
-        const head = el.querySelector("h2")!;
-        const grid = el.querySelector(".prefs-grid")!;
-        return Math.round(grid.getBoundingClientRect().top - head.getBoundingClientRect().bottom);
-      });
-
-    await node(page, "ch1").click();
-    const gate = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^GATE$/ }) });
-    if (!(await gate.evaluate((el) => (el as HTMLDetailsElement).open))) await gate.locator("summary").click();
-    await gate.locator("#btn-gate-screen").click();
-    const plain = await gapUnderTitle();
-    await box(page).locator(".consent-btn-secondary").click();
-
+  // The bar left the title row, so the dialog's accessible name is the heading's own text
+  // and nothing else. Asserted against the SCREEN THAT HAS A BAR, which is the only one
+  // that could put buttons in it — on a screen with none the count is 0 whatever the code
+  // does, and the case would hold nothing.
+  test("keeps the bar out of the dialog's name", async ({ page }) => {
     await openFace(page, "ssmcs", /^SSMCS$/);
-    expect(await gapUnderTitle()).toBe(plain);
+    // The positive control: this screen really does carry a bar, elsewhere.
+    await expect(screenBox(page).locator(".gt-modes button")).toHaveCount(4);
 
-    // The dialog names itself with the heading, so a button inside it joins that name.
-    const name = await box(page).evaluate(() => {
+    const name = await screenBox(page).evaluate(() => {
       const id = document.querySelector("#dyn-screen-modal")!.getAttribute("aria-labelledby")!;
       const el = document.getElementById(id)!;
       return { text: el.textContent, buttons: el.querySelectorAll("button").length };
@@ -214,7 +198,7 @@ test.describe("the tuning screen's three faces", () => {
   test("each section's launcher opens its own face", async ({ page }) => {
     await openFace(page, "ssmcsComp", /^COMP$/);
     await expect(face(page, "comp")).toHaveAttribute("aria-pressed", "true");
-    await box(page).locator(".consent-btn-secondary").click();
+    await screenBox(page).locator(".consent-btn-secondary").click();
 
     await openFace(page, "ssmcsEq", /^EQ$/);
     await expect(face(page, "eq")).toHaveAttribute("aria-pressed", "true");
@@ -260,7 +244,7 @@ test.describe("the tuning screen's three faces", () => {
       }
       await openFace(page, "ssmcs", /^SSMCS$/);
       const geom = () =>
-        box(page).evaluate((el) => {
+        screenBox(page).evaluate((el) => {
           const b = el.getBoundingClientRect();
           const panel = el.querySelector(".gt-curvebox, .gt-ladderbox")!.getBoundingClientRect();
           const close = el.querySelector(".consent-btn-secondary")!.getBoundingClientRect();
@@ -273,13 +257,13 @@ test.describe("the tuning screen's three faces", () => {
         });
       const main = await geom();
       const seen = [main.hint];
-      const pressed = [(await box(page).locator('.gt-modes button[aria-pressed="true"]').innerText()).trim()];
+      const pressed = [(await screenBox(page).locator('.gt-modes button[aria-pressed="true"]').innerText()).trim()];
       expect(main.closeOverflow).toBeLessThanOrEqual(0);
       // The Side Chain segment is walked as well as the three faces: it carries the WIDEST
       // rack (three columns, four readout tiles) and is the one that wrapped against the
       // measured floor this arrangement replaced, so leaving it out skips the case.
       for (const f of ["comp", "sidechain", "eq"] as const) {
-        await box(page)
+        await screenBox(page)
           .locator(f === "sidechain" ? "#dyn-mode-sidechain" : `#dyn-face-ssmcs-${f}`)
           .click();
         const g = await geom();
@@ -287,7 +271,7 @@ test.describe("the tuning screen's three faces", () => {
         expect(g.panelTop, f).toBe(main.panelTop);
         expect(g.closeOverflow, f).toBeLessThanOrEqual(0);
         seen.push(g.hint);
-        pressed.push((await box(page).locator('.gt-modes button[aria-pressed="true"]').innerText()).trim());
+        pressed.push((await screenBox(page).locator('.gt-modes button[aria-pressed="true"]').innerText()).trim());
       }
       // The positive control: the faces really are different faces. Without it, a build
       // that rendered the same one three times would satisfy every line above. Read off the
@@ -301,25 +285,25 @@ test.describe("the tuning screen's three faces", () => {
   test("the face is not carried to the next open", async ({ page }) => {
     await openFace(page, "ssmcs", /^SSMCS$/);
     await face(page, "eq").click();
-    await box(page).locator(".consent-btn-secondary").click();
+    await screenBox(page).locator(".consent-btn-secondary").click();
     await openFace(page, "ssmcs", /^SSMCS$/);
     await expect(face(page, "main")).toHaveAttribute("aria-pressed", "true");
   });
 
   test("MAIN shows both curves and four readouts, with no lane rack", async ({ page }) => {
     await openFace(page, "ssmcs", /^SSMCS$/);
-    expect(await box(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual([
+    expect(await screenBox(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual([
       "Sweet Spot Data",
       "Comp Drive",
       "Morphing",
       "Out Gain",
     ]);
     await expect(screenRow(page, "Sweet Spot Data").locator("option")).toHaveCount(34);
-    await expect(box(page).locator("#dyn-curve")).toBeVisible();
-    await expect(box(page).locator(".gt-ladderbox")).toHaveCount(0);
-    await expect(box(page).locator(".gt-ro")).toHaveCount(4);
+    await expect(screenBox(page).locator("#dyn-curve")).toBeVisible();
+    await expect(screenBox(page).locator(".gt-ladderbox")).toHaveCount(0);
+    await expect(screenBox(page).locator(".gt-ro")).toHaveCount(4);
     // Four tiles take two columns.
-    await expect(box(page).locator(".gt-readouts")).toHaveClass(/two/);
+    await expect(screenBox(page).locator(".gt-readouts")).toHaveCSS("grid-template-columns", /^\S+ \S+$/);
   });
 
   test("COMP reads its eight rows in the unit's own order, four per segment", async ({ page }) => {
@@ -327,22 +311,32 @@ test.describe("the tuning screen's three faces", () => {
     // Each segment carries the sliders whose effect is on the plot beside it, and the two
     // sets are four rows each — which is what holds this face at the height its siblings
     // are held at.
-    expect(await box(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual(["Attack", "Release", "Ratio", "Knee"]);
-    await box(page).locator("#dyn-mode-sidechain").click();
-    expect(await box(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual(["Side Chain", "Q", "Freq", "Gain"]);
-    await box(page).locator("#dyn-face-ssmcs-comp").click();
+    expect(await screenBox(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual([
+      "Attack",
+      "Release",
+      "Ratio",
+      "Knee",
+    ]);
+    await screenBox(page).locator("#dyn-mode-sidechain").click();
+    expect(await screenBox(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual([
+      "Side Chain",
+      "Q",
+      "Freq",
+      "Gain",
+    ]);
+    await screenBox(page).locator("#dyn-face-ssmcs-comp").click();
     // The bank's corner is an internal value the unit never shows, so the lane rack
     // carries no fader cap — the one gesture the rack otherwise has.
-    await expect(box(page).locator(".gt-cap")).toHaveCount(0);
+    await expect(screenBox(page).locator(".gt-cap")).toHaveCount(0);
     // The positive control, on the screen next door: the same selector finds one where a
     // rack DOES carry a cap, so the count above is a statement about this face rather
     // than about a class that was renamed out from under it.
-    await box(page).locator(".consent-btn-secondary").click();
+    await screenBox(page).locator(".consent-btn-secondary").click();
     await node(page, "ch2").click();
     const gate = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^GATE$/ }) });
     if (!(await gate.evaluate((el) => (el as HTMLDetailsElement).open))) await gate.locator("summary").click();
     await gate.locator("#btn-gate-screen").click();
-    await expect(box(page).locator(".gt-cap")).toHaveCount(1);
+    await expect(screenBox(page).locator(".gt-cap")).toHaveCount(1);
   });
 
   // One bar stands in front of the whole bank, and this face is two of its four segments —
@@ -353,26 +347,26 @@ test.describe("the tuning screen's three faces", () => {
   // sliders beside it still reach the plan.
   test("COMP offers a Side Chain segment, and the filter's sliders move its curve", async ({ page }) => {
     await openFace(page, "ssmcsComp", /^COMP$/);
-    await expect(box(page).locator(".gt-modes button")).toHaveText(["MAIN", "COMP", "Side Chain", "EQ"]);
+    await expect(screenBox(page).locator(".gt-modes button")).toHaveText(["MAIN", "COMP", "Side Chain", "EQ"]);
 
     // Each segment is one height, so pressing one does not move the button that was just
     // pressed. The curve's own height is the reference the other is measured against.
     const curveHeight = await panelHeight(page);
-    const columns = () => box(page).locator(".gt-ladders .gt-slot").count();
+    const columns = () => screenBox(page).locator(".gt-ladders .gt-slot").count();
     // The curve is the compressor's own pair, and the reduction merges into the PRE EQ
     // column it was taken off — so two, not three.
-    await expect(box(page).locator("#dyn-curve")).toBeVisible();
-    await expect(box(page).locator(".gt-ladderbox")).toHaveCount(1);
+    await expect(screenBox(page).locator("#dyn-curve")).toBeVisible();
+    await expect(screenBox(page).locator(".gt-ladderbox")).toHaveCount(1);
     expect(await columns()).toBe(2);
 
-    await box(page).locator("#dyn-mode-sidechain").click();
-    await expect(box(page).locator("#dyn-mode-sidechain")).toHaveAttribute("aria-pressed", "true");
+    await screenBox(page).locator("#dyn-mode-sidechain").click();
+    await expect(screenBox(page).locator("#dyn-mode-sidechain")).toHaveAttribute("aria-pressed", "true");
     // The plot AND the rack, which is what this segment is for: set the filter, watch the
     // reduction it buys. It keeps the side-chain lane the curve drops, so three.
-    await expect(box(page).locator("#dyn-curve")).toBeVisible();
-    await expect(box(page).locator(".gt-ladderbox")).toHaveCount(1);
+    await expect(screenBox(page).locator("#dyn-curve")).toBeVisible();
+    await expect(screenBox(page).locator(".gt-ladderbox")).toHaveCount(1);
     expect(await columns()).toBe(3);
-    await expect(box(page).locator(".gt-note")).toHaveText(/side-chain filter/);
+    await expect(screenBox(page).locator(".gt-note")).toHaveText(/side-chain filter/);
     expect(await panelHeight(page)).toBe(curveHeight);
 
     // The curve is a canvas, so what an E2E run can hold is that the gesture reaches the
@@ -388,9 +382,9 @@ test.describe("the tuning screen's three faces", () => {
 
     // The choice persists, which is what `persistSel` claims: it is a way of reading the
     // processor rather than a place in a flow.
-    await box(page).locator(".consent-btn-secondary").click();
+    await screenBox(page).locator(".consent-btn-secondary").click();
     await openFace(page, "ssmcsComp", /^COMP$/);
-    await expect(box(page).locator("#dyn-mode-sidechain")).toHaveAttribute("aria-pressed", "true");
+    await expect(screenBox(page).locator("#dyn-mode-sidechain")).toHaveAttribute("aria-pressed", "true");
   });
 
   test("the EQ face keeps four rows and one height on every band", async ({ page }) => {
@@ -398,7 +392,7 @@ test.describe("the tuning screen's three faces", () => {
     const first = await panelHeight(page);
     for (const [i, band] of (["low", "mid", "high"] as const).entries()) {
       await pickBand(page, i);
-      const labels = await box(page).locator(".prefs-row .lbl").allInnerTexts();
+      const labels = await screenBox(page).locator(".prefs-row .lbl").allInnerTexts();
       expect(labels, band).toEqual(["Band", "Q", "Freq", "Gain"]);
       // A shelf has no Q at all; the row stays and says so, so the panel does not move
       // under the pointer that just pressed the band beside it.
@@ -431,5 +425,5 @@ test("the CONSOLE strip offers one opener for the whole morphing bank", async ({
   expect(await openers(strip)).toEqual(["Gate screen", "SSMCS screen"]);
 
   await strip.locator('.con-chip-open[aria-label="SSMCS screen"]').click();
-  await expect(box(page).locator("#dyn-face-ssmcs-main")).toHaveAttribute("aria-pressed", "true");
+  await expect(screenBox(page).locator("#dyn-face-ssmcs-main")).toHaveAttribute("aria-pressed", "true");
 });

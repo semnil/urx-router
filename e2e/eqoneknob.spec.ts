@@ -1,5 +1,5 @@
 import { test, expect, heldThroughBlur, type Page } from "./fixtures";
-import { pickPlot } from "./dyn-helpers";
+import { pickPlot, screenBox } from "./dyn-helpers";
 
 // The EQ 1-knob, on the tuning screen where it lives (the inspector keeps the section's
 // ON toggle and a launcher). What it does on the device is measured and recorded in
@@ -7,23 +7,22 @@ import { pickPlot } from "./dyn-helpers";
 // neutral point, and while 1-knob is on the device computes all four bands and announces
 // every recomputation — so the band rows stay on screen, read-only.
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
-const box = (page: Page) => page.locator("#dyn-screen-box");
 const row = (page: Page, label: string) =>
-  box(page)
+  screenBox(page)
     .locator(".prefs-row")
     .filter({ has: page.getByText(label, { exact: true }) });
 
 /** The 1-knob section, by its heading — not by text, since the reserved note in the
  *  Parameters section names the 1-knob as well. */
 const oneKnob = (page: Page) =>
-  box(page)
+  screenBox(page)
     .locator(".prefs-section")
     .filter({ has: page.locator("h3", { hasText: "1-knob" }) });
 
 async function openEq(page: Page, id: string): Promise<void> {
   await node(page, id).click();
   await page.locator("#inspector #btn-eq-screen").click();
-  await expect(box(page)).toBeVisible();
+  await expect(screenBox(page)).toBeVisible();
 }
 
 test.beforeEach(async ({ page }) => {
@@ -71,7 +70,7 @@ test("the Type and Level rows stay on screen with 1-knob off, locked", async ({ 
 test("1-knob on takes the bands away entirely, without moving anything", async ({ page }) => {
   await openEq(page, "ch1");
   await expect(row(page, "Freq").locator("input[type=range]")).toBeEnabled();
-  const height = async (): Promise<number> => Math.round((await box(page).boundingBox())?.height ?? 0);
+  const height = async (): Promise<number> => Math.round((await screenBox(page).boundingBox())?.height ?? 0);
   const before = await height();
 
   await oneKnob(page).locator("button", { hasText: "ON" }).click();
@@ -79,7 +78,7 @@ test("1-knob on takes the bands away entirely, without moving anything", async (
   // The device computes all four bands, so there is no band being edited: the rows go,
   // the band bar goes with them (nothing selected, nothing selectable) and the band's
   // name leaves the Parameters heading.
-  const params = box(page).locator(".prefs-section", { hasText: "Parameters" });
+  const params = screenBox(page).locator(".prefs-section", { hasText: "Parameters" });
   for (const label of ["Band", "Type", "Q", "Freq", "Gain"]) {
     await expect(row(page, label)).toHaveCount(1); // still there…
     await expect(row(page, label)).not.toBeVisible(); // …and not shown
@@ -89,7 +88,7 @@ test("1-knob on takes the bands away entirely, without moving anything", async (
   await expect(pickPlot(page)).toHaveCount(0);
   await expect(params.locator("h3 .prefs-lock")).not.toBeVisible();
   // The space says why, instead of reading as a rendering fault.
-  await expect(box(page).locator(".gt-reserved-note")).toBeVisible();
+  await expect(screenBox(page).locator(".gt-reserved-note")).toBeVisible();
   // Nothing in the block can be reached, by pointer or by tab.
   await expect(params.locator("input:not([disabled]), select:not([disabled]), button:not([disabled])")).toHaveCount(0);
 
@@ -104,7 +103,7 @@ test("the 1-knob level survives reopening the screen", async ({ page }) => {
   await row(page, "1-knob Level").locator("input[type=range]").fill("80");
   await expect(row(page, "1-knob Level").locator(".param-val")).toHaveText("80 %");
 
-  await box(page).locator(".consent-btn-secondary").click();
+  await screenBox(page).locator(".consent-btn-secondary").click();
   await node(page, "ch2").click();
   await openEq(page, "ch1");
   await expect(row(page, "1-knob Level").locator(".param-val")).toHaveText("80 %");

@@ -59,7 +59,15 @@ import { SSMCS_INITIAL } from "../core/plan";
 import type { NodeParams, SsmcsBand, SsmcsParams } from "../core/plan";
 import { onOff, settingsChoice, settingsRow } from "./dom";
 import { bindChannelStrip, enumRow } from "./dyn-chan";
-import { drawBandMarkers, drawFreqAxes, drawFreqCurve, FREQ_PAD, freqGeo, pickBandMarker } from "./dyn-freq-plot";
+import {
+  bandMarkers,
+  drawBandMarkers,
+  drawFreqAxes,
+  drawFreqCurve,
+  FREQ_PAD,
+  freqGeo,
+  pickBandMarker,
+} from "./dyn-freq-plot";
 import type { BandMarker } from "./dyn-freq-plot";
 import { fmtSsmcsGain, fmtSsmcsHz, fmtSsmcsMs, fmtSsmcsQ, fmtSsmcsRatio } from "./inspector-format";
 import { CURVE_PAD, dbGeo, drawDbAxes, drawLiveDot, drawTransferCurve, transferPlot } from "./dyn-plot";
@@ -191,10 +199,6 @@ const CORNER_FLOOR_DB = -54;
  *  moved it). */
 const MAKEUP_RAW_MAX = 200;
 const MAKEUP_MAX_DB = 24;
-
-/** The lane rack's reduction scale. The corner floors at -54 dBFS, so the deepest
- *  reduction this compressor can reach is 54 dB — at a full-scale input — and a shallower
- *  ruler pins the bar while the readout keeps going. */
 
 /**
  * The compressor's response as a function of input level, and the gain it carries there.
@@ -342,26 +346,17 @@ function drawEqResponse(
   drawBandMarkers(c, g, tok, bandMarksOf(bands, resp, sel));
 }
 
-/** The markers, from the strip's bands and which one is selected. One function, because the
- *  press that selects a band hit-tests exactly what was drawn. */
+/** The markers, from the strip's bands and which one is selected. */
 function eqBandMarks(v: StripValues, sel: SsmcsEqBandName | null): BandMarker[] {
   const bands = bandStates(v);
   return bandMarksOf(bands, ssmcsEqResponse(bands), sel);
 }
 
-function bandMarksOf(
+const bandMarksOf = (
   bands: readonly SsmcsBandState[],
   resp: (hz: number) => number,
   sel: SsmcsEqBandName | null,
-): BandMarker[] {
-  return bands.map((b) => ({
-    label: MARKER_LABELS[b.kind],
-    hz: b.freq,
-    db: resp(b.freq),
-    on: b.on,
-    active: b.kind === sel,
-  }));
-}
+): BandMarker[] => bandMarkers(bands, resp, (b) => ({ label: MARKER_LABELS[b.kind], active: b.kind === sel }));
 
 // ---------------------------------------------------------------- shared descriptor parts
 

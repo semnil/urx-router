@@ -198,20 +198,21 @@ export function transferPlot(o: {
    *  no gain of its own, where the reference is plain unity. */
   unityOffsetDb?: (ctx: DynCtx) => number;
   /**
-   * The segments this transfer plot is the plot FOR, where its processor's bar offers a
-   * segment showing something else on the same canvas (the SSMCS strip's side-chain
-   * response puts frequency across). Those segments answer `plotGeo` / `drawAxes` /
-   * `drawCurve` themselves, and this is what keeps the live dot off them: two levels
+   * Which segments carry the LIVE DOT, where its processor's bar offers a segment showing
+   * something else on the same canvas (the SSMCS strip's side-chain response puts
+   * frequency across). Those segments answer `plotGeo` / `drawAxes` / `drawCurve` — and
+   * `hint` — themselves, so what is left for this to decide is the dot: two levels
    * plotted against a frequency axis is a reading of nothing.
    *
-   * Omitted, the plot belongs to every segment — which is the case for a processor whose
+   * Omitted, the dot belongs to every segment — which is the case for a processor whose
    * bar selects nothing else.
    */
   on?: (ctx: DynCtx) => boolean;
-}): Pick<DynProcessor, "hint" | "display" | "plotGeo" | "drawAxes" | "drawLive"> {
+}): Pick<DynProcessor, "hint" | "display" | "plotGeo" | "drawAxes" | "drawLive" | "liveOn"> {
   const onCurve = (ctx: DynCtx): boolean => o.on?.(ctx) ?? true;
   return {
-    hint: (ctx) => (onCurve(ctx) ? o.hint(ctx.m) : null),
+    liveOn: onCurve,
+    hint: (ctx) => o.hint(ctx.m),
     // The plot and the lane rack are shown TOGETHER, with no bar choosing between them —
     // the arrangement the EQ and DUCKER screens have always had. It became possible when
     // the reduction moved onto the output column: a rack that was three columns wide is
@@ -225,7 +226,6 @@ export function transferPlot(o: {
     // something else on those axes (the SSMCS strip's side-chain filter puts frequency
     // across), and a level plotted against a frequency axis is a reading of nothing.
     drawLive: (c, g, read, tok, ctx) => {
-      if (!onCurve(ctx)) return undefined;
       const out = read("out");
       const offset = o.outOffsetDb?.(ctx) ?? 0;
       return drawLiveDot(c, g, read("in"), out === null ? null : out + offset, tok, { in: o.loDb, out: o.outLoDb });
