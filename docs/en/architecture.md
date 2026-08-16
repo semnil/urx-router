@@ -1279,7 +1279,12 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   port sends nothing on its own, a fetch and a `.urxf` import do not open it (neither says the plan is the
   unit's state), a readback that threw or was cancelled does not either — the re-send hangs off the session
   being up rather than off reaching the `finally` all three land in — and Live sync ending, or the plan being
-  replaced, closes it again. The receive side mirrors the guard: for 300 ms after feedback
+  replaced, closes it again. **What the fetch exclusion costs** is a motorised controller left showing what it
+  was last told: touch that fader before a session opens the output side and its stale position is applied to
+  the freshly fetched plan. Pickup mode is the per-mapping answer, and the alternative — letting a fetch open
+  it — is the one this rule exists to refuse, since a plan that agreed with the unit at the instant of a read
+  is not a plan anything holds to it afterwards. A pass that is HELD still runs: what it owes the receive side
+  (a moved plan value un-engages a pickup binding) does not depend on the controller having heard. The receive side mirrors the guard: for 300 ms after feedback
   goes out, the first incoming value equal to it on the same address is dropped as an echo and the guard
   disarms (a shared virtual MIDI bus, or a controller that re-sends its state when feedback changes it,
   would otherwise flip an edge-mode toggle straight back; consuming the echo one-shot keeps an equal real
