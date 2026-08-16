@@ -768,11 +768,23 @@ describe("what the curves draw", () => {
   /** The 120-segment stroke, before any annotation. */
   const curveYs = (proc: DynProcessor, sel = 0): number[] => recordCurve(proc, sel).ys.slice(0, 121);
 
-  /** Put the strip's compressor at one setting, everything else factory. */
-  const withComp = (comp: Partial<typeof SSMCS_INITIAL.comp>): void => {
+  /** The reduction annotation's text, by the token it is drawn in, on a recorder nothing
+   *  else has drawn into — the shared canvas KEEPS what earlier draws put there, so a case
+   *  that walks several settings would read the first one's label back at the second. Named
+   *  once for a second reason: a `--gr` that moved would leave every copy of this filter
+   *  matching nothing, and a copy asserting a count would stay green on the empty list. */
+  const grTexts = (proc: DynProcessor = SSMCS_COMP_DYN, sel = 0): string[] =>
+    recordCurve(proc, sel)
+      .texts.filter((tx) => tx.style === "--gr")
+      .map((tx) => tx.text);
+
+  /** Put the strip's compressor at one setting, everything else factory. Comp Drive is a
+   *  second argument rather than a helper of its own because the corner is a function of
+   *  BOTH it and the threshold, so a case about the corner has to set the pair. */
+  const withComp = (comp: Partial<typeof SSMCS_INITIAL.comp>, compDrive = SSMCS_INITIAL.compDrive): void => {
     h!.plan.nodeParams[ssmcsChannel] = {
       ...h!.plan.nodeParams[ssmcsChannel],
-      ssmcs: { ...SSMCS_INITIAL, comp: { ...SSMCS_INITIAL.comp, ...comp } },
+      ssmcs: { ...SSMCS_INITIAL, compDrive, comp: { ...SSMCS_INITIAL.comp, ...comp } },
     };
   };
 
@@ -998,17 +1010,8 @@ describe("what the curves draw", () => {
     // reaches 10.0 dB above the corner, so 0 dBFS is past the knee and lands on the
     // asymptote at -20 + 20/2.5 = -12.0. The VALUE is the assertion — a count passes
     // whatever number the model computed, which is how a wrong corner would go unseen.
-    const gr = h!.canvas.texts.filter((tx) => tx.style === "--gr");
-    expect(gr.map((tx) => tx.text)).toEqual(["-12.0 dB"]);
+    expect(grTexts()).toEqual(["-12.0 dB"]);
   });
-
-  /** The strip at one Comp Drive and one threshold, everything else factory. */
-  const withDrive = (compDrive: number, threshold: number): void => {
-    h!.plan.nodeParams[ssmcsChannel] = {
-      ...h!.plan.nodeParams[ssmcsChannel],
-      ssmcs: { ...SSMCS_INITIAL, compDrive, comp: { ...SSMCS_INITIAL.comp, threshold } },
-    };
-  };
 
   it("ramps the corner from full scale below the drive the threshold takes over at", () => {
     // Drive raw 20 with the threshold at its minimum: the corner is 20/31 of the -26.2 dBFS
@@ -1016,9 +1019,27 @@ describe("what the curves draw", () => {
     // 10.0 dB upper reach, so the asymptote puts it at -16.9 + 16.9/2.5. Reading the corner
     // straight off the threshold instead — which is what the drive's whole range used to do
     // — puts it at -24.0 and this label at -14.4.
-    withDrive(20, 0);
-    draw(SSMCS_COMP_DYN);
-    expect(h!.canvas.texts.filter((tx) => tx.style === "--gr").map((tx) => tx.text)).toEqual(["-10.1 dB"]);
+    withComp({ threshold: 0 }, 20);
+    expect(grTexts()).toEqual(["-10.1 dB"]);
+  });
+
+  it("joins the ramp to the threshold's own line at the drive they meet", () => {
+    // The label is 0.6 x the corner here (past a Medium knee, ratio 2.50:1), so it reads the
+    // corner directly. Below the meeting drive the corner falls 31sts of -26.2 dBFS — 0.85 dB
+    // a step, half a dB of label — and above it 0.2 dB a step. The join is the assertion: the
+    // last ramped step has to LAND on what the line above asks for at 31, which it does only
+    // while the ramp's top and that line are the same expression. Re-measuring the top on its
+    // own puts a step here that no other case sees — an anchor of -26.5 draws -14.9 at 29,
+    // which is where this fails first.
+    for (const [drive, label] of [
+      [29, "-14.7 dB"],
+      [30, "-15.2 dB"],
+      [31, "-15.7 dB"],
+      [32, "-15.8 dB"],
+    ] as const) {
+      withComp({ threshold: 0 }, drive);
+      expect(grTexts(), `drive ${drive}`).toEqual([label]);
+    }
   });
 
   it("leaves the factory threshold's whole drive range where it already was", () => {
@@ -1027,9 +1048,8 @@ describe("what the curves draw", () => {
     // is invisible along that one column, and a low drive there still draws what it drew.
     // Not a check on the constant (the first test is that): a check that correcting the
     // corner did not move the picture the operator starts from.
-    withDrive(20, 100);
-    draw(SSMCS_COMP_DYN);
-    expect(h!.canvas.texts.filter((tx) => tx.style === "--gr").map((tx) => tx.text)).toEqual(["-2.9 dB"]);
+    withComp({ threshold: 100 }, 20);
+    expect(grTexts()).toEqual(["-2.9 dB"]);
   });
 
   /**
@@ -1089,10 +1109,7 @@ describe("what the curves draw", () => {
       for (const ratio of [0, 30, 60, 90, 120])
         for (const makeup of [0, 50, 100, 150, 200])
           for (const compDrive of [40, 100, 200]) {
-            h!.plan.nodeParams[ssmcsChannel] = {
-              ...h!.plan.nodeParams[ssmcsChannel],
-              ssmcs: { ...SSMCS_INITIAL, compDrive, comp: { ...SSMCS_INITIAL.comp, knee, ratio, makeup } },
-            };
+            withComp({ knee, ratio, makeup }, compDrive);
             const worst = Math.max(...deltas());
             if (worst > 0.01)
               folded.push(`knee=${knee} ratio=${ratio} makeup=${makeup} drive=${compDrive} +${worst.toFixed(2)}px`);
@@ -1122,12 +1139,8 @@ describe("what the curves draw", () => {
   });
 
   it("draws no reduction label when the drive has the compressor switched out", () => {
-    h!.plan.nodeParams[ssmcsChannel] = {
-      ...h!.plan.nodeParams[ssmcsChannel],
-      ssmcs: { ...SSMCS_INITIAL, compDrive: 0 },
-    };
-    draw(SSMCS_COMP_DYN);
-    expect(h!.canvas.texts.filter((tx) => tx.style === "--gr").length).toBe(0);
+    withComp({}, 0);
+    expect(grTexts()).toEqual([]);
   });
 
   it("marks all three bands on the EQ face, lighting only the selected one", () => {
