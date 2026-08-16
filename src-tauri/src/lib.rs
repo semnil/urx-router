@@ -189,33 +189,60 @@ async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<(), Strin
 // cannot disagree); asking Rust for it would make a value that can never be unavailable
 // arrive over a fallible round trip. `debug_assertions` is not derivable that way: it
 // describes the binary that opened the broker socket, not the frontend bundle.
+/// Whether this is a development binary. The single home of that question: everything
+/// which turns on it — what `app_build_kind` reports, and whether the MIDI trace will be
+/// written at all — derives from here rather than writing `cfg!` again, so the answers
+/// cannot be made to disagree.
+fn dev_build() -> bool {
+    cfg!(debug_assertions)
+}
+
 #[tauri::command]
 fn app_build_kind() -> &'static str {
-    if cfg!(debug_assertions) {
+    if dev_build() {
         "dev"
     } else {
         "release"
     }
 }
 
-/// Rotate the ledger at this size, keeping one previous generation, so the whole
-/// record is bounded at roughly twice it.
+/// A ledger file: its name, and the size it rotates at.
 ///
-/// 2 MiB is around ten thousand lines at the shape these records have — over a hundred
-/// hours of continuous session, so the run before a force quit is still in the file —
-/// while staying small enough to attach to a report. The alternative shapes were an age
-/// cap (needs every line parsed) and truncate-from-the-front (rewrites the file on every
-/// append); one rotation is the cheapest thing that bounds it.
-const LINK_LOG_MAX_BYTES: u64 = 2 * 1024 * 1024;
+/// The two travel together because the cap is a property of the FILE — passed as loose
+/// arguments, a call could hand one ledger's name the other's bound and still compile.
+struct LogSpec {
+    stem: &'static str,
+    max: u64,
+}
 
-/// Move the ledger aside when it has grown past `max`, replacing the previous
+/// Rotate a ledger at its `max`, keeping one previous generation, so the whole record is
+/// bounded at roughly twice it. The alternative shapes were an age cap (needs every line
+/// parsed) and truncate-from-the-front (rewrites the file on every append); one rotation
+/// is the cheapest thing that bounds it.
+///
+/// Both caps are 2 MiB and neither is derived from the other, because the same byte count
+/// buys each a different span: the link ledger's records are per minute, so it holds over
+/// a hundred hours and the run before a force quit is still in the file; the MIDI trace's
+/// are around 60 bytes and arrive per MESSAGE, so it holds roughly thirty-five thousand
+/// events. Either can move without the other.
+const LINK_LEDGER: LogSpec = LogSpec {
+    stem: "link-ledger",
+    max: 2 * 1024 * 1024,
+};
+const MIDI_TRACE: LogSpec = LogSpec {
+    stem: "midi-trace",
+    max: 2 * 1024 * 1024,
+};
+
+/// Move a ledger aside when it has grown past `max`, replacing the previous
 /// generation. Returns whether it rotated (for the test — nothing else asks).
 ///
-/// Both steps are best-effort: a rotation that cannot happen must not cost the caller
-/// its line. `remove_file` before `rename` because Windows refuses a rename onto an
-/// existing path, where Unix would replace it silently — the same call has to mean the
-/// same thing on both.
-fn rotate_link_log(path: &std::path::Path, prev: &std::path::Path, max: u64) -> bool {
+/// Both steps discard their own failure (`let _`, `.is_ok()`), so a rotation that does
+/// not happen leaves the caller's line to be appended to the file as it stands.
+/// `remove_file` before `rename` because Windows refuses a rename onto an existing path,
+/// where Unix would replace it silently — the same call has to mean the same thing on
+/// both.
+fn rotate_log(path: &std::path::Path, prev: &std::path::Path, max: u64) -> bool {
     if fs::metadata(path).map(|m| m.len()).unwrap_or(0) < max {
         return false;
     }
@@ -223,49 +250,100 @@ fn rotate_link_log(path: &std::path::Path, prev: &std::path::Path, max: u64) -> 
     fs::rename(path, prev).is_ok()
 }
 
-// Append one line to the link ledger in the app's log directory, and answer with the
-// file's path so the UI can name where it went.
-//
-// Append rather than the atomic whole-file write the plan/image exports use: this is
-// a record ACROSS sessions — the symptom it exists for (Device Center needing a force
-// quit) shows up after the app is gone, so a session that rewrote the file would erase
-// the evidence of the one before it. It is also why the path is fixed rather than
-// chosen: nothing about it is a document the operator saves.
 /// Whether `line` is ONE ledger line. Named rather than inlined so it can be tested:
 /// the command around it needs an AppHandle and a real log directory.
-fn link_log_line_ok(line: &str) -> bool {
+fn log_line_ok(line: &str) -> bool {
     !line.chars().any(char::is_control)
+}
+
+/// Append `lines` to the named ledger, and answer with the file's path so a caller can
+/// name where it went.
+///
+/// Both ledgers go through here: the rotation, the one-line-means-one-line rule and the
+/// create-on-demand are properties of the FORMAT rather than of either caller, and a
+/// second copy of them would let the two drift.
+///
+/// Append rather than the atomic whole-file write the plan/image exports use: these are
+/// records ACROSS sessions — the symptoms they exist for show up after the app is gone,
+/// so a session that rewrote the file would erase the evidence of the one before it. It
+/// is also why the path is fixed rather than chosen: nothing here is a document the
+/// operator saves.
+///
+/// A line carrying a control character refuses the WHOLE batch rather than being dropped
+/// from it. Both halves matter: the link ledger reads an ABSENT session-end record as
+/// "nothing closed this session", so a line carrying a newline writes several records in
+/// one call and can forge or split the evidence the file exists to keep; and a batch is
+/// one caller's contiguous record, so a gap inside it reads exactly like a period in
+/// which nothing happened. Other control characters go along because they cannot appear
+/// in the JSON these emit and they make a ledger line unreadable in a terminal.
+async fn append_log(
+    app: &tauri::AppHandle,
+    spec: &'static LogSpec,
+    lines: Vec<String>,
+) -> Result<String, String> {
+    use tauri::Manager;
+    if lines.iter().any(|l| !log_line_ok(l)) {
+        return Err("bad-request: log line carries a control character".into());
+    }
+    let dir = app.path().app_log_dir().map_err(file_io)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        append_lines(&dir, spec, &lines)
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|e| io_error(&e))
+    })
+    .await
+    .map_err(file_io)?
+}
+
+/// The append itself, taking the directory rather than resolving it, so it can be tested:
+/// everything above it needs an AppHandle, and the batch's arrival as N separate records
+/// is the half a rotation test does not reach.
+fn append_lines(
+    dir: &std::path::Path,
+    spec: &LogSpec,
+    lines: &[String],
+) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write;
+    let path = dir.join(format!("{}.jsonl", spec.stem));
+    let prev = dir.join(format!("{}.1.jsonl", spec.stem));
+    fs::create_dir_all(dir)?;
+    rotate_log(&path, &prev, spec.max);
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    // Joined and written in one call rather than appended line by line, so a batch does
+    // not reach the file with another writer's lines between two of its own.
+    let mut body = String::new();
+    for line in lines {
+        body.push_str(line);
+        body.push('\n');
+    }
+    f.write_all(body.as_bytes())?;
+    Ok(path)
 }
 
 #[tauri::command]
 async fn append_link_log(app: tauri::AppHandle, line: String) -> Result<String, String> {
-    use std::io::Write;
-    use tauri::Manager;
-    // One line means one line. The ledger reads an ABSENT session-end record as
-    // "nothing closed this session", so a `line` carrying a newline — a serializer bug,
-    // or any caller that is not the one this was written for — writes several records
-    // in one call and can forge or split exactly the evidence the file exists to keep.
-    // Other control characters go with it: they cannot appear in the JSON this emits and
-    // they make a ledger line unreadable in a terminal.
-    if !link_log_line_ok(&line) {
-        return Err("bad-request: link log line carries a control character".into());
+    append_log(&app, &LINK_LEDGER, vec![line]).await
+}
+
+/// Append a batch of MIDI trace records.
+///
+/// Dev builds only. The trace records every message the bridge carries, so it is gated on
+/// the BINARY rather than on the page: a release build refuses the command outright, and
+/// no page-side flag can turn it on. `import.meta.env.DEV` gates the caller in the bundle
+/// and `dev_build` gates the shell — both compile-time, and the second is the half the
+/// page cannot reach.
+///
+/// A batch rather than a line because these arrive per message: a controller sweep is
+/// dozens a second, and one round trip per message would put a file open behind each.
+#[tauri::command]
+async fn append_midi_log(app: tauri::AppHandle, lines: Vec<String>) -> Result<String, String> {
+    if !dev_build() {
+        return Err("not-available: the MIDI trace is a dev build's diagnostic".into());
     }
-    let dir = app.path().app_log_dir().map_err(file_io)?;
-    let path = dir.join("link-ledger.jsonl");
-    let prev = dir.join("link-ledger.1.jsonl");
-    tauri::async_runtime::spawn_blocking(move || {
-        fs::create_dir_all(&dir).map_err(|e| io_error(&e))?;
-        rotate_link_log(&path, &prev, LINK_LOG_MAX_BYTES);
-        let mut f = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| io_error(&e))?;
-        writeln!(f, "{line}").map_err(|e| io_error(&e))?;
-        Ok(path.to_string_lossy().into_owned())
-    })
-    .await
-    .map_err(file_io)?
+    append_log(&app, &MIDI_TRACE, lines).await
 }
 
 // True when the app was launched with the --experimental flag. Device writes and
@@ -1215,6 +1293,7 @@ pub fn run() {
             vd_disconnect,
             vd_link_stats,
             append_link_log,
+            append_midi_log,
             app_build_kind,
             midi_list_inputs,
             midi_list_outputs,
@@ -1425,30 +1504,41 @@ mod tests {
         );
     }
 
+    /// A scratch directory of this test's own, empty when it is handed over. Named by
+    /// pid AND thread id because the suite runs its tests in parallel threads of one
+    /// process, so the pid alone is shared; the leading `remove_dir_all` is what makes a
+    /// re-run start from the same state as a first run after a test failed before its
+    /// own cleanup.
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "urx-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
     // The ledger is appended to for the life of the install, so its size is bounded by
     // rotation rather than by anyone remembering to clear it. Pinned because both
     // halves are easy to lose: a rotation that fires early throws away the history the
     // file exists for, and one that never fires is an unbounded file.
     #[test]
     fn the_ledger_rotates_only_once_it_is_full() {
-        use super::rotate_link_log;
-        let dir = std::env::temp_dir().join(format!(
-            "urx-link-log-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        use super::rotate_log;
+        let dir = scratch_dir("link-log");
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("link-ledger.jsonl");
         let prev = dir.join("link-ledger.1.jsonl");
 
         std::fs::write(&path, b"first\n").expect("write");
         assert!(
-            !rotate_link_log(&path, &prev, 64),
+            !rotate_log(&path, &prev, 64),
             "a file under the cap stays where it is"
         );
         assert!(!prev.exists(), "and no generation is made for it");
 
-        assert!(rotate_link_log(&path, &prev, 6), "at the cap it rotates");
+        assert!(rotate_log(&path, &prev, 6), "at the cap it rotates");
         assert!(
             !path.exists(),
             "the live file is gone, so the next append starts one"
@@ -1458,7 +1548,7 @@ mod tests {
         // A second rotation replaces the generation rather than accumulating them:
         // two files is the bound, whatever the install's age.
         std::fs::write(&path, b"second\n").expect("write");
-        assert!(rotate_link_log(&path, &prev, 6));
+        assert!(rotate_log(&path, &prev, 6));
         assert_eq!(std::fs::read(&prev).expect("previous"), b"second\n");
         assert_eq!(
             std::fs::read_dir(&dir).expect("dir").count(),
@@ -1487,7 +1577,7 @@ mod tests {
     // mixed body. It also destroyed a pre-existing operator file of that name.
     #[test]
     fn an_atomic_write_leaves_a_sibling_named_tmp_alone() {
-        let dir = std::env::temp_dir().join(format!("urx-atomic-{}", std::process::id()));
+        let dir = scratch_dir("atomic");
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("plan.json");
         let decoy = dir.join("plan.json.tmp");
@@ -1517,9 +1607,45 @@ mod tests {
     // split exactly the evidence the file exists to keep.
     #[test]
     fn a_link_log_line_carrying_a_control_character_is_refused() {
-        assert!(super::link_log_line_ok("{\"ok\":true}"));
-        assert!(!super::link_log_line_ok("{\"a\":1}\n{\"end\":true}"));
-        assert!(!super::link_log_line_ok("{\"a\":\"\u{7}\"}"));
+        assert!(super::log_line_ok("{\"ok\":true}"));
+        assert!(!super::log_line_ok("{\"a\":1}\n{\"end\":true}"));
+        assert!(!super::log_line_ok("{\"a\":\"\u{7}\"}"));
+    }
+
+    // A batch is one caller's contiguous run of records, so what matters is that N lines
+    // in are N lines out and that a later batch lands BEHIND an earlier one. The MIDI
+    // trace flushes every 250 ms, so a truncating write would keep only the last quarter
+    // second of a session and still leave a plausible-looking file.
+    #[test]
+    fn a_batch_lands_as_its_own_lines_behind_whatever_was_already_there() {
+        let dir = scratch_dir("append");
+        let batch =
+            |lines: &[&str]| -> Vec<String> { lines.iter().map(|s| (*s).to_string()).collect() };
+        let spec = |max: u64| super::LogSpec {
+            stem: "midi-trace",
+            max,
+        };
+
+        // The directory does not exist yet: the first append is what creates it.
+        let path = super::append_lines(&dir, &spec(1 << 20), &batch(&["{\"a\":1}", "{\"a\":2}"]))
+            .expect("first batch");
+        assert_eq!(path, dir.join("midi-trace.jsonl"));
+        super::append_lines(&dir, &spec(1 << 20), &batch(&["{\"a\":3}"])).expect("second batch");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n",
+            "three records in order, one terminator each"
+        );
+
+        // Past the cap the live file starts again and the run so far is the generation —
+        // the record is bounded without the batch that tripped it being the one lost.
+        super::append_lines(&dir, &spec(8), &batch(&["{\"a\":4}"])).expect("after rotation");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "{\"a\":4}\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("midi-trace.1.jsonl")).expect("generation"),
+            "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // The app's ACL is three hand-kept lists — build.rs's command set, the handler in

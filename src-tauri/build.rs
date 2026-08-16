@@ -40,6 +40,7 @@ fn main() {
             "vd_disconnect",
             "vd_link_stats",
             "append_link_log",
+            "append_midi_log",
             "app_build_kind",
             "midi_list_inputs",
             "midi_list_outputs",

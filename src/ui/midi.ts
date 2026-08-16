@@ -48,7 +48,7 @@ import {
   type MidiAddr,
   type MidiMapping,
 } from "../core/midi/mapping";
-import { midiProbe } from "./midi-probe";
+import { midiProbe, startMidiTrace } from "./midi-probe";
 import { mirrorBalPair } from "../core/routing";
 import { parseRelay } from "./midi-protocol";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
@@ -99,6 +99,10 @@ const FEEDBACK_FAIL_PASSES = 3;
 const FEEDBACK_SETTLE_MS = 350;
 // A lone CC learn candidate commits after this quiet gap (single-message buttons).
 const LEARN_FLUSH_MS = 500;
+
+/** Why a feedback pass is a full re-send. Carried to the one mark site in `runFeedback`,
+ *  so each cause is attributable without a second mark in front of the burst. */
+type ResyncCause = "port-open" | "model" | "readback" | "learn-off";
 
 export class MidiControl {
   private engine: MidiEngine;
@@ -225,6 +229,10 @@ export class MidiControl {
       now: () => performance.now(),
       trace: this.note,
     });
+    // The bridge is the only thing that feeds the probe, so starting the trace file here
+    // is what makes its first record the page's own — and keeps the probe module free of
+    // an import-time side effect (see midi-probe's `start`).
+    startMidiTrace?.();
     this.engine.setMappings(this.loadMappings());
     this.restorePorts();
     if (isTauri()) void this.attach();
@@ -340,7 +348,7 @@ export class MidiControl {
     this.boundPlan = null;
     this.engine.setMappings(this.loadMappings());
     this.pushState();
-    this.runFeedback(true);
+    this.runFeedback("model");
   }
 
   /** One of the latches behind `blocked` cleared: end the engine's reported
@@ -361,7 +369,7 @@ export class MidiControl {
    *  to another bank since the sent cache was filled). Same pass as opening the
    *  output port, which is the other moment nothing may be assumed about it. */
   resyncFeedback(): void {
-    this.runFeedback(true);
+    this.runFeedback("readback");
   }
 
   /** Batch a feedback pass after a plan edit (debounced; called from the shared
@@ -370,7 +378,7 @@ export class MidiControl {
     if (!this.outputPort || this.feedbackTimer) return;
     this.feedbackTimer = window.setTimeout(() => {
       this.feedbackTimer = 0;
-      this.runFeedback(false);
+      this.runFeedback(null);
     }, FEEDBACK_DEBOUNCE_MS);
   }
 
@@ -412,6 +420,9 @@ export class MidiControl {
       });
       this.closeInput = close;
       this.inputPort = port;
+      // The two opens run on independent queues, so this is what says whether the input
+      // was listening yet when the output's own resync burst went out.
+      this.probeMark("midi:port-open:in");
     } catch (err) {
       this.closeInput = null;
       this.inputPort = null;
@@ -436,7 +447,7 @@ export class MidiControl {
       // broken. Only OUR claim is cleared, so an unrelated status (a learn hint,
       // another error) said since is not wiped by opening a port.
       if (this.outputStalled) this.say("");
-      this.runFeedback(true); // align motor faders / LEDs with the plan at once
+      this.runFeedback("port-open"); // align motor faders / LEDs with the plan at once
     } catch (err) {
       this.outputPort = null;
       this.say(midiErrorStatus(err, t().midi.outputError));
@@ -575,11 +586,16 @@ export class MidiControl {
     this.outputStalled = true;
   }
 
-  private runFeedback(resync: boolean): void {
+  /** Run a feedback pass. `cause` names the full re-send's reason, or null for the
+   *  ordinary debounced diff — a resync is exactly a pass with a cause. */
+  private runFeedback(cause: ResyncCause | null): void {
+    const resync = cause !== null;
     // Marked from here rather than from the callers, so every entry to a full re-send
-    // — a Live-sync start, a port open, a model switch — lands in the log the same way
-    // and the three are comparable against each other.
-    if (resync) this.probe?.mark("midi:resync");
+    // lands in the log the same way and the four are comparable against each other. The
+    // cause travels to this one site rather than each caller marking its own: a mark of
+    // its own would sit immediately before this one with an empty tx window between them,
+    // and `report()` attributes every send to the most recent mark.
+    if (cause) this.probe?.mark(`midi:resync (${cause})`);
     // Nothing goes out while a learn is armed. On a reflecting transport (the shared
     // IAC bus, or a controller that re-sends its state when feedback moves it — both
     // device classes the echo guard exists for) our own feedback comes straight back,
@@ -607,7 +623,7 @@ export class MidiControl {
     if (deferred && !this.settleTimer) {
       this.settleTimer = window.setTimeout(() => {
         this.settleTimer = 0;
-        this.runFeedback(false);
+        this.runFeedback(null);
       }, FEEDBACK_SETTLE_MS);
     }
   }
@@ -626,7 +642,7 @@ export class MidiControl {
       // controller may be showing values the plan has moved past. A resync rather than
       // an ordinary pass: the sent cache is still whatever it was before the arming,
       // and only a forced re-send brings every LED and motor fader back into line.
-      this.resyncFeedback();
+      this.runFeedback("learn-off");
     }
     this.hooks.onLearnChanged();
     this.pushState();

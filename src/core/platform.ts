@@ -432,6 +432,18 @@ export function appendLinkLog(line: string): Promise<string> {
   return invoke<string>("append_link_log", { line });
 }
 
+/**
+ * Append a batch of MIDI trace records to the dev build's trace log; resolves with the
+ * file's path. A batch rather than a line because these arrive per MIDI message.
+ *
+ * Rejects outside Tauri (like `appendLinkLog`, through `invoke`'s own refusal), and
+ * rejects in a release binary — the shell gates the command on `debug_assertions`, which
+ * is what makes "the dev app only" true of the SHELL and not just of the bundle.
+ */
+export function appendMidiLog(lines: string[]): Promise<string> {
+  return invoke<string>("append_midi_log", { lines });
+}
+
 /** Which build is running, for a record that outlives it. `tauri dev` and the
  *  installed app write to the same ledger — the path comes from the bundle
  *  identifier, which does not vary by profile — so the lines have to say.

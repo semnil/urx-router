@@ -45,7 +45,9 @@ vi.mock("../core/platform", () => ({
   midiWindowOpen: mocks.midiWindowOpen,
   openMidiWindow: mocks.openMidiWindow,
 }));
-vi.mock("./midi-probe", () => ({ midiProbe: null }));
+// The production shape of the module: both halves fold away together, so a mock that
+// returned only one would let this suite exercise a combination no build produces.
+vi.mock("./midi-probe", () => ({ midiProbe: null, startMidiTrace: null }));
 
 import { ensureFixedConnections } from "../core/plan";
 import { getModel } from "../models";
