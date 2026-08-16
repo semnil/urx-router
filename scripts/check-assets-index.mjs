@@ -17,6 +17,10 @@
 // setup-node with no `pnpm install`, so every `pnpm test <filter>` is resolved by
 // globbing the filesystem the way vitest/playwright would, never by running them.
 //
+// The pure half — the classifier, the name oracles and the pieces they are built from — sits
+// above the CLI guard and is exported, which is what scripts/check-assets-index.test.mjs drives.
+// Importing this file therefore runs no check.
+//
 // Known limits, deliberate:
 //   - The private half is unverifiable in CI. reference/work/device-tests/ is
 //     /reference/-ignored and absent from every checkout but the operator's, so an
@@ -29,9 +33,10 @@
 //     comments, because meter-bench-run.mjs composes its flags at runtime
 //     ("--" + name), so --tree exists only in its usage comment. Tier A (Tauri
 //     launch flags), where the real rename risk lives, parses the actual call sites.
-//     THIS FILE is excluded from that corpus: its own header names --tree and --hook,
-//     and a checker whose comments answer its own questions passes on itself
-//     (measured — renaming --tree away in meter-bench-run.mjs left the run green).
+//     THIS FILE AND ITS TEST are excluded from that corpus (SELF_FILES): this header names
+//     --tree and --hook, the test spells --experimental, and a checker whose own files answer
+//     its questions passes on itself (measured — renaming --tree away in meter-bench-run.mjs
+//     left the run green).
 //   - A row is required to INTRODUCE an anchor, not merely to contain one, so a row
 //     pasted in with another row's `pnpm dev` in it cannot ride on that row's
 //     assertion. What no rule can see is a row that names a real-but-unrelated
