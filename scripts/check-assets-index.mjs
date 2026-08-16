@@ -51,6 +51,11 @@ const DOC_DIRS = ["docs/en", "docs/ja"];
 const SELF = relative(process.cwd(), fileURLToPath(import.meta.url))
   .split(sep)
   .join("/");
+// This file AND its own test. The header's rule is that a checker whose comments answer its own
+// questions passes on itself; the test is the same problem one file over, and worse, because it
+// spells `--experimental`, `VITE_TRACE`, `UPDATE_SKILL` and `PWTEST_SHARD_WEIGHTS` as literals
+// while living under scripts/. Derived from SELF so a rename carries both.
+export const SELF_FILES = new Set([SELF, SELF.replace(/\.mjs$/, ".test.mjs")]);
 
 // Exact-string allowlist: spans that are prose, not anchors. Every entry needs a
 // reason, because an unreasoned entry here is how a real anchor stops being checked.
@@ -151,12 +156,19 @@ const MD_TARGET = /\]\([^)\n]*\)/g;
 
 // --- the classifier ---------------------------------------------------------
 
+// The shape of an environment variable's name. A pattern SOURCE rather than a regex, because
+// the classifier anchors it and a scan wants it global, and one `g` regex shared between them
+// would carry lastIndex from caller to caller. The underscore is the whole discriminator —
+// without it the shape is "any shouted word", which is the defect this file's test opens with.
+export const ENV_NAME = String.raw`[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+`;
+const ENV_NAME_EXACT = new RegExp(`^${ENV_NAME}$`);
+
 // Which SHAPE a span has. Nothing here asks whether the anchor resolves — that is the
 // oracles' half below — so this is a pure function of the token, and the ORDER of the
 // shapes, which is load-bearing in two places and measured in both, is drivable from a
 // test without the tree walk the rest of this file opens with.
-export function classifyToken(token, { isProse = (t) => PROSE_TOKENS.has(t), isRowExport = () => false } = {}) {
-  if (isProse(token)) return "prose";
+export function classifyToken(token, { isRowExport = () => false } = {}) {
+  if (PROSE_TOKENS.has(token)) return "prose";
   if (/^[A-Z][A-Z0-9_]*=\S+\s+pnpm\s/.test(token) || /^pnpm\s/.test(token)) return "pnpm";
   if (/^node\s/.test(token)) return "node";
   if (/^python3?\s/.test(token)) return "python";
@@ -174,7 +186,7 @@ export function classifyToken(token, { isProse = (t) => PROSE_TOKENS.has(t), isR
   // run" counted `CONSOLE` as a verified variable (assertions went UP by one) where the
   // fall-through had been forcing an author to classify it. An all-caps EXPORT is taken by
   // the shape above, against the row that owns it, which is the stronger of the two answers.
-  if (/^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(token)) return "env";
+  if (ENV_NAME_EXACT.test(token)) return "env";
   // The load-bearing invariant. A silently-ignored token class is how this check would rot
   // the same way the table does.
   return "unclassified";
@@ -188,11 +200,35 @@ export function classifyToken(token, { isProse = (t) => PROSE_TOKENS.has(t), isR
 // boundary where the shorter one ends.
 export const mentions = (hay, name) => new RegExp(String.raw`\b${name}\b`).test(hay);
 
-// Which files the environment-variable oracle reads. A workflow is one of them because the
-// section names variables a workflow sets and nothing under src/, e2e/ or scripts/ reads back,
-// and such a name answered as "appears nowhere in the repo". The documents are NOT in it: a
-// corpus that read them would be answered by the very sentence making the claim.
-export const ENV_CORPUS = /^(?:src|e2e|scripts|\.github)\/|^\.env|\.config\.ts$/;
+// Which files the environment-variable oracle reads, by repo-relative path. A workflow is one
+// of them because the section names variables a workflow sets and nothing under src/, e2e/ or
+// scripts/ reads back, and such a name answered as "appears nowhere in the repo". The documents
+// are NOT in it: a corpus that read them would be answered by the very sentence making the
+// claim. Paths are matched with forward slashes, which is what `walk` below produces.
+//
+// Markdown is excluded from the .github/ arm rather than assumed absent: `PULL_REQUEST_TEMPLATE.md`
+// lives there and repeats claims the asset table makes, so a bare `^\.github/` put a document
+// back in the corpus and made the sentence above false (measured).
+export const ENV_CORPUS = /^(?:src|e2e|scripts)\/|^\.github\/(?!.*\.md$)|^\.env|\.config\.ts$/;
+
+// Never walked. A build output is not part of the repository's inventory, and src-tauri/target
+// alone is large enough to make a whole-tree walk unaffordable.
+const WALK_SKIP = new Set(["node_modules", ".git", "dist", "dist-trace", "target", "gen", ".vite"]);
+
+// Separators normalized, which is what lets ENV_CORPUS and every other path rule here be
+// written one way. `join` produces backslashes on Windows, where a rule anchored on `/` keeps
+// only its separator-free arms — measured by simulating that shape: the env corpus drops from
+// 343 files to 5, which is not empty enough to look broken.
+export function walk(dir, out = []) {
+  if (!existsSync(dir)) return out;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (WALK_SKIP.has(entry.name)) continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) walk(path, out);
+    else out.push(path.split(sep).join("/"));
+  }
+  return out;
+}
 
 // --- the check --------------------------------------------------------------
 //
@@ -258,22 +294,15 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
 
   // --- repo inventory helpers -------------------------------------------------
 
-  // Never walked. A build output is not part of the repository's inventory, and
-  // src-tauri/target alone is large enough to make the whole-tree walk below unaffordable.
-  const WALK_SKIP = new Set(["node_modules", ".git", "dist", "dist-trace", "target", "gen", ".vite"]);
-
-  function walk(dir, out = []) {
-    if (!existsSync(dir)) return out;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (WALK_SKIP.has(entry.name)) continue;
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) walk(path, out);
-      else out.push(path.split(sep).join("/"));
-    }
-    return out;
-  }
-
-  const read = (path) => (existsSync(path) ? readFileSync(path, "utf8") : "");
+  // Memoized. The environment-variable corpus and the three per-directory texts name 320 of the
+  // same files, and reading them a second time cost 9.7 ms against 0.8 ms — on a ~170 ms run
+  // that the tracked hook pays on every CLAUDE.md and docs edit. Nothing here writes, so a file
+  // this process reads twice is the same file both times.
+  const readCache = new Map();
+  const read = (path) => {
+    if (!readCache.has(path)) readCache.set(path, existsSync(path) ? readFileSync(path, "utf8") : "");
+    return readCache.get(path);
+  };
 
   // One spawn, over misses only. Exit 0 = something matched, 1 = nothing matched,
   // anything else is a real git failure and must not read as "not ignored".
@@ -464,7 +493,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   // oracles are substring matches, and a checker that reads its own header answers its
   // own questions.
   const scriptsText = scriptFiles
-    .filter((f) => f !== SELF)
+    .filter((f) => !SELF_FILES.has(f))
     .map(read)
     .join("\n");
   // The checker's own two inputs. `read` answers "" for a file that is not there, and an
@@ -491,7 +520,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   // out of it for the same reason it is out of scriptsText: its own comments spell names.
   const envHay = repoFiles
     .map((f) => f.replace(/^\.\//, ""))
-    .filter((f) => f !== SELF && ENV_CORPUS.test(f))
+    .filter((f) => !SELF_FILES.has(f) && ENV_CORPUS.test(f))
     .map(read)
     .join("\n");
 
@@ -697,11 +726,18 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
       case "env":
         assertEnv(token, line);
         break;
-      default:
+      case "unclassified":
         finding(
           `${DOC}:${line}`,
           `unclassified token \`${token}\` — add a classifier or add it to PROSE_TOKENS with a reason`,
         );
+        break;
+      // A kind classifyToken returns that nothing here handles. Named rather than folded into
+      // the case above, which would report "add a classifier" about the one thing already done.
+      // The uncaughtException handler turns this into exit 1 on a full run and exit 0 in the
+      // hook, which is the same fail-closed rule as every other infrastructure failure here.
+      default:
+        throw new Error(`classifyToken returned "${kind}", which the check has no branch for`);
     }
   }
 

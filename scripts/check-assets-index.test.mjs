@@ -10,11 +10,11 @@
 // inside the test worker — which is why the classifier could only ever be measured by
 // mutating the repository and reading a count.
 import { describe, expect, it } from "vitest";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ENV_CORPUS, classifyToken, mentions } from "./check-assets-index.mjs";
+import { ENV_CORPUS, ENV_NAME, SELF_FILES, classifyToken, mentions, walk } from "./check-assets-index.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -58,8 +58,8 @@ describe("classifyToken", () => {
 // PWTEST_SHARD_WEIGHTS_DISABLED in this repository is as the name of a mutation a pin
 // performs, so deleting the real variable would have left the assertion green.
 describe("mentions", () => {
+  // `includes` answers true to both of these, which is what the oracle used to do.
   it("does not let a longer shouted name answer for a shorter one", () => {
-    expect("PWTEST_SHARD_WEIGHTS_DISABLED".includes("PWTEST_SHARD_WEIGHTS")).toBe(true);
     expect(mentions("PWTEST_SHARD_WEIGHTS_DISABLED", "PWTEST_SHARD_WEIGHTS")).toBe(false);
     expect(mentions("SOME_PWTEST_SHARD_WEIGHTS", "PWTEST_SHARD_WEIGHTS")).toBe(false);
   });
@@ -78,18 +78,6 @@ describe("mentions", () => {
   });
 });
 
-const SKIP = new Set(["node_modules", ".git", "dist", "dist-trace", "target", "gen", ".vite"]);
-function walk(dir, out = []) {
-  if (!existsSync(dir)) return out;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (SKIP.has(entry.name)) continue;
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) walk(path, out);
-    else out.push(path);
-  }
-  return out;
-}
-
 describe("ENV_CORPUS", () => {
   it("takes the places a variable is set or read, and nothing else", () => {
     expect(ENV_CORPUS.test(".github/workflows/race.yml")).toBe(true);
@@ -103,6 +91,26 @@ describe("ENV_CORPUS", () => {
     expect(ENV_CORPUS.test("CLAUDE.md")).toBe(false);
     expect(ENV_CORPUS.test("package.json")).toBe(false);
     expect(ENV_CORPUS.test("src-tauri/src/lib.rs")).toBe(false);
+    // The one a directory-shaped rule lets back in: a document that lives under .github/ and
+    // repeats what the asset table claims.
+    expect(ENV_CORPUS.test(".github/PULL_REQUEST_TEMPLATE.md")).toBe(false);
+  });
+
+  // The exclusion half asked of the tree rather than of nine literals: a document entering the
+  // corpus is the failure the predicate exists to prevent, and only a corpus-level reading can
+  // see one arrive. The literals above say what the rule means; this says what it admits.
+  it("admits no document and neither of the two files that would answer for themselves", () => {
+    const corpus = walk(repo)
+      .map((f) => f.slice(repo.length + 1))
+      .filter((f) => ENV_CORPUS.test(f));
+    expect(corpus.filter((f) => f.endsWith(".md"))).toEqual([]);
+    expect(corpus.filter((f) => f.startsWith("docs/"))).toEqual([]);
+    // …and the predicate admits both halves of this checker, which is why the corpora subtract
+    // SELF_FILES after applying it. Held here because that subtraction happens inside the CLI
+    // guard, where nothing else can reach it.
+    expect(corpus).toContain("scripts/check-assets-index.mjs");
+    expect(corpus).toContain("scripts/check-assets-index.test.mjs");
+    expect([...SELF_FILES].sort()).toEqual(["scripts/check-assets-index.mjs", "scripts/check-assets-index.test.mjs"]);
   });
 
   // Why the corpus was widened, computed from the tree rather than asserted: this derives the
@@ -111,20 +119,28 @@ describe("ENV_CORPUS", () => {
   // repo". Derived rather than spelled, so a rename in a workflow cannot fail this for a
   // reason it is not about.
   it("reaches names that live only in a workflow", () => {
-    const files = walk(join(repo, ".github")).map((f) => f.slice(repo.length + 1));
-    const outside = walk(repo)
-      .map((f) => f.slice(repo.length + 1))
+    // The checker's own walk, so the paths carry forward slashes on every platform — built with
+    // join() alone they are backslashes on Windows, where ENV_CORPUS keeps only the arms that
+    // have no separator in them (`.env*`, `*.config.ts`). That does not empty the corpus, it
+    // shrinks it to five files, and this case then passes MORE easily: `outside` collapses from
+    // 5.47 MB to 0.01 MB, so 31 names look workflow-only where 22 are. Measured by simulating
+    // the shape rather than asserting it.
+    const tree = walk(repo).map((f) => f.slice(repo.length + 1));
+    expect(tree.some((f) => f.startsWith("src/"))).toBe(true);
+    const files = tree.filter((f) => f.startsWith(".github/"));
+    const outside = tree
       .filter((f) => ENV_CORPUS.test(f) && !f.startsWith(".github/"))
       .map((f) => readFileSync(join(repo, f), "utf8"))
       .join("\n");
+    // The classifier's own shape, so a change to what counts as a variable cannot leave this
+    // enumerating the old one.
     const inWorkflows = new Set();
     for (const f of files) {
-      for (const m of readFileSync(join(repo, f), "utf8").matchAll(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g)) {
+      for (const m of readFileSync(join(repo, f), "utf8").matchAll(new RegExp(`\\b${ENV_NAME}\\b`, "g"))) {
         inWorkflows.add(m[0]);
       }
     }
     const onlyThere = [...inWorkflows].filter((name) => !mentions(outside, name));
     expect(onlyThere.length).toBeGreaterThan(0);
-    expect(files.some((f) => ENV_CORPUS.test(f))).toBe(true);
   });
 });
