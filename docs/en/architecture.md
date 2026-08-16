@@ -3206,7 +3206,7 @@ digits and dots only (`v1.9.0-rc1`, `v1.9.0-rc.2`; **not** `v1.9.0-rc-2`) — ru
 five jobs: `check-tag` validates the tag and fails the run on one outside those
 forms, `create-release` opens a **draft** GitHub Release, `licenses`
 generates the bundled notice once (see "Third-party licenses" below), and a
-`build` matrix (`macos-14` / `windows-latest`) packages each platform with
+`build` matrix (`macos-26` / `windows-latest`) packages each platform with
 [`tauri-action`](https://github.com/tauri-apps/tauri-action) and attaches the
 bundles to the draft. The draft is left for manual review before publishing. A
 manual `workflow_dispatch` run builds without creating a release, uploading the
@@ -3227,6 +3227,13 @@ decides is in "Display themes". `RUSTFLAGS` in the environment REPLACES that tab
 to it, which would drop the argument with no other symptom than a build that succeeds, so the `build`
 job reads the values back off the packaged binary (`scripts/check-macho-platform.mjs`) and fails the
 run when they disagree with the file. `pnpm check:platform <binary>` is the same check by hand.
+
+What the runner image still decides is which SDK the binary actually links against, and `macos-26`
+is the one that agrees with the declared version, so the recorded value describes the build that
+took place rather than only what the file asked for. `post-merge.yml`'s `warm-cache` matrix and
+`ci.yml`'s `rust` job name the same image — the first so the cache a release restores describes the
+build it is about to do, the second so a pull request compiles the crate under the release's SDK.
+The workflow headers carry the retirement that made the move urgent.
 
 The `build` matrix restores its Rust cache read-only: a run can restore caches from its own ref or the
 default branch only, and every tag is its own scope, so a cache saved during a release is unreachable
