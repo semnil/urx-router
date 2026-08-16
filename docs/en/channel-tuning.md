@@ -1002,9 +1002,11 @@ its inversion (it hangs from the top and is the bar rather than the cover over o
 `translate.ts` beside the field table that defines them, so a screen and the inspector cannot
 disagree about how a value prints or steps.
 
-The bar's selection is stored per processor (`urx-dyn-display`, a record keyed by processor), which is
+The bar's selection is stored per processor (`urx-dyn-display2`, a record keyed by processor), which is
 now the SSMCS bank alone. It is a way of reading a processor rather than a per-device mapping — so
-unlike the meter point it is not model-scoped.
+unlike the meter point it is not model-scoped. **The stored value is a segment INDEX**, so renumbering
+a bar's segments takes a new key — an old index and a new one are indistinguishable, and the previous
+key held a three-segment numbering in which 1 meant the transfer curve rather than the side chain.
 
 The curve is drawn as a cached static layer plus a live dot: everything but the dot depends only on
 the parameters, size and theme. Canvas size is measured on open and refresh, and the theme tokens
