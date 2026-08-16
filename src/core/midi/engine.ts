@@ -75,6 +75,13 @@ export class MidiEngine {
   private pickup = new Map<string, PickupState>();
   private pair = new Map<string, { msb: number; lsb: number }>(); // cc14 assembly
   private lastSent = new Map<string, number>(); // last raw value fed back per address
+  /** The plan value each address carried at the last pass, whether or not that pass put
+   *  anything on the wire. Separate from `lastSent`, which is a claim about the
+   *  CONTROLLER: the pickup question is "did the plan move under the physical control",
+   *  and a held pass reading the sent cache for it answers "always" — every address, on
+   *  every pass, taking the seeded crossing state of a binding the operator is in the
+   *  middle of picking up with it. */
+  private lastSeen = new Map<string, number>();
   private lastRecv = new Map<string, number>(); // last receive time per address
   private lastFedAt = new Map<string, number>(); // echo guard: last feedback send-time per address
   /** What the guard expects that echo to carry. Separate from `lastSent`, which is the
@@ -107,6 +114,7 @@ export class MidiEngine {
     this.pickup.clear();
     this.pair.clear();
     this.lastFedAt.clear();
+    this.lastSeen.clear();
   }
 
   isMapped(controlId: string): boolean {
@@ -327,7 +335,15 @@ export class MidiEngine {
     // The controller already shows what it sent: remember the applied value as
     // fed back, so the settle pass only sends a genuinely different value. A gang
     // shares one address, and its head owns that feedback cache — only it records.
-    if (isHead) this.lastSent.set(key, wireRaw(mapping.addr, after));
+    if (isHead) {
+      const raw = wireRaw(mapping.addr, after);
+      this.lastSent.set(key, raw);
+      // The pass's own record of the plan, kept here as well: a pass may not have run
+      // for this address yet (no output port, or an offline stretch), and without a
+      // value to compare against the first one that does cannot tell a plan that moved
+      // under the physical control from one it has simply never watched.
+      this.lastSeen.set(key, raw);
+    }
     this.hooks.trace?.(`apply ${mapping.control} ${before} -> ${after}`);
     if (after !== before) this.hooks.applied(control);
   }
@@ -440,11 +456,25 @@ export class MidiEngine {
       // less than the value does (a note carries on/off) does not re-emit a
       // byte-identical message every time the position moves.
       const raw = wireRaw(mapping.addr, control.get());
-      if (this.lastSent.get(key) === raw) continue;
+      // What this pass is about to decide the pickup question against. An address seen
+      // for the FIRST time counts as unmoved: nothing can have been engaged against a
+      // value this has not watched yet, and calling it a move deletes the crossing state
+      // a pickup binding seeds on its first swallowed message.
+      const seen = this.lastSeen.get(key);
+      if (this.lastSent.get(key) === raw) {
+        // In step with what the controller was told: whatever moved, it is not the plan
+        // away from the physical control. Recorded, so a later move is measured from here.
+        this.lastSeen.set(key, raw);
+        continue;
+      }
       if (now - (this.lastRecv.get(key) ?? -Infinity) < RECENT_MS) {
+        // NOT recorded: the settle retry that follows is the pass that will act on this
+        // value, and a record here would leave it comparing the move against itself.
         deferred = true;
         continue;
       }
+      const moved = seen !== undefined && seen !== raw;
+      this.lastSeen.set(key, raw);
       if (deliver) {
         this.emit(mapping.addr, raw);
         this.lastSent.set(key, raw);
@@ -496,8 +526,10 @@ export class MidiEngine {
         half(mapping.addr.controller + 32, raw & 0x7f);
       }
       // The physical control no longer matches the plan (the change came from
-      // elsewhere): a non-motorized fader must pick the value up again.
-      this.pickup.delete(key);
+      // elsewhere): a non-motorized fader must pick the value up again. Asked of the
+      // plan (`moved`) rather than of the sent cache, which says nothing about the plan
+      // on a pass that sends nothing.
+      if (moved) this.pickup.delete(key);
     }
     return deferred;
   }

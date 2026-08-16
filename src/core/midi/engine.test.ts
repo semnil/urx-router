@@ -165,6 +165,26 @@ describe("incoming application", () => {
     expect(c.value).toBe(0.2);
   });
 
+  // The other half of the same rule: a held pass must not touch a binding whose plan
+  // value did NOT move. Deciding that from the sent cache — which a held pass never
+  // writes — deleted every address on every pass, and with it the crossing state a
+  // pickup binding seeds on its first swallowed message: the operator's sweep then
+  // reached the plan value and was swallowed as though it had never started.
+  it("leaves an unmoved address' pickup state alone on a held pass", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
+    engine.onMessage(encodeCc(0, 7, 10)); // 0.079: swallowed, seeds the crossing state
+    expect(c.value).toBe(0.5);
+
+    clock += 400; // past RECENT_MS, so the pass runs rather than deferring
+    engine.feedback(false, false); // a plan edit elsewhere, with the wire held
+    expect(sent).toEqual([]);
+
+    engine.onMessage(encodeCc(0, 7, 120)); // 0.945: crosses 0.5 → engages and applies
+    expect(c.value).toBeGreaterThan(0.9);
+  });
+
   // The echo guard says "the next equal value on this address is my own feedback coming
   // back". A held pass sent nothing, so there is no echo to expect — arming it there
   // would eat the operator's next press instead.
