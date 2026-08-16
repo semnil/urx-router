@@ -82,8 +82,9 @@ function push(kind: MidiProbeKind, text: string, bytes?: number[]): void {
 
 /**
  * One entry as its file record. `ms` is the wall clock, which is the only field two page
- * loads can be ordered by; `t` is kept beside it because the sub-millisecond deltas are
- * what a gap is read from, and rounding to epoch milliseconds would lose them.
+ * loads can be ordered by; `t` is kept beside it because `ms` is rounded to whole
+ * milliseconds, so on an engine whose clock resolves finer than that — jsdom and Chromium
+ * do, the macOS webview does not — `t` is the only field that keeps the difference.
  *
  * `JSON.stringify` is what keeps a detail's own newline or control character from
  * reaching the file as one: the shell refuses the WHOLE batch over a control character
