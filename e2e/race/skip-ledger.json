@@ -16,7 +16,7 @@
       "e2e/race/t2e-shape-change.spec.ts": 2,
       "e2e/race/t2f-shape-change.spec.ts": 2,
       "e2e/race/t3-undo.spec.ts": 18,
-      "e2e/race/t3b-undo.spec.ts": 19,
+      "e2e/race/t3b-undo.spec.ts": 18,
       "e2e/race/t4-midi.spec.ts": 11,
       "e2e/race/t4b-midi.spec.ts": 23,
       "e2e/race/t5-drop.spec.ts": 12,
@@ -32,7 +32,7 @@
       "e2e/race/t4-midi.spec.ts": 3
     },
     "_shardWeights": "How many cases each `--shard=k/N` takes, handed to Playwright as PWTEST_SHARD_WEIGHTS — race.yml reads this array, and its LENGTH is N, so the matrix and this agree or Playwright refuses the run outright. Playwright's own split is a contiguous slice of the collected order sized by case COUNT, and the six expensive t2*-shape-change files sit beside each other in path order, so the equal counts it produces are not equal times. Same order, cut by measured duration instead. Re-derive with `node scripts/race-shard-weights.mjs <run id>` whenever the corpus moves; the reading behind the current array, and what it buys, are in docs/{en,ja}/live-race-harness.md. check-race-skips.mjs re-runs the collection under these weights and fails when a count no longer matches, which is what a corpus that changed SIZE produces, and what a Playwright that stopped honouring an environment variable its own types never documented produces. A one-for-one swap leaves every count alone: nothing reports that the durations behind the array have moved, only a re-derivation shows it.",
-    "shardWeights": [38, 73, 59]
+    "shardWeights": [38, 72, 59]
   },
   "skips": [
     {
@@ -55,11 +55,6 @@
         "file": "src/main.device.test.ts",
         "title": "the desktop-only surfaces > keeps the settings import behind the flag, and the race fake never sets it"
       }
-    },
-    {
-      "file": "e2e/race/t3b-undo.spec.ts",
-      "title": "T3b undo > a cancelled Fetch re-points the MIDI bound cache",
-      "unguarded": "Not a claim about the app, and now not a reachable one either: the case is titled after a path that is gone. A cancelled Fetch used to restore a pre-read clone outside loadPlan; the read runs against a private copy now and the module plan object is never replaced (main.ts), while loadPlan — the one replacement left — announces itself. What survives is the memo's identity backstop, pinned at unit level in src/ui/midi.test.ts; that test guards the backstop, NOT this case, which is why it is not named as the guard here. Listed so the count of unwritten cases stays countable. What would settle it: deciding whether to retitle the case around a replacement that can still happen, or delete it — an unwritten case for a path with no producer is a floor entry nobody can ever raise."
     },
     {
       "file": "e2e/race/t4b-midi.spec.ts",

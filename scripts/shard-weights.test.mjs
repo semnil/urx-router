@@ -15,12 +15,15 @@ import { fileURLToPath } from "node:url";
 
 import {
   caseKey,
+  doubledInLog,
   durations,
   inspectWeights,
   logCoverage,
   offsets,
   planMismatch,
   planProblems,
+  runShape,
+  runShapeProblem,
   skippedInLog,
   weightShapeProblem,
 } from "./shard-weights.mjs";
@@ -29,15 +32,30 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW = readFileSync(join(repo, ".github/workflows/race.yml"), "utf8");
 const LEDGER = JSON.parse(readFileSync(join(repo, "e2e/race/skip-ledger.json"), "utf8"));
 
-/** The committed arrangement, with one thing swapped out per case. */
+/** The committed arrangement, with one thing swapped out per case. Read from the ledger
+ *  rather than written out: hard-coded, these two described the repository as it stood when
+ *  the file was written, and a case deleted from the harness moved both. */
+const WEIGHTS = LEDGER.collect.shardWeights;
+const TOTAL = WEIGHTS.reduce((a, b) => a + b, 0);
 const good = (over = {}) => ({
-  weights: [38, 73, 59],
-  collectedCount: 170,
-  shardCounts: [38, 73, 59],
+  weights: WEIGHTS,
+  collectedCount: TOTAL,
+  shardCounts: WEIGHTS,
   workflowText: WORKFLOW,
   ...over,
 });
 const messages = (over) => inspectWeights(good(over)).map((p) => `${p.where}: ${p.message}`);
+
+// The reporter's finished line for one synthetic case, shared by the suites that need a line
+// rather than a particular case. The verbatim samples are separate and stay that way — those
+// are the pin on the format, this is a fixture the assertions are built out of.
+const resultLine = (line, dur) => `  ✓  1 [race] › e2e/race/t0-baseline.spec.ts:${line}:3 › T0 › a case (${dur})`;
+// The pair a retried case prints: the attempt that failed, then the one that passed. The tier
+// takes one CI retry, so this is the only legitimate way a key is timed twice.
+const retriedPair = (title) => [
+  `  ✘  7 [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › ${title} (120.0s)`,
+  `  ✓  7 [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › ${title} (retry #1) (8.2s)`,
+];
 
 // The only place in this repository that parses another tool's output format, and the one
 // input to the derivation nothing downstream can re-check. Lines are taken verbatim from a
@@ -61,20 +79,17 @@ describe("durations", () => {
   });
 
   it("scales all three units the reporter prints", () => {
-    const line = (d) => `  ✓  1 [race] › e2e/race/t0-baseline.spec.ts:28:3 › T0 › a case (${d})`;
     const at = (text) => durations(text).get(caseKey("t0-baseline.spec.ts", 28, "a case"));
-    expect(at(line("900ms"))).toBe(900);
-    expect(at(line("4.6s"))).toBe(4_600);
-    expect(at(line("1.5m"))).toBe(90_000);
+    expect(at(resultLine(28, "900ms"))).toBe(900);
+    expect(at(resultLine(28, "4.6s"))).toBe(4_600);
+    expect(at(resultLine(28, "1.5m"))).toBe(90_000);
   });
 
   // The tier retries once on CI, so a case that failed and passed prints twice: the retry
   // suffix has to leave the title, and the later line has to win. Left in the title, the key
   // matches no collected case and the run reads as "a log from another revision".
   it("strips the retry suffix and keeps the attempt that ran last", () => {
-    const first = "  ✘  7 [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › link loss at the mid (120.0s)";
-    const retry = "  ✓  7 [race] › e2e/race/t5-drop.spec.ts:141:7 › T5 drop › link loss at the mid (retry #1) (8.2s)";
-    const map = durations(`${first}\n${retry}`);
+    const map = durations(retriedPair("link loss at the mid").join("\n"));
     expect([...map.keys()]).toEqual([caseKey("t5-drop.spec.ts", 141, "link loss at the mid")]);
     expect([...map.values()]).toEqual([8_200]);
   });
@@ -83,6 +98,107 @@ describe("durations", () => {
     const other = "  ✓  1 [chromium] › e2e/console.spec.ts:10:3 › console › a case (1.0s)";
     const skipped = "  -  23 [race] › e2e/race/t3b-undo.spec.ts:1395:8 › T3b undo › a refused entry";
     expect(durations(`${other}\n${skipped}`).size).toBe(0);
+  });
+});
+
+// Two runs in one file. `durations` takes the last line for a key, so whichever log was
+// appended supplies every duration they share — and the thing that used to catch it was a
+// side effect of refusing a log with cases this checkout no longer collects, which a deletion
+// makes every existing log carry.
+describe("doubledInLog", () => {
+  it("says nothing about one run", () => {
+    expect(doubledInLog(`${resultLine(28, "4.6s")}\n${resultLine(73, "1.2s")}`).size).toBe(0);
+  });
+
+  // The legitimate double: a case that failed and passed carries the reporter's own marker on
+  // the second line, and a tier that retries prints both.
+  it("leaves a retried case alone", () => {
+    expect(doubledInLog(retriedPair("link loss").join("\n")).size).toBe(0);
+  });
+
+  it("names a case timed twice with no retry between them", () => {
+    const text = [resultLine(28, "4.6s"), resultLine(73, "1.2s"), resultLine(28, "9.9s")].join("\n");
+    expect([...doubledInLog(text)]).toEqual([caseKey("t0-baseline.spec.ts", 28, "a case")]);
+  });
+});
+
+// The half `doubledInLog` cannot reach. Two partial logs that do not overlap — shard 1 from
+// one run, shards 2 and 3 from another — double nothing and leave nothing uncovered, so every
+// other reading here is satisfied while the durations come from two machines at two times.
+// Lines are verbatim from run 31865018013 (the header the list reporter opens a sharded run
+// with, and the webkit job's, which carries no shard clause).
+describe("runShape / runShapeProblem", () => {
+  const header = (tests, k, of = 3) =>
+    `race (${k})\tRun if [ -z "$PWTEST_SHARD_WEIGHTS" ]; then\t2026-08-15T04:41:44.5107108Z ` +
+    `Running ${tests} tests using 2 workers, shard ${k} of ${of}`;
+  const mark = (id) => `race (1)\tRun echo\t2026-08-15T04:41:40.0000000Z urx-race-run ${id}`;
+  // One per shard job, which is what run 31866387883's log carries.
+  const marks = (id, n = 3) => Array.from({ length: n }, () => mark(id));
+  const WEBKIT =
+    "race-webkit\tRun pnpm test:e2e:race:webkit\t2026-08-15T04:41:48.4857372Z Running 5 tests using 2 workers";
+  const RUN = [header(38, 1), header(72, 2), header(59, 3), WEBKIT].join("\n");
+  const problem = (text) => runShapeProblem(runShape(text), 3);
+
+  it("passes one complete run, with or without run marks", () => {
+    expect(problem(RUN)).toBeNull();
+    expect(problem([...marks("31865018013/1"), RUN].join("\n"))).toBeNull();
+  });
+
+  // The state every existing log is in the moment the array has to be re-derived: a case was
+  // deleted, so the log counts one case more than this checkout collects. Refusing that here
+  // would put back the refusal race-shard-weights.mjs demoted to a note for this exact reason.
+  it("says nothing about a corpus that has since lost a case", () => {
+    expect(problem(RUN)).toBeNull();
+    expect(runShape(RUN).shards.reduce((a, s) => a + s.tests, 0)).toBe(169);
+  });
+
+  // The webkit job runs the same specs in another project and prints the same opening line
+  // without a shard clause. Counted as a shard it would make every complete log a stitch.
+  it("does not read the webkit job's header as a shard", () => {
+    expect(runShape(RUN).shards.map((s) => s.shard)).toEqual([1, 2, 3]);
+  });
+
+  it("refuses a file carrying two runs' marks", () => {
+    const text = [mark("31865018013/1"), RUN, mark("31862345557/1")].join("\n");
+    expect(problem(text)).toMatch(/2 runs \(31865018013\/1, 31862345557\/1\)/);
+  });
+
+  // A re-run of the failed jobs keeps the run id, so the attempt is part of the identity.
+  it("refuses two attempts of the same run", () => {
+    expect(problem([mark("31865018013/1"), RUN, mark("31865018013/2")].join("\n"))).toMatch(/2 runs/);
+  });
+
+  // The stitch the marks exist for and the headers cannot see: a fresh run supplying two shards
+  // and a log written before the echo supplying the third. One id, three headers, right corpus —
+  // and the marks are two where a whole run leaves three.
+  it("refuses a run whose shards are not all marked", () => {
+    const text = [...marks("31865018013/1", 2), RUN].join("\n");
+    expect(problem(text)).toMatch(/2 of 3 shard\(s\) name the run that produced them/);
+  });
+
+  it("refuses a shard that starts twice", () => {
+    expect(problem(`${RUN}\n${header(38, 1)}`)).toMatch(/shard 1 of 3 starts more than once/);
+  });
+
+  // One run's whole log pasted twice: same id throughout, so the two-ids clause says nothing
+  // and the count is the reading. Named for what it is rather than as a missing mark.
+  it("refuses one run's log carried twice", () => {
+    const text = [...marks("31865018013/1", 6), RUN, RUN].join("\n");
+    expect(problem(text)).toMatch(/marks 6 shards where a run has 3 — this file carries that run more than once/);
+  });
+
+  // The reviewed defect, in its unmarked form: two disjoint partial logs whose union covers
+  // the corpus exactly once. Nothing else in the derivation objects to it.
+  it("refuses a union of partial runs that leaves a shard unstarted", () => {
+    expect(problem([header(38, 1), header(72, 2)].join("\n"))).toMatch(/shard 3 of 3 never started/);
+  });
+
+  it("refuses a log split into another number of shards", () => {
+    expect(problem([header(85, 1, 2), header(84, 2, 2)].join("\n"))).toMatch(/split into 2, not into 3/);
+  });
+
+  it("refuses a log that was never sharded at all", () => {
+    expect(problem(WEBKIT)).toMatch(/no `shard k of 3` header/);
   });
 });
 
@@ -315,20 +431,26 @@ describe("inspectWeights", () => {
     expect(inspectWeights(good())).toEqual([]);
   });
 
-  // Mutation 1 as it was run by hand: [39, 73, 59] against a corpus of 170.
+  // Mutation 1 as it was run by hand against the ledger: one shard given a case it does not
+  // have. The corpus is the ledger's own sum, so this stays a mutation of the committed
+  // arrangement however the harness grows or shrinks.
+  const oneOver = [WEIGHTS[0] + 1, ...WEIGHTS.slice(1)];
   it("reports a sum that no longer matches the corpus, and says to re-derive", () => {
-    const found = messages({ weights: [39, 73, 59], shardCounts: null });
+    const found = messages({ weights: oneOver, shardCounts: null });
     expect(found).toHaveLength(1);
-    expect(found[0]).toMatch(/sums to 171 but --project=race collects 170/);
+    expect(found[0]).toMatch(new RegExp(`sums to ${TOTAL + 1} but --project=race collects ${TOTAL}`));
     expect(found[0]).toMatch(/race-shard-weights\.mjs/);
   });
 
   // Mutation 2: the counts that come back when the variable is ignored are Playwright's own
   // equal-count split. Every shard is wrong, and each says so on its own line.
   it("reports the counts an ignored variable produces", () => {
-    const found = messages({ shardCounts: [57, 57, 56] });
-    expect(found).toHaveLength(3);
-    expect(found[0]).toMatch(/--shard=1\/3 collects 57 case\(s\).*not the 38/s);
+    // Playwright's own equal-count split of the same corpus, derived rather than written out.
+    const n = WEIGHTS.length;
+    const equal = WEIGHTS.map((_, i) => Math.floor(TOTAL / n) + (i < TOTAL % n ? 1 : 0));
+    const found = messages({ shardCounts: equal });
+    expect(found).toHaveLength(n);
+    expect(found[0]).toMatch(new RegExp(`--shard=1/${n} collects ${equal[0]} case\\(s\\).*not the ${WEIGHTS[0]}`, "s"));
     expect(found.every((m) => /stopped reading PWTEST_SHARD_WEIGHTS/.test(m))).toBe(true);
   });
 
@@ -342,7 +464,7 @@ describe("inspectWeights", () => {
   // The sum is what says "re-derive"; taking the per-shard readings as well would report
   // the same corpus move three more times in a shape that names a different cause.
   it("does not ask for per-shard readings once the sum is wrong", () => {
-    expect(messages({ weights: [39, 73, 59], shardCounts: null })).toHaveLength(1);
+    expect(messages({ weights: oneOver, shardCounts: null })).toHaveLength(1);
   });
 
   describe("what it holds against the workflow", () => {

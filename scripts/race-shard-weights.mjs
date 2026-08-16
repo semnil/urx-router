@@ -35,10 +35,13 @@ import { fileURLToPath } from "node:url";
 
 import {
   caseKey as key,
+  doubledInLog,
   durations,
   logCoverage,
   offsets,
   planProblems,
+  runShape,
+  runShapeProblem,
   skippedInLog,
   weightShapeProblem,
 } from "./shard-weights.mjs";
@@ -198,10 +201,13 @@ const skippedThere = skippedInLog(log);
 const ms = collected.map((c) => measured.get(c.key) ?? 0);
 const seen = new Set([...measured.keys(), ...skippedThere]);
 const unused = [...seen].filter((k) => !collected.some((c) => c.key === k));
-const { declaredSkips, runtimeSkips, unexplained } = logCoverage(collected, measured, skippedThere);
+const { timed, declaredSkips, runtimeSkips, unexplained } = logCoverage(collected, measured, skippedThere);
 
 const list = (keys) => keys.slice(0, 12).join("\n    ");
-console.log(`${collected.length} cases collected, ${measured.size} timed in the log`);
+// `timed` rather than the whole map: the two stopped being the same number when a log may
+// carry cases this checkout no longer collects, and the count that means anything here is
+// the one over cases being weighted.
+console.log(`${collected.length} cases collected, ${timed.length} timed in the log`);
 
 // A case with no duration belongs at 0 only when the log ACCOUNTS for it. A declared skip
 // does: it will not run next time either, so zero is its cost. A case the run itself skipped
@@ -211,12 +217,28 @@ console.log(`${collected.length} cases collected, ${measured.size} timed in the 
 // exited 0, which is the array this file's header records as the failure the refusals exist
 // to prevent. So it is refused with the cases named, and taking the guess is a flag.
 //
-// Everything else missing, or anything in the log the checkout does not collect, means the
-// two describe different corpora — and unlike every other input here, that cannot be caught
-// downstream: the resulting array is arithmetically consistent, passes the runner check
-// below and passes check-race-skips.mjs.
+// Anything else missing means the log does not describe this corpus — and unlike every
+// other input here, that cannot be caught downstream: the resulting array is
+// arithmetically consistent, passes the runner check below and passes check-race-skips.mjs.
 if (measured.size === 0) {
   die("no timed lines in the log — wrong run, wrong workflow, or the list reporter's format has moved");
+}
+// What the log says it IS, before anything is read out of it: one complete sharded run. The
+// two refusals below both need the halves of a stitch to overlap or to leave something
+// uncovered, and two partial logs from different runs need do neither.
+const shapeProblem = runShapeProblem(runShape(log), shards);
+if (shapeProblem) die(`the log does not describe one run: ${shapeProblem}`);
+// Two runs in one file, which the note below cannot be relaxed past: `durations` takes the
+// last line for a key, so the appended run supplies every duration they share and the split
+// is priced from a run nobody chose. Measured before this refusal existed: stitching an older
+// log onto a current one exits 0 with an array the newer run alone does not produce.
+const doubled = doubledInLog(log);
+if (doubled.size) {
+  die(
+    `${doubled.size} case(s) are timed twice with no retry between them — a case runs in one shard, so ` +
+      `this file is more than one run and the later one silently wins every duration they share:\n    ` +
+      `${list([...doubled])}`,
+  );
 }
 if (unexplained.length) {
   die(
@@ -224,9 +246,23 @@ if (unexplained.length) {
       `partial (a cancelled or timed-out shard), or from another revision:\n    ${list(unexplained)}`,
   );
 }
+// The other direction is a NOTE, not a refusal, and the reason is what the split is made of:
+// once nothing collected is unaccounted for, every case being cut has a reading and the
+// extras describe cases this checkout no longer has. Refusing them made the tool unusable in
+// the one situation it is most needed — a case was DELETED, so the ledger's sum no longer
+// matches and the array has to be re-derived, from the only logs that exist, which all
+// predate the deletion.
+//
+// It rescues a narrow shape, and the narrowness is the key's: `caseKey` carries the line, so
+// only a deletion that shifts nothing below it — the last case in a file, or a whole file —
+// leaves every survivor matching. A deletion from the middle of a file moves every case under
+// it and dies at `unexplained` above, with no path through this tool; what would settle that
+// is a key that survives a line move, which is a change to how a case is addressed rather
+// than to a refusal.
 if (unused.length) {
-  die(
-    `${unused.length} case(s) in the log are not in this checkout's collection — another revision:\n    ${list(unused)}`,
+  console.log(
+    `  ${unused.length} case(s) in the log are not in this checkout's collection — from before they were ` +
+      `removed, or from another revision:\n    ${list(unused)}`,
   );
 }
 if (runtimeSkips.length && !acceptRunSkips) {

@@ -54,6 +54,30 @@ export function durations(text) {
 }
 
 /**
+ * Cases the log times more than once WITHOUT a retry marking one of them — which one run
+ * cannot produce, since a case belongs to exactly one shard and a second attempt carries the
+ * reporter's `(retry #N)`. Two runs in one file can, and `durations` resolves that by
+ * last-wins, so whichever log was appended silently supplies every shared duration.
+ *
+ * Its own detector because the thing that used to catch it was a side effect: refusing a log
+ * that carries cases this checkout does not collect. That refusal had to go (a deletion makes
+ * every existing log carry one), and stitching a fresh partial run onto an older one is the
+ * move the situation invites.
+ */
+export function doubledInLog(text) {
+  const seen = new Set();
+  const doubled = new Set();
+  for (const raw of text.split("\n")) {
+    const m = raw.match(LINE);
+    if (!m || RETRY.test(m[3])) continue;
+    const k = caseKey(m[1], m[2], m[3]);
+    if (seen.has(k)) doubled.add(k);
+    seen.add(k);
+  }
+  return doubled;
+}
+
+/**
  * Every case the run reports as SKIPPED. Separate from `durations` because it answers a
  * different question — those cases have no weight to contribute, and what matters is that
  * they are ACCOUNTED FOR: a caller that only knows about timed cases has to treat them as
@@ -77,6 +101,101 @@ export function skippedInLog(text) {
     if (m) out.add(caseKey(m[1], m[2], m[3].replace(RETRY, "")));
   }
   return out;
+}
+
+// The reporter's own first line, one per sharded run: `Running 38 tests using 2 workers,
+// shard 1 of 3`. The webkit job prints the same line WITHOUT the shard clause, which is why
+// the clause is required rather than optional — one `gh run view --log` carries both jobs.
+const SHARD_HEADER = /Running (\d+) tests? using \d+ workers?, shard (\d+) of (\d+)\s*$/;
+// What .github/workflows/race.yml echoes ahead of the tests, once per shard job. Playwright
+// emits nothing that identifies a run, and the timestamps a `gh run view --log` carries cannot
+// answer it either: a shard job can sit queued for as long as it takes, so no spread between
+// two of them separates one run from two. The identity has to be put there by what produced it.
+const RUN_MARK = /\burx-race-run (\d+\/\d+)/;
+
+/**
+ * What a log says about itself: which shards it is, and which run marked each of them.
+ *
+ * The marks are a LIST rather than the distinct ids, because the two readings catch different
+ * stitches. Two ids is two runs outright. One id on fewer lines than there are shards means the
+ * REST of the file predates the echo — measured on run 31866387883's log, which carries exactly
+ * three: a fresh marked run supplying two shards and an old unmarked log supplying the third
+ * passed every other reading here.
+ */
+export function runShape(text) {
+  const shards = [];
+  const marks = [];
+  for (const raw of text.split("\n")) {
+    const h = raw.match(SHARD_HEADER);
+    if (h) shards.push({ tests: Number(h[1]), shard: Number(h[2]), of: Number(h[3]) });
+    const r = raw.match(RUN_MARK);
+    if (r) marks.push(r[1]);
+  }
+  return { shards, marks };
+}
+
+/**
+ * Whether that self-description is ONE complete run of this checkout's corpus. Null when it
+ * is, a sentence naming what is wrong when it is not.
+ *
+ * `doubledInLog` catches a stitch only where the two halves OVERLAP. Two partial logs that do
+ * not — shard 1 from one run and shards 2 and 3 from another — cover the corpus exactly once
+ * between them and leave every other reading here intact, while the durations being cut are
+ * priced from two different machines at two different times. These headers are what makes
+ * that visible: each half brings its own, so the set has to be exactly one per shard.
+ *
+ * The marks settle it wherever they reach: two ids, two attempts of one id, or one id on fewer
+ * lines than there are shards. The headers are the structural form of the same question and
+ * reach a stitch that OVERLAPS, one missing a shard, and one cut into another number of shards.
+ * Both are kept because only the headers read a log that already exists — no log written before
+ * the workflow echoed a run id carries a mark at all, and refusing those would make the tool
+ * unusable in the situation that calls for it, which is the trap the `unused` note in
+ * race-shard-weights.mjs already fell into once.
+ *
+ * What that leaves is a stitch of two logs BOTH written before the echo, assembled to put
+ * exactly one header per shard: measured, that derives an array at exit 0. It is what the marks
+ * shrink as logs age out.
+ *
+ * The corpus size is deliberately NOT asked here. A log carrying one case more than this
+ * checkout collects is the normal state after a deletion — which is exactly when the array has
+ * to be re-derived — and race-shard-weights.mjs decides what that costs, in the one place that
+ * already weighs it against `unexplained`.
+ */
+export function runShapeProblem({ shards, marks }, want) {
+  const runs = [...new Set(marks)];
+  if (runs.length > 1) {
+    return `the log is ${runs.length} runs (${runs.join(", ")}) — every duration they share is taken from whichever was appended last`;
+  }
+  if (marks.length > want) {
+    return `${runs[0]} marks ${marks.length} shards where a run has ${want} — this file carries that run more than once`;
+  }
+  if (marks.length && marks.length < want) {
+    return (
+      `${marks.length} of ${want} shard(s) name the run that produced them — the rest were written before the ` +
+      `workflow echoed it, so this file is more than one run`
+    );
+  }
+  if (!shards.length) {
+    return (
+      `no \`shard k of ${want}\` header — this is not a sharded race.yml run, and the split is priced for that ` +
+      `runner's schedule (2 workers, a measured startup) rather than for whatever produced this log`
+    );
+  }
+  const wrongTotal = [...new Set(shards.map((s) => s.of))].filter((of) => of !== want);
+  if (wrongTotal.length) {
+    return `the log is a split into ${wrongTotal.join(" and ")}, not into ${want}`;
+  }
+  const times = new Map();
+  for (const s of shards) times.set(s.shard, (times.get(s.shard) ?? 0) + 1);
+  const twice = [...times].filter(([, n]) => n > 1).map(([k]) => k);
+  if (twice.length) {
+    return `shard ${twice.join(", ")} of ${want} starts more than once — the log is more than one run`;
+  }
+  const missing = Array.from({ length: want }, (_, i) => i + 1).filter((k) => !times.has(k));
+  if (missing.length) {
+    return `shard ${missing.join(", ")} of ${want} never started — the log is part of a run`;
+  }
+  return null;
 }
 
 /**

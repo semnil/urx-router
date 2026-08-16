@@ -1399,14 +1399,4 @@ test.describe("T3b undo", () => {
   // making the fake claim a launch mode the shipped app does not have, so the case
   // would measure the harness rather than the app.
   test.skip("a .urxf settings import empties both stacks", () => {});
-
-  // Race variant 2 was written for a cancelled Fetch replacing the plan object, which
-  // left the BoundControl cache writing into the discarded one. That path is gone — the
-  // read runs against a private copy and the module plan object is never replaced
-  // (main.ts) — so the case is not merely unwritten, it is unwritable as titled. What
-  // survives is the memo's identity backstop, pinned at unit level in `src/ui/midi.test.ts`,
-  // which guards the backstop and not this case. Left registered so the count of unwritten cases stays
-  // countable; retitling it around a replacement that can still happen, or deleting it,
-  // is the open decision.
-  test.skip("a cancelled Fetch re-points the MIDI bound cache", () => {});
 });

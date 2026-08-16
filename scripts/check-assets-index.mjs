@@ -91,13 +91,14 @@ const PROSE_TOKENS = new Map([
   ["userGesture", "a DevTools-protocol parameter of Runtime.evaluate"],
   ["SetForegroundWindow", "a Win32 call, named as the one the foreground lock silently refuses"],
   ["GetForegroundWindow", "a Win32 call, named as what an armed capture polls"],
-  // The race tier's split. The variable is Playwright's own, undocumented in its shipped
-  // types, which is why the row names it at all; the disabled spelling is the mutation the
-  // scan was tightened against, and the third is a key inside the ledger the row already
-  // names as a file.
-  ["PWTEST_SHARD_WEIGHTS", "a Playwright environment variable, named as itself"],
-  ["PWTEST_SHARD_WEIGHTS_DISABLED", "a rename of that variable, named as the mutation a substring check missed"],
+  // The race tier's split. The variable itself is NOT here — an underscored bare token is
+  // classified now, so it is held against the repo the way `NAME=value` always was. These two
+  // are the ones no oracle fits: a key inside the ledger the row already names as a file, and
+  // a name whose whole point is that it must NOT exist — the row cites it as the mutation a
+  // substring check missed, so asserting its presence would make deleting that mutation's
+  // test turn `docs-required` red.
   ["collect.shardWeights", "a key inside e2e/race/skip-ledger.json, not a path"],
+  ["PWTEST_SHARD_WEIGHTS_DISABLED", "a rename that must not resolve — named as a mutation, not as a variable"],
   ["includes()", "JavaScript's own method, named as the check that was too loose"],
   ["test.describe.serial", "a Playwright declaration, named as itself"],
   ["(retry #1)", "the list reporter's retry suffix, quoted as the text a parser has to strip"],
@@ -436,6 +437,10 @@ const envText = repoFiles
   .filter((f) => /^\.env/.test(f.replace(/^\.\//, "")) || /\.config\.ts$/.test(f))
   .map(read)
   .join("\n");
+// Built once. The environment-variable oracle scans the whole of it, and rebuilding it per
+// call flattened 5.4 MB again each time — measured at 4.5 ms of a ~100 ms run, which is paid
+// on every CLAUDE.md edit through the hook.
+const envHay = srcText + scriptsText + e2eText + envText;
 
 // Tauri launch flags, from the actual call sites. Truncated at the first
 // column-0 #[cfg(test)] per file: without it lib.rs's
@@ -491,10 +496,19 @@ const takePath = (token, line, note, file) => {
   if (r !== true) pathMisses.push(r);
 };
 
+// A name is mentioned when it stands ALONE. Substring was the first spelling and it let
+// `PWTEST_SHARD_WEIGHTS_DISABLED` — a name that exists in this repo only as the mutation a pin
+// performs — answer for `PWTEST_SHARD_WEIGHTS`, so deleting the real variable would have left
+// the assertion green. `\b` does the whole job for the two callers below, whose names are
+// shouted variables and `__urx` handles: `_` is a word character, so a longer name carries no
+// boundary where the shorter one ends.
+const mentions = (hay, name) => new RegExp(String.raw`\b${name}\b`).test(hay);
+
 function assertEnv(name, line) {
   checked++;
-  const hay = srcText + scriptsText + e2eText + envText;
-  if (!hay.includes(name)) finding(`${DOC}:${line}`, `environment variable ${name} appears nowhere in the repo`);
+  if (!mentions(envHay, name)) {
+    finding(`${DOC}:${line}`, `environment variable ${name} appears nowhere in the repo`);
+  }
 }
 
 function assertTestFilter(script, filter, line) {
@@ -511,8 +525,8 @@ function assertTestFilter(script, filter, line) {
 
 function assertHandle(name, line) {
   checked++;
-  const inSrc = srcText.includes(name);
-  const inE2e = e2eText.includes(name);
+  const inSrc = mentions(srcText, name);
+  const inE2e = mentions(e2eText, name);
   if (!inSrc && !inE2e) {
     finding(`${DOC}:${line}`, `handle ${name} is published nowhere under src/ or e2e/`);
     return;
@@ -623,6 +637,15 @@ for (const span of spans) {
     // because the names are ordinary words — accepting `wire` or `test` section-wide
     // would pardon it on a row about a file that exports no such thing.
     checked++;
+  } else if (/^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(token)) {
+    // The same oracle as `NAME=value`, for a variable the section names on its own — which
+    // is how it names one it does not set. It has to be the LAST shape tried and it has to
+    // require an underscore, both measured: this section shouts in prose, and a rule of "any
+    // all-caps run" counted `CONSOLE` as a verified variable (assertions went UP by one)
+    // where the else-branch below had been forcing an author to classify it. An all-caps
+    // EXPORT is checked by the branch above, against the row that owns it, which is the
+    // stronger of the two answers.
+    assertEnv(token, line);
   } else {
     // The load-bearing invariant. A silently-ignored token class is how this check
     // would rot the same way the table does.
