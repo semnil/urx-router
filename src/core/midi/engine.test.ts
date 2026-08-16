@@ -141,6 +141,30 @@ describe("incoming application", () => {
     expect(c.value).toBeCloseTo(0.15, 5);
   });
 
+  // A held pass (the output side shut until a Live-sync readback settles) still owes the
+  // receive side its bookkeeping: the plan value moved, so a non-motorized fader no
+  // longer matches it and has to pick it up again. Skipping the pass entirely left the
+  // engagement standing, and the next twitch of the physical control tracked from
+  // wherever it stood and pulled the plan with it.
+  it("un-engages pickup on a held pass, with nothing on the wire", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
+    engine.onMessage(encodeCc(0, 7, 64)); // within the window of 0.5 → engaged
+    engine.onMessage(encodeCc(0, 7, 127)); // tracks
+    expect(c.value).toBe(1);
+
+    c.value = 0.2; // the plan moves from somewhere else (a console edit, device follow)
+    sent.length = 0;
+    clock += 400; // past RECENT_MS: an address still being swept defers its whole pass
+    engine.feedback(false, false);
+    expect(sent).toEqual([]);
+
+    // Not engaged any more: a value neither near nor crossing 0.2 is swallowed.
+    engine.onMessage(encodeCc(0, 7, 120));
+    expect(c.value).toBe(0.2);
+  });
+
   it("assembles a 14-bit CC pair from both halves", () => {
     const c = fake("ch1/level", "continuous", 0, 1 / 16383);
     controls.set(c.id, c);

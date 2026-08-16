@@ -415,8 +415,16 @@ export class MidiEngine {
    * received input within RECENT_MS are deferred (returns true so the caller
    * reschedules a settle pass). Call after any plan change, and with
    * `resync = true` (forget the sent cache) after opening the output port.
+   *
+   * `deliver = false` runs the pass without putting anything on the wire, for a
+   * caller that may not state the plan to a controller yet (MidiControl gates that
+   * on a settled Live-sync readback). What the pass owes the RECEIVE side is owed
+   * either way: a plan value that moved means a non-motorized fader no longer
+   * matches it, whether or not the controller was told. What it owes the SEND side
+   * — the sent cache, and the echo guard's arming — is skipped, because both are
+   * claims about a message that did not go out.
    */
-  feedback(resync = false): boolean {
+  feedback(resync = false, deliver = true): boolean {
     if (resync) this.forgetFeedback();
     const now = this.hooks.now();
     let deferred = false;
@@ -437,8 +445,10 @@ export class MidiEngine {
         deferred = true;
         continue;
       }
-      this.emit(mapping.addr, raw);
-      this.lastSent.set(key, raw);
+      if (deliver) {
+        this.emit(mapping.addr, raw);
+        this.lastSent.set(key, raw);
+      }
       // Arm the echo guard: this feedback loops back on a shared bus (or off a
       // controller that re-sends its state when feedback changes it) and is applied
       // as if the operator had moved something. On a toggle that flips an edge
@@ -458,7 +468,7 @@ export class MidiEngine {
       // of this decision rather than an aside, so it is pinned in controls.test.ts.
       // Asked of the address' resolution rather than of its type: the property is what
       // decides, and `wireSteps` is the one place a new address type has to choose.
-      if (wireSteps(mapping.addr) === 127) {
+      if (deliver && wireSteps(mapping.addr) === 127) {
         this.lastFedAt.set(key, now);
         this.lastFedValue.set(key, raw);
       }
@@ -472,7 +482,7 @@ export class MidiEngine {
       // the other at the debounce cadence until the two snapped values happen to
       // coincide. Arming the plain-CC entries the emission actually touches is what
       // stops the first step of that.
-      if (mapping.addr.type === "cc14") {
+      if (deliver && mapping.addr.type === "cc14") {
         const half = (controller: number, value: number): void => {
           const k = addrKey({ type: "cc", channel: mapping.addr.channel, controller });
           if (!this.byKey.has(k)) return;

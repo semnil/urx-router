@@ -342,8 +342,11 @@ export class MidiControl {
 
   // ---- app integration ----
 
-  /** The plan (and possibly the model) was replaced: reload that model's
-   *  mappings and resync the controller to the new plan values. */
+  /** The plan (and possibly the model) was replaced: reload that model's mappings and
+   *  re-take the feedback pass against the new plan values. That pass reaches the
+   *  controller only if the output side is open, which a replacement has just closed —
+   *  what it always does is re-state which bindings no longer match their physical
+   *  control. */
   onModelChanged(): void {
     // The plan was replaced, so whatever a read established is about a document that
     // is no longer loaded. Live sync is dropped before every wholesale replacement
@@ -620,18 +623,27 @@ export class MidiControl {
     // its own would sit immediately before this one with an empty tx window between them,
     // and `report()` attributes every send to the most recent mark.
     if (cause) this.probe?.mark(`midi:resync (${cause})`);
-    // Nothing goes out until a Live-sync readback has completed and the plan IS the
-    // unit's state. Before that the plan is whatever was loaded — a new document's
-    // defaults, a file, a partly applied read — and a pass would put those values on
-    // the wire as though the unit held them. That is not only wrong for the
+    // Nothing goes ON THE WIRE until a Live-sync readback has completed and the plan
+    // IS the unit's state. Before that the plan is whatever was loaded — a new
+    // document's defaults, a file, a partly applied read — and a pass would put those
+    // values out as though the unit held them. That is not only wrong for the
     // controller: on a loopback or shared bus another listener takes them for an
     // operator's gesture, and a second instance of this app applies them to its own
-    // plan and writes them to the device. `liveEnded()` clears it again, so an offline
+    // plan and writes them to the device. `liveEnded()` closes it again, so an offline
     // stretch is one of the periods nothing is sent in.
-    if (!this.deviceStateKnown) {
-      this.probe?.note(`feedback skipped — device state not established (resync=${resync})`);
-      return;
-    }
+    //
+    // The pass still RUNS — `feedback(resync, deliver)` skips the wire and the two
+    // caches that describe it, and keeps what it owes the receive side (a plan value
+    // that moved un-engages a pickup binding whether or not the controller heard).
+    // Returning here instead left an engaged pickup binding engaged for the whole
+    // offline stretch, so the next twitch of a physical fader tracked from wherever it
+    // stood and pulled the plan value with it.
+    //
+    // Through `note` rather than `probe`: `probe` is a dev build's, and a release
+    // build's own diagnostic (`urx-midi-log`) would otherwise show incoming messages
+    // with no outgoing ones and no line saying why — the same shape `send()`'s
+    // txDropped exists to avoid.
+    if (!this.deviceStateKnown) this.note?.(`feedback held — device state not established (resync=${resync})`);
     // Nothing goes out while a learn is armed. On a reflecting transport (the shared
     // IAC bus, or a controller that re-sends its state when feedback moves it — both
     // device classes the echo guard exists for) our own feedback comes straight back,
@@ -654,7 +666,7 @@ export class MidiControl {
       this.probe?.note(`feedback skipped — no output port (resync=${resync})`);
       return;
     }
-    const deferred = this.engine.feedback(resync);
+    const deferred = this.engine.feedback(resync, this.deviceStateKnown);
     if (deferred) this.probe?.note("feedback deferred behind an in-progress sweep");
     if (deferred && !this.settleTimer) {
       this.settleTimer = window.setTimeout(() => {
