@@ -1265,7 +1265,9 @@ alternative is a plan and a unit taking a gesture from a control that is not on 
 
 Measured: `midi-vs-main-fader-absolute` at 50 / 300 / 900 ms — the visible readout, the last command on
 the wire and the unit now agree on `+5.0` at every phase, with the detached element frozen at the value
-it was replaced holding (`-24.0` / `-18.0` / `-7.2`). `midi-vs-send-fader-relative-baseline`: the frozen
+it was replaced holding (`-24.0` / `-18.0` / `-7.2`). The case **runs the 50 ms phase**: the three agreed,
+and a rebuild does not become a different event later in a gesture, so the other two were re-measuring
+one mechanism at the tier's highest per-case cost. `midi-vs-send-fader-relative-baseline`: the frozen
 baseline is still in the code and is no longer reachable — the drag that would recompute over the message
 never makes another move, so `-22 → +5.0` survives instead of being erased down to the tail of the scale.
 `baseline-view-locale-churn`, whose trigger is purely local: **writes after the rebuild → none**.

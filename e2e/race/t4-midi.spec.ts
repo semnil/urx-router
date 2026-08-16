@@ -206,7 +206,9 @@ test.describe("T4 midi", () => {
   // DOM boundary at all and is held open by the 300 ms idle backstop, which is the
   // window the ladder walks.
   // ---------------------------------------------------------------------------
-  for (const d of [20, 60, 400, 2000]) {
+  // Two rungs inside the 300 ms backstop and one outside. It ran a second outside rung
+  // at 2000 ms, which measures the same "outside" the 400 ms one does.
+  for (const d of [20, 60, 400]) {
     const inWindow = d < 300;
     test(`a MIDI message ${d} ms after a wheel edit ${inWindow ? "eats" : "spares"} the operator's undo entry`, async ({
       page,
@@ -366,7 +368,11 @@ test.describe("T4 midi", () => {
   // the Rust bridge actually hands over) rather than ten 15 ms deliveries: both
   // produce one coalesced reflect, and one batch keeps the phase exact.
   // ---------------------------------------------------------------------------
-  for (const d of [50, 300, 900]) {
+  // One phase. It ran three (50 / 300 / 900 ms into the drag), and all three assert the
+  // same outcome against the same mechanism — the phase is not a boundary here, and the
+  // strip rebuild does not become a different event later in a gesture. At ~8 s each in
+  // WebKit they were the tier's most expensive family.
+  for (const d of [50]) {
     test(`a CC burst ${d} ms into a CH 1 fader drag rebuilds the strip under the pointer @webkit`, async ({ page }) => {
       await installFake(page, { storage: midiStore([{ control: "ch1/level", addr: CC7, mode: "absolute" }]) });
       await page.goto("/");
