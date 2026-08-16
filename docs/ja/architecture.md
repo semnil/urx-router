@@ -2876,7 +2876,7 @@ Windows は NSIS だけを生成し、MSI (WiX) は作らない。WiX はスタ�
 `v1.9.0-rc.2` は通り、`v1.9.0-rc-2` は通らない) を push すると
 5 ジョブが走る: `check-tag` がタグを検証し、この形から外れたタグでは run を失敗させる。
 `create-release` が **draft** の GitHub Release を作り、`licenses` が同梱する通知を 1 回だけ生成し
-(後述の「サードパーティライセンス」)、`build` マトリクス (`macos-14` /
+(後述の「サードパーティライセンス」)、`build` マトリクス (`macos-26` /
 `windows-latest`) が各プラットフォームを [`tauri-action`](https://github.com/tauri-apps/tauri-action)
 でパッケージし draft に添付する。draft は公開前に手動レビューする。手動 `workflow_dispatch`
 実行ではリリースを作らず、成果物を job artifact としてのみ残す (パッケージ検証用)。
@@ -2895,6 +2895,12 @@ Windows は NSIS だけを生成し、MSI (WiX) は作らない。WiX はスタ�
 引数が落ちてもビルドが成功する以外の症状が出ない。そこで `build` ジョブがパッケージ済みバイナリから値を
 読み戻し (`scripts/check-macho-platform.mjs`)、ファイルの宣言と食い違えば run を失敗させる。
 手で同じ検査をするには `pnpm check:platform <binary>`。
+
+ランナーイメージが依然として決めるのは、バイナリが実際にリンクする SDK である。`macos-26` は宣言値と
+一致するイメージで、これにより記録値はファイルが要求した値であるだけでなく実際に行われたビルドを表す。
+`post-merge.yml` の `warm-cache` マトリクスと `ci.yml` の `rust` ジョブも同じイメージを名指しする —
+前者はリリースが復元するキャッシュがこれから行うビルドを表すため、後者は pull request がリリースと同じ
+SDK で crate をコンパイルするため。移行を急がせた提供終了の日程はワークフローのヘッダにある。
 
 `build` マトリクスは Rust キャッシュを復元専用で使う: 復元できるのは自分の ref かデフォルトブランチの
 キャッシュだけで、タグはそれぞれ別スコープになるため、リリース中に保存したキャッシュは次のリリース

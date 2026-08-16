@@ -186,7 +186,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14
+          # macos-14 is deprecated: actions/runner-images#13518 gives it eight brownout
+          # windows in October 2026, in which a job using the label fails outright, and full
+          # retirement on 2026-11-02, after which such a job "will be terminated with an
+          # error". This is the release path, so that failure is no macOS installer — and
+          # ci.yml's `rust` job carries the same label into `ci-required`, where it stops
+          # every merge, the version bump that cuts a release among them.
+          #
+          # The recorded platform version is no longer part of this choice: src-tauri/.cargo/
+          # config.toml states it and the step below reads it back. What the image still
+          # decides is which SDK the binary actually links against, and macos-26 is the one
+          # that agrees with what the config declares.
+          - platform: macos-26
             args: --target aarch64-apple-darwin
             rustTargets: aarch64-apple-darwin
           - platform: windows-latest
@@ -255,6 +266,12 @@ jobs:
       # the system's title bar again. Reads the packaged binary, so signing and notarization
       # have already happened — neither touches a load command, and there is nothing earlier
       # in this job that the argument could be read off.
+      #
+      # On an image whose own SDK equals the declared version this cannot separate an
+      # argument that worked from one that was dropped, since the linker would have written
+      # the same values either way. What holds that half is `pnpm test macho-platform`, which
+      # reads the repository's config on every pull request and fails when the argument is
+      # gone; this reads the artifact, which is the half no unit test can see.
       - name: Verify the recorded macOS platform version
         if: runner.os == 'macOS'
         timeout-minutes: 2

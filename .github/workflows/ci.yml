@@ -198,13 +198,16 @@ jobs:
   # page load may tear the app's device session and MIDI ports down.
   #
   # macOS rather than ubuntu, which would be the cheaper runner: this crate is only ever
-  # built on macos-14 and windows-latest, and a Linux build needs libwebkit2gtk installed
+  # built on macos-26 and windows-latest, and a Linux build needs libwebkit2gtk installed
   # from the Ubuntu mirror — the sequential apt path #257 took out of every E2E run, and
   # a platform nothing else here compiles on. Free either way on a public repository.
   rust:
     needs: preflight
     if: needs.preflight.outputs.code == 'true'
-    runs-on: macos-14
+    # The image release.yml packages on. macos-14, which this replaces, is retired on
+    # 2026-11-02 and fails during October's brownouts — and the context this job feeds is
+    # required, so that failure is every merge rather than this job alone.
+    runs-on: macos-26
     # No debug info. Nothing here debugs: the tests report by assertion message, and a
     # backtrace would be read from the source anyway. Measured on the first warm run
     # before this: the cargo work was 13.65 s against 11.7 s spent restoring a 415 MB
