@@ -2179,6 +2179,30 @@ describe("MIDI feedback and the live session", () => {
     expect(shell.count("midi_send")).toBe(sentWhileLive);
   });
 
+  // The shape the guard is actually placed against: device values ARE in the plan when
+  // the flow reaches the same `finally` a settled read reaches, and the session is not
+  // up. Only `liveSessionUp` separates the two, so this is the case that goes red if the
+  // re-send is moved back beside planReadFromDevice — where it sits one line away.
+  it("stays silent when a partial readback refuses the session", SLOW, async () => {
+    let reads = 0;
+    const shell = await bootWithController({
+      ...connectAs("URX44V"),
+      vd_get: (): number => {
+        reads++;
+        if (reads === 1) throw new Error("read refused"); // one bad read is a partial plan
+        return 0;
+      },
+    });
+    await invoked(shell, "midi_open_output");
+
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+    expect(live().getAttribute("aria-pressed")).not.toBe("true");
+    expect(shell.count("vd_params_subscribe")).toBe(0); // the session never registered
+    expect(errors(shell).length).toBeGreaterThan(0); // and said so
+    expect(shell.count("midi_send")).toBe(0);
+  });
+
   it("stays silent when the live session fails on the way up", SLOW, async () => {
     // Unknown model: the read never runs, and the flow lands in the same `finally` a
     // settled one does. What separates them is the session, which is why the re-send
