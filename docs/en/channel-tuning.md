@@ -131,7 +131,7 @@ one reserves the row instead, through the same builder, so the space is whatever
 drawn occupy. Without it the black display sat a bar's height higher on those screens.
 
 The note under the display is always printed now, since the plot always is. Its box is a fixed height
-whatever it holds — two lines, three inside a bank — so a longer string is CUT rather than wrapped, and
+whatever it holds — three lines, everywhere — so a longer string is CUT rather than wrapped, and
 every string is measured against the 960 px window before it ships.
 
 **A bar survives in one place**: the SSMCS bank, where it selects a face rather than a display mode.
@@ -515,9 +515,14 @@ the 48 px the box keeps clear of the viewport, and the grid scrolls below it rat
 that then have nowhere to go. The equal height survives the yield: at 640 px every face is the clamped
 592 px, because the scroll absorbs what differs.
 
-Two more consequences follow. The faced bank's hint line gets three lines instead of the usual two —
-the MAIN line has to name Comp Drive, Sweet Spot Data and Morphing, which took a third line in Japanese
-at the 960 px minimum and was silently cut — and every face keeps its plot beside its lanes all the way
+Two more consequences follow. The hint line is three lines on every screen — it was two, and the bank
+took three on its own because the MAIN line has to name Comp Drive, Sweet Spot Data and Morphing, which
+took a third line in Japanese at the 960 px minimum and was silently cut. Three became the base when the
+COMP note did the same thing on the CI image: **the font decides the wrap, and the runner's font is not
+this machine's** — two lines measured clean at 960 px on macOS for every note in both languages, and the
+Japanese COMP note was cut by 13 px in CI. Three costs almost nothing, measured: at 960x640 the panel
+does not move on any of the six language x screen pairs, and at 1280x800 only GATE grows, 610 to 634 px.
+And every face keeps its plot beside its lanes all the way
 down to 960 px, where the shipped 4-band screen wraps instead. Inside a bank that wrap is a 291 px
 change on one face, so a bank does not wrap at all: the row is `flex-wrap: nowrap`, the rack keeps its
 own width (a fixed number of fixed-width slots) and the plot takes what is left. A measured floor was

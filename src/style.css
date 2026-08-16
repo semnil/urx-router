@@ -3935,15 +3935,6 @@ button.consent-btn-primary {
      losing the rows off the bottom. Inert at any window tall enough for the reserve. */
   overflow-y: auto;
 }
-/* Three lines for a faced bank's hint instead of two. The shortest face's display column
-   sits ~100px inside the reserve above, so the extra line costs no height at all here,
-   while on the single-face screens it would move the modal — which is why the two-line
-   reserve stays the default. The MAIN face needs it: its line has to name Comp Drive,
-   Sweet Spot Data and Morphing, and in Japanese those three took a third line at the
-   960px minimum window and were cut. */
-#dyn-screen-box .prefs-grid.gt-faced .gt-note {
-  height: 4.65em;
-}
 /* The EQ face keeps its plot beside its lanes all the way down to the 960px minimum
    window, where the shipped 4-band screen wraps instead. Wrapping is the right answer for
    a screen that is only ever itself — the plot takes the full width on its own row — but
@@ -4231,20 +4222,27 @@ button.consent-btn-primary {
    grew the modal by its height, moving the Close action and the parameter rows
    under the pointer. One line exactly — a hint that wraps would bring the jump
    back, which is why the height is fixed rather than a minimum. */
-/* Two lines, reserved whether or not they are used. The height is FIXED because the
-   panel must not change height when the display mode or the band changes (three
-   tests pin that), and `overflow: hidden` is what holds it — so whatever does not
-   fit is cut with nothing to say it was.
-   It was one line, and one line is not enough: measured across both languages, the
-   COMP and EQ notes that shipped already wrapped below about 1150 px of window, and
-   the Japanese ones below about 1300 — they were being silently truncated on any
-   window narrower than a wide desktop. Two lines clears every note in both languages
-   at 960 px, the window's own configured minimum (tauri.conf.json), which is the
-   width that decides this. Shortening the copy instead only moves the width at which
-   the next one is cut. `pnpm test:e2e:app dyntuning` measures it. */
+/* Three lines, reserved whether or not they are used. The height is FIXED because the
+   panel must not change height when the band changes (three tests pin that), and
+   `overflow: hidden` is what holds it — so whatever does not fit is cut with nothing to
+   say it was.
+   It was one line, then two. One is not enough: the COMP and EQ notes that shipped already
+   wrapped below about 1150 px of window and the Japanese ones below about 1300, so they
+   were silently truncated on any window narrower than a wide desktop. Two is not enough
+   either, and how that was found is the point — **the font decides the wrap, and the font
+   is the runner's, not this machine's**. Two lines measured clean at 960 px on macOS for
+   every note in both languages; on the CI image the Japanese COMP note takes a third line
+   and was cut by 13 px. A local reading cannot settle this rule, so the guard that owns it
+   is `pnpm test:e2e:app dyntuning`, in CI.
+   Three lines costs almost nothing, measured: at the 960x640 minimum the panel does not
+   move at all on any of the six language x screen pairs (the grid already yields there and
+   the scroll absorbs it), and at 1280x800 only GATE grows — 610 to 634 px — because COMP's
+   and the EQ's parameter columns are already taller than their display columns. Close stays
+   23 px inside the box throughout. Shortening the copy is the other lever and it is worse:
+   it only moves the width, and the font, at which the next note is cut. */
 .gt-note {
   margin-left: 14px;
-  height: 3.1em;
+  height: 4.65em;
   overflow: hidden;
 }
 /* The Device setup brightness row's slider recipe, widened for "-72.0 dB". */
