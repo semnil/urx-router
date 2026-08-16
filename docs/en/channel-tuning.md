@@ -2,14 +2,16 @@
 
 > 日本語版: [../ja/channel-tuning.md](../ja/channel-tuning.md)
 
-**Status: GATE, COMP, EQ and DUCKER implemented (DUCKER 2026-08-08).** This document specifies the
+**Status: GATE, COMP, EQ, DUCKER and the SSMCS bank implemented.** This document specifies the
 per-node screens that put one processor's parameters beside the meters showing what they are doing.
-The insert-FX dynamics have gain-reduction meters of their own (see [Scope](#scope)) and belong here
-when they follow. Implemented in `src/ui/dyn-screen.ts` (the shared host), `src/ui/dyn-gate.ts` /
-`src/ui/dyn-comp.ts` / `src/ui/dyn-eq.ts` / `src/ui/dyn-ducker.ts` (what differs per processor), `src/ui/dyn-chan.ts` (the
+The insert-FX dynamics have gain-reduction meters of their own (see [Scope](#scope)).
+Implemented in `src/ui/dyn-screen.ts` (the shared host), `src/ui/dyn-gate.ts` /
+`src/ui/dyn-comp.ts` / `src/ui/dyn-eq.ts` / `src/ui/dyn-ducker.ts` / `src/ui/dyn-ssmcs.ts` (what
+differs per processor), `src/ui/dyn-registry.ts` (which of them exist), `src/ui/dyn-chan.ts` (the
 binding the two channel-strip processors share), `src/ui/dyn-plot.ts` (the dB×dB transfer plot),
+`src/ui/dyn-freq-plot.ts` (the frequency-against-gain plot the two EQs share),
 `src/core/eq-response.ts` (the measured filter model), `src/core/meters.ts` (the GR table and
-decode), `src/style.css` (`.gt-*`), with coverage in `e2e/dyntuning.spec.ts` and
+decode), `src/style.css` (`.gt-*`), with coverage in `e2e/dyntuning.spec.ts`, `e2e/ssmcs.spec.ts` and
 `e2e/eqoneknob.spec.ts`.
 
 One host serves all three and the processor is chosen per open, so opening any of them replaces
@@ -343,9 +345,9 @@ height, which `e2e/dyntuning.spec.ts` pins.
 **While 1-knob is on the band block goes away entirely**, and still without changing the height. There
 is no band being edited then — the device computes all four from one level — so a band selector would
 be offering a choice with no effect: the rows are **reserved out of sight** (`visibility: hidden`,
-which also takes them out of the tab order, with their controls disabled as well), the band bar goes
-inert beside its heading, the band's name leaves the Parameters heading, and no marker on the plot is
-drawn as the selected one. The reserved space carries one line saying what owns those values, since a
+which also takes them out of the tab order, with their controls disabled as well), the plot stops
+taking a band press and leaves the tab order with it, the band's name leaves the Parameters heading,
+and no marker on the plot is drawn as the selected one. The reserved space carries one line saying what owns those values, since a
 heading over five rows of nothing reads as a rendering fault — and because hiding the rows removes the
 only place that said the numbers are the device's. Reserving rather than removing is what holds the
 height: the rows keep their tags too, invisible, because a tag pill makes a row taller (measured:

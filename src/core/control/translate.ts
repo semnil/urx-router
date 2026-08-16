@@ -912,13 +912,13 @@ export const ssmcsCompFields = (): DynField[] => [
   { key: "scGain", min: SSMCS_GAIN_MIN, max: SSMCS_GAIN_MAX, step: 1, def: SSMCS_INITIAL.sc.gain, unit: "raw" },
 ];
 
-/** The three SSMCS EQ bands, in the order the band bar offers them. */
+/** The three SSMCS EQ bands, in the order the screen offers them. */
 export const SSMCS_EQ_BAND_NAMES = ["low", "mid", "high"] as const;
 export type SsmcsEqBandName = (typeof SSMCS_EQ_BAND_NAMES)[number];
 
 /** Whether a band reads a Q at all: MID is peaking, LOW and HIGH are shelves with no Q
  *  parameter on the device. The Q row is still offered on all three (locked on the
- *  shelves), so the panel keeps one height across the band bar. */
+ *  shelves), so the panel keeps one height across the three bands. */
 export const ssmcsEqBandHasQ = (band: SsmcsEqBandName): boolean => band === "mid";
 
 /** One SSMCS EQ band's fields. The frequency range is the band's own — LOW stops at

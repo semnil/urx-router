@@ -1221,7 +1221,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   say. A send target is one kind (`@bus.mix1`); a processor or an EQ band is another (`@gate`, `@comp`,
   `@eq.low`) — a node has one fader but three thresholds, and "which threshold" is the same question as
   "which send's level". A band is a scope rather than a cursor because a mapping has to keep working with
-  the tuning screen closed, and the screen's band bar resets to LOW on every open. The two kinds print
+  the tuning screen closed, and the screen's own band selection — the markers on its response —
+  resets to LOW on every open. The two kinds print
   differently in the assignment list, because they mean different things: `CH 1 → MIX 1 · Level` is where the
   signal goes, `CH 1 · EQ LOW · Gain` is a stage of this node.
 
