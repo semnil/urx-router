@@ -13,6 +13,7 @@
     "process:allow-exit",
     "allow-app-build-kind",
     "allow-append-link-log",
+    "allow-append-midi-log",
     "allow-close-midi-window",
     "allow-experimental-enabled",
     "allow-focus-midi-window",
