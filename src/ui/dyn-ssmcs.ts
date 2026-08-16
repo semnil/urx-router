@@ -193,6 +193,20 @@ const kneeReach = (knee: number): readonly [number, number] => KNEE_REACH_DB[kne
  */
 const CORNER_FLOOR_DB = -54;
 
+/**
+ * The Comp Drive raw at which the threshold parameter takes the corner over.
+ *
+ * At and above it the threshold owns the corner and Comp Drive slides it, both at 0.2 dB
+ * per raw. Below it the corner is the drive's own: it runs from 0 dBFS at a drive of zero
+ * down to whatever the threshold asks for here, so the threshold keeps only `drive` of
+ * this many parts of its 0.2 dB per raw. The boundary is this one drive and not a curve
+ * across the two parameters: the two forms meet here whatever the threshold is, which is
+ * the property a change to either of them has to keep.
+ *
+ * The readings behind it are in docs/{en,ja}/channel-tuning.md, "The two curves".
+ */
+const CORNER_RAMP_RAW = 31;
+
 /** The makeup's own range, and the ceiling on what it returns. At its maximum it lifts
  *  the corner to 0 dBFS — so it is a FRACTION of the corner's depth, not a number of dB —
  *  and it stops at MAKEUP_MAX_DB. Measured over 22 points in three runs: raw 0 gives
@@ -208,16 +222,23 @@ const MAKEUP_MAX_DB = 24;
  * The threshold is an internal value the unit never shows, driven by Comp Drive, and the
  * drive also adds gain of its own — so turning that one knob moves the corner AND lifts
  * the output, which is what the operator sees on the OUT lane.
- * A drive of zero is not a threshold pushed out of range: it disables the compressor.
+ * A drive of zero disables the compressor outright. That is its own behaviour rather than
+ * the ramp's bottom end, and it stays a branch of its own for a reason the arithmetic does
+ * not carry: the ramp leaves the corner at 0 dBFS, and a wide knee reaches below that.
  *
  * Built once per redraw rather than read per sample point: the curve evaluates it ~120
  * times, and each read walks the plan.
  */
 function transferOf(v: StripValues): { out: (inDb: number) => number; gainDb: number } {
   const drive = v.compDrive;
-  // The corner, on the input meter's own dBFS. The threshold parameter raises it and Comp
-  // Drive lowers it, both at 0.2 dB per raw, and it stops at CORNER_FLOOR_DB.
-  const thr = Math.max(CORNER_FLOOR_DB, 0.2 * (v.comp.threshold - drive) - 20);
+  // The corner, on the input meter's own dBFS, by CORNER_RAMP_RAW's two-region law and
+  // clamped at CORNER_FLOOR_DB. `thresholdCorner` is the upper region's own law, which the
+  // lower region calls at the ramp's top to get the value it interpolates toward.
+  const thresholdCorner = (d: number): number => 0.2 * (v.comp.threshold - d) - 20;
+  const thr = Math.max(
+    CORNER_FLOOR_DB,
+    drive >= CORNER_RAMP_RAW ? thresholdCorner(drive) : (drive / CORNER_RAMP_RAW) * thresholdCorner(CORNER_RAMP_RAW),
+  );
   const ratio = Math.max(1, ssmcsRatio(v.comp.ratio));
   const [up, down] = kneeReach(v.comp.knee);
   // One output gain over the whole curve, as the shipped COMP screen applies its makeup.
@@ -234,7 +255,7 @@ function transferOf(v: StripValues): { out: (inDb: number) => number; gainDb: nu
   // It survives a drive of zero, which disables the compressor and nothing else.
   const outDb = ssmcsGainDb(v.outGain);
   const makeupDb = Math.min(MAKEUP_MAX_DB, -thr * (v.comp.makeup / MAKEUP_RAW_MAX));
-  const gainDb = (drive === 0 ? 0 : makeupDb) + outDb;
+  const gainDb = makeupDb + outDb;
   // The knee's two edges do not straddle the threshold evenly on this bank, which is the
   // whole reason `kneeResponse` takes a pair. A drive of zero disables the compressor
   // outright, so it returns the input rather than a curve with no reduction in it.
