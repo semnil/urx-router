@@ -97,37 +97,41 @@ describe("midi probe", () => {
     expect(text).toMatch(/first rx \+\d+(\.\d\d)? ms \(CH 16 CC 80 = 12\)/);
   });
 
+  // One mark / tx / rx through a scripted clock, read back as the report. The restore is
+  // before the assertions on purpose: a failing expectation must not leave `performance`
+  // mocked for the rest of the file (nothing here sets `restoreMocks`).
+  const reportAtClock = (...times: number[]): string => {
+    const now = vi.spyOn(performance, "now");
+    for (const t of times) now.mockReturnValueOnce(t);
+    probe.mark("midi:resync (readback)");
+    probe.tx([0xbf, 80, 95]);
+    probe.rx([0xbf, 80, 12]);
+    now.mockRestore();
+    return handle().report();
+  };
+
   // The engine's clock is `performance.now()`, and the shipping webview clamps it to
   // whole milliseconds (measured on macOS WKWebView, 2026-08-16: 419 records over five
   // launches, none carrying a fraction) while jsdom and Chromium keep sub-millisecond
   // values. The same report is therefore read at two resolutions, so it states which one
   // it is in: printing `.00` on every line of a real-device run claims a precision the
   // reading does not have, and a 0 there means "below the clock", not "simultaneous".
-  it("drops the decimals, and says why, when the clock carries no fractions", () => {
-    const now = vi.spyOn(performance, "now");
-    now.mockReturnValueOnce(1000).mockReturnValueOnce(1002).mockReturnValueOnce(1004);
-    probe.mark("midi:resync (readback)");
-    probe.tx([0xbf, 80, 95]);
-    probe.rx([0xbf, 80, 12]);
-    now.mockRestore();
-
-    const text = handle().report();
+  it("drops the decimals, and says what it counted, when the clock carries no fractions", () => {
+    const text = reportAtClock(1000, 1002, 1004);
     expect(text).toContain("first rx +4 ms");
-    expect(text).toContain("clock: whole milliseconds");
-    expect(text).not.toMatch(/\d\.\d/);
+    expect(text).toMatch(/^\s+0\s+0\s+mark/m); // the row columns lost them too
+    // The claim is the evidence, not a verdict about the engine — one integral timestamp
+    // decides nothing, so the count travels with it.
+    expect(text).toContain("clock: 3 records, none carrying a sub-millisecond value");
+    // …and it sits above the numbers it qualifies, which is the whole reason for it.
+    expect(text.indexOf("clock:")).toBeLessThan(text.indexOf("first rx"));
   });
 
   it("keeps the decimals where the clock has them, and then claims nothing about it", () => {
-    const now = vi.spyOn(performance, "now");
-    now.mockReturnValueOnce(1000).mockReturnValueOnce(1000.5).mockReturnValueOnce(1004.25);
-    probe.mark("midi:resync (readback)");
-    probe.tx([0xbf, 80, 95]);
-    probe.rx([0xbf, 80, 12]);
-    now.mockRestore();
-
-    const text = handle().report();
+    const text = reportAtClock(1000, 1000.5, 1004.25);
     expect(text).toContain("first rx +4.25 ms");
-    expect(text).not.toContain("clock: whole milliseconds");
+    expect(text).toMatch(/^\s+0\.00\s+0\.00\s+mark/m);
+    expect(text).not.toContain("clock:");
   });
 
   it("says so when a mark's window drew no reply at all", () => {

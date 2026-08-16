@@ -197,25 +197,6 @@ const recorder: MidiProbe = {
  *  folds away with it, the shape `traceProbe` already has in main.ts. */
 export const midiProbe: MidiProbe | null = import.meta.env.DEV ? recorder : null;
 
-const fmt = (ms: number, dp: number): string => ms.toFixed(dp).padStart(9);
-
-/**
- * How many decimals this run's clock earns.
- *
- * The engine's clock is `performance.now()`, and **the shipping webview clamps it to
- * whole milliseconds** — measured on macOS WKWebView (2026-08-16): 419 records over five
- * launches, not one carrying a fraction. jsdom and Chromium keep sub-millisecond values,
- * so the same report is read at two resolutions. A fixed two decimals prints `.00` on
- * every line of a real-device run and states a precision the reading does not have, in
- * the one report whose whole subject is how long a gap was.
- *
- * Taken from the records rather than from the engine, so it describes the run being read
- * rather than the environment the reader assumes.
- */
-function decimals(): number {
-  return log.some((e) => !Number.isInteger(e.t)) ? 2 : 0;
-}
-
 /**
  * The log as text: absolute ms from the first entry, the delta from the previous
  * entry, then per-mark measurements. The per-mark trailer is what decides a gate
@@ -226,7 +207,16 @@ function decimals(): number {
  */
 function report(): string {
   if (log.length === 0) return "(no entries)";
-  const dp = decimals();
+  // How many decimals this run's clock earns. The engine's clock is `performance.now()`,
+  // and **the shipping webview clamps it to whole milliseconds** — measured on macOS
+  // WKWebView (2026-08-16): 419 records over five launches, not one carrying a fraction.
+  // jsdom and Chromium keep sub-millisecond values, so the same report is read at two
+  // resolutions, and a fixed two decimals prints `.00` on every line of a real-device run
+  // — a precision the reading does not have, in the one report whose whole subject is how
+  // long a gap was. Read off the records rather than off the engine, so it describes the
+  // run being printed rather than the environment the reader is assumed to be in.
+  const dp = log.some((e) => !Number.isInteger(e.t)) ? 2 : 0;
+  const fmt = (ms: number): string => ms.toFixed(dp).padStart(9);
   const t0 = log[0].t;
   const counts: Record<string, number> = {};
   const marks: Array<{ at: number; text: string; tx: number; dropped: number; rx?: MidiProbeEntry }> = [];
@@ -235,7 +225,7 @@ function report(): string {
   // still counting sends; a reply is filled in for every mark that has not seen one.
   let open: (typeof marks)[number] | undefined;
   for (const [i, e] of log.entries()) {
-    rows.push(`${fmt(e.t - t0, dp)} ${fmt(i === 0 ? 0 : e.t - log[i - 1].t, dp)}  ${e.kind.padEnd(10)} ${e.text}`);
+    rows.push(`${fmt(e.t - t0)} ${fmt(i === 0 ? 0 : e.t - log[i - 1].t)}  ${e.kind.padEnd(10)} ${e.text}`);
     counts[e.kind] = (counts[e.kind] ?? 0) + 1;
     if (e.kind === "mark") marks.push((open = { at: e.t, text: e.text, tx: 0, dropped: 0 }));
     else if (e.kind === "tx" && open) open.tx++;
@@ -250,15 +240,22 @@ function report(): string {
       `  ${m.text}: tx=${m.tx} dropped=${m.dropped}, ` +
       (m.rx ? `first rx +${(m.rx.t - m.at).toFixed(dp)} ms (${m.rx.text})` : "no rx after it"),
   );
-  // Said once, above the numbers it qualifies: at this resolution a gap of 0 is "shorter
-  // than the clock", which is a different reading from "simultaneous" — and it is the
-  // reading a real-device run produces, since that is where the clamp is.
-  if (!dp) trailer.unshift("  clock: whole milliseconds — a gap printed as 0 ms is below it, not zero");
+  // Said once, above the numbers it qualifies. Stated as the EVIDENCE rather than as a
+  // verdict about the engine, and the count is what keeps that honest: a report typed in
+  // before any traffic holds one record, and one integral timestamp decides nothing —
+  // Chromium coarsens to a fraction of a millisecond rather than to none, so a short ring
+  // there comes out integral by chance.
+  if (!dp) {
+    trailer.unshift(
+      `  clock: ${log.length} records, none carrying a sub-millisecond value` +
+        ` — read a 0 ms gap as "shorter than this clock" rather than as zero`,
+    );
+  }
   // Where the file is, and whether it is still being written. A run whose sink gave up
   // holds fewer records than the ring does, and without this the file simply ends —
   // which is indistinguishable from the app having stopped there.
   if (traceStopped)
-    trailer.push(`  trace file: STOPPED at ${fmt(traceStopped.t - t0, dp).trim()} ms — ${traceStopped.reason}`);
+    trailer.push(`  trace file: STOPPED at ${fmt(traceStopped.t - t0).trim()} ms — ${traceStopped.reason}`);
   else if (tracePath) trailer.push(`  trace file: ${tracePath}`);
   else if (started) trailer.push("  trace file: no batch has landed yet");
   return [`    t(ms)    Δ(ms)  kind       detail`, ...rows, "", `-- ${summary} --`, ...trailer].join("\n");
