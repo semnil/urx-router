@@ -14,6 +14,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf } from "./analyze";
 import { drag, port, tapJack, faceplate } from "../graph-helpers";
+import { pickBand, pickPlot } from "../dyn-helpers";
 import { CH1_FADER, deviceLevelText, faderOf, faderReadout, graphNode, openEqScreen, strip } from "./ui";
 
 // T0b baseline sweeps — the reachability half of the T0 floor
@@ -905,17 +906,7 @@ test.describe("T0b baseline sweeps", () => {
         },
       },
       { label: "GATE · arrow the cap", run: () => keyOn(page.locator("#dyn-threshold-cap"), "ArrowUp") },
-      {
-        label: "GATE · display LADDER → CURVE",
-        run: () => dynBox(page).locator("#dyn-mode-curve").click(),
-        silent: true,
-      },
       { label: "GATE · drag the plot", run: () => dragBy(page, dynBox(page).locator("#dyn-curve"), 0, -30, 6) },
-      {
-        label: "GATE · display CURVE → LADDER",
-        run: () => dynBox(page).locator("#dyn-mode-ladder").click(),
-        silent: true,
-      },
       {
         label: "GATE · close with the Close button",
         run: async () => {
@@ -936,21 +927,11 @@ test.describe("T0b baseline sweeps", () => {
         label: "COMP · drag the threshold cap 40 px",
         run: () => dragBy(page, page.locator("#dyn-threshold-cap"), 0, 40, 6),
       },
-      {
-        label: "COMP · display LADDER → CURVE",
-        run: () => dynBox(page).locator("#dyn-mode-curve").click(),
-        silent: true,
-      },
       // The COMP plot is inert by design — only the GATE's drags its cap — so this is
       // the same gesture that wrote on the GATE, asserted here to write nothing.
       {
         label: "COMP · drag the plot (inert)",
         run: () => dragBy(page, dynBox(page).locator("#dyn-curve"), 0, -30, 6),
-        silent: true,
-      },
-      {
-        label: "COMP · display CURVE → LADDER",
-        run: () => dynBox(page).locator("#dyn-mode-ladder").click(),
         silent: true,
       },
       ...lateGestures("COMP", compRows),
@@ -974,10 +955,11 @@ test.describe("T0b baseline sweeps", () => {
     gestures.push({ label: "EQ · open", run: () => openScreen("eq"), silent: true });
     gestures.push(...rowGestures("EQ", eqRows));
     gestures.push(
-      { label: "EQ · band bar → LOWMID", run: () => dynBox(page).locator("#dyn-band-lowmid").click(), silent: true },
-      { label: "EQ · band bar → HIGHMID", run: () => dynBox(page).locator("#dyn-band-highmid").click(), silent: true },
-      { label: "EQ · band bar → HIGH", run: () => dynBox(page).locator("#dyn-band-high").click(), silent: true },
-      { label: "EQ · band bar → LOW", run: () => dynBox(page).locator("#dyn-band-low").click(), silent: true },
+      { label: "EQ · focus the response", run: () => pickPlot(page).focus(), silent: true },
+      { label: "EQ · marker → LOWMID", run: () => page.keyboard.press("ArrowRight"), silent: true },
+      { label: "EQ · marker → HIGHMID", run: () => page.keyboard.press("ArrowRight"), silent: true },
+      { label: "EQ · marker → HIGH", run: () => page.keyboard.press("End"), silent: true },
+      { label: "EQ · marker → LOW", run: () => page.keyboard.press("Home"), silent: true },
       // The EQ's 1-Knob lives outside the parameter rows (its own section), so it is
       // named rather than enumerated.
       {
@@ -993,13 +975,14 @@ test.describe("T0b baseline sweeps", () => {
         label: "EQ · 1-Knob level (enabled by the toggle above)",
         run: () => keyOn(page.locator("#dyn-oneknob-level"), "ArrowRight"),
       },
-      // …and with 1-Knob on the band bar goes inert: still drawn, still there, and the
-      // same click that selected a band four gestures ago now does nothing. Dispatched
-      // rather than performed, so the gesture measures the handler rather than
-      // Playwright's actionability check (a disabled button would simply time out).
+      // …and with 1-Knob on the plot stops taking a press at all: the canvas is still
+      // drawn but it is no longer a pick plot, so it carries neither the class nor the
+      // key listener. Dispatched onto the canvas rather than performed, so the gesture
+      // measures the handler rather than Playwright's actionability check — a canvas that
+      // is not in the tab order would simply time out on `focus`.
       {
-        label: "EQ · band bar under 1-Knob (inert)",
-        run: () => dynBox(page).locator("#dyn-band-high").dispatchEvent("click"),
+        label: "EQ · response under 1-Knob (inert)",
+        run: () => dynBox(page).locator("#dyn-curve").dispatchEvent("keydown", { key: "ArrowRight", bubbles: true }),
         silent: true,
       },
       ...lateGestures("EQ", eqRows),
@@ -1023,7 +1006,7 @@ test.describe("T0b baseline sweeps", () => {
     // ch1 the sweep left 1-Knob on and the band rows locked, and a locked row is
     // deliberately not armed — the measurement would read the lock, not the grid.
     await openScreen("eq", "ch2");
-    await dynBox(page).locator("#dyn-band-lowmid").click(); // a mid band is always Peaking, so its Gain is live
+    await pickBand(page, 1); // a mid band is always Peaking, so its Gain is live
     const fineInputs = dynBox(page).locator("input[data-fine-step]");
     const eqFineCount = await fineInputs.count();
     const coarseStep = await fineInputs.first().getAttribute("step");
@@ -1366,7 +1349,7 @@ test.describe("T0b baseline sweeps", () => {
     // The UI is in Japanese from the language switch above, so the slider is addressed
     // by what it IS rather than by its label: a mid band is always Peaking, and its
     // gain row is the one opted into the device's fine grid.
-    await dynBox(page).locator("#dyn-band-lowmid").click();
+    await pickBand(page, 1);
     const slider = dynBox(page).locator("input[data-fine-step]").first();
     const sBox = (await slider.boundingBox())!;
     await mark(page, "dyn-drag-start");

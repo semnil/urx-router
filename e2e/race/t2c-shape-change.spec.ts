@@ -20,6 +20,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf } from "./analyze";
 import { faderOf, graphNode, openEqScreen } from "./ui";
+import { pickBand } from "../dyn-helpers";
 
 // T2c shape-change — the two T2 cases whose subject is the ENGINE side of the write
 // set rather than the selector side (docs/{en,ja}/live-race-harness.md):
@@ -164,9 +165,10 @@ test.describe("T2c shape-change", () => {
     await setLatency(page, { get: 1, set: 5 });
 
     // ---- arm A (control): a dragged slider with no sideEffect ------------------
-    // The LOW band, explicitly — the segmented bar's selection is persisted per
-    // processor, so which band the screen opens on is not this case's to assume.
-    await page.locator("#dyn-band-low").click();
+    // The LOW band, explicitly. It is where the screen opens — the band is a cursor into
+    // the parameters, not a way of reading the processor, so it resets per open — but
+    // stating it keeps the case independent of that.
+    await pickBand(page, 0);
     const gain = page.locator('#dyn-screen-box input[data-dyn="gain"]');
     await expect(gain).toBeEnabled();
     const gainBefore = Number(await gain.inputValue());
