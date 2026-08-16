@@ -141,6 +141,65 @@ describe("incoming application", () => {
     expect(c.value).toBeCloseTo(0.15, 5);
   });
 
+  // A held pass (the output side shut until a Live-sync readback settles) still owes the
+  // receive side its bookkeeping: the plan value moved, so a non-motorized fader no
+  // longer matches it and has to pick it up again. Skipping the pass entirely left the
+  // engagement standing, and the next twitch of the physical control tracked from
+  // wherever it stood and pulled the plan with it.
+  it("un-engages pickup on a held pass, with nothing on the wire", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
+    engine.onMessage(encodeCc(0, 7, 64)); // within the window of 0.5 → engaged
+    engine.onMessage(encodeCc(0, 7, 127)); // tracks
+    expect(c.value).toBe(1);
+
+    c.value = 0.2; // the plan moves from somewhere else (a console edit, device follow)
+    sent.length = 0;
+    clock += 400; // past RECENT_MS: an address still being swept defers its whole pass
+    engine.feedback(false, false);
+    expect(sent).toEqual([]);
+
+    // Not engaged any more: a value neither near nor crossing 0.2 is swallowed.
+    engine.onMessage(encodeCc(0, 7, 120));
+    expect(c.value).toBe(0.2);
+  });
+
+  // The other half of the same rule: a held pass must not touch a binding whose plan
+  // value did NOT move. Deciding that from the sent cache — which a held pass never
+  // writes — deleted every address on every pass, and with it the crossing state a
+  // pickup binding seeds on its first swallowed message: the operator's sweep then
+  // reached the plan value and was swallowed as though it had never started.
+  it("leaves an unmoved address' pickup state alone on a held pass", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
+    engine.onMessage(encodeCc(0, 7, 10)); // 0.079: swallowed, seeds the crossing state
+    expect(c.value).toBe(0.5);
+
+    clock += 400; // past RECENT_MS, so the pass runs rather than deferring
+    engine.feedback(false, false); // a plan edit elsewhere, with the wire held
+    expect(sent).toEqual([]);
+
+    engine.onMessage(encodeCc(0, 7, 120)); // 0.945: crosses 0.5 → engages and applies
+    expect(c.value).toBeGreaterThan(0.9);
+  });
+
+  // The echo guard says "the next equal value on this address is my own feedback coming
+  // back". A held pass sent nothing, so there is no echo to expect — arming it there
+  // would eat the operator's next press instead.
+  it("does not arm the echo guard on a held pass", () => {
+    const c = fake("ch1/mute", "toggle", 0);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc", channel: 0, controller: 20 });
+    c.value = 1; // a delivered pass would send 127 here, and arm on it
+    engine.feedback(false, false);
+    expect(sent).toEqual([]);
+
+    engine.onMessage(encodeCc(0, 20, 127)); // a real press carrying that same value
+    expect(c.value).toBe(0); // flipped: not swallowed as the echo of a message never sent
+  });
+
   it("assembles a 14-bit CC pair from both halves", () => {
     const c = fake("ch1/level", "continuous", 0, 1 / 16383);
     controls.set(c.id, c);

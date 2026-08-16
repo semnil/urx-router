@@ -127,6 +127,9 @@ async function sweptRig(): Promise<{ control: MidiControl; sweep: (value: number
   await attached();
   await openOutput();
   await openInput();
+  // The output side sends nothing until a Live-sync readback has settled, so a rig
+  // about what a pass CARRIES has to open that first.
+  control.liveReadSettled();
 
   vi.useFakeTimers();
   const sweep = (value: number, level: number): void => {
@@ -172,23 +175,115 @@ afterEach(() => {
 });
 
 describe("feedback to the controller", () => {
-  // Opening the output port is one of the two moments nothing may be assumed about
-  // what the controller holds — it may have been replugged or moved to another bank —
-  // so the port opening sends every mapped value at once rather than waiting for a
-  // change.
-  it("sends every mapped value the moment the output port opens", async () => {
+  // Opening the output port used to send every mapped value at once. What it sent was
+  // whatever the plan held — at startup, a new document's defaults — and on a loopback
+  // or shared bus that push is another listener's incoming gesture: a second instance
+  // of this app applied one to its own plan and wrote it to the unit, taking CH 1 from
+  // +66 dB to its minimum. So the port opening now assumes nothing about the plan
+  // either, and the controller waits until a readback says what the unit holds.
+  it("sends nothing when the output port opens before a live readback", async () => {
     seedMappings();
-    install();
+    const { control } = install();
     await attached();
     await openOutput();
+    control.scheduleFeedback();
+    await Promise.resolve();
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+
+    // And everything once that readback settles — the port-open pass is not lost, it
+    // is deferred to the moment the values are the unit's own.
+    control.liveReadSettled();
+    await Promise.resolve();
     expect(mocks.midiSend).toHaveBeenCalled();
+  });
+
+  // The held pass still RUNS, and what it owes the receive side does not depend on the
+  // controller having heard: a plan value that moved un-engages a pickup binding, or the
+  // physical fader goes on tracking from wherever it stands and pulls the plan with it.
+  // Returning before the engine was what left it engaged for the whole offline stretch.
+  it("un-engages a pickup binding on a held pass", async () => {
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V: [{ ...MAPPING, mode: "pickup" }] } }));
+    const { control, hooks } = install();
+    await attached();
+    await openOutput();
+    await openInput();
+    // Installed before the first message, as sweptRig does: the engine reads the clock
+    // vitest fakes, and switching to it after a receive leaves that receive stamped on
+    // the real one — so every later pass defers behind a RECENT_MS that never elapses.
+    vi.useFakeTimers();
+    const level = (): number | undefined =>
+      hooks.getPlan().connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")?.params?.level;
+    const parked = level();
+
+    // Seed below the plan value, then cross it: pickup engages and tracks.
+    mocks.inputReceiver!([0xb0, 7, 20]);
+    expect(level()).toBe(parked); // swallowed, lastIn seeded
+    mocks.inputReceiver!([0xb0, 7, 127]);
+    const engagedAt = level();
+    expect(engagedAt).not.toBe(parked);
+
+    // The plan moves from elsewhere while the output side is shut.
+    const conn = hooks.getPlan().connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    conn.params = { ...conn.params, level: -20 };
+    control.scheduleFeedback();
+    await vi.advanceTimersByTimeAsync(600); // the debounce, then past RECENT_MS
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+
+    // Not engaged any more: a value neither near nor crossing -20 dB is swallowed.
+    mocks.inputReceiver!([0xb0, 7, 110]);
+    expect(level()).toBe(-20);
+  });
+
+  // Live sync ending is not a claim that the plan is wrong, but nothing keeps the two
+  // together from there — so the output side closes again rather than going on stating
+  // values whose provenance has run out.
+  it("closes the output side again when live sync ends", async () => {
+    seedMappings();
+    const { control, hooks } = install();
+    await attached();
+    await openOutput();
+    control.liveReadSettled();
+    await Promise.resolve();
+    expect(mocks.midiSend).toHaveBeenCalled();
+
+    control.liveEnded();
+    mocks.midiSend.mockClear();
+    const conn = hooks.getPlan().connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    conn.params = { ...conn.params, level: -20 };
+    vi.useFakeTimers();
+    control.scheduleFeedback();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+  });
+
+  // A wholesale replacement (File > New, Open, a model switch) leaves the plan holding
+  // values no read established, so what the readback opened closes with it. Live sync is
+  // dropped before every such replacement, which closes it too — this is the class's own
+  // half, so the rule does not depend on the order two callers happen to run in.
+  it("closes the output side when the plan is replaced", async () => {
+    seedMappings();
+    const { control, hooks } = install();
+    await attached();
+    await openOutput();
+    control.liveReadSettled();
+    await Promise.resolve();
+    expect(mocks.midiSend).toHaveBeenCalled();
+
+    control.onModelChanged();
+    mocks.midiSend.mockClear();
+    const conn = hooks.getPlan().connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    conn.params = { ...conn.params, level: -20 };
+    vi.useFakeTimers();
+    control.scheduleFeedback();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(mocks.midiSend).not.toHaveBeenCalled();
   });
 
   it("stays silent with no output port open", async () => {
     seedMappings();
     const { control } = install();
     await attached();
-    control.resyncFeedback();
+    control.liveReadSettled();
     control.scheduleFeedback();
     await Promise.resolve();
     expect(mocks.midiSend).not.toHaveBeenCalled();
@@ -201,6 +296,7 @@ describe("feedback to the controller", () => {
     const { control, hooks } = install();
     await attached();
     await openOutput();
+    control.liveReadSettled();
     mocks.midiSend.mockClear();
 
     vi.useFakeTimers();
@@ -222,6 +318,7 @@ describe("feedback to the controller", () => {
     const { control } = install();
     await attached();
     await openOutput();
+    control.liveReadSettled();
     mocks.midiSend.mockClear();
 
     vi.useFakeTimers();
@@ -229,7 +326,7 @@ describe("feedback to the controller", () => {
     await vi.advanceTimersByTimeAsync(200);
     expect(mocks.midiSend).not.toHaveBeenCalled(); // nothing changed
 
-    control.resyncFeedback();
+    control.liveReadSettled();
     await Promise.resolve();
     expect(mocks.midiSend).toHaveBeenCalled();
   });
@@ -280,7 +377,7 @@ describe("feedback to the controller", () => {
     vi.useFakeTimers();
     mocks.midiSend.mockClear();
     mocks.midiSend.mockRejectedValueOnce(new Error("port gone"));
-    control.resyncFeedback();
+    control.liveReadSettled();
     await vi.advanceTimersByTimeAsync(0);
     const afterFailure = mocks.midiSend.mock.calls.length;
 
@@ -303,7 +400,7 @@ describe("feedback to the controller", () => {
     mocks.midiCloseOutput.mockClear();
     mocks.midiSend.mockRejectedValue(new Error("port gone"));
 
-    control.resyncFeedback();
+    control.liveReadSettled();
     await vi.advanceTimersByTimeAsync(1000);
     const settled = mocks.midiSend.mock.calls.length;
     expect(settled).toBeGreaterThan(0); // it really did try
@@ -327,7 +424,7 @@ describe("feedback to the controller", () => {
 
     vi.useFakeTimers();
     mocks.midiSend.mockRejectedValue(new Error("port gone"));
-    control.resyncFeedback();
+    control.liveReadSettled();
     await vi.advanceTimersByTimeAsync(2000);
     expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.outputStalled);
 
@@ -361,13 +458,13 @@ describe("feedback to the controller", () => {
 
     // Two failing passes, then one that lands (the default mock resolves).
     mocks.midiSend.mockRejectedValueOnce(new Error("x")).mockRejectedValueOnce(new Error("x"));
-    control.resyncFeedback();
+    control.liveReadSettled();
     await vi.advanceTimersByTimeAsync(200); // second pass
     await vi.advanceTimersByTimeAsync(200); // third pass lands -> streak cleared
 
     // Two more failing passes: four failures in total, never three in a row.
     mocks.midiSend.mockRejectedValueOnce(new Error("x")).mockRejectedValueOnce(new Error("x"));
-    control.resyncFeedback();
+    control.liveReadSettled();
     await vi.advanceTimersByTimeAsync(200);
     await vi.advanceTimersByTimeAsync(200);
 
@@ -406,7 +503,7 @@ describe("feedback to the controller", () => {
       .mockRejectedValueOnce(new Error("x"))
       .mockRejectedValueOnce(new Error("x"));
 
-    control.resyncFeedback();
+    control.liveReadSettled();
     await vi.advanceTimersByTimeAsync(0);
     // Self-guard: without more bound addresses than the limit this case proves nothing,
     // and an unresolvable control id would silently leave it under.

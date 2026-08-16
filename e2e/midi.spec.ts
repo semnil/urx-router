@@ -43,22 +43,24 @@ const sendMidi = (page: Page, ...msgs: number[][]) =>
     window.__midiTest.inChannel!.onmessage(list.map((bytes) => ({ bytes })));
   }, msgs);
 
-/** Wait page-side for `bytes` to be the last feedback out, then feed it straight back in
- *  as an echo — no driver round trip between the two, so the echo lands inside the
- *  engine's guard window the way a reflecting transport's does. */
-const echoLastFeedback = (page: Page, bytes: number[]): Promise<number> =>
-  page.evaluate(async (expected) => {
+/** Wait page-side for the NEXT feedback message (the caller having cleared `sent`) and
+ *  echo it straight back in, in the same task — no driver round trip, so it lands inside
+ *  the engine's guard window the way a reflecting transport's does. Answers with the
+ *  bytes it echoed, so a case can drive the same message again as a real press without
+ *  assuming which value the surface was showing. */
+const echoNextFeedback = (page: Page): Promise<number[]> =>
+  page.evaluate(async () => {
     const deadline = performance.now() + 2000;
     while (performance.now() < deadline) {
-      if (window.__midiTest.sent.at(-1)?.join() === expected.join()) {
-        const sentAt = performance.now();
-        window.__midiTest.inChannel!.onmessage([{ bytes: expected }]);
-        return performance.now() - sentAt;
+      const last = window.__midiTest.sent.at(-1);
+      if (last) {
+        window.__midiTest.inChannel!.onmessage([{ bytes: last }]);
+        return last;
       }
       await new Promise((r) => setTimeout(r, 5));
     }
-    throw new Error(`feedback ${expected.join()} never went out`);
-  }, bytes);
+    throw new Error("no feedback went out");
+  });
 
 /** Open the MIDI control window from the Device menu and attach to it. The shell
  *  command is stubbed, so the second page is opened here — the app's own state
@@ -143,6 +145,8 @@ test.beforeEach(async ({ page }) => {
     class Channel {
       onmessage: (data: unknown) => void = () => {};
     }
+    // What the vd stub below has been written, by parameter instance.
+    const written = new Map<string, number>();
     // The UI relay: each side registers a receiver, and a post reaches the other
     // page only (BroadcastChannel does not echo to its sender, and neither does
     // the Rust relay it stands in for).
@@ -261,8 +265,18 @@ test.beforeEach(async ({ page }) => {
             return Promise.resolve({ model: "URX44V", label: "Stub URX", firmware: "", epoch: 1 });
           case "vd_disconnect":
             return Promise.resolve();
+          // A write is readable afterwards, the way main.test-util's device stub is:
+          // feedback needs a live session to flow at all now, and inside one an edit
+          // writes and the follow layer reads back. Answering 0 to that read would
+          // undo every edit these cases make — the converge would report the value it
+          // just wrote as refused and put the old one back.
           case "vd_get":
-            return Promise.resolve(0);
+            return Promise.resolve(written.get(`${args.paramId}/${args.x}/${args.y}`) ?? 0);
+          case "vd_set":
+            written.set(`${args.paramId}/${args.x}/${args.y}`, args.value as number);
+            return Promise.resolve();
+          case "vd_set_str":
+            return Promise.resolve();
           case "vd_get_str":
             return Promise.resolve("");
           case "plugin:dialog|message":
@@ -779,8 +793,18 @@ test("feedback follows UI edits out of the output port", async ({ page }) => {
   await learnBinding(page, win, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 64], [0xb0, 7, 65]);
   await setLearn(page, win, false);
 
-  // Opening the output resyncs every binding to the current plan value.
+  // Opening the output port sends nothing on its own: what a pass would carry is the
+  // PLAN's values, and until a Live-sync readback settles those are whatever was loaded
+  // rather than what the unit holds. On a shared bus that push is another listener's
+  // incoming gesture, which is how a second instance of this app rewrote CH 1's gain.
   await pickOutputPort(page, win);
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.__midiTest.sent.length)).toBe(0);
+
+  // The session's readback is what opens it, and every binding is resynced there.
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
   const synced = await page.evaluate(() => window.__midiTest.sent.at(-1));
   expect(synced?.[0]).toBe(0xb0);
@@ -804,47 +828,77 @@ test("a toggle ignores the echo of its own feedback", async ({ page }) => {
   await learnBinding(page, win, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
   await setLearn(page, win, false);
   await pickOutputPort(page, win);
+  // Feedback reaches the wire only while a session holds the plan to the unit, and this
+  // case is about what comes BACK off that wire.
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  // Waited on the send itself rather than on the session: the port's own open and the
+  // session's readback race here, and whichever runs second is the pass that carries
+  // the state out. Moving on before one of them has is what leaves the guard unarmed.
+  await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
+  await page.evaluate(() => (window.__midiTest.sent.length = 0));
 
+  // The readback leaves this chip muted (the stub answers 0 for every read, which is the
+  // send switched off). Unmute first, so the edit under test feeds back the ON value:
+  // an edge toggle ignores a repeat of a release, and the second half below presses the
+  // fed message again as a real press.
+  if (/\bon\b/.test((await muteChip().getAttribute("class")) ?? "")) {
+    await muteChip().click();
+    await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
+    await page.evaluate(() => (window.__midiTest.sent.length = 0));
+  }
+  await expect(muteChip()).not.toHaveClass(/\bon\b/);
   await muteChip().click(); // mute via the UI
   await expect(muteChip()).toHaveClass(/\bon\b/);
+
   // Echoed page-side, in the task that sees the feedback go out. Bridging that over the
   // driver — poll for `sent`, then send — puts the echo ~250 ms after the feedback
   // (measured on this spec), well past the engine's 50 ms guard, so the case asserted the
   // guard against a message it is not meant to catch and failed wherever the poll was
   // slower than the window. A reflecting transport answers in 0.13-5 ms, which is what
   // the guard is sized from and what this reproduces.
-  await echoLastFeedback(page, [0xb0, 20, 127]);
+  const echoed = await echoNextFeedback(page);
   await page.waitForTimeout(150);
   await expect(muteChip()).toHaveClass(/\bon\b/); // still muted
-  // The echo is consumed one-shot: an equal press right after it is a real
-  // press and still unmutes (a blanket window would eat it).
-  await sendMidi(page, [0xb0, 20, 127]);
+  // The echo is consumed one-shot: the same message right after it is a real press and
+  // still unmutes (a blanket window would eat it).
+  await sendMidi(page, echoed);
   await expect(muteChip()).not.toHaveClass(/\bon\b/);
 });
 
-test("feedback follows a device fetch out of the output port", async ({ page }) => {
-  // A fetch readback rewrites the plan without markChanged, so it must push the
-  // fetched values to the controller itself — otherwise the next touch of the
-  // physical control would send the stale value back and overwrite the plan.
+test("a device fetch does not open the output port; the live session does", async ({ page }) => {
+  // A fetch reads the whole unit, and the plan is the unit's state for that instant —
+  // but nothing holds the two together afterwards, and on a shared bus a push is
+  // another listener's incoming gesture. So the output side stays shut through a
+  // fetch, and the values reach the controller when a session opens it.
+  //
+  // What that costs is real and accepted: between the fetch and the session the
+  // controller shows what it was last told, and a motorised fader touched there sends
+  // its stale position back into the plan. Pickup mode is the per-mapping answer.
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
   await learnBinding(page, win, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 64], [0xb0, 7, 65]);
   await setLearn(page, win, false);
   await pickOutputPort(page, win);
 
-  // Park the fader at -∞ so the stubbed readback (every read = 0 → 0.0 dB) is a
-  // real change, and drain the port-open resync + the edit's own feedback before
-  // fetching (the resync already carried a CC 7 above zero).
+  // Park the fader at -∞ so the stubbed readback (every read = 0 → 0.0 dB) is a real
+  // change rather than a value that would go out as itself.
   const fader = strip(page, "CH 1").locator(".con-fader");
   await fader.click();
   await fader.press("End");
-  await expect.poll(() => page.evaluate(() => window.__midiTest.sent.at(-1))).toEqual([0xb0, 7, 0]);
-  await page.evaluate(() => (window.__midiTest.sent.length = 0));
 
   await page.click("#btn-device");
   await page.click("#btn-fetch");
   await expect(readLevel(page, "CH 1")).toHaveText("0.0"); // the fetch landed
-  // The fetched level goes out as feedback: CC 7 with the 0.0 dB position (> 0).
+  await page.waitForTimeout(300); // past the feedback debounce
+  expect(await page.evaluate(() => window.__midiTest.sent.length)).toBe(0);
+
+  // The positive control: the same value goes out the moment a session establishes it,
+  // so the silence above is the gate rather than a rig that never sends.
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
   await expect
     .poll(() => page.evaluate(() => window.__midiTest.sent.find((b) => b[0] === 0xb0 && b[1] === 7)?.[2] ?? -1))
     .toBeGreaterThan(0);
@@ -856,26 +910,27 @@ test("Live sync start pushes every assignment to the controller, not just what c
   // stub answers 0 for every read, which is already CH 1's level. That is exactly
   // the value a controller replugged (or moved to another bank) since the sent
   // cache was filled would still be showing wrong, so the session start re-sends
-  // every binding once, the way opening the output port does.
+  // every binding once. It is also the only moment that does: the port opening states
+  // nothing, since before a readback the plan is not the unit's state to state.
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
   await learnBinding(page, win, () => strip(page, "CH 1").locator(".con-fader").click(), [0xb0, 7, 64], [0xb0, 7, 65]);
   await setLearn(page, win, false);
   await pickOutputPort(page, win);
 
-  // Drain the port-open resync, so everything recorded below belongs to the session.
-  await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
-  const sentAtOpen = await page.evaluate(() => window.__midiTest.sent.find((b) => b[0] === 0xb0 && b[1] === 7));
-  await page.evaluate(() => (window.__midiTest.sent.length = 0));
+  // Nothing at all until the session: the port opening states no values of its own.
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.__midiTest.sent.length)).toBe(0);
 
   await page.click("#btn-device");
   await page.click("#btn-live");
   await expect(page.locator("#live-tally")).toBeVisible(); // the session is up
-  // Nothing moved: the read confirmed the level the controller was already told.
+  // Nothing in the plan moved — the stub answers 0 for every read, which is already
+  // CH 1's level — and the binding is sent anyway.
   await expect(readLevel(page, "CH 1")).toHaveText("0.0");
   await expect
-    .poll(() => page.evaluate(() => window.__midiTest.sent.find((b) => b[0] === 0xb0 && b[1] === 7)))
-    .toEqual(sentAtOpen);
+    .poll(() => page.evaluate(() => window.__midiTest.sent.filter((b) => b[0] === 0xb0 && b[1] === 7).length))
+    .toBeGreaterThan(0);
 });
 
 test("assignments and the port choice survive a reload", async ({ page }) => {

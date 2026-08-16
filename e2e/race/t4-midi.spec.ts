@@ -455,7 +455,7 @@ test.describe("T4 midi", () => {
   // cleared" more than a single reading — it is not a survey of the control catalog,
   // and nothing here observes a third.
   // ---------------------------------------------------------------------------
-  test("pickup does not disengage on a UI edit while no output port is open, and the port open fixes it", async ({
+  test("pickup does not disengage on a UI edit while no output port is open, and a later plan move fixes it", async ({
     page,
   }) => {
     await installFake(page, {
@@ -497,27 +497,37 @@ test.describe("T4 midi", () => {
     await pushMidi(page, [cc7(118)]); // 0.929: again neither near nor crossing 0.85
     await expect(readout).toHaveText("+6.0"); // pos 37 — yanked back a second time
 
-    // Open the output port: runFeedback(true) resyncs every binding and deletes the
-    // pickup state with the emit.
+    // Open the output port. Nothing goes on the wire — the output side stays shut until
+    // a live readback establishes the plan — but the pass still RUNS, and deleting the
+    // pickup engagement is what it owes the receive side either way.
     const win = await openMidiWindow(page);
     await win.locator(".mw-out").selectOption("Fake Out");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.outPort)).toBe("Fake Out");
     await win.close();
-    // Polled, not read once: the address received input moments ago, so the resync
-    // pass defers behind RECENT_MS and lands on the 350 ms settle retry.
-    await expect
-      .poll(async () => (await midiSentOf(page)).filter((b) => b[0] === 0xb0 && b[1] === 7).length)
-      .toBeGreaterThan(0);
-    expect((await midiSentOf(page)).at(-1)).toEqual([0xb0, 7, 117]); // +6.0 dB = pos 37/40
+    // The address received input moments ago, so the pass defers behind RECENT_MS and
+    // lands on the 350 ms settle retry.
+    await page.waitForTimeout(700);
+    expect(await midiSentOf(page)).toEqual([]);
+
+    // Nothing is un-engaged yet, and that is the rule rather than the defect: what drops
+    // the engagement is a pass seeing the plan MOVE away from the physical control, and
+    // at this instant the plan holds exactly what the last twitch put there. The port
+    // opening used to drop it by emitting; with the output side shut until a session
+    // establishes the plan, there is no emit to hang it on.
+    await mark(page, "edit-with-output");
+    await faderOf(page, "CH 1").focus();
+    for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
+    await expect(readout).toHaveText("+3.2"); // pos 34, three detents down from +6.0
+    await page.waitForTimeout(700); // the debounce, then the settle retry behind RECENT_MS
 
     await mark(page, "twitch-with-output");
-    await pushMidi(page, [cc7(60)]); // 0.472 vs plan 0.925: swallowed now
+    await pushMidi(page, [cc7(60)]); // 0.472 vs plan 0.85: swallowed now
     await page.waitForTimeout(200);
-    expect(await readout.textContent()).toBe("+6.0");
+    expect(await readout.textContent()).toBe("+3.2");
     await pushMidi(page, [cc7(100)]); // 0.787: same side as 0.472 — still swallowed
     await page.waitForTimeout(200);
-    expect(await readout.textContent()).toBe("+6.0");
-    await pushMidi(page, [cc7(127)]); // crosses 0.925 → re-engages → +10.0
+    expect(await readout.textContent()).toBe("+3.2");
+    await pushMidi(page, [cc7(127)]); // crosses 0.85 → re-engages → +10.0
     await expect(readout).toHaveText("+10.0");
 
     const trace = await traceOf(page);

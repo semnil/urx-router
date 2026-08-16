@@ -83,6 +83,18 @@ async function boot(page: Page, mappings: Mapping[], ports?: { input?: string; o
   await expect(faderReadout(page, "CH 1")).toBeVisible();
 }
 
+/** A session's readback leaves CH 1 muted — the fake answers 0 for every param nothing
+ *  wrote, and 0 on a send's ON is the send switched off. The echo cases need the guard
+ *  armed by a pass carrying the ON value (an edge toggle ignores a release), so they
+ *  un-mute first and let that pass land before stamping. */
+async function unmuteCh1(page: Page): Promise<void> {
+  if ((await muteChip(page, "CH 1").getAttribute("aria-pressed")) === "true") {
+    await muteChip(page, "CH 1").click();
+    await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "false");
+    await page.waitForTimeout(200); // past the feedback debounce, so armIdx counts only the mute
+  }
+}
+
 /** Every case prints its own evidence: the fake's ordered trace, the analyzer's
  *  verdict, and the MIDI bytes that crossed the bridge in each direction. */
 async function dump(page: Page, title: string, from: string, spec: Parameters<typeof analyze>[1] = {}): Promise<void> {
@@ -161,9 +173,15 @@ test.describe("T4b midi", () => {
       ],
       { input: "Fake In", output: "Fake Out" },
     );
-    // The output port opens at boot and resyncs: the head's value goes out first.
+    // A session, because the output side stays shut until a live readback establishes
+    // the plan — the port opening states nothing of its own. Its resync is what puts
+    // the head's value out first.
+    await goLive(page);
     await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
-    expect((await midiSentOf(page)).at(-1)).toEqual([0xb0, 7, 0]); // MIX 1 send ships off (-∞)
+    // The head's value, and 95 is the readback's own: the fake answers 0 for every param
+    // nothing wrote, which on a send LEVEL is 0.0 dB — the session replaced the factory
+    // -∞ the offline plan carried.
+    expect((await midiSentOf(page))[0]).toEqual([0xb0, 7, 95]);
 
     await mark(page, "cc-vari");
     await pushMidi(page, [cc7(114)]); // +5.0 dB on all three
@@ -655,9 +673,12 @@ test.describe("T4b midi", () => {
         input: "Fake In",
         output: "Fake Out",
       });
-      // Boot resync sends the un-muted state (0). Only a 127 can flip an edge
-      // toggle, so the guard has to be armed by a feedback pass carrying one.
+      // The output side opens with a live readback, not with the port, so the session
+      // is what puts the un-muted state (0) out. Only a 127 can flip an edge toggle, so
+      // the guard has to be armed by a feedback pass carrying one.
+      await goLive(page);
       await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
+      await unmuteCh1(page);
       await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "false");
 
       await stampSends(page);
@@ -710,7 +731,11 @@ test.describe("T4b midi", () => {
     // so it went on passing while comparing against nothing. Its rung is named from the
     // same ladder now.
     await boot(page, [{ control: "ch1/mute", addr: CC7, mode: "absolute" }], { input: "Fake In", output: "Fake Out" });
+    // The output side opens with a live readback rather than with the port, and the
+    // guard this case is about is armed by a feedback pass.
+    await goLive(page);
     await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
+    await unmuteCh1(page);
 
     await stampSends(page);
     const armIdx = (await midiSentOf(page)).length;
@@ -735,7 +760,11 @@ test.describe("T4b midi", () => {
     // matching message arrives first, so an echo and a press inside one window are
     // treated as one echo and one press — in whichever order they happen to land.
     await boot(page, [{ control: "ch1/mute", addr: CC7, mode: "absolute" }], { input: "Fake In", output: "Fake Out" });
+    // The output side opens with a live readback rather than with the port, and the
+    // guard this case is about is armed by a feedback pass.
+    await goLive(page);
     await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
+    await unmuteCh1(page);
 
     await stampSends(page);
     const armIdx = (await midiSentOf(page)).length;
