@@ -82,8 +82,9 @@ function push(kind: MidiProbeKind, text: string, bytes?: number[]): void {
 
 /**
  * One entry as its file record. `ms` is the wall clock, which is the only field two page
- * loads can be ordered by; `t` is kept beside it because the sub-millisecond deltas are
- * what a gap is read from, and rounding to epoch milliseconds would lose them.
+ * loads can be ordered by; `t` is kept beside it because `ms` is rounded to whole
+ * milliseconds, so on an engine whose clock resolves finer than that — jsdom and Chromium
+ * do, the macOS webview does not — `t` is the only field that keeps the difference.
  *
  * `JSON.stringify` is what keeps a detail's own newline or control character from
  * reaching the file as one: the shell refuses the WHOLE batch over a control character
@@ -197,8 +198,6 @@ const recorder: MidiProbe = {
  *  folds away with it, the shape `traceProbe` already has in main.ts. */
 export const midiProbe: MidiProbe | null = import.meta.env.DEV ? recorder : null;
 
-const fmt = (ms: number): string => ms.toFixed(2).padStart(9);
-
 /**
  * The log as text: absolute ms from the first entry, the delta from the previous
  * entry, then per-mark measurements. The per-mark trailer is what decides a gate
@@ -209,6 +208,16 @@ const fmt = (ms: number): string => ms.toFixed(2).padStart(9);
  */
 function report(): string {
   if (log.length === 0) return "(no entries)";
+  // How many decimals this run's clock earns. The engine's clock is `performance.now()`,
+  // and **the shipping webview clamps it to whole milliseconds** — measured on macOS
+  // WKWebView (2026-08-16): 419 records over five launches, not one carrying a fraction.
+  // jsdom and Chromium keep sub-millisecond values, so the same report is read at two
+  // resolutions, and a fixed two decimals prints `.00` on every line of a real-device run
+  // — a precision the reading does not have, in the one report whose whole subject is how
+  // long a gap was. Read off the records rather than off the engine, so it describes the
+  // run being printed rather than the environment the reader is assumed to be in.
+  const dp = log.some((e) => !Number.isInteger(e.t)) ? 2 : 0;
+  const fmt = (ms: number): string => ms.toFixed(dp).padStart(9);
   const t0 = log[0].t;
   const counts: Record<string, number> = {};
   const marks: Array<{ at: number; text: string; tx: number; dropped: number; rx?: MidiProbeEntry }> = [];
@@ -230,8 +239,19 @@ function report(): string {
   const trailer = marks.map(
     (m) =>
       `  ${m.text}: tx=${m.tx} dropped=${m.dropped}, ` +
-      (m.rx ? `first rx +${(m.rx.t - m.at).toFixed(2)} ms (${m.rx.text})` : "no rx after it"),
+      (m.rx ? `first rx +${(m.rx.t - m.at).toFixed(dp)} ms (${m.rx.text})` : "no rx after it"),
   );
+  // Said once, above the numbers it qualifies. Stated as the EVIDENCE rather than as a
+  // verdict about the engine, and the count is what keeps that honest: a report typed in
+  // before any traffic holds one record, and one integral timestamp decides nothing —
+  // Chromium coarsens to a fraction of a millisecond rather than to none, so a short ring
+  // there comes out integral by chance.
+  if (!dp) {
+    trailer.unshift(
+      `  clock: ${log.length} records, none carrying a sub-millisecond value` +
+        ` — read a 0 ms gap as "shorter than this clock" rather than as zero`,
+    );
+  }
   // Where the file is, and whether it is still being written. A run whose sink gave up
   // holds fewer records than the ring does, and without this the file simply ends —
   // which is indistinguishable from the app having stopped there.

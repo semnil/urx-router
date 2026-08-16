@@ -103,6 +103,46 @@ async function openOutput(): Promise<void> {
   await Promise.resolve();
 }
 
+/** Its mirror: the input port, waited on by the receiver the shell hands back. */
+async function openInput(): Promise<void> {
+  dispatch({ type: "port", dir: "in", name: "Controller In" });
+  await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+}
+
+/**
+ * A rig mid-sweep: both ports open, one incoming move applied, and the plan moved past
+ * what that apply fed back — which is what makes the next pass DEFER rather than find
+ * nothing to carry (`apply` records what it applied as sent, so an incoming move alone
+ * leaves the engine with no diff).
+ *
+ * Fake timers are installed here, and vitest fakes `performance` along with them — that
+ * is the clock `MidiEngine`'s `now` hook reads, so without it the quiet-gap arithmetic
+ * these cases turn on would compare against a real clock that never advances.
+ *
+ * `sweep(value, level)` repeats the pair, which is how an address is kept "still moving".
+ */
+async function sweptRig(): Promise<{ control: MidiControl; sweep: (value: number, level: number) => void }> {
+  seedMappings();
+  const { control, hooks } = install();
+  await attached();
+  await openOutput();
+  await openInput();
+
+  vi.useFakeTimers();
+  const sweep = (value: number, level: number): void => {
+    mocks.inputReceiver!([0xb0, 7, value]);
+    const conn = hooks.getPlan().connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    conn.params = { ...conn.params, level };
+  };
+  sweep(100, -20);
+  // The receive has to have LANDED, or none of the rest means anything: swallowed by the
+  // echo guard or the gate there is no `lastRecv`, nothing defers, and these cases would
+  // fail pointing at the settle timer rather than at the swallow.
+  expect(hooks.onApplied).toHaveBeenCalled();
+  mocks.midiSend.mockClear();
+  return { control, sweep };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
@@ -191,6 +231,40 @@ describe("feedback to the controller", () => {
 
     control.resyncFeedback();
     await Promise.resolve();
+    expect(mocks.midiSend).toHaveBeenCalled();
+  });
+
+  // Feedback for an address that is still receiving is held back, so a snapped echo does
+  // not fight an in-progress sweep. The settle timer is the only thing that carries that
+  // value out afterwards — without it a deferred value never reaches the controller at
+  // all, and the fader sits wrong until the plan happens to move again.
+  it("carries a deferred pass out after the quiet gap", async () => {
+    const { control } = await sweptRig();
+
+    control.scheduleFeedback();
+    await vi.advanceTimersByTimeAsync(200); // the debounced pass — inside the quiet gap
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(400); // the settle pass, past it
+    expect(mocks.midiSend).toHaveBeenCalled();
+  });
+
+  // …and it keeps re-arming for as long as the sweep lasts. The callback clears
+  // `settleTimer` before re-running the pass, which is the only reason a SECOND deferral
+  // can arm a timer at all: without that clear the guard stays shut for the life of the
+  // app, and a value deferred twice — an address still moving 350 ms later, which is an
+  // ordinary fader drag — never reaches the controller. Measured: deleting the clear
+  // leaves the case above green.
+  it("keeps re-arming while the sweep continues, and lands once it stops", async () => {
+    const { control, sweep } = await sweptRig();
+
+    control.scheduleFeedback();
+    await vi.advanceTimersByTimeAsync(200); // deferred, settle armed
+    sweep(101, -30); // still moving: the settle pass will defer again and re-arm
+    await vi.advanceTimersByTimeAsync(400);
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(400); // quiet at last
     expect(mocks.midiSend).toHaveBeenCalled();
   });
 

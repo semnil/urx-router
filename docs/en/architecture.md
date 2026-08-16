@@ -1285,7 +1285,14 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   carries `window.__urxMidiProbe` (`ui/midi-probe.ts`), which records the same stream **with timestamps** on
   the engine's own clock plus the live-sync marks, because the question a console trace cannot answer is a
   gap — how long after a burst goes out the controller answers, and whether that answer lands before or
-  after incoming MIDI stops being refused. That recording is written to a **file** as well, because the ring
+  after incoming MIDI stops being refused. **That clock has a floor in the shipping engine**: WKWebView
+  clamps `performance.now()` to whole milliseconds (measured on macOS, 2026-08-16 — 419 records over five
+  launches, not one carrying a fraction), while jsdom and Chromium keep sub-millisecond values. `report()`
+  therefore takes its decimals from the records it is printing and, when they carry none, says how many it
+  counted — a gap shown as 0 ms there is *below the clock* rather than simultaneous, and one integral
+  timestamp is not evidence about an engine. It follows that **no sub-millisecond figure in this document was
+  taken with this probe**: the 0.13 ms echo latency `ECHO_MS` is sized against comes from a separate CoreMIDI
+  monitor and lives in `core/midi/echo-repro.test.ts`. That recording is written to a **file** as well, because the ring
   alone cannot answer a question spanning a page load: it lives in page memory and `performance.now()`
   restarts with it, so a reload — in `tauri dev`, every HMR edit — empties it at the moment being
   investigated and leaves two pages' entries with no common clock. Records go to `midi-trace.jsonl` in the
