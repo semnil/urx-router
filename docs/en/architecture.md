@@ -408,14 +408,13 @@ carries a one-line map of the same directories and points here.
   the one whose node is not the node it tunes, since a ducker hangs under a stereo channel keyed by a wire
   from somewhere else, so its lanes are gathered from three places instead of read off the node the screen
   opened on — and `dyn-ssmcs.ts` the one that is three faces of one bank rather than one processor, moved between from
-  the title row without closing — `dyn-chan.ts` the binding the
+  the bar over the display without closing — `dyn-chan.ts` the binding the
   MONO IN channel-strip processors share, `dyn-plot.ts` the dB×dB transfer plot they draw, `dyn-freq-plot.ts`
   the frequency×gain plot the two EQs draw, and
   `dyn-registry.ts` the one place that knows which processors exist.
-  GATE/COMP show a LADDER of meters —
-  where the threshold is dragged as a fader cap on the input meter, the two sharing one coordinate — or a
-  CURVE; the EQ shows its response plot and the lane rack at once and its segmented bar selects a band
-  instead. The EQ's filter model is `core/eq-response.ts` (measured: the unit's Q is twice the biquad Q,
+  Every screen shows its plot and its lane rack at once — the threshold is dragged as a fader cap on the
+  input meter, the two sharing one coordinate — and a band is selected by pressing its marker on the
+  response rather than from a bar. The EQ's filter model is `core/eq-response.ts` (measured: the unit's Q is twice the biquad Q,
   pass filters ignore Q, a shelf's nominal frequency is its −3 dB-from-plateau point). **Every plot draws
   its curve at the true value and the host clips it to the plot area** — the `drawAxes` / `drawCurve` split
   exists to enforce that: clamping a value onto the axis draws a horizontal bar along the edge, i.e. a
@@ -612,8 +611,9 @@ in-house module `src/i18n/`:
 - `en.ts` — the base language and the source of truth for the message shape (the `Messages` type).
   Every string in it is wrapped in one of three markers, and interpolation functions sit beside
   them unwrapped: `dev()` for a control reproduced from one of the unit's own screens, `fixed()`
-  for one that is identical in every language for a reason that is not the device (only the
-  CONSOLE strip group separators), and `tr()` for this app's own copy. `dev()` and `fixed()` are
+  for one that is identical in every language for a reason that is not the device (all of them on
+  the CONSOLE strip: the group separators and the two readout captions), and `tr()` for this app's
+  own copy. `dev()` and `fixed()` are
   identity functions whose generic parameter keeps the value's **literal type**; `tr()` brands it
   as `Translatable`. `Messages` is `Unbrand<typeof en>`, which drops the brand — so a `tr()` slot
   becomes an ordinary `string` a translation can fill, while a `dev()` / `fixed()` slot keeps its
@@ -671,7 +671,10 @@ the inspector, and the open modal itself.
 > behaviors do. The CONSOLE strip group separators (`INPUTS` / `BUS / FX` / `MONITOR` / `MASTER`) stay
 > in English for a reason that is layout rather than terminology: they are set in vertical writing mode,
 > where a full-width glyph is as wide as the column itself, so translating one moves the rack's geometry
-> and not only its wording. The visible canvas element is a **node**; reserve "module" for software modules
+> and not only its wording. The readout captions under each strip (`FADER` / `METER`) follow them, so
+> that the strip does not carry one translated word among English ones — which is the whole of the
+> exception, and the reason the tuning screens' heading over the same meters IS translated
+> (「メーター」, after the user guide's own "Channel meter" / 「チャンネルメーター」). The visible canvas element is a **node**; reserve "module" for software modules
 > (`src/i18n/` etc.). The legend groups the wire kinds under "Connection types" and the node kinds
 > under "Nodes".
 
