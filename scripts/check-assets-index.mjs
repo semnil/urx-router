@@ -437,6 +437,10 @@ const envText = repoFiles
   .filter((f) => /^\.env/.test(f.replace(/^\.\//, "")) || /\.config\.ts$/.test(f))
   .map(read)
   .join("\n");
+// Built once. The environment-variable oracle scans the whole of it, and rebuilding it per
+// call flattened 5.4 MB again each time — measured at 4.5 ms of a ~100 ms run, which is paid
+// on every CLAUDE.md edit through the hook.
+const envHay = srcText + scriptsText + e2eText + envText;
 
 // Tauri launch flags, from the actual call sites. Truncated at the first
 // column-0 #[cfg(test)] per file: without it lib.rs's
@@ -492,17 +496,17 @@ const takePath = (token, line, note, file) => {
   if (r !== true) pathMisses.push(r);
 };
 
-// A variable is mentioned when its name stands ALONE. Substring was the first spelling and it
-// let `PWTEST_SHARD_WEIGHTS_DISABLED` — a name that exists in this repo only as the mutation a
-// pin performs — answer for `PWTEST_SHARD_WEIGHTS`, so deleting the real variable would have
-// left the assertion green. `\b` does the whole job here: `_` is a word character, so a longer
-// shouted name carries no boundary where the shorter one ends.
-const mentionsEnv = (hay, name) => new RegExp(String.raw`\b${name.replace(/[^\w]/g, "\\$&")}\b`).test(hay);
+// A name is mentioned when it stands ALONE. Substring was the first spelling and it let
+// `PWTEST_SHARD_WEIGHTS_DISABLED` — a name that exists in this repo only as the mutation a pin
+// performs — answer for `PWTEST_SHARD_WEIGHTS`, so deleting the real variable would have left
+// the assertion green. `\b` does the whole job for the two callers below, whose names are
+// shouted variables and `__urx` handles: `_` is a word character, so a longer name carries no
+// boundary where the shorter one ends.
+const mentions = (hay, name) => new RegExp(String.raw`\b${name}\b`).test(hay);
 
 function assertEnv(name, line) {
   checked++;
-  const hay = srcText + scriptsText + e2eText + envText;
-  if (!mentionsEnv(hay, name)) {
+  if (!mentions(envHay, name)) {
     finding(`${DOC}:${line}`, `environment variable ${name} appears nowhere in the repo`);
   }
 }
@@ -521,8 +525,8 @@ function assertTestFilter(script, filter, line) {
 
 function assertHandle(name, line) {
   checked++;
-  const inSrc = srcText.includes(name);
-  const inE2e = e2eText.includes(name);
+  const inSrc = mentions(srcText, name);
+  const inE2e = mentions(e2eText, name);
   if (!inSrc && !inE2e) {
     finding(`${DOC}:${line}`, `handle ${name} is published nowhere under src/ or e2e/`);
     return;
