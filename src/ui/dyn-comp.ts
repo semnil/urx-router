@@ -24,7 +24,7 @@ import { channelDynamics } from "../core/control/translate";
 import { COMP_SCOPE, controlId } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
 import { bindChannelStrip, subObjectIo } from "./dyn-chan";
-import { drawTransferCurve, transferPlot } from "./dyn-plot";
+import { drawTransferCurve, kneeResponse, transferPlot } from "./dyn-plot";
 import { oneKnobLevelRow } from "./dyn-screen";
 import type { DynCtx, DynProcessor, DynValues } from "./dyn-screen";
 
@@ -59,11 +59,9 @@ const OUT_TICKS = [18, 6, -6, -18, -30, -42, -54];
  * (0.275 / 0.274 / 0.283), so it takes the round middle.
  *
  * The symmetry itself is a per-block property, not a house rule. The SSMCS strip's
- * compressor — the other bank on the same channel — was measured directly in 2026-08
- * and its knee is ASYMMETRIC, opening 2.1x further above the threshold than below on
- * Medium, with a full width of 8 dB where doubling the lower reach had predicted 14.
- * So neither bank's constants may be carried across to the other, and a single width
- * per setting cannot express the SSMCS one at all.
+ * compressor — the other bank on the same channel — has an asymmetric knee, which a
+ * single width per setting cannot express; its reaches are a pair, in dyn-ssmcs.ts. So
+ * neither bank's constants may be carried across to the other.
  *
  * What stays an assumption here is the curvature BETWEEN the edges: the standard
  * quadratic interpolation. The signal-side fit above cannot separate it from nearby
@@ -77,15 +75,16 @@ const kneeWidth = (knee: number): number => KNEE_WIDTH_DB[knee] ?? KNEE_WIDTH_DB
  *  once per redraw rather than read per sample point: the curve evaluates it ~120
  *  times, and each `v.get` walks the plan. */
 function responseOf(v: DynValues): (inDb: number) => number {
-  const thr = v.get("threshold");
-  const ratio = Math.max(1, v.get("ratio"));
-  const gain = v.get("gain");
+  // Half the width each side: this block's knee was fitted as one symmetric number, and
+  // `kneeResponse` reproduces exactly what the quadratic above it used to draw.
   const w = kneeWidth(Math.round(v.get("knee")));
-  return (inDb) => {
-    const d = inDb - thr;
-    if (w > 0 && Math.abs(d) <= w / 2) return inDb + ((1 / ratio - 1) * (d + w / 2) ** 2) / (2 * w) + gain;
-    return (d <= 0 ? inDb : thr + d / ratio) + gain;
-  };
+  return kneeResponse({
+    thr: v.get("threshold"),
+    ratio: v.get("ratio"),
+    up: w / 2,
+    down: w / 2,
+    gain: v.get("gain"),
+  });
 }
 
 const io = subObjectIo("comp");

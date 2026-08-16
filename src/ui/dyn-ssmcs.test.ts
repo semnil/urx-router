@@ -995,7 +995,7 @@ describe("what the curves draw", () => {
     draw(SSMCS_COMP_DYN);
     // Factory: threshold raw 100 and Comp Drive raw 100, which put the corner at
     // 0.2 x (100 - 100) - 20 = -20 dBFS; ratio raw 30 -> 2.50:1; knee raw 1 (Medium)
-    // reaches 5.4 dB above the corner, so 0 dBFS is past the knee and lands on the
+    // reaches 10.0 dB above the corner, so 0 dBFS is past the knee and lands on the
     // asymptote at -20 + 20/2.5 = -12.0. The VALUE is the assertion — a count passes
     // whatever number the model computed, which is how a wrong corner would go unseen.
     const gr = h!.canvas.texts.filter((tx) => tx.style === "--gr");
@@ -1009,7 +1009,7 @@ describe("what the curves draw", () => {
    * model interpolated the knee with a quadratic centred between the two measured edges
    * while the leg above it stayed anchored to the threshold — and for an ASYMMETRIC knee
    * those two do not meet, so the drawing carried a vertical step at the upper edge
-   * (0.84 dB at the factory settings, 1.8 dB on Soft). Nothing saw it: the only
+   * (0.45 dB at the factory settings, 0.60 dB on Soft). Nothing saw it: the only
    * assertions on this plot were a label count.
    *
    * The bound is the 1:1 leg's own rise, which every sample below the knee already has,

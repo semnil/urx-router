@@ -74,6 +74,44 @@ describe("plot drawing stays off the frame instead of on its edge", () => {
     expect(at(thr)).toBeCloseTo(compGeo.py(inAtThreshold + depth), 1);
   });
 
+  it("joins the compressor's knee to both legs at the edges, not just at its centre", () => {
+    // The centre is where every interpolant through the same two edges agrees, so the pin
+    // above cannot see the shape. These are the two joins: below the knee the curve is
+    // unity, above it the asymptote, and an interpolant that misses either draws a step.
+    //
+    // Written out rather than imported, as the pin above is: importing the model would
+    // make this agree with whatever the model does.
+    const W_MEDIUM = 16;
+    const thr = -20;
+    const ratio = 4;
+    const compGeo = COMP_DYN.plotGeo(W, H, {} as never);
+    const r = recorder();
+    COMP_DYN.drawCurve(r.ctx, compGeo, vals({ threshold: thr, ratio, gain: 0, knee: 1 }), TOK, {} as never);
+
+    const SAMPLES = 121;
+    const lo = COMP_DYN.loDb;
+    const step = (0 - lo) / (SAMPLES - 1);
+    // The nearest sampled input to a given level, and the level that sample actually
+    // carries — an edge does not land on the grid, and comparing at the asked-for level
+    // instead would fail by the grid's own spacing.
+    const sampled = (db: number) => {
+      const i = Math.round((db - lo) / step);
+      return { y: r.ys[i], at: lo + i * step };
+    };
+
+    const lower = sampled(thr - W_MEDIUM / 2);
+    expect(lower.y).toBeCloseTo(compGeo.py(lower.at), 1);
+
+    const upper = sampled(thr + W_MEDIUM / 2);
+    expect(upper.y).toBeCloseTo(compGeo.py(thr + (upper.at - thr) / ratio), 1);
+
+    // And between them the curve is neither leg: a knee that had collapsed to a corner
+    // would satisfy both joins above while drawing a straight line through the middle.
+    const mid = sampled(thr - W_MEDIUM / 4);
+    const asUnity = compGeo.py(mid.at);
+    expect(Math.abs(mid.y - asUnity)).toBeGreaterThan(1);
+  });
+
   it("leaves a compressor's response inside its own axes at every setting", () => {
     // Not a clamp: makeup gain only adds and the knee interpolation only subtracts, so the
     // -54…+18 axes contain the response. Checked at the extremes rather than assumed.

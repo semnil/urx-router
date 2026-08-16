@@ -617,9 +617,12 @@ is the same assumption the shipped COMP curve carries.
 - **The compressor.** Its threshold is an internal value driven by Comp Drive, and the drive adds gain
   of its own — so that one knob moves the corner *and* lifts the output, which is what the operator
   sees on the OUT lane. A drive of zero is not a threshold pushed out of range: it disables the
-  compressor. The knee is **asymmetric**, opening further above the threshold than below, so
-  `dyn-comp.ts`'s `KNEE_WIDTH_DB` — one symmetric width per setting — cannot express it and must not be
-  reused. The full-scale reduction annotation is read off the drawn curve with the gain terms taken
+  compressor. The knee is **asymmetric**, opening further above the threshold than below. **The knee
+  model is one function for both banks** (`kneeResponse` in `dyn-plot.ts`), taking the two reaches as a
+  pair; what stays per-bank is the DATA. `dyn-comp.ts`'s `KNEE_WIDTH_DB` is a measurement fitted as one
+  symmetric width, so that bank passes `up = down = width/2` — and on a symmetric pair the cubic is the
+  same polynomial as the quadratic it replaced, satisfying the same four constraints (both edges, both
+  slopes), so sharing moved neither curve. The full-scale reduction annotation is read off the drawn curve with the gain terms taken
   back out, not off the asymptote, so a knee still open at 0 dBFS is labelled with what it does there.
 - **The makeup is one gain over the whole curve**, as the shipped COMP screen applies its own. What was
   measured is what the unit does WHILE COMPRESSING — five raw points, linear, ±6 dB, with the GR meter
@@ -633,13 +636,15 @@ is the same assumption the shipped COMP curve carries.
   transfer curve does neither. Which leg the unit puts it on is the open question; what settles it is
   walking the input across the corner and reading `111 - 108` on both sides.
 - **The knee's shape** is a cubic through both measured edges carrying each leg's own slope — 1 below,
-  1/ratio above — with the two slopes limited to the cubic's monotone region first. Both halves earn
-  their place. A quadratic cannot do it at all: its endpoint is fixed by its two slopes, so on an
-  asymmetric knee it lands `(1 - 1/ratio)(up - down)/2` from the asymptote, 0.84 dB at the factory
-  settings, drawn as a vertical step at the upper edge. An unlimited cubic overshoots: a Medium knee at
-  infinite ratio leaves the 1:1 leg's slope 3.08x the secant through the knee, past the 3 the monotone
-  region allows. The limit scales both slopes by `3/hypot`, which is 1 wherever the pair is already
-  inside the region, so every knee that does not need it still joins its legs exactly.
+  1/ratio above — with the two slopes limited to the cubic's monotone region first. A quadratic cannot
+  do it at all: its endpoint is fixed by its two slopes, so on an asymmetric knee it lands
+  `(1 - 1/ratio)(up - down)/2` from the asymptote, 0.45 dB at the factory settings, drawn as a vertical
+  step at the upper edge. The limit is what stops an unlimited cubic overshooting — rising above the
+  plateau and coming back down, which is an input increase drawn as an output decrease. It scales both
+  slopes by `3/hypot`, which is 1 wherever the pair is already inside the region, so a knee that does
+  not need it still joins its legs exactly. **With the measured reaches it never engages**: the worst
+  case over the whole ratio range is 2.18 against a bound of 3, and a Hard knee is zero wide so the
+  branch does not run at all. It stays because the reaches are measured values that can move again.
 - **The EQ.** Three fixed bands: LOW shelving, MID peaking, HIGH shelving. The shelf convention is the
   4-band model's — the nominal frequency is the point 3 dB below the plateau — and the peaking Q is
   **not**: the 4-band's "the unit's Q is twice the biquad Q" was refuted here. MID takes the same
