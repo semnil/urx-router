@@ -693,12 +693,23 @@ A log assembled from two runs is the case none of that reaches on its own: where
 case timed twice with no retry between them gives it away, but halves that do not overlap cover the
 corpus exactly once between them while the durations being cut come from two machines at two times. Two
 readings answer it, and they answer different amounts of it. The list reporter opens a sharded run with
-`Running 38 tests using 2 workers, shard 1 of 3`, so each half brings its own: a header set that is not
-exactly one per shard, summing to what this checkout collects, is refused — and that reads a log written
-at any time, every one that already exists included. What it does not reach is a stitch assembled to
-leave exactly one header per shard, measured at exit 0 with an array derived from two runs. That is what
-the run id and attempt `race.yml` echoes ahead of the tests settle, for logs written from now on:
-Playwright emits nothing that identifies a run, and a log read from a file has no timestamps either.
+`Running 38 tests using 2 workers, shard 1 of 3`, so each half brings its own, and a header set that is
+not exactly one per shard is refused — that reads a log written at any time, every one that already
+exists included. `race.yml` then echoes the run id and attempt ahead of the tests, once per shard job,
+which refuses two ids, two attempts of one id, and one id on fewer lines than there are shards. That
+last is a fresh run stitched onto a log written before the echo, and it passes every other reading here
+— measured. Playwright emits nothing that identifies a run, and the timestamps a `gh run view --log`
+carries cannot answer it either: a shard job can sit queued for as long as it takes, so no spread
+between two of them separates one run from two.
+
+What none of it reaches is a stitch of two logs BOTH older than the echo, cut to put exactly one header
+per shard. That one shrinks as logs age out rather than being closed.
+
+**The corpus size is deliberately not part of this.** A log counting one case more than the checkout
+collects is the normal state after a deletion — which is exactly when the array has to be re-derived, so
+the only logs that exist are older ones — and refusing it there would put back the refusal that made the
+tool unusable at that moment. It stays a printed note, beside the cases the derivation cannot account
+for at all, which is where the decision already lives.
 
 The value reaches the shard step through four names, and GitHub resolves one that does not exist to the
 empty string, which Playwright treats as no weights at all rather than as an error — so the shard step

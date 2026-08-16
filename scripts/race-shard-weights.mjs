@@ -223,26 +223,22 @@ console.log(`${collected.length} cases collected, ${timed.length} timed in the l
 if (measured.size === 0) {
   die("no timed lines in the log — wrong run, wrong workflow, or the list reporter's format has moved");
 }
-// What the log says it IS, before anything is read out of it: one complete sharded run of
-// this corpus. The two refusals below both need the halves of a stitch to overlap or to leave
-// something uncovered, and two partial logs from different runs need do neither.
-{
-  const problem = runShapeProblem(runShape(log), shards, collected.length);
-  if (problem) die(`the log does not describe one run of this checkout: ${problem}`);
-}
+// What the log says it IS, before anything is read out of it: one complete sharded run. The
+// two refusals below both need the halves of a stitch to overlap or to leave something
+// uncovered, and two partial logs from different runs need do neither.
+const shapeProblem = runShapeProblem(runShape(log), shards);
+if (shapeProblem) die(`the log does not describe one run: ${shapeProblem}`);
 // Two runs in one file, which the note below cannot be relaxed past: `durations` takes the
 // last line for a key, so the appended run supplies every duration they share and the split
 // is priced from a run nobody chose. Measured before this refusal existed: stitching an older
 // log onto a current one exits 0 with an array the newer run alone does not produce.
-{
-  const doubled = doubledInLog(log);
-  if (doubled.size) {
-    die(
-      `${doubled.size} case(s) are timed twice with no retry between them — a case runs in one shard, so ` +
-        `this file is more than one run and the later one silently wins every duration they share:\n    ` +
-        `${list([...doubled])}`,
-    );
-  }
+const doubled = doubledInLog(log);
+if (doubled.size) {
+  die(
+    `${doubled.size} case(s) are timed twice with no retry between them — a case runs in one shard, so ` +
+      `this file is more than one run and the later one silently wins every duration they share:\n    ` +
+      `${list([...doubled])}`,
+  );
 }
 if (unexplained.length) {
   die(

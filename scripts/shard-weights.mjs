@@ -107,22 +107,31 @@ export function skippedInLog(text) {
 // shard 1 of 3`. The webkit job prints the same line WITHOUT the shard clause, which is why
 // the clause is required rather than optional — one `gh run view --log` carries both jobs.
 const SHARD_HEADER = /Running (\d+) tests? using \d+ workers?, shard (\d+) of (\d+)\s*$/;
-// What .github/workflows/race.yml echoes ahead of the tests. Playwright emits nothing that
-// identifies a run, and a log read from disk has no timestamps either, so the identity has to
-// be put there by the thing that produced it.
+// What .github/workflows/race.yml echoes ahead of the tests, once per shard job. Playwright
+// emits nothing that identifies a run, and the timestamps a `gh run view --log` carries cannot
+// answer it either: a shard job can sit queued for as long as it takes, so no spread between
+// two of them separates one run from two. The identity has to be put there by what produced it.
 const RUN_MARK = /\burx-race-run (\d+\/\d+)/;
 
-/** What a log says about itself: which shards it is, and which run(s) produced them. */
+/**
+ * What a log says about itself: which shards it is, and which run marked each of them.
+ *
+ * The marks are a LIST rather than the distinct ids, because the two readings catch different
+ * stitches. Two ids is two runs outright. One id on fewer lines than there are shards means the
+ * REST of the file predates the echo — measured on run 31866387883's log, which carries exactly
+ * three: a fresh marked run supplying two shards and an old unmarked log supplying the third
+ * passed every other reading here.
+ */
 export function runShape(text) {
   const shards = [];
-  const runs = new Set();
+  const marks = [];
   for (const raw of text.split("\n")) {
     const h = raw.match(SHARD_HEADER);
     if (h) shards.push({ tests: Number(h[1]), shard: Number(h[2]), of: Number(h[3]) });
     const r = raw.match(RUN_MARK);
-    if (r) runs.add(r[1]);
+    if (r) marks.push(r[1]);
   }
-  return { shards, runs: [...runs] };
+  return { shards, marks };
 }
 
 /**
@@ -135,20 +144,36 @@ export function runShape(text) {
  * priced from two different machines at two different times. These headers are what makes
  * that visible: each half brings its own, so the set has to be exactly one per shard.
  *
- * The run marker is the exact form of the same question and the headers are the structural
- * one, and they answer different amounts of it. The marker settles it: two ids, or two
- * attempts of one id, are two runs whatever the lines say. The headers reach a stitch that
- * OVERLAPS, one missing a shard, one cut into another number of shards and one whose corpus
- * is not this one — but a stitch assembled to leave exactly one header per shard passes them,
- * measured: shard 1 of a run and shards 2 and 3 of another derive an array at exit 0 with no
- * marker present. Both are kept because only the headers read a log that already exists — no
- * log written before the workflow echoed a run id carries a marker, and refusing those would
- * make the tool unusable in the situation that calls for it, which is the trap the `unused`
- * note already fell into once.
+ * The marks settle it wherever they reach: two ids, two attempts of one id, or one id on fewer
+ * lines than there are shards. The headers are the structural form of the same question and
+ * reach a stitch that OVERLAPS, one missing a shard, and one cut into another number of shards.
+ * Both are kept because only the headers read a log that already exists — no log written before
+ * the workflow echoed a run id carries a mark at all, and refusing those would make the tool
+ * unusable in the situation that calls for it, which is the trap the `unused` note in
+ * race-shard-weights.mjs already fell into once.
+ *
+ * What that leaves is a stitch of two logs BOTH written before the echo, assembled to put
+ * exactly one header per shard: measured, that derives an array at exit 0. It is what the marks
+ * shrink as logs age out.
+ *
+ * The corpus size is deliberately NOT asked here. A log carrying one case more than this
+ * checkout collects is the normal state after a deletion — which is exactly when the array has
+ * to be re-derived — and race-shard-weights.mjs decides what that costs, in the one place that
+ * already weighs it against `unexplained`.
  */
-export function runShapeProblem({ shards, runs }, want, collectedCount) {
+export function runShapeProblem({ shards, marks }, want) {
+  const runs = [...new Set(marks)];
   if (runs.length > 1) {
     return `the log is ${runs.length} runs (${runs.join(", ")}) — every duration they share is taken from whichever was appended last`;
+  }
+  if (marks.length > want) {
+    return `${runs[0]} marks ${marks.length} shards where a run has ${want} — this file carries that run more than once`;
+  }
+  if (marks.length && marks.length < want) {
+    return (
+      `${marks.length} of ${want} shard(s) name the run that produced them — the rest were written before the ` +
+      `workflow echoed it, so this file is more than one run`
+    );
   }
   if (!shards.length) {
     return (
@@ -169,10 +194,6 @@ export function runShapeProblem({ shards, runs }, want, collectedCount) {
   const missing = Array.from({ length: want }, (_, i) => i + 1).filter((k) => !times.has(k));
   if (missing.length) {
     return `shard ${missing.join(", ")} of ${want} never started — the log is part of a run`;
-  }
-  const sum = shards.reduce((a, s) => a + s.tests, 0);
-  if (sum !== collectedCount) {
-    return `the run collected ${sum} case(s) across its shards where this checkout collects ${collectedCount} — the log is from another revision`;
   }
   return null;
 }
