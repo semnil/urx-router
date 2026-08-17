@@ -208,6 +208,8 @@ jobs:
     # 2026-11-02 and fails during October's brownouts — and the context this job feeds is
     # required, so that failure is every merge rather than this job alone.
     runs-on: macos-26
+    permissions:
+      contents: read
     # No debug info. Nothing here debugs: the tests report by assertion message, and a
     # backtrace would be read from the source anyway. Measured on the first warm run
     # before this: the cargo work was 13.65 s against 11.7 s spent restoring a 415 MB
