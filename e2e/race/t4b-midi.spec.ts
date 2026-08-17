@@ -662,10 +662,12 @@ test.describe("T4b midi", () => {
       return performance.now() - at;
     }, bytes);
 
-  // Three rungs inside the window and two outside, the innermost and outermost placed
-  // one margin from the edge — the shape the 300 ms ladder ran at (50 / 250 / 290 |
-  // 310 / 400), scaled to the window rather than kept at those numbers.
-  for (const d of [10, 25, ECHO_WINDOW_MS - EDGE_MARGIN_MS, ECHO_WINDOW_MS + EDGE_MARGIN_MS, 400]) {
+  // The two rungs that BRACKET the window, one margin either side of the edge. It ran
+  // five (10 / 25 / 40 | 60 / 400) while the window itself was being sized; what those
+  // three extra samples add now is a second and third reading of a boundary the pair
+  // already states, and each of them is a case that has to be re-driven whenever the
+  // way feedback reaches the wire changes.
+  for (const d of [ECHO_WINDOW_MS - EDGE_MARGIN_MS, ECHO_WINDOW_MS + EDGE_MARGIN_MS]) {
     const inWindow = d < ECHO_WINDOW_MS;
     const verb = inWindow ? "eaten" : "applied";
     test(`a matching message ${d} ms after the feedback emit is ${verb}`, async ({ page }) => {
