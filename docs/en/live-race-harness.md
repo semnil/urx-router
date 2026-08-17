@@ -689,6 +689,17 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
+**The current array, and the cut the tool would not take.** `[38, 74, 51]` is derived from the race run
+of the 163-case corpus (2026-08-17). The derivation's own optimum is `[38, 73, 52]`, and it refused to
+print it: that cut falls INSIDE a `test.describe.serial` block in `t5-drop`, which Playwright moves
+whole, so the runner assigns 74 / 51 against the plan's 73 / 52 — the refusal the paragraph above
+describes, doing its job. The reachable cut is what the array carries. Measured against that run's
+durations, under the two-worker model: `38:66:59` (what a deletion left behind, corrected by
+subtraction) runs 253 / 248 / 262 s, `38:74:51` runs 253 / 256 / 253 s, and a division with no
+contiguity constraint at all would be 248 s. So the worst shard comes down 6 s — the point of
+re-deriving is not that number but that the cut is a duration reading again rather than the residue of
+an edit, since nothing reports an array whose durations have moved.
+
 A log assembled from two runs is the case none of that reaches on its own: where the halves overlap, a
 case timed twice with no retry between them gives it away, but halves that do not overlap cover the
 corpus exactly once between them while the durations being cut come from two machines at two times. Two

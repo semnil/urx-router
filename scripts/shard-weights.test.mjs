@@ -455,10 +455,17 @@ describe("inspectWeights", () => {
   });
 
   // A cut that falls inside a group Playwright assigns whole (e2e/race has one, the serial
-  // ladder in t5-drop) moves cases without moving the sum.
-  it("reports a single shard whose collected count is off", () => {
-    const found = messages({ shardCounts: [38, 74, 58] });
-    expect(found).toHaveLength(2);
+  // ladder in t5-drop) moves cases without moving the sum — so the two shards either side
+  // of that cut both report. Expressed against the ledger's own array rather than written
+  // out: a re-derivation moves those numbers, and a fixture holding the previous ones
+  // fails for a reason that has nothing to do with the rule (measured — this case broke
+  // on the array going 38:66:59 → 38:74:51, where the literal it held was one shard off
+  // instead of two and the rule itself was untouched).
+  it("reports the two shards either side of a cut that moved", () => {
+    const moved = [...WEIGHTS];
+    moved[1] += 1;
+    moved[2] -= 1;
+    expect(messages({ shardCounts: moved })).toHaveLength(2);
   });
 
   // The sum is what says "re-derive"; taking the per-shard readings as well would report
