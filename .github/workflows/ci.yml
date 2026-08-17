@@ -182,7 +182,7 @@ jobs:
       - run: pnpm check:skips
       - run: pnpm test:coverage
       - name: Upload frontend coverage
-        uses: codecov/codecov-action@8cad3ba95e5920c42f44492e54bc9639cba47959 # v6.0.2
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2
         with:
           fail_ci_if_error: false
           files: ./coverage/lcov.info
@@ -318,7 +318,7 @@ jobs:
       # never reached is covered by whichever one did. Only `name` separates them, so a
       # shard that uploaded nothing is still visible as itself.
       - name: Upload frontend E2E coverage
-        uses: codecov/codecov-action@8cad3ba95e5920c42f44492e54bc9639cba47959 # v6.0.2
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2
         with:
           fail_ci_if_error: false
           files: ./coverage/e2e/lcov.info
