@@ -353,6 +353,7 @@ jobs:
     needs: [preflight, frontend, rust, e2e]
     if: always()
     runs-on: ubuntu-latest
+    permissions: {}
     timeout-minutes: 5
     steps:
       - name: Fail unless every job passed or skipped by design
