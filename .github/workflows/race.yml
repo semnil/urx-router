@@ -42,6 +42,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
 # Pushing again to a pull request abandons the run already in flight. This is the
 # expensive tier and it now runs on ordinary pull requests, so a review carrying several
 # pushes would otherwise pay for it once per push.
