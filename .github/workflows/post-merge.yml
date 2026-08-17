@@ -14,9 +14,6 @@ on:
       - '**/*.md'
       - 'docs/**'
 
-permissions:
-  contents: read
-
 # Keyed by the branch, so merges landing in quick succession leave only the newest run.
 # Nothing waits on this workflow — tag-release.yml watches CI, not this — so a cancelled
 # run costs that commit its license gate and its cache warm, both of which the next merge
