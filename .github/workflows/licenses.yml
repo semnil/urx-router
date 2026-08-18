@@ -9,6 +9,9 @@ name: Licenses
 on:
   workflow_call:
 
+permissions:
+  contents: read
+
 # `github.run_id` inside a called workflow is the CALLER's run id, so each invocation is
 # a group of one. That is the point: post-merge.yml and release.yml both call this, and a
 # group they shared would let a merge landing during a release build cancel the very
