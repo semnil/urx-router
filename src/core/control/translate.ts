@@ -1918,9 +1918,10 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   // compander / multi-band comp), also emit its engine parameter array. The
   // selector binds + populates the engine; the array writes override with the
   // plan's values (absolute state, like the FX-channel effects). The ON/OFF
-  // (bypass) switch is emitted after the selector: the device auto-engages it on
-  // every (re)selection, so the plan's state must land last to stick. With No
-  // Effect selected the device ignores the switch, so it is not written then.
+  // (bypass) switch is emitted after the selector AND the restored engine slots:
+  // the device auto-engages it on every (re)selection, so the plan's intent must
+  // land last to stick.
+  // With No Effect selected the device ignores the switch, so it is not written.
   for (const node of model.nodes) {
     const ifx = insertFxControl(model, node.id);
     const np = plan.nodeParams[node.id] ?? {};
@@ -1929,13 +1930,13 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     // device would take it verbatim and could bind an effect the plan never named.
     const v = ifx.options.some((o) => o.value === np.insertFx) ? np.insertFx : INSERT_FX_NONE;
     for (const inst of ifx.instances) out.push(rawCommand("INSERT_FX", ifx.param, "insertFx", inst, v));
+    const fam = insertFxFamilyOf(v);
+    if (fam) pushInsertFxEffectCommands(out, insertFxEngine(fam, ifx.isOutput), fam, np.insertFxParams);
     if (np.insertFxOn !== undefined && v !== INSERT_FX_NONE) {
       for (const inst of ifx.instances) {
         out.push(rawCommand("INSERT_FX_ON", ifx.onParam, "bool", inst, np.insertFxOn ? 1 : 0));
       }
     }
-    const fam = insertFxFamilyOf(v);
-    if (fam) pushInsertFxEffectCommands(out, insertFxEngine(fam, ifx.isOutput), fam, np.insertFxParams);
     own(node.id);
   }
 

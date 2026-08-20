@@ -216,6 +216,53 @@ describe("planToCommands", () => {
     expect(mix.every((c) => c.vdValue === 1792)).toBe(true);
   });
 
+  // A URX22 plan carrying both shapes the emit loop can take: an input channel on a
+  // single instance, and an output bus whose linked legs share one engine. One `it` per
+  // claim — vitest stops at the first failure, so a bundled case leaves the second
+  // claim unmeasured on the commit it is supposed to be a net for.
+  const u22InsertFxPlan = (): ReturnType<typeof emptyPlan> => {
+    const u22 = getModel("URX22");
+    const plan = emptyPlan("URX22");
+    ensureFixedConnections(u22, plan);
+    plan.nodeParams.ch2 = { insertFx: 512, insertFxParams: { "18": 37 }, insertFxOn: false };
+    plan.nodeParams["bus.mix2"] = { insertFx: 1792, insertFxParams: { "9": 99 }, insertFxOn: false };
+    return plan;
+  };
+
+  it("emits a URX22 input selector, then its engine slots, then the bypass intent", () => {
+    const cmds = planToCommands(getModel("URX22"), u22InsertFxPlan());
+    const selector = cmds.findIndex((c) => c.name === "INSERT_FX" && c.paramId === 135 && c.y === 1);
+    const slot = cmds.findIndex((c) => c.paramId === 701 && c.y === 18);
+    const on = cmds.findIndex((c) => c.paramId === 134 && c.y === 1);
+    expect([cmds[selector].vdValue, cmds[slot].vdValue, cmds[on].vdValue]).toEqual([512, 37, 0]);
+    expect(selector).toBeLessThan(slot);
+    expect(slot).toBeLessThan(on);
+    // Nothing else insert-FX lands inside the run, so hoisting the bypass into a second
+    // pass over the nodes fails here rather than satisfying the two comparisons above.
+    const between = cmds.slice(selector + 1, on).filter((c) => c.name.startsWith("INSERT_FX"));
+    expect(between.length).toBeGreaterThan(0);
+    expect(between.every((c) => c.name === "INSERT_FX_EFFECT" && c.paramId === 701)).toBe(true);
+  });
+
+  it("emits both URX22 output legs' selectors, then the shared engine slot, then both bypass intents", () => {
+    const cmds = planToCommands(getModel("URX22"), u22InsertFxPlan());
+    const selectors = cmds.filter((c) => c.name === "INSERT_FX" && c.paramId === 671);
+    const slot = cmds.findIndex((c) => c.paramId === 693 && c.y === 9);
+    const ons = cmds.filter((c) => c.paramId === 670);
+    expect(selectors.map((c) => [c.y, c.vdValue])).toEqual([
+      [2, 1792],
+      [3, 1792],
+    ]);
+    expect(cmds[slot].vdValue).toBe(99);
+    expect(ons.map((c) => [c.y, c.vdValue])).toEqual([
+      [2, 0],
+      [3, 0],
+    ]);
+    // Max and min, so a leg that did not move is a failure rather than an average.
+    expect(Math.max(...selectors.map((c) => cmds.indexOf(c)))).toBeLessThan(slot);
+    expect(slot).toBeLessThan(Math.min(...ons.map((c) => cmds.indexOf(c))));
+  });
+
   it("emits COMP/EQ type on mono channels but not stereo", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

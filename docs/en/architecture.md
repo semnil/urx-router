@@ -1478,7 +1478,8 @@ written at all:
   pointer, and the EQ band commands are simply not emitted while 1-knob is on.
 - **The unit changes actual state.** Selecting an insert effect turns its ON switch on by itself. Here the
   write model's contract applies instead — `planToCommands` writes absolute state, so the plan has to win: the
-  ON parameter is emitted *after* the selector to put the unit back where the plan says. Leaving this one to
+  ON parameter is emitted *after* the selector and after the engine values it applies to, to put the unit
+  back where the plan says. Leaving this one to
   the unit would silently make an effect the user switched off audible again.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the

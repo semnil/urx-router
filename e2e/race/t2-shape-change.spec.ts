@@ -586,8 +586,8 @@ test.describe("T2 shape-change", () => {
     expect(noneWrites.some((s) => s.addr === CH1_INSERT_FX)).toBe(true);
     expect(noneWrites.some((s) => s.addr === CH1_INSERT_FX_ON)).toBe(false);
 
-    // Re-selecting the same effect brings the pair back in the same order, in one
-    // flush, with the engine slot writes behind them.
+    // Re-selecting the same effect brings the pair back in one flush, with the engine
+    // slot writes between the selector and the bypass.
     await mark(page, "reselect");
     await sel.selectOption({ label: "Compander-H" });
     await settleAfter(page, "reselect", 1800);
@@ -605,6 +605,8 @@ test.describe("T2 shape-change", () => {
     // follow it too.
     expect(engine.length).toBeGreaterThan(0);
     expect(Math.min(...engine.map((s) => s.seq))).toBeGreaterThan(reSel!.seq);
+    // ...and the bypass follows them, so the intent lands after the values it applies to.
+    expect(Math.max(...engine.map((s) => s.seq))).toBeLessThan(reOn!.seq);
   });
 
   // shape-scene-write-scope. Differential by construction: one script, two scopes.
