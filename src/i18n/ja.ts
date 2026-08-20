@@ -372,6 +372,7 @@ export const ja: Messages = {
         outGain: "Out Gain",
         width: "Width",
         gain: "Gain",
+        volume: "Volume",
         bass: "Bass",
         middle: "Middle",
         treble: "Treble",

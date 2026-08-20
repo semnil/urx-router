@@ -462,6 +462,11 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
 // Guitar Amp Classics (engine 697). Common params shared by all four types, plus
 // the type-specific slot 6 and the per-type extras.
 const GUITAR_COMMON_PARAMS: InsertFxParamDesc[] = [
+  // Slot 7 is Volume on Clean and Gain on the other three — the label the unit prints,
+  // confirmed on the hardware and listed that way by the effect guide (Volume under
+  // CLEAN Only, Gain repeated under each of the other three). The slot, the encoding and
+  // the range are one thing across all four, so it stays here and only its label is
+  // swapped, which keeps the read order the emit path walks.
   { slot: 7, label: "gain", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
   { slot: 9, label: "bass", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
   { slot: 10, label: "middle", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
@@ -573,6 +578,12 @@ function guitarTypeParams(family: InsertFxFamily): InsertFxParamDesc[] {
   }
 }
 
+/** The shared guitar rows for one amp type: slot 7 reads Volume on Clean. */
+function guitarCommon(family: InsertFxFamily): InsertFxParamDesc[] {
+  if (family !== "guitar-clean") return GUITAR_COMMON_PARAMS;
+  return GUITAR_COMMON_PARAMS.map((d) => (d.slot === 7 ? { ...d, label: "volume" } : d));
+}
+
 // The descriptor / writable-slot lists are static per family, so memoize them: the
 // per-node loop in planToCommands (every live-sync tick) and readback both ask for
 // them repeatedly.
@@ -591,7 +602,7 @@ export function insertFxParams(family: InsertFxFamily): InsertFxParamDesc[] {
           ? PITCH_PARAMS
           : family === "mbc"
             ? []
-            : [...GUITAR_COMMON_PARAMS, ...guitarTypeParams(family)];
+            : [...guitarCommon(family), ...guitarTypeParams(family)];
     PARAMS_CACHE.set(family, cached);
   }
   return cached;

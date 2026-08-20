@@ -446,6 +446,7 @@ export const en = {
         outGain: dev("Out Gain"),
         width: dev("Width"),
         gain: dev("Gain"),
+        volume: dev("Volume"),
         bass: dev("Bass"),
         middle: dev("Middle"),
         treble: dev("Treble"),
