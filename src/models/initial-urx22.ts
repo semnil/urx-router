@@ -7,8 +7,11 @@
 //   - No LINE OUT and no microSD on URX22, so the MIX 1 -> LINE OUT default
 //     patch is dropped and no SD nodes are seeded.
 //   - Hi-Z lives on CH2 (HI_Z_CHANNELS in translate.ts), so only CH2 carries hiZ.
-// Values not affected by the model differences mirror URX44V verbatim. Treat the
-// whole file as an unverified estimate until a real URX22 reset can be captured.
+// Values not affected by the model differences mirror URX44V verbatim, and most of
+// this file is an unverified factory-state estimate. The INS FX values are the one
+// exception: they are the adopted URX22 implementation values, not an estimate held
+// until a capture arrives. The values themselves live with the code that uses them
+// (insertFxControl in core/control/translate.ts, the anchors in core/control/params.ts).
 
 import type { NodeParams, PlanConnection } from "../core/plan";
 import { SSMCS_INITIAL } from "../core/plan";
@@ -50,6 +53,7 @@ const monoChannel = (hiZ?: boolean): NodeParams => ({
   },
   ssmcs: SSMCS_INITIAL,
   insertFx: -1,
+  insertFxOn: false,
 });
 
 const stereoChannel = (gain: number): NodeParams => ({
@@ -65,6 +69,7 @@ const stereoChannel = (gain: number): NodeParams => ({
 const outputBus = (): NodeParams => ({
   level: 0,
   insertFx: -1,
+  insertFxOn: false,
   eqOn: true,
   eqOneKnob: { on: false, type: 0, level: 0 },
   eqBands: EQ_FLAT(),

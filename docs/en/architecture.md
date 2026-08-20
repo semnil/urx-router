@@ -522,7 +522,8 @@ carries a one-line map of the same directories and points here.
   with a factory initial state (node parameters + routing + CH SETTING colors and names). Only URX44V is captured from real
   hardware; URX44 reuses that capture verbatim (it differs only by URX44V's HDMI input, which no
   default routes), and URX22 is an inferred remap of it (`models/initial-urx22.ts`, unverified until
-  a real reset is captured). A device fetch instead starts from an empty plan (`emptyPlan` in
+  a real reset is captured — its INS FX values are the exception, adopted rather than held as an
+  estimate awaiting one). A device fetch instead starts from an empty plan (`emptyPlan` in
   `core/plan.ts`) and lets the readback (`core/control/`) fill in the live values.
   On startup the model selection is restored from the last choice (`localStorage("urx-model")`),
   falling back to URX44V when it is unset or invalid (the same "saved value → fallback" pattern as

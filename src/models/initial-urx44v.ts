@@ -42,6 +42,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     },
     ssmcs: SSMCS_INITIAL,
     insertFx: -1,
+    insertFxOn: false,
     stereoLink: false,
     panBal: 0,
   },
@@ -79,6 +80,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     },
     ssmcs: SSMCS_INITIAL,
     insertFx: -1,
+    insertFxOn: false,
   },
   ch3: {
     on: true,
@@ -115,6 +117,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     },
     ssmcs: SSMCS_INITIAL,
     insertFx: -1,
+    insertFxOn: false,
     stereoLink: false,
     panBal: 0,
   },
@@ -153,6 +156,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     },
     ssmcs: SSMCS_INITIAL,
     insertFx: -1,
+    insertFxOn: false,
   },
   ch_5_6: {
     on: true,
@@ -213,6 +217,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   "bus.stereo": {
     level: 0,
     insertFx: -1,
+    insertFxOn: false,
     eqOn: true,
     eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
@@ -227,6 +232,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     level: 0,
     busType: 0,
     insertFx: -1,
+    insertFxOn: false,
     eqOn: true,
     eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
@@ -242,6 +248,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     level: 0,
     busType: 0,
     insertFx: -1,
+    insertFxOn: false,
     eqOn: true,
     eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [

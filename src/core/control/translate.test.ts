@@ -12,6 +12,7 @@ import {
   collisionKey,
   collisionOwners,
   formatAddrKey,
+  insertFxControl,
   nameControl,
   planToCommands,
   planToCommandsUncollapsed,
@@ -214,6 +215,31 @@ describe("planToCommands", () => {
       "/vd/parameters/671:0:1?operation=value",
     ]);
     expect(mix.every((c) => c.vdValue === 1792)).toBe(true);
+  });
+
+  it("uses the adopted URX22 INS FX selector/ON instances", () => {
+    const u22 = getModel("URX22");
+    expect(insertFxControl(u22, "ch1")).toMatchObject({ param: 135, onParam: 134, isOutput: false, instances: [0] });
+    expect(insertFxControl(u22, "ch2")).toMatchObject({ param: 135, onParam: 134, isOutput: false, instances: [1] });
+    expect(insertFxControl(u22, "bus.stereo")).toMatchObject({
+      param: 578,
+      onParam: 577,
+      isOutput: true,
+      instances: [0],
+    });
+    expect(insertFxControl(u22, "bus.mix1")).toMatchObject({
+      param: 671,
+      onParam: 670,
+      isOutput: true,
+      instances: [0, 1],
+    });
+    expect(insertFxControl(u22, "bus.mix2")).toMatchObject({
+      param: 671,
+      onParam: 670,
+      isOutput: true,
+      instances: [2, 3],
+    });
+    expect(insertFxControl(u22, "ch_3_4")).toBeNull();
   });
 
   // A URX22 plan carrying both shapes the emit loop can take: an input channel on a
