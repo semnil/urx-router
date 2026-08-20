@@ -753,6 +753,59 @@ one-value row on every band — which is not why the 4-band screen keeps its Typ
 bands are typed, and dropping it would change the panel's height per band). The two shelves' Q row does
 stay, locked and tagged, for exactly that reason.
 
+## INS FX
+
+**One screen for every insert effect, resolved from the plan.** What a node holds is a selector value
+the operator changes on another surface, and a device follow can change it underneath an open screen —
+so `insert-fx-screen.ts` reads the family on every call rather than existing once per family. One
+registry entry, one modal: a follow re-binds it instead of closing one screen and opening another. The
+title carries the effect's own name (`INS FX — Compander-H`), because the heading would otherwise name
+a slot rather than what is in it.
+
+- **No Effect Type row, deliberately.** Writing the selector makes the unit refill the bound engine
+  array with that type's defaults, and it is not reversible — re-selecting the original type fills it
+  with that type's defaults, not with the values that were there. Putting that beside the sliders would
+  give it the weight of a slider. Selecting stays on the Inspector's Insert FX row, and this screen
+  adjusts what was selected.
+- **No plot.** A guitar amp's frequency response and a pitch tracker are not derivable from the
+  parameters, and the unit meters neither, so the display is the lane rack alone. That is what
+  `plotGeo` / `drawAxes` / `drawCurve` being optional together is for.
+- **Fields name an engine slot, not a parameter.** Insert-FX values live in `insertFxParams` keyed by
+  family and slot, so a field's key is `ifx6` and only the catalogue knows what slot 6 is under the
+  family on screen — which is why `fieldLabel` and `fieldText` are asked with the context. Every range,
+  default, enum and formatter comes from `core/control/insert-fx-effect.ts`; nothing here restates one.
+- **The compander's rows are grouped by what shapes the response** — Threshold, Ratio, Width, then the
+  makeup, then Attack and Release — rather than in the device's read order, which is what the catalogue
+  carries for the emit path.
+- **No MIDI ids.** The control catalog carries none for these values, so the screen marks nothing —
+  the same position DUCKER is in, and for the same reason.
+
+### The two reduction meters are indexed differently
+
+They are not one table, and the difference is the reason:
+
+| Effect sits on | Input lane | Output lane | Reduction |
+| --- | --- | --- | --- |
+| MONO IN channel | PRE INS FX (`112:ch`) | PRE FADER (`113:ch`) | `132:ch` — x is the mono channel |
+| Output bus | PRE INS FX (post-fader) | POST (post-insert) | `133:band` — x is the effect's BAND |
+
+`133` takes no node at all: one output insert effect runs device-wide (the `out-dyn` 1-of slot), so
+which bus holds it does not enter the address. A single-band effect reads band 0.
+
+The reduction merges into the OUTPUT column, as every reduction on every screen does, and takes no
+offset: the rule is to subtract whatever gain the processor adds, and these add none — the compander's
+makeup reaches 0 dB and only attenuates below it, so the level bar and the reduction hanging off the
+top of the same ruler cannot meet.
+
+### Which families the screen shows
+
+The guitar amps and the two companders. Pitch Fix and the multi-band compressor stay in the Inspector's
+own editor, and `bind` refuses them, so the two surfaces cannot disagree about where a family is
+edited. Pitch Fix keeps its Key, its Scale and its twelve-note mask outside the flat catalogue and
+under rules of their own — a note edit sets Custom, and only two presets have a pattern this app can
+author — so a screen built from the flat rows alone would be missing the half that decides what the
+effect corrects to. The multi-band compressor is not in the flat catalogue at all.
+
 ## Off the scale is off the frame
 
 Every plot draws its curve at the **true** value, and the host **clips it to the plot area**. Clamping
@@ -913,6 +966,7 @@ per address, so a batch carrying more than one frame for an address keeps only t
 | --- | --- |
 | GRAPH inspector, GATE / SSMCS / COMP / EQ section | A full-width button below the ON/OFF toggle, its label centred and a caret at the trailing edge |
 | CONSOLE strip | A narrow chip beside each processor chip the strip has, labelled `▸` |
+| GRAPH inspector, Insert FX | The same full-width button, below the Insert FX selector and its ON toggle — shown once an effect this screen tunes is selected, since with none there is nothing to open on |
 
 In SSMCS mode the inspector keeps all four sections and hands each launcher over: the SSMCS section
 opens the MAIN face, and the COMP and EQ sections open the COMP and EQ faces of the same bank. They
