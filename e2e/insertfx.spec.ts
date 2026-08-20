@@ -11,6 +11,21 @@ const insertSelect = (page: Page) => page.locator("#inspector .param", { hasText
 const paramSelect = (page: Page, label: string) =>
   page.locator("#inspector .param", { hasText: label }).locator("select");
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
+// The families the tuning screen shows whole (the guitar amps and the companders) keep
+// their sliders there rather than in the Inspector, so a case about one of those opens
+// the screen and reads its rows. Pitch Fix and the multi-band compressor still edit in
+// the Inspector, and their cases below still read `param`.
+const screenBox = (page: Page) => page.locator("#dyn-screen-box");
+const screenRow = (page: Page, label: string) =>
+  screenBox(page)
+    .locator(".prefs-row")
+    .filter({ has: page.getByText(label, { exact: true }) });
+const openScreen = async (page: Page): Promise<void> => {
+  await page.locator("#btn-insfx-screen").click();
+  await expect(screenBox(page)).toBeVisible();
+};
+const closeScreen = (page: Page) => page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+const screenSelect = (page: Page, label: string) => screenRow(page, label).locator("select");
 // COMPANDER_PARAMS writable slots: threshold / ratio / attack / release / outGain / width.
 const COMPANDER_SLOT_COUNT = 6;
 
@@ -27,12 +42,13 @@ test.beforeEach(async ({ page }) => {
 test("guitar amp (Clean) reveals common params + cabinet list", async ({ page }) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Clean" });
+  await openScreen(page);
   // Common params appear.
-  await expect(param(page, "Treble")).toBeVisible();
-  await expect(param(page, "Output")).toBeVisible();
-  await expect(param(page, "Blend")).toBeVisible(); // Clean-only
+  await expect(screenRow(page, "Treble")).toBeVisible();
+  await expect(screenRow(page, "Output")).toBeVisible();
+  await expect(screenRow(page, "Blend")).toBeVisible(); // Clean-only
   // SP Type lists the eight cabinets in order.
-  await expect(paramSelect(page, "SP Type").locator("option")).toHaveText([
+  await expect(screenSelect(page, "SP Type").locator("option")).toHaveText([
     "BS 4x12",
     "AC 2x12",
     "AC 1x12",
@@ -47,19 +63,28 @@ test("guitar amp (Clean) reveals common params + cabinet list", async ({ page })
 test("switching guitar amp type swaps the type-specific control", async ({ page }) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Clean" });
-  await expect(param(page, "Blend")).toBeVisible();
+  await openScreen(page);
+  await expect(screenRow(page, "Blend")).toBeVisible();
+  // The selector is outside the screen, so the type changes underneath an open one and
+  // the same modal re-binds — which is the whole reason the screen carries no Type row.
+  await closeScreen(page);
   await insertSelect(page).selectOption({ label: "Drive" });
-  await expect(param(page, "Blend")).toHaveCount(0);
-  await expect(param(page, "Amp Type")).toBeVisible(); // Drive-only
-  await expect(param(page, "Master")).toBeVisible();
+  await openScreen(page);
+  await expect(screenRow(page, "Blend")).toHaveCount(0);
+  await expect(screenRow(page, "Amp Type")).toBeVisible(); // Drive-only
+  await expect(screenRow(page, "Master")).toBeVisible();
 });
 
 test("compander on the STEREO master reveals dynamics params", async ({ page }) => {
   await node(page, "bus.stereo").click();
   await insertSelect(page).selectOption({ label: "Compander-H" });
-  await expect(param(page, "Threshold")).toBeVisible();
-  await expect(param(page, "Ratio")).toBeVisible();
-  await expect(param(page, "Width")).toBeVisible();
+  await openScreen(page);
+  await expect(screenRow(page, "Threshold")).toBeVisible();
+  await expect(screenRow(page, "Ratio")).toBeVisible();
+  await expect(screenRow(page, "Width")).toBeVisible();
+  // The taps either side of the insert point, which is what the screen adds over the
+  // Inspector's list.
+  await expect(screenBox(page).locator(".gt-ladders")).toBeVisible();
 });
 
 test("multi-band comp on a MIX bus reveals three bands", async ({ page }) => {
@@ -217,17 +242,23 @@ test("sample-rate ceilings gate the insert FX options", async ({ page }) => {
 test("selecting No Effect removes the effect parameter editor", async ({ page }) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Clean" });
-  await expect(param(page, "Treble")).toBeVisible();
+  await openScreen(page);
+  await expect(screenRow(page, "Treble")).toBeVisible();
+  await closeScreen(page);
   await insertSelect(page).selectOption({ label: "No Effect" });
-  await expect(param(page, "Treble")).toHaveCount(0);
+  // Nothing to tune, so the way in goes with the effect rather than opening on an
+  // empty panel.
+  await expect(page.locator("#btn-insfx-screen")).toHaveCount(0);
   await expect(insertSelect(page)).toHaveValue("-1");
 });
 
 test("insert-fx param round-trips through save and open", async ({ page }, testInfo) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Clean" });
-  await paramSelect(page, "SP Type").selectOption({ label: "JC 2x12" });
-  await expect(paramSelect(page, "SP Type")).toHaveValue("8");
+  await openScreen(page);
+  await screenSelect(page, "SP Type").selectOption({ label: "JC 2x12" });
+  await expect(screenSelect(page, "SP Type")).toHaveValue("8");
+  await closeScreen(page);
 
   await page.click("#btn-file");
   const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
@@ -244,7 +275,8 @@ test("insert-fx param round-trips through save and open", async ({ page }, testI
   await chooser.setFiles(saved);
   await node(page, "ch1").click();
   await expect(insertSelect(page)).toHaveValue("256"); // Clean
-  await expect(paramSelect(page, "SP Type")).toHaveValue("8"); // JC 2x12
+  await openScreen(page);
+  await expect(screenSelect(page, "SP Type")).toHaveValue("8"); // JC 2x12
 });
 
 test("selecting an effect reveals the ON/OFF (bypass) toggle; bypass keeps the selection", async ({ page }) => {
@@ -301,10 +333,13 @@ test("a write says which node's insert-FX values reach the device", async ({ pag
   await expect(page.locator("#statusbar")).toContainText("Fetched", { timeout: 20000 });
 
   await node(page, "ch1").click();
-  // CH 1 is the FIRST owner in model order, so its command is the one dropped.
-  const threshold = param(page, "Threshold").locator('input[type="range"]');
+  // CH 1 is the FIRST owner in model order, so its command is the one dropped. The
+  // compander every MONO IN reports is edited on the tuning screen.
+  await openScreen(page);
+  const threshold = screenRow(page, "Threshold").locator('input[type="range"]');
   await threshold.focus();
   await page.keyboard.press("ArrowUp");
+  await closeScreen(page);
   // A second, unshared edit so the write has something of its own to confirm — the
   // dropped owner's own change is on no address and would report "no changes".
   await param(page, "HPF").getByRole("button", { name: "ON", exact: true }).click();

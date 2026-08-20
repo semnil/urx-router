@@ -99,8 +99,11 @@ const SURFACES: Record<SurfaceName, Surface> = {
   },
   dynScreen: {
     roots: ["dynTuning"],
-    // The peak readout is the prefix in front of its own value ("pk -12.0").
-    composed: ["dynTuning.peakPrefix"],
+    // The peak readout is the prefix in front of its own value ("pk -12.0"), and the INS
+    // FX screen's name is the first half of its heading ("INS FX — Compander-H"): that
+    // screen shows whichever effect the node holds, so the effect's own name is part of
+    // the title rather than something else on the panel.
+    composed: ["dynTuning.peakPrefix", "dynTuning.insfx.title"],
   },
   prefs: {
     roots: ["prefs"],
@@ -496,6 +499,26 @@ test("the channel tuning screens show every processor, both displays and their n
     await pickBand(page, band);
     await inv.take(page, "#dyn-screen-modal");
   }
+
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+
+  // INS FX is not reached from a section of its own: what the screen shows is whichever
+  // effect the node HOLDS, so the way in appears beside the Insert FX selector once one is
+  // selected, and the launcher's own wording is only on screen from that moment.
+  const openInsFx = async (id: string, effect: string): Promise<void> => {
+    await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
+    await page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select").selectOption({ label: effect });
+    await inv.take(page, "#inspector");
+    await page.locator("#btn-insfx-screen").click();
+    await expect(box).toBeVisible();
+    await inv.take(page, "#dyn-screen-modal");
+    await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+  };
+  // Both sides of the pair, because an insert effect sits BEFORE the fader on a channel
+  // and AFTER it on a bus — two different output taps, and only one of them is on screen
+  // at a time.
+  await openInsFx("ch2", "Compander-H");
+  await openInsFx("bus.mix1", "Compander-S");
 
   expectComplete("dynScreen", inv);
 });

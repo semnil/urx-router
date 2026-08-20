@@ -653,6 +653,17 @@ export const en = {
       tapOut: dev("Post"),
       hint: tr("The diagonals are times, not the shape of the change. Key is one bar even in stereo: L and R, summed."),
     },
+    // One screen for four effect families: the title names the effect the node holds,
+    // since the selector that picked it is on another surface. Two output taps, because
+    // an insert effect sits before the fader on a channel and after it on a bus.
+    insfx: {
+      title: dev("INS FX"),
+      open: tr("Insert FX screen"),
+      tapIn: dev("Pre Ins FX"),
+      tapOut: dev("Pre Fader"),
+      tapOutBus: dev("Post"),
+      tapGr: dev("Ins FX GR"),
+    },
   },
   shelf: {
     title: tr("Hidden"),

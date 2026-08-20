@@ -6,6 +6,7 @@ import { COMP_DYN } from "./dyn-comp";
 import { EQ_DYN } from "./dyn-eq";
 import { DUCKER_DYN } from "./dyn-ducker";
 import { SSMCS_COMP_DYN, SSMCS_DYN, SSMCS_EQ_DYN } from "./dyn-ssmcs";
+import { INSFX_DYN } from "./insert-fx-screen";
 import type { DynProcessor } from "./dyn-screen";
 import type { Messages } from "../i18n/en";
 
@@ -20,6 +21,10 @@ export const DYN_PROCESSORS = {
   ssmcs: SSMCS_DYN,
   ssmcsComp: SSMCS_COMP_DYN,
   ssmcsEq: SSMCS_EQ_DYN,
+  // One entry for four effect families rather than one per family: what a node holds is a
+  // plan value the operator changes elsewhere, so the descriptor resolves it per call and
+  // a follow re-binds the same modal instead of swapping screens.
+  insfx: INSFX_DYN,
 } satisfies Record<string, DynProcessor>;
 
 /** Which processor a screen is opened for. */

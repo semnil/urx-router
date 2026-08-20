@@ -33,7 +33,7 @@ import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import type { DynCtx } from "./dyn-screen";
 import { bindControl } from "../core/midi/controls";
-import { COMP_EQ_SSMCS } from "../core/control/params";
+import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS } from "../core/control/params";
 import { defaultPlan } from "../models/initial-state";
 import { setLang, t } from "../i18n";
 
@@ -148,26 +148,48 @@ describe("arming surfaces against the control catalog", () => {
       // a default plan carries no SSMCS channel at all, and putting every mono channel
       // into it would leave COMP and the 4-band EQ with nothing.
       plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
-      const ctxAt = (nodeId: string): DynCtx => ({ model, plan, nodeId, sel: 0, m: t() });
-      const nodeId = model.nodes.map((n) => n.id).find((id) => proc.bind(ctxAt(id)) !== null);
-      expect(nodeId, `${kind} binds no node of URX44V`).toBeTruthy();
-
-      const screen = new DynScreen(dh.hooks);
-      screen.open(proc, nodeId!);
-      expect(screen.isOpen()).toBe(true);
-      const { marked, ids } = armEverything(dh.box, armed);
-      if (proc.controlId) {
-        expect(marked).toBeGreaterThan(0);
-        expect(ids.length).toBeGreaterThan(0);
-        // Same equality as the CONSOLE case: a screen that marks five rows and arms one
-        // is the defect, and only the counts show it.
-        expect(ids.length).toBe(marked);
-        expect(ids.filter((id) => !bindControl(model, plan, id))).toEqual([]);
-      } else {
-        expect(marked).toBe(0);
-        expect(ids).toEqual([]);
+      // The INS FX screen is one registry entry standing for several effect families, and
+      // a default plan holds none of them — `bind` answers null everywhere until something
+      // is selected, and one open would exercise only whichever family was seeded first.
+      // Three different slots, so all three can be held at once.
+      if (kind === "insfx") {
+        for (const [nodeId, label] of [
+          ["ch1", "Clean"],
+          ["ch2", "Pitch Fix"],
+          ["ch3", "Compander-H"],
+        ] as const) {
+          plan.nodeParams[nodeId] = {
+            ...plan.nodeParams[nodeId],
+            insertFx: INSERT_FX_OPTIONS.find((o) => o.label === label)!.value,
+          };
+        }
       }
-      screen.close();
+      const ctxAt = (nodeId: string): DynCtx => ({ model, plan, nodeId, sel: 0, m: t() });
+      const binding = model.nodes.map((n) => n.id).filter((id) => proc.bind(ctxAt(id)) !== null);
+      expect(binding.length, `${kind} binds no node of URX44V`).toBeGreaterThan(0);
+      // Every node it binds for the one kind that shows a different thing on each; the
+      // first for the rest, whose faces do not vary by node.
+      const nodeIds = kind === "insfx" ? binding : binding.slice(0, 1);
+
+      for (const nodeId of nodeIds) {
+        armed.length = 0;
+        const screen = new DynScreen(dh.hooks);
+        screen.open(proc, nodeId);
+        expect(screen.isOpen()).toBe(true);
+        const { marked, ids } = armEverything(dh.box, armed);
+        if (proc.controlId) {
+          expect(marked, nodeId).toBeGreaterThan(0);
+          expect(ids.length, nodeId).toBeGreaterThan(0);
+          // Same equality as the CONSOLE case: a screen that marks five rows and arms one
+          // is the defect, and only the counts show it.
+          expect(ids.length, nodeId).toBe(marked);
+          expect(ids.filter((id) => !bindControl(model, plan, id))).toEqual([]);
+        } else {
+          expect(marked, nodeId).toBe(0);
+          expect(ids, nodeId).toEqual([]);
+        }
+        screen.close();
+      }
     },
   );
 });
