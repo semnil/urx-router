@@ -11,7 +11,7 @@ import { dynHost } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import { DynScreen } from "./dyn-screen";
 import type { DynCtx } from "./dyn-screen";
-import { INSFX_DYN, insertFxScreenFamily } from "./insert-fx-screen";
+import { INSFX_CAB_DYN, INSFX_DYN, insertFxScreenFamily } from "./insert-fx-screen";
 import { insertFxParamKey, insertFxParams } from "../core/control/insert-fx-effect";
 import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { t } from "../i18n";
@@ -192,5 +192,114 @@ describe("the rendered screen", () => {
     h.plan.nodeParams.ch1!.insertFx = INSERT_FX_NONE;
     screen.refresh();
     expect(screen.isOpen()).toBe(false);
+  });
+});
+
+describe("the guitar amp's two faces", () => {
+  const labelsOn = (proc: typeof INSFX_DYN, ctx: DynCtx): string[] => {
+    const fields = proc.bind(ctx)!.fields;
+    return fields.map((f) => proc.fieldLabel!(f, t(), ctx) ?? f.key);
+  };
+
+  it("puts the cabinet's four rows on their own face, in the order the signal meets them", () => {
+    const ctx = holding("ch1", "Clean");
+    const m = t().inspector.insertFxEffect.params;
+    // Gate is a toggle and SP Type / Mic Position are selects, so the sliders alone are
+    // Gate Level; the rest of the face is asserted through the rendered screen below.
+    expect(labelsOn(INSFX_CAB_DYN, ctx)).toEqual([m.gateLevel]);
+    // …and none of them is left on the amp face.
+    for (const cab of [m.gate, m.gateLevel, m.spType, m.micPosition]) {
+      expect(labelsOn(INSFX_DYN, ctx)).not.toContain(cab);
+    }
+  });
+
+  it("leads the amp face with the values that make one amp a different amp", () => {
+    const m = t().inspector.insertFxEffect.params;
+    expect(labelsOn(INSFX_DYN, holding("ch1", "Clean"))).toEqual([
+      m.blend,
+      m.distortion,
+      m.volume,
+      m.bass,
+      m.middle,
+      m.treble,
+      m.presence,
+      m.modSpeed,
+      m.modDepth,
+      m.output,
+    ]);
+    expect(labelsOn(INSFX_DYN, holding("ch1", "Drive"))).toEqual([
+      m.master,
+      m.gain,
+      m.bass,
+      m.middle,
+      m.treble,
+      m.presence,
+      m.output,
+    ]);
+  });
+
+  it("offers the face bar only where there is a second face", () => {
+    expect(INSFX_DYN.bar!(holding("ch1", "Crunch"))).toBeTruthy();
+    expect(INSFX_DYN.bar!(holding("ch1", "Compander-H"))).toBeUndefined();
+    // …and the second face cannot be reached on a family that has none.
+    expect(INSFX_CAB_DYN.bind(holding("ch1", "Compander-H"))).toBeNull();
+  });
+
+  it("reverses the columns for an amp and leaves them for a compander", () => {
+    expect(INSFX_DYN.bind(holding("ch1", "Lead"))!.paramsFirst).toBe(true);
+    expect(INSFX_DYN.bind(holding("ch1", "Compander-S"))!.paramsFirst).toBeUndefined();
+  });
+
+  it("locks Speed and Depth in place while the modulation is not vibrato", () => {
+    const ctx = holding("ch1", "Clean");
+    // Cho/Off/Vib is slot 19, its factory value Off.
+    const off = INSFX_DYN.rowStates!(ctx, INSFX_DYN.read(ctx))!;
+    expect(off.get("ifx20")?.locked).toBe(true);
+    expect(off.get("ifx21")?.tag).toBe(t().dynTuning.insfx.vibOnly);
+    h.plan.nodeParams.ch1!.insertFxParams = { "19": 2 };
+    expect(INSFX_DYN.rowStates!(ctx, INSFX_DYN.read(ctx))).toBeNull();
+  });
+});
+
+describe("moving between the faces", () => {
+  const face = (id: string): HTMLElement => h.box.querySelector<HTMLElement>(`#${id}`)!;
+
+  it("swaps the face without closing, and the columns follow the family", () => {
+    holding("ch1", "Clean");
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    const grid = (): HTMLElement => h.box.querySelector<HTMLElement>(".prefs-grid")!;
+    expect(grid().classList.contains("gt-paramsleft")).toBe(true);
+    const m = t().inspector.insertFxEffect.params;
+    const labels = (): string[] =>
+      [...h.box.querySelectorAll<HTMLElement>(".prefs-row .lbl")].map((e) => e.textContent ?? "");
+    expect(labels()).toContain(m.blend);
+
+    face("dyn-face-insfx-cab").click();
+    expect(screen.isOpen()).toBe(true);
+    expect(labels()).toContain(m.spType);
+    expect(labels()).not.toContain(m.blend);
+    screen.close();
+  });
+
+  it("goes back to the amp face when a follow replaces the effect", () => {
+    holding("ch1", "Clean");
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    face("dyn-face-insfx-cab").click();
+    expect(h.box.querySelector("#dyn-face-insfx-cab")!.getAttribute("aria-pressed")).toBe("true");
+
+    // The device says the channel now holds a compander. The CAB face does not exist
+    // there, and reading that as "the processor is gone" would close a screen that has
+    // something to show.
+    h.plan.nodeParams.ch1!.insertFx = valueOf("Compander-H");
+    screen.refresh();
+    expect(screen.isOpen()).toBe(true);
+    const m = t().inspector.insertFxEffect.params;
+    const labels = [...h.box.querySelectorAll<HTMLElement>(".prefs-row .lbl")].map((e) => e.textContent ?? "");
+    expect(labels).toContain(m.width);
+    // …and the reversed columns went back with it.
+    expect(h.box.querySelector<HTMLElement>(".prefs-grid")!.classList.contains("gt-paramsleft")).toBe(false);
+    screen.close();
   });
 });

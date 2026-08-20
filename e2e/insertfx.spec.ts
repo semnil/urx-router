@@ -26,6 +26,8 @@ const openScreen = async (page: Page): Promise<void> => {
 };
 const closeScreen = (page: Page) => page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 const screenSelect = (page: Page, label: string) => screenRow(page, label).locator("select");
+// A guitar amp is two faces; the cabinet's four rows are on the second one.
+const showCab = (page: Page) => page.click("#dyn-face-insfx-cab");
 // COMPANDER_PARAMS writable slots: threshold / ratio / attack / release / outGain / width.
 const COMPANDER_SLOT_COUNT = 6;
 
@@ -50,6 +52,10 @@ test("guitar amp (Clean) reveals common params + cabinet list", async ({ page })
   await expect(screenRow(page, "Treble")).toBeVisible();
   await expect(screenRow(page, "Output")).toBeVisible();
   await expect(screenRow(page, "Blend")).toBeVisible(); // Clean-only
+  // The cabinet is the other face, and the amp's rows are not on it.
+  await showCab(page);
+  await expect(screenRow(page, "Treble")).toHaveCount(0);
+  await expect(screenRow(page, "Gate Level")).toBeVisible();
   // SP Type lists the eight cabinets in order.
   await expect(screenSelect(page, "SP Type").locator("option")).toHaveText([
     "BS 4x12",
@@ -262,6 +268,7 @@ test("insert-fx param round-trips through save and open", async ({ page }, testI
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Clean" });
   await openScreen(page);
+  await showCab(page);
   await screenSelect(page, "SP Type").selectOption({ label: "JC 2x12" });
   await expect(screenSelect(page, "SP Type")).toHaveValue("8");
   await closeScreen(page);
@@ -282,6 +289,10 @@ test("insert-fx param round-trips through save and open", async ({ page }, testI
   await node(page, "ch1").click();
   await expect(insertSelect(page)).toHaveValue("256"); // Clean
   await openScreen(page);
+  // The face is a cursor into the panel, not part of the plan: a fresh open lands on the
+  // amp whatever the last one was showing.
+  await expect(screenRow(page, "Volume")).toBeVisible();
+  await showCab(page);
   await expect(screenSelect(page, "SP Type")).toHaveValue("8"); // JC 2x12
 });
 

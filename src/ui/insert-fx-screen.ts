@@ -23,6 +23,7 @@ import type { DynField, InsertFxFieldKey } from "../core/control/translate";
 import { grAddr, insertFxOutGrAddr, tapFor } from "../core/meters";
 import type { NodeParams, Plan } from "../core/plan";
 import { onOff, settingsRow } from "./dom";
+import type { SettingsRowOptions } from "./dom";
 import { enumRow } from "./dyn-chan";
 import type { DynBinding, DynCtx, DynLane, DynProcessor } from "./dyn-screen";
 import { insertFxVal, reKeyInsertFxParams } from "./insert-fx-model";
@@ -50,6 +51,51 @@ const slotOf = (key: string): number => Number(key.slice(3));
 const ROW_ORDER: Partial<Record<InsertFxFamily, readonly string[]>> = {
   compander: ["threshold", "ratio", "width", "outGain", "attack", "release"],
 };
+
+/** Which face of a guitar amp a row belongs to. */
+export type InsFxFace = "amp" | "cab";
+
+/** The cabinet's four rows, in the order the signal meets them. */
+const CAB_ORDER: readonly string[] = ["gate", "gateLevel", "spType", "micPosition"];
+
+/**
+ * The amp's own rows: this type's own values first, then the tone stack, then the
+ * modulation group, then the output.
+ *
+ * The type-specific values lead because they are what makes one amp a different amp, and
+ * the modulation group is placed by name rather than with them because it is a stage of
+ * its own — Clean's Cho/Off/Vib and its Speed and Depth are type-specific too, and putting
+ * them at the head would separate Speed and Depth from the switch that drives them AND
+ * from the output they sit before.
+ *
+ * Every guitar row is named here. A row the catalogue gains and this list does not name
+ * still appears, after the ones it does, rather than disappearing from a face silently.
+ */
+const AMP_ORDER: readonly string[] = [
+  "blend",
+  "distortion",
+  "character",
+  "ampType",
+  "master",
+  "volume",
+  "gain",
+  "bass",
+  "middle",
+  "treble",
+  "presence",
+  "mod",
+  "modSpeed",
+  "modDepth",
+  "output",
+];
+
+/** Clean's Cho/Off/Vib selector (slot 19) and the value that puts it on vibrato. */
+const MOD_SLOT = 19;
+const MOD_VIB = 2;
+const MOD_SPEED_SLOT = 20;
+const MOD_DEPTH_SLOT = 21;
+
+const isGuitar = (fam: InsertFxFamily): boolean => fam.startsWith("guitar-");
 
 /** The family a node holds, or null where it holds nothing (No Effect, or nothing at all). */
 function familyOf(ctx: DynCtx): InsertFxFamily | null {
@@ -81,24 +127,32 @@ export function insertFxScreenFamily(plan: Plan, nodeId: string): InsertFxFamily
  * rather than a list. An empty answer is what makes `bind` refuse, and refusing is what
  * keeps the Inspector's own editor in front of a family this screen does not show whole.
  */
-function rowsOf(fam: InsertFxFamily): InsertFxParamDesc[] {
+function rowsOf(fam: InsertFxFamily, face: InsFxFace = "amp"): InsertFxParamDesc[] {
   const descs = insertFxParams(fam);
-  const order = ROW_ORDER[fam];
+  // A guitar amp is two faces: the cabinet's four rows, and everything else.
+  const order = isGuitar(fam) ? (face === "cab" ? CAB_ORDER : AMP_ORDER) : ROW_ORDER[fam];
   if (!order) return [...descs];
-  // A label the order does not name keeps its catalogue position after the ones it does,
-  // so a parameter added to the catalogue appears rather than disappearing silently.
-  const rank = (d: InsertFxParamDesc): number => {
-    const i = order.indexOf(d.label);
-    return i < 0 ? order.length + descs.indexOf(d) : i;
-  };
-  return [...descs].sort((a, b) => rank(a) - rank(b));
+  if (isGuitar(fam)) {
+    const onFace = (d: InsertFxParamDesc): boolean =>
+      face === "cab" ? CAB_ORDER.includes(d.label) : !CAB_ORDER.includes(d.label);
+    return descs.filter(onFace).sort((a, b) => rankIn(order, descs, a) - rankIn(order, descs, b));
+  }
+  return [...descs].sort((a, b) => rankIn(order, descs, a) - rankIn(order, descs, b));
 }
 
-/** The catalogue row one field key came from. */
+/** A label the order does not name keeps its catalogue position after the ones it does, so
+ *  a parameter added to the catalogue appears rather than disappearing silently. */
+function rankIn(order: readonly string[], descs: InsertFxParamDesc[], d: InsertFxParamDesc): number {
+  const i = order.indexOf(d.label);
+  return i < 0 ? order.length + descs.indexOf(d) : i;
+}
+
+/** The catalogue row one field key came from. Searched across the whole family rather
+ *  than one face's rows: a slot is one parameter under a family whichever face shows it. */
 function descOf(ctx: DynCtx, key: string): InsertFxParamDesc | undefined {
   const fam = familyOf(ctx);
   const slot = slotOf(key);
-  return fam ? rowsOf(fam).find((d) => d.slot === slot) : undefined;
+  return fam ? insertFxParams(fam).find((d) => d.slot === slot) : undefined;
 }
 
 const labelOf = (d: InsertFxParamDesc, m: Messages): string => {
@@ -144,111 +198,172 @@ function lanesOf(ctx: DynCtx, isOutput: boolean): DynLane[] {
   ];
 }
 
-export const INSFX_DYN: DynProcessor = {
-  key: "insfx",
-  loDb: LO_DB,
-  tickStep: TICK_STEP,
-  // The effect's own name is in the title because the screen shows one effect and the
-  // selector that picked it is on another surface: without it the heading names a slot
-  // rather than what is in it.
-  title: (m, ctx) => {
-    const fam = familyOf(ctx);
-    const value = ctx.plan.nodeParams[ctx.nodeId]?.insertFx;
-    const name = insertFxControl(ctx.model, ctx.nodeId)?.options.find((o) => o.value === value)?.label;
-    return fam && name ? `${m.dynTuning.insfx.title} — ${name}` : m.dynTuning.insfx.title;
-  },
+/**
+ * One face of the screen. A guitar amp is two — the amp and its cabinet — and every other
+ * family is one, so the CAB face refuses to bind anywhere else and the bar that reaches it
+ * is only offered where there is something on the other side of it.
+ */
+function insFxFace(face: InsFxFace): DynProcessor {
+  return {
+    key: face === "amp" ? "insfx" : "insfxCab",
+    loDb: LO_DB,
+    tickStep: TICK_STEP,
+    // One reserved height across every family, not only across the two guitar faces: a
+    // device follow can replace the effect inside this modal, and a panel whose controls
+    // start at a different height each time is the same resize under the pointer that the
+    // reserve exists to stop.
+    banked: true,
+    // The effect's own name is in the title because the screen shows one effect and the
+    // selector that picked it is on another surface: without it the heading names a slot
+    // rather than what is in it.
+    title: (m, ctx) => {
+      const fam = familyOf(ctx);
+      const value = ctx.plan.nodeParams[ctx.nodeId]?.insertFx;
+      const name = insertFxControl(ctx.model, ctx.nodeId)?.options.find((o) => o.value === value)?.label;
+      return fam && name ? `${m.dynTuning.insfx.title} — ${name}` : m.dynTuning.insfx.title;
+    },
+    // What this bank is a bank of. The faces belong to the effect the node HOLDS, so a
+    // follow that replaces it takes the screen back to the amp face rather than leaving a
+    // CAB segment selected on a compander that has no cabinet.
+    bankIdentity: (ctx) => familyOf(ctx) ?? "",
 
-  bind: (ctx): DynBinding | null => {
-    const ifx = insertFxControl(ctx.model, ctx.nodeId);
-    const fam = insertFxScreenFamily(ctx.plan, ctx.nodeId);
-    if (!ifx || !fam) return null;
-    const fields: DynField[] = rowsOf(fam)
-      .filter((d) => d.control === "slider")
-      .map((d) => ({
-        key: slotKey(d.slot),
-        min: d.rawMin ?? 0,
-        max: d.rawMax ?? 0,
-        step: d.rawStep ?? 1,
-        def: d.def,
-        // Raw broker integers throughout: the catalogue's formatter is what turns one
-        // into the device's own reading, supplied through `fieldText`.
-        unit: "raw",
-      }));
-    return { fields, lanes: lanesOf(ctx, ifx.isOutput) };
-  },
+    bind: (ctx): DynBinding | null => {
+      const ifx = insertFxControl(ctx.model, ctx.nodeId);
+      const fam = insertFxScreenFamily(ctx.plan, ctx.nodeId);
+      if (!ifx || !fam) return null;
+      // Only a guitar amp has a second face; nothing else may be reached on one.
+      if (face === "cab" && !isGuitar(fam)) return null;
+      const fields: DynField[] = rowsOf(fam, face)
+        .filter((d) => d.control === "slider")
+        .map((d) => ({
+          key: slotKey(d.slot),
+          min: d.rawMin ?? 0,
+          max: d.rawMax ?? 0,
+          step: d.rawStep ?? 1,
+          def: d.def,
+          // Raw broker integers throughout: the catalogue's formatter is what turns one
+          // into the device's own reading, supplied through `fieldText`.
+          unit: "raw",
+        }));
+      return {
+        fields,
+        lanes: lanesOf(ctx, ifx.isOutput),
+        // A guitar amp's panel is a dozen controls and its display is a level rack with
+        // nothing else in it, so the two columns swap. The companders keep the ordinary
+        // order: their display is the point of the screen.
+        ...(isGuitar(fam) ? { paramsFirst: true as const } : {}),
+      };
+    },
 
-  read: (ctx) => {
-    const fam = familyOf(ctx);
-    if (!fam) return {};
-    const out: Record<string, unknown> = {};
-    for (const d of rowsOf(fam)) out[slotKey(d.slot)] = rawOf(ctx, fam, d);
-    return out;
-  },
+    // Two segments over two faces, offered only where there are two. A family with one
+    // face answers nothing and the host reserves the bar's space instead, so the controls
+    // below start at the same height on every effect.
+    bar: (ctx) => {
+      const fam = familyOf(ctx);
+      if (!fam || !isGuitar(fam)) return undefined;
+      const g = ctx.m.dynTuning.insfx;
+      return {
+        label: g.faceBar,
+        items: [
+          { label: g.faceAmp, id: "dyn-face-insfx-amp", face: INSFX_DYN, sel: 0 },
+          { label: g.faceCab, id: "dyn-face-insfx-cab", face: INSFX_CAB_DYN, sel: 0 },
+        ],
+      };
+    },
 
-  patch: (ctx, patch): NodeParams => {
-    const fam = familyOf(ctx);
-    if (!fam) return {};
-    const slots: Record<number, number> = {};
-    for (const [key, v] of Object.entries(patch)) {
-      const raw = typeof v === "boolean" ? (v ? 1 : 0) : v;
-      const slot = slotOf(key);
-      slots[slot] = raw;
-      // Three Pitch Fix values are stored twice; the catalogue names the second slot and
-      // the device reads both, so an edit that wrote one of them would be half applied.
-      const mirror = rowsOf(fam).find((d) => d.slot === slot)?.mirror;
-      if (mirror !== undefined) slots[mirror] = raw;
-    }
-    return { insertFxParams: reKeyInsertFxParams(ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams ?? {}, fam, slots) };
-  },
+    read: (ctx) => {
+      const fam = familyOf(ctx);
+      if (!fam) return {};
+      const out: Record<string, unknown> = {};
+      // Every row of the family, not only this face's: `rowStates` reads the Cho/Off/Vib
+      // selector, which is on the amp face, to lock two rows beside it.
+      for (const d of insertFxParams(fam)) out[slotKey(d.slot)] = rawOf(ctx, fam, d);
+      return out;
+    },
 
-  // A field carries a slot, and a slot means a different parameter under every family, so
-  // both of these need the ctx to know which catalogue row they are printing.
-  fieldLabel: (f, m, ctx) => {
-    const d = descOf(ctx, f.key);
-    return d && labelOf(d, m);
-  },
-  fieldText: (f, v, ctx) => descOf(ctx, f.key)?.format?.(v),
-
-  // Everything that is not a slider — the guitar amp's cabinet selectors and its gate
-  // switch. Placed in front of the slider that follows them in display order, so the
-  // panel reads in one order rather than sliders-then-the-rest.
-  rows: (ctx) => {
-    const fam = familyOf(ctx);
-    if (!fam) return {};
-    const descs = rowsOf(fam);
-    const before: Record<string, HTMLElement[]> = {};
-    const tail: HTMLElement[] = [];
-    let pending: HTMLElement[] = [];
-    for (const d of descs) {
-      if (d.control === "slider") {
-        if (pending.length) {
-          before[slotKey(d.slot)] = pending;
-          pending = [];
-        }
-        continue;
+    patch: (ctx, patch): NodeParams => {
+      const fam = familyOf(ctx);
+      if (!fam) return {};
+      const slots: Record<number, number> = {};
+      for (const [key, v] of Object.entries(patch)) {
+        const raw = typeof v === "boolean" ? (v ? 1 : 0) : v;
+        const slot = slotOf(key);
+        slots[slot] = raw;
+        // Three Pitch Fix values are stored twice; the catalogue names the second slot and
+        // the device reads both, so an edit that wrote one of them would be half applied.
+        const mirror = insertFxParams(fam).find((d) => d.slot === slot)?.mirror;
+        if (mirror !== undefined) slots[mirror] = raw;
       }
-      const key = slotKey(d.slot);
-      const cur = rawOf(ctx, fam, d);
-      const label = labelOf(d, ctx.m);
-      pending.push(
-        d.control === "toggle"
-          ? ctx.midi(
-              settingsRow(
-                label,
-                onOff(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 })),
-              ),
-              key,
-            )
-          : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v })),
-      );
-    }
-    tail.push(...pending);
-    return { before, tail };
-  },
+      return { insertFxParams: reKeyInsertFxParams(ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams ?? {}, fam, slots) };
+    },
 
-  // Lanes only. Nothing here draws a response: the level meters and the reduction are
-  // measured, and a guitar amp's EQ curve or a pitch tracker would be an invention. The
-  // families whose response IS defined by their parameters (the companders, the
-  // multi-band compressor) get a plot with their own faces.
-  display: (parts) => parts.lanes(),
-};
+    // A field carries a slot, and a slot means a different parameter under every family, so
+    // both of these need the ctx to know which catalogue row they are printing.
+    fieldLabel: (f, m, ctx) => {
+      const d = descOf(ctx, f.key);
+      return d && labelOf(d, m);
+    },
+    fieldText: (f, v, ctx) => descOf(ctx, f.key)?.format?.(v),
+
+    // Speed and Depth drive a vibrato the selector beside them can switch off. The rows
+    // stay where they are, dimmed and tagged, rather than being dropped: a panel that
+    // loses two rows moves everything under them out from under the pointer.
+    rowStates: (ctx, vals) => {
+      const fam = familyOf(ctx);
+      if (!fam || !isGuitar(fam)) return null;
+      if (vals[slotKey(MOD_SLOT)] === undefined || vals[slotKey(MOD_SLOT)] === MOD_VIB) return null;
+      const out = new Map<string, SettingsRowOptions>();
+      for (const slot of [MOD_SPEED_SLOT, MOD_DEPTH_SLOT]) {
+        out.set(slotKey(slot), { tag: ctx.m.dynTuning.insfx.vibOnly, locked: true });
+      }
+      return out;
+    },
+
+    // Everything that is not a slider — the guitar amp's cabinet selectors and its gate
+    // switch. Placed in front of the slider that follows them in display order, so the
+    // panel reads in one order rather than sliders-then-the-rest.
+    rows: (ctx) => {
+      const fam = familyOf(ctx);
+      if (!fam) return {};
+      const descs = rowsOf(fam, face);
+      const before: Record<string, HTMLElement[]> = {};
+      const tail: HTMLElement[] = [];
+      let pending: HTMLElement[] = [];
+      for (const d of descs) {
+        if (d.control === "slider") {
+          if (pending.length) {
+            before[slotKey(d.slot)] = pending;
+            pending = [];
+          }
+          continue;
+        }
+        const key = slotKey(d.slot);
+        const cur = rawOf(ctx, fam, d);
+        const label = labelOf(d, ctx.m);
+        pending.push(
+          d.control === "toggle"
+            ? ctx.midi(
+                settingsRow(
+                  label,
+                  onOff(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 })),
+                ),
+                key,
+              )
+            : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v })),
+        );
+      }
+      tail.push(...pending);
+      return { before, tail };
+    },
+
+    // Lanes only. Nothing here draws a response: the level meters and the reduction are
+    // measured, and a guitar amp's EQ curve or a pitch tracker would be an invention. The
+    // families whose response IS defined by their parameters (the companders, the
+    // multi-band compressor) get a plot with their own faces.
+    display: (parts) => parts.lanes(),
+  };
+}
+
+/** The face a launcher opens on, and the one the bar reaches from it. */
+export const INSFX_DYN = insFxFace("amp");
+export const INSFX_CAB_DYN = insFxFace("cab");

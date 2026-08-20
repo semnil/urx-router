@@ -3907,8 +3907,17 @@ button.consent-btn-primary {
 #dyn-screen-box .prefs-grid {
   grid-template-columns: 1fr 400px;
 }
+/* Reversed: the parameters take the flexible column and the meters a narrow fixed one.
+   A guitar amp's panel is a dozen controls and its display is a level rack with nothing
+   else in it, so the widths swap with the order. Selected by a class the host adds, one
+   step more specific than the rule above, which is why the narrow-window rule below has
+   to be restated for it too — a media query adds no specificity of its own. */
+#dyn-screen-box .prefs-grid.gt-paramsleft {
+  grid-template-columns: 1fr 230px;
+}
 @media (max-width: 860px) {
-  #dyn-screen-box .prefs-grid {
+  #dyn-screen-box .prefs-grid,
+  #dyn-screen-box .prefs-grid.gt-paramsleft {
     grid-template-columns: 1fr;
   }
 }
