@@ -62,3 +62,13 @@ src-tauri/icons/ios
 *.key
 *.cer
 *.mobileprovision
+
+# Local agent tool configuration, none of it read by this repository's own tooling.
+# Codex mirrors .claude/skills into .agents/skills, and only the .claude path is
+# generated (skill-export.ts) and diffed in CI; a tracked second copy would drift
+# with nothing to catch it. A symlink in its place would not survive a checkout on
+# a Windows machine without symlink support. AGENTS.md is a per-machine rendering
+# of CLAUDE.md for another tool, so tracking it would make one rule two texts.
+/.agents/
+/.codex/
+/AGENTS.md
