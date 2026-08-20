@@ -167,6 +167,18 @@ export function insertFxAllRateLocked(menu: InsertFxMenuEntry[]): boolean {
   return menu.length > 0 && menu.every((e) => e.option.value === INSERT_FX_NONE || e.lock === "rate");
 }
 
+/** The menu entry for what a node currently holds — null when it holds nothing, holds
+ *  No Effect, or names a value its own control does not offer (a value a readback can
+ *  carry, since the loader does not gate it).
+ *
+ *  Its `lock` is the question every surface showing one node has to ask, and it is not the
+ *  one `insertFxAllRateLocked` answers: the ceilings are per effect, so a node holding
+ *  Pitch Fix at 88.2 kHz is off while the menu it came from still offers effects that run. */
+export function insertFxSelectedEntry(menu: InsertFxMenuEntry[], value: number | undefined): InsertFxMenuEntry | null {
+  if (value === undefined || value === INSERT_FX_NONE) return null;
+  return menu.find((e) => e.option.value === value) ?? null;
+}
+
 // True when `channelId` is a stereo channel whose Ducker is on. The Ducker sits
 // post-fader on the main path, so a PRE (pre-fader) send taps ahead of it and is
 // not ducked — the inspector notes this on such a send.

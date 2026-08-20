@@ -10,6 +10,7 @@ import {
   insertFxAllRateLocked,
   insertFxFree,
   insertFxMenu,
+  insertFxSelectedEntry,
   canPatchFromMonitor,
   isMonitorBus,
   outputMono,
@@ -195,6 +196,52 @@ describe("insertFxAllRateLocked", () => {
     const menu = insertFxMenu(u44v, plan, "bus.mix1");
     expect(insertFxFree(menu)).toEqual([]);
     expect(insertFxAllRateLocked(menu)).toBe(false);
+  });
+});
+
+describe("insertFxSelectedEntry", () => {
+  const u44v = getModel("URX44V");
+  const valueOf = (label: string): number => INSERT_FX_OPTIONS.find((o) => o.label === label)!.value;
+  const holding = (rate: number, label: string) => {
+    const plan = planAt(rate);
+    plan.nodeParams.ch1 = { insertFx: valueOf(label) };
+    return { plan, menu: insertFxMenu(u44v, plan, "ch1") };
+  };
+
+  it("reports the HELD effect's own ceiling, which the menu-wide answer misses", () => {
+    // 88.2 kHz is above Pitch Fix's 48 and below every amp's and compander's 96, so the
+    // node is off while six effects in the same menu still run.
+    const { plan, menu } = holding(88200, "Pitch Fix");
+    expect(insertFxSelectedEntry(menu, plan.nodeParams.ch1!.insertFx)?.lock).toBe("rate");
+    expect(insertFxAllRateLocked(menu)).toBe(false);
+    expect(insertFxFree(menu).length).toBeGreaterThan(0);
+  });
+
+  it("is null where the held effect runs", () => {
+    const { plan, menu } = holding(88200, "Clean");
+    expect(insertFxSelectedEntry(menu, plan.nodeParams.ch1!.insertFx)?.lock).toBeNull();
+  });
+
+  it("is null for a node holding nothing — a rate takes nothing away from No Effect", () => {
+    const menu = insertFxMenu(u44v, planAt(192000), "ch1");
+    expect(insertFxSelectedEntry(menu, undefined)).toBeNull();
+    expect(insertFxSelectedEntry(menu, INSERT_FX_NONE)).toBeNull();
+    expect(insertFxAllRateLocked(menu)).toBe(true);
+  });
+
+  it("reports a slot taken by another node", () => {
+    const plan = planAt(48000);
+    plan.nodeParams.ch1 = { insertFx: valueOf("Clean") };
+    plan.nodeParams.ch2 = { insertFx: valueOf("Crunch") };
+    // Both claim the one device-wide amp slot, so each reads the other as holding it.
+    expect(insertFxSelectedEntry(insertFxMenu(u44v, plan, "ch2"), plan.nodeParams.ch2!.insertFx)?.lock).toBe("slot");
+  });
+
+  it("answers null for a value this model's own control does not offer", () => {
+    // A readback can carry an effect the app's table has no row for; it has no ceiling
+    // to read, and claiming one would name a number nothing measured.
+    const menu = insertFxMenu(u44v, planAt(48000), "ch1");
+    expect(insertFxSelectedEntry(menu, 4242)).toBeNull();
   });
 });
 

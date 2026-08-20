@@ -46,10 +46,12 @@ import { markMidi } from "./midi-learn";
 import type { MidiLearnHooks } from "./midi-learn";
 import {
   channelEqUnavailable,
+  formatRate,
   insertFxAllRateLocked,
   insertFxCensus,
   insertFxFree,
   insertFxMenu,
+  insertFxSelectedEntry,
   isMonitorBus,
   type InsertFxCensus,
 } from "../core/constraints";
@@ -1954,12 +1956,22 @@ export class Console {
       // is free — the tooltip naming which of the two reasons applies.
       const menu = insertFxMenu(model, this.hooks.getPlan(), m.id, this.ifxCensus ?? undefined);
       const free = insertFxFree(menu);
-      const rateLocked = insertFxAllRateLocked(menu);
       const holds = insertFxSelected(planOf());
+      // The lock the HELD effect carries, not the menu's: Pitch Fix stops at 48 kHz where
+      // the amps and companders reach 96, so a strip holding it at 88.2 kHz is off while
+      // the menu it came from still offers effects that run. A held value this app's own
+      // table does not carry has no ceiling to read, and falls back to the menu-wide
+      // answer — above 96 kHz nothing runs whatever the value names.
+      const selected = insertFxSelectedEntry(menu, planOf().insertFx);
+      const rateLocked = selected ? selected.lock === "rate" : holds && insertFxAllRateLocked(menu);
       const locked = holds ? rateLocked : !free.length;
       if (locked)
         this.makeChip(m.id, proc, "INS FX", false, false, () => false, {
-          readonlyTitle: rateLocked ? t().inspector.insFxRateLocked : t().inspector.insFxSlotLocked,
+          readonlyTitle: !rateLocked
+            ? t().inspector.insFxSlotLocked
+            : selected?.option.maxRate !== undefined
+              ? t().inspector.insFxRateLockedAt(selected.option.label, formatRate(selected.option.maxRate))
+              : t().inspector.insFxRateLocked,
         });
       // Taking a slot removes it from every other strip's chip and menu, so that
       // branch rebuilds the whole view; a bypass changes this strip alone and keeps

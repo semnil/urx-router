@@ -269,6 +269,8 @@ export const ja: Messages = {
     prePostLcdOnly: "CH → FX send の PRE/POST は本体でのみ設定可 (software から変更不可)。",
     eqRateLocked: "176.4 / 192 kHz ではステレオ ch の EQ は無効 — 強制的に OFF。",
     insFxRateLocked: "96 kHz 超では Insert FX は使用不可 — 強制的に OFF。",
+    insFxRateLockedAt: (effect: string, maxRate: string): string =>
+      `${maxRate} 超では ${effect} は使用不可 — 強制的に OFF。`,
     insFxSlotLocked: "Insert FX はすべて使用中 — 各エフェクトは本体全体で 1 スロットを占有。",
     channelOn: "チャンネル",
     sendOn: "Send",
