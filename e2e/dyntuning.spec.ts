@@ -998,8 +998,8 @@ test.describe("ducker", () => {
   });
 });
 
-// The note under the display is a FIXED two lines with `overflow: hidden`, so the
-// panel keeps its height across display modes. That makes a note too long for it get
+// The note under the display is a FIXED three lines with `overflow: hidden`, so the
+// panel keeps its height whatever the display shows. That makes a note too long for it get
 // cut with nothing to say so — which is what shipped: measured, the COMP and EQ notes
 // already wrapped below about 1150 px of window and their Japanese counterparts below
 // about 1300, and the ducker's second line was missing on a real unit.

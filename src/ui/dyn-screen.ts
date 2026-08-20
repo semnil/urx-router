@@ -1287,9 +1287,8 @@ export class DynScreen {
    *  height on every switch, which moves the Close action and the parameter rows under
    *  the pointer. `gt-note` reserves a fixed height, which is what keeps a longer string
    *  from silently reintroducing the jump — and from being cut, which one line did on any
-   *  window narrower than a wide desktop (E2E pins both). Two lines by default; a bank of
-   *  faces takes three, since its line has three controls to name and the reserve above
-   *  the grid already leaves that face the room (`style.css`, `.gt-faced .gt-note`). */
+   *  window narrower than a wide desktop (E2E pins both). Three lines on every screen,
+   *  the faced bank included (`style.css`, `.gt-note`). */
   private hintLine(proc: DynProcessor, ctx: DynCtx): HTMLElement {
     const hint = el("p", "gt-note");
     const text = proc.hint?.(ctx);
