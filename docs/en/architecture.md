@@ -404,17 +404,29 @@ carries a one-line map of the same directories and points here.
   node has (`bind` → fields + meter lanes), reads and writes its own corner of the plan (`read`/`patch`),
   and arranges its display column out of the parts the host offers (`display` over `parts.lanes()` /
   `parts.plot()`). It owns the session's one meter subscription while open, so the console is told to release and
-  regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` / `dyn-ssmcs.ts` are the descriptors — DUCKER is
+  regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` / `dyn-ssmcs.ts` / `insert-fx-screen.ts` are the
+  descriptors — DUCKER is
   the one whose node is not the node it tunes, since a ducker hangs under a stereo channel keyed by a wire
   from somewhere else, so its lanes are gathered from three places instead of read off the node the screen
   opened on — and `dyn-ssmcs.ts` the one that is three faces of one bank rather than one processor, moved between from
-  the bar over the display without closing — `dyn-chan.ts` the binding the
+  the bar over the display without closing. `insert-fx-screen.ts` is the one that stands for several effects
+  rather than one: what it shows is the insert effect the node HOLDS, which is a plan value another surface
+  changes, so it resolves the family on every call and a device follow re-binds the same modal instead of
+  closing one screen and opening another. It carries no Effect Type row deliberately — a selector write refills
+  the bound engine array with that type's defaults and is not reversible (`core/control/insert-fx-effect.ts`) —
+  and its fields name an engine SLOT rather than a parameter, since those values live in `insertFxParams` keyed
+  by family and slot. The families it does not show whole stay in the inspector's own editor, which is the same
+  answer `bind` gives: Pitch Fix keeps its Key, Scale and note mask outside the flat catalogue, and the
+  multi-band compressor is not in it at all. `dyn-chan.ts` the binding the
   MONO IN channel-strip processors share, `dyn-plot.ts` the dB×dB transfer plot they draw, `dyn-freq-plot.ts`
   the frequency×gain plot the two EQs draw, and
   `dyn-registry.ts` the one place that knows which processors exist.
-  Every screen shows its plot and its lane rack at once — the threshold is dragged as a fader cap on the
-  input meter, the two sharing one coordinate — and a band is selected by pressing its marker on the
-  response rather than from a bar. The EQ's filter model is `core/eq-response.ts` (measured: the unit's Q is twice the biquad Q,
+  Every screen that draws a response shows it and its lane rack at once — the threshold is dragged as a fader
+  cap on the input meter, the two sharing one coordinate — and a band is selected by pressing its marker on the
+  response rather than from a bar. INS FX draws none: a guitar amp's frequency response and a pitch tracker are
+  not derivable from the parameters and the unit meters neither, so its display is the lane rack alone and it
+  omits `plotGeo` / `drawAxes` / `drawCurve` together (`DynPlotProcessor` is the type that keeps the three
+  required wherever one of them is supplied). The EQ's filter model is `core/eq-response.ts` (measured: the unit's Q is twice the biquad Q,
   pass filters ignore Q, a shelf's nominal frequency is its −3 dB-from-plateau point). **Every plot draws
   its curve at the true value and the host clips it to the plot area** — the `drawAxes` / `drawCurve` split
   exists to enforce that: clamping a value onto the axis draws a horizontal bar along the edge, i.e. a

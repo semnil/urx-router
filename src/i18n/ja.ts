@@ -543,6 +543,14 @@ export const ja: Messages = {
       tapOut: "Post",
       hint: "斜線は変化にかかる時間で、変化の形ではありません。Key はステレオでも 1 本 (L+R の和) です。",
     },
+    insfx: {
+      title: "INS FX",
+      open: "Insert FX 画面",
+      tapIn: "Pre Ins FX",
+      tapOut: "Pre Fader",
+      tapOutBus: "Post",
+      tapGr: "Ins FX GR",
+    },
   },
   shelf: {
     title: "非表示",

@@ -706,7 +706,7 @@ export function eqOneKnob(model: DeviceModel, nodeId: string, compEqType: number
 export interface DynField {
   /** The GateParams / CompParams / EqBand sub-field this controls, or one of the SSMCS
    *  keys the descriptor flattens its nested sub-objects onto. */
-  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey;
+  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey | InsertFxFieldKey;
   /** The catalog row the numeric writer emits this value through. Absent for the SSMCS
    *  strip, whose commands are built from the plan's own nested shape
    *  (`pushSsmcsCommands`) rather than from a field table — a name here would be a
@@ -741,6 +741,12 @@ export type EmittedDynField = DynField & { name: ParamName };
  *  descriptor flattens `ssmcs` and `ssmcs.sc` onto one record, so the side-chain
  *  filter's three values are prefixed to keep them apart from the compressor's. */
 export type SsmcsFieldKey = "compDrive" | "morphing" | "outGain" | "scQ" | "scFreq" | "scGain";
+
+/** An insert-FX engine value, named by the SLOT it occupies. Those values live in
+ *  `insertFxParams` keyed by family and slot rather than in a sub-object of their own, so
+ *  there is no parameter name to borrow — and the same slot means a different parameter
+ *  under each family, which is why the key alone never identifies one. */
+export type InsertFxFieldKey = `ifx${number}`;
 
 const SSMCS_SC_PREFIX = /^sc[A-Z]/;
 

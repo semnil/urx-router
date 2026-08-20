@@ -112,6 +112,7 @@ import { setLevelText } from "./glyph";
 import { holdInertOnBlur, isHoldingInert, onInertHoldsEnd, wheelStep } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import { dynOpenLabel } from "./dyn-registry";
+import { insertFxScreenFamily } from "./insert-fx-screen";
 import type { DynKind } from "./dyn-registry";
 import {
   EQ_FREQ_POS_MAX,
@@ -837,11 +838,19 @@ export function renderInspector(
           ),
         );
       }
-      // Editable parameters for the selected effect (guitar amp / pitch fix /
-      // compander / multi-band comp), below the selector.
+      // The selected effect's own parameters. Where the tuning screen can show the
+      // family, this is its launcher and the sliders live there, beside the meters that
+      // say what they are doing — the move GATE / COMP / EQ / SSMCS have already made,
+      // and for the same reason: a slider built here reads the snapshot taken at render
+      // time and writes a stale value back on its next drag. The families the screen
+      // does not yet show keep the section below.
       if (ifxSel !== undefined) {
-        const fxSec = insertFxEffectSection(node.id, ifxSel, plan, actions, m);
-        if (fxSec) (tailBody ?? host).append(fxSec);
+        if (insertFxScreenFamily(plan, node.id)) {
+          (tailBody ?? host).append(dynLauncher("insfx", node.id, actions, m));
+        } else {
+          const fxSec = insertFxEffectSection(node.id, ifxSel, plan, actions, m);
+          if (fxSec) (tailBody ?? host).append(fxSec);
+        }
       }
     }
 
