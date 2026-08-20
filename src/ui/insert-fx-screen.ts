@@ -18,6 +18,7 @@
 
 import { insertFxFamilyOf, insertFxParams } from "../core/control/insert-fx-effect";
 import type { InsertFxFamily, InsertFxParamDesc } from "../core/control/insert-fx-effect";
+import { insertFxSelected } from "../core/control/params";
 import { insertFxControl } from "../core/control/translate";
 import type { DynField, InsertFxFieldKey } from "../core/control/translate";
 import { grAddr, insertFxOutGrAddr, tapFor } from "../core/meters";
@@ -304,6 +305,15 @@ function insFxFace(face: InsFxFace): DynProcessor {
       return d && labelOf(d, m);
     },
     fieldText: (f, v, ctx) => descOf(ctx, f.key)?.format?.(v),
+
+    // The one line under the display. A bypassed effect is still editable — the plan holds
+    // the values and the unit stores them — but nothing it is set to reaches the signal,
+    // and the two level lanes beside the note read the same thing while it is off. Null
+    // where there is nothing to say, which keeps the line's space either way.
+    hint: (ctx) =>
+      insertFxSelected(ctx.plan.nodeParams[ctx.nodeId]) && ctx.plan.nodeParams[ctx.nodeId]?.insertFxOn === false
+        ? ctx.m.dynTuning.insfx.bypassed
+        : null,
 
     // Speed and Depth drive a vibrato the selector beside them can switch off. The rows
     // stay where they are, dimmed and tagged, rather than being dropped: a panel that

@@ -677,6 +677,7 @@ export const en = {
       // Speed and Depth on the Clean amp: the selector beside them decides whether they
       // reach anything.
       vibOnly: tr("Vib only"),
+      bypassed: tr("Bypassed — the values are kept and edited here, but nothing they are set to reaches the signal."),
     },
   },
   shelf: {
