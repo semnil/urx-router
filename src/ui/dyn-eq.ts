@@ -52,7 +52,7 @@ import { enumRow } from "./dyn-chan";
 import { bandMarkers, drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo, pickBandMarker } from "./dyn-freq-plot";
 import type { BandMarker } from "./dyn-freq-plot";
 import { oneKnobLevelRow, splitDisplay } from "./dyn-screen";
-import type { DynCtx, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
+import type { DynCtx, DynLane, DynPlotGeo, DynPlotProcessor } from "./dyn-screen";
 
 /** Level-lane ruler. The stages either side of an EQ are programme level, so the ruler
  *  is the range a mix is read in rather than a threshold's domain (there is no value to
@@ -89,7 +89,7 @@ function eqTapKeys(nodeId: string): { in: string; out: string } {
 /** Whether the device is driving this node's bands right now. */
 const oneKnobOn = (ctx: DynCtx): boolean => ctx.plan.nodeParams[ctx.nodeId]?.eqOneKnob?.on === true;
 
-export const EQ_DYN: DynProcessor = {
+export const EQ_DYN: DynPlotProcessor = {
   key: "eq",
   loDb: LO_DB,
   tickStep: TICK_STEP,
