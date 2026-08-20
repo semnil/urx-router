@@ -143,6 +143,27 @@ describe("insert-fx family / engine / slot mapping", () => {
   });
 });
 
+describe("the guitar amps' shared rows", () => {
+  const labelOf = (family: Parameters<typeof insertFxParams>[0], slot: number): string =>
+    insertFxParams(family).find((d) => d.slot === slot)!.label;
+
+  it("names slot 7 Volume on Clean and Gain on the other three", () => {
+    // The unit prints Volume there on Clean alone; the slot, its encoding and its range
+    // are one thing across all four, so only the label differs.
+    expect(labelOf("guitar-clean", 7)).toBe("volume");
+    for (const f of ["guitar-crunch", "guitar-lead", "guitar-drive"] as const) {
+      expect(labelOf(f, 7)).toBe("gain");
+    }
+  });
+
+  it("keeps the read order the emit path walks", () => {
+    // Substituting the label must not move the row: the writable-slot enumeration and the
+    // Inspector both walk this list in order.
+    const slots = (f: Parameters<typeof insertFxParams>[0]): number[] => insertFxParams(f).map((d) => d.slot);
+    expect(slots("guitar-clean").slice(0, 9)).toEqual(slots("guitar-crunch").slice(0, 9));
+  });
+});
+
 describe("insert-fx effect emission", () => {
   it("compander: selector + engine 689 array at calibrated slots", () => {
     const plan = emptyPlan("URX44V");

@@ -43,7 +43,10 @@ test("guitar amp (Clean) reveals common params + cabinet list", async ({ page })
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Clean" });
   await openScreen(page);
-  // Common params appear.
+  // Common params appear. Slot 7 reads Volume here and Gain on the other three amps —
+  // the unit's own labelling, and the one row whose name depends on the type.
+  await expect(screenRow(page, "Volume")).toBeVisible();
+  await expect(screenRow(page, "Gain")).toHaveCount(0);
   await expect(screenRow(page, "Treble")).toBeVisible();
   await expect(screenRow(page, "Output")).toBeVisible();
   await expect(screenRow(page, "Blend")).toBeVisible(); // Clean-only
@@ -73,6 +76,9 @@ test("switching guitar amp type swaps the type-specific control", async ({ page 
   await expect(screenRow(page, "Blend")).toHaveCount(0);
   await expect(screenRow(page, "Amp Type")).toBeVisible(); // Drive-only
   await expect(screenRow(page, "Master")).toBeVisible();
+  // …and slot 7 changed its name with the type.
+  await expect(screenRow(page, "Gain")).toBeVisible();
+  await expect(screenRow(page, "Volume")).toHaveCount(0);
 });
 
 test("compander on the STEREO master reveals dynamics params", async ({ page }) => {
