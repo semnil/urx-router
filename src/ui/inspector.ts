@@ -96,8 +96,10 @@ import {
   channelDuckerOn,
   channelEqUnavailable,
   duckerBypassWarnings,
+  formatRate,
   insertFxAllRateLocked,
   insertFxMenu,
+  insertFxSelectedEntry,
   isMonitorBus,
   canPatchFromMonitor,
   outputMono,
@@ -829,13 +831,22 @@ export function renderInspector(
       // plan keeps its value and translate.ts keeps emitting it, so the control
       // shows what the operator may change, not what will be written.
       if (ifxSel !== undefined && ifxSel !== INSERT_FX_NONE) {
-        const ifxRateLocked = insertFxAllRateLocked(ifxMenu);
+        // The ceiling that decides this is the SELECTED effect's, not the menu's: Pitch
+        // Fix stops at 48 kHz where the amps and companders reach 96. A selection this
+        // app's own table does not carry (read back from a unit) has no ceiling to name
+        // and falls back to the menu-wide answer.
+        const ifxEntry = insertFxSelectedEntry(ifxMenu, ifxSel);
+        const ifxRateLocked = ifxEntry ? ifxEntry.lock === "rate" : insertFxAllRateLocked(ifxMenu);
         (tailBody ?? host).append(
           boolToggle(
             m.inspector.insertFxOn,
             !ifxRateLocked && insertFxEngaged(plan.nodeParams[node.id]),
             (v) => actions.onUpdateNodeParams(node.id, { insertFxOn: v }),
-            ifxRateLocked ? m.inspector.insFxRateLocked : undefined,
+            !ifxRateLocked
+              ? undefined
+              : ifxEntry?.option.maxRate !== undefined
+                ? m.inspector.insFxRateLockedAt(ifxEntry.option.label, formatRate(ifxEntry.option.maxRate))
+                : m.inspector.insFxRateLocked,
           ),
         );
       }

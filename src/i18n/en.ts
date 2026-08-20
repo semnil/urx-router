@@ -341,6 +341,11 @@ export const en = {
     prePostLcdOnly: tr("CH → FX send Pre/Post is set on the device only (not writable from software)."),
     eqRateLocked: tr("Stereo channel EQ is disabled at 176.4 / 192 kHz — forced off."),
     insFxRateLocked: tr("Insert FX is unavailable above 96 kHz — forced off."),
+    // The effect the node HOLDS, named with its own ceiling: the ceilings differ per
+    // effect (Pitch Fix stops at 48 kHz where the amps and companders reach 96), so the
+    // sentence above can only be said of a value this app's own table does not carry.
+    insFxRateLockedAt: (effect: string, maxRate: string): string =>
+      `${effect} is unavailable above ${maxRate} — forced off.`,
     insFxSlotLocked: tr("Every insert effect is in use — each occupies one device-wide slot."),
     channelOn: tr("Channel"),
     sendOn: tr("Send"),
