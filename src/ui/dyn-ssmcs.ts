@@ -72,7 +72,7 @@ import type { BandMarker } from "./dyn-freq-plot";
 import { fmtSsmcsGain, fmtSsmcsHz, fmtSsmcsMs, fmtSsmcsQ, fmtSsmcsRatio } from "./inspector-format";
 import { CURVE_PAD, dbGeo, drawDbAxes, drawLiveDot, drawTransferCurve, kneeResponse, transferPlot } from "./dyn-plot";
 import { PLOT_FONT, splitDisplay } from "./dyn-screen";
-import type { DynBar, DynCtx, DynLane, DynPlotGeo, DynProcessor } from "./dyn-screen";
+import type { DynBar, DynCtx, DynLane, DynPlotGeo, DynPlotProcessor } from "./dyn-screen";
 import type { Messages } from "../i18n/en";
 
 /** Level-lane ruler. The stages this bank sits between carry programme level and it
@@ -428,7 +428,7 @@ function mainHalves(w: number, h: number): { half: number; left: DynPlotGeo; rig
   };
 }
 
-export const SSMCS_DYN: DynProcessor = {
+export const SSMCS_DYN: DynPlotProcessor = {
   key: "ssmcs",
   loDb: LO_DB,
   tickStep: TICK_STEP,
@@ -605,7 +605,7 @@ function drawScResponse(c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Record<
   drawBandMarkers(c, g, tok, [{ label: SC_MARKER, hz: sc.freq, db: asReduction(sc.freq), on: sc.on, active: false }]);
 }
 
-export const SSMCS_COMP_DYN: DynProcessor = {
+export const SSMCS_COMP_DYN: DynPlotProcessor = {
   key: "ssmcsComp",
   loDb: LO_DB,
   tickStep: TICK_STEP,
@@ -733,7 +733,7 @@ export const SSMCS_COMP_DYN: DynProcessor = {
 
 const bandOf = (ctx: DynCtx): SsmcsEqBandName => SSMCS_EQ_BAND_NAMES[ctx.sel] ?? SSMCS_EQ_BAND_NAMES[0];
 
-export const SSMCS_EQ_DYN: DynProcessor = {
+export const SSMCS_EQ_DYN: DynPlotProcessor = {
   key: "ssmcsEq",
   loDb: LO_DB,
   tickStep: TICK_STEP,
