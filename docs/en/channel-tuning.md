@@ -780,6 +780,40 @@ a slot rather than what is in it.
 - **No MIDI ids.** The control catalog carries none for these values, so the screen marks nothing —
   the same position DUCKER is in, and for the same reason.
 
+### The guitar amp is two faces
+
+Everything else this screen shows is one panel. A guitar amp is an amp and a cabinet, and the
+cabinet's four rows are a different job from the tone stack, so they are a bank in the sense the
+SSMCS section defines: two descriptors, one bar, one reserved height, moved between without closing.
+
+| Face | Rows |
+| --- | --- |
+| AMP | this type's own values, then Volume (Clean) / Gain, Bass, Middle, Treble, Presence, then the modulation group, then Output |
+| CAB | Gate, Gate Level, SP Type, Mic Position — in the order the signal meets them |
+
+The type's own values lead because they are what makes one amp a different amp. The modulation
+group is placed by name rather than with them: Clean's Cho/Off/Vib, Speed and Depth are
+type-specific too, and putting them at the head would separate Speed and Depth both from the
+switch that drives them and from the Output they sit before. **Speed and Depth stay where they
+are when that switch is not on vibrato** — dimmed and tagged, never dropped, because a panel that
+loses two rows moves everything under them out from under the pointer.
+
+**Slot 7 is Volume on Clean and Gain on the other three**, which is what the unit prints. The
+catalogue swaps the label alone: the slot, its encoding and its range are one thing across the
+four, and the row keeps the position the emit path walks.
+
+**The columns reverse for an amp.** Its panel is a dozen controls and its display is a level rack
+with nothing else in it, so the parameters take the flexible column and the meters a narrow fixed
+one. The companders keep the ordinary order — their display is the point of the screen — and the
+binding declares which, since it is a property of what the node holds rather than of the
+descriptor.
+
+**A follow that replaces the effect returns to the AMP face.** The faces belong to the effect, so
+a compander arriving under an open CAB face is neither of the two things the host does on its own:
+a face whose `bind` answers null closes the screen, which is right for a bank taken away and wrong
+for one replaced, and a `sel` nothing resets would carry a cabinet segment onto an effect with no
+cabinet. `DynProcessor.bankIdentity` is what the host compares to tell those apart.
+
 ### The two reduction meters are indexed differently
 
 They are not one table, and the difference is the reason:

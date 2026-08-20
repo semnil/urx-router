@@ -664,6 +664,19 @@ export const en = {
       tapOut: dev("Pre Fader"),
       tapOutBus: dev("Post"),
       tapGr: dev("Ins FX GR"),
+      // The heading over the two-face segment. It names which face is being ADJUSTED
+      // rather than a way of displaying one, which is why it is not the "Display" the
+      // other screens' bars sit under.
+      faceBar: tr("View"),
+      // The guitar amp's two faces. `fixed()` rather than `dev()`: the unit's own INS FX
+      // screen is one page — the user guide shows an effect menu and a meter and nothing
+      // else, and the effect guide groups these parameters without pages — so the split is
+      // this app's, and the two abbreviations read the same in every language.
+      faceAmp: fixed("AMP"),
+      faceCab: fixed("CAB"),
+      // Speed and Depth on the Clean amp: the selector beside them decides whether they
+      // reach anything.
+      vibOnly: tr("Vib only"),
     },
   },
   shelf: {

@@ -505,13 +505,17 @@ test("the channel tuning screens show every processor, both displays and their n
   // INS FX is not reached from a section of its own: what the screen shows is whichever
   // effect the node HOLDS, so the way in appears beside the Insert FX selector once one is
   // selected, and the launcher's own wording is only on screen from that moment.
-  const openInsFx = async (id: string, effect: string): Promise<void> => {
+  const openInsFx = async (id: string, effect: string, faces: string[] = []): Promise<void> => {
     await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
     await page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select").selectOption({ label: effect });
     await inv.take(page, "#inspector");
     await page.locator("#btn-insfx-screen").click();
     await expect(box).toBeVisible();
     await inv.take(page, "#dyn-screen-modal");
+    for (const face of faces) {
+      await page.click(face);
+      await inv.take(page, "#dyn-screen-modal");
+    }
     await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
   };
   // Both sides of the pair, because an insert effect sits BEFORE the fader on a channel
@@ -519,6 +523,9 @@ test("the channel tuning screens show every processor, both displays and their n
   // at a time.
   await openInsFx("ch2", "Compander-H");
   await openInsFx("bus.mix1", "Compander-S");
+  // A guitar amp is the one family with two faces, and the only one whose face bar and
+  // the tag on its locked modulation rows are on screen at all.
+  await openInsFx("ch1", "Clean", ["#dyn-face-insfx-cab", "#dyn-face-insfx-amp"]);
 
   expectComplete("dynScreen", inv);
 });

@@ -163,6 +163,13 @@ export interface DynBinding {
    *  five might not, and a threshold on `lanes.length` is a guess dressed as a rule —
    *  the same guess `nodeLabel` and the optional `bar` exist to avoid. Absent = 3. */
   readoutCols?: number;
+  /** Put the parameters on the left and the meters in a narrow column on the right,
+   *  instead of the display column first. Declared by the binding rather than by the
+   *  descriptor because it is a property of what this node HOLDS: the INS FX screen
+   *  reverses for a guitar amp, whose panel is a grid of a dozen controls and whose
+   *  display is a level rack and nothing else, and keeps the ordinary order for the
+   *  companders, whose display is the point. */
+  paramsFirst?: true;
 }
 
 /** Everything a descriptor is asked its questions against. `sel` is whatever the
@@ -273,8 +280,13 @@ export interface DynProcessor {
   /** The segmented bar over the display, where there is something to pick. Absent
    *  where there is not: the DUCKER shows its envelope and its lanes at once, as the
    *  EQ does, so nothing chooses between them and a heading reading "Display" over a
-   *  bar with no buttons would name a choice that does not exist. */
-  bar?: (ctx: DynCtx) => DynBar;
+   *  bar with no buttons would name a choice that does not exist.
+   *
+   *  It may also answer nothing for a PARTICULAR node, which is what a descriptor
+   *  standing for more than one thing needs: the INS FX screen shows a two-face bank on
+   *  a guitar amp and a single face on a compander, and the reserve the host puts in a
+   *  bar's place is the same either way. */
+  bar?: (ctx: DynCtx) => DynBar | undefined;
   /** Keep the bar's choice across opens and sessions (it picks a way of reading the
    *  processor), rather than resetting per open (it is a cursor into the parameters). */
   persistSel?: true;
@@ -387,6 +399,20 @@ export interface DynProcessor {
    * that is what the operator selects them from.
    */
   banked?: true;
+  /**
+   * What this bank is a bank OF, where that can change under an open screen. The host
+   * remembers it at `open` and compares it on every refresh; when it moves, the screen
+   * goes back to the descriptor it was opened with and its first segment before it
+   * re-binds.
+   *
+   * Only the INS FX screen has one. Its faces belong to the effect the node HOLDS, and a
+   * device follow can replace that effect with one whose faces are different or with none
+   * at all — and neither of the two things the host does on its own is right there. A
+   * face whose `bind` answers null CLOSES the screen, which is correct for a bank taken
+   * away and wrong for one replaced; and a `sel` nothing resets would carry a guitar
+   * amp's CAB segment onto a compander that has no second face.
+   */
+  bankIdentity?: (ctx: DynCtx) => string;
 }
 
 /** A processor whose display carries a plot: the three drawing hooks are required, so
@@ -551,6 +577,11 @@ export class DynScreen {
   private lanes: DynLane[] = [];
   /** What the binding declared about the readouts. Only the column count so far. */
   private readoutCols = READOUT_COLS_DEFAULT;
+  private paramsFirst = false;
+  /** The descriptor `open` was called with, and what its bank was a bank of at the time.
+   *  A bank whose identity moves goes back to both. */
+  private entryProc: DynProcessor | null = null;
+  private bankId = "";
   private unsub: (() => void) | null = null;
   private raf = 0;
   /** The address set the current registration covers, and a counter that supersedes
@@ -672,9 +703,12 @@ export class DynScreen {
     this.proc = proc;
     this.nodeId = nodeId;
     this.sel = sel;
+    this.entryProc = proc;
+    this.bankId = proc.bankIdentity?.({ ...this.ctx(), nodeId, sel }) ?? "";
     this.fields = bound.fields;
     this.lanes = bound.lanes;
     this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
+    this.paramsFirst = bound.paramsFirst === true;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     this.peaks.clear();
     this.render();
@@ -707,6 +741,11 @@ export class DynScreen {
    *  follow can move these very parameters while it is open. */
   refresh(): void {
     if (!this.isOpen()) return;
+    // What the bank is a bank OF can change under an open screen — the INS FX screen's
+    // faces belong to the effect the node holds. Decided before `rebind`, because the
+    // face on screen may not exist on the new one and `rebind` would read that as the
+    // processor being gone and close a screen that should have re-bound.
+    this.syncBank();
     // A follow can switch the channel's COMP/EQ bank out from under the screen,
     // which takes the processor away entirely. That verdict is not deferrable —
     // a screen left open on a bank the plan no longer emits would keep writing
@@ -739,6 +778,20 @@ export class DynScreen {
     this.watchPlotSize();
   }
 
+  /** Go back to the descriptor the screen was opened with, and its first segment, when the
+   *  bank stopped being a bank of the same thing. The peak holds go with it: a lane key
+   *  means a different tap under another effect, and a hold carried across would print one
+   *  tap's peak under another's caption. */
+  private syncBank(): void {
+    if (!this.proc?.bankIdentity || !this.entryProc) return;
+    const id = this.proc.bankIdentity(this.ctx());
+    if (id === this.bankId) return;
+    this.bankId = id;
+    this.proc = this.entryProc;
+    this.sel = 0;
+    this.peaks.clear();
+  }
+
   /** Re-resolve what this node has. False (and closed) when the processor is gone — a
    *  follow can switch the channel's COMP/EQ bank out from under an open screen, and a
    *  loaded plan can take the node away entirely. */
@@ -751,6 +804,7 @@ export class DynScreen {
     this.fields = bound.fields;
     this.lanes = bound.lanes;
     this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
+    this.paramsFirst = bound.paramsFirst === true;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     return true;
   }
@@ -1184,7 +1238,12 @@ export class DynScreen {
     // costs is blank space below the shorter faces; `.gt-faced`'s `min-height` in
     // style.css is where the measurement lives, along with what it yields to.
     if (proc.banked) grid.classList.add("gt-faced");
-    grid.append(this.displayColumn(proc), this.controlColumn(m));
+    // A reversed panel is one class plus the DOM order, not a second layout: the two
+    // columns are what they always were, and only which of them is the flexible one moves.
+    const display = this.displayColumn(proc);
+    const controls = this.controlColumn(m);
+    if (this.paramsFirst) grid.classList.add("gt-paramsleft");
+    grid.append(...(this.paramsFirst ? [controls, display] : [display, controls]));
 
     const actions = el("div", "consent-actions");
     const close = el("button", "consent-btn-secondary");

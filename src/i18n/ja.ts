@@ -551,6 +551,10 @@ export const ja: Messages = {
       tapOut: "Pre Fader",
       tapOutBus: "Post",
       tapGr: "Ins FX GR",
+      faceBar: "面",
+      faceAmp: "AMP",
+      faceCab: "CAB",
+      vibOnly: "Vib のみ",
     },
   },
   shelf: {
