@@ -780,6 +780,11 @@ a slot rather than what is in it.
 - **No MIDI ids.** The control catalog carries none for these values, so the screen marks nothing —
   the same position DUCKER is in, and for the same reason.
 
+**A bypassed effect says so.** The note under the display is the one place the app states that
+the values are still kept and edited here while nothing they are set to reaches the signal — the
+two level lanes beside it read the same thing while it is off. The launcher stays available: an
+effect held and switched out is still an effect to tune.
+
 ### The guitar amp is two faces
 
 Everything else this screen shows is one panel. A guitar amp is an amp and a cabinet, and the

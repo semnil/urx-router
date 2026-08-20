@@ -555,6 +555,7 @@ export const ja: Messages = {
       faceAmp: "AMP",
       faceCab: "CAB",
       vibOnly: "Vib のみ",
+      bypassed: "バイパス中 — 値はここで保持・編集できますが、設定した内容は信号に届きません。",
     },
   },
   shelf: {

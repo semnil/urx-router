@@ -505,9 +505,18 @@ test("the channel tuning screens show every processor, both displays and their n
   // INS FX is not reached from a section of its own: what the screen shows is whichever
   // effect the node HOLDS, so the way in appears beside the Insert FX selector once one is
   // selected, and the launcher's own wording is only on screen from that moment.
-  const openInsFx = async (id: string, effect: string, faces: string[] = []): Promise<void> => {
+  const openInsFx = async (id: string, effect: string, faces: string[] = [], bypass = false): Promise<void> => {
     await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
     await page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select").selectOption({ label: effect });
+    // Bypassing is a state of the screen, not of the Inspector: the note under the
+    // display is the only place the app says the values are still editable while nothing
+    // they are set to reaches the signal.
+    if (bypass) {
+      await page
+        .locator("#inspector .param", { hasText: "Insert FX ON" })
+        .getByRole("button", { name: "OFF", exact: true })
+        .click();
+    }
     await inv.take(page, "#inspector");
     await page.locator("#btn-insfx-screen").click();
     await expect(box).toBeVisible();
@@ -526,6 +535,9 @@ test("the channel tuning screens show every processor, both displays and their n
   // A guitar amp is the one family with two faces, and the only one whose face bar and
   // the tag on its locked modulation rows are on screen at all.
   await openInsFx("ch1", "Clean", ["#dyn-face-insfx-cab", "#dyn-face-insfx-amp"]);
+  // Back to the strip that already holds it: the compander takes a device-wide 1-of slot,
+  // so a third channel cannot select one while CH 2 has it.
+  await openInsFx("ch2", "Compander-H", [], true);
 
   expectComplete("dynScreen", inv);
 });

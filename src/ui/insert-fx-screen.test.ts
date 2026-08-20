@@ -303,3 +303,30 @@ describe("moving between the faces", () => {
     screen.close();
   });
 });
+
+describe("a bypassed effect", () => {
+  const note = (): string => h.box.querySelector<HTMLElement>(".gt-note")!.textContent ?? "";
+
+  it("says so, and still lets the values be edited", () => {
+    holding("ch1", "Compander-H");
+    h.plan.nodeParams.ch1!.insertFxOn = false;
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    expect(note()).toBe(t().dynTuning.insfx.bypassed);
+    // The rows are live: the plan holds the values and the unit stores them whether or
+    // not the effect is in the path.
+    const slider = h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx6"]')!;
+    expect(slider.disabled).toBe(false);
+    screen.close();
+  });
+
+  it("says nothing while the effect is engaged, and keeps the line's space", () => {
+    holding("ch1", "Compander-H");
+    h.plan.nodeParams.ch1!.insertFxOn = true;
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    expect(note()).toBe("");
+    expect(h.box.querySelector(".gt-note")).not.toBeNull();
+    screen.close();
+  });
+});
