@@ -1049,12 +1049,19 @@ export interface MergedRead extends ReadbackResult {
  */
 export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<string> {
   const held = new Set<string>();
-  // No rate from the read, nothing to decide with. A scoped read never asks for the
-  // address (it has no owner node) and a full read whose 766 failed has none either, so
-  // this is the ordinary case rather than the exceptional one — and deciding from the
-  // plan's own rate instead would let a stale number overwrite an operator who cleared
-  // the effect on the unit by hand.
-  if (ctx.deviceSampleRate === undefined) return held;
+  // Every rate this read has evidence of: the one it established, and the ones the unit
+  // announced. A read that has NEITHER decides nothing — the plan's own rate is not
+  // evidence, and deciding from it would let a stale number overwrite an operator who
+  // cleared the effect on the unit by hand.
+  //
+  // A scoped read has no rate of its own (the address has no owner node) and is not
+  // therefore blind: it reads a node's insert FX like any other body value, so one
+  // already running when the unit clears an effect is the FIRST to see the cleared
+  // selector — before the full read the rate notify escalates to. Measured: without the
+  // announced rate to decide from, that scoped read adopted the clearing, and the full
+  // read behind it then had nothing left to hold.
+  const rates = [...(ctx.deviceSampleRate === undefined ? [] : [ctx.deviceSampleRate]), ...(ctx.ratesSeen ?? [])];
+  if (!rates.length) return held;
   for (const node of model.nodes) {
     const ifx = insertFxControl(model, node.id);
     if (!ifx) continue;
@@ -1081,7 +1088,6 @@ export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<stri
     // keep a value in the plan that has no way of ever reaching the unit.
     if (!option) continue;
     // Unavailable at the read's rate, or at any the unit announced on the way here.
-    const rates = [ctx.deviceSampleRate, ...(ctx.ratesSeen ?? [])];
     if (rates.every((rate) => insertFxAvailable(option, rate))) continue;
     for (const key of INSERT_FX_KEYS) held.add(nodeParamContestKey(node.id, key));
   }

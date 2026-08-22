@@ -1514,6 +1514,12 @@ written at all:
   asks the read's rate AND every rate the unit announced on the way (`HoldContext.ratesSeen`). That list is
   deliberately NOT scoped to the read's own window, unlike the announcements above: the rate notify that
   escalated to the read arrives before it starts, and it is the one carrying the rate that did the clearing.
+  It also survives a read that established no rate, rather than being emptied by whichever read ends first —
+  reconciles run one at a time, so a SCOPED read for another node sits between the notify and the full read
+  it escalates to. That scoped read is where both halves matter: it never asks for the rate address, and it
+  is not therefore blind — it reads a node's insert FX like any other body value, so one already running when
+  the unit clears an effect is the FIRST to see the cleared selector. Deciding only from a read's own rate
+  left it adopting the clearing, with nothing for the full read behind it to keep.
   What separates this from an operator's own No Effect on the unit is the rate the READ established
   (`ReadbackResult.deviceSampleRate`) — never the plan's own copy, which under the *Scene only* device scope
   is restored across a read and can name a rate the unit left long ago. A read that established no rate at

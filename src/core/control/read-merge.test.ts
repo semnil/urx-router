@@ -628,6 +628,25 @@ describe("insertFxHoldKeys", () => {
     expect(hold({ ...ctx, ratesSeen: [44100, 48000] }).size).toBe(0);
   });
 
+  // A SCOPED read has no rate of its own, and is not therefore blind: it reads a node's
+  // insert FX like any other body value, so one already running when the unit clears an
+  // effect is the FIRST to see the cleared selector — ahead of the full read the rate
+  // notify escalates to, which then finds nothing left to hold. Measured before the
+  // announced rate could decide on its own: nothing held, and the effect was gone.
+  it("holds on a rate the unit announced even when the read established none of its own", () => {
+    const before = basePlan();
+    before.nodeParams.ch1 = selected(before);
+    const deviceView = clonePlanState(before);
+    deviceView.nodeParams.ch1 = { ...deviceView.nodeParams.ch1, insertFx: -1, insertFxOn: false };
+    const ctx = { before, deviceView, authored: new Set<string>() };
+
+    expect(hold({ ...ctx, ratesSeen: [96000] }).size).toBe(3);
+    // A rate the effect runs at still says nothing…
+    expect(hold({ ...ctx, ratesSeen: [48000] }).size).toBe(0);
+    // …and a read with no evidence at all decides nothing, as before.
+    expect(hold(ctx).size).toBe(0);
+  });
+
   // The rate the PLAN holds is not the rate to decide from, and the two really do come
   // apart: a scoped read never asks for the address, and under the "Scene only" device
   // scope a full read's answer is discarded from the plan again. Deciding from the plan's

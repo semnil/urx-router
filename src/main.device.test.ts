@@ -910,6 +910,49 @@ describe("the live session", () => {
     await endLive();
   });
 
+  // Reconciles run one at a time, so a scoped read for ANOTHER node can sit between the
+  // rate notify and the full read it escalates to. Clearing the rate history on whichever
+  // read finished first took the announcement out from under the read it was for, and the
+  // full read then saw only the rate the unit had already come back to.
+  it("keeps the rate history across a scoped read that established none", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    const written = insertFxWrites(shell).length;
+    // Slow enough that the rate notify below lands INSIDE the scoped read.
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      const v =
+        a.paramId === PARAMS.SAMPLE_RATE.id
+          ? 48_000
+          : a.paramId === PARAMS.INSERT_FX.id
+            ? denormalizeInsertFx(INSERT_FX_NONE)
+            : 0;
+      return new Promise((r) => setTimeout(() => r(v), 5));
+    });
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+
+    // A CH 3 parameter the unit moved: no owner-less address, so this settles into a
+    // SCOPED read, which never asks for the rate.
+    const reads = shell.count("vd_get");
+    channel.onmessage([{ param_id: PARAMS.HPF_ON.id, x: 0, y: 2, value: 1 }]);
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 3), {
+      timeout: 25_000,
+      interval: 2,
+    });
+    // …and the excursion, announced while that read is still running.
+    channel.onmessage([
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
+    ]);
+
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
+    await endLive();
+  });
+
   // The Signal Type transition is announced on the PAIR's primary and clears the effect
   // on both members (measured), so recording the announcement without its partner leaves
   // the other half of the pair held and re-sent — half a clearing undone.

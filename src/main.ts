@@ -684,8 +684,9 @@ const announcedInsertFx: string[] = [];
 // the read arrives before it starts, and it is the one carrying the rate that cleared the
 // effect. An excursion can also be over before the read asks for the rate at all — 48 →
 // 96 → 48 leaves the read holding 48, where the effect runs and the clearing then reads
-// as the operator's own. Emptied with the list above when the last read ends, so the
-// scope is one coalescing window plus the read it produced.
+// as the operator's own. Emptied only when a read that ESTABLISHED a rate ends, so the
+// scope is one coalescing window plus every read up to and including the full one the
+// notify escalated to.
 const announcedRates: number[] = [];
 
 // Everything device-follow has in flight for a plan that is being replaced. Called at
@@ -721,26 +722,31 @@ async function followRead(
   const controller = new AbortController();
   followReads.add(controller);
   const mark = announcedInsertFx.length;
+  let establishedRate = false;
   try {
     const merged = await readIntoPlan(
       () => plan,
       (into) => read(into, controller.signal),
       planWrites,
-      (ctx) =>
-        insertFxHoldKeys(getModel(modelId), {
+      (ctx) => {
+        establishedRate = ctx.deviceSampleRate !== undefined;
+        return insertFxHoldKeys(getModel(modelId), {
           ...ctx,
           announced: new Set(announcedInsertFx.slice(mark)),
           ratesSeen: [...announcedRates],
-        }),
+        });
+      },
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
     return merged;
   } finally {
     followReads.delete(controller);
-    if (!followReads.size) {
-      announcedInsertFx.length = 0;
-      announcedRates.length = 0;
-    }
+    if (!followReads.size) announcedInsertFx.length = 0;
+    // The rate history outlives a read that established no rate of its own. A rate notify
+    // forces a FULL reconcile, and the scoped reads that overlap it are exactly the ones
+    // that need the announcement to decide with — clearing on whichever read happened to
+    // finish first took the evidence out from under the read the notify was for.
+    if (establishedRate && !followReads.size) announcedRates.length = 0;
   }
 }
 
