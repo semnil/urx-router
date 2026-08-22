@@ -35,12 +35,13 @@ import {
   SEMITONE_NAMES,
 } from "../core/control/insert-fx-effect";
 import type { InsertFxFamily, InsertFxParamDesc } from "../core/control/insert-fx-effect";
+import { formatRate, insertFxMenu, insertFxSelectedEntry } from "../core/constraints";
 import { insertFxSelected } from "../core/control/params";
 import { insertFxControl } from "../core/control/translate";
 import type { DynField, InsertFxFieldKey } from "../core/control/translate";
 import { grAddr, insertFxOutGrAddr, tapFor } from "../core/meters";
 import type { NodeParams, Plan } from "../core/plan";
-import { el, onOff, settingsChoice, settingsRow } from "./dom";
+import { el, onOff, settingsRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { enumRow } from "./dyn-chan";
 import type { DynBinding, DynCtx, DynLane, DynProcessor, DynRowCtx } from "./dyn-screen";
@@ -53,10 +54,14 @@ import type { Messages } from "../i18n/en";
 const LO_DB = -48;
 const TICK_STEP = 6;
 
-/** A field's key is its engine slot: an insert-FX value has no plan sub-object named
- *  after it to borrow a name from. */
-const slotKey = (slot: number): InsertFxFieldKey => `ifx${slot}`;
-const slotOf = (key: string): number => Number(key.slice(3));
+/** A field's key is its family and its engine slot. Both halves are needed: an insert-FX
+ *  value has no plan sub-object to borrow a name from, and a row can outlive the family it
+ *  was built for (translate.ts's `InsertFxFieldKey` carries how). */
+const slotKey = (fam: InsertFxFamily, slot: number): InsertFxFieldKey => `ifx:${fam}:${slot}`;
+const keyParts = (key: string): { fam: InsertFxFamily; slot: number } | null => {
+  const m = /^ifx:([\w-]+):(\d+)$/.exec(key);
+  return m ? { fam: m[1] as InsertFxFamily, slot: Number(m[2]) } : null;
+};
 
 /**
  * The order a family's rows are shown in, where it is not the catalogue's own.
@@ -118,6 +123,24 @@ const AMP_ORDER: readonly string[] = [
   "output",
 ];
 
+/**
+ * The height each bank reserves for its faces, where the stylesheet's shared 520px is not
+ * enough for the taller one. Without it the modal resizes on the segment that moves between
+ * them, which is what the reserve exists to stop.
+ *
+ * Measured with the faces rendered, Chromium on macOS at 1280x900, in both languages:
+ * the guitar amp's AMP face is 614px (EN) / 622px (JA) against its cabinet's 520, and the
+ * Pitch Fix SCALE face is 522px (JA) against PITCH's 520. Each number carries the headroom
+ * a wider font stack takes, on the same reasoning as the shipped bank's own.
+ */
+const FACE_RESERVE: Partial<Record<InsertFxFamily, number>> = {
+  "guitar-clean": 650,
+  "guitar-crunch": 650,
+  "guitar-lead": 650,
+  "guitar-drive": 650,
+  pitch: 560,
+};
+
 /** Clean's Cho/Off/Vib selector (slot 19) and the value that puts it on vibrato. */
 const MOD_SLOT = 19;
 const MOD_VIB = 2;
@@ -178,12 +201,13 @@ function rankIn(order: readonly string[], descs: InsertFxParamDesc[], d: InsertF
   return i < 0 ? order.length + descs.indexOf(d) : i;
 }
 
-/** The catalogue row one field key came from. Searched across the whole family rather
- *  than one face's rows: a slot is one parameter under a family whichever face shows it. */
-function descOf(ctx: DynCtx, key: string): InsertFxParamDesc | undefined {
-  const fam = familyOf(ctx);
-  const slot = slotOf(key);
-  return fam ? insertFxParams(fam).find((d) => d.slot === slot) : undefined;
+/** The catalogue row one field key came from. Read from the KEY rather than from the plan:
+ *  a row built for one family must go on printing that family's parameter even if the plan
+ *  has since moved to another. Searched across the whole family rather than one face's
+ *  rows — a slot is one parameter under a family whichever face shows it. */
+function descOf(_ctx: DynCtx, key: string): InsertFxParamDesc | undefined {
+  const parts = keyParts(key);
+  return parts ? insertFxParams(parts.fam).find((d) => d.slot === parts.slot) : undefined;
 }
 
 const labelOf = (d: InsertFxParamDesc, m: Messages): string => {
@@ -267,7 +291,7 @@ function insFxFace(face: InsFxFace): DynProcessor {
       const fields: DynField[] = rowsOf(fam, face)
         .filter((d) => d.control === "slider")
         .map((d) => ({
-          key: slotKey(d.slot),
+          key: slotKey(fam, d.slot),
           min: d.rawMin ?? 0,
           max: d.rawMax ?? 0,
           step: d.rawStep ?? 1,
@@ -281,8 +305,11 @@ function insFxFace(face: InsFxFace): DynProcessor {
         lanes: lanesOf(ctx, ifx.isOutput),
         // A guitar amp's panel is a dozen controls and its display is a level rack with
         // nothing else in it, so the two columns swap. The companders keep the ordinary
-        // order: their display is the point of the screen.
+        // order: their display is the point of the screen. The reserve rides with it: both
+        // of the amp's faces answer the same number, which is what keeps the modal still
+        // when the segment moves between them.
         ...(isGuitar(fam) ? { paramsFirst: true as const } : {}),
+        ...(FACE_RESERVE[fam] === undefined ? {} : { faceReserve: FACE_RESERVE[fam] }),
       };
     },
 
@@ -309,24 +336,33 @@ function insFxFace(face: InsFxFace): DynProcessor {
       const out: Record<string, unknown> = {};
       // Every row of the family, not only this face's: `rowStates` reads the Cho/Off/Vib
       // selector, which is on the amp face, to lock two rows beside it.
-      for (const d of insertFxParams(fam)) out[slotKey(d.slot)] = rawOf(ctx, fam, d);
+      for (const d of insertFxParams(fam)) out[slotKey(fam, d.slot)] = rawOf(ctx, fam, d);
       return out;
     },
 
+    // The family comes from the KEY, not from the plan. A device follow can replace the
+    // effect while a slider is under the pointer, and the drag goes on firing at a row that
+    // is already detached; resolving the family here would put that value under the
+    // INCOMING family's slot of the same number, which is a different parameter on a
+    // different scale (guitar and compander share 7, 9, 10 and 11). Keyed this way it lands
+    // in the outgoing family's parked values, where a selector change would have parked it.
     patch: (ctx, patch): NodeParams => {
-      const fam = familyOf(ctx);
-      if (!fam) return {};
-      const slots: Record<number, number> = {};
+      let params = ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams ?? {};
+      const byFamily = new Map<InsertFxFamily, Record<number, number>>();
       for (const [key, v] of Object.entries(patch)) {
+        const parts = keyParts(key);
+        if (!parts) continue;
         const raw = typeof v === "boolean" ? (v ? 1 : 0) : v;
-        const slot = slotOf(key);
-        slots[slot] = raw;
+        const slots = byFamily.get(parts.fam) ?? {};
+        slots[parts.slot] = raw;
         // Three Pitch Fix values are stored twice; the catalogue names the second slot and
         // the device reads both, so an edit that wrote one of them would be half applied.
-        const mirror = insertFxParams(fam).find((d) => d.slot === slot)?.mirror;
+        const mirror = insertFxParams(parts.fam).find((d) => d.slot === parts.slot)?.mirror;
         if (mirror !== undefined) slots[mirror] = raw;
+        byFamily.set(parts.fam, slots);
       }
-      return { insertFxParams: reKeyInsertFxParams(ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams ?? {}, fam, slots) };
+      for (const [fam, slots] of byFamily) params = reKeyInsertFxParams(params, fam, slots);
+      return { insertFxParams: params };
     },
 
     // A field carries a slot, and a slot means a different parameter under every family, so
@@ -341,10 +377,21 @@ function insFxFace(face: InsFxFace): DynProcessor {
     // the values and the unit stores them — but nothing it is set to reaches the signal,
     // and the two level lanes beside the note read the same thing while it is off. Null
     // where there is nothing to say, which keeps the line's space either way.
-    hint: (ctx) =>
-      insertFxSelected(ctx.plan.nodeParams[ctx.nodeId]) && ctx.plan.nodeParams[ctx.nodeId]?.insertFxOn === false
-        ? ctx.m.dynTuning.insfx.bypassed
-        : null,
+    hint: (ctx) => {
+      const np = ctx.plan.nodeParams[ctx.nodeId];
+      if (!insertFxSelected(np)) return null;
+      // The rate first: above the held effect's own ceiling the unit is running no DSP at
+      // all, which the Inspector and the CONSOLE chip already say. Saying it in different
+      // words on the third surface — or not at all — is how one panel tells the operator
+      // the effect is off while another hands them a live editor for it.
+      const entry = insertFxSelectedEntry(insertFxMenu(ctx.model, ctx.plan, ctx.nodeId), np?.insertFx);
+      if (entry?.lock === "rate") {
+        return entry.option.maxRate === undefined
+          ? ctx.m.inspector.insFxRateLocked
+          : ctx.m.inspector.insFxRateLockedAt(entry.option.label, formatRate(entry.option.maxRate));
+      }
+      return np?.insertFxOn === false ? ctx.m.dynTuning.insfx.bypassed : null;
+    },
 
     // Speed and Depth drive a vibrato the selector beside them can switch off. The rows
     // stay where they are, dimmed and tagged, rather than being dropped: a panel that
@@ -352,10 +399,11 @@ function insFxFace(face: InsFxFace): DynProcessor {
     rowStates: (ctx, vals) => {
       const fam = familyOf(ctx);
       if (!fam || !isGuitar(fam)) return null;
-      if (vals[slotKey(MOD_SLOT)] === undefined || vals[slotKey(MOD_SLOT)] === MOD_VIB) return null;
+      const mod = vals[slotKey(fam, MOD_SLOT)];
+      if (mod === undefined || mod === MOD_VIB) return null;
       const out = new Map<string, SettingsRowOptions>();
       for (const slot of [MOD_SPEED_SLOT, MOD_DEPTH_SLOT]) {
-        out.set(slotKey(slot), { tag: ctx.m.dynTuning.insfx.vibOnly, locked: true });
+        out.set(slotKey(fam, slot), { tag: ctx.m.dynTuning.insfx.vibOnly, locked: true });
       }
       return out;
     },
@@ -373,12 +421,12 @@ function insFxFace(face: InsFxFace): DynProcessor {
       for (const d of descs) {
         if (d.control === "slider") {
           if (pending.length) {
-            before[slotKey(d.slot)] = pending;
+            before[slotKey(fam, d.slot)] = pending;
             pending = [];
           }
           continue;
         }
-        const key = slotKey(d.slot);
+        const key = slotKey(fam, d.slot);
         const cur = rawOf(ctx, fam, d);
         const label = labelOf(d, ctx.m);
         // The Key is a plain enum in the catalogue, but writing it alone would leave the
@@ -416,7 +464,7 @@ function insFxFace(face: InsFxFace): DynProcessor {
 
 /** A slot→raw patch, as the field keys `patch` speaks. */
 const slotPatch = (patch: Record<number, number>): Record<string, number> =>
-  Object.fromEntries(Object.entries(patch).map(([slot, raw]) => [slotKey(Number(slot)), raw]));
+  Object.fromEntries(Object.entries(patch).map(([slot, raw]) => [slotKey("pitch", Number(slot)), raw]));
 
 const scaleOf = (ctx: DynCtx): number =>
   insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_SCALE_SLOT, PITCH_SCALE_CHROMATIC);
@@ -456,7 +504,7 @@ function pitchScaleRows(ctx: DynRowCtx): HTMLElement[] {
     b.classList.toggle("on", on);
     b.setAttribute("aria-pressed", String(on));
     b.addEventListener("click", () =>
-      ctx.set({ [slotKey(slot)]: on ? 0 : 1, [slotKey(PITCH_SCALE_SLOT)]: PITCH_SCALE_CUSTOM }),
+      ctx.set({ [slotKey("pitch", slot)]: on ? 0 : 1, [slotKey("pitch", PITCH_SCALE_SLOT)]: PITCH_SCALE_CUSTOM }),
     );
     notes.append(b);
   });
@@ -477,10 +525,18 @@ function pitchMidiRow(ctx: DynRowCtx): HTMLElement {
     insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_ENABLE_SLOT, 0),
     insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_REALTIME_SLOT, 0),
   );
-  const row = settingsRow(
+  // A select, like the Key and the Scale above it: three buttons do not fit the row, and
+  // "Real Time" wrapped onto a second line, which moved everything below it.
+  const row = enumRow(
     t.params.midiControl,
-    settingsChoice(["Off", "Setting", "Real Time"], mode, () => {}, true),
-    { locked: true },
+    [
+      { value: 0, label: "Off" },
+      { value: 1, label: "Setting" },
+      { value: 2, label: "Real Time" },
+    ],
+    mode,
+    () => {},
+    { locked: true, tag: t.midiControlTag },
   );
   row.title = t.midiControlDeviceOnly;
   return row;

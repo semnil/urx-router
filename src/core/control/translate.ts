@@ -742,11 +742,17 @@ export type EmittedDynField = DynField & { name: ParamName };
  *  filter's three values are prefixed to keep them apart from the compressor's. */
 export type SsmcsFieldKey = "compDrive" | "morphing" | "outGain" | "scQ" | "scFreq" | "scGain";
 
-/** An insert-FX engine value, named by the SLOT it occupies. Those values live in
- *  `insertFxParams` keyed by family and slot rather than in a sub-object of their own, so
+/** An insert-FX engine value, named by the FAMILY and the SLOT it occupies. Those values
+ *  live in `insertFxParams` keyed the same way rather than in a sub-object of their own, so
  *  there is no parameter name to borrow — and the same slot means a different parameter
- *  under each family, which is why the key alone never identifies one. */
-export type InsertFxFieldKey = `ifx${number}`;
+ *  under each family, which is why the family is part of the key rather than resolved from
+ *  the plan when the value is written. A row can outlive the family it was built for: a
+ *  device follow can replace the effect while a slider is under the pointer, and the drag
+ *  goes on firing at the row that is already detached. With the family in the key, that
+ *  write lands in the outgoing family's parked values — where a selector change would have
+ *  parked them anyway — instead of under the incoming family's slot of the same number,
+ *  which is a different parameter on a different scale. */
+export type InsertFxFieldKey = `ifx:${string}:${number}`;
 
 const SSMCS_SC_PREFIX = /^sc[A-Z]/;
 

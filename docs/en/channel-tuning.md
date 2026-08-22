@@ -780,10 +780,13 @@ a slot rather than what is in it.
 - **No MIDI ids.** The control catalog carries none for these values, so the screen marks nothing —
   the same position DUCKER is in, and for the same reason.
 
-**A bypassed effect says so.** The note under the display is the one place the app states that
-the values are still kept and edited here while nothing they are set to reaches the signal — the
-two level lanes beside it read the same thing while it is off. The launcher stays available: an
-effect held and switched out is still an effect to tune.
+**The note under the display says when nothing reaches the signal**, in either of the two ways
+that happens. Above the held effect's own ceiling it names the effect and the ceiling, in the same
+words the Inspector and the CONSOLE chip use — the alternative was one panel saying the effect is
+off while another handed over a live editor for it. Switched out by its own bypass, it says that
+instead. Either way the values are still kept and edited here, and the two level lanes beside the
+note read the same thing. The launcher stays available: an effect held and not running is still an
+effect to tune.
 
 ### The guitar amp is two faces
 
@@ -801,7 +804,9 @@ group is placed by name rather than with them: Clean's Cho/Off/Vib, Speed and De
 type-specific too, and putting them at the head would separate Speed and Depth both from the
 switch that drives them and from the Output they sit before. **Speed and Depth stay where they
 are when that switch is not on vibrato** — dimmed and tagged, never dropped, because a panel that
-loses two rows moves everything under them out from under the pointer.
+loses two rows moves everything under them out from under the pointer. The effect guide's CLEAN Only
+table is what says they apply only there: "Sets vibrato speed/depth when 'Vib' is On. Not available
+when 'Cho' is On."
 
 **Slot 7 is Volume on Clean and Gain on the other three**, which is what the unit prints. The
 catalogue swaps the label alone: the slot, its encoding and its range are one thing across the
@@ -840,6 +845,13 @@ re-derive the mask over the edit.
 own — not the port this app reads external control from, so writing here would be a second route into
 one setting — and switching it on erases a twelve-note mask that is FULL, taking the Scale enum to
 Custom with it. Both measured. The row is inert, with the reason on it.
+
+**Never written means the emit path, not the row.** The two slots are out of
+`insertFxWritableSlots`, which is the list `translate` emits from — an inert row alone would not have
+been enough, because a device read fills the plan from that same list and the next flush would have
+written the enable bit with nobody having touched the app. They stay in `insertFxReadableSlots`, so
+the read that feeds the row is unaffected: dropping a slot from the writable list drops the read with
+it, and the row would then print a default instead of what the unit holds.
 
 ### The two reduction meters are indexed differently
 

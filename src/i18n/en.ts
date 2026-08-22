@@ -441,6 +441,9 @@ export const en = {
       scaleHarmonicMinor: dev("Harmonic Minor"),
       scaleMelodicMinor: dev("Melodic Minor"),
       scalePentatonic: dev("Pentatonic"),
+      // The pill on the MIDI Control row. The reason belongs on the panel and not only in
+      // the tooltip below, which is a hover away.
+      midiControlTag: tr("Set on the device"),
       midiControlDeviceOnly: tr(
         "MIDI Control is set on the device. It receives on the unit's own USB-MIDI port, and switching it on clears a full note mask.",
       ),
@@ -680,7 +683,10 @@ export const en = {
       faceAmp: fixed("AMP"),
       faceCab: fixed("CAB"),
       // Pitch Fix's two faces: what the correction does to a note, and what decides which
-      // notes there are. Named this app's own way for the same reason AMP / CAB are.
+      // notes there are. `fixed()` for a different reason from AMP / CAB, which are
+      // abbreviations: these are ordinary words, and what keeps them out of translation is
+      // that they are set beside AMP / CAB on the same bar, in the same Latin caps, and one
+      // translated face label among four would read as a different kind of control.
       facePitch: fixed("PITCH"),
       faceScale: fixed("SCALE"),
       // Speed and Depth on the Clean amp: the selector beside them decides whether they
