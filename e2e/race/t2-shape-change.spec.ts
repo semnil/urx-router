@@ -515,9 +515,10 @@ test.describe("T2 shape-change", () => {
   });
 
   // shape-insert-fx-select-ordering. The only case where correctness is decided by the
-  // ORDER of two commands inside one flush rather than by their values: the device
-  // auto-engages the bypass whenever a selector is accepted, so 135 must precede 134.
-  test("insert-FX selection sends the selector before the bypass, and clears it by leaving the set", async ({
+  // ORDER of commands inside one flush rather than by their values: accepting a selector
+  // makes the device refill the engine array with the type's defaults and auto-engage the
+  // bypass, so 135 precedes the engine writes and 134 follows them.
+  test("insert-FX selection brackets the engine values with the selector and the bypass, and clears it by leaving the set", async ({
     page,
   }) => {
     await goLive(page);

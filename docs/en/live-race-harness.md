@@ -853,7 +853,7 @@ agreement, zero findings.
 - **Signal Type = STEREO** writes both pair indices and **re-authors the partner node wholesale**; one
   undo restores all of it. But the converge round is a **re-send, not a repair** — it keeps pushing the
   app's value back at a channel the unit has reset
-- **Insert-FX ordering is clean** (selector 135 before bypass 134) — it works as the counter-example
+- **Insert-FX ordering is clean** (selector 135, then its engine array, then bypass 134) — it works as the counter-example
 
 **T3 — undo**
 
@@ -1126,7 +1126,8 @@ pair's pan addresses on the wire ahead of `891:0:0`, and the undo repeated it.
 same ±63 encoding. What it does is a write SIDE EFFECT: BAL→PAN slams `141` and eight send pans to
 ±63, PAN→BAL and unlink drive the same nine to 0 (measured by a whole-settings-file `.urxf` diff plus a
 targeted probe). So a pan written ahead of the selector is not misread — it is DISCARDED. The ordering
-rule is the one insert FX (135 → 134) and the FX effect type (679 → its 681 array) already keep.
+rule is the one insert FX (135 → its engine array → 134) and the FX effect type (679 → its 681 array)
+already keep.
 
 The fix is a relocation of the two blocks and nothing else: the command set, the values and the owner
 stamps are identical (sorting the added and removed diff lines leaves no difference). `PAN_BAL` keeps
