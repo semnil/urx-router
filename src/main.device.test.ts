@@ -231,6 +231,13 @@ const pickSignalType = (value: number): void => {
   sel.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
+/** PAN / BAL, the mode that decides which of the two pair mirrors runs. */
+const pickPanBal = (value: number): void => {
+  const sel = paramRow("PAN / BAL").querySelector("select")!;
+  sel.value = String(value);
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
 /** Which half of the bypass toggle is lit. */
 const insertFxOnFace = (): string | undefined =>
   paramRow("Insert FX ON")?.querySelector("button.on")?.textContent ?? undefined;
@@ -261,6 +268,39 @@ describe("Fetch from device", () => {
     selectNode("ch2");
     expect(paramRow("Insert FX").querySelector("select")!.value).toBe("1793");
     expect(insertFxOnFace()).toBe("ON");
+  });
+
+  // …and only what it wrote. In STEREO + PAN the BAL mirror does not run, so an insert-FX
+  // selection carries three keys to the partner and asserts nothing else — registering the
+  // partner's whole key set there would drop the device's answer for a key no mirror had
+  // touched. The device holds this stub's default for CH 2's HPF (unwritten, so OFF) while
+  // the plan says ON, which is the contest: the read's value has to win it.
+  it("asserts only the keys the running mirror wrote", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickSignalType(1); // STEREO — which lands the pair in BAL…
+    pickPanBal(0); // …and PAN is where only the insert-FX mirror runs
+    selectNode("ch2");
+    paramRow("HPF").querySelector<HTMLButtonElement>("button.on")!.textContent === "ON" ||
+      [...paramRow("HPF").querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "ON")!.click();
+    expect(paramRow("HPF").querySelector("button.on")?.textContent).toBe("ON");
+
+    selectNode("ch1");
+    pickInsertFx(256);
+
+    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    selectNode("ch1");
+    pickInsertFx(1793);
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch2");
+    // The mirror's own three keys still stand…
+    expect(insertFxOnFace()).toBe("ON");
+    // …and the key it never touched took the device's value.
+    expect(paramRow("HPF").querySelector("button.on")?.textContent).toBe("OFF");
   });
 
   // The write witness names what a funnel WROTE, not only what its write MOVED. Selecting

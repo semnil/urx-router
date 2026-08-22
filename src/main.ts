@@ -4,7 +4,14 @@ import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
-import { applyPairTransition, mirrorBalPair, mirrorLinkedInsertFx, mixSendLocks, partnerChannel } from "./core/routing";
+import {
+  applyPairTransition,
+  INSERT_FX_PAIR_KEYS,
+  mirrorBalPair,
+  mirrorLinkedInsertFx,
+  mixSendLocks,
+  partnerChannel,
+} from "./core/routing";
 import {
   decodePlanParam,
   deserializeDocument,
@@ -1181,14 +1188,20 @@ const inspectorActions = {
     // every member it carries, and a device read in flight must not take back one that
     // happened to already hold the asserted value.
     const written = Object.keys(patch).map((key) => nodeParamContestKey(id, key));
-    // A mirror asserts the PARTNER's keys the same way, and it can assert one that
-    // already holds the value it writes — the insert-FX mirror re-writes a bypass that
-    // was already on, and the BAL mirror replaces the partner's params wholesale. Before
-    // and after, because both mirrors also DELETE: an absent key asserted absent moves
-    // nothing either.
-    if (partner && (mirrored || insFxMirrored))
-      for (const key of new Set([...partnerKeysBefore, ...Object.keys(plan.nodeParams[partner] ?? {})]))
-        written.push(nodeParamContestKey(partner, key));
+    // A mirror asserts the PARTNER's keys the same way, and it can assert one that already
+    // holds the value it writes — the insert-FX mirror re-writes a bypass that was already
+    // on, and the BAL mirror replaces the partner's params wholesale. Each names only what
+    // IT wrote: the BAL mirror's assertion is every key the partner had and every key it
+    // has now (both, because it deletes as well as writes), and the insert-FX mirror's is
+    // the pair state it carries. Registering the wider set for the narrower mirror threw
+    // away the device's answer for a partner key nobody had written — in STEREO + PAN,
+    // where only the insert FX mirrors, a partner's HPF read in the same window was lost.
+    const mirroredKeys = mirrored
+      ? new Set<string>([...partnerKeysBefore, ...Object.keys(plan.nodeParams[partner ?? ""] ?? {})])
+      : insFxMirrored
+        ? new Set<string>(INSERT_FX_PAIR_KEYS)
+        : null;
+    if (partner && mirroredKeys) for (const key of mirroredKeys) written.push(nodeParamContestKey(partner, key));
     markChanged("ui", written);
     // Two of the side effects below write the plan AFTER markChanged took the ledger
     // sample, so their keys would land in whatever samples next — under live follow a

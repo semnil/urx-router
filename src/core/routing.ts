@@ -268,6 +268,10 @@ export function mirrorBalPair(model: DeviceModel, plan: Plan, id: string): boole
  *  mirrorBalPair from every edit funnel, and in BAL the two write the same values.
  *  The engine values are deep-copied for the aliasing reason mirrorBalPair documents.
  *  Returns false — a no-op — unless the pair is STEREO-linked. */
+/** The pair state this mirror carries, and the whole of it — the caller that has to name
+ *  what the mirror asserted reads the same list rather than keeping a second copy. */
+export const INSERT_FX_PAIR_KEYS = ["insertFx", "insertFxOn", "insertFxParams"] as const;
+
 export function mirrorLinkedInsertFx(model: DeviceModel, plan: Plan, id: string): boolean {
   if (!isStereoLinkedPair(model, plan, id)) return false;
   const partner = partnerChannel(model, id);
@@ -276,9 +280,7 @@ export function mirrorLinkedInsertFx(model: DeviceModel, plan: Plan, id: string)
   const dst = (plan.nodeParams[partner] ??= {});
   // An absent key stays absent on the partner: a key held as undefined would outlive
   // the copy through the history differ and the JSON round-trip.
-  delete dst.insertFx;
-  delete dst.insertFxOn;
-  delete dst.insertFxParams;
+  for (const key of INSERT_FX_PAIR_KEYS) delete dst[key];
   if (insertFx !== undefined) dst.insertFx = insertFx;
   if (insertFxOn !== undefined) dst.insertFxOn = insertFxOn;
   if (insertFxParams !== undefined) dst.insertFxParams = structuredClone(insertFxParams);
