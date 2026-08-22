@@ -109,6 +109,7 @@ import {
   applyNodeState,
   applySourceState,
   formatReadbackReport,
+  insertFxHoldKeys,
   readIntoPlan,
 } from "./core/control/readback";
 import type { MergedRead, ReadbackResult } from "./core/control/readback";
@@ -576,6 +577,18 @@ function assertReadComplete(result: ReadbackResult, label: string): void {
 function noteMergeConflicts(merged: MergedRead): void {
   if (merged.unplaced.length) console.warn("device read: merge targets no longer in the plan", merged.unplaced);
 }
+// A device read kept plan values the unit had cleared on its own. The snapshot has just
+// re-based onto the unit's values, so plan and device now disagree exactly where the read
+// held, and the ordinary outgoing diff is what puts them back — for insert FX, the
+// selector, then the stored engine values, then the bypass intent. Nothing else would
+// schedule that flush: no plan key moved, so no edit funnel ran. Said out loud rather than
+// repaired in silence, and only after the read is known complete: a partial read is about
+// to drop the link, and a flush issued into that writes nothing and reports nothing.
+function reapplyHeld(merged: MergedRead): void {
+  if (!merged.held.length) return;
+  console.warn("device read: the plan keeps what the unit cleared, and sends it back", merged.held);
+  live?.schedule();
+}
 // Single funnel for every device-follow reflect (direct notifies and the scoped /
 // full read-backs alike): a knob sweep delivers notifies in ~30/s IPC batches, any
 // of which would otherwise drive a full graph rebuild + snapshot re-base. Coalesce
@@ -648,6 +661,7 @@ async function followRead(
       () => plan,
       (into) => read(into, controller.signal),
       planWrites,
+      (before, deviceView) => insertFxHoldKeys(getModel(modelId), before, deviceView),
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
     return merged;
@@ -746,6 +760,7 @@ const follow =
           followFull = true;
           requestReflect();
           assertReadComplete(merged, "device-follow scoped readback issues:");
+          reapplyHeld(merged);
           setStatus(t().status.liveFollowed(merged.applied));
         },
         // Escalation / idle safety net: pull the whole device into the plan.
@@ -766,6 +781,7 @@ const follow =
           followFull = true;
           requestReflect();
           assertReadComplete(merged, "device-follow readback issues:");
+          reapplyHeld(merged);
           setStatus(t().status.liveFollowed(merged.applied));
         },
         onFollow: () => setStatus(t().status.liveFollowing),

@@ -572,6 +572,13 @@ function contestName(...parts: string[]): string {
   return parts.join(WIRE_SEP);
 }
 
+/** The name `dropAuthored` matches a nodeParams sub-key by. Exported so a caller that
+ *  arbitrates one — a device read holding a key it must not adopt — spells it the way
+ *  the witness and the merge already do, rather than rebuilding the separator. */
+export function nodeParamContestKey(nodeId: string, param: string): string {
+  return contestName("nodeParams", nodeId, param);
+}
+
 /** The printable label of the same piece, in the spelling applyPatchInContext reports. */
 function contestLabel(field: PatchField, key?: string, rest?: string[]): string {
   const head = key === undefined ? field : `${field} ${key}`;

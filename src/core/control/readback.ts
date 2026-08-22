@@ -24,10 +24,25 @@ import {
   removeConnection,
   setExclusiveConnection,
 } from "../plan";
-import { applyPatchInContext, clonePlanState, diffPlans, dropAuthored, readableContestKey } from "../plan-history";
+import {
+  applyPatchInContext,
+  clonePlanState,
+  diffPlans,
+  dropAuthored,
+  nodeParamContestKey,
+  readableContestKey,
+} from "../plan-history";
 import type { PlanPatch, PlanWriteWitness } from "../plan-history";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
-import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
+import {
+  colorIndexToHex,
+  COMP_EQ_SSMCS,
+  FX_STEREO_ASSIGN_ON,
+  insertFxAvailable,
+  insertFxSelected,
+  normalizeInsertFx,
+  PARAMS,
+} from "./params";
 import type { ParamName } from "./params";
 import { writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -968,6 +983,12 @@ export interface MergedRead extends ReadbackResult {
    *  straddled the read still commit as one entry. Detached from both plans — diffPlans
    *  clones into its slots and applyPatch clones on the way out. */
   devicePatch: PlanPatch;
+  /** The keys a `hold` kept the plan's own value for, in `dropAuthored`'s label
+   *  spelling. Separate from `unplaced` because the two mean opposite things: an
+   *  unplaced key had nowhere to land, while a held one landed nowhere ON PURPOSE and
+   *  still differs from `deviceView` — which is what the next outgoing diff writes back.
+   *  Empty for every read that passes no hold. */
+  held: string[];
   /** Everything the device patch did not write: an entry with nowhere to land (a wire
    *  removed while the read was in flight), and every key the operator moved meanwhile,
    *  which the merge deliberately leaves standing. Skipped rather than forced.
@@ -982,6 +1003,43 @@ export interface MergedRead extends ReadbackResult {
    *  (no `devtools` feature) — so for those paths this really is silent, on purpose. */
   unplaced: string[];
 }
+
+/**
+ * The insert-FX keys a device-follow read must keep the plan's own value for.
+ *
+ * Crossing a selected effect's sample-rate ceiling makes the unit clear the selector,
+ * the pointer and the bypass, and coming back to a supported rate restores none of them.
+ * The unit announces none of that — the rate is the only address it reports — so the
+ * first thing that sees the cleared values is the full read the rate notify escalated to.
+ * Adopting them ends the effect: the plan would agree with the unit, and nothing would be
+ * left to put back.
+ *
+ * The rate decides which clearing this is. A No Effect the CURRENT rate cannot explain is
+ * the operator's own, made on the unit, and is adopted like any other device-side edit.
+ * `deviceView` carries the rate the same read established, so the read that sees the
+ * cleared effect is the read that sees why.
+ *
+ * A node whose read failed keeps its plan value in `deviceView` and so reads as still
+ * selected, which takes it out of scope here: there is nothing to hold against.
+ */
+export function insertFxHoldKeys(model: DeviceModel, before: Plan, deviceView: Plan): Set<string> {
+  const held = new Set<string>();
+  for (const node of model.nodes) {
+    const ifx = insertFxControl(model, node.id);
+    if (!ifx) continue;
+    const was = before.nodeParams[node.id];
+    if (!insertFxSelected(was) || insertFxSelected(deviceView.nodeParams[node.id])) continue;
+    const option = ifx.options.find((o) => o.value === was?.insertFx);
+    if (!option || insertFxAvailable(option, deviceView.sampleRate)) continue;
+    for (const key of INSERT_FX_KEYS) held.add(nodeParamContestKey(node.id, key));
+  }
+  return held;
+}
+
+/** What one insert-FX route stores: the selector, the bypass intent and the engine
+ *  values the selector applies to. Held together — a selector kept without its values
+ *  would be re-applied against whatever defaults the device refilled the engine with. */
+const INSERT_FX_KEYS = ["insertFx", "insertFxOn", "insertFxParams"] as const;
 
 /**
  * Run a device read against a private copy of the plan and merge the result back, so
@@ -1013,11 +1071,19 @@ export interface MergedRead extends ReadbackResult {
  *
  * A read that throws propagates with the live plan untouched: the copy is discarded,
  * so an aborted or link-lost read really is "nothing happened".
+ *
+ * `hold` names keys the plan keeps whatever the device said, for a device-side change
+ * the app is about to undo rather than adopt. It is deliberately NOT a change to
+ * `deviceView`: the live snapshot re-bases from that, so the device's own value has to
+ * stay in it — the difference between it and the plan is what the next outgoing diff
+ * writes back, and a `deviceView` edited to agree with the plan would leave the app
+ * holding an intent it had no way left to send.
  */
 export async function readIntoPlan(
   current: () => Plan,
   read: (into: Plan) => Promise<ReadbackResult>,
   witness?: PlanWriteWitness,
+  hold?: (before: Plan, deviceView: Plan) => ReadonlySet<string>,
 ): Promise<MergedRead | null> {
   const plan = current();
   const before = clonePlanState(plan);
@@ -1033,9 +1099,13 @@ export async function readIntoPlan(
     // author is one list: the history baseline absorbs the same devicePatch, and a key
     // absorbed but not applied would put a value the app never wrote into the next
     // undo entry.
-    const { patch: devicePatch, dropped } = dropAuthored(diffPlans(before, target), authored ?? new Set());
+    const { patch: contested, dropped } = dropAuthored(diffPlans(before, target), authored ?? new Set());
+    // Held keys go through the same filter and stay a SEPARATE list. Folding them into
+    // `dropped` would put a deliberate repair into the list whose whole meaning is
+    // "this had nowhere to land", which one caller prints and another warns on.
+    const { patch: devicePatch, dropped: held } = dropAuthored(contested, hold?.(before, target) ?? new Set());
     const unplaced = [...applyPatchInContext(plan, devicePatch), ...dropped];
-    return { ...result, deviceView: target, devicePatch, unplaced };
+    return { ...result, deviceView: target, devicePatch, unplaced, held };
   } finally {
     watch?.close();
   }

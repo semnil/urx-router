@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
-import { readIntoPlan, type ReadbackResult } from "./readback";
+import { insertFxHoldKeys, readIntoPlan, type ReadbackResult } from "./readback";
 import { applyPatchInContext, clonePlanState, diffPlans, PlanWriteWitness } from "../plan-history";
 
 // readIntoPlan is the contest between a device read and the operator's hands: the read
@@ -392,5 +392,105 @@ describe("MergedRead.devicePatch and the context-checked absorb", () => {
     expect(merged).not.toBeNull();
     expect(merged!.devicePatch).toHaveLength(0);
     expect(merged!.unplaced).toHaveLength(0);
+  });
+});
+
+// A sample-rate excursion past a selected effect's ceiling clears the effect ON THE UNIT
+// and announces only the rate, so the read the rate notify escalates to is what finds the
+// cleared values. These pin which of those the merge adopts and which it holds — and that
+// the held ones stay OUT of the device view, since that is the copy the outgoing diff
+// measures against and the only thing that can send the effect back.
+describe("insertFxHoldKeys", () => {
+  const hold = (before: Plan, deviceView: Plan) => insertFxHoldKeys(model, before, deviceView);
+  const PITCH_FIX = 512; // 48 kHz ceiling
+  const selected = (plan: Plan) => ({
+    ...plan.nodeParams.ch1,
+    insertFx: PITCH_FIX,
+    insertFxOn: true,
+    insertFxParams: { "18": 37 },
+  });
+  const cleared = (into: Plan, rate: number) => {
+    into.nodeParams.ch1 = { ...into.nodeParams.ch1, insertFx: -1, insertFxOn: false, insertFxParams: undefined };
+    into.sampleRate = rate;
+    return OK;
+  };
+
+  it("keeps an effect the unit cleared for a rate that cannot run it, and still reports the unit's own value", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = selected(plan);
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => cleared(into, 96000),
+      undefined,
+      hold,
+    );
+
+    expect(merged).not.toBeNull();
+    // The plan keeps the intent, whole: a selector without its engine values would be
+    // re-applied against whatever defaults the unit refilled the engine with.
+    expect(plan.nodeParams.ch1?.insertFx).toBe(PITCH_FIX);
+    expect(plan.nodeParams.ch1?.insertFxOn).toBe(true);
+    expect(plan.nodeParams.ch1?.insertFxParams).toEqual({ "18": 37 });
+    // The rate itself is not held — that change IS the operator's.
+    expect(plan.sampleRate).toBe(96000);
+    // The device view keeps what the unit answered. This is the half a hold must not
+    // touch: the live snapshot re-bases from it, and an agreeing view would leave the
+    // app holding an effect with no divergence left to send it back.
+    expect(merged!.deviceView.nodeParams.ch1?.insertFx).toBe(-1);
+    expect(merged!.held.sort()).toEqual([
+      "nodeParams ch1.insertFx",
+      "nodeParams ch1.insertFxOn",
+      "nodeParams ch1.insertFxParams",
+    ]);
+  });
+
+  it("adopts a No Effect the current rate can run, because that one is the operator's own", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = selected(plan);
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => cleared(into, 48000),
+      undefined,
+      hold,
+    );
+
+    expect(plan.nodeParams.ch1?.insertFx).toBe(-1);
+    expect(plan.nodeParams.ch1?.insertFxOn).toBe(false);
+    expect(merged!.held).toEqual([]);
+  });
+
+  it("adopts the cleared values when no hold is passed at all", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = selected(plan);
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => cleared(into, 96000),
+    );
+
+    expect(plan.nodeParams.ch1?.insertFx).toBe(-1);
+    expect(merged!.held).toEqual([]);
+  });
+
+  it("holds nothing for a node whose insert-FX read failed, since its view still shows the effect", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = selected(plan);
+
+    // The read raised the rate but never reached ch1's insert FX, so the view carries the
+    // plan's own effect forward — there is no cleared value to hold against.
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        into.sampleRate = 96000;
+        return { applied: 0, errors: ["ch1: read timeout"], unreadNodes: new Set(["ch1"]) };
+      },
+      undefined,
+      hold,
+    );
+
+    expect(merged!.held).toEqual([]);
+    expect(plan.nodeParams.ch1?.insertFx).toBe(PITCH_FIX);
   });
 });

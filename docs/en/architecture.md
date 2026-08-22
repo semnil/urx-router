@@ -1482,6 +1482,16 @@ written at all:
   ON parameter is emitted *after* the selector and after the engine values it applies to, to put the unit
   back where the plan says. Leaving this one to
   the unit would silently make an effect the user switched off audible again.
+- **The unit changes actual state and announces none of it.** A sample-rate excursion past a selected insert
+  effect's ceiling clears the selector, the pointer and the bypass, and the only address the unit reports is
+  the rate; coming back to a supported rate restores nothing. The read that rate notify escalates to is the
+  first thing that sees the cleared values, so this one is settled in the MERGE: `insertFxHoldKeys` names the
+  keys a device-follow read keeps the plan's own value for, and `readIntoPlan`'s `hold` takes them out of the
+  patch. The device view still carries what the unit answered — that is what leaves the plan and the live
+  snapshot disagreeing, and the ordinary outgoing diff is then what sends the effect back, selector first,
+  then the stored engine values, then the bypass intent. What separates this from an operator's own No Effect
+  on the unit is the rate the same read established: a clearing that rate cannot explain is adopted like any
+  other device-side edit.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being
