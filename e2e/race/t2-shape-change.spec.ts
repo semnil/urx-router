@@ -16,7 +16,7 @@ import {
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
-import { graphNode, openEqScreen, param, paramExact, strip } from "./ui";
+import { closeDynScreen, graphNode, openEqScreen, openInsertFxScreen, param, paramExact, strip } from "./ui";
 
 // T2 shape-change — the parameters that reshape the WRITABLE ADDRESS SET rather
 // than a value inside it (docs/{en,ja}/live-race-harness.md).
@@ -560,11 +560,17 @@ test.describe("T2 shape-change", () => {
     // (an absent slot is left to the device's per-type default), so without this the
     // engine array is not in the write set at all and the ordering below has nothing
     // to order — the compander's Threshold is what puts a 689 slot into it.
+    // The Threshold is on the insert-FX tuning screen, so the screen is opened BEFORE the
+    // mark — its own open is not what this window measures — and closed after, because the
+    // selector the case moves next is behind it.
+    await openInsertFxScreen(page, "ch1");
+    const threshold = page.locator('#dyn-screen-box input[data-dyn="ifx:compander:6"]');
+    await expect(threshold).toBeEnabled();
     await mark(page, "edit-engine-slot");
-    const threshold = param(page, "Threshold").locator('input[type="range"]');
     await threshold.focus();
     await page.keyboard.press("ArrowUp");
     await settleAfter(page, "edit-engine-slot", 1200);
+    await closeDynScreen(page);
     trace = await traceOf(page);
     const slotAt = markTime(trace, "edit-engine-slot")!;
     const slotWrite = setsOf(trace).filter((s) => s.addr?.startsWith("689:") && s.start > slotAt);
