@@ -163,6 +163,13 @@ export interface DynBinding {
    *  five might not, and a threshold on `lanes.length` is a guess dressed as a rule —
    *  the same guess `nodeLabel` and the optional `bar` exist to avoid. Absent = 3. */
   readoutCols?: number;
+  /** The height a bank reserves for all of its faces, where the stylesheet's own number is
+   *  not enough. Declared by the binding, like `readoutCols`, because it is a property of
+   *  what the node HOLDS: a guitar amp's panel is eleven rows and overflows the shared
+   *  reserve, and raising that reserve would grow every other bank's faces with it.
+   *  Absent = the stylesheet's number. Every face of one bank must answer the same value,
+   *  or the modal resizes between them, which is what the reserve exists to stop. */
+  faceReserve?: number;
   /** Put the parameters on the left and the meters in a narrow column on the right,
    *  instead of the display column first. Declared by the binding rather than by the
    *  descriptor because it is a property of what this node HOLDS: the INS FX screen
@@ -578,6 +585,7 @@ export class DynScreen {
   /** What the binding declared about the readouts. Only the column count so far. */
   private readoutCols = READOUT_COLS_DEFAULT;
   private paramsFirst = false;
+  private faceReserve: number | null = null;
   /** The descriptor `open` was called with, and what its bank was a bank of at the time.
    *  A bank whose identity moves goes back to both. */
   private entryProc: DynProcessor | null = null;
@@ -709,6 +717,7 @@ export class DynScreen {
     this.lanes = bound.lanes;
     this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
     this.paramsFirst = bound.paramsFirst === true;
+    this.faceReserve = bound.faceReserve ?? null;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     this.peaks.clear();
     this.render();
@@ -805,6 +814,7 @@ export class DynScreen {
     this.lanes = bound.lanes;
     this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
     this.paramsFirst = bound.paramsFirst === true;
+    this.faceReserve = bound.faceReserve ?? null;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     return true;
   }
@@ -1238,6 +1248,7 @@ export class DynScreen {
     // costs is blank space below the shorter faces; `.gt-faced`'s `min-height` in
     // style.css is where the measurement lives, along with what it yields to.
     if (proc.banked) grid.classList.add("gt-faced");
+    if (this.faceReserve !== null) grid.style.setProperty("--gt-face-min", `${this.faceReserve}px`);
     // A reversed panel is one class plus the DOM order, not a second layout: the two
     // columns are what they always were, and only which of them is the flexible one moves.
     const display = this.displayColumn(proc);

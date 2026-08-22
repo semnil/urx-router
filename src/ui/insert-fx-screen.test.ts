@@ -94,19 +94,22 @@ describe("the meter lanes", () => {
     expect(lanes[0].label).toBe(t().dynTuning.insfx.tapIn);
   });
 
-  it("draws no reduction bar for an effect that reduces nothing", () => {
-    // A guitar amp has no GR meter on the unit. The lane is still declared, so the rack
-    // keeps one shape across the families, and it simply resolves no address.
-    const lanes = INSFX_DYN.bind(holding("ch1", "Crunch"))!.lanes;
-    expect(lanes[2].kind).toBe("gr");
-    expect(lanes[2].gr).toEqual([132, 0]);
+  it("gives every family the same three lanes, addressed the same way", () => {
+    // The rack keeps one shape across the families, so moving between them does not move
+    // the readouts. A guitar amp subscribes to the input-insert reduction exactly as a
+    // compander does — what it reads there is the unit's business, not the descriptor's.
+    const amp = INSFX_DYN.bind(holding("ch1", "Crunch"))!.lanes;
+    const comp = INSFX_DYN.bind(holding("ch1", "Compander-H"))!.lanes;
+    expect(amp.map((l) => l.key)).toEqual(comp.map((l) => l.key));
+    expect(amp[2].kind).toBe("gr");
+    expect(amp[2].gr).toEqual(comp[2].gr);
   });
 });
 
 describe("reading and writing engine slots", () => {
   it("stores an edit under the family's own key, not the bare slot", () => {
     const ctx = holding("ch1", "Compander-H");
-    const patch = INSFX_DYN.patch(ctx, { ifx6: -2000 });
+    const patch = INSFX_DYN.patch(ctx, { "ifx:compander:6": -2000 });
     expect(patch.insertFxParams).toEqual({ [insertFxParamKey("compander", 6)]: -2000 });
   });
 
@@ -115,8 +118,8 @@ describe("reading and writing engine slots", () => {
     h.plan.nodeParams.ch1!.insertFxParams = { "6": -1234 };
     // The bare key is the device-shaped namespace, read as the selected family's until
     // the first edit re-keys it. Two keys for one slot is what must not survive.
-    expect(INSFX_DYN.read(ctx).ifx6).toBe(-1234);
-    const patch = INSFX_DYN.patch(ctx, { ifx6: -2000 });
+    expect(INSFX_DYN.read(ctx)["ifx:compander:6"]).toBe(-1234);
+    const patch = INSFX_DYN.patch(ctx, { "ifx:compander:6": -2000 });
     expect(patch.insertFxParams!["6"]).toBeUndefined();
     expect(patch.insertFxParams![insertFxParamKey("compander", 6)]).toBe(-2000);
   });
@@ -126,7 +129,7 @@ describe("reading and writing engine slots", () => {
     // wrote one of them would be half applied.
     const ctx = holding("ch1", "Pitch Fix");
     const mirrored = insertFxParams("pitch").find((d) => d.mirror !== undefined)!;
-    const written = INSFX_DYN.patch(ctx, { [`ifx${mirrored.slot}`]: 7 }).insertFxParams!;
+    const written = INSFX_DYN.patch(ctx, { [`ifx:pitch:${mirrored.slot}`]: 7 }).insertFxParams!;
     expect(written[insertFxParamKey("pitch", mirrored.slot)]).toBe(7);
     expect(written[insertFxParamKey("pitch", mirrored.mirror!)]).toBe(7);
   });
@@ -134,7 +137,7 @@ describe("reading and writing engine slots", () => {
   it("reads a value the plan does not carry as the catalogue's own default", () => {
     const ctx = holding("ch1", "Compander-S");
     // ratio, slot 7, factory 350 = 3.5:1.
-    expect(INSFX_DYN.read(ctx).ifx7).toBe(350);
+    expect(INSFX_DYN.read(ctx)["ifx:compander:7"]).toBe(350);
   });
 
   it("keeps one family's stored values out of another's", () => {
@@ -142,7 +145,7 @@ describe("reading and writing engine slots", () => {
     h.plan.nodeParams.ch1!.insertFxParams = { [insertFxParamKey("guitar-clean", 7)]: 99 };
     // Slot 7 is the compander's Ratio and the guitar amp's Volume. Reading the guitar's
     // value here would show 99 as a ratio and write it back as one.
-    expect(INSFX_DYN.read(ctx).ifx7).toBe(350);
+    expect(INSFX_DYN.read(ctx)["ifx:compander:7"]).toBe(350);
   });
 });
 
@@ -251,8 +254,8 @@ describe("the guitar amp's two faces", () => {
     const ctx = holding("ch1", "Clean");
     // Cho/Off/Vib is slot 19, its factory value Off.
     const off = INSFX_DYN.rowStates!(ctx, INSFX_DYN.read(ctx))!;
-    expect(off.get("ifx20")?.locked).toBe(true);
-    expect(off.get("ifx21")?.tag).toBe(t().dynTuning.insfx.vibOnly);
+    expect(off.get("ifx:guitar-clean:20")?.locked).toBe(true);
+    expect(off.get("ifx:guitar-clean:21")?.tag).toBe(t().dynTuning.insfx.vibOnly);
     h.plan.nodeParams.ch1!.insertFxParams = { "19": 2 };
     expect(INSFX_DYN.rowStates!(ctx, INSFX_DYN.read(ctx))).toBeNull();
   });
@@ -312,7 +315,7 @@ describe("a bypassed effect", () => {
     expect(note()).toBe(t().dynTuning.insfx.bypassed);
     // The rows are live: the plan holds the values and the unit stores them whether or
     // not the effect is in the path.
-    const slider = h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx6"]')!;
+    const slider = h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx:compander:6"]')!;
     expect(slider.disabled).toBe(false);
     screen.close();
   });
@@ -324,6 +327,84 @@ describe("a bypassed effect", () => {
     screen.open(INSFX_DYN, "ch1");
     expect(note()).toBe("");
     expect(h.box.querySelector(".gt-note")).not.toBeNull();
+    screen.close();
+  });
+});
+
+describe("a gesture that outlives the family it started under", () => {
+  it("writes a stale row's value under the family that row was built for", () => {
+    // A device follow can replace the effect while a slider is under the pointer, and the
+    // drag goes on firing at a row that is already detached. Guitar and compander share
+    // slots 7, 9, 10 and 11, where they are different parameters on different scales — so
+    // resolving the family at write time would put a guitar value into a compander's
+    // Release. Keyed by family, it lands in the outgoing family's parked values instead.
+    const ctx = holding("ch1", "Clean");
+    ctx.plan.nodeParams.ch1!.insertFxParams = { [insertFxParamKey("compander", 9)]: 2290 };
+    // The follow has landed: the plan now holds a compander.
+    ctx.plan.nodeParams.ch1!.insertFx = valueOf("Compander-H");
+    const written = INSFX_DYN.patch(ctx, { "ifx:guitar-clean:9": 30 }).insertFxParams!;
+    expect(written[insertFxParamKey("guitar-clean", 9)]).toBe(30);
+    // …and the compander's own Release is still what the device read put there.
+    expect(written[insertFxParamKey("compander", 9)]).toBe(2290);
+  });
+
+  it("prints a stale row through the formatter of the family that built it", () => {
+    const ctx = holding("ch1", "Compander-H");
+    const guitarBass = { key: "ifx:guitar-clean:9", min: 0, max: 100, step: 1, def: 50, unit: "raw" } as const;
+    // Slot 9 is the guitar's Bass (a 0..10 knob) and the compander's Release (ms). A row
+    // that says Bass has to go on saying Bass.
+    expect(INSFX_DYN.fieldLabel!(guitarBass, t(), ctx)).toBe(t().inspector.insertFxEffect.params.bass);
+    expect(INSFX_DYN.fieldText!(guitarBass, 30, ctx)).toBe("3.0");
+  });
+});
+
+describe("what the note under the display says", () => {
+  const note = (): string => h.box.querySelector<HTMLElement>(".gt-note")!.textContent ?? "";
+
+  it("names the effect and its ceiling when the rate has switched it off", () => {
+    // The Inspector and the CONSOLE chip both say this; the screen said nothing, and opened
+    // a live editor over DSP the unit had already dropped.
+    holding("ch1", "Pitch Fix");
+    h.plan.sampleRate = 88200;
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    expect(note()).toContain("Pitch Fix");
+    expect(note()).toContain("48 kHz");
+    screen.close();
+  });
+
+  it("says the effect is bypassed only when the rate is not the reason", () => {
+    holding("ch1", "Compander-H");
+    h.plan.sampleRate = 48000;
+    h.plan.nodeParams.ch1!.insertFxOn = false;
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    expect(note()).toBe(t().dynTuning.insfx.bypassed);
+    screen.close();
+  });
+});
+
+describe("the bank identity", () => {
+  it("moves when the TYPE moves inside one family, not only between families", () => {
+    // A Clean amp and a Drive amp are different rows on the same face, so an identity that
+    // only told families apart would leave the CAB segment selected and the panel showing
+    // the amp face's rows for a type it no longer holds.
+    const clean = INSFX_DYN.bankIdentity!(holding("ch1", "Clean"));
+    const drive = INSFX_DYN.bankIdentity!(holding("ch1", "Drive"));
+    const comp = INSFX_DYN.bankIdentity!(holding("ch1", "Compander-H"));
+    expect(new Set([clean, drive, comp]).size).toBe(3);
+  });
+
+  it("returns to the first face when the type moves within the family", () => {
+    holding("ch1", "Clean");
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    h.box.querySelector<HTMLElement>("#dyn-face-insfx-cab")!.click();
+    expect(h.box.querySelector("#dyn-face-insfx-cab")!.getAttribute("aria-pressed")).toBe("true");
+    h.plan.nodeParams.ch1!.insertFx = valueOf("Drive");
+    screen.refresh();
+    expect(screen.isOpen()).toBe(true);
+    expect(h.box.querySelector("#dyn-face-insfx-amp")!.getAttribute("aria-pressed")).toBe("true");
     screen.close();
   });
 });
