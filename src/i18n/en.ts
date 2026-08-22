@@ -483,7 +483,6 @@ export const en = {
         midiControl: dev("MIDI Control"),
         oneKnobOn: dev("1-Knob"),
         oneKnobLevel: dev("1-Knob Level"),
-        bypass: dev("Bypass"),
         xoverLowMid: dev("L-M XOVER"),
         xoverMidHigh: dev("M-H XOVER"),
       },

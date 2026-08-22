@@ -368,10 +368,25 @@ export const MBC_BANDS: Array<{ band: "low" | "mid" | "high" } & Record<MbcBandK
   { band: "mid", attack: 13, threshold: 14, ratio: 15, gain: 16 },
   { band: "high", attack: 18, threshold: 19, ratio: 20, gain: 21 },
 ];
+/**
+ * Band Bypass. Deliberately NOT in `MBC_GLOBAL`, which is what the writable-slot
+ * enumeration walks — a slot listed there is emitted from the plan on every flush.
+ *
+ * It bypasses the band the UNIT has selected, not all three and not one this app can
+ * name: measured on a URX44V by driving LOW / MID / HIGH to different reduction depths
+ * (`133:0/1/2` reading -10 / -4 / 0 dB) and setting the slot, after which MID alone
+ * stopped reducing while LOW stayed where it was. Which band that is comes from the
+ * panel, and the panel's selection is on no address — it is not the last band written
+ * either, since the write before it was LOW's.
+ *
+ * So the app can neither predict nor choose what a write here would do, and it writes
+ * nothing. Keeping the number is what stops it being rediscovered as an unused slot.
+ */
+export const MBC_BYPASS_SLOT = 17;
+
 export const MBC_GLOBAL = {
   oneKnobOn: 6, // bool
   oneKnobLevel: 7, // raw 0..48
-  bypass: 17, // bool
   xoverLowMid: 23, // freq table
   xoverMidHigh: 24, // freq table
   release: 25, // MBC_RELEASE_MS index
@@ -388,7 +403,6 @@ export const MBC_OUT_GAIN_RAW_MAX = 76;
  *  reaching the emit path without bounds opts out of that firewall silently. */
 export const MBC_GLOBAL_BOUNDS: Record<keyof typeof MBC_GLOBAL, { rawMin: number; rawMax: number }> = {
   oneKnobOn: { rawMin: 0, rawMax: 1 },
-  bypass: { rawMin: 0, rawMax: 1 },
   oneKnobLevel: { rawMin: 0, rawMax: MBC_ONE_KNOB_LEVEL_MAX },
   xoverLowMid: { rawMin: MBC_XOVER_LM_RANGE.min, rawMax: MBC_XOVER_LM_RANGE.max },
   xoverMidHigh: { rawMin: MBC_XOVER_MH_RANGE.min, rawMax: MBC_XOVER_MH_RANGE.max },

@@ -19,6 +19,7 @@ import {
   ENGINE_OUTPUT,
   ENGINE_PITCH,
   MBC_BAND_PARAM,
+  MBC_BYPASS_SLOT,
   MBC_GLOBAL,
   MBC_RELEASE_MS,
   MBC_XOVER_LM_RANGE,
@@ -140,6 +141,21 @@ describe("insert-fx family / engine / slot mapping", () => {
       "7->10",
       "8->11",
     ]);
+  });
+});
+
+describe("the multi-band compressor's Band Bypass", () => {
+  it("is not in the writable set, so nothing emits it", () => {
+    // It bypasses the band the UNIT has selected, and that selection is on no address:
+    // driving the three bands to different depths and setting the slot stopped MID alone
+    // while LOW kept reducing. A plan value here would land on a band the app cannot name.
+    expect(insertFxWritableSlots("mbc").some((s) => s.slot === MBC_BYPASS_SLOT)).toBe(false);
+  });
+
+  it("still names the slot, so it is not rediscovered as a free one", () => {
+    expect(MBC_BYPASS_SLOT).toBe(17);
+    // …and it is not reachable through the globals, which is what the emit path walks.
+    expect(Object.values(MBC_GLOBAL)).not.toContain(MBC_BYPASS_SLOT);
   });
 });
 

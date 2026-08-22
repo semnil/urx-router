@@ -406,7 +406,6 @@ export const ja: Messages = {
         midiControl: "MIDI Control",
         oneKnobOn: "1-Knob",
         oneKnobLevel: "1-Knob Level",
-        bypass: "Bypass",
         xoverLowMid: "L-M XOVER",
         xoverMidHigh: "M-H XOVER",
       },
