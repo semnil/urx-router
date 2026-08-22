@@ -514,10 +514,13 @@ test.describe("T2 shape-change", () => {
     );
   });
 
-  // shape-insert-fx-select-ordering. The only case where correctness is decided by the
-  // ORDER of two commands inside one flush rather than by their values: the device
-  // auto-engages the bypass whenever a selector is accepted, so 135 must precede 134.
-  test("insert-FX selection sends the selector before the bypass, and clears it by leaving the set", async ({
+  // shape-insert-fx-select-ordering. Correctness decided by the ORDER of three groups
+  // inside one flush rather than by their values: accepting a selector makes the device
+  // refill the engine array with the type's defaults and auto-engage the bypass, so 135
+  // precedes the engine writes and 134 follows them. T2d carries the harness's other two
+  // ordering contracts — the FX effect type ahead of its own array, and PAN/BAL ahead of
+  // the pans it re-authors.
+  test("insert-FX selection brackets the engine values with the selector and the bypass, and clears it by leaving the set", async ({
     page,
   }) => {
     await goLive(page);
@@ -592,8 +595,8 @@ test.describe("T2 shape-change", () => {
     expect(noneWrites.some((s) => s.addr === CH1_INSERT_FX)).toBe(true);
     expect(noneWrites.some((s) => s.addr === CH1_INSERT_FX_ON)).toBe(false);
 
-    // Re-selecting the same effect brings the pair back in the same order, in one
-    // flush, with the engine slot writes behind them.
+    // Re-selecting the same effect brings the pair back in one flush, with the engine
+    // slot writes between the selector and the bypass.
     await mark(page, "reselect");
     await sel.selectOption({ label: "Compander-H" });
     await settleAfter(page, "reselect", 1800);
@@ -611,6 +614,8 @@ test.describe("T2 shape-change", () => {
     // follow it too.
     expect(engine.length).toBeGreaterThan(0);
     expect(Math.min(...engine.map((s) => s.seq))).toBeGreaterThan(reSel!.seq);
+    // ...and the bypass follows them, so the intent lands after the values it applies to.
+    expect(Math.max(...engine.map((s) => s.seq))).toBeLessThan(reOn!.seq);
   });
 
   // shape-scene-write-scope. Differential by construction: one script, two scopes.

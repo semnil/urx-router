@@ -4269,10 +4269,6 @@ button.consent-btn-primary {
   background: var(--plot-line);
 }
 
-/* Reserved in both display modes, filled only in CURVE: adding it on the switch
-   grew the modal by its height, moving the Close action and the parameter rows
-   under the pointer. One line exactly — a hint that wraps would bring the jump
-   back, which is why the height is fixed rather than a minimum. */
 /* Three lines, reserved whether or not they are used. The height is FIXED because the
    panel must not change height when the band changes (three tests pin that), and
    `overflow: hidden` is what holds it — so whatever does not fit is cut with nothing to

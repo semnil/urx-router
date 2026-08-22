@@ -135,9 +135,10 @@ describe("Console UI", () => {
     // A click on an inert chip must not select an effect the rate cannot run
     // (the plan ships with No Effect selected, so it has to stay there).
     const before = plan.nodeParams["ch1"]?.insertFx;
+    const beforeOn = plan.nodeParams["ch1"]?.insertFxOn;
     locked!.click();
     expect(plan.nodeParams["ch1"]?.insertFx).toBe(before);
-    expect(plan.nodeParams["ch1"]?.insertFxOn).toBeUndefined();
+    expect(plan.nodeParams["ch1"]?.insertFxOn).toBe(beforeOn);
 
     plan.sampleRate = 96000;
     consoleInstance.refresh();

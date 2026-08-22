@@ -90,6 +90,12 @@ const planAt = (rate: number): ReturnType<typeof emptyPlan> => {
   return plan;
 };
 
+const urx22PlanAt = (rate: number): ReturnType<typeof emptyPlan> => {
+  const plan = emptyPlan("URX22");
+  plan.sampleRate = rate;
+  return plan;
+};
+
 describe("insertFxMenu", () => {
   const u44v = getModel("URX44V");
   const lockOf = (menu: InsertFxMenuEntry[], label: string): string | null =>
@@ -116,6 +122,21 @@ describe("insertFxMenu", () => {
     expect(lockOf(insertFxMenu(u44v, planAt(96000), "ch1"), "Clean")).toBeNull();
     expect(lockOf(insertFxMenu(u44v, planAt(192000), "ch1"), "Clean")).toBe("rate");
     expect(insertFxFree(insertFxMenu(u44v, planAt(192000), "ch1"))).toEqual([]);
+  });
+
+  it("adopts the same catalog and rate ceilings for the URX22 routes", () => {
+    const u22 = getModel("URX22");
+    for (const nodeId of ["ch1", "ch2"]) {
+      expect(insertFxMenu(u22, urx22PlanAt(48000), nodeId).map((e) => e.option)).toEqual(INSERT_FX_OPTIONS);
+      expect(lockOf(insertFxMenu(u22, urx22PlanAt(96000), nodeId), "Pitch Fix")).toBe("rate");
+      expect(lockOf(insertFxMenu(u22, urx22PlanAt(96000), nodeId), "Clean")).toBeNull();
+      expect(insertFxFree(insertFxMenu(u22, urx22PlanAt(192000), nodeId))).toEqual([]);
+    }
+    for (const nodeId of ["bus.stereo", "bus.mix1", "bus.mix2"]) {
+      expect(insertFxMenu(u22, urx22PlanAt(96000), nodeId).map((e) => e.option)).toEqual(OUTPUT_INSERT_FX_OPTIONS);
+      expect(insertFxFree(insertFxMenu(u22, urx22PlanAt(192000), nodeId))).toEqual([]);
+    }
+    expect(insertFxMenu(u22, urx22PlanAt(48000), "ch_3_4")).toEqual([]);
   });
 
   it("locks every option of a slot another node holds, and only that slot", () => {

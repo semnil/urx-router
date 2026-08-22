@@ -30,6 +30,28 @@ describe("defaultPlan", () => {
     expect(plan.connections).toEqual(URX22_CONNECTIONS);
   });
 
+  // A No Effect route reads bypassed on the unit, so both models seed the pair rather
+  // than leaving the switch unset on one of them. Asserted together: the URX22 file is
+  // inferred from the URX44V capture, and a value that reaches one and not the other is
+  // the drift this case exists to catch.
+  it("seeds every INS FX route with No Effect and the bypass switch off, on both models", () => {
+    for (const [model, routes] of [
+      ["URX22", ["ch1", "ch2", "bus.stereo", "bus.mix1", "bus.mix2"]],
+      ["URX44V", ["ch1", "ch2", "ch3", "ch4", "bus.stereo", "bus.mix1", "bus.mix2"]],
+    ] as const) {
+      const plan = defaultPlan(model);
+      for (const nodeId of routes) {
+        const where = `${model} ${nodeId}`;
+        expect(plan.nodeParams[nodeId].insertFx, where).toBe(-1);
+        expect(plan.nodeParams[nodeId].insertFxOn, where).toBe(false);
+        expect(plan.nodeParams[nodeId].insertFxParams, where).toBeUndefined();
+      }
+    }
+    for (const nodeId of ["ch_3_4", "ch_5_6", "ch_7_8", "ch_9_10"]) {
+      expect(defaultPlan("URX22").nodeParams[nodeId].insertFx, nodeId).toBeUndefined();
+    }
+  });
+
   // The URX22 seed is inferred, not captured: its header documents that stereo
   // defaults are copied by POSITION from the URX44V capture (CH3/4 <- CH5/6,
   // CH5/6 <- CH7/8, CH7/8 <- CH9/10, CH9/10 <- CH11/12). The stereo channel

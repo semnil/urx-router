@@ -534,7 +534,8 @@ carries a one-line map of the same directories and points here.
   with a factory initial state (node parameters + routing + CH SETTING colors and names). Only URX44V is captured from real
   hardware; URX44 reuses that capture verbatim (it differs only by URX44V's HDMI input, which no
   default routes), and URX22 is an inferred remap of it (`models/initial-urx22.ts`, unverified until
-  a real reset is captured). A device fetch instead starts from an empty plan (`emptyPlan` in
+  a real reset is captured — its INS FX values are the exception, adopted rather than held as an
+  estimate awaiting one). A device fetch instead starts from an empty plan (`emptyPlan` in
   `core/plan.ts`) and lets the readback (`core/control/`) fill in the live values.
   On startup the model selection is restored from the last choice (`localStorage("urx-model")`),
   falling back to URX44V when it is unset or invalid (the same "saved value → fallback" pattern as
@@ -1490,7 +1491,8 @@ written at all:
   pointer, and the EQ band commands are simply not emitted while 1-knob is on.
 - **The unit changes actual state.** Selecting an insert effect turns its ON switch on by itself. Here the
   write model's contract applies instead — `planToCommands` writes absolute state, so the plan has to win: the
-  ON parameter is emitted *after* the selector to put the unit back where the plan says. Leaving this one to
+  ON parameter is emitted *after* the selector and after the engine values it applies to, to put the unit
+  back where the plan says. Leaving this one to
   the unit would silently make an effect the user switched off audible again.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the

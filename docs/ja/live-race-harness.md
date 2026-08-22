@@ -236,7 +236,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | `shape-comp-eq-type-bank-swap` | inspector | アドレスの同一性と値の極性が同時に変わる唯一の param |
 | `shape-eq-oneknob-registration-blindspot` | tuning | 再計算を起こした当のブール値が、再計算の通知先を登録ごと集合から外す自己盲目。告知は配達されて置けないのではなく拒否される。節 B の発火対照も持つ |
 | `shape-eq-oneknob-level-refetch-storm` | tuning | ドラッグ中に毎フラッシュ読み戻しが走り、履歴が再基準化され続ける |
-| `shape-insert-fx-select-ordering` | inspector | 値ではなくコマンド 2 件の順序が正しさを決める唯一のケース |
+| `shape-insert-fx-select-ordering` | inspector | 値ではなく 1 フラッシュ内の 3 グループの順序 — セレクタ → それが埋め直すエンジン配列 → バイパス — が正しさを決める。実機が選択のたびに配列を既定で埋め直し、バイパスを自分で入れるため |
 | `shape-insert-fx-engine-array-collision` | inspector | 2 つのプラン所有者が 1 つのデバイスアドレスを共有する構造的衝突 |
 | `shape-fx-effect-type-slot-family` | inspector | param id ではなくスロット集合が変わる。undo が構造上不完全になる |
 | `shape-signal-type-pair-link` | inspector | 書込が別ノード全体をデバイス側でリセットする唯一の param |
@@ -805,7 +805,7 @@ settle も idle 網も張られない）。フェーダー 1 detent は遅延 0 
 - **Signal Type = STEREO** は両インデックスへ書き、**相方ノードを丸ごと再著作する**。undo 1 回で
   全部戻る。ただし converge ラウンドは**修復ではなく再送**で、実機が相方をリセットしても
   アプリの値を押し戻し続ける
-- **insert FX の順序は clean** (セレクタ 135 がバイパス 134 より前)。対照として機能
+- **insert FX の順序は clean** (セレクタ 135 → エンジン配列 → バイパス 134)。対照として機能
 
 **T3 — アンドゥ**
 
@@ -1059,7 +1059,7 @@ notify は毎秒およそ 10 件。ケースも入れ替わり、`undo-rebase-dr
 891 は pan を**型付けしない** — 同じパラメータが両モードで同じ id・同じ ±63 エンコード。891 が行うのは
 **書込副作用**で、BAL→PAN は `141` と送り pan 8 本を ±63 に叩き、PAN→BAL と連結解除は同じ 9 本を 0 に
 する (`.urxf` 全体差分と対象読み出しで実測)。つまりセレクタより前に書いた pan は誤読されるのではなく
-**破棄される**。順序規則は insert FX (135 → 134) と FX タイプ (679 → 681 配列) と同一。
+**破棄される**。順序規則は insert FX (135 → エンジン配列 → 134) と FX タイプ (679 → 681 配列) と同一。
 
 修正は 2 ブロックの相対移動のみ (コマンド集合・値・所有印は不変で、追加行と削除行をソートすると一致)。
 `PAN_BAL` の `sideEffect: "converge"` は残す ── 順序が正しくなったので converge は**修復ではなく網**に

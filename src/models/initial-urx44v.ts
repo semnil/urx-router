@@ -2,7 +2,7 @@
 // after a reset and used to seed a new plan (see defaultPlan). Values are the
 // decoded plan-unit defaults the device ships with; the routing wires mirror its
 // default input source / send / patch / ducker-key topology. URX44 reuses this
-// capture verbatim; URX22 has its own capture (see initial-urx22.ts).
+// capture verbatim; URX22 is an inferred remap of it (see initial-urx22.ts).
 
 import type { NodeParams, PlanConnection } from "../core/plan";
 import { SSMCS_INITIAL } from "../core/plan";
@@ -42,6 +42,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     },
     ssmcs: SSMCS_INITIAL,
     insertFx: -1,
+    insertFxOn: false,
     stereoLink: false,
     panBal: 0,
   },
@@ -79,6 +80,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     },
     ssmcs: SSMCS_INITIAL,
     insertFx: -1,
+    insertFxOn: false,
   },
   ch3: {
     on: true,
@@ -115,6 +117,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     },
     ssmcs: SSMCS_INITIAL,
     insertFx: -1,
+    insertFxOn: false,
     stereoLink: false,
     panBal: 0,
   },
@@ -153,6 +156,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     },
     ssmcs: SSMCS_INITIAL,
     insertFx: -1,
+    insertFxOn: false,
   },
   ch_5_6: {
     on: true,
@@ -213,6 +217,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   "bus.stereo": {
     level: 0,
     insertFx: -1,
+    insertFxOn: false,
     eqOn: true,
     eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
@@ -227,6 +232,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     level: 0,
     busType: 0,
     insertFx: -1,
+    insertFxOn: false,
     eqOn: true,
     eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
@@ -242,6 +248,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     level: 0,
     busType: 0,
     insertFx: -1,
+    insertFxOn: false,
     eqOn: true,
     eqOneKnob: { on: false, type: 0, level: 0 },
     eqBands: [
