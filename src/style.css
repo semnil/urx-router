@@ -1947,6 +1947,42 @@ input[type="range"]:focus-visible,
 /* Joined segmented bar, shared with the Device setup screen's knob-bank switch. */
 .view-tabs,
 .udk-banks,
+/* The twelve semitone buttons on the Pitch Fix scale face. Twelve independent toggles
+   rather than one selection, so they share the segment bar's look and not its behaviour —
+   and they are named from C in a straight row on purpose: the slots are absolute semitones,
+   and a black-and-white keyboard would draw a root that is not there. Each button takes the
+   narrowest padding the mono face allows, because twelve of them share one control column. */
+.gt-notes {
+  display: flex;
+  border: 1px solid var(--ctl-border);
+  border-radius: 7px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.gt-notes button {
+  font: 700 10px var(--mono);
+  letter-spacing: 0;
+  padding: 7px 5px;
+  border: 0;
+  border-right: 1px solid var(--ctl-border);
+  background: var(--ctl-bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 1 1 0;
+}
+.gt-notes button:last-child {
+  border-right: 0;
+}
+.gt-notes button[aria-pressed="true"] {
+  color: var(--on-accent-ink);
+  background: var(--led-face);
+  border-color: var(--led-ink);
+}
+.gt-notes button:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
+}
 .gt-modes {
   display: flex;
   border: 1px solid var(--ctl-border);
@@ -4327,6 +4363,7 @@ button.consent-btn-primary {
   #inspector .toggle button.on,
   .prefs-toggle button.on,
   .udk-banks button[aria-pressed="true"],
+  .gt-notes button[aria-pressed="true"],
   .menu-panel .menu-item[aria-pressed="true"],
   .mw-learnbtn.on,
   .con-panbtn.open {

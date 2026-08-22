@@ -52,18 +52,16 @@ describe("what the screen binds to", () => {
   });
 
   it("binds every family it shows whole", () => {
-    for (const label of ["Clean", "Crunch", "Lead", "Drive", "Compander-H", "Compander-S"]) {
+    for (const label of ["Clean", "Crunch", "Lead", "Drive", "Pitch Fix", "Compander-H", "Compander-S"]) {
       const binding = INSFX_DYN.bind(holding("ch1", label));
       expect(binding, label).not.toBeNull();
       expect(binding!.fields.length, label).toBeGreaterThan(0);
     }
   });
 
-  it("refuses the two families it would show only in part", () => {
-    // Pitch Fix keeps its Key, Scale and note mask outside the flat catalogue, and the
-    // multi-band compressor is not in it at all. Opening on either would be an editor
-    // missing the half that decides what the effect does.
-    expect(INSFX_DYN.bind(holding("ch1", "Pitch Fix"))).toBeNull();
+  it("refuses the family it would show only in part", () => {
+    // The multi-band compressor's bands and globals are a structured layout, and the flat
+    // catalogue carries none of it. Opening on it would be an editor with nothing in it.
     expect(INSFX_DYN.bind(holding("bus.mix1", "M.Band Comp"))).toBeNull();
   });
 
@@ -125,8 +123,7 @@ describe("reading and writing engine slots", () => {
 
   it("writes a mirrored slot with its twin", () => {
     // Three Pitch Fix values are stored twice and the device reads both, so an edit that
-    // wrote one of them would be half applied. `patch` is asked directly: the screen does
-    // not open on this family, and the rule belongs to the writer either way.
+    // wrote one of them would be half applied.
     const ctx = holding("ch1", "Pitch Fix");
     const mirrored = insertFxParams("pitch").find((d) => d.mirror !== undefined)!;
     const written = INSFX_DYN.patch(ctx, { [`ifx${mirrored.slot}`]: 7 }).insertFxParams!;

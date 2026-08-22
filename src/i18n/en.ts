@@ -430,6 +430,9 @@ export const en = {
       bandHigh: dev("HIGH"),
       oneKnob: dev("1-Knob"),
       scale: dev("Scale"),
+      // The twelve semitone buttons. Absolute, named from C — the unit stores them that
+      // way whatever the Key is.
+      scaleNotes: tr("Notes"),
       scaleChromatic: dev("Chromatic"),
       scaleMajor: dev("Major"),
       scaleCustom: dev("Custom"),
@@ -677,6 +680,10 @@ export const en = {
       // this app's, and the two abbreviations read the same in every language.
       faceAmp: fixed("AMP"),
       faceCab: fixed("CAB"),
+      // Pitch Fix's two faces: what the correction does to a note, and what decides which
+      // notes there are. Named this app's own way for the same reason AMP / CAB are.
+      facePitch: fixed("PITCH"),
+      faceScale: fixed("SCALE"),
       // Speed and Depth on the Clean amp: the selector beside them decides whether they
       // reach anything.
       vibOnly: tr("Vib only"),

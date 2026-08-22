@@ -11,7 +11,6 @@ import { formatHz, fxEffectTypes, fxParams, resolveFxEffectType } from "../core/
 import {
   insertFxFamilyOf,
   insertFxParamKey,
-  insertFxParams,
   MBC_BANDS,
   MBC_BAND_PARAM,
   MBC_GLOBAL,
@@ -23,22 +22,7 @@ import {
   MBC_ONE_KNOB_LEVEL_MAX,
   MBC_OUT_GAIN_RAW_MIN,
   MBC_OUT_GAIN_RAW_MAX,
-  SEMITONE_NAMES,
-  PITCH_NOTE_SLOTS,
-  PITCH_KEY_SLOT,
-  PITCH_SCALE_SLOT,
-  PITCH_SCALE_CHROMATIC,
-  PITCH_SCALE_MAJOR,
-  PITCH_SCALE_CUSTOM,
-  PITCH_SCALE_SINGLE,
-  PITCH_SCALE_NATURAL_MINOR,
-  PITCH_SCALE_HARMONIC_MINOR,
-  PITCH_SCALE_MELODIC_MINOR,
-  PITCH_SCALE_PENTATONIC,
-  PITCH_MIDI_ENABLE_SLOT,
-  PITCH_MIDI_REALTIME_SLOT,
   type InsertFxFamily,
-  type InsertFxParamDesc,
   type MbcBandKey,
 } from "../core/control/insert-fx-effect";
 import { isFixedConnection, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
@@ -128,13 +112,7 @@ import {
 import { clearSectionOverride, recordSectionOpen, resolveSectionOpen } from "./inspector-sections";
 import { isBalanceChannel, sendFields, sendlessNote } from "./send-fields";
 import type { ParamField } from "./send-fields";
-import {
-  insertFxVal,
-  parkOutgoingInsertFxParams,
-  pitchMidiMode,
-  pitchScalePatch,
-  reKeyInsertFxParams,
-} from "./insert-fx-model";
+import { insertFxVal, parkOutgoingInsertFxParams, reKeyInsertFxParams } from "./insert-fx-model";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -1273,42 +1251,6 @@ function mergeInsertFxParams(
   );
 }
 
-// Render one flat descriptor (compander / guitar / pitch scalar) into `body`.
-function appendInsertFxDesc(
-  body: HTMLElement,
-  desc: InsertFxParamDesc,
-  nodeId: string,
-  fam: InsertFxFamily,
-  plan: Plan,
-  actions: InspectorActions,
-  t: Messages["inspector"]["insertFxEffect"],
-): void {
-  const label = t.params[desc.label as keyof typeof t.params] ?? desc.label;
-  const cur = insertFxVal(plan, nodeId, fam, desc.slot, desc.def);
-  const set = (raw: number) => {
-    const patch: Record<number, number> = { [desc.slot]: raw };
-    if (desc.mirror !== undefined) patch[desc.mirror] = raw;
-    mergeInsertFxParams(actions, plan, nodeId, fam, patch);
-  };
-  if (desc.control === "toggle") {
-    body.append(boolToggle(label, cur !== 0, (v) => set(v ? 1 : 0)));
-  } else if (desc.control === "select") {
-    body.append(enumSelect(label, desc.options ?? [], cur, set));
-  } else {
-    body.append(
-      rangeSlider(
-        label,
-        desc.rawMin ?? 0,
-        desc.rawMax ?? 0,
-        desc.rawStep ?? 1,
-        cur,
-        (r) => (desc.format ? desc.format(r) : String(r)),
-        set,
-      ),
-    );
-  }
-}
-
 // INSERT-FX effect section, shown below the insert-FX selector when the chosen
 // effect has editable parameters. Layout per family: compander/guitar = flat
 // descriptors; MBC = 1-knob + three bands + global; pitch = scalars + scale
@@ -1321,19 +1263,14 @@ function insertFxEffectSection(
   m: Messages,
 ): HTMLElement | null {
   const fam = insertFxFamilyOf(selectorValue);
-  if (!fam) return null;
+  // Only the multi-band compressor is edited here. Every other family opens the tuning
+  // screen, which shows the same values beside the taps either side of the effect — and
+  // which is where a slider belongs: one built here reads the params snapshot taken at
+  // render time and writes a stale value back on its next drag.
+  if (fam !== "mbc") return null;
   const t = m.inspector.insertFxEffect;
   const { el, body } = section(t.title, { key: "insertFxEffect" });
-
-  if (fam === "mbc") {
-    renderMbc(body, nodeId, plan, actions, t);
-  } else if (fam === "pitch") {
-    for (const d of insertFxParams("pitch")) appendInsertFxDesc(body, d, nodeId, fam, plan, actions, t);
-    renderPitchScale(body, nodeId, plan, actions, t);
-    renderPitchMidi(body, nodeId, plan, actions, t);
-  } else {
-    for (const d of insertFxParams(fam)) appendInsertFxDesc(body, d, nodeId, fam, plan, actions, t);
-  }
+  renderMbc(body, nodeId, plan, actions, t);
   return el;
 }
 
@@ -1415,81 +1352,6 @@ function renderMbc(
       (v) => set(MBC_GLOBAL.outGain, v),
     ),
   );
-}
-
-function renderPitchScale(
-  body: HTMLElement,
-  nodeId: string,
-  plan: Plan,
-  actions: InspectorActions,
-  t: Messages["inspector"]["insertFxEffect"],
-): void {
-  const scale = insertFxVal(plan, nodeId, "pitch", PITCH_SCALE_SLOT, PITCH_SCALE_CHROMATIC);
-  const key = insertFxVal(plan, nodeId, "pitch", PITCH_KEY_SLOT, 0);
-  // Every preset is selectable. The mask each one turns on was read off the unit at two
-  // keys, so the app authors the same twelve notes the unit derives instead of only the
-  // two patterns it could once spell.
-  const scales = [
-    { value: PITCH_SCALE_CHROMATIC, label: t.scaleChromatic },
-    { value: PITCH_SCALE_MAJOR, label: t.scaleMajor },
-    { value: PITCH_SCALE_CUSTOM, label: t.scaleCustom },
-    { value: PITCH_SCALE_SINGLE, label: t.scaleSingle },
-    { value: PITCH_SCALE_NATURAL_MINOR, label: t.scaleNaturalMinor },
-    { value: PITCH_SCALE_HARMONIC_MINOR, label: t.scaleHarmonicMinor },
-    { value: PITCH_SCALE_MELODIC_MINOR, label: t.scaleMelodicMinor },
-    { value: PITCH_SCALE_PENTATONIC, label: t.scalePentatonic },
-  ];
-  body.append(
-    selectControl(
-      t.scale,
-      scales.map((o) => ({ value: String(o.value), label: o.label })),
-      String(scales.some((o) => o.value === scale) ? scale : PITCH_SCALE_CUSTOM),
-      (v) => mergeInsertFxParams(actions, plan, nodeId, "pitch", pitchScalePatch(Number(v), key)),
-    ),
-  );
-  // The twelve notes, absolute semitones from C — which is how the unit stores them,
-  // whatever the Key. Editing one sets Custom, as the unit does on its own.
-  for (let i = 0; i < PITCH_NOTE_SLOTS.length; i++) {
-    const slot = PITCH_NOTE_SLOTS[i];
-    body.append(
-      boolToggle(SEMITONE_NAMES[i], insertFxVal(plan, nodeId, "pitch", slot, 1) !== 0, (on) =>
-        mergeInsertFxParams(actions, plan, nodeId, "pitch", {
-          [slot]: on ? 1 : 0,
-          [PITCH_SCALE_SLOT]: PITCH_SCALE_CUSTOM,
-        }),
-      ),
-    );
-  }
-}
-
-function renderPitchMidi(
-  body: HTMLElement,
-  nodeId: string,
-  plan: Plan,
-  actions: InspectorActions,
-  t: Messages["inspector"]["insertFxEffect"],
-): void {
-  const enable = insertFxVal(plan, nodeId, "pitch", PITCH_MIDI_ENABLE_SLOT, 0);
-  const realtime = insertFxVal(plan, nodeId, "pitch", PITCH_MIDI_REALTIME_SLOT, 0);
-  const cur = pitchMidiMode(enable, realtime);
-  // Shown, never written. Two reasons, both measured: the unit takes these notes on a
-  // USB-MIDI port of its own, which is not the port this app's external control reads, so
-  // writing here would be a second route into one setting; and switching it on erases a
-  // twelve-note mask that is FULL, taking the Scale enum to Custom with it. Not writing it
-  // is what keeps the app off that edge.
-  const row = selectControl(
-    t.params.midiControl,
-    [
-      { value: "0", label: "Off" },
-      { value: "1", label: "Setting" },
-      { value: "2", label: "Real Time" },
-    ],
-    String(cur),
-    () => {},
-    true,
-  );
-  row.title = t.midiControlDeviceOnly;
-  body.append(row);
 }
 
 // Ducker node section: the on/off and the control that opens its tuning screen. The
