@@ -5,20 +5,21 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  PITCH_MAJOR_ON,
   insertFxVal,
   parkOutgoingInsertFxParams,
   pitchMidiMode,
-  pitchMidiPatch,
   pitchScalePatch,
   reKeyInsertFxParams,
 } from "./insert-fx-model";
 import {
-  PITCH_MIDI_ENABLE_SLOT,
-  PITCH_MIDI_REALTIME_SLOT,
   PITCH_NOTE_SLOTS,
   PITCH_SCALE_CHROMATIC,
   PITCH_SCALE_CUSTOM,
+  PITCH_SCALE_SINGLE,
+  PITCH_SCALE_NATURAL_MINOR,
+  PITCH_SCALE_HARMONIC_MINOR,
+  PITCH_SCALE_MELODIC_MINOR,
+  PITCH_SCALE_PENTATONIC,
   PITCH_SCALE_MAJOR,
   PITCH_SCALE_SLOT,
   insertFxParamKey,
@@ -130,25 +131,60 @@ describe("parkOutgoingInsertFxParams", () => {
 });
 
 describe("pitch scale presets", () => {
+  /** The semitones a patch turns on, as indices from C. */
+  const onNotes = (patch: Record<number, number>): number[] =>
+    PITCH_NOTE_SLOTS.map((s, i) => [i, patch[s]] as const)
+      .filter(([, v]) => v === 1)
+      .map(([i]) => i);
+
   it("turns every note on for Chromatic", () => {
-    const patch = pitchScalePatch(PITCH_SCALE_CHROMATIC);
+    const patch = pitchScalePatch(PITCH_SCALE_CHROMATIC, 0);
     expect(patch[PITCH_SCALE_SLOT]).toBe(PITCH_SCALE_CHROMATIC);
     expect(PITCH_NOTE_SLOTS.every((s) => patch[s] === 1)).toBe(true);
   });
 
-  // Calibration confirmed Major clears the five non-major semitones.
-  it("clears exactly the non-major semitones for Major", () => {
-    const patch = pitchScalePatch(PITCH_SCALE_MAJOR);
+  it("clears exactly the non-major semitones for Major at C", () => {
+    const patch = pitchScalePatch(PITCH_SCALE_MAJOR, 0);
     expect(patch[PITCH_SCALE_SLOT]).toBe(PITCH_SCALE_MAJOR);
-    const off = PITCH_NOTE_SLOTS.map((s, i) => [i, patch[s]] as const).filter(([, v]) => v === 0);
-    expect(off.map(([i]) => i)).toEqual([1, 3, 6, 8, 10]);
-    expect(PITCH_MAJOR_ON).toEqual(new Set([0, 2, 4, 5, 7, 9, 11]));
+    expect(onNotes(patch)).toEqual([0, 2, 4, 5, 7, 9, 11]);
   });
 
-  // Every other preset is a device value the app only displays, so it sets the scale
-  // slot alone and leaves the note pattern as it was read back.
-  it("sets the scale slot alone for a preset the app does not author", () => {
-    expect(pitchScalePatch(PITCH_SCALE_CUSTOM)).toEqual({ [PITCH_SCALE_SLOT]: PITCH_SCALE_CUSTOM });
+  // The slots are ABSOLUTE semitones, so the preset's offsets are rooted at the Key. A mask
+  // written from C at another key is a different scale — which is what this app used to
+  // send: Major at Key G reached the unit as C major, over the G major the unit had just
+  // derived for itself. G major is C D E F# G A B.
+  it("roots the pattern at the Key", () => {
+    expect(onNotes(pitchScalePatch(PITCH_SCALE_MAJOR, 7))).toEqual([0, 2, 4, 6, 7, 9, 11]);
+    // Single is the root alone, which is the clearest reading of the same rule.
+    expect(onNotes(pitchScalePatch(PITCH_SCALE_SINGLE, 7))).toEqual([7]);
+    expect(onNotes(pitchScalePatch(PITCH_SCALE_SINGLE, 0))).toEqual([0]);
+  });
+
+  it("authors every preset, each with the pattern the unit derives", () => {
+    // Read off a URX44V at Key = C and Key = G; the offsets came back identical at both.
+    const OFFSETS: Record<number, number[]> = {
+      [PITCH_SCALE_SINGLE]: [0],
+      [PITCH_SCALE_MAJOR]: [0, 2, 4, 5, 7, 9, 11],
+      [PITCH_SCALE_NATURAL_MINOR]: [0, 2, 3, 5, 7, 8, 10],
+      [PITCH_SCALE_HARMONIC_MINOR]: [0, 2, 3, 5, 7, 8, 11],
+      [PITCH_SCALE_MELODIC_MINOR]: [0, 2, 3, 5, 7, 9, 11],
+      [PITCH_SCALE_PENTATONIC]: [0, 2, 4, 7, 9],
+    };
+    for (const [scale, offsets] of Object.entries(OFFSETS)) {
+      for (const key of [0, 3, 7, 11]) {
+        const on = onNotes(pitchScalePatch(Number(scale), key));
+        expect(
+          on.slice().sort((a, b) => a - b),
+          `scale ${scale} at key ${key}`,
+        ).toEqual(offsets.map((o) => (o + key) % 12).sort((a, b) => a - b));
+      }
+    }
+  });
+
+  // Custom is not a pattern: it names whatever mask is already there, which is also what
+  // the unit sets the enum to on its own when a note is edited.
+  it("sets the scale slot alone for Custom", () => {
+    expect(pitchScalePatch(PITCH_SCALE_CUSTOM, 7)).toEqual({ [PITCH_SCALE_SLOT]: PITCH_SCALE_CUSTOM });
   });
 });
 
@@ -160,16 +196,11 @@ describe("pitch MIDI control tri-state", () => {
     expect(pitchMidiMode(1, 1)).toBe(2);
   });
 
-  it("writes the two bits back for each mode", () => {
-    expect(pitchMidiPatch(0)).toEqual({ [PITCH_MIDI_ENABLE_SLOT]: 0, [PITCH_MIDI_REALTIME_SLOT]: 0 });
-    expect(pitchMidiPatch(1)).toEqual({ [PITCH_MIDI_ENABLE_SLOT]: 1, [PITCH_MIDI_REALTIME_SLOT]: 0 });
-    expect(pitchMidiPatch(2)).toEqual({ [PITCH_MIDI_ENABLE_SLOT]: 1, [PITCH_MIDI_REALTIME_SLOT]: 1 });
-  });
-
-  it("round-trips every mode through the bits and back", () => {
-    for (const mode of [0, 1, 2] as const) {
-      const bits = pitchMidiPatch(mode);
-      expect(pitchMidiMode(bits[PITCH_MIDI_ENABLE_SLOT], bits[PITCH_MIDI_REALTIME_SLOT])).toBe(mode);
-    }
+  // There is no writer. Switching the enable bit on erases a full note mask, and the notes
+  // it listens for arrive on a port of the unit's own — so this module decodes the mode and
+  // has nothing that encodes one.
+  it("carries no encoder", async () => {
+    const mod = (await import("./insert-fx-model")) as Record<string, unknown>;
+    expect(Object.keys(mod).filter((k) => /midi/i.test(k))).toEqual(["pitchMidiMode"]);
   });
 });

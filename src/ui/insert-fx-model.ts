@@ -9,11 +9,9 @@ import {
   insertFxFamilyOf,
   insertFxParamKey,
   qualifyInsertFxParams,
-  PITCH_MIDI_ENABLE_SLOT,
-  PITCH_MIDI_REALTIME_SLOT,
+  PITCH_KEY_SLOT,
   PITCH_NOTE_SLOTS,
-  PITCH_SCALE_CHROMATIC,
-  PITCH_SCALE_MAJOR,
+  PITCH_SCALE_OFFSETS,
   PITCH_SCALE_SLOT,
   type InsertFxFamily,
 } from "../core/control/insert-fx-effect";
@@ -54,29 +52,42 @@ export function parkOutgoingInsertFxParams(prev: NodeParams | undefined): Record
   return qualifyInsertFxParams(prev.insertFxParams, prevFam);
 }
 
-// Standard C-major scale (semitone offsets on = major; the rest off). Used by the
-// Pitch Fix scale preset buttons; calibration confirmed Major clears slots
-// 23/25/28/30/32 (the non-major semitones).
-export const PITCH_MAJOR_ON = new Set([0, 2, 4, 5, 7, 9, 11]);
-
-/** The engine patch a Pitch Fix scale selection writes: the scale slot always, plus
- *  the 12 note slots for the two presets the app authors (Chromatic = all on, Major
- *  = the major mask). Every other preset is a device value the app only displays,
- *  so it sets the scale slot alone and leaves the note pattern as read back. */
-export function pitchScalePatch(scale: number): Record<number, number> {
+/**
+ * The engine patch a Pitch Fix scale selection writes: the scale slot, and the twelve
+ * notes the preset turns on AT THIS KEY.
+ *
+ * The mask slots are absolute semitones and the unit derives them from the Scale enum and
+ * the Key. Authoring them from the same offsets is what keeps a plan written offline
+ * agreeing with what the unit would have derived — a mask rooted at C, written at any
+ * other Key, is a different scale.
+ *
+ * Custom carries no pattern: it names whatever mask is already there, so the patch is the
+ * enum alone.
+ */
+export function pitchScalePatch(scale: number, key: number): Record<number, number> {
   const patch: Record<number, number> = { [PITCH_SCALE_SLOT]: scale };
-  if (scale === PITCH_SCALE_CHROMATIC) PITCH_NOTE_SLOTS.forEach((s) => (patch[s] = 1));
-  else if (scale === PITCH_SCALE_MAJOR) PITCH_NOTE_SLOTS.forEach((s, i) => (patch[s] = PITCH_MAJOR_ON.has(i) ? 1 : 0));
+  const offsets = PITCH_SCALE_OFFSETS[scale];
+  if (!offsets) return patch;
+  const on = new Set(offsets.map((o) => (o + key) % 12));
+  PITCH_NOTE_SLOTS.forEach((s, i) => (patch[s] = on.has(i) ? 1 : 0));
   return patch;
 }
 
-/** MIDI Control's three-way, folded from its two engine bits: enable off = Off,
- *  enable on with realtime off = Setting, both on = Real Time. */
-export function pitchMidiMode(enable: number, realtime: number): 0 | 1 | 2 {
-  return enable === 0 ? 0 : realtime === 0 ? 1 : 2;
+/** The mask a Key change re-roots to, keeping the scale it is currently spelling. The unit
+ *  re-derives on a Key write of its own, so this is what an offline plan needs to match. */
+export function pitchKeyPatch(scale: number, key: number): Record<number, number> {
+  return { [PITCH_KEY_SLOT]: key, ...pitchScalePatch(scale, key) };
 }
 
-/** The two engine bits a MIDI Control mode selection writes. */
-export function pitchMidiPatch(mode: number): Record<number, number> {
-  return { [PITCH_MIDI_ENABLE_SLOT]: mode === 0 ? 0 : 1, [PITCH_MIDI_REALTIME_SLOT]: mode === 2 ? 1 : 0 };
+/**
+ * MIDI Control's three-way, folded from its two engine bits: enable off = Off, enable on
+ * with realtime off = Setting, both on = Real Time.
+ *
+ * There is no writer, deliberately. Switching the enable bit on erases a twelve-note mask
+ * that is FULL and takes the Scale enum to Custom with it — measured — and the notes it
+ * listens for arrive on a USB-MIDI port of the unit's own, which is not the port this app
+ * reads external control from. The app shows the mode and leaves the setting to the unit.
+ */
+export function pitchMidiMode(enable: number, realtime: number): 0 | 1 | 2 {
+  return enable === 0 ? 0 : realtime === 0 ? 1 : 2;
 }
