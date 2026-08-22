@@ -202,12 +202,17 @@ export interface ReadbackResult {
    */
   unreadNodes: Set<string>;
   /**
-   * The sample rate this read established ON THE UNIT, when it read one at all: a
+   * The sample rate this read established at its source, when it read one at all: a
    * scoped read never asks (the address has no owner node), and a full read whose
    * `766` failed leaves it unset. Separate from the plan's own `sampleRate` because
    * the two are not the same number — under the "Scene only" device scope the read's
    * rate is discarded from the plan again (`main.ts` applyDeviceStateScoped), and a
    * merge deciding anything from the plan's copy would be reading its own input.
+   *
+   * "Its source" rather than "the unit" because `applySourceState` is a full pass too and
+   * its source is a `.urxf` file. That path reaches no merge and passes no hold, so no
+   * consumer reads a file's rate as the unit's — but the field is the wrong one to answer
+   * a question about the hardware from without checking which read filled it.
    */
   deviceSampleRate?: number;
 }

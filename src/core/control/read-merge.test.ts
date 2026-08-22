@@ -512,8 +512,11 @@ describe("insertFxHoldKeys", () => {
       () => plan,
       async (into) => {
         const result = cleared(into, 96000);
-        // The operator picks a different effect in the app, mid-read.
-        plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 1793 };
+        // The operator picks a different effect in the app, mid-read. Both keys move,
+        // which is what the two funnels that can do this actually write (the inspector's
+        // selector and the CONSOLE strip's): a selector alone is a shape no edit path
+        // produces, and pinning it here would bless a bypassed effect as correct.
+        plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: COMPANDER_H, insertFxOn: true };
         witness.note();
         return result;
       },
@@ -524,8 +527,13 @@ describe("insertFxHoldKeys", () => {
     // The selector is the operator's, left standing by the value contest — and the other
     // two keys are NOT held beside it, which would put the old effect's bypass and engine
     // values under the new selection.
-    expect(plan.nodeParams.ch1?.insertFx).toBe(1793);
+    expect(plan.nodeParams.ch1?.insertFx).toBe(COMPANDER_H);
     expect(merged!.held).toEqual([]);
+    // The bypass lands on the DEVICE's value, and that is the merge's ordinary contest
+    // rather than anything the hold does: selecting an effect over one that was already
+    // engaged leaves `insertFxOn` at the value the read's own `before` side holds, so the
+    // witness never names it and the device's OFF wins the key. Pinned as the behaviour
+    // it is — the effect arrives selected and bypassed until the next edit moves it.
     expect(plan.nodeParams.ch1?.insertFxOn).toBe(false);
   });
 

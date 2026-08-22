@@ -893,6 +893,7 @@ export const ja: Messages = {
       `${n} 件の設定を読み取れず、デバイスの状態を完全には把握できません。Live sync の開始には完全な読み取りが必要です。`,
     liveFollowStopped:
       "セッション開始中にデバイス追従が停止したため、実機側の変更がプランに届かない状態でした。Live sync は開始していません。",
+    followReadHeld: (cause: string, n: number): string => `${cause}。実機が消去した ${n} 件はプランに保持したまま`,
     followReadIncomplete: (n: number): string =>
       `デバイス側の変更後、${n} 件の設定を読み戻せず、プランが実機と一致しなくなりました。取得し直して同期してください。`,
     clockUnread: (message: string): string =>

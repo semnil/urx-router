@@ -395,7 +395,6 @@ const live = DEMO
         // entries or as 1 describing only its tail.
         planHistory?.absorb(merged.devicePatch);
         requestReflect();
-        noteHeld(merged);
         assertReadComplete(merged, "side-effect refetch issues:");
         return merged.deviceView;
       },
@@ -566,10 +565,20 @@ function reflectFollow(): void {
 // edit on the hardware. Throwing takes DeviceFollow's stop-following path, which
 // its hook contract already declares. Shared by both reconcile hooks so the rule
 // has one spelling.
-function assertReadComplete(result: ReadbackResult, label: string): void {
-  if (!result.errors.length) return;
-  console.warn(label, result.errors);
-  throw new Error(linkFailureIn(result.errors) ?? t().error.followReadIncomplete(result.errors.length));
+function assertReadComplete(merged: MergedRead, label: string): void {
+  // What the read HELD is reported first and unconditionally. The hold has already taken
+  // effect inside the merge, so a report that ran only past this throw would leave the
+  // plan keeping values the unit does not have with nothing saying so — and reporting it
+  // here rather than at each call site is what stops a fourth caller getting that order
+  // wrong.
+  if (merged.held.length) console.warn("device read: the plan keeps what the unit cleared", merged.held);
+  if (!merged.errors.length) return;
+  console.warn(label, merged.errors);
+  const cause = linkFailureIn(merged.errors) ?? t().error.followReadIncomplete(merged.errors.length);
+  // The count travels with the teardown's own message: the status line this read would
+  // have written is about to be replaced by `stopLiveOnError`, and the console does not
+  // reach an installed build.
+  throw new Error(merged.held.length ? t().error.followReadHeld(cause, merged.held.length) : cause);
 }
 // A merged device read could not place part of its result: a wire the operator removed
 // while it was in flight, or an edit a device-side routing change left nowhere to land.
@@ -578,14 +587,7 @@ function assertReadComplete(result: ReadbackResult, label: string): void {
 function noteMergeConflicts(merged: MergedRead): void {
   if (merged.unplaced.length) console.warn("device read: merge targets no longer in the plan", merged.unplaced);
 }
-// A device read kept plan values the unit had cleared on its own. Said out loud BEFORE
-// anything can throw: the hold has already taken effect inside the merge, and
-// `assertReadComplete` ends the session on a partial read — so a report placed after it
-// is the one case where the plan holds values the unit does not and nothing says so.
-function noteHeld(merged: MergedRead): void {
-  if (merged.held.length) console.warn("device read: the plan keeps what the unit cleared", merged.held);
-}
-// …and the send-back, which only a complete read may ask for: a partial read is about to
+// The send-back, which only a complete read may ask for: a partial read is about to
 // drop the link, and a flush issued into that writes nothing and reports nothing. The
 // snapshot has just re-based onto the unit's values, so plan and device disagree exactly
 // where the read held, and the ordinary outgoing diff is what puts them back — for insert
@@ -603,9 +605,15 @@ function reapplyHeld(merged: MergedRead): void {
   // A follow read outlives a session that merely ended (`abandonFollowWork` is not called
   // from `deactivateLive`), and `schedule()` is a no-op once it has — worth telling apart
   // in the log from a flush that went out.
-  if (live?.isActive()) live.schedule();
-  else console.warn("device read: no session left to send the held values back through");
-  setStatus(t().status.liveHeld(merged.applied, merged.held.length));
+  if (live?.isActive()) {
+    live.schedule();
+    setStatus(t().status.liveHeld(merged.applied, merged.held.length));
+    return;
+  }
+  // Nothing left to send them through: the values stay in the plan, and the status line
+  // belongs to whatever ended the session. Writing "re-sent" over it would name an action
+  // that did not happen and cannot.
+  console.warn("device read: no session left to send the held values back through", merged.held);
 }
 // Single funnel for every device-follow reflect (direct notifies and the scoped /
 // full read-backs alike): a knob sweep delivers notifies in ~30/s IPC batches, any
@@ -777,7 +785,6 @@ const follow =
           followAuthored += merged.devicePatch.length;
           followFull = true;
           requestReflect();
-          noteHeld(merged);
           assertReadComplete(merged, "device-follow scoped readback issues:");
           reapplyHeld(merged);
         },
@@ -798,7 +805,6 @@ const follow =
           followAuthored += merged.devicePatch.length;
           followFull = true;
           requestReflect();
-          noteHeld(merged);
           assertReadComplete(merged, "device-follow readback issues:");
           reapplyHeld(merged);
         },

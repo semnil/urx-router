@@ -1058,6 +1058,8 @@ export const en = {
     liveFollowStopped: tr(
       "Device follow stopped while the session was starting, so a change made on the device would not reach the plan. Live sync was not started.",
     ),
+    followReadHeld: (cause: string, n: number): string =>
+      `${cause}; ${n} setting${n === 1 ? "" : "s"} the unit cleared are still held in the plan`,
     followReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     clockUnread: (message: string): string =>
