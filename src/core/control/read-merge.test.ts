@@ -624,6 +624,30 @@ describe("insertFxHoldKeys", () => {
     expect(plan.nodeParams.ch1?.insertFx).toBe(COMPANDER_H);
   });
 
+  // The rate is not the only thing that clears an effect. A Signal Type transition clears
+  // the selector and the ON on both members, and `applyPairTransition` follows that rather
+  // than resisting it — so a pair whose Signal Type moved in this same read is not the
+  // hold's to keep, whatever the rate would otherwise say.
+  it("adopts a clearing a Signal Type transition explains, whatever the rate says", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = { ...selected(plan), stereoLink: false };
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        const result = cleared(into, 96000);
+        into.nodeParams.ch1 = { ...into.nodeParams.ch1, stereoLink: true };
+        return result;
+      },
+      undefined,
+      hold,
+    );
+
+    expect(merged!.held).toEqual([]);
+    expect(plan.nodeParams.ch1?.insertFx).toBe(-1);
+    expect(plan.nodeParams.ch1?.stereoLink).toBe(true);
+  });
+
   // An output bus: a different option table, a node id carrying a dot, and the one route
   // kind whose selector writes two instances.
   it("holds an output bus route the same way, under its own option table", async () => {

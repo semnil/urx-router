@@ -48,6 +48,7 @@ import { writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_LEVEL, FX_SLOT_ON, fxParams } from "./fx-effect";
 import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./insert-fx-effect";
+import { pairPrimary } from "../routing";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   addrKey,
@@ -1038,6 +1039,13 @@ export interface MergedRead extends ReadbackResult {
  *
  * A node whose read failed keeps its plan value in `deviceView` and so reads as still
  * selected, which takes it out of scope here: there is nothing to hold against.
+ *
+ * The rate is not the only thing that clears an insert effect. A Signal Type transition
+ * clears the selector and the ON on BOTH members of a pair, in either direction, and
+ * `applyPairTransition` follows that rather than resisting it — a selection left standing
+ * would make the next converge re-select an effect the unit has just dropped. So a pair
+ * whose Signal Type moved in this same read is out of scope here whatever the rate says:
+ * that clearing has an owner already.
  */
 export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<string> {
   const held = new Set<string>();
@@ -1052,6 +1060,12 @@ export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<stri
     if (!ifx) continue;
     const was = ctx.before.nodeParams[node.id];
     if (!insertFxSelected(was) || insertFxSelected(ctx.deviceView.nodeParams[node.id])) continue;
+    const primary = pairPrimary(model, node.id);
+    if (
+      primary !== null &&
+      ctx.before.nodeParams[primary]?.stereoLink !== ctx.deviceView.nodeParams[primary]?.stereoLink
+    )
+      continue;
     // The operator re-selected this route's effect while the read was in flight: the
     // selector is already the merge's to leave standing, and holding the other two keys
     // beside it would put the OLD effect's bypass and engine values under the new
