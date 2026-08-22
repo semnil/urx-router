@@ -729,12 +729,16 @@ describe("the live session", () => {
   // Driven by putting the unit where the sample-rate excursion leaves it: a rate the
   // selected effect's ceiling forbids, and no effect selected, announced on the rate
   // address alone.
-  const heldByExcursion = async (shell: TauriShell): Promise<void> => {
+  const heldByExcursion = async (shell: TauriShell, link = false): Promise<void> => {
     $("btn-live").click();
     await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
     // Selected through the session, so the unit holds it too: the hold is about a value
-    // the app and the device agreed on until the rate moved.
+    // the app and the device agreed on until the rate moved. `link` puts the pair in
+    // STEREO first, so the mirror carries the effect and BOTH members hold one — and it
+    // has to happen after the session is up, since the session's own read would
+    // otherwise take the link straight back off the unit.
     selectNode("ch1");
+    if (link) pickSignalType(1);
     pickInsertFx(COMPANDER_H);
     await vi.waitFor(() => expect(insertFxWrites(shell)).toContain(COMPANDER_H), { timeout: 25_000 });
     // Settled before the excursion, so what the shell is asked afterwards belongs to the
@@ -757,9 +761,13 @@ describe("the live session", () => {
   // `refuseY` refuses every read of one channel index, for the case that needs the read
   // to be partial as well as holding — CH 1 is y0, so a later index leaves the held
   // route's own addresses answering.
-  const notifyRate = (shell: TauriShell, { delayMs = 0, refuseY = -1 } = {}): void => {
+  // `linked` answers Signal Type STEREO throughout, which is what a read that was
+  // answered on that address BEFORE a transition landed looks like — the stale half of
+  // the race the announcement exists to settle.
+  const notifyRate = (shell: TauriShell, { delayMs = 0, refuseY = -1, linked = false } = {}): void => {
     const answer = (a: Record<string, unknown>): number => {
       if (a.y === refuseY) throw new Error("read refused");
+      if (linked && a.paramId === PARAMS.SIGNAL_TYPE.id) return 1;
       return a.paramId === PARAMS.SAMPLE_RATE.id
         ? 192_000
         : a.paramId === PARAMS.INSERT_FX.id
@@ -832,6 +840,70 @@ describe("the live session", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  // The other cause of the same cleared values, told apart by the notify stream rather
+  // than by the read's own values — which come from different moments and cannot answer
+  // it. Here the unit announces the selector itself while the read runs, so the clearing
+  // is the announcement's to explain and the plan adopts it.
+  it("adopts a clearing the unit announced while the read was running", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    const written = insertFxWrites(shell).length;
+    const reads = shell.count("vd_get");
+    notifyRate(shell, { delayMs: 1 });
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+    // INSIDE the read the rate notify escalated to, on CH 1's own selector. Waited for
+    // past the count the session start left behind: a bare `> 5` is satisfied before the
+    // settle debounce has fired, and the announcement would then arrive ahead of the read
+    // it has to fall inside.
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 5), {
+      timeout: 25_000,
+      interval: 5,
+    });
+    channel.onmessage([{ param_id: PARAMS.INSERT_FX.id, x: 0, y: 0, value: denormalizeInsertFx(INSERT_FX_NONE) }]);
+
+    // The ordinary followed line, not the held one — and nothing sent back.
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    expect(insertFxWrites(shell).length).toBe(written);
+    await endLive();
+  });
+
+  // The Signal Type transition is announced on the PAIR's primary and clears the effect
+  // on both members (measured), so recording the announcement without its partner leaves
+  // the other half of the pair held and re-sent — half a clearing undone.
+  it("carries a pair-level announcement to the partner as well", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell, true); // STEREO: the mirror gives both members the effect
+
+    const written = insertFxWrites(shell).length;
+    const reads = shell.count("vd_get");
+    // The read keeps answering STEREO, so it is the stale half of the race: the pair's
+    // Signal Type is read before the selector, and a transition in that gap leaves the
+    // predicate comparing two equal values. Only the announcement says what happened.
+    notifyRate(shell, { delayMs: 1, linked: true });
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 5), {
+      timeout: 25_000,
+      interval: 5,
+    });
+    // The pair-level address, at the primary's index alone — which is the only index the
+    // unit announces it on.
+    channel.onmessage([{ param_id: PARAMS.SIGNAL_TYPE.id, x: 0, y: 0, value: 0 }]);
+
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    // Neither member held: a partner left out would show as its own two kept keys.
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    expect(insertFxWrites(shell).length).toBe(written);
+    await endLive();
   });
 
   // And when the read is partial as well, the count travels with the teardown's own

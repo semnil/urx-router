@@ -42,7 +42,7 @@ import {
   saveTextDocument,
 } from "./core/storage";
 import type { RecentEntry } from "./core/storage";
-import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
+import { COMP_EQ_SSMCS, INSERT_FX_ANNOUNCED, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
@@ -656,6 +656,17 @@ function requestReflect(): void {
 // abandonFollowWork's clear also ends the refusal — a read bound to a discarded plan
 // provably cannot touch the open one, so it must not keep undo shut.
 const followReads = new Set<AbortController>();
+// Routes the UNIT announced an insert-FX change on, appended in notify order. A read is
+// not a snapshot: its addresses are answered hundreds of milliseconds apart, so a change
+// landing inside one is caught on the addresses read after it and missed on those read
+// before, and comparing two of its values says nothing about what happened between them.
+// The notify stream is what carries the order — and it tells the two clearings apart,
+// where the read's values cannot: a Signal Type transition announces the insert-FX
+// addresses it clears, the sample-rate excursion announces only the rate. Appended
+// rather than cleared per read, because two follow reads can be in flight at once and a
+// reset would take the evidence of one out from under the other; each takes the slice
+// that arrived inside it, and the list is emptied when the last read ends.
+const announcedInsertFx: string[] = [];
 
 // Everything device-follow has in flight for a plan that is being replaced. Called at
 // each wholesale reassignment of `plan`, and deliberately not from deactivateLive: with
@@ -689,17 +700,19 @@ async function followRead(
 ): Promise<MergedRead | null> {
   const controller = new AbortController();
   followReads.add(controller);
+  const mark = announcedInsertFx.length;
   try {
     const merged = await readIntoPlan(
       () => plan,
       (into) => read(into, controller.signal),
       planWrites,
-      (ctx) => insertFxHoldKeys(getModel(modelId), ctx),
+      (ctx) => insertFxHoldKeys(getModel(modelId), { ...ctx, announced: new Set(announcedInsertFx.slice(mark)) }),
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
     return merged;
   } finally {
     followReads.delete(controller);
+    if (!followReads.size) announcedInsertFx.length = 0;
   }
 }
 
@@ -724,6 +737,17 @@ const follow =
             ? live?.isEchoName(p.paramId, p.y, p.valueStr)
             : live?.isEcho(p.paramId, p.x, p.y, p.value)) ?? false,
         lookup: (paramId, x, y) => live?.lookup(paramId, x, y),
+        // Read for one thing only: which routes the unit announced an insert-FX change
+        // on while a read was running (see `announcedInsertFx`). A Signal Type notify
+        // names the pair's primary, and the transition it reports clears BOTH members,
+        // so the partner is recorded with it.
+        onDeviceParam: (p) => {
+          const addr = live?.lookup(p.paramId, p.x, p.y);
+          if (!addr?.node || !INSERT_FX_ANNOUNCED.has(addr.name)) return;
+          announcedInsertFx.push(addr.node);
+          const partner = partnerChannel(getModel(modelId), addr.node);
+          if (partner) announcedInsertFx.push(partner);
+        },
         // A direct (node-local scalar) change: decode the notify value straight into
         // the plan, no read-back, and record the node so the coalesced reflect
         // repaints just it. The reflect is scheduled by flushDirect.

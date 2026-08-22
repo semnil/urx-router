@@ -1497,6 +1497,14 @@ written at all:
   then the stored engine values, then the bypass intent. Measured on a URX44V on 2026-08-18: that re-send is
   accepted at the rate that cleared the effect and survives the return, checked across all 64 engine slots
   with non-default sentinels, which is why the app does not wait for the rate to come back before sending.
+  What separates it from the OTHER clearing — a Signal Type transition, which drops the effect on both
+  members of a pair — is the notify stream rather than the read's own values: measured on a URX44V, the
+  transition announces the selector and the bypass on both members while the excursion announces the rate and
+  nothing else. That distinction has to come from the notifies because a read is not a snapshot — its
+  addresses are answered hundreds of milliseconds apart, and the pair's Signal Type is read *before* the
+  selector, so a transition landing in that gap leaves the two values equal and stale. A route the unit
+  announced during the read is therefore left alone (`HoldContext.announced`, fed from `DeviceFollow`'s
+  `onDeviceParam`).
   What separates this from an operator's own No Effect on the unit is the rate the READ established
   (`ReadbackResult.deviceSampleRate`) — never the plan's own copy, which under the *Scene only* device scope
   is restored across a read and can name a rate the unit left long ago. A read that established no rate at

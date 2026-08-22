@@ -1060,6 +1060,10 @@ export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<stri
     if (!ifx) continue;
     const was = ctx.before.nodeParams[node.id];
     if (!insertFxSelected(was) || insertFxSelected(ctx.deviceView.nodeParams[node.id])) continue;
+    // The unit said so itself, on this route's own addresses. Ahead of the read-value
+    // comparison below, which is the same question asked of two values that may have
+    // been read on either side of the change.
+    if (ctx.announced?.has(node.id)) continue;
     const primary = pairPrimary(model, node.id);
     if (
       primary !== null &&
@@ -1091,6 +1095,17 @@ export interface HoldContext {
   deviceView: Plan;
   deviceSampleRate?: number;
   authored: ReadonlySet<string>;
+  /** Nodes whose insert FX the UNIT announced a change to while the read was running.
+   *  A read is not a snapshot — its addresses are answered hundreds of milliseconds
+   *  apart — so a change landing inside it can be caught on one address and missed on
+   *  another, and two values compared across that gap say nothing about what happened
+   *  between them. The notify stream is what carries the order, and it separates the two
+   *  clearings by hand: a Signal Type transition announces the insert-FX addresses it
+   *  clears on both members, while the sample-rate excursion announces only the rate
+   *  (both measured on a URX44V). A route named here is therefore one whose clearing has
+   *  a cause of its own, and the hold — which exists for the announced-nothing case —
+   *  leaves it alone. */
+  announced?: ReadonlySet<string>;
 }
 
 /** What one insert-FX route stores: the selector, the bypass intent and the engine

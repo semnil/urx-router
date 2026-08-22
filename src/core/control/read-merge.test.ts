@@ -464,6 +464,29 @@ describe("insertFxHoldKeys", () => {
     return { ...result, deviceSampleRate: undefined };
   };
 
+  // The read is not a snapshot. A Signal Type transition landing inside one is caught on
+  // the addresses read after it and missed on those read before, and the pair's Signal
+  // Type is read BEFORE the selector — so a transition in that gap leaves this predicate
+  // comparing two equal, stale values and holding a clearing the unit made for a reason
+  // of its own. Measured on the code before `announced` existed: three keys held, which
+  // the outgoing diff then re-sent. What separates the two causes is the notify stream:
+  // measured on a URX44V, the transition announces the selector and the bypass on both
+  // members, the rate excursion announces the rate and nothing else.
+  it("leaves a route alone when the unit announced the change itself", () => {
+    const before = basePlan();
+    before.nodeParams.ch1 = selected(before);
+    const deviceView = clonePlanState(before);
+    deviceView.nodeParams.ch1 = { ...deviceView.nodeParams.ch1, insertFx: -1, insertFxOn: false };
+    const ctx = { before, deviceView, deviceSampleRate: 96000, authored: new Set<string>() };
+
+    // Without the announcement the values alone read as the silent clearing…
+    expect(hold(ctx).size).toBe(3);
+    // …and with it, the route is the announcement's to explain.
+    expect(hold({ ...ctx, announced: new Set(["ch1"]) }).size).toBe(0);
+    // A different route's announcement says nothing about this one.
+    expect(hold({ ...ctx, announced: new Set(["ch3"]) }).size).toBe(3);
+  });
+
   it("keeps an effect the unit cleared for a rate that cannot run it, and still reports the unit's own value", async () => {
     const plan = basePlan();
     plan.nodeParams.ch1 = selected(plan);

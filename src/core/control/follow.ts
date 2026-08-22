@@ -55,6 +55,12 @@ export interface DeviceFollowHooks {
    *  rather than two: an echo policy that lived in two places would have to be found
    *  and changed twice, and the second site is what goes stale. */
   isEcho: (p: ParamUpdate) => boolean;
+  /** A device-side change, past the intercept and echo filters — the notify stream
+   *  itself, before it becomes a reconcile window. The window cannot answer for it: a
+   *  burst is coalesced to the set of nodes it touched, so which addresses were
+   *  announced, and whether they were announced at all, is lost by the time a read
+   *  runs. A host that has to tell one cause from another reads it here. */
+  onDeviceParam?: (p: ParamUpdate) => void;
   /** Resolve a notify address to its catalog name, owner node, and follow kind,
    *  or undefined when the address is in no index (registered by the host, or announced
    *  by the unit on an address nothing here tracks — both take the full-read escalation). */
@@ -313,6 +319,7 @@ export class DeviceFollow {
     // ~800 reads 900 ms later and took its own undo entry with it. The host dispatches
     // this hook on `valueStr` because the two snapshots are separate maps.
     if (this.hooks.isEcho(p)) return;
+    this.hooks.onDeviceParam?.(p);
     // A device-side rename, which the numeric filters below cannot judge: it has no
     // catalog entry and no numeric value. Handled here and answered with the node, so
     // it stays a direct follow: one repaint, no readback.
