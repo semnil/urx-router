@@ -316,6 +316,42 @@ describe("readIntoPlan inside a nested group", () => {
     expect(await run(nodeParamContestPath("ch1", "comp"))).toEqual({ attack: 10, release: 100 });
   });
 
+  // …however deep it sits. `fxEffect.params` is a record inside a record, and a walk that
+  // stopped at the first one made the whole map ONE contested key: the app moving a reverb
+  // time and the device moving the room size were the same key, so the app won both and
+  // the device's value was thrown away with it. The SSMCS bank's sections and eqBands
+  // (objects inside an array) have the same shape.
+  it("keeps both fields when they sit two levels down in one group", async () => {
+    const plan = basePlan();
+    plan.nodeParams["bus.fx1"] = {
+      ...plan.nodeParams["bus.fx1"],
+      fxEffect: { params: { reverbTime: 23, roomSize: 29 } },
+    };
+    const witness = new PlanWriteWitness(() => plan);
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        // The unit's own room size, read back…
+        into.nodeParams["bus.fx1"] = {
+          ...into.nodeParams["bus.fx1"],
+          fxEffect: { params: { reverbTime: 23, roomSize: 40 } },
+        };
+        // …while the operator drags the reverb time in the inspector.
+        plan.nodeParams["bus.fx1"] = {
+          ...plan.nodeParams["bus.fx1"],
+          fxEffect: { params: { reverbTime: 25, roomSize: 29 } },
+        };
+        witness.note([nodeParamContestPath("bus.fx1", "fxEffect.params.reverbTime")]);
+        return OK;
+      },
+      witness,
+    );
+
+    expect(merged).not.toBeNull();
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect).toEqual({ params: { reverbTime: 25, roomSize: 40 } });
+  });
+
   it("keeps the field the device moved and the field the app moved", async () => {
     const plan = basePlan();
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { attack: 10, release: 100 } };

@@ -80,7 +80,11 @@ carries a one-line map of the same directories and points here.
   `keyof Plan` and `plan-history.contract.test.ts` round-trips one real mutation per entry — a field that
   reaches the plan without reaching the differ is an edit the user cannot undo, silently. It also arbitrates
   the device-read merge: `entryInContext` narrows a contested nested group (comp / gate / eqBands / …) to
-  its sub-keys so an app edit and a device edit to *different* fields of one group both survive, and
+  its LEAVES — however deep they sit — so an app edit and a device edit to *different* fields of one group
+  both survive. Depth is not a detail: `fxEffect.params` is a record inside a record, and a walk that stopped
+  at the first one made the whole map a single contested key, so an edit to a reverb time and the device's own
+  room size were the same key and the app won both. The SSMCS bank's sections and eqBands, whose bands are
+  objects inside an array, have the same shape. And
   `PlanWriteWitness` records **which keys the app wrote while a read was in flight**, so `readIntoPlan`
   drops those by authorship rather than by value — an edit that went A→B→A is indistinguishable from an
   untouched key otherwise, and the read's transient B would be enshrined) / `routing.ts` connection

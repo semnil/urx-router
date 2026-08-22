@@ -218,9 +218,58 @@ function diffKeys(before: AnyRecord, after: AnyRecord): [KeySlots, KeySlots] | n
   return changed ? [b, a] : null;
 }
 
+/** Every LEAF two group values differ at, keyed by the path to it — the sub-keys joined
+ *  the way a contest name joins its own parts, so a caller matching one against an
+ *  authored name never has to know how deep the field sat.
+ *
+ *  Descends as far as the two sides stay groups of the same kind. Stopping at the first
+ *  one made `fxEffect.params` a single contested key, so the app moving one of its fields
+ *  and the device moving another were one key and the app won both — measured: a device's
+ *  reverb room size read during an edit to the reverb time was thrown away with it. The
+ *  same shape is in the SSMCS bank's comp / sc / eq sections and in eqBands, whose bands
+ *  are objects inside an array. */
+function diffLeaves(before: AnyRecord, after: AnyRecord, prefix = ""): [KeySlots, KeySlots] | null {
+  const b: KeySlots = {};
+  const a: KeySlots = {};
+  let changed = false;
+  for (const key of unionKeys(before, after)) {
+    if (sameAt(before, after, key)) continue;
+    const path = prefix ? contestName(prefix, key) : key;
+    const bs = slotOf(before, key);
+    const as = slotOf(after, key);
+    const deeper =
+      bs.present && as.present && sameKindGroup(bs.value, as.value)
+        ? diffLeaves(bs.value as AnyRecord, as.value as AnyRecord, path)
+        : null;
+    if (deeper) {
+      Object.assign(b, deeper[0]);
+      Object.assign(a, deeper[1]);
+    } else {
+      b[path] = bs;
+      a[path] = as;
+    }
+    changed = true;
+  }
+  return changed ? [b, a] : null;
+}
+
+/** A leaf path resolved against a live value: the record that directly holds the leaf,
+ *  and the leaf's own key. `parent` is undefined when the path runs through something
+ *  that is not there, which every caller reads as "the plan does not hold this". */
+function atPath(rec: AnyRecord, path: string): { parent: AnyRecord; key: string } {
+  const parts = path.split(WIRE_SEP);
+  const key = parts[parts.length - 1];
+  let cur: unknown = rec;
+  for (const part of parts.slice(0, -1)) {
+    if (typeof cur !== "object" || cur === null) return { parent: undefined, key };
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return { parent: typeof cur === "object" && cur !== null ? (cur as Record<string, unknown>) : undefined, key };
+}
+
 /** Whether both values are records, or both arrays — something the contest can descend
- *  into one level. A group replaced by an array of the same keys is a shape change, not
- *  a per-field edit. */
+ *  into. A group replaced by an array of the same keys is a shape change, not a per-field
+ *  edit. */
 function sameKindGroup(a: unknown, b: unknown): boolean {
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
   return Array.isArray(a) === Array.isArray(b);
@@ -232,7 +281,7 @@ function sameKindGroup(a: unknown, b: unknown): boolean {
 function groupSubKeys(before: Slot<unknown> | undefined, after: Slot<unknown> | undefined): string[] | null {
   if (!before?.present || !after?.present) return null;
   if (!sameKindGroup(before.value, after.value)) return null;
-  const sub = diffKeys(before.value as AnyRecord, after.value as AnyRecord);
+  const sub = diffLeaves(before.value as AnyRecord, after.value as AnyRecord);
   return sub ? Object.keys(sub[0]) : null;
 }
 
@@ -434,18 +483,25 @@ export function applyPatch(plan: Plan, patch: PlanPatch): string[] {
 }
 
 function applySlots(rec: Record<string, unknown>, slots: KeySlots): void {
-  for (const [key, slot] of Object.entries(slots)) {
-    if (slot.present) rec[key] = structuredClone(slot.value);
-    else delete rec[key];
+  for (const [path, slot] of Object.entries(slots)) {
+    // A top-level key carries no separator, so it resolves to `rec` itself; a leaf path
+    // walks to the record that holds it. A path whose way is not there writes nothing —
+    // `slotHolds` refused it already, and creating the branch would put a value into a
+    // shape the plan does not have.
+    const { parent, key } = atPath(rec, path);
+    if (!parent) continue;
+    if (slot.present) parent[key] = structuredClone(slot.value);
+    else delete parent[key];
   }
 }
 
 /** Whether `rec[key]` is what the slot describes, presence included — one key's worth
  *  of the context a patch was computed against. */
-function slotHolds(rec: AnyRecord, key: string, slot: Slot<unknown>): boolean {
-  const present = rec !== undefined && Object.hasOwn(rec, key);
+function slotHolds(rec: AnyRecord, path: string, slot: Slot<unknown>): boolean {
+  const { parent, key } = rec === undefined ? { parent: undefined, key: path } : atPath(rec, path);
+  const present = parent !== undefined && Object.hasOwn(parent, key);
   if (!present || !slot.present) return present === slot.present;
-  return deepEqual(rec![key], slot.value);
+  return deepEqual(parent![key], slot.value);
 }
 
 /** The part of one nested group value (comp, gate, eqBands, …) the plan still holds the
@@ -463,7 +519,7 @@ function slotHolds(rec: AnyRecord, key: string, slot: Slot<unknown>): boolean {
 function narrowGroup(current: unknown, before: Slot<unknown>, after: Slot<unknown> | undefined): Slot<unknown> | null {
   if (!before.present || !after?.present) return null;
   if (!sameKindGroup(current, before.value) || !sameKindGroup(current, after.value)) return null;
-  const sub = diffKeys(before.value as AnyRecord, after.value as AnyRecord);
+  const sub = diffLeaves(before.value as AnyRecord, after.value as AnyRecord);
   if (!sub) return null;
   const keep: KeySlots = {};
   let any = false;
@@ -586,10 +642,7 @@ export function nodeParamContestKey(nodeId: string, param: string, sub?: string)
  *  its answer for all of them. Measured: with the group named, a device's OSC frequency
  *  read during an OSC ON toggle was dropped whole; with the field named, it landed. */
 export function nodeParamContestPath(nodeId: string, path: string): string {
-  const dot = path.indexOf(".");
-  return dot < 0
-    ? nodeParamContestKey(nodeId, path)
-    : nodeParamContestKey(nodeId, path.slice(0, dot), path.slice(dot + 1));
+  return contestName("nodeParams", nodeId, ...path.split("."));
 }
 
 /** The same, for one param of one wire. A caller names the wire by its endpoints — the
@@ -602,7 +655,8 @@ export function connParamContestKey(from: string, to: string, param: string): st
 /** The printable label of the same piece, in the spelling applyPatchInContext reports. */
 function contestLabel(field: PatchField, key?: string, rest?: string[]): string {
   const head = key === undefined ? field : `${field} ${key}`;
-  return rest?.length ? `${head}.${rest.join(".")}` : head;
+  // A leaf path arrives joined the way a contest name is; printed, it reads as dots.
+  return rest?.length ? `${head}.${rest.join(".").replaceAll(WIRE_SEP, ".")}` : head;
 }
 
 /** Every piece of `patch`, named at the granularity the merge arbitrates: one name per
@@ -631,7 +685,10 @@ function revertSubKeys(before: Slot<unknown>, after: Slot<unknown>, keys: string
   if (!before.present || !after.present) return after;
   const value = structuredClone(after.value) as Record<string, unknown>;
   const slots: KeySlots = {};
-  for (const key of keys) slots[key] = slotOf(before.value as Record<string, unknown>, key);
+  for (const path of keys) {
+    const { parent, key } = atPath(before.value as Record<string, unknown>, path);
+    slots[path] = parent === undefined ? { present: false } : slotOf(parent, key);
+  }
   applySlots(value, slots);
   return { present: true, value };
 }
