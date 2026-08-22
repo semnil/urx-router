@@ -24,15 +24,31 @@ import {
   removeConnection,
   setExclusiveConnection,
 } from "../plan";
-import { applyPatchInContext, clonePlanState, diffPlans, dropAuthored, readableContestKey } from "../plan-history";
+import {
+  applyPatchInContext,
+  clonePlanState,
+  diffPlans,
+  dropAuthored,
+  nodeParamContestKey,
+  readableContestKey,
+} from "../plan-history";
 import type { PlanPatch, PlanWriteWitness } from "../plan-history";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
-import { colorIndexToHex, COMP_EQ_SSMCS, FX_STEREO_ASSIGN_ON, normalizeInsertFx, PARAMS } from "./params";
+import {
+  colorIndexToHex,
+  COMP_EQ_SSMCS,
+  FX_STEREO_ASSIGN_ON,
+  insertFxAvailable,
+  insertFxSelected,
+  normalizeInsertFx,
+  PARAMS,
+} from "./params";
 import type { ParamName } from "./params";
 import { writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_LEVEL, FX_SLOT_ON, fxParams } from "./fx-effect";
 import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./insert-fx-effect";
+import { pairPrimary } from "../routing";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   addrKey,
@@ -186,6 +202,20 @@ export interface ReadbackResult {
    * never appear here. Transient: not serialized into the plan.
    */
   unreadNodes: Set<string>;
+  /**
+   * The sample rate this read established at its source, when it read one at all: a
+   * scoped read never asks (the address has no owner node), and a full read whose
+   * `766` failed leaves it unset. Separate from the plan's own `sampleRate` because
+   * the two are not the same number — under the "Scene only" device scope the read's
+   * rate is discarded from the plan again (`main.ts` applyDeviceStateScoped), and a
+   * merge deciding anything from the plan's copy would be reading its own input.
+   *
+   * "Its source" rather than "the unit" because `applySourceState` is a full pass too and
+   * its source is a `.urxf` file. That path reaches no merge and passes no hold, so no
+   * consumer reads a file's rate as the unit's — but the field is the wrong one to answer
+   * a question about the hardware from without checking which read filled it.
+   */
+  deviceSampleRate?: number;
 }
 
 /** A node's fixed main path into STEREO — the send connection carrying its
@@ -308,6 +338,7 @@ async function readPass(
   const attempted = new Set<string>();
   const failed = new Set<string>();
   let applied = 0;
+  let deviceSampleRate: number | undefined;
 
   for (const node of model.nodes) {
     signal?.throwIfAborted();
@@ -774,6 +805,7 @@ async function readPass(
   if (only === undefined) {
     try {
       plan.sampleRate = await vdGet(PARAMS.SAMPLE_RATE.id, 0, 0);
+      deviceSampleRate = plan.sampleRate;
       applied++;
     } catch (e) {
       errors.push(`sample rate: ${e instanceof Error ? e.message : String(e)}`);
@@ -929,7 +961,7 @@ async function readPass(
   // never attempted (inputs, record-track slots) and fully-read nodes stay out.
   const unreadNodes = new Set<string>();
   for (const id of attempted) if (failed.has(id)) unreadNodes.add(id);
-  return { applied, errors, unreadNodes };
+  return { applied, errors, unreadNodes, deviceSampleRate };
 }
 
 /**
@@ -968,6 +1000,12 @@ export interface MergedRead extends ReadbackResult {
    *  straddled the read still commit as one entry. Detached from both plans — diffPlans
    *  clones into its slots and applyPatch clones on the way out. */
   devicePatch: PlanPatch;
+  /** The keys a `hold` kept the plan's own value for, in `dropAuthored`'s label
+   *  spelling. Separate from `unplaced` because the two mean opposite things: an
+   *  unplaced key had nowhere to land, while a held one landed nowhere ON PURPOSE and
+   *  still differs from `deviceView` — which is what the next outgoing diff writes back.
+   *  Empty for every read that passes no hold. */
+  held: string[];
   /** Everything the device patch did not write: an entry with nowhere to land (a wire
    *  removed while the read was in flight), and every key the operator moved meanwhile,
    *  which the merge deliberately leaves standing. Skipped rather than forced.
@@ -982,6 +1020,115 @@ export interface MergedRead extends ReadbackResult {
    *  (no `devtools` feature) — so for those paths this really is silent, on purpose. */
   unplaced: string[];
 }
+
+/**
+ * The insert-FX keys a device-follow read must keep the plan's own value for.
+ *
+ * Crossing a selected effect's sample-rate ceiling makes the unit clear the selector,
+ * the pointer and the bypass, and coming back to a supported rate restores none of them.
+ * The unit announces none of that — the rate is the only address it reports — so the
+ * first thing that sees the cleared values is the full read the rate notify escalated to.
+ * Adopting them ends the effect: the plan would agree with the unit, and nothing would be
+ * left to put back.
+ *
+ * The rate decides which clearing this is. A No Effect the unit's CURRENT rate can run is
+ * the operator's own, made on the unit, and is adopted like any other device-side edit.
+ * That rate is the one the read established (`ReadbackResult.deviceSampleRate`) and never
+ * the plan's own: under the "Scene only" device scope the plan keeps its rate across a
+ * read, so the plan's copy can name a rate the unit left long ago.
+ *
+ * A node whose read failed keeps its plan value in `deviceView` and so reads as still
+ * selected, which takes it out of scope here: there is nothing to hold against.
+ *
+ * The rate is not the only thing that clears an insert effect. A Signal Type transition
+ * clears the selector and the ON on BOTH members of a pair, in either direction, and
+ * `applyPairTransition` follows that rather than resisting it — a selection left standing
+ * would make the next converge re-select an effect the unit has just dropped. So a pair
+ * whose Signal Type moved in this same read is out of scope here whatever the rate says:
+ * that clearing has an owner already.
+ */
+export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<string> {
+  const held = new Set<string>();
+  // Every rate this read has evidence of: the one it established, and the ones the unit
+  // announced. A read that has NEITHER decides nothing — the plan's own rate is not
+  // evidence, and deciding from it would let a stale number overwrite an operator who
+  // cleared the effect on the unit by hand.
+  //
+  // A scoped read has no rate of its own (the address has no owner node) and is not
+  // therefore blind: it reads a node's insert FX like any other body value, so one
+  // already running when the unit clears an effect is the FIRST to see the cleared
+  // selector — before the full read the rate notify escalates to. Measured: without the
+  // announced rate to decide from, that scoped read adopted the clearing, and the full
+  // read behind it then had nothing left to hold.
+  const rates = [...(ctx.deviceSampleRate === undefined ? [] : [ctx.deviceSampleRate]), ...(ctx.ratesSeen ?? [])];
+  if (!rates.length) return held;
+  for (const node of model.nodes) {
+    const ifx = insertFxControl(model, node.id);
+    if (!ifx) continue;
+    const was = ctx.before.nodeParams[node.id];
+    if (!insertFxSelected(was) || insertFxSelected(ctx.deviceView.nodeParams[node.id])) continue;
+    // The unit said so itself, on this route's own addresses. Ahead of the read-value
+    // comparison below, which is the same question asked of two values that may have
+    // been read on either side of the change.
+    if (ctx.announced?.has(node.id)) continue;
+    const primary = pairPrimary(model, node.id);
+    if (
+      primary !== null &&
+      ctx.before.nodeParams[primary]?.stereoLink !== ctx.deviceView.nodeParams[primary]?.stereoLink
+    )
+      continue;
+    // The operator re-selected this route's effect while the read was in flight: the
+    // selector is already the merge's to leave standing, and holding the other two keys
+    // beside it would put the OLD effect's bypass and engine values under the new
+    // selection. The keys move together or not at all.
+    if (ctx.authored.has(nodeParamContestKey(node.id, "insertFx"))) continue;
+    const option = ifx.options.find((o) => o.value === was?.insertFx);
+    // A selector this model's control does not offer — a plan carried across models.
+    // Adopted rather than held: translate will not emit it either, so holding it would
+    // keep a value in the plan that has no way of ever reaching the unit.
+    if (!option) continue;
+    // Unavailable at the read's rate, or at any the unit announced on the way here.
+    if (rates.every((rate) => insertFxAvailable(option, rate))) continue;
+    for (const key of INSERT_FX_KEYS) held.add(nodeParamContestKey(node.id, key));
+  }
+  return held;
+}
+
+/** What a hold is decided from: the plan as the read found it, what the read wrote into
+ *  its private copy, the rate the read established on the unit (absent when it read none),
+ *  and the keys an edit funnel authored while it was in flight — which the merge has
+ *  already taken out of the patch, and which a hold must therefore not put back. */
+export interface HoldContext {
+  before: Plan;
+  deviceView: Plan;
+  deviceSampleRate?: number;
+  authored: ReadonlySet<string>;
+  /** Nodes whose insert FX the UNIT announced a change to while the read was running.
+   *  A read is not a snapshot — its addresses are answered hundreds of milliseconds
+   *  apart — so a change landing inside it can be caught on one address and missed on
+   *  another, and two values compared across that gap say nothing about what happened
+   *  between them. The notify stream is what carries the order, and it separates the two
+   *  clearings by hand: a Signal Type transition announces the insert-FX addresses it
+   *  clears on both members, while the sample-rate excursion announces only the rate
+   *  (both measured on a URX44V). A route named here is therefore one whose clearing has
+   *  a cause of its own, and the hold — which exists for the announced-nothing case —
+   *  leaves it alone. */
+  announced?: ReadonlySet<string>;
+  /** Every sample rate the UNIT announced since the previous read finished, in notify
+   *  order. The read's own rate is one moment out of a sweep that takes hundreds of
+   *  milliseconds, and the excursion that clears an effect can be over before the rate
+   *  address is even asked: 48 → 96 → 48 leaves the read holding 48, at which the effect
+   *  runs, and the clearing then reads exactly like an operator's own No Effect. The
+   *  notify that escalated to this read carries the rate that did it, which is why this
+   *  is NOT sliced to the read's own window the way `announced` is — it reaches back to
+   *  the coalescing window that produced the read. */
+  ratesSeen?: readonly number[];
+}
+
+/** What one insert-FX route stores: the selector, the bypass intent and the engine
+ *  values the selector applies to. Held together — a selector kept without its values
+ *  would be re-applied against whatever defaults the device refilled the engine with. */
+const INSERT_FX_KEYS = ["insertFx", "insertFxOn", "insertFxParams"] as const;
 
 /**
  * Run a device read against a private copy of the plan and merge the result back, so
@@ -1013,11 +1160,19 @@ export interface MergedRead extends ReadbackResult {
  *
  * A read that throws propagates with the live plan untouched: the copy is discarded,
  * so an aborted or link-lost read really is "nothing happened".
+ *
+ * `hold` names keys the plan keeps whatever the device said, for a device-side change
+ * the app is about to undo rather than adopt. It is deliberately NOT a change to
+ * `deviceView`: the live snapshot re-bases from that, so the device's own value has to
+ * stay in it — the difference between it and the plan is what the next outgoing diff
+ * writes back, and a `deviceView` edited to agree with the plan would leave the app
+ * holding an intent it had no way left to send.
  */
 export async function readIntoPlan(
   current: () => Plan,
   read: (into: Plan) => Promise<ReadbackResult>,
   witness?: PlanWriteWitness,
+  hold?: (ctx: HoldContext) => ReadonlySet<string>,
 ): Promise<MergedRead | null> {
   const plan = current();
   const before = clonePlanState(plan);
@@ -1033,9 +1188,20 @@ export async function readIntoPlan(
     // author is one list: the history baseline absorbs the same devicePatch, and a key
     // absorbed but not applied would put a value the app never wrote into the next
     // undo entry.
-    const { patch: devicePatch, dropped } = dropAuthored(diffPlans(before, target), authored ?? new Set());
+    const { patch: contested, dropped } = dropAuthored(diffPlans(before, target), authored ?? new Set());
+    // Held keys go through the same filter and stay a SEPARATE list. Folding them into
+    // `dropped` would put a deliberate repair into the list whose whole meaning is
+    // "this had nowhere to land", which one caller prints and another warns on.
+    const holdKeys =
+      hold?.({
+        before,
+        deviceView: target,
+        deviceSampleRate: result.deviceSampleRate,
+        authored: authored ?? new Set(),
+      }) ?? new Set<string>();
+    const { patch: devicePatch, dropped: held } = dropAuthored(contested, holdKeys);
     const unplaced = [...applyPatchInContext(plan, devicePatch), ...dropped];
-    return { ...result, deviceView: target, devicePatch, unplaced };
+    return { ...result, deviceView: target, devicePatch, unplaced, held };
   } finally {
     watch?.close();
   }

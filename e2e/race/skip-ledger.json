@@ -5,7 +5,7 @@
     "minCases": {
       "e2e/race/t0-baseline.spec.ts": 5,
       "e2e/race/t0b-sweeps.spec.ts": 6,
-      "e2e/race/t1-overtake.spec.ts": 3,
+      "e2e/race/t1-overtake.spec.ts": 4,
       "e2e/race/t1b-overtake.spec.ts": 9,
       "e2e/race/t1c-refetch-stale.spec.ts": 1,
       "e2e/race/t1d-name-window.spec.ts": 2,
@@ -32,7 +32,7 @@
       "e2e/race/t4-midi.spec.ts": 1
     },
     "_shardWeights": "How many cases each `--shard=k/N` takes, handed to Playwright as PWTEST_SHARD_WEIGHTS — race.yml reads this array, and its LENGTH is N, so the matrix and this agree or Playwright refuses the run outright. Playwright's own split is a contiguous slice of the collected order sized by case COUNT, and the six expensive t2*-shape-change files sit beside each other in path order, so the equal counts it produces are not equal times. Same order, cut by measured duration instead. Re-derive with `node scripts/race-shard-weights.mjs <run id>` whenever the corpus moves; the reading behind the current array, and what it buys, are in docs/{en,ja}/live-race-harness.md. check-race-skips.mjs re-runs the collection under these weights and fails when a count no longer matches, which is what a corpus that changed SIZE produces, and what a Playwright that stopped honouring an environment variable its own types never documented produces. A one-for-one swap leaves every count alone: nothing reports that the durations behind the array have moved, only a re-derivation shows it.",
-    "shardWeights": [38, 74, 51]
+    "shardWeights": [36, 67, 61]
   },
   "skips": [
     {

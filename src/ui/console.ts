@@ -54,7 +54,9 @@ import {
   type InsertFxCensus,
 } from "../core/constraints";
 import { busBalance, channelControl, channelDynamics, hasEq, insertFxControl } from "../core/control/translate";
+import { nodeParamContestPath } from "../core/plan-history";
 import {
+  INSERT_FX_PAIR_KEYS,
   isBalLinkedPair,
   isNodeInactive,
   mirrorBalPair,
@@ -301,7 +303,8 @@ interface StripModel {
 // arms. Null for STREAMING (no on/off param).
 interface PowerSpec {
   on: boolean;
-  toggle: () => void;
+  /** Flips the flag and returns the node-parameter keys it wrote. */
+  toggle: () => readonly string[];
   midiId: string;
 }
 
@@ -373,6 +376,9 @@ interface KnobSpec {
   /** When set, the knob shows its value but cannot be edited (a device-locked
    *  control, e.g. a Pan-Link send pan). The string is the disabled tooltip. */
   readonlyTitle?: string;
+  /** The node-parameter keys `set` writes, for the change funnel's write witness.
+   *  Absent for a knob that writes a wire's params instead. */
+  keys?: readonly string[];
 }
 
 /** MIDI-learn integration. The contract is shared with the channel tuning screens
@@ -383,8 +389,12 @@ export type ConsoleMidiHooks = MidiLearnHooks;
 export interface ConsoleHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
-  /** An edit changed the plan (mute / fader / EQ): flag dirty + schedule live sync. */
-  onChange: () => void;
+  /** An edit changed the plan (mute / fader / EQ): flag dirty + schedule live sync.
+   *  `written` names the contest keys the edit ASSERTED — its own and the ones a pair
+   *  mirror carried — not only the ones whose value moved. A device read in flight
+   *  arbitrates by authorship, so a write that lands on the value already there is
+   *  invisible to it otherwise. */
+  onChange: (written?: readonly string[]) => void;
   /** The meter stream could not be registered. Bars stuck on the floor are
    *  indistinguishable from silence, so the host surfaces this rather than
    *  leaving a live session that quietly shows nothing. */
@@ -1314,6 +1324,7 @@ export class Console {
         toggle: () => {
           const p = this.nodeParamsOf(m.id);
           p.osc = { ...p.osc, on: !(p.osc?.on === true) };
+          return ["osc.on"];
         },
         midiId: controlId(m.id, "oscOn"),
       };
@@ -1326,6 +1337,7 @@ export class Console {
       toggle: () => {
         const p = this.nodeParamsOf(m.id);
         p.on = p.on === false;
+        return ["on"];
       },
       midiId: controlId(m.id, "chOn"),
     };
@@ -1360,8 +1372,7 @@ export class Console {
     scrib.setAttribute("aria-pressed", String(spec.on));
     scrib.setAttribute("aria-label", `${m.label} ${t().console.power}`);
     this.wireActivate(scrib, spec.midiId, () => {
-      spec.toggle();
-      this.commit(m.id);
+      this.commit(m.id, spec.toggle());
       this.render();
     });
   }
@@ -1377,7 +1388,7 @@ export class Console {
     mute: boolean,
     on: boolean,
     toggle: () => boolean,
-    opts?: { readonlyTitle?: string; midiId?: string; title?: string; rerender?: boolean },
+    opts?: { readonlyTitle?: string; midiId?: string; title?: string; rerender?: boolean; keys?: readonly string[] },
   ): void {
     parent.append(this.buildChip(id, label, on, toggle, { ...opts, mute }));
   }
@@ -1416,9 +1427,10 @@ export class Console {
       title?: string;
       after?: (next: boolean) => void;
       rerender?: boolean;
+      keys?: readonly string[];
     },
   ): HTMLElement {
-    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender } = opts ?? {};
+    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender, keys } = opts ?? {};
     // Normalised before it reaches the DOM. The device write is `np.<flag> ? 1 : 0`
     // and the load funnel passes a finite numeric leaf through unchecked, so a plan
     // authored elsewhere reaches here carrying 1 — `String(1)` is "1", which is not
@@ -1440,7 +1452,7 @@ export class Console {
       chip.classList.toggle("on", next);
       chip.setAttribute("aria-pressed", String(next));
       after?.(next);
-      const mirrored = this.commit(id);
+      const mirrored = this.commit(id, keys);
       if (mirrored || rerender) this.render();
     });
     return chip;
@@ -1527,12 +1539,20 @@ export class Console {
     if (m.isStream) {
       const chips = el("div", "con-chips");
       const delayOn = (): boolean => this.hooks.getPlan().nodeParams[m.id]?.delay?.on ?? false;
-      this.makeChip(m.id, chips, "DELAY", false, delayOn(), () => {
-        const np = this.nodeParamsOf(m.id);
-        const next = !delayOn();
-        np.delay = { ...np.delay, on: next };
-        return next;
-      });
+      this.makeChip(
+        m.id,
+        chips,
+        "DELAY",
+        false,
+        delayOn(),
+        () => {
+          const np = this.nodeParamsOf(m.id);
+          const next = !delayOn();
+          np.delay = { ...np.delay, on: next };
+          return next;
+        },
+        { keys: ["delay.on"] },
+      );
       chips.append(el("div", "con-chip spacer"));
       head.append(chips);
       const factory = this.factoryPlan().nodeParams[m.id]?.delay?.time ?? DELAY_TIME_MIN_MS;
@@ -1545,6 +1565,7 @@ export class Console {
             const np = this.nodeParamsOf(m.id);
             np.delay = { ...np.delay, time: v };
           },
+          keys: ["delay.time"],
           min: DELAY_TIME_MIN_MS,
           max: DELAY_TIME_MAX_MS,
           step: 1, // whole-ms on the knob; the inspector keeps the 0.01 ms grid
@@ -1805,7 +1826,7 @@ export class Console {
           this.nodeParamsOf(m.id)[key] = next;
           return next;
         },
-        { midiId: controlId(m.id, key), title },
+        { midiId: controlId(m.id, key), title, keys: [key] },
       );
     };
 
@@ -1878,6 +1899,10 @@ export class Console {
         label: string,
         read: () => boolean,
         set: (cur: SsmcsParams, next: boolean) => SsmcsParams,
+        // The field `set` writes, one level inside the bank. Named rather than derived:
+        // `set` rebuilds the whole object, and naming the bank would claim every sibling
+        // it copied — taking the device's answer for all of them.
+        field: string,
         opts: { midiId?: string; title?: string },
       ): void => {
         this.makeChip(
@@ -1892,7 +1917,7 @@ export class Console {
             np.ssmcs = set(np.ssmcs ?? {}, next);
             return next;
           },
-          opts,
+          { ...opts, keys: [`ssmcs.${field}`] },
         );
       };
       // The morphing strip's own master, between GATE and COMP as the inspector orders
@@ -1902,6 +1927,7 @@ export class Console {
           "SSMCS",
           () => planOf().ssmcs?.on ?? SSMCS_INITIAL.on,
           (cur, next) => ({ ...cur, on: next }),
+          "on",
           { midiId: controlId(m.id, "ssmcsOn") },
         );
         proc.append(this.dynOpenChip("ssmcs", m.id));
@@ -1922,6 +1948,7 @@ export class Console {
           "SC",
           () => planOf().ssmcs?.sc?.on ?? SSMCS_INITIAL.sc.on,
           (cur, next) => ({ ...cur, sc: { ...cur.sc, on: next } }),
+          "sc",
           { midiId: controlId(m.id, "sideChain", SSMCS_SC_SCOPE), title: t().inspector.ssmcs.sideChain },
         );
       }
@@ -1967,6 +1994,10 @@ export class Console {
       else
         this.makeChip(m.id, proc, "INS FX", false, insertFxEngaged(planOf()), () => this.toggleInsFx(m.id, free), {
           rerender: !holds,
+          // Both, because taking a slot writes the bypass ON over a bypass a No Effect
+          // route can already be holding — the plan reads the same before and after,
+          // and a read in flight then landed the new effect BYPASSED.
+          keys: ["insertFx", "insertFxOn"],
         });
     }
     // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
@@ -1986,7 +2017,7 @@ export class Console {
           this.nodeParamsOf(duckerId).duckerOn = next;
           return next;
         },
-        { midiId: controlId(duckerId, "duckerOn") },
+        { midiId: controlId(duckerId, "duckerOn"), keys: ["duckerOn"] },
       );
       // The tuning screen's opener, as GATE / COMP / EQ have. It carries the DUCKER
       // NODE's id, not the strip's: the chip lives here because a hung node has no
@@ -2012,6 +2043,7 @@ export class Console {
         {
           get: () => this.hooks.getPlan().nodeParams[m.id]?.gain ?? factory,
           set: (v) => void (this.nodeParamsOf(m.id).gain = v),
+          keys: ["gain"],
           min,
           max,
           step: 1,
@@ -2046,6 +2078,7 @@ export class Console {
         {
           get: () => this.hooks.getPlan().nodeParams[m.id]?.phonesLevel ?? PHONES_LEVEL_DEFAULT,
           set: (v) => void (this.nodeParamsOf(m.id).phonesLevel = v),
+          keys: ["phonesLevel"],
           min: PHONES_LEVEL_MIN,
           max: PHONES_LEVEL_MAX,
           step: 0.1,
@@ -2144,9 +2177,9 @@ export class Console {
     const midiId = controlId(r.m.id, "level");
     this.midiMark(fader, midiId);
     const setLevel = (db: number): void => {
-      this.setMain(r.m, db);
+      const written = this.setMain(r.m, db);
       this.updateStripLevel(r, db);
-      this.commit(r.m.id);
+      this.commit(r.m.id, written);
       this.mirrorPartnerLevel(r.m.id); // a BAL-linked partner tracks the fader live
     };
     fader.addEventListener("pointerdown", (e) => {
@@ -2418,7 +2451,13 @@ export class Console {
 
   /** Shared PAN/BALANCE knob spec (±63, C / Ln / Rn display); get/set/reset bind
    *  the source — a connection's send pan or a node's master balance. */
-  private panKnobSpec(get: () => number, set: (v: number) => void, reset: number, readonlyTitle?: string): KnobSpec {
+  private panKnobSpec(
+    get: () => number,
+    set: (v: number) => void,
+    reset: number,
+    readonlyTitle?: string,
+    keys?: readonly string[],
+  ): KnobSpec {
     return {
       get,
       set,
@@ -2428,6 +2467,7 @@ export class Console {
       format: (v) => (v === 0 ? "C" : v < 0 ? "L" + -v : "R" + v),
       reset,
       readonlyTitle,
+      keys,
     };
   }
 
@@ -2464,6 +2504,8 @@ export class Console {
         () => this.hooks.getPlan().nodeParams[id]?.pan ?? 0,
         (v) => void (this.nodeParamsOf(id).pan = v),
         factory,
+        undefined,
+        ["pan"],
       ),
       id,
       controlId(id, "pan"),
@@ -2479,10 +2521,22 @@ export class Console {
    *  is in BAL mode — plus the insert FX, which the unit mirrors on Signal Type alone
    *  (PAN mode included) — then run the shared change funnel. Returns whether it
    *  mirrored (the caller rebuilds so the partner strip catches up). */
-  private commit(id: string): boolean {
-    const mirrored = mirrorBalPair(this.hooks.getModel(), this.hooks.getPlan(), id);
-    const insFxMirrored = mirrorLinkedInsertFx(this.hooks.getModel(), this.hooks.getPlan(), id);
-    this.hooks.onChange();
+  private commit(id: string, written: readonly string[] = []): boolean {
+    const model = this.hooks.getModel();
+    const plan = this.hooks.getPlan();
+    const mirrored = mirrorBalPair(model, plan, id);
+    const insFxMirrored = mirrorLinkedInsertFx(model, plan, id);
+    // Each mirror names only what IT wrote, the same rule the inspector's funnel
+    // follows: the BAL mirror carries THIS edit's keys onto the partner, and the
+    // insert-FX mirror the three-key pair state it copies whenever the pair is linked.
+    // A key no mirror wrote stays the device's to answer for.
+    const keys = written.map((k) => nodeParamContestPath(id, k));
+    const partner = partnerChannel(model, id);
+    if (partner) {
+      if (mirrored) for (const k of written) keys.push(nodeParamContestPath(partner, k));
+      if (insFxMirrored) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
+    }
+    this.hooks.onChange(keys);
     return mirrored || insFxMirrored;
   }
 
@@ -2533,19 +2587,22 @@ export class Console {
     return this.mainLevelOf(this.hooks.getPlan(), m);
   }
 
-  private setMain(m: StripModel, db: number): void {
+  /** Returns the node-parameter keys it wrote, for the change funnel's write witness.
+   *  Empty where the main path is a wire's level rather than a node's own. */
+  private setMain(m: StripModel, db: number): readonly string[] {
     const plan = this.hooks.getPlan();
     if (m.isOsc) {
       const np = this.nodeParamsOf(m.id);
       np.osc = { ...np.osc, level: db };
-      return;
+      return ["osc.level"];
     }
     if (m.fadersOnly) {
       this.nodeParamsOf(m.id).level = db;
-      return;
+      return ["level"];
     }
     const conn = sendConnection(plan, m.id, MAIN_BUS);
     if (conn) conn.params = { ...conn.params, level: db };
+    return [];
   }
 
   // The factory send level (double-click reset); the live send level/pan/tap are read
@@ -2651,7 +2708,7 @@ export class Console {
       const v = Math.max(k.min, Math.min(k.max, scrubFloat(Math.round(raw / st) * st)));
       k.set(v);
       show(v);
-      this.commit(id);
+      this.commit(id, k.keys);
     };
     show(Math.max(k.min, Math.min(k.max, k.get()))); // initial display, not dirty
     if (k.readonlyTitle) return; // device-locked: value painted, no input handlers

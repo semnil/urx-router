@@ -18,7 +18,9 @@ import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
 import { $, bootApp, deviceCommands, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
-import { COMP_EQ_SSMCS } from "./core/control/params";
+import { attackToVd, eqFreqToVd } from "./core/control/vd";
+import { formatHz } from "./core/control/fx-effect";
+import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { PARAMS } from "./core/control/params";
 import { nameControl } from "./core/control/translate";
@@ -212,7 +214,219 @@ const diffReadsFail = (a: Record<string, unknown>): number => {
   throw new Error("read-refused");
 };
 
+/** An inspector row by the label it stamps on itself, so "Insert FX" cannot match
+ *  "Insert FX ON" — two rows carrying two different addresses. */
+const paramRow = (label: string): HTMLElement =>
+  $("inspector").querySelector<HTMLElement>(`.param[data-param-label="${label}"]`)!;
+
+/** Pick an insert effect the way the inspector's own select does. */
+const pickInsertFx = (value: number): void => {
+  const sel = paramRow("Insert FX").querySelector("select")!;
+  sel.value = String(value);
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+/** Signal Type, whose STEREO option links the pair the insert FX then mirrors across. */
+const pickSignalType = (value: number): void => {
+  const sel = paramRow("Signal Type").querySelector("select")!;
+  sel.value = String(value);
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+/** PAN / BAL, the mode that decides which of the two pair mirrors runs. */
+const pickPanBal = (value: number): void => {
+  const sel = paramRow("PAN / BAL").querySelector("select")!;
+  sel.value = String(value);
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+/** Which half of the bypass toggle is lit. */
+const insertFxOnFace = (): string | undefined =>
+  paramRow("Insert FX ON")?.querySelector("button.on")?.textContent ?? undefined;
+
+/** An insert effect whose sample-rate ceiling (96 kHz) a 192 kHz clock is above,
+ *  which is what makes the unit drop it. */
+const COMPANDER_H = 1793;
+
+/** Every value written to the insert-FX selector, in order. Read off the ledger by
+ *  ADDRESS: a flush sends hundreds of writes, so counting `vd_set` cannot say whether
+ *  this one went out, nor what it carried. */
+const insertFxWrites = (shell: TauriShell): number[] =>
+  shell.invokes.flatMap((cmd, i) =>
+    cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.INSERT_FX.id ? [shell.args[i]!.value as number] : [],
+  );
+
+/** Wait until the shell stops being asked anything, so what happens next is the only
+ *  thing in flight. A count that has merely grown says nothing about WHOSE reads they
+ *  were. */
+const quiet = async (shell: TauriShell): Promise<void> => {
+  let seen = -1;
+  let stable = 0;
+  await vi.waitFor(
+    () => {
+      const now = shell.invokes.length;
+      stable = now === seen ? stable + 1 : 0;
+      seen = now;
+      // Several readings, not one: a flush pauses between its own phases, and a single
+      // stable sample is satisfied inside one of those pauses.
+      if (stable < 4) throw new Error(`still working (${now})`);
+    },
+    { timeout: 25_000, interval: 200 },
+  );
+};
+
 describe("Fetch from device", () => {
+  // The same rule for what a MIRROR wrote. While a pair is linked the insert FX travels
+  // to the partner, bypass included — and if the partner's bypass already held the value
+  // the mirror writes, that write moves nothing either. The partner then took the device's
+  // OFF while the source kept ON, so one operator gesture left the pair disagreeing on a
+  // key it had set once.
+  it("keeps the partner's mirrored bypass while a read is in flight", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickSignalType(1); // STEREO — the pair mirrors its insert FX in either PAN/BAL mode
+    pickInsertFx(256);
+    expect(insertFxOnFace()).toBe("ON");
+    selectNode("ch2");
+    expect(insertFxOnFace()).toBe("ON"); // the mirror carried it
+
+    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    selectNode("ch1");
+    pickInsertFx(COMPANDER_H);
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch2");
+    expect(paramRow("Insert FX").querySelector("select")!.value).toBe(String(COMPANDER_H));
+    expect(insertFxOnFace()).toBe("ON");
+  });
+
+  // …and only what it wrote. In STEREO + PAN the BAL mirror does not run, so an insert-FX
+  // selection carries three keys to the partner and asserts nothing else — registering the
+  // partner's whole key set there would drop the device's answer for a key no mirror had
+  // touched. The device holds this stub's default for CH 2's HPF (unwritten, so OFF) while
+  // the plan says ON, which is the contest: the read's value has to win it.
+  it("asserts only the keys the running mirror wrote", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickSignalType(1); // STEREO — which lands the pair in BAL…
+    pickPanBal(0); // …and PAN is where only the insert-FX mirror runs
+    selectNode("ch2");
+    paramRow("HPF").querySelector<HTMLButtonElement>("button.on")!.textContent === "ON" ||
+      [...paramRow("HPF").querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "ON")!.click();
+    expect(paramRow("HPF").querySelector("button.on")?.textContent).toBe("ON");
+
+    selectNode("ch1");
+    pickInsertFx(256);
+
+    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    selectNode("ch1");
+    pickInsertFx(COMPANDER_H);
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch2");
+    // The mirror's own three keys still stand…
+    expect(insertFxOnFace()).toBe("ON");
+    // …and the key it never touched took the device's value.
+    expect(paramRow("HPF").querySelector("button.on")?.textContent).toBe("OFF");
+  });
+
+  // A pair transition is the case where NOTHING the gesture wrote has to move. Signal
+  // Type clears the insert FX on both members — on a pair that carried none, that is
+  // three deletions of keys already absent, so the plan reads identically before and
+  // after and the read's own diff has nothing to tell it from a key nobody touched. The
+  // device then re-selected an effect the operator had just told the unit to drop.
+  it("keeps a Signal Type transition's insert-FX clear through a read in flight", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickSignalType(1); // STEREO, with no effect selected on either member
+
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.INSERT_FX.id ? COMPANDER_H : 0), 1)),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    selectNode("ch1");
+    pickSignalType(0); // MONO x2 — the transition clears the pair's insert FX
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch1");
+    expect(paramRow("Insert FX").querySelector("select")!.value).toBe("-1");
+    selectNode("ch2");
+    expect(paramRow("Insert FX").querySelector("select")!.value).toBe("-1");
+  });
+
+  // The same transition's other half, and the one that moves nothing by construction:
+  // STEREO leaves the pair in BAL, whose pans are centred, and unlinking centres them —
+  // so every send of both members is written the value it already holds, every time. The
+  // plan is read through a save rather than the inspector because a channel's pan lives
+  // on its send wire, and this asserts every send the pair carries rather than one row.
+  it("keeps its pan centring too, on a transition that moved nothing", SLOW, async () => {
+    const shell = await bootDevice(SAVES);
+    selectNode("ch1");
+    pickSignalType(1); // STEREO — lands in BAL, which centres both members' pans
+
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) =>
+          setTimeout(() => r(a.paramId === PARAMS.CH_PAN.id || a.paramId === PARAMS.SEND_PAN.id ? 63 : 0), 1),
+        ),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    selectNode("ch1");
+    pickSignalType(0); // MONO x2 — the transition centres the pair's pans (0 over 0)
+    await invoked(shell, "vd_disconnect");
+
+    const before = shell.count("write_text_file");
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+    const saved = shell.args[shell.invokes.lastIndexOf("write_text_file")];
+    const doc = JSON.parse(String((saved as { contents: string }).contents));
+    const pans = (doc.connections as Array<Record<string, never>>)
+      .filter((c) => String(c.from).startsWith("ch1:") && c.kind === "send")
+      .map((c) => (c.params as { pan?: number } | undefined)?.pan ?? 0);
+    expect(pans.length).toBeGreaterThan(0);
+    expect(pans.every((p) => p === 0)).toBe(true);
+  });
+
+  // The write witness names what a funnel WROTE, not only what its write MOVED. Selecting
+  // an insert effect over one that is already engaged writes `insertFxOn: true` again —
+  // the value does not move, so the read's own diff cannot tell that key from one nobody
+  // touched, and the device's value wins it. This stub answers every unwritten address 0,
+  // so the unit's bypass reads OFF: the operator's new effect used to land selected and
+  // muted, which is the failure the emit order elsewhere exists to prevent.
+  it("keeps a bypass the operator's patch asserted while a read was in flight", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickInsertFx(256); // Clean — an engaged effect to select over
+    expect(insertFxOnFace()).toBe("ON");
+
+    // One millisecond per read, so there is a mid-read window at all (see the latch case).
+    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    // …and the operator picks a different effect while it runs.
+    selectNode("ch1");
+    pickInsertFx(COMPANDER_H);
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch1");
+    expect(paramRow("Insert FX").querySelector("select")!.value).toBe(String(COMPANDER_H));
+    expect(insertFxOnFace()).toBe("ON");
+  });
+
   it("connects, reads the whole unit, and drops the link when it is done", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-fetch").click();
@@ -506,6 +720,287 @@ describe("the live session", () => {
     // there. Before the fix, the reflect reset both stacks and this chord did nothing.
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(slider().getAttribute("aria-valuenow")).toBe(before), { timeout: 10_000 });
+  });
+
+  // What a read that HELD values tells the operator, and what it does about them. The
+  // race tier owns the re-send's addresses and their order; it uploads no coverage and
+  // its trigger skips a documentation-only pull request, so both branches below were
+  // reachable by nothing that reports on an ordinary one — and the status line is the
+  // only place an installed build says any of this, the console not reaching it.
+  //
+  // Driven by putting the unit where the sample-rate excursion leaves it: a rate the
+  // selected effect's ceiling forbids, and no effect selected, announced on the rate
+  // address alone.
+  const heldByExcursion = async (shell: TauriShell, link = false): Promise<void> => {
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    // Selected through the session, so the unit holds it too: the hold is about a value
+    // the app and the device agreed on until the rate moved. `link` puts the pair in
+    // STEREO first, so the mirror carries the effect and BOTH members hold one — and it
+    // has to happen after the session is up, since the session's own read would
+    // otherwise take the link straight back off the unit.
+    selectNode("ch1");
+    if (link) pickSignalType(1);
+    pickInsertFx(COMPANDER_H);
+    await vi.waitFor(() => expect(insertFxWrites(shell)).toContain(COMPANDER_H), { timeout: 25_000 });
+    // Settled before the excursion, so what the shell is asked afterwards belongs to the
+    // reconcile alone: the session's own flush is still writing when that first selector
+    // write lands, and a later write of the same address would otherwise read as the
+    // send-back whether or not one was scheduled.
+    await quiet(shell);
+  };
+
+  /** End the session before the case does. A follow read outlives one that merely ended,
+   *  so a case that walks away from a live session leaves its teardown to fire after the
+   *  shell is gone — which surfaces as an unhandled "not running under Tauri" rejection
+   *  attributed to whichever file is running then. */
+  const endLive = async (): Promise<void> => {
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+  };
+
+  // `delayMs` stretches each read, for the case that has to end the session inside one.
+  // `refuseY` refuses every read of one channel index, for the case that needs the read
+  // to be partial as well as holding — CH 1 is y0, so a later index leaves the held
+  // route's own addresses answering.
+  // `linked` answers Signal Type STEREO throughout, which is what a read that was
+  // answered on that address BEFORE a transition landed looks like — the stale half of
+  // the race the announcement exists to settle.
+  const notifyRate = (shell: TauriShell, { delayMs = 0, refuseY = -1, linked = false } = {}): void => {
+    const answer = (a: Record<string, unknown>): number => {
+      if (a.y === refuseY) throw new Error("read refused");
+      if (linked && a.paramId === PARAMS.SIGNAL_TYPE.id) return 1;
+      return a.paramId === PARAMS.SAMPLE_RATE.id
+        ? 192_000
+        : a.paramId === PARAMS.INSERT_FX.id
+          ? denormalizeInsertFx(INSERT_FX_NONE)
+          : 0;
+    };
+    shell.answer("vd_get", (a: Record<string, unknown>) =>
+      delayMs ? new Promise((r) => setTimeout(() => r(answer(a)), delayMs)) : answer(a),
+    );
+    // Taken from the subscribe's own arguments rather than by position, so a second
+    // channel opening beside it cannot silently redirect this.
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+    channel.onmessage([{ param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 }]);
+  };
+
+  it("says how many values a reconcile kept, and sends them back", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    const written = insertFxWrites(shell).length;
+    notifyRate(shell);
+
+    // Two keys held on CH 1 — the selector and its bypass. The third the hold names,
+    // the stored engine values, is not in the plan for an effect selected and not yet
+    // tuned, and a key the read's patch never carried is not one it can keep.
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    // …and the send-back really was scheduled, rather than only reported.
+    await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
+    expect(insertFxWrites(shell).at(-1)).toBe(COMPANDER_H);
+    await endLive();
+  });
+
+  it("claims no send-back when the session ended under the read", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    // One millisecond per read, so the reconcile is long enough to end the session
+    // inside it. A follow read outlives a session that merely ended, so it still
+    // reaches the hold — with nothing left to flush through.
+    const reads = shell.count("vd_get");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    notifyRate(shell, { delayMs: 1 });
+
+    try {
+      const written = insertFxWrites(shell).length;
+      // Past the settle debounce and INTO the reconcile: the session start has already
+      // read the whole unit, so a bare `count > 5` is satisfied before the notify's
+      // read exists and the click below would cancel the settle instead of racing it.
+      await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 5), {
+        timeout: 25_000,
+        interval: 5,
+      });
+      $("btn-live").click();
+      await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+
+      await vi.waitFor(
+        () =>
+          expect(
+            warn.mock.calls.some((c) => String(c[0]).includes("no session left to send the held values back through")),
+          ).toBe(true),
+        { timeout: 25_000 },
+      );
+      // The positive control is the case above, which takes this same path with the
+      // session up and DOES write: an absence here is the session and not the setup.
+      expect(insertFxWrites(shell).length).toBe(written);
+      expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  // The other cause of the same cleared values, told apart by the notify stream rather
+  // than by the read's own values — which come from different moments and cannot answer
+  // it. Here the unit announces the selector itself while the read runs, so the clearing
+  // is the announcement's to explain and the plan adopts it.
+  it("adopts a clearing the unit announced while the read was running", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    const written = insertFxWrites(shell).length;
+    const reads = shell.count("vd_get");
+    notifyRate(shell, { delayMs: 1 });
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+    // INSIDE the read the rate notify escalated to, on CH 1's own selector. Waited for
+    // past the count the session start left behind: a bare `> 5` is satisfied before the
+    // settle debounce has fired, and the announcement would then arrive ahead of the read
+    // it has to fall inside.
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 5), {
+      timeout: 25_000,
+      interval: 5,
+    });
+    channel.onmessage([{ param_id: PARAMS.INSERT_FX.id, x: 0, y: 0, value: denormalizeInsertFx(INSERT_FX_NONE) }]);
+
+    // The ordinary followed line, not the held one — and nothing sent back.
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    expect(insertFxWrites(shell).length).toBe(written);
+    await endLive();
+  });
+
+  // The excursion can be over before the read asks for the rate: 48 → 96 → 48 leaves the
+  // read holding a rate the effect runs at, and the cleared values then read exactly like
+  // an operator's own No Effect. What says otherwise is the rate notify that escalated to
+  // the read — which arrives BEFORE it starts, so the rate history is not sliced to the
+  // read's own window the way the insert-FX announcements are.
+  it("keeps an effect through a rate excursion that was over before the read asked", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    const written = insertFxWrites(shell).length;
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+    // The unit went up past the effect's ceiling and came straight back, so every address
+    // the read asks for — the rate included — answers as if nothing had happened.
+    shell.answer("vd_get", (a: Record<string, unknown>) =>
+      a.paramId === PARAMS.SAMPLE_RATE.id
+        ? 48_000
+        : a.paramId === PARAMS.INSERT_FX.id
+          ? denormalizeInsertFx(INSERT_FX_NONE)
+          : 0,
+    );
+    channel.onmessage([
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
+    ]);
+
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
+    expect(insertFxWrites(shell).at(-1)).toBe(COMPANDER_H);
+    await endLive();
+  });
+
+  // Reconciles run one at a time, so a scoped read for ANOTHER node can sit between the
+  // rate notify and the full read it escalates to. Clearing the rate history on whichever
+  // read finished first took the announcement out from under the read it was for, and the
+  // full read then saw only the rate the unit had already come back to.
+  it("keeps the rate history across a scoped read that established none", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    const written = insertFxWrites(shell).length;
+    // Slow enough that the rate notify below lands INSIDE the scoped read.
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      const v =
+        a.paramId === PARAMS.SAMPLE_RATE.id
+          ? 48_000
+          : a.paramId === PARAMS.INSERT_FX.id
+            ? denormalizeInsertFx(INSERT_FX_NONE)
+            : 0;
+      return new Promise((r) => setTimeout(() => r(v), 5));
+    });
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+
+    // A CH 3 parameter the unit moved: no owner-less address, so this settles into a
+    // SCOPED read, which never asks for the rate.
+    const reads = shell.count("vd_get");
+    channel.onmessage([{ param_id: PARAMS.HPF_ON.id, x: 0, y: 2, value: 1 }]);
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 3), {
+      timeout: 25_000,
+      interval: 2,
+    });
+    // …and the excursion, announced while that read is still running.
+    channel.onmessage([
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
+    ]);
+
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
+    await endLive();
+  });
+
+  // The Signal Type transition is announced on the PAIR's primary and clears the effect
+  // on both members (measured), so recording the announcement without its partner leaves
+  // the other half of the pair held and re-sent — half a clearing undone.
+  it("carries a pair-level announcement to the partner as well", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell, true); // STEREO: the mirror gives both members the effect
+
+    const written = insertFxWrites(shell).length;
+    const reads = shell.count("vd_get");
+    // The read keeps answering STEREO, so it is the stale half of the race: the pair's
+    // Signal Type is read before the selector, and a transition in that gap leaves the
+    // predicate comparing two equal values. Only the announcement says what happened.
+    notifyRate(shell, { delayMs: 1, linked: true });
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 5), {
+      timeout: 25_000,
+      interval: 5,
+    });
+    // The pair-level address, at the primary's index alone — which is the only index the
+    // unit announces it on.
+    channel.onmessage([{ param_id: PARAMS.SIGNAL_TYPE.id, x: 0, y: 0, value: 0 }]);
+
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    // Neither member held: a partner left out would show as its own two kept keys.
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    expect(insertFxWrites(shell).length).toBe(written);
+    await endLive();
+  });
+
+  // And when the read is partial as well, the count travels with the teardown's own
+  // message rather than the status line: that line is about to be replaced by the one
+  // stopLiveOnError writes, and the console does not reach an installed build.
+  it("names the values it kept inside the failure a partial read raises", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    notifyRate(shell, { refuseY: 3 }); // CH 4's reads refused; CH 1, which holds, is y0
+
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    // The same two keys the case above counts, inside the cause rather than beside it.
+    expect(
+      countFor(errors(shell).at(-1) ?? "", (n) =>
+        t().status.liveError(t().error.followReadHeld(t().error.followReadIncomplete(n), 2)),
+      ),
+    ).not.toBeNaN();
   });
 
   it("comes up, prints the tally, and goes down again", SLOW, async () => {
@@ -2214,5 +2709,142 @@ describe("MIDI feedback and the live session", () => {
     await invoked(shell, "vd_disconnect");
     expect(errors(shell)).toEqual([t().status.liveError(t().error.unknownModel("URX88"))]);
     expect(shell.count("midi_send")).toBe(0);
+  });
+});
+
+// Two funnels write the plan, and both have to name what they asserted. These drive the
+// CONSOLE half and the BAL mirror's half against a read in flight.
+describe("an edit funnel against a device read", () => {
+  const face = (label: string): string | undefined =>
+    paramRow(label)?.querySelector("button.on")?.textContent ?? undefined;
+
+  // The CONSOLE's INS FX chip is the one console write that is not a flip: taking a slot
+  // writes the bypass ON, which a No Effect route can already be holding (the inspector
+  // leaves it engaged when the operator picks No Effect). The plan then reads the same
+  // before and after, so the read's own diff cannot tell that key from one nobody
+  // touched — and the operator's new effect landed selected and BYPASSED.
+  it("keeps a bypass the CONSOLE asserted while a read was in flight", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickInsertFx(COMPANDER_H);
+    pickInsertFx(INSERT_FX_NONE); // selector alone: the bypass stays engaged
+
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) =>
+          setTimeout(() => r(a.paramId === PARAMS.INSERT_FX.id ? denormalizeInsertFx(INSERT_FX_NONE) : 0), 1),
+        ),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    $("btn-view-console").click();
+    const strip = $("console-host").querySelectorAll<HTMLElement>(".con-strip")[0];
+    [...strip.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === "INS FX")!.click();
+    await invoked(shell, "vd_disconnect");
+
+    $("btn-view-graph").click();
+    selectNode("ch1");
+    expect(paramRow("Insert FX").querySelector("select")!.value).not.toBe(String(INSERT_FX_NONE));
+    expect(insertFxOnFace()).toBe("ON");
+  });
+
+  // A nested group is edited by REBUILDING it — one field set, the rest copied — so the
+  // patch key names the whole group, and the merge drops a named group whole. Naming it
+  // therefore takes the device's answer for every sibling the rebuild never touched:
+  // measured, an OSC frequency the unit moved during an OSC ON toggle was thrown away
+  // with the toggle's own key.
+  it("keeps a device change to a sibling of the group field the operator edited", SLOW, async () => {
+    const shell = await bootDevice();
+    // The unit answers a different oscillator frequency than the plan's default.
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.OSC_FREQ.id ? eqFreqToVd(2000) : 0), 1)),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    // Mid-read, the operator toggles the oscillator ON — one field of the same group.
+    selectNode("bus.osc");
+    const btns = [...paramRow(t().inspector.oscOn).querySelectorAll<HTMLButtonElement>("button")];
+    (btns.find((b) => b.textContent === "ON") ?? btns[0]).click();
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("bus.osc");
+    expect(paramRow(t().inspector.oscOn).querySelector("button.on")?.textContent).toBe("ON");
+    // …and the sibling the operator never touched took the unit's value.
+    expect(paramRow(t().inspector.frequency).querySelector(".param-val")?.textContent).toBe(formatHz(2000));
+  });
+
+  // The same rule, for a funnel that names nothing: a tuning screen rebuilds its whole
+  // group through one shared writer (`subObjectIo`), so the patch key it produces is the
+  // GROUP. Naming that is what the funnel must not do by default — the screens carry no
+  // field that can be written without moving, so a group falls through to the plan's own
+  // diff rather than being claimed whole.
+  it("keeps a device change to a tuning screen's other field", SLOW, async () => {
+    const shell = await bootDevice(SAVES);
+    $("btn-view-console").click();
+    const strip = $("console-host").querySelectorAll<HTMLElement>(".con-strip")[0];
+    strip.querySelector<HTMLElement>(".con-chip-open")!.click(); // the GATE opener
+
+    // The unit moved GATE ATTACK to 4 ms while the screen was open.
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.GATE_ATTACK.id ? attackToVd(4) : 0), 1)),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    // …and the operator drags THRESHOLD in the same group, mid-read.
+    const thr = $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="threshold"]')!;
+    const moved = Number(thr.value) - 5;
+    thr.value = String(moved);
+    thr.dispatchEvent(new Event("input", { bubbles: true }));
+    thr.dispatchEvent(new Event("change", { bubbles: true }));
+    await invoked(shell, "vd_disconnect");
+
+    // Read the plan back through a save: the open screen does not repaint on a read, so
+    // its DOM would answer for the render rather than for the merge.
+    const before = shell.count("write_text_file");
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+    const saved = shell.args[shell.invokes.lastIndexOf("write_text_file")];
+    const gate = JSON.parse(String((saved as { contents: string }).contents)).nodeParams.ch1.gate;
+
+    expect(gate.threshold).toBe(moved); // the field the operator moved is theirs…
+    expect(gate.attack).toBe(4); // …and the sibling they never touched took the unit's
+  });
+
+  // …and the BAL mirror names THIS EDIT's keys on the partner, not the whole record it
+  // copies. The other keys were already equal on both sides, so copying them writes
+  // nothing — while claiming them takes the device's answer away from the partner alone
+  // and splits a pair that moves as one.
+  it("lets both members of a BAL pair take a device change the edit never touched", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickSignalType(1); // STEREO, which lands the pair in BAL
+
+    // The unit holds HPF ON on every channel; the plan holds the default OFF.
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.HPF_ON.id ? 1 : 0), 1)),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    // An edit that carries Phase alone, mid-read.
+    selectNode("ch1");
+    const btns = [...paramRow(t().inspector.phase).querySelectorAll<HTMLButtonElement>("button")];
+    (btns.find((b) => b.textContent === "ON") ?? btns[0]).click();
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch1");
+    expect(face(t().inspector.hpf)).toBe("ON");
+    selectNode("ch2");
+    expect(face(t().inspector.hpf)).toBe("ON");
   });
 });

@@ -10,6 +10,7 @@ import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
 import { formatHz, fxEffectTypes, fxParams, resolveFxEffectType } from "../core/control/fx-effect";
 import {
   insertFxFamilyOf,
+  insertFxParamKey,
   insertFxParams,
   MBC_BANDS,
   MBC_BAND_PARAM,
@@ -137,7 +138,11 @@ import type { Messages } from "../i18n/en";
 export interface InspectorActions {
   onDeleteConnection: (from: string, to: string) => void;
   onUpdateParams: (from: string, to: string, patch: ConnParams) => void;
-  onUpdateNodeParams: (id: string, patch: NodeParams) => void;
+  /** `written` names what the edit ASSERTED, as dotted paths (`"osc.on"`), for the
+   *  funnel's write witness. Give it wherever the patch REBUILDS a nested group: the
+   *  patch key alone names the whole group, which claims every sibling the rebuild
+   *  merely copied. Absent means the patch's own keys, which is right for a scalar. */
+  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[]) => void;
   onRenameNode: (id: string, name: string) => void;
   onRecolorNode: (id: string, color: string | null) => void;
   onOpenRecent: (path: string) => void;
@@ -706,7 +711,11 @@ export function renderInspector(
       // Read the latest stored osc at edit time so a second field edit (the
       // inspector is not re-rendered between edits) does not clobber the first.
       const setOsc = (patch: Partial<typeof osc>): void =>
-        actions.onUpdateNodeParams(node.id, { osc: { ...(plan.nodeParams[node.id]?.osc ?? {}), ...patch } });
+        actions.onUpdateNodeParams(
+          node.id,
+          { osc: { ...(plan.nodeParams[node.id]?.osc ?? {}), ...patch } },
+          groupPaths("osc", patch),
+        );
       // OSCILLATOR menu order (device top-left → bottom-right): Mode, ON, then the
       // Frequency / Level row (Frequency shows only in Sine Wave mode).
       const ps = section(m.inspector.parameters, { key: "params" });
@@ -754,7 +763,11 @@ export function renderInspector(
       // Read the latest stored delay at edit time so a second field edit (the
       // inspector is not re-rendered between edits) does not clobber the first.
       const setDelay = (patch: Partial<typeof delay>): void =>
-        actions.onUpdateNodeParams(node.id, { delay: { ...(plan.nodeParams[node.id]?.delay ?? {}), ...patch } });
+        actions.onUpdateNodeParams(
+          node.id,
+          { delay: { ...(plan.nodeParams[node.id]?.delay ?? {}), ...patch } },
+          groupPaths("delay", patch),
+        );
       const ps = section(m.inspector.delayTitle, { key: "delay" });
       ps.body.append(
         enumSelect(
@@ -1121,6 +1134,14 @@ function panSlider(conn: PlanConnection, onUpdate: UpdateParams, label: string):
   );
 }
 
+/** The dotted paths a group rebuild ASSERTED: the fields the caller set, not the whole
+ *  group it rebuilt. Naming the group would claim every sibling it merely copied, and the
+ *  merge drops a named group whole — measured, a device's OSC frequency read during an
+ *  OSC ON toggle was thrown away with it. */
+function groupPaths(group: string, patch: object): string[] {
+  return Object.keys(patch).map((key) => `${group}.${key}`);
+}
+
 // Node-level gain slider (HA / D.Gain): integer dB steps over the given range.
 function gainControl(label: string, min: number, max: number, cur: number, onChange: (v: number) => void): HTMLElement {
   return rangeSlider(label, min, max, 1, cur, formatGainDb, onChange);
@@ -1129,7 +1150,11 @@ function gainControl(label: string, min: number, max: number, cur: number, onCha
 // Merge a patch into a node's FX effect object / its raw params map, reading the
 // latest stored value at edit time so concurrent sibling edits aren't lost.
 function mergeFxEffect(actions: InspectorActions, plan: Plan, nodeId: string, patch: Partial<FxEffectParams>): void {
-  actions.onUpdateNodeParams(nodeId, { fxEffect: { ...(plan.nodeParams[nodeId]?.fxEffect ?? {}), ...patch } });
+  actions.onUpdateNodeParams(
+    nodeId,
+    { fxEffect: { ...(plan.nodeParams[nodeId]?.fxEffect ?? {}), ...patch } },
+    groupPaths("fxEffect", patch),
+  );
 }
 function mergeFxParam(actions: InspectorActions, plan: Plan, nodeId: string, key: string, raw: number): void {
   const params = plan.nodeParams[nodeId]?.fxEffect?.params ?? {};
@@ -1217,7 +1242,15 @@ function mergeInsertFxParams(
   patch: Record<number, number>,
 ): void {
   const params = plan.nodeParams[nodeId]?.insertFxParams ?? {};
-  actions.onUpdateNodeParams(nodeId, { insertFxParams: reKeyInsertFxParams(params, fam, patch) });
+  // Two slots per patched value, because the re-key writes one and REMOVES the other:
+  // the family-qualified key it stores under, and the bare slot a readback wrote, whose
+  // absence afterwards is as much this edit's assertion as the value it put in.
+  const written = Object.keys(patch).flatMap((slot) => [insertFxParamKey(fam, Number(slot)), slot]);
+  actions.onUpdateNodeParams(
+    nodeId,
+    { insertFxParams: reKeyInsertFxParams(params, fam, patch) },
+    written.map((slot) => `insertFxParams.${slot}`),
+  );
 }
 
 // Render one flat descriptor (compander / guitar / pitch scalar) into `body`.
@@ -1466,7 +1499,11 @@ function dynLauncher(kind: DynKind, nodeId: string, actions: InspectorActions, m
 // sub-section (comp / sc), or a named EQ band — reading the latest stored value
 // so sibling slider edits aren't lost.
 function mergeSsmcs(actions: InspectorActions, plan: Plan, nodeId: string, patch: Partial<SsmcsParams>): void {
-  actions.onUpdateNodeParams(nodeId, { ssmcs: { ...(plan.nodeParams[nodeId]?.ssmcs ?? {}), ...patch } });
+  actions.onUpdateNodeParams(
+    nodeId,
+    { ssmcs: { ...(plan.nodeParams[nodeId]?.ssmcs ?? {}), ...patch } },
+    groupPaths("ssmcs", patch),
+  );
 }
 
 // A range slider over discrete integer positions: the slider walks [0, posMax] by

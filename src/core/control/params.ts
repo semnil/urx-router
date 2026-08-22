@@ -690,6 +690,23 @@ export const PORT_REF_PARAM_IDS: ReadonlySet<number> = new Set(
 // Insert FX choices for MONO IN channels (input_insert_fx table). `value` is the
 // broker enum value (not an index); -1 = No Effect (the "off" state). The broker
 // reports "none" as the uint32 sentinel, normalized back to -1 on read.
+/** The catalog names the unit announces an insert-FX change on — every route's selector
+ *  and bypass, plus the Signal Type whose transition clears both members of a pair. The
+ *  set exists because two clearings are indistinguishable in a read's own values and are
+ *  not indistinguishable in the notify stream: measured on a URX44V, a Signal Type
+ *  transition announces the selector and the bypass on both members, while a sample-rate
+ *  excursion past an effect's ceiling announces the rate and nothing else. A route the
+ *  unit announced therefore had a cause of its own. */
+export const INSERT_FX_ANNOUNCED: ReadonlySet<ParamName> = new Set<ParamName>([
+  "INSERT_FX",
+  "INSERT_FX_ON",
+  "OUTPUT_INSERT_FX_STEREO",
+  "OUTPUT_INSERT_FX_ON_STEREO",
+  "OUTPUT_INSERT_FX_MIX",
+  "OUTPUT_INSERT_FX_ON_MIX",
+  "SIGNAL_TYPE",
+]);
+
 export const INSERT_FX_NONE = -1;
 const INSERT_FX_VD_NONE = 0xffffffff;
 /**

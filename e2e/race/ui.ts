@@ -13,6 +13,14 @@ export const graphNode = (page: Page, id: string): Locator => page.locator(`#gra
 export const strip = (page: Page, name: string): Locator =>
   page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
+/** An inspector row whose label CONTAINS `label`. */
+export const param = (page: Page, label: string): Locator => page.locator("#inspector .param", { hasText: label });
+
+/** An inspector row whose label is EXACTLY `label` — "Insert FX" must not match
+ *  "Insert FX ON", which is a different row with a different address. */
+export const paramExact = (page: Page, label: string): Locator =>
+  page.locator("#inspector .param", { has: page.getByText(label, { exact: true }) });
+
 /** A strip's level readout — the numeric one, not the meter's. */
 export const readoutOf = (stripLoc: Locator): Locator => stripLoc.locator(".con-readout .rd:not(.mtr) .rv");
 
