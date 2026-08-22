@@ -834,6 +834,17 @@ when it acts.
 setting Key = G with Scale = Major and reading them back as C D E F# G A B. So the buttons are named
 from C and are not laid out as a keyboard: black and white keys would draw a root that is not there.
 
+**Six per row, in two rows.** The column that holds them does not grow with the window — it measures
+the same at 1280x900 and at the 960x640 minimum the app admits — and twelve targets cannot reach the
+36px desktop minimum across it, while six reach it with room over. They were 16.03-23.05px wide and
+25px tall on one line. The row is a grid rather than a wrapped flex row for two measured reasons: it
+inherits `gap: 8px` from `.prefs-row .ctl`, and under `flex-shrink: 0` it sized itself for all twelve
+on one line (522px, wider than the column), wrapped five per row, and had the rest clipped off the
+modal at the minimum window. That same rule is declared later in the stylesheet and out-specifies a
+bare `.gt-notes`, so the layout half is written as `.prefs-row .ctl.gt-notes`. `--led-ink` IS
+`--led-face`, so the separator was drawn in the face colour and a full mask read as one solid block
+once the gap was gone; lit, it now takes the ink the label takes, softened.
+
 **A gesture reads the Key the plan holds, not the one the row was drawn with.** A row's handlers
 close over the context they were built with, and the rebuild that would replace them is deferred for
 as long as a pointer is down — a press anywhere in the box sets that, a `<select>` included — while a

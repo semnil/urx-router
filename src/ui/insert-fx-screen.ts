@@ -130,17 +130,20 @@ const AMP_ORDER: readonly string[] = [
  * enough for the taller one. Without it the modal resizes on the segment that moves between
  * them, which is what the reserve exists to stop.
  *
- * Measured with the faces rendered, Chromium on macOS at 1280x900, in both languages:
- * the guitar amp's AMP face is 614px (EN) / 622px (JA) against its cabinet's 520, and the
- * Pitch Fix SCALE face is 522px (JA) against PITCH's 520. Each number carries the headroom
- * a wider font stack takes, on the same reasoning as the shipped bank's own.
+ * Measured with the faces rendered and the reserve lifted in the page, so each number is
+ * the face's own height rather than the reserve read back at itself. Chromium on macOS at
+ * 1280x900, in both languages: the guitar amp's AMP face is 614px (EN) / 622px (JA) against
+ * its cabinet's 520, and Pitch Fix's SCALE face is 549px (EN) / 557px (JA) against PITCH's
+ * 493. Each reserve carries the headroom a wider font stack takes -- Windows renders this
+ * app in a different stack and is not measured here -- on the same reasoning as the shipped
+ * bank's own.
  */
 const FACE_RESERVE: Partial<Record<InsertFxFamily, number>> = {
   "guitar-clean": 650,
   "guitar-crunch": 650,
   "guitar-lead": 650,
   "guitar-drive": 650,
-  pitch: 560,
+  pitch: 590,
 };
 
 /** Clean's Cho/Off/Vib selector (slot 19) and the value that puts it on vibrato. */

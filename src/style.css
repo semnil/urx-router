@@ -1952,15 +1952,30 @@ input[type="range"]:focus-visible,
    and they are named from C in a straight row on purpose: the slots are absolute semitones,
    and a black-and-white keyboard would draw a root that is not there. Each button takes the
    narrowest padding the mono face allows, because twelve of them share one control column. */
+/* Six per row, not twelve. The control column does not grow with the window -- this span
+   measures the same at 1280x900 and at the 960x640 minimum the app admits -- so twelve
+   targets cannot reach the 36px desktop minimum on one line, and six reach it with room
+   over. A grid rather than a wrapped flex row: the row inherits `gap: 8px` from
+   `.prefs-row .ctl`, and a wrapped flex row then sized itself for all twelve on one line
+   (522px, wider than the column that holds it), wrapped five per row, and had the rest
+   clipped off the modal at the minimum window. */
+/* `.prefs-row .ctl` (0,2,0) is declared later in this file and carries `display: flex`
+   and `gap: 8px`, so the layout half has to out-SPECIFY it rather than merely follow it:
+   written as `.gt-notes` the grid never applied, the eight-pixel gap stayed, and all
+   twelve sat on one line at 16.63px wide. */
+.prefs-row .ctl.gt-notes {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(36px, 1fr));
+  gap: 0;
+  flex: 1 1 auto;
+}
 .gt-notes {
-  display: flex;
   border: 1px solid var(--ctl-border);
   border-radius: 7px;
   overflow: hidden;
-  flex-shrink: 0;
 }
 .gt-notes button {
-  font: 700 10px var(--mono);
+  font: 700 11px var(--mono);
   letter-spacing: 0;
   padding: 7px 5px;
   border: 0;
@@ -1969,15 +1984,22 @@ input[type="range"]:focus-visible,
   color: var(--text-dim);
   cursor: pointer;
   white-space: nowrap;
-  flex: 1 1 0;
+  min-height: 36px;
 }
-.gt-notes button:last-child {
+.gt-notes button:nth-child(6n) {
   border-right: 0;
 }
+.gt-notes button:nth-child(-n + 6) {
+  border-bottom: 1px solid var(--ctl-border);
+}
+/* `--led-ink` IS `--led-face` (both #ffc24d in dark), so a separator drawn in the ink is
+   invisible the moment two neighbours are both lit -- with the eight-pixel gap gone, a full
+   mask read as one solid block rather than twelve targets. On the lit face the separator
+   takes the ink the LABEL takes, softened to a groove. */
 .gt-notes button[aria-pressed="true"] {
   color: var(--on-accent-ink);
   background: var(--led-face);
-  border-color: var(--led-ink);
+  border-color: color-mix(in srgb, var(--on-accent-ink) 28%, var(--led-face));
 }
 .gt-notes button:focus-visible {
   outline: 2px solid var(--led);

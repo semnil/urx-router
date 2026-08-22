@@ -437,3 +437,41 @@ test("a write says which node's insert-FX values reach the device", async ({ pag
   expect(engine.length).toBeGreaterThan(0);
   expect(engine.length).toBeLessThanOrEqual(COMPANDER_SLOT_COUNT);
 });
+
+// The desktop minimum pointer target, from the project's UI defaults: 36x36 CSS px.
+const MIN_TARGET = 36;
+
+test("every semitone button meets the desktop minimum target, at the smallest window", async ({ page }) => {
+  // The SMALLEST window the app admits (tauri.conf.json minWidth / minHeight), because the
+  // note row's width does not grow with the viewport — measured identical at 1280x900 and
+  // here — so a reading taken on a wide window would not be the worst case and a reading
+  // taken here covers both. Twelve targets do not reach 36px on one line in this column;
+  // six per row do, which is what the stylesheet lays them out as.
+  await page.setViewportSize({ width: 960, height: 640 });
+  await node(page, "ch1").click();
+  await insertSelect(page).selectOption({ label: "Pitch Fix" });
+  await openScreen(page);
+  await showCab(page);
+  const buttons = page.locator("#dyn-screen-box .gt-notes button");
+  await expect(buttons).toHaveCount(12);
+
+  const rects: { label: string; w: number; h: number }[] = [];
+  for (let i = 0; i < 12; i++) {
+    const b = buttons.nth(i);
+    const box = await b.boundingBox();
+    expect(box, `note ${i} has no box`).not.toBeNull();
+    rects.push({ label: (await b.textContent()) ?? "", w: box!.width, h: box!.height });
+  }
+  console.log(`note targets: ${rects.map((r) => `${r.label} ${r.w.toFixed(2)}x${r.h.toFixed(2)}`).join("  ")}`);
+  for (const r of rects) {
+    expect(r.w, `${r.label} width`).toBeGreaterThanOrEqual(MIN_TARGET);
+    expect(r.h, `${r.label} height`).toBeGreaterThanOrEqual(MIN_TARGET);
+  }
+  // Two rows of six, not one row of twelve and not some other wrap: distinct top edges,
+  // and six buttons sharing each. Without this the size assertions above pass on any wrap
+  // the flex box happens to produce, including the ten-then-two one an earlier basis gave.
+  const tops = await buttons.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+  const rows = [...new Set(tops)];
+  expect(rows).toHaveLength(2);
+  for (const top of rows) expect(tops.filter((t) => t === top)).toHaveLength(6);
+});
