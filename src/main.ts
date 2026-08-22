@@ -1159,6 +1159,11 @@ const inspectorActions = {
   },
   onUpdateNodeParams: (id: string, patch: NodeParams) => {
     const prev = plan.nodeParams[id];
+    // Taken before the mirrors below run, so a key one of them REMOVES from the partner
+    // is still nameable: an assertion that a key is absent is one the read's own diff
+    // cannot see either, when it was already absent.
+    const partner = partnerChannel(getModel(modelId), id);
+    const partnerKeysBefore = partner ? Object.keys(plan.nodeParams[partner] ?? {}) : [];
     plan.nodeParams[id] = { ...prev, ...patch };
     // Signal Type / PAN-BAL move the pair's pans — and PAN-BAL itself on a link —
     // the way the unit does. Applied before the BAL mirror below, so the mirror
@@ -1175,10 +1180,16 @@ const inspectorActions = {
     // The patch's own keys, not only the ones whose value moved: this funnel asserts
     // every member it carries, and a device read in flight must not take back one that
     // happened to already hold the asserted value.
-    markChanged(
-      "ui",
-      Object.keys(patch).map((key) => nodeParamContestKey(id, key)),
-    );
+    const written = Object.keys(patch).map((key) => nodeParamContestKey(id, key));
+    // A mirror asserts the PARTNER's keys the same way, and it can assert one that
+    // already holds the value it writes — the insert-FX mirror re-writes a bypass that
+    // was already on, and the BAL mirror replaces the partner's params wholesale. Before
+    // and after, because both mirrors also DELETE: an absent key asserted absent moves
+    // nothing either.
+    if (partner && (mirrored || insFxMirrored))
+      for (const key of new Set([...partnerKeysBefore, ...Object.keys(plan.nodeParams[partner] ?? {})]))
+        written.push(nodeParamContestKey(partner, key));
+    markChanged("ui", written);
     // Two of the side effects below write the plan AFTER markChanged took the ledger
     // sample, so their keys would land in whatever samples next — under live follow a
     // device notify, which invariant 13 then reads as the device authoring a key the

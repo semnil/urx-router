@@ -224,11 +224,45 @@ const pickInsertFx = (value: number): void => {
   sel.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
+/** Signal Type, whose STEREO option links the pair the insert FX then mirrors across. */
+const pickSignalType = (value: number): void => {
+  const sel = paramRow("Signal Type").querySelector("select")!;
+  sel.value = String(value);
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
 /** Which half of the bypass toggle is lit. */
 const insertFxOnFace = (): string | undefined =>
   paramRow("Insert FX ON")?.querySelector("button.on")?.textContent ?? undefined;
 
 describe("Fetch from device", () => {
+  // The same rule for what a MIRROR wrote. While a pair is linked the insert FX travels
+  // to the partner, bypass included — and if the partner's bypass already held the value
+  // the mirror writes, that write moves nothing either. The partner then took the device's
+  // OFF while the source kept ON, so one operator gesture left the pair disagreeing on a
+  // key it had set once.
+  it("keeps the partner's mirrored bypass while a read is in flight", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickSignalType(1); // STEREO — the pair mirrors its insert FX in either PAN/BAL mode
+    pickInsertFx(256);
+    expect(insertFxOnFace()).toBe("ON");
+    selectNode("ch2");
+    expect(insertFxOnFace()).toBe("ON"); // the mirror carried it
+
+    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    selectNode("ch1");
+    pickInsertFx(1793);
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch2");
+    expect(paramRow("Insert FX").querySelector("select")!.value).toBe("1793");
+    expect(insertFxOnFace()).toBe("ON");
+  });
+
   // The write witness names what a funnel WROTE, not only what its write MOVED. Selecting
   // an insert effect over one that is already engaged writes `insertFxOn: true` again —
   // the value does not move, so the read's own diff cannot tell that key from one nobody
