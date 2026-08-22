@@ -142,8 +142,10 @@ test("pitch fix reveals key + scale keyboard", async ({ page }) => {
   await expect(screenSelect(page, "Key").locator("option")).toHaveCount(12);
   await expect(screenRow(page, "MIDI Control")).toBeVisible();
   // Shown and never written: the unit takes those notes on a port of its own, and
-  // switching it on erases a full note mask.
-  await expect(screenRow(page, "MIDI Control").locator("button").first()).toBeDisabled();
+  // switching it on erases a full note mask. The pill is what says so on the panel; the
+  // select is inert.
+  await expect(screenSelect(page, "MIDI Control")).toBeDisabled();
+  await expect(screenRow(page, "MIDI Control")).toContainText("Set on the device");
 });
 
 // One of the twelve semitone buttons on the scale face. They are absolute — named from C
