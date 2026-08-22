@@ -896,6 +896,15 @@ Everything but the multi-band compressor, whose bands and globals are a structur
 flat catalogue carries none of. It stays in the Inspector's own editor, and `bind` refuses it, so the
 two surfaces cannot disagree about where a family is edited.
 
+**An edit names the paths it asserted.** The funnel drops a named nested group — naming it
+would claim every sibling the rebuild merely copied — and falls back to the plan's own diff, which
+sees only what MOVED. `insertFxParams` is exactly that group, and the Scale selector writes twelve
+mask slots at once with several already holding the value it writes, so those would be invisible
+there and a device read in flight would take them back. The descriptor therefore reports its
+asserted paths through `DynProcessor.written`, naming per slot the family-qualified key the plan
+stores under AND the bare slot the re-key removes — the same pair, for the same reason, that the
+Inspector's own funnel names.
+
 **And nothing the device path will not act on.** A plan can hold an insert-FX value the node's own
 control does not carry — a bus holding a channel effect, which a file, a `?plan=` link or a device
 read all land, since the loader gates none of them. `translate` coerces such a value to No Effect and

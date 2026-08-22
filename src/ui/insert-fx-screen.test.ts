@@ -422,6 +422,38 @@ describe("a plan value the device path will not act on", () => {
   });
 });
 
+describe("what an edit tells the write witness it asserted", () => {
+  it("names the qualified key AND the bare slot the re-key removes, per patched slot", () => {
+    // The funnel drops a named GROUP and falls back to the plan's own diff, which sees only
+    // what MOVED — so a slot written the value it already holds is invisible there and a
+    // device read in flight takes it back. The Scale selector writes twelve mask slots at
+    // once with several already correct, which is exactly that case.
+    const ctx = holding("ch1", "Pitch Fix");
+    const written = INSFX_DYN.written!(ctx, { "ifx:pitch:22": 1, "ifx:pitch:27": 0 });
+    expect(written).toEqual([
+      "insertFxParams.pitch:22",
+      "insertFxParams.22",
+      "insertFxParams.pitch:27",
+      "insertFxParams.27",
+    ]);
+  });
+
+  it("is what the host forwards to the funnel", () => {
+    // Asserted through the screen rather than on the descriptor alone: a hook nothing calls
+    // is the same as no hook, and the host's own call is the half a descriptor test cannot
+    // see. The plan path is the family-qualified key, NOT the field key the row carries.
+    holding("ch1", "Compander-H");
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    const slider = h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx:compander:6"]')!;
+    slider.value = String(Number(slider.value) + Number(slider.step || 1));
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    const call = h.patches.at(-1)!;
+    expect(call.written).toEqual(["insertFxParams.compander:6", "insertFxParams.6"]);
+    screen.close();
+  });
+});
+
 describe("a gesture taken while the rebuild is deferred", () => {
   const K = (slot: number): string => insertFxParamKey("pitch", slot);
   const MASK = [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33];

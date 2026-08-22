@@ -316,6 +316,14 @@ export interface DynProcessor {
   read: (ctx: DynCtx) => Record<string, unknown>;
   /** Route a patch back into the plan's own shape, as a `nodeParams` patch. */
   patch: (ctx: DynCtx, patch: Record<string, number | boolean>) => NodeParams;
+  /** The dotted plan paths this edit ASSERTED, for the funnel's write witness.
+   *
+   *  Needed only where `patch` REBUILDS a nested group. The funnel drops a named group —
+   *  naming it would claim every sibling the rebuild merely copied — and falls back to the
+   *  plan's own diff, which names the fields that MOVED. A descriptor writing several
+   *  leaves at once, some of which already hold the value being written, has exactly the
+   *  case that diff cannot see, and a device read in flight then takes those back. */
+  written?: (ctx: DynCtx, patch: Record<string, number | boolean>) => string[];
   /** How each row that is not plainly editable renders — the row options themselves, per
    *  key. Options rather than a flag because the reasons differ and say different things:
    *  the filter type does not read that value (locked, tagged), the rate has the whole
@@ -1132,7 +1140,8 @@ export class DynScreen {
   }
 
   private setVals(patch: Record<string, number | boolean>): void {
-    this.hooks.onUpdateNodeParams(this.nodeId, this.p().patch(this.ctx(), patch));
+    const ctx = this.ctx();
+    this.hooks.onUpdateNodeParams(this.nodeId, this.p().patch(ctx, patch), this.p().written?.(ctx, patch));
   }
 
   /** The value of one parameter, falling back to the catalog's own default — so the

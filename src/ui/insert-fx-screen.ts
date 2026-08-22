@@ -19,6 +19,7 @@
 
 import {
   insertFxFamilyOf,
+  insertFxParamKey,
   insertFxParams,
   PITCH_KEY_SLOT,
   PITCH_MIDI_ENABLE_SLOT,
@@ -376,6 +377,20 @@ function insFxFace(face: InsFxFace): DynProcessor {
       for (const [fam, slots] of byFamily) params = reKeyInsertFxParams(params, fam, slots);
       return { insertFxParams: params };
     },
+
+    // Two paths per slot, because the re-key WRITES one and REMOVES the other: the
+    // family-qualified key the plan stores under, and the bare slot a readback wrote, whose
+    // absence afterwards is as much this edit's assertion as the value it put in. The
+    // Inspector's own funnel names the same pair; without this the Scale selector — which
+    // writes twelve mask slots at once, several of them already holding the value it writes
+    // — leaves those to a diff that can only see what moved.
+    written: (_ctx, patch) =>
+      Object.keys(patch).flatMap((key) => {
+        const parts = keyParts(key);
+        return parts
+          ? [`insertFxParams.${insertFxParamKey(parts.fam, parts.slot)}`, `insertFxParams.${parts.slot}`]
+          : [];
+      }),
 
     // A field carries a family and a slot, and a slot means a different parameter under
     // every family, so both of these read the catalogue row out of the key itself.
