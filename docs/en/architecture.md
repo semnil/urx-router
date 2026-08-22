@@ -1505,6 +1505,11 @@ written at all:
   selector, so a transition landing in that gap leaves the two values equal and stale. A route the unit
   announced during the read is therefore left alone (`HoldContext.announced`, fed from `DeviceFollow`'s
   `onDeviceParam`).
+  The rate is read from the notify stream for the same reason: an excursion can be over before the read asks
+  for the rate address at all — 48 → 96 → 48 leaves the read holding a rate the effect runs at — so the hold
+  asks the read's rate AND every rate the unit announced on the way (`HoldContext.ratesSeen`). That list is
+  deliberately NOT scoped to the read's own window, unlike the announcements above: the rate notify that
+  escalated to the read arrives before it starts, and it is the one carrying the rate that did the clearing.
   What separates this from an operator's own No Effect on the unit is the rate the READ established
   (`ReadbackResult.deviceSampleRate`) — never the plan's own copy, which under the *Scene only* device scope
   is restored across a read and can name a rate the unit left long ago. A read that established no rate at

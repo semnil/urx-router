@@ -48,7 +48,13 @@ import {
   saveTextDocument,
 } from "./core/storage";
 import type { RecentEntry } from "./core/storage";
-import { COMP_EQ_SSMCS, INSERT_FX_ANNOUNCED, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
+import {
+  COMP_EQ_SSMCS,
+  INSERT_FX_ANNOUNCED,
+  PARAMS,
+  REC_POINT_PRE_COMP,
+  REC_POINT_PRE_EQ,
+} from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
@@ -673,6 +679,14 @@ const followReads = new Set<AbortController>();
 // reset would take the evidence of one out from under the other; each takes the slice
 // that arrived inside it, and the list is emptied when the last read ends.
 const announcedInsertFx: string[] = [];
+// Every sample rate the unit announced, from the same stream. Taken WHOLE rather than
+// sliced to a read's own window, unlike the list above: the rate notify that escalates to
+// the read arrives before it starts, and it is the one carrying the rate that cleared the
+// effect. An excursion can also be over before the read asks for the rate at all — 48 →
+// 96 → 48 leaves the read holding 48, where the effect runs and the clearing then reads
+// as the operator's own. Emptied with the list above when the last read ends, so the
+// scope is one coalescing window plus the read it produced.
+const announcedRates: number[] = [];
 
 // Everything device-follow has in flight for a plan that is being replaced. Called at
 // each wholesale reassignment of `plan`, and deliberately not from deactivateLive: with
@@ -712,13 +726,21 @@ async function followRead(
       () => plan,
       (into) => read(into, controller.signal),
       planWrites,
-      (ctx) => insertFxHoldKeys(getModel(modelId), { ...ctx, announced: new Set(announcedInsertFx.slice(mark)) }),
+      (ctx) =>
+        insertFxHoldKeys(getModel(modelId), {
+          ...ctx,
+          announced: new Set(announcedInsertFx.slice(mark)),
+          ratesSeen: [...announcedRates],
+        }),
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
     return merged;
   } finally {
     followReads.delete(controller);
-    if (!followReads.size) announcedInsertFx.length = 0;
+    if (!followReads.size) {
+      announcedInsertFx.length = 0;
+      announcedRates.length = 0;
+    }
   }
 }
 
@@ -748,6 +770,7 @@ const follow =
         // names the pair's primary, and the transition it reports clears BOTH members,
         // so the partner is recorded with it.
         onDeviceParam: (p) => {
+          if (p.paramId === PARAMS.SAMPLE_RATE.id) announcedRates.push(p.value);
           const addr = live?.lookup(p.paramId, p.x, p.y);
           if (!addr?.node || !INSERT_FX_ANNOUNCED.has(addr.name)) return;
           announcedInsertFx.push(addr.node);

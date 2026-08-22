@@ -573,6 +573,25 @@ describe("insertFxHoldKeys", () => {
     expect(merged!.held).toEqual([]);
   });
 
+  // …unless the unit had said otherwise on the way here. The excursion can be over before
+  // the rate address is asked: 48 → 96 → 48 leaves the read holding 48, at which the
+  // effect runs, so its own values are the operator's-No-Effect case exactly. The rate
+  // notify that escalated to the read carries the one that did it.
+  it("keeps an effect a rate the unit announced could not run, even when the read found a rate that can", () => {
+    const before = basePlan();
+    before.nodeParams.ch1 = selected(before);
+    const deviceView = clonePlanState(before);
+    deviceView.nodeParams.ch1 = { ...deviceView.nodeParams.ch1, insertFx: -1, insertFxOn: false };
+    const ctx = { before, deviceView, deviceSampleRate: 48000, authored: new Set<string>() };
+
+    // The read's own rate runs the effect, so on that alone the clearing is adopted…
+    expect(hold(ctx).size).toBe(0);
+    // …and the rate the unit announced on the way is what says otherwise.
+    expect(hold({ ...ctx, ratesSeen: [96000, 48000] }).size).toBe(3);
+    // A rate the effect runs at says nothing.
+    expect(hold({ ...ctx, ratesSeen: [44100, 48000] }).size).toBe(0);
+  });
+
   // The rate the PLAN holds is not the rate to decide from, and the two really do come
   // apart: a scoped read never asks for the address, and under the "Scene only" device
   // scope a full read's answer is discarded from the plan again. Deciding from the plan's

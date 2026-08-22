@@ -1080,7 +1080,9 @@ export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<stri
     // Adopted rather than held: translate will not emit it either, so holding it would
     // keep a value in the plan that has no way of ever reaching the unit.
     if (!option) continue;
-    if (insertFxAvailable(option, ctx.deviceSampleRate)) continue;
+    // Unavailable at the read's rate, or at any the unit announced on the way here.
+    const rates = [ctx.deviceSampleRate, ...(ctx.ratesSeen ?? [])];
+    if (rates.every((rate) => insertFxAvailable(option, rate))) continue;
     for (const key of INSERT_FX_KEYS) held.add(nodeParamContestKey(node.id, key));
   }
   return held;
@@ -1106,6 +1108,15 @@ export interface HoldContext {
    *  a cause of its own, and the hold — which exists for the announced-nothing case —
    *  leaves it alone. */
   announced?: ReadonlySet<string>;
+  /** Every sample rate the UNIT announced since the previous read finished, in notify
+   *  order. The read's own rate is one moment out of a sweep that takes hundreds of
+   *  milliseconds, and the excursion that clears an effect can be over before the rate
+   *  address is even asked: 48 → 96 → 48 leaves the read holding 48, at which the effect
+   *  runs, and the clearing then reads exactly like an operator's own No Effect. The
+   *  notify that escalated to this read carries the rate that did it, which is why this
+   *  is NOT sliced to the read's own window the way `announced` is — it reaches back to
+   *  the coalescing window that produced the read. */
+  ratesSeen?: readonly number[];
 }
 
 /** What one insert-FX route stores: the selector, the bypass intent and the engine

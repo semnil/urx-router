@@ -876,6 +876,40 @@ describe("the live session", () => {
     await endLive();
   });
 
+  // The excursion can be over before the read asks for the rate: 48 → 96 → 48 leaves the
+  // read holding a rate the effect runs at, and the cleared values then read exactly like
+  // an operator's own No Effect. What says otherwise is the rate notify that escalated to
+  // the read — which arrives BEFORE it starts, so the rate history is not sliced to the
+  // read's own window the way the insert-FX announcements are.
+  it("keeps an effect through a rate excursion that was over before the read asked", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    const written = insertFxWrites(shell).length;
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+    // The unit went up past the effect's ceiling and came straight back, so every address
+    // the read asks for — the rate included — answers as if nothing had happened.
+    shell.answer("vd_get", (a: Record<string, unknown>) =>
+      a.paramId === PARAMS.SAMPLE_RATE.id
+        ? 48_000
+        : a.paramId === PARAMS.INSERT_FX.id
+          ? denormalizeInsertFx(INSERT_FX_NONE)
+          : 0,
+    );
+    channel.onmessage([
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
+    ]);
+
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
+    expect(insertFxWrites(shell).at(-1)).toBe(COMPANDER_H);
+    await endLive();
+  });
+
   // The Signal Type transition is announced on the PAIR's primary and clears the effect
   // on both members (measured), so recording the announcement without its partner leaves
   // the other half of the pair held and re-sent — half a clearing undone.
