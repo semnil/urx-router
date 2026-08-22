@@ -1950,10 +1950,11 @@ export class Console {
       // The chip has two duties, and its lock composes them off the one menu
       // core/constraints.ts computes — the menu the inspector's selector renders,
       // so the chip cannot hand a strip what that selector greys out. Holding an
-      // effect makes it a bypass, locked only where the rate rules every effect out
-      // (above 96 kHz none of them runs): forced off and read-only, the treatment
-      // the stereo EQ gets. Holding none makes it take a slot, locked when nothing
-      // is free — the tooltip naming which of the two reasons applies.
+      // effect makes it a bypass, locked where the rate rules THAT effect out: forced
+      // off and read-only, the treatment the stereo EQ gets. Holding none makes it take
+      // a slot, locked when nothing is free — the tooltip naming which of the two
+      // reasons applies, which is why the rate question is asked of a strip holding
+      // nothing too: above every ceiling it is the rate and not the slots.
       const menu = insertFxMenu(model, this.hooks.getPlan(), m.id, this.ifxCensus ?? undefined);
       const free = insertFxFree(menu);
       const holds = insertFxSelected(planOf());
@@ -1963,7 +1964,7 @@ export class Console {
       // table does not carry has no ceiling to read, and falls back to the menu-wide
       // answer — above 96 kHz nothing runs whatever the value names.
       const selected = insertFxSelectedEntry(menu, planOf().insertFx);
-      const rateLocked = selected ? selected.lock === "rate" : holds && insertFxAllRateLocked(menu);
+      const rateLocked = selected ? selected.lock === "rate" : insertFxAllRateLocked(menu);
       const locked = holds ? rateLocked : !free.length;
       if (locked)
         this.makeChip(m.id, proc, "INS FX", false, false, () => false, {
