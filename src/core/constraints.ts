@@ -179,6 +179,21 @@ export function insertFxSelectedEntry(menu: InsertFxMenuEntry[], value: number |
   return menu.find((e) => e.option.value === value) ?? null;
 }
 
+/** Whether the rate has left the held effect with no DSP to run, and the entry that
+ *  decided it. Every surface that names a node's own insert-FX state asks this, and asks
+ *  it the same way: the entry's own ceiling where the menu carries the value, and the
+ *  menu-wide answer where it does not — a held value the node's control does not offer has
+ *  no ceiling of its own to read, and a menu that is entirely rate-locked is still the
+ *  truth about it. Split across the surfaces, the third one was written without the
+ *  fallback and showed a live editor for an effect the other two called off. */
+export function insertFxRateLock(
+  menu: InsertFxMenuEntry[],
+  value: number | undefined,
+): { locked: boolean; entry: InsertFxMenuEntry | null } {
+  const entry = insertFxSelectedEntry(menu, value);
+  return { locked: entry ? entry.lock === "rate" : insertFxAllRateLocked(menu), entry };
+}
+
 // True when `channelId` is a stereo channel whose Ducker is on. The Ducker sits
 // post-fader on the main path, so a PRE (pre-fader) send taps ahead of it and is
 // not ducked — the inspector notes this on such a send.

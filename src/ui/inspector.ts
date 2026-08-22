@@ -82,9 +82,8 @@ import {
   channelEqUnavailable,
   duckerBypassWarnings,
   formatRate,
-  insertFxAllRateLocked,
+  insertFxRateLock,
   insertFxMenu,
-  insertFxSelectedEntry,
   isMonitorBus,
   canPatchFromMonitor,
   outputMono,
@@ -814,8 +813,7 @@ export function renderInspector(
         // Fix stops at 48 kHz where the amps and companders reach 96. A selection this
         // app's own table does not carry (read back from a unit) has no ceiling to name
         // and falls back to the menu-wide answer.
-        const ifxEntry = insertFxSelectedEntry(ifxMenu, ifxSel);
-        const ifxRateLocked = ifxEntry ? ifxEntry.lock === "rate" : insertFxAllRateLocked(ifxMenu);
+        const { locked: ifxRateLocked, entry: ifxEntry } = insertFxRateLock(ifxMenu, ifxSel);
         (tailBody ?? host).append(
           boolToggle(
             m.inspector.insertFxOn,

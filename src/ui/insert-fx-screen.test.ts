@@ -373,6 +373,19 @@ describe("what the note under the display says", () => {
     screen.close();
   });
 
+  it("still says it for a held value the node's own control does not list", () => {
+    // A bus holding a CHANNEL effect: a device read or a hand-edited plan lands it, and
+    // the menu has no entry to read a ceiling from. Above 96 kHz nothing runs whatever the
+    // value names, so the screen reports the menu-wide answer rather than falling silent
+    // and handing out an editor the other two surfaces have already called off.
+    holding("bus.mix1", "Pitch Fix");
+    h.plan.sampleRate = 192000;
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "bus.mix1");
+    expect(note()).toBe(t().inspector.insFxRateLocked);
+    screen.close();
+  });
+
   it("says the effect is bypassed only when the rate is not the reason", () => {
     holding("ch1", "Compander-H");
     h.plan.sampleRate = 48000;
