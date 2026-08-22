@@ -575,8 +575,21 @@ function contestName(...parts: string[]): string {
 /** The name `dropAuthored` matches a nodeParams sub-key by. Exported so a caller that
  *  arbitrates one — a device read holding a key it must not adopt — spells it the way
  *  the witness and the merge already do, rather than rebuilding the separator. */
-export function nodeParamContestKey(nodeId: string, param: string): string {
-  return contestName("nodeParams", nodeId, param);
+export function nodeParamContestKey(nodeId: string, param: string, sub?: string): string {
+  return sub === undefined ? contestName("nodeParams", nodeId, param) : contestName("nodeParams", nodeId, param, sub);
+}
+
+/** The same, from a dotted path: `"osc"` names the whole group, `"osc.on"` one field of
+ *  it. The distinction is the difference between keeping a value and throwing one away —
+ *  every funnel that edits a nested group REBUILDS it, writing one field and copying the
+ *  rest, so naming the group claims the siblings too and a device read in flight loses
+ *  its answer for all of them. Measured: with the group named, a device's OSC frequency
+ *  read during an OSC ON toggle was dropped whole; with the field named, it landed. */
+export function nodeParamContestPath(nodeId: string, path: string): string {
+  const dot = path.indexOf(".");
+  return dot < 0
+    ? nodeParamContestKey(nodeId, path)
+    : nodeParamContestKey(nodeId, path.slice(0, dot), path.slice(dot + 1));
 }
 
 /** The same, for one param of one wire. A caller names the wire by its endpoints — the

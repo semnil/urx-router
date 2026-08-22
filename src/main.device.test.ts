@@ -18,6 +18,8 @@ import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
 import { $, bootApp, deviceCommands, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
+import { attackToVd, eqFreqToVd } from "./core/control/vd";
+import { formatHz } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { PARAMS } from "./core/control/params";
@@ -2669,6 +2671,74 @@ describe("an edit funnel against a device read", () => {
     selectNode("ch1");
     expect(paramRow("Insert FX").querySelector("select")!.value).not.toBe(String(INSERT_FX_NONE));
     expect(insertFxOnFace()).toBe("ON");
+  });
+
+  // A nested group is edited by REBUILDING it — one field set, the rest copied — so the
+  // patch key names the whole group, and the merge drops a named group whole. Naming it
+  // therefore takes the device's answer for every sibling the rebuild never touched:
+  // measured, an OSC frequency the unit moved during an OSC ON toggle was thrown away
+  // with the toggle's own key.
+  it("keeps a device change to a sibling of the group field the operator edited", SLOW, async () => {
+    const shell = await bootDevice();
+    // The unit answers a different oscillator frequency than the plan's default.
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.OSC_FREQ.id ? eqFreqToVd(2000) : 0), 1)),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    // Mid-read, the operator toggles the oscillator ON — one field of the same group.
+    selectNode("bus.osc");
+    const btns = [...paramRow(t().inspector.oscOn).querySelectorAll<HTMLButtonElement>("button")];
+    (btns.find((b) => b.textContent === "ON") ?? btns[0]).click();
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("bus.osc");
+    expect(paramRow(t().inspector.oscOn).querySelector("button.on")?.textContent).toBe("ON");
+    // …and the sibling the operator never touched took the unit's value.
+    expect(paramRow(t().inspector.frequency).querySelector(".param-val")?.textContent).toBe(formatHz(2000));
+  });
+
+  // The same rule, for a funnel that names nothing: a tuning screen rebuilds its whole
+  // group through one shared writer (`subObjectIo`), so the patch key it produces is the
+  // GROUP. Naming that is what the funnel must not do by default — the screens carry no
+  // field that can be written without moving, so a group falls through to the plan's own
+  // diff rather than being claimed whole.
+  it("keeps a device change to a tuning screen's other field", SLOW, async () => {
+    const shell = await bootDevice(SAVES);
+    $("btn-view-console").click();
+    const strip = $("console-host").querySelectorAll<HTMLElement>(".con-strip")[0];
+    strip.querySelector<HTMLElement>(".con-chip-open")!.click(); // the GATE opener
+
+    // The unit moved GATE ATTACK to 4 ms while the screen was open.
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.GATE_ATTACK.id ? attackToVd(4) : 0), 1)),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    // …and the operator drags THRESHOLD in the same group, mid-read.
+    const thr = $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="threshold"]')!;
+    const moved = Number(thr.value) - 5;
+    thr.value = String(moved);
+    thr.dispatchEvent(new Event("input", { bubbles: true }));
+    thr.dispatchEvent(new Event("change", { bubbles: true }));
+    await invoked(shell, "vd_disconnect");
+
+    // Read the plan back through a save: the open screen does not repaint on a read, so
+    // its DOM would answer for the render rather than for the merge.
+    const before = shell.count("write_text_file");
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+    const saved = shell.args[shell.invokes.lastIndexOf("write_text_file")];
+    const gate = JSON.parse(String((saved as { contents: string }).contents)).nodeParams.ch1.gate;
+
+    expect(gate.threshold).toBe(moved); // the field the operator moved is theirs…
+    expect(gate.attack).toBe(4); // …and the sibling they never touched took the unit's
   });
 
   // …and the BAL mirror names THIS EDIT's keys on the partner, not the whole record it

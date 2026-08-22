@@ -26,7 +26,13 @@ import {
 import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
-import { clonePlanState, diffPlans, nodeParamContestKey, PlanWriteWitness, type PatchTouch } from "./core/plan-history";
+import {
+  clonePlanState,
+  diffPlans,
+  nodeParamContestPath,
+  PlanWriteWitness,
+  type PatchTouch,
+} from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import { isRefusal, planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
@@ -1188,7 +1194,7 @@ const inspectorActions = {
     // ducked-channel PRE-send note appears/clears with the tap.
     if (patch.oscL !== undefined || patch.oscR !== undefined || patch.tap !== undefined) refreshInspector();
   },
-  onUpdateNodeParams: (id: string, patch: NodeParams) => {
+  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[]) => {
     const prev = plan.nodeParams[id];
     const partner = partnerChannel(getModel(modelId), id);
     plan.nodeParams[id] = { ...prev, ...patch };
@@ -1211,7 +1217,17 @@ const inspectorActions = {
     // The patch's own keys, not only the ones whose value moved: this funnel asserts
     // every member it carries, and a device read in flight must not take back one that
     // happened to already hold the asserted value.
-    const written = [...Object.keys(patch).map((key) => nodeParamContestKey(id, key)), ...transitionKeys];
+    //
+    // A NESTED GROUP is the exception, and it is the default rather than a caller's
+    // responsibility: every funnel edits one by REBUILDING it — one field set, the rest
+    // copied — and the merge drops a named group WHOLE, so naming it hands the device's
+    // answer for every untouched sibling away with it (measured: an OSC frequency the
+    // unit moved during an OSC ON toggle was thrown out with the toggle's own key). A
+    // group therefore falls through to the plan's own diff, which names the fields that
+    // moved. A caller with a field that can be written WITHOUT moving names it itself, as
+    // a dotted path — that is what `written` carries, and it replaces this derivation.
+    const names = written ?? Object.keys(patch).filter((key) => typeof patch[key as keyof NodeParams] !== "object");
+    const keys = [...names.map((name) => nodeParamContestPath(id, name)), ...transitionKeys];
     // A mirror asserts the PARTNER's keys the same way, and it can assert one that already
     // holds the value it writes — the insert-FX mirror re-writes a bypass that was already
     // on. Each names only what IT wrote, and for the BAL mirror that is THIS EDIT's keys,
@@ -1221,10 +1237,10 @@ const inspectorActions = {
     // both members' HPF, with an unrelated Phase edit inside it, left CH 1 on the device's
     // ON and CH 2 on the plan's OFF — one gesture splitting a pair that moves as one.
     const mirroredKeys = new Set<string>();
-    if (mirrored) for (const key of Object.keys(patch)) mirroredKeys.add(key);
+    if (mirrored) for (const name of names) mirroredKeys.add(name);
     if (insFxMirrored) for (const key of INSERT_FX_PAIR_KEYS) mirroredKeys.add(key);
-    if (partner) for (const key of mirroredKeys) written.push(nodeParamContestKey(partner, key));
-    markChanged("ui", written);
+    if (partner) for (const name of mirroredKeys) keys.push(nodeParamContestPath(partner, name));
+    markChanged("ui", keys);
     // Two of the side effects below write the plan AFTER markChanged took the ledger
     // sample, so their keys would land in whatever samples next — under live follow a
     // device notify, which invariant 13 then reads as the device authoring a key the
@@ -2131,7 +2147,7 @@ const dynScreen = new DynScreen({
   getModel: () => getModel(modelId),
   getPlan: () => plan,
   isLive: () => liveSessionUp,
-  onUpdateNodeParams: (id, patch) => inspectorActions.onUpdateNodeParams(id, patch),
+  onUpdateNodeParams: (id, patch, written) => inspectorActions.onUpdateNodeParams(id, patch, written),
   releaseMeters: () => consoleView.releaseMeters(),
   regainMeters: () => consoleView.regainMeters(),
   onMeterError: (message) => stopLiveOnError(errorText(message)),

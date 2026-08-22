@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
 import { insertFxHoldKeys, readIntoPlan, type ReadbackResult } from "./readback";
-import { applyPatchInContext, clonePlanState, diffPlans, nodeParamContestKey, PlanWriteWitness } from "../plan-history";
+import {
+  applyPatchInContext,
+  clonePlanState,
+  diffPlans,
+  nodeParamContestKey,
+  nodeParamContestPath,
+  PlanWriteWitness,
+} from "../plan-history";
 
 // readIntoPlan is the contest between a device read and the operator's hands: the read
 // samples the unit before a gesture exists, resolves hundreds of milliseconds to tens of
@@ -278,6 +285,37 @@ describe("readIntoPlan against an edit that goes there and back", () => {
 // COMP RELEASE, their pointer on the app's COMP ATTACK. Contesting the group whole hands
 // it to the app and the next flush reverts the device's own sibling on the unit.
 describe("readIntoPlan inside a nested group", () => {
+  // The witness's own names decide how much of a group a merge gives up. A funnel edits
+  // a group by REBUILDING it — one field set, the rest copied — so the patch key names
+  // the whole group, and a named group is dropped WHOLE. `nodeParamContestPath` is what
+  // turns a caller's `"comp.attack"` into the field's own name; a helper that stopped
+  // splitting would name a param called `comp.attack`, which matches nothing, and the
+  // merge would then take the device's value for the field the operator was holding.
+  it("gives up only the field a caller named, not the group it was rebuilt into", async () => {
+    const run = async (authored: string) => {
+      const plan = basePlan();
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { attack: 10, release: 100 } };
+      const witness = new PlanWriteWitness(() => plan);
+      await readIntoPlan(
+        () => plan,
+        async (into) => {
+          // The unit moved BOTH fields while the app rebuilt the group for one of them.
+          into.nodeParams.ch1 = { ...into.nodeParams.ch1, comp: { attack: 99, release: 200 } };
+          plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { attack: 10, release: 100 } };
+          witness.note([authored]);
+          return OK;
+        },
+        witness,
+      );
+      return plan.nodeParams.ch1?.comp;
+    };
+
+    // Naming the field: the device's other field lands, the named one is the app's.
+    expect(await run(nodeParamContestPath("ch1", "comp.attack"))).toEqual({ attack: 10, release: 200 });
+    // Naming the group: the device's answer for BOTH fields is thrown away.
+    expect(await run(nodeParamContestPath("ch1", "comp"))).toEqual({ attack: 10, release: 100 });
+  });
+
   it("keeps the field the device moved and the field the app moved", async () => {
     const plan = basePlan();
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { attack: 10, release: 100 } };

@@ -54,7 +54,7 @@ import {
   type InsertFxCensus,
 } from "../core/constraints";
 import { busBalance, channelControl, channelDynamics, hasEq, insertFxControl } from "../core/control/translate";
-import { nodeParamContestKey } from "../core/plan-history";
+import { nodeParamContestPath } from "../core/plan-history";
 import {
   INSERT_FX_PAIR_KEYS,
   isBalLinkedPair,
@@ -1324,7 +1324,7 @@ export class Console {
         toggle: () => {
           const p = this.nodeParamsOf(m.id);
           p.osc = { ...p.osc, on: !(p.osc?.on === true) };
-          return ["osc"];
+          return ["osc.on"];
         },
         midiId: controlId(m.id, "oscOn"),
       };
@@ -1551,7 +1551,7 @@ export class Console {
           np.delay = { ...np.delay, on: next };
           return next;
         },
-        { keys: ["delay"] },
+        { keys: ["delay.on"] },
       );
       chips.append(el("div", "con-chip spacer"));
       head.append(chips);
@@ -1565,7 +1565,7 @@ export class Console {
             const np = this.nodeParamsOf(m.id);
             np.delay = { ...np.delay, time: v };
           },
-          keys: ["delay"],
+          keys: ["delay.time"],
           min: DELAY_TIME_MIN_MS,
           max: DELAY_TIME_MAX_MS,
           step: 1, // whole-ms on the knob; the inspector keeps the 0.01 ms grid
@@ -1899,6 +1899,10 @@ export class Console {
         label: string,
         read: () => boolean,
         set: (cur: SsmcsParams, next: boolean) => SsmcsParams,
+        // The field `set` writes, one level inside the bank. Named rather than derived:
+        // `set` rebuilds the whole object, and naming the bank would claim every sibling
+        // it copied — taking the device's answer for all of them.
+        field: string,
         opts: { midiId?: string; title?: string },
       ): void => {
         this.makeChip(
@@ -1913,7 +1917,7 @@ export class Console {
             np.ssmcs = set(np.ssmcs ?? {}, next);
             return next;
           },
-          { ...opts, keys: ["ssmcs"] },
+          { ...opts, keys: [`ssmcs.${field}`] },
         );
       };
       // The morphing strip's own master, between GATE and COMP as the inspector orders
@@ -1923,6 +1927,7 @@ export class Console {
           "SSMCS",
           () => planOf().ssmcs?.on ?? SSMCS_INITIAL.on,
           (cur, next) => ({ ...cur, on: next }),
+          "on",
           { midiId: controlId(m.id, "ssmcsOn") },
         );
         proc.append(this.dynOpenChip("ssmcs", m.id));
@@ -1943,6 +1948,7 @@ export class Console {
           "SC",
           () => planOf().ssmcs?.sc?.on ?? SSMCS_INITIAL.sc.on,
           (cur, next) => ({ ...cur, sc: { ...cur.sc, on: next } }),
+          "sc",
           { midiId: controlId(m.id, "sideChain", SSMCS_SC_SCOPE), title: t().inspector.ssmcs.sideChain },
         );
       }
@@ -2524,11 +2530,11 @@ export class Console {
     // follows: the BAL mirror carries THIS edit's keys onto the partner, and the
     // insert-FX mirror the three-key pair state it copies whenever the pair is linked.
     // A key no mirror wrote stays the device's to answer for.
-    const keys = written.map((k) => nodeParamContestKey(id, k));
+    const keys = written.map((k) => nodeParamContestPath(id, k));
     const partner = partnerChannel(model, id);
     if (partner) {
-      if (mirrored) for (const k of written) keys.push(nodeParamContestKey(partner, k));
-      if (insFxMirrored) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestKey(partner, k));
+      if (mirrored) for (const k of written) keys.push(nodeParamContestPath(partner, k));
+      if (insFxMirrored) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
     }
     this.hooks.onChange(keys);
     return mirrored || insFxMirrored;
@@ -2588,7 +2594,7 @@ export class Console {
     if (m.isOsc) {
       const np = this.nodeParamsOf(m.id);
       np.osc = { ...np.osc, level: db };
-      return ["osc"];
+      return ["osc.level"];
     }
     if (m.fadersOnly) {
       this.nodeParamsOf(m.id).level = db;
