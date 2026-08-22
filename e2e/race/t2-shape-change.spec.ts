@@ -16,7 +16,7 @@ import {
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
-import { graphNode, openEqScreen, strip } from "./ui";
+import { graphNode, openEqScreen, param, paramExact, strip } from "./ui";
 
 // T2 shape-change — the parameters that reshape the WRITABLE ADDRESS SET rather
 // than a value inside it (docs/{en,ja}/live-race-harness.md).
@@ -83,11 +83,6 @@ const setsAfter = (trace: TraceEvent[], addr: string, at: number): number[] =>
   setsOf(trace)
     .filter((s) => s.addr === addr && s.start > at)
     .map((s) => s.value ?? Number.NaN);
-
-const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
-/** A .param whose label is EXACTLY `label` — "Insert FX" must not match "Insert FX ON". */
-const paramExact = (page: Page, label: string) =>
-  page.locator("#inspector .param", { has: page.getByText(label, { exact: true }) });
 
 /** The EQ tuning screen's 1-Knob ON/OFF pair, located from the level slider's id (the
  *  only stable anchor in that section) rather than by its localized label. */
