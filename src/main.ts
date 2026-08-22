@@ -2268,6 +2268,7 @@ const traceProbe = TRACE
       // clearing there would not answer null either. isActive() is what "no session" is.
       liveSnapshot: () => (live?.isActive() ? live.snapshotEntries() : null),
       depth: () => planHistory?.depth() ?? { undo: 0, redo: 0 },
+      rates: () => announcedRates.map((r) => r.hz),
     })
   : null;
 

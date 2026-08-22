@@ -11,6 +11,7 @@ import {
   blockAt,
   releaseBarrier,
   memOf,
+  ratesOf,
   setMemAt,
   settleAfter,
   waitQuiet,
@@ -317,5 +318,96 @@ test.describe("T1 overtake", () => {
     await pushNotify(page, [[766, 0, 0, 48000]]);
     await settleAfter(page, "rate-back", 2500);
     await expect(paramExact(page, "Insert FX").locator("select")).toHaveValue(String(COMPANDER_H));
+  });
+
+  // The read that decided from an announcement CONSUMES it, and the next clearing —
+  // the operator's own, by hand at a rate that runs the effect — is then adopted rather
+  // than held against a rate the unit left long before. The consumption is read directly
+  // (`ratesOf`, the trace probe) as well as through that clearing: a later read with
+  // nothing else open would consume it too, and the two are indistinguishable from the
+  // outcome alone.
+  //
+  // What this case does NOT reach is the arrangement that made the rule wrong in the
+  // first place: a side-effect refetch still OPEN when the read finishes, which is what
+  // the withdrawn `!followReads.size` gate turned into a skipped consumption. The 1-knob
+  // toggle below opens that refetch inside the read, but not in a placement where it
+  // outlives it — the link is one queue, so the two flows interleave one command each and
+  // the refetch's node read (about 50) is spent well before a whole-device sweep's tail.
+  // Barrier placements leaving 30, 60 and 120 reads were measured and none of them left
+  // the refetch open at the moment of consumption; restoring the gate leaves this case
+  // green. Settling it needs `followReads` itself observable at that moment, which is a
+  // probe field this one does not add.
+  test("a full read consumes the rate announcement it decided from", async ({ page }) => {
+    await goLive(page);
+    await graphNode(page, "ch1").click();
+    await setLatency(page, { get: 2, set: 2 });
+
+    await mark(page, "select-compander");
+    await paramExact(page, "Insert FX").locator("select").selectOption({ label: "Compander-H" });
+    await settleAfter(page, "select-compander", 1800);
+    // Open before the excursion: the screen is modal, and reaching it afterwards would
+    // put a click in the middle of the window this case is placing.
+    await openEqScreen(page, "ch1");
+
+    // 615 of the sweep's own 675 reads — measured, not guessed. The barrier counts from
+    // the moment it is armed and the link is otherwise idle, so read #615 leaves 60. The
+    // number is what places the overlap: the flush takes about 40 commands to reach its
+    // refetch, and the refetch's own node read is about 50, so a tail of 60 has the sweep
+    // finishing (120 interleaved slots) while the refetch is still reading (140). At 30 —
+    // measured — the sweep ended before the refetch had opened at all.
+    await blockAt(page, "vd_get", 555);
+    await mark(page, "excursion");
+    await setMemAt(page, {
+      [RATE_ADDR]: 192000,
+      [CH1_INSERT_FX]: INSERT_FX_NONE_RAW,
+      [CH1_INSERT_FX_ON]: 0,
+    });
+    await pushNotify(page, [[766, 0, 0, 192000]]);
+    await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 25_000 });
+
+    // The 1-knob write is `sideEffect: "refetch"`, so its flush reads the node back —
+    // a second follow read, opened while the first is still finishing.
+    await mark(page, "oneknob");
+    await oneKnobOn(page).click();
+    await releaseBarrier(page);
+    await settleAfter(page, "oneknob", 2500, 25_000);
+    // The rule itself, read where the IPC log cannot see it: the read that decided from
+    // the announcement has finished, so nothing announced before it may still be standing.
+    // Asserted here rather than through the next clearing alone — a later read with
+    // nothing open would consume it too, and the two are then indistinguishable.
+    console.log(`rates still standing after the read: ${JSON.stringify(await ratesOf(page))}`);
+    expect(await ratesOf(page)).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#dyn-screen-box")).toBeHidden();
+
+    // The operator clears it by hand on the unit, back at a rate that runs it. The rate
+    // is put back WITHOUT announcing it: a second rate notify would escalate to another
+    // whole-device read, and that read — with nothing else open — would consume the stale
+    // announcement on its own, which is the very thing this case is asking about.
+    //
+    // Nothing about their clearing is the app's to undo, and only a consumed announcement
+    // leaves the merge able to say so: the notify for it arrives BEFORE the scoped read it
+    // escalates to, so it falls outside the window `announced` covers, and the rate
+    // history is what decides.
+    await mark(page, "hand-clear");
+    await setMemAt(page, {
+      [RATE_ADDR]: 48000,
+      [CH1_INSERT_FX]: INSERT_FX_NONE_RAW,
+      [CH1_INSERT_FX_ON]: 0,
+    });
+    await pushNotify(page, [[135, 0, 0, INSERT_FX_NONE_RAW]]);
+    await settleAfter(page, "hand-clear", 2500, 25_000);
+
+    const trace = await traceOf(page);
+    const at = markTime(trace, "hand-clear")!;
+    const resent = setsOf(trace).filter((s) => s.start > at && s.addr === CH1_INSERT_FX);
+    console.log(
+      `after the hand clear: ` +
+        (resent.map((s) => `#${s.seq}@${Math.round(s.start)} ${s.addr}=${s.value}`).join(", ") ||
+          "(no selector write)"),
+    );
+    // The plan adopted it: nothing was sent back, and the row reads No Effect.
+    expect(resent).toEqual([]);
+    await expect(paramExact(page, "Insert FX").locator("select")).toHaveValue("-1");
   });
 });

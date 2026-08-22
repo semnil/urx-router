@@ -1257,6 +1257,13 @@ export const depthOf = (page: Page): Promise<{ undo: number; redo: number }> =>
   );
 
 /** True when the served bundle is a trace build. */
+/** The announced sample rates no read has consumed yet (main.ts's `announcedRates`).
+ *  Whether an announcement was consumed decides the NEXT clearing rather than the one in
+ *  front of it, so the IPC log shows the consequence a whole gesture later or not at all —
+ *  this reads the rule itself. */
+export const ratesOf = (page: Page): Promise<number[]> =>
+  page.evaluate(() => (window as unknown as { __urxTrace?: { rates: () => number[] } }).__urxTrace?.rates() ?? []);
+
 export const hasProbe = (page: Page): Promise<boolean> =>
   page.evaluate(() => (window as unknown as { __urxTrace?: unknown }).__urxTrace !== undefined);
 
