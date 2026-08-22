@@ -953,6 +953,53 @@ describe("the live session", () => {
     await endLive();
   });
 
+  // The read that CONSUMES the rate history is not always the read that was running when
+  // the announcement arrived. A full read already in flight reads the selector before the
+  // unit clears it, so it holds nothing — and clearing the whole history on its way out
+  // takes the announcement away from the replay it scheduled, which is the read that sees
+  // the cleared selector.
+  it("leaves the announcement for the replay a read in flight scheduled", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    const written = insertFxWrites(shell).length;
+    // CH 1's selector answers as it stood for the FIRST read that asks, and cleared for
+    // every one after — so the read already in flight sees it standing (and holds
+    // nothing) while the replay behind it is the first to see it gone. Counted rather
+    // than timed: which read of a 700-address sweep reaches CH 1 is not a clock.
+    let asked = 0;
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      const v =
+        a.paramId === PARAMS.SAMPLE_RATE.id
+          ? 48_000
+          : a.paramId === PARAMS.INSERT_FX.id && a.y === 0
+            ? asked++ === 0
+              ? COMPANDER_H
+              : denormalizeInsertFx(INSERT_FX_NONE)
+            : 0;
+      return new Promise((r) => setTimeout(() => r(v), 2));
+    });
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+
+    // An address in no index forces a FULL read, without touching the rate history.
+    channel.onmessage([{ param_id: 9_999, x: 0, y: 0, value: 1 }]);
+    // Past CH 1's own selector, which this read has now taken as standing.
+    await vi.waitFor(() => expect(asked).toBeGreaterThan(0), { timeout: 25_000, interval: 2 });
+    // The excursion lands inside it and schedules the replay.
+    channel.onmessage([
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
+    ]);
+
+    // …and the replay behind it, which is the first read to see the cleared selector.
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
+    await endLive();
+  });
+
   // The Signal Type transition is announced on the PAIR's primary and clears the effect
   // on both members (measured), so recording the announcement without its partner leaves
   // the other half of the pair held and re-sent — half a clearing undone.

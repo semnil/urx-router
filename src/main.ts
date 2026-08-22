@@ -613,9 +613,11 @@ function noteMergeConflicts(merged: MergedRead): void {
 // FX, the selector, then the stored engine values, then the bypass intent. Nothing else
 // would schedule that flush: no plan key moved, so no edit funnel ran.
 //
-// Only a read that established the unit's own rate can hold anything (insertFxHoldKeys),
-// which is the full reconcile. The scoped paths hand over the same hold and it returns
-// nothing, so the pairing cannot be forgotten at one of them.
+// A read holds only where it has rate evidence (insertFxHoldKeys) — its own, or one the
+// unit announced while it ran. Both reconcile paths hand over the same hold for that
+// reason: a scoped read establishes no rate of its own and is still the first thing to
+// see a selector the unit has just cleared, so the pairing cannot be skipped at one of
+// them.
 function reapplyHeld(merged: MergedRead): void {
   if (!merged.held.length) {
     setStatus(t().status.liveFollowed(merged.applied));
@@ -722,6 +724,10 @@ async function followRead(
   const controller = new AbortController();
   followReads.add(controller);
   const mark = announcedInsertFx.length;
+  // Where this read's own share of the rate history ends. Everything after it arrived
+  // WHILE the read ran, which means it belongs to the reconcile it scheduled rather than
+  // to this one.
+  const rateMark = announcedRates.length;
   let establishedRate = false;
   try {
     const merged = await readIntoPlan(
@@ -742,11 +748,16 @@ async function followRead(
   } finally {
     followReads.delete(controller);
     if (!followReads.size) announcedInsertFx.length = 0;
-    // The rate history outlives a read that established no rate of its own. A rate notify
-    // forces a FULL reconcile, and the scoped reads that overlap it are exactly the ones
-    // that need the announcement to decide with — clearing on whichever read happened to
-    // finish first took the evidence out from under the read the notify was for.
-    if (establishedRate && !followReads.size) announcedRates.length = 0;
+    // The rate history outlives a read that established no rate of its own, and a read
+    // that did takes only what was already there when it started. Both halves are about
+    // the same thing — the read that CONSUMES an announcement is not always the one that
+    // was running when it arrived. A scoped read holds no rate at all, so emptying on
+    // whichever read finished first took the evidence out from under the full read the
+    // notify was for; and a full read already in flight has read the selector before the
+    // unit cleared it, so it holds nothing itself and the announcement belongs to the
+    // replay it scheduled. Measured: clearing the whole list there left that replay
+    // adopting the clearing.
+    if (establishedRate && !followReads.size) announcedRates.splice(0, rateMark);
   }
 }
 

@@ -1520,11 +1520,11 @@ written at all:
   is not therefore blind — it reads a node's insert FX like any other body value, so one already running when
   the unit clears an effect is the FIRST to see the cleared selector. Deciding only from a read's own rate
   left it adopting the clearing, with nothing for the full read behind it to keep.
-  What separates this from an operator's own No Effect on the unit is the rate the READ established
-  (`ReadbackResult.deviceSampleRate`) — never the plan's own copy, which under the *Scene only* device scope
-  is restored across a read and can name a rate the unit left long ago. A read that established no rate at
-  all — every scoped one — holds nothing, so an operator clearing an effect by hand is adopted as it always
-  was. The status line says how many values were kept, since the console is not reachable in an installed
+  What separates this from an operator's own No Effect on the unit is the rate the READ has evidence of —
+  the one it established (`ReadbackResult.deviceSampleRate`) or one the unit announced while it ran — never
+  the plan's own copy, which under the *Scene only* device scope is restored across a read and can name a
+  rate the unit left long ago. A read with NEITHER holds nothing, so an operator clearing an effect by hand
+  is adopted as it always was. The status line says how many values were kept, since the console is not reachable in an installed
   build.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
