@@ -266,6 +266,11 @@ test.describe("T1 overtake", () => {
     await param(page, "Threshold").locator('input[type="range"]').focus();
     await page.keyboard.press("ArrowUp");
     await settleAfter(page, "edit-engine-slot", 1800);
+    // Read back rather than hard-coded: the slot's value is one detent from the device's
+    // own default, and pinning the number here would make this case fail on a default
+    // change instead of on the thing it watches.
+    const slotWrites = setsOf(await traceOf(page)).filter((s) => s.addr?.startsWith(COMPANDER_ENGINE));
+    const slotValue = slotWrites[slotWrites.length - 1]!.value!;
 
     // The excursion, in the shape the unit performs it: 192 kHz is past the compander's
     // 96 kHz ceiling, its addresses read cleared, and the rate is the only announcement.
@@ -295,8 +300,11 @@ test.describe("T1 overtake", () => {
     // stops being a select — while a plan that had adopted the clearing would write
     // nothing here at all, which is the difference this case exists to see.
     expect(reSel?.value).toBe(COMPANDER_H);
-    expect(engine.length).toBeGreaterThan(0);
-    expect(reOn).toBeDefined();
+    // The VALUES, not just the addresses: an effect re-selected and then re-sent bypassed
+    // is restored and muted, which is the failure the emit order exists to prevent, and a
+    // re-sent engine slot at the type's default is the plan's tuning quietly gone.
+    expect(engine.map((s) => s.value)).toEqual([slotValue]);
+    expect(reOn?.value).toBe(1);
     // …and in the order the unit takes it: selector, the values it applies to, then the
     // bypass intent (t2-shape-change pins the same order for an ordinary selection).
     expect(reSel!.seq).toBeLessThan(Math.min(...engine.map((s) => s.seq)));
