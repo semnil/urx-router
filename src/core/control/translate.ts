@@ -706,7 +706,7 @@ export function eqOneKnob(model: DeviceModel, nodeId: string, compEqType: number
 export interface DynField {
   /** The GateParams / CompParams / EqBand sub-field this controls, or one of the SSMCS
    *  keys the descriptor flattens its nested sub-objects onto. */
-  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey;
+  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey | InsertFxFieldKey;
   /** The catalog row the numeric writer emits this value through. Absent for the SSMCS
    *  strip, whose commands are built from the plan's own nested shape
    *  (`pushSsmcsCommands`) rather than from a field table — a name here would be a
@@ -741,6 +741,18 @@ export type EmittedDynField = DynField & { name: ParamName };
  *  descriptor flattens `ssmcs` and `ssmcs.sc` onto one record, so the side-chain
  *  filter's three values are prefixed to keep them apart from the compressor's. */
 export type SsmcsFieldKey = "compDrive" | "morphing" | "outGain" | "scQ" | "scFreq" | "scGain";
+
+/** An insert-FX engine value, named by the FAMILY and the SLOT it occupies. Those values
+ *  live in `insertFxParams` keyed the same way rather than in a sub-object of their own, so
+ *  there is no parameter name to borrow — and the same slot means a different parameter
+ *  under each family, which is why the family is part of the key rather than resolved from
+ *  the plan when the value is written. A row can outlive the family it was built for: a
+ *  device follow can replace the effect while a slider is under the pointer, and the drag
+ *  goes on firing at the row that is already detached. With the family in the key, that
+ *  write lands in the outgoing family's parked values — where a selector change would have
+ *  parked them anyway — instead of under the incoming family's slot of the same number,
+ *  which is a different parameter on a different scale. */
+export type InsertFxFieldKey = `ifx:${string}:${number}`;
 
 const SSMCS_SC_PREFIX = /^sc[A-Z]/;
 
@@ -1113,9 +1125,10 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
 // raw. The selector (emitted by the caller) binds the engine first.
 // Only slots the plan explicitly carries are written; absent slots are left to
 // the device's per-type defaults populated by the selector (guitar-amp common
-// params differ per type, so a single catalog default would clobber them). A
-// plan read back from the device carries every slot, so it still round-trips in
-// full.
+// params differ per type, so a single catalog default would clobber them). The
+// writable list is a deliberate subset of what a readback fills: a slot the unit
+// answers but this app must not write back is in insertFxReadableSlots and not
+// here, so a read does not round-trip in full.
 // A slot is read under the selected family's own key, then under the bare slot
 // number — the device-shaped namespace a readback writes, which is by construction
 // the family the selector named at the time. Anything the plan stored for ANOTHER

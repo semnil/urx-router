@@ -235,8 +235,39 @@ export const PITCH_SCALE_HARMONIC_MINOR = 4;
 export const PITCH_SCALE_MELODIC_MINOR = 5;
 export const PITCH_SCALE_PENTATONIC = 6;
 export const PITCH_SCALE_CHROMATIC = 7;
-/** Note-keyboard array slots (12 semitones from the Key root). */
+/**
+ * Note-keyboard array slots. The twelve are ABSOLUTE semitones — slot 22 is C whatever the
+ * Key is — measured on a URX44V by setting Key = G with Scale = Major and reading them
+ * back: C D E F# G A B, which is G major written from C. Every mask the earlier
+ * calibration captured was taken at Key = C, where the two readings coincide.
+ */
 export const PITCH_NOTE_SLOTS = [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33];
+
+/**
+ * Which semitones each Scale preset turns on, as offsets from the Key.
+ *
+ * The unit derives the twelve-note mask itself from the Scale enum and the Key, for every
+ * preset and at every key — read off a URX44V at Key = C and Key = G, where the offsets
+ * came back identical while the absolute bits moved. So the app can author any of them
+ * rather than only the two it could spell, and the mask it writes agrees with what the
+ * unit would have derived instead of overwriting it with a C-rooted one.
+ *
+ * Custom is null: it is not a pattern. Selecting it leaves the mask exactly as it is, which
+ * is also what the unit does to the enum when a note is edited — it sets Custom on its own.
+ */
+export const PITCH_SCALE_OFFSETS: Readonly<Record<number, readonly number[] | null>> = {
+  [PITCH_SCALE_CUSTOM]: null,
+  [PITCH_SCALE_SINGLE]: [0],
+  [PITCH_SCALE_MAJOR]: [0, 2, 4, 5, 7, 9, 11],
+  [PITCH_SCALE_NATURAL_MINOR]: [0, 2, 3, 5, 7, 8, 10],
+  [PITCH_SCALE_HARMONIC_MINOR]: [0, 2, 3, 5, 7, 8, 11],
+  [PITCH_SCALE_MELODIC_MINOR]: [0, 2, 3, 5, 7, 9, 11],
+  [PITCH_SCALE_PENTATONIC]: [0, 2, 4, 7, 9],
+  [PITCH_SCALE_CHROMATIC]: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+};
+
+/** The Key the mask is derived against (engine slot 15, raw 0..11 = C..B). */
+export const PITCH_KEY_SLOT = 15;
 /** MIDI Control: enable bit (slot 34) + realtime bit (slot 35). */
 export const PITCH_MIDI_ENABLE_SLOT = 34;
 export const PITCH_MIDI_REALTIME_SLOT = 35;
@@ -337,10 +368,25 @@ export const MBC_BANDS: Array<{ band: "low" | "mid" | "high" } & Record<MbcBandK
   { band: "mid", attack: 13, threshold: 14, ratio: 15, gain: 16 },
   { band: "high", attack: 18, threshold: 19, ratio: 20, gain: 21 },
 ];
+/**
+ * Band Bypass. Deliberately NOT in `MBC_GLOBAL`, which is what the writable-slot
+ * enumeration walks — a slot listed there is emitted from the plan on every flush.
+ *
+ * It bypasses the band the UNIT has selected, not all three and not one this app can
+ * name: measured on a URX44V by driving LOW / MID / HIGH to different reduction depths
+ * (`133:0/1/2` reading -10 / -4 / 0 dB) and setting the slot, after which MID alone
+ * stopped reducing while LOW stayed where it was. Which band that is comes from the
+ * panel, and the panel's selection is on no address — it is not the last band written
+ * either, since the write before it was LOW's.
+ *
+ * So the app can neither predict nor choose what a write here would do, and it writes
+ * nothing. Keeping the number is what stops it being rediscovered as an unused slot.
+ */
+export const MBC_BYPASS_SLOT = 17;
+
 export const MBC_GLOBAL = {
   oneKnobOn: 6, // bool
   oneKnobLevel: 7, // raw 0..48
-  bypass: 17, // bool
   xoverLowMid: 23, // freq table
   xoverMidHigh: 24, // freq table
   release: 25, // MBC_RELEASE_MS index
@@ -352,12 +398,11 @@ export const MBC_ONE_KNOB_LEVEL_MAX = 48;
 export const MBC_OUT_GAIN_RAW_MIN = 52;
 export const MBC_OUT_GAIN_RAW_MAX = 76;
 /** Calibrated raw bounds for the writable MBC global slots — the single source the
- *  emit-path firewall (insertFxWritableSlots) and the inspector share. The two
- *  device-managed bool flags (oneKnobOn / bypass) carry the bool range: a slot
- *  reaching the emit path without bounds opts out of that firewall silently. */
+ *  emit-path firewall (insertFxWritableSlots) and the inspector share. The one
+ *  device-managed bool flag (oneKnobOn) carries the bool range: a slot reaching the emit
+ *  path without bounds opts out of that firewall silently. */
 export const MBC_GLOBAL_BOUNDS: Record<keyof typeof MBC_GLOBAL, { rawMin: number; rawMax: number }> = {
   oneKnobOn: { rawMin: 0, rawMax: 1 },
-  bypass: { rawMin: 0, rawMax: 1 },
   oneKnobLevel: { rawMin: 0, rawMax: MBC_ONE_KNOB_LEVEL_MAX },
   xoverLowMid: { rawMin: MBC_XOVER_LM_RANGE.min, rawMax: MBC_XOVER_LM_RANGE.max },
   xoverMidHigh: { rawMin: MBC_XOVER_MH_RANGE.min, rawMax: MBC_XOVER_MH_RANGE.max },
@@ -462,6 +507,11 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
 // Guitar Amp Classics (engine 697). Common params shared by all four types, plus
 // the type-specific slot 6 and the per-type extras.
 const GUITAR_COMMON_PARAMS: InsertFxParamDesc[] = [
+  // Slot 7 is Volume on Clean and Gain on the other three — the label the unit prints,
+  // confirmed on the hardware and listed that way by the effect guide (Volume under
+  // CLEAN Only, Gain repeated under each of the other three). The slot, the encoding and
+  // the range are one thing across all four, so it stays here and only its label is
+  // swapped, which keeps the read order the emit path walks.
   { slot: 7, label: "gain", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
   { slot: 9, label: "bass", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
   { slot: 10, label: "middle", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
@@ -573,6 +623,12 @@ function guitarTypeParams(family: InsertFxFamily): InsertFxParamDesc[] {
   }
 }
 
+/** The shared guitar rows for one amp type: slot 7 reads Volume on Clean. */
+function guitarCommon(family: InsertFxFamily): InsertFxParamDesc[] {
+  if (family !== "guitar-clean") return GUITAR_COMMON_PARAMS;
+  return GUITAR_COMMON_PARAMS.map((d) => (d.slot === 7 ? { ...d, label: "volume" } : d));
+}
+
 // The descriptor / writable-slot lists are static per family, so memoize them: the
 // per-node loop in planToCommands (every live-sync tick) and readback both ask for
 // them repeatedly.
@@ -591,7 +647,7 @@ export function insertFxParams(family: InsertFxFamily): InsertFxParamDesc[] {
           ? PITCH_PARAMS
           : family === "mbc"
             ? []
-            : [...GUITAR_COMMON_PARAMS, ...guitarTypeParams(family)];
+            : [...guitarCommon(family), ...guitarTypeParams(family)];
     PARAMS_CACHE.set(family, cached);
   }
   return cached;
@@ -629,6 +685,38 @@ function descBounds(d: InsertFxParamDesc): { rawMin: number; rawMax: number } {
   return { rawMin: d.rawMin as number, rawMax: d.rawMax as number };
 }
 
+/**
+ * Slots the app READS from the unit but never writes.
+ *
+ * The writable list decides both halves — `translate` emits from it and `readback` fills
+ * the plan from it — so a slot dropped from it to stop a write also stops being read, and a
+ * row that displays the value then shows a default instead of what the unit holds. These
+ * are the ones where the app has to know and must not write:
+ *
+ *   Pitch Fix MIDI Control (34 / 35) — setting the enable bit erases a twelve-note mask
+ *     that is FULL and takes the Scale enum to Custom with it (measured), and the notes it
+ *     listens for arrive on a USB-MIDI port of the unit's own. The screen shows the mode.
+ */
+function insertFxReadOnlySlotsOf(family: InsertFxFamily): InsertFxSlotSpec[] {
+  if (family !== "pitch") return [];
+  return [
+    { slot: PITCH_MIDI_ENABLE_SLOT, rawMin: 0, rawMax: 1 },
+    { slot: PITCH_MIDI_REALTIME_SLOT, rawMin: 0, rawMax: 1 },
+  ];
+}
+
+const READ_ONLY_CACHE = new Map<InsertFxFamily, InsertFxSlotSpec[]>();
+
+/** Every slot a device read fills the plan from: the writable ones plus the read-only ones. */
+export function insertFxReadableSlots(family: InsertFxFamily): InsertFxSlotSpec[] {
+  let cached = READ_ONLY_CACHE.get(family);
+  if (!cached) {
+    cached = [...insertFxWritableSlots(family), ...insertFxReadOnlySlotsOf(family)];
+    READ_ONLY_CACHE.set(family, cached);
+  }
+  return cached;
+}
+
 export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[] {
   let cached = SLOTS_CACHE.get(family);
   if (cached) return cached;
@@ -652,10 +740,12 @@ export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[
     }));
     if (family === "pitch") {
       out.push({ slot: PITCH_SCALE_SLOT, rawMin: PITCH_SCALE_CUSTOM, rawMax: PITCH_SCALE_CHROMATIC });
-      // The note keyboard and the two MIDI Control bits are bools.
+      // The note keyboard is bools. MIDI Control (34 / 35) is deliberately NOT here: this
+      // is the list the emit path walks, and setting the enable bit erases a twelve-note
+      // mask that is FULL, taking the Scale enum to Custom with it — measured. A device
+      // readback puts a 1 in the plan without anyone touching the app, so leaving the slot
+      // in the writable set is what would carry that erase to the unit on the next flush.
       for (const slot of PITCH_NOTE_SLOTS) out.push({ slot, rawMin: 0, rawMax: 1 });
-      out.push({ slot: PITCH_MIDI_ENABLE_SLOT, rawMin: 0, rawMax: 1 });
-      out.push({ slot: PITCH_MIDI_REALTIME_SLOT, rawMin: 0, rawMax: 1 });
     }
     cached = out;
   }

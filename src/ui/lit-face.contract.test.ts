@@ -73,8 +73,17 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
 
     const plan = defaultPlan("URX44V");
     const offenders: string[] = [];
+    // A processor that draws no plot has nothing for this to read, so it is skipped — but
+    // the skip is DECLARED rather than taken silently. The plot hooks became optional when
+    // the INS FX screen arrived, which turned a line that had never skipped anything into
+    // one that can absorb a whole processor: a new plot-less descriptor would then be
+    // covered by nothing and turn nothing red.
+    const skipped: string[] = [];
     for (const [kind, proc] of Object.entries(DYN_PROCESSORS)) {
-      if (!proc.drawCurve || !proc.plotGeo) continue;
+      if (!proc.drawCurve || !proc.plotGeo) {
+        skipped.push(kind);
+        continue;
+      }
       // Band 0 selected, so the EQ's lit marker is among the faces drawn. A processor
       // that ignores `sel` is unaffected by it.
       const ctx = { nodeId: "ch1", sel: 0, plan } as never;
@@ -86,5 +95,6 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
       }
     }
     expect(offenders, "fill the face with --led-face and write --on-accent-ink on it").toEqual([]);
+    expect(skipped, "a processor that draws no plot has to be named here").toEqual(["insfx"]);
   });
 });

@@ -37,6 +37,20 @@ no hint of which picture it selects, so supporting it means calibrating the whol
 glyph set against the unit's screen first. The name and the color are supported because their values are
 self-describing.
 
+## The Multi-Band Compressor's Band Bypass is not offered
+
+The unit's multi-band compressor has a **Bypass** for one band, and the planner does not
+offer it or write it. The setting is a single value on the effect's engine, but it acts on
+the band the **unit** currently has selected, and that selection reaches no address the app
+can read or set — so a write from here would land on a band it cannot name.
+
+Measured on a URX44V: with LOW, MID and HIGH driven to different reduction depths (their
+meters reading -10, -4 and 0 dB), setting the value stopped MID alone while LOW went on
+reducing. It is not the last band the app wrote either — the write before it was LOW's.
+
+Everything else on that effect is offered: the three bands' Threshold, Ratio, Attack and
+Gain, the shared Release, both crossover frequencies, the output gain, and the 1-knob.
+
 ## CUE (solo/monitor interrupt) assignment cannot be controlled
 
 Each device channel has a **CUE** button that interrupts the monitor with that

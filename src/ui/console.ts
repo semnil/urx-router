@@ -46,7 +46,8 @@ import { markMidi } from "./midi-learn";
 import type { MidiLearnHooks } from "./midi-learn";
 import {
   channelEqUnavailable,
-  insertFxAllRateLocked,
+  formatRate,
+  insertFxRateLock,
   insertFxCensus,
   insertFxFree,
   insertFxMenu,
@@ -1948,18 +1949,26 @@ export class Console {
       // The chip has two duties, and its lock composes them off the one menu
       // core/constraints.ts computes — the menu the inspector's selector renders,
       // so the chip cannot hand a strip what that selector greys out. Holding an
-      // effect makes it a bypass, locked only where the rate rules every effect out
-      // (above 96 kHz none of them runs): forced off and read-only, the treatment
-      // the stereo EQ gets. Holding none makes it take a slot, locked when nothing
-      // is free — the tooltip naming which of the two reasons applies.
+      // effect makes it a bypass, locked where the rate rules THAT effect out: forced
+      // off and read-only, the treatment the stereo EQ gets. Holding none makes it take
+      // a slot, locked when nothing is free — the tooltip naming which of the two
+      // reasons applies, which is why the rate question is asked of a strip holding
+      // nothing too: above every ceiling it is the rate and not the slots.
       const menu = insertFxMenu(model, this.hooks.getPlan(), m.id, this.ifxCensus ?? undefined);
       const free = insertFxFree(menu);
-      const rateLocked = insertFxAllRateLocked(menu);
       const holds = insertFxSelected(planOf());
+      // The lock the HELD effect carries, not the menu's: Pitch Fix stops at 48 kHz where
+      // the amps and companders reach 96, so a strip holding it at 88.2 kHz is off while
+      // the menu it came from still offers effects that run.
+      const { locked: rateLocked, entry: selected } = insertFxRateLock(menu, planOf().insertFx);
       const locked = holds ? rateLocked : !free.length;
       if (locked)
         this.makeChip(m.id, proc, "INS FX", false, false, () => false, {
-          readonlyTitle: rateLocked ? t().inspector.insFxRateLocked : t().inspector.insFxSlotLocked,
+          readonlyTitle: !rateLocked
+            ? t().inspector.insFxSlotLocked
+            : selected?.option.maxRate !== undefined
+              ? t().inspector.insFxRateLockedAt(selected.option.label, formatRate(selected.option.maxRate))
+              : t().inspector.insFxRateLocked,
         });
       // Taking a slot removes it from every other strip's chip and menu, so that
       // branch rebuilds the whole view; a bypass changes this strip alone and keeps

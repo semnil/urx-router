@@ -1947,6 +1947,42 @@ input[type="range"]:focus-visible,
 /* Joined segmented bar, shared with the Device setup screen's knob-bank switch. */
 .view-tabs,
 .udk-banks,
+/* The twelve semitone buttons on the Pitch Fix scale face. Twelve independent toggles
+   rather than one selection, so they share the segment bar's look and not its behaviour —
+   and they are named from C in a straight row on purpose: the slots are absolute semitones,
+   and a black-and-white keyboard would draw a root that is not there. Each button takes the
+   narrowest padding the mono face allows, because twelve of them share one control column. */
+.gt-notes {
+  display: flex;
+  border: 1px solid var(--ctl-border);
+  border-radius: 7px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.gt-notes button {
+  font: 700 10px var(--mono);
+  letter-spacing: 0;
+  padding: 7px 5px;
+  border: 0;
+  border-right: 1px solid var(--ctl-border);
+  background: var(--ctl-bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 1 1 0;
+}
+.gt-notes button:last-child {
+  border-right: 0;
+}
+.gt-notes button[aria-pressed="true"] {
+  color: var(--on-accent-ink);
+  background: var(--led-face);
+  border-color: var(--led-ink);
+}
+.gt-notes button:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
+}
 .gt-modes {
   display: flex;
   border: 1px solid var(--ctl-border);
@@ -3907,8 +3943,17 @@ button.consent-btn-primary {
 #dyn-screen-box .prefs-grid {
   grid-template-columns: 1fr 400px;
 }
+/* Reversed: the parameters take the flexible column and the meters a narrow fixed one.
+   A guitar amp's panel is a dozen controls and its display is a level rack with nothing
+   else in it, so the widths swap with the order. Selected by a class the host adds, one
+   step more specific than the rule above, which is why the narrow-window rule below has
+   to be restated for it too — a media query adds no specificity of its own. */
+#dyn-screen-box .prefs-grid.gt-paramsleft {
+  grid-template-columns: 1fr 230px;
+}
 @media (max-width: 860px) {
-  #dyn-screen-box .prefs-grid {
+  #dyn-screen-box .prefs-grid,
+  #dyn-screen-box .prefs-grid.gt-paramsleft {
     grid-template-columns: 1fr;
   }
 }
@@ -3928,8 +3973,14 @@ button.consent-btn-primary {
      box's own edge on each of the six readings. 211px is what the
      modal wraps around the grid (a 683px box over a 520px one) plus the 48px the box keeps
      clear of the viewport, so the second term is the grid's own share of the shortest
-     window it has to survive. */
-  min-height: min(520px, calc(100vh - 211px));
+     window it has to survive.
+
+     The 520px is the shipped bank's number and the default a face gets. A bank whose
+     tallest face needs more says so from its binding, which sets `--gt-face-min` here: the
+     INS FX guitar amp's AMP face measures 614px in English and 622px in Japanese (Chromium,
+     macOS, 1280x900) against its cabinet face's 520, so without one the modal would jump
+     94px on the segment that moves between them — the jump this rule exists to remove. */
+  min-height: min(var(--gt-face-min, 520px), calc(100vh - 211px));
   /* Below the reserve the panel would CLIP rather than shrink — a column has nowhere to
      put its rows and the box hides what overflows — so the grid takes a scroll instead of
      losing the rows off the bottom. Inert at any window tall enough for the reserve. */
@@ -4318,6 +4369,7 @@ button.consent-btn-primary {
   #inspector .toggle button.on,
   .prefs-toggle button.on,
   .udk-banks button[aria-pressed="true"],
+  .gt-notes button[aria-pressed="true"],
   .menu-panel .menu-item[aria-pressed="true"],
   .mw-learnbtn.on,
   .con-panbtn.open {

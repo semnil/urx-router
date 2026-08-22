@@ -15,7 +15,9 @@ import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test
 import type { ConsoleMidiHooks } from "./console";
 import { sendConnection } from "../core/plan";
 import { PAN_BAL_BAL } from "../core/control/params";
-import { insertFxSelected } from "../core/control/params";
+import { INSERT_FX_OPTIONS, insertFxSelected } from "../core/control/params";
+import { defaultPlan } from "../models/initial-state";
+import { t } from "../i18n";
 
 let h: ConsoleHost;
 
@@ -460,6 +462,37 @@ describe("the INS FX chip", () => {
     expect(chipOf("ch1").getAttribute("aria-pressed")).toBe("false");
     chipOf("ch1").click();
     expect(chipOf("ch1").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // A strip holding NOTHING is locked too above every ceiling, and the reason it gives has
+  // to be the rate: no effect is free because none of them runs, not because another strip
+  // took the slot. The per-effect reading has to keep answering that question for a strip
+  // with no effect of its own to ask it about.
+  it("names the rate, not the slots, on a strip holding nothing above every ceiling", () => {
+    const plan = defaultPlan("URX44V");
+    plan.sampleRate = 192000;
+    h = consoleHost({ plan });
+    expect(chipOf("ch1").getAttribute("aria-disabled")).toBe("true");
+    expect(chipOf("ch1").title).toBe(t().inspector.insFxRateLocked);
+  });
+
+  // The ceilings are per effect, so the rate that switches a strip off depends on what
+  // that strip holds. 88.2 kHz is above Pitch Fix's 48 and below the amps' and companders'
+  // 96: a menu-wide reading says every effect still runs and leaves the chip live, which
+  // is a bypass toggle over DSP the unit has already dropped.
+  it("locks off a strip holding an effect the rate rules out, while its neighbours run", () => {
+    const plan = defaultPlan("URX44V");
+    plan.sampleRate = 88200;
+    plan.nodeParams["ch1"] = { insertFx: INSERT_FX_OPTIONS.find((o) => o.label === "Pitch Fix")!.value };
+    plan.nodeParams["ch2"] = { insertFx: INSERT_FX_OPTIONS.find((o) => o.label === "Clean")!.value };
+    h = consoleHost({ plan });
+
+    expect(chipOf("ch1").getAttribute("aria-disabled")).toBe("true");
+    expect(chipOf("ch1").getAttribute("aria-pressed")).toBe("false");
+    expect(chipOf("ch1").title).toContain("Pitch Fix");
+    expect(chipOf("ch1").title).toContain("48 kHz");
+
+    expect(chipOf("ch2").getAttribute("aria-disabled")).toBeNull();
   });
 });
 

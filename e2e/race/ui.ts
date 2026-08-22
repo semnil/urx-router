@@ -40,6 +40,26 @@ export const openEqScreen = (page: Page, id: string): Promise<void> => openDynSc
 export const openSsmcsScreen = (page: Page, id: string): Promise<void> =>
   openDynScreen(page, id, /^SSMCS$/, "btn-ssmcs-screen");
 
+/** Select a node and open its insert-FX tuning screen. It does not go through
+ *  `openDynScreen` because on a channel the launcher is not in a section at all — the
+ *  Insert FX control sits loose in the inspector there, and only a bus groups it into a
+ *  Parameters section — so the ancestor is opened when there is one and skipped when
+ *  there is not. */
+export async function openInsertFxScreen(page: Page, id: string): Promise<void> {
+  await graphNode(page, id).click();
+  const btn = page.locator("#inspector #btn-insfx-screen");
+  await btn.evaluate((el) => el.closest("details")?.setAttribute("open", ""));
+  await btn.click();
+  await expect(page.locator("#dyn-screen-box")).toBeVisible();
+}
+
+/** Dismiss whichever tuning screen is open. A case that goes on to touch the inspector or
+ *  the CONSOLE has to: the screen is modal and everything behind it is unreachable. */
+export async function closeDynScreen(page: Page): Promise<void> {
+  await page.locator("#dyn-screen-box .consent-btn-secondary").click();
+  await expect(page.locator("#dyn-screen-box")).toBeHidden();
+}
+
 /** A tuning screen's row, by the exact label it prints. */
 export const screenRow = (page: Page, label: string): Locator =>
   page.locator("#dyn-screen-box .prefs-row").filter({ has: page.getByText(label, { exact: true }) });

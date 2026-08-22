@@ -26,7 +26,7 @@ import type { ControlParam } from "../core/midi/controls";
 import { bindChannelStrip, subObjectIo } from "./dyn-chan";
 import { drawTransferCurve, kneeResponse, transferPlot } from "./dyn-plot";
 import { oneKnobLevelRow } from "./dyn-screen";
-import type { DynCtx, DynProcessor, DynValues } from "./dyn-screen";
+import type { DynCtx, DynPlotProcessor, DynValues } from "./dyn-screen";
 
 /** Input axis = the threshold's own domain (-54…0 dB). Ticks every 6 dB. */
 const LO_DB = -54;
@@ -99,7 +99,7 @@ function makeupOf(ctx: DynCtx): number {
   return typeof v === "number" ? v : def;
 }
 
-export const COMP_DYN: DynProcessor = {
+export const COMP_DYN: DynPlotProcessor = {
   key: "comp",
   loDb: LO_DB,
   tickStep: 6,

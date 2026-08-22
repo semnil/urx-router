@@ -341,6 +341,11 @@ export const en = {
     prePostLcdOnly: tr("CH → FX send Pre/Post is set on the device only (not writable from software)."),
     eqRateLocked: tr("Stereo channel EQ is disabled at 176.4 / 192 kHz — forced off."),
     insFxRateLocked: tr("Insert FX is unavailable above 96 kHz — forced off."),
+    // The effect the node HOLDS, named with its own ceiling: the ceilings differ per
+    // effect (Pitch Fix stops at 48 kHz where the amps and companders reach 96), so the
+    // sentence above can only be said of a value this app's own table does not carry.
+    insFxRateLockedAt: (effect: string, maxRate: string): string =>
+      `${effect} is unavailable above ${maxRate} — forced off.`,
     insFxSlotLocked: tr("Every insert effect is in use — each occupies one device-wide slot."),
     channelOn: tr("Channel"),
     sendOn: tr("Send"),
@@ -425,6 +430,9 @@ export const en = {
       bandHigh: dev("HIGH"),
       oneKnob: dev("1-Knob"),
       scale: dev("Scale"),
+      // The twelve semitone buttons. Absolute, named from C — the unit stores them that
+      // way whatever the Key is.
+      scaleNotes: tr("Notes"),
       scaleChromatic: dev("Chromatic"),
       scaleMajor: dev("Major"),
       scaleCustom: dev("Custom"),
@@ -433,6 +441,12 @@ export const en = {
       scaleHarmonicMinor: dev("Harmonic Minor"),
       scaleMelodicMinor: dev("Melodic Minor"),
       scalePentatonic: dev("Pentatonic"),
+      // The pill on the MIDI Control row. The reason belongs on the panel and not only in
+      // the tooltip below, which is a hover away.
+      midiControlTag: tr("Set on the device"),
+      midiControlDeviceOnly: tr(
+        "MIDI Control is set on the device. It receives on the unit's own USB-MIDI port, and switching it on clears a full note mask.",
+      ),
       params: {
         threshold: dev("Threshold"),
         ratio: dev("Ratio"),
@@ -441,6 +455,7 @@ export const en = {
         outGain: dev("Out Gain"),
         width: dev("Width"),
         gain: dev("Gain"),
+        volume: dev("Volume"),
         bass: dev("Bass"),
         middle: dev("Middle"),
         treble: dev("Treble"),
@@ -471,7 +486,6 @@ export const en = {
         midiControl: dev("MIDI Control"),
         oneKnobOn: dev("1-Knob"),
         oneKnobLevel: dev("1-Knob Level"),
-        bypass: dev("Bypass"),
         xoverLowMid: dev("L-M XOVER"),
         xoverMidHigh: dev("M-H XOVER"),
       },
@@ -647,6 +661,38 @@ export const en = {
       tapGr: dev("Ducker GR"),
       tapOut: dev("Post"),
       hint: tr("The diagonals are times, not the shape of the change. Key is one bar even in stereo: L and R, summed."),
+    },
+    // One screen for four effect families: the title names the effect the node holds,
+    // since the selector that picked it is on another surface. Two output taps, because
+    // an insert effect sits before the fader on a channel and after it on a bus.
+    insfx: {
+      title: dev("INS FX"),
+      open: tr("Insert FX screen"),
+      tapIn: dev("Pre Ins FX"),
+      tapOut: dev("Pre Fader"),
+      tapOutBus: dev("Post"),
+      tapGr: dev("Ins FX GR"),
+      // The heading over the two-face segment. It names which face is being ADJUSTED
+      // rather than a way of displaying one, which is why it is not the "Display" the
+      // other screens' bars sit under.
+      faceBar: tr("View"),
+      // The guitar amp's two faces. `fixed()` rather than `dev()`: the unit's own INS FX
+      // screen is one page — the user guide shows an effect menu and a meter and nothing
+      // else, and the effect guide groups these parameters without pages — so the split is
+      // this app's, and the two abbreviations read the same in every language.
+      faceAmp: fixed("AMP"),
+      faceCab: fixed("CAB"),
+      // Pitch Fix's two faces: what the correction does to a note, and what decides which
+      // notes there are. `fixed()` for a different reason from AMP / CAB, which are
+      // abbreviations: these are ordinary words, and what keeps them out of translation is
+      // that they are set beside AMP / CAB on the same bar, in the same Latin caps, and one
+      // translated face label among four would read as a different kind of control.
+      facePitch: fixed("PITCH"),
+      faceScale: fixed("SCALE"),
+      // Speed and Depth on the Clean amp: the selector beside them decides whether they
+      // reach anything.
+      vibOnly: tr("Vib only"),
+      bypassed: tr("Bypassed — the values are kept and edited here, but nothing they are set to reaches the signal."),
     },
   },
   shelf: {

@@ -32,7 +32,7 @@ import type { ParamName } from "./params";
 import { writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_LEVEL, FX_SLOT_ON, fxParams } from "./fx-effect";
-import { insertFxEngine, insertFxFamilyOf, insertFxWritableSlots } from "./insert-fx-effect";
+import { insertFxEngine, insertFxFamilyOf, insertFxReadableSlots } from "./insert-fx-effect";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   addrKey,
@@ -591,7 +591,10 @@ async function readPass(
       if (fam) {
         const engine = insertFxEngine(fam, ifx.isOutput);
         insertFxParams = {};
-        for (const s of insertFxWritableSlots(fam)) {
+        // Readable, not writable: MIDI Control is shown and never written, and the row that
+        // shows it would print a default instead of the unit's value if the read followed
+        // the emit path's own list.
+        for (const s of insertFxReadableSlots(fam)) {
           insertFxParams[String(s.slot)] = await vdGet(engine, 0, s.slot);
         }
       }

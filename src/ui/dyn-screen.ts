@@ -163,6 +163,20 @@ export interface DynBinding {
    *  five might not, and a threshold on `lanes.length` is a guess dressed as a rule —
    *  the same guess `nodeLabel` and the optional `bar` exist to avoid. Absent = 3. */
   readoutCols?: number;
+  /** The height a bank reserves for all of its faces, where the stylesheet's own number is
+   *  not enough. Declared by the binding, like `readoutCols`, because it is a property of
+   *  what the node HOLDS: a guitar amp's panel is eleven rows and overflows the shared
+   *  reserve, and raising that reserve would grow every other bank's faces with it.
+   *  Absent = the stylesheet's number. Every face of one bank must answer the same value,
+   *  or the modal resizes between them, which is what the reserve exists to stop. */
+  faceReserve?: number;
+  /** Put the parameters on the left and the meters in a narrow column on the right,
+   *  instead of the display column first. Declared by the binding rather than by the
+   *  descriptor because it is a property of what this node HOLDS: the INS FX screen
+   *  reverses for a guitar amp, whose panel is a grid of a dozen controls and whose
+   *  display is a level rack and nothing else, and keeps the ordinary order for the
+   *  companders, whose display is the point. */
+  paramsFirst?: true;
 }
 
 /** Everything a descriptor is asked its questions against. `sel` is whatever the
@@ -252,7 +266,10 @@ export interface DynRows {
 export interface DynProcessor {
   /** Identity: the segmented bar's persistence key, and the registry's own. */
   key: string;
-  title: (m: Messages) => string;
+  /** The screen's own name. Takes the context because one descriptor can stand for more
+   *  than one thing: the INS FX screen shows whichever effect the node holds, and a title
+   *  that could not read the plan would name the slot instead of what is in it. */
+  title: (m: Messages, ctx: DynCtx) => string;
   /** What the title names the screen as belonging to. Defaults to the node's own
    *  canvas label, which is right wherever the screen opens on the thing it tunes.
    *  The DUCKER opens on the ducker node, whose label is "Ducker" — beside a title
@@ -270,8 +287,13 @@ export interface DynProcessor {
   /** The segmented bar over the display, where there is something to pick. Absent
    *  where there is not: the DUCKER shows its envelope and its lanes at once, as the
    *  EQ does, so nothing chooses between them and a heading reading "Display" over a
-   *  bar with no buttons would name a choice that does not exist. */
-  bar?: (ctx: DynCtx) => DynBar;
+   *  bar with no buttons would name a choice that does not exist.
+   *
+   *  It may also answer nothing for a PARTICULAR node, which is what a descriptor
+   *  standing for more than one thing needs: the INS FX screen shows a two-face bank on
+   *  a guitar amp and a single face on a compander, and the reserve the host puts in a
+   *  bar's place is the same either way. */
+  bar?: (ctx: DynCtx) => DynBar | undefined;
   /** Keep the bar's choice across opens and sessions (it picks a way of reading the
    *  processor), rather than resetting per open (it is a cursor into the parameters). */
   persistSel?: true;
@@ -299,12 +321,12 @@ export interface DynProcessor {
   sections?: (ctx: DynRowCtx) => HTMLElement[];
   /** A label for a field whose key the shared `inspector.dyn` table does not name (or
    *  names differently — COMP's `gain` is a makeup gain, the EQ's is a band gain). */
-  fieldLabel?: (f: DynField, m: Messages) => string | undefined;
+  fieldLabel?: (f: DynField, m: Messages, ctx: DynCtx) => string | undefined;
   /** The display text for a field whose value is not readable from the number alone —
    *  a raw broker integer, which reaches a millisecond, a ratio or a hertz only through
    *  a device curve. Undefined falls back to the field's unit, which is what the one
    *  raw value that IS its own display (the morphing position) takes. */
-  fieldText?: (f: DynField, v: number) => string | undefined;
+  fieldText?: (f: DynField, v: number, ctx: DynCtx) => string | undefined;
   /** The MIDI control id one of this processor's value keys is addressable by, or
    *  null where there is none (the enum selectors are deliberately not mappable).
    *  Which processor and which band a key belongs to is the descriptor's business —
@@ -316,10 +338,16 @@ export interface DynProcessor {
   paramsTag?: (ctx: DynCtx) => { text: string; shown: boolean } | undefined;
   /** Arrange the parts into the display column. */
   display: (parts: DynParts) => HTMLElement;
-  plotGeo: (w: number, h: number, ctx: DynCtx) => DynPlotGeo;
+  /** The three below belong to the plot, and a display that does not call `parts.plot()`
+   *  omits all three — the INS FX screen does: a guitar amp's frequency response and a
+   *  pitch tracker are not derivable from the parameters, so a curve there would be an
+   *  invention. Nothing is drawn without a canvas, so the omission is inert rather than a
+   *  blank frame; `DynPlotProcessor` is what keeps the three together wherever one of them
+   *  is supplied. */
+  plotGeo?: (w: number, h: number, ctx: DynCtx) => DynPlotGeo;
   /** The plot's frame: grid, tick labels, axis names, any reference line. Drawn
    *  unclipped, because the tick labels belong in the gutters `geo.pad` reserves. */
-  drawAxes: (c: CanvasRenderingContext2D, geo: DynPlotGeo, tok: Record<string, string>, ctx: DynCtx) => void;
+  drawAxes?: (c: CanvasRenderingContext2D, geo: DynPlotGeo, tok: Record<string, string>, ctx: DynCtx) => void;
   /**
    * The response itself. **Clipped by the host to the plot area**, which is the contract
    * that keeps every plot honest: draw the true value and let it leave the frame, rather
@@ -331,7 +359,7 @@ export interface DynProcessor {
    * An annotation of a value (a label, a leader line) may still be clamped so it stays
    * readable — it describes the value rather than being it. Do that deliberately.
    */
-  drawCurve: (
+  drawCurve?: (
     c: CanvasRenderingContext2D,
     geo: DynPlotGeo,
     v: DynValues,
@@ -378,7 +406,27 @@ export interface DynProcessor {
    * that is what the operator selects them from.
    */
   banked?: true;
+  /**
+   * What this bank is a bank OF, where that can change under an open screen. The host
+   * remembers it at `open` and compares it on every refresh; when it moves, the screen
+   * goes back to the descriptor it was opened with and its first segment before it
+   * re-binds.
+   *
+   * Only the INS FX screen has one. Its faces belong to the effect the node HOLDS, and a
+   * device follow can replace that effect with one whose faces are different or with none
+   * at all — and neither of the two things the host does on its own is right there. A
+   * face whose `bind` answers null CLOSES the screen, which is correct for a bank taken
+   * away and wrong for one replaced; and a `sel` nothing resets would carry a guitar
+   * amp's CAB segment onto a compander that has no second face.
+   */
+  bankIdentity?: (ctx: DynCtx) => string;
 }
+
+/** A processor whose display carries a plot: the three drawing hooks are required, so
+ *  everything holding one of these reaches them without a null check. Every descriptor
+ *  that calls `parts.plot()` is declared as one, which is what keeps the optionality on
+ *  `DynProcessor` from spreading into every caller. */
+export type DynPlotProcessor = DynProcessor & Required<Pick<DynProcessor, "plotGeo" | "drawAxes" | "drawCurve">>;
 
 /** Peak hold, in notify frames (100 ms each). Nothing on the device sets this —
  *  the level meters hold in hardware and GR holds not at all — so it is a UI
@@ -536,6 +584,12 @@ export class DynScreen {
   private lanes: DynLane[] = [];
   /** What the binding declared about the readouts. Only the column count so far. */
   private readoutCols = READOUT_COLS_DEFAULT;
+  private paramsFirst = false;
+  private faceReserve: number | null = null;
+  /** The descriptor `open` was called with, and what its bank was a bank of at the time.
+   *  A bank whose identity moves goes back to both. */
+  private entryProc: DynProcessor | null = null;
+  private bankId = "";
   private unsub: (() => void) | null = null;
   private raf = 0;
   /** The address set the current registration covers, and a counter that supersedes
@@ -657,9 +711,13 @@ export class DynScreen {
     this.proc = proc;
     this.nodeId = nodeId;
     this.sel = sel;
+    this.entryProc = proc;
+    this.bankId = proc.bankIdentity?.({ ...this.ctx(), nodeId, sel }) ?? "";
     this.fields = bound.fields;
     this.lanes = bound.lanes;
     this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
+    this.paramsFirst = bound.paramsFirst === true;
+    this.faceReserve = bound.faceReserve ?? null;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     this.peaks.clear();
     this.render();
@@ -692,6 +750,11 @@ export class DynScreen {
    *  follow can move these very parameters while it is open. */
   refresh(): void {
     if (!this.isOpen()) return;
+    // What the bank is a bank OF can change under an open screen — the INS FX screen's
+    // faces belong to the effect the node holds. Decided before `rebind`, because the
+    // face on screen may not exist on the new one and `rebind` would read that as the
+    // processor being gone and close a screen that should have re-bound.
+    this.syncBank();
     // A follow can switch the channel's COMP/EQ bank out from under the screen,
     // which takes the processor away entirely. That verdict is not deferrable —
     // a screen left open on a bank the plan no longer emits would keep writing
@@ -724,6 +787,20 @@ export class DynScreen {
     this.watchPlotSize();
   }
 
+  /** Go back to the descriptor the screen was opened with, and its first segment, when the
+   *  bank stopped being a bank of the same thing. The peak holds go with it: a lane key
+   *  means a different tap under another effect, and a hold carried across would print one
+   *  tap's peak under another's caption. */
+  private syncBank(): void {
+    if (!this.proc?.bankIdentity || !this.entryProc) return;
+    const id = this.proc.bankIdentity(this.ctx());
+    if (id === this.bankId) return;
+    this.bankId = id;
+    this.proc = this.entryProc;
+    this.sel = 0;
+    this.peaks.clear();
+  }
+
   /** Re-resolve what this node has. False (and closed) when the processor is gone — a
    *  follow can switch the channel's COMP/EQ bank out from under an open screen, and a
    *  loaded plan can take the node away entirely. */
@@ -736,6 +813,8 @@ export class DynScreen {
     this.fields = bound.fields;
     this.lanes = bound.lanes;
     this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
+    this.paramsFirst = bound.paramsFirst === true;
+    this.faceReserve = bound.faceReserve ?? null;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
     return true;
   }
@@ -760,7 +839,7 @@ export class DynScreen {
    *  broker integer becomes a millisecond or a hertz only through a device curve; what
    *  it declines falls through to the field's own unit. */
   private valueText(f: DynField, v: number): string {
-    return this.p().fieldText?.(f, v) ?? dynValueText(f, v);
+    return this.p().fieldText?.(f, v, this.ctx()) ?? dynValueText(f, v);
   }
 
   /** Live sync turned on/off while this screen is open. It holds the meter slot
@@ -1159,7 +1238,7 @@ export class DynScreen {
     const ch = el("span", "gt-ch");
     ch.textContent = proc.nodeLabel?.(this.ctx()) ?? channelLabel(this.hooks.getModel(), this.nodeId);
     const name = el("span", "");
-    name.textContent = proc.title(m);
+    name.textContent = proc.title(m, this.ctx());
     title.append(ch, name);
 
     const grid = el("div", "prefs-grid");
@@ -1169,7 +1248,13 @@ export class DynScreen {
     // costs is blank space below the shorter faces; `.gt-faced`'s `min-height` in
     // style.css is where the measurement lives, along with what it yields to.
     if (proc.banked) grid.classList.add("gt-faced");
-    grid.append(this.displayColumn(proc), this.controlColumn(m));
+    if (this.faceReserve !== null) grid.style.setProperty("--gt-face-min", `${this.faceReserve}px`);
+    // A reversed panel is one class plus the DOM order, not a second layout: the two
+    // columns are what they always were, and only which of them is the flexible one moves.
+    const display = this.displayColumn(proc);
+    const controls = this.controlColumn(m);
+    if (this.paramsFirst) grid.classList.add("gt-paramsleft");
+    grid.append(...(this.paramsFirst ? [controls, display] : [display, controls]));
 
     const actions = el("div", "consent-actions");
     const close = el("button", "consent-btn-secondary");
@@ -1191,7 +1276,7 @@ export class DynScreen {
     // operator moves between GATE, COMP, DUCKER and the bank. Reserved through the same
     // builder rather than with a margin, so the space is whatever a bar that does get
     // drawn actually occupies — a constant would be measured once and then track nothing.
-    col.append(bar ? this.displayBar(bar) : this.reservedBar(proc, ctx.m));
+    col.append(bar ? this.displayBar(bar) : this.reservedBar(proc, ctx));
     col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }));
     col.append(this.hintLine(proc, ctx));
     return col;
@@ -1200,10 +1285,11 @@ export class DynScreen {
   /** The display bar's space, with nothing in it. `visibility: hidden` rather than a
    *  height: it keeps the box and takes the heading and the button out of the tab order
    *  and the accessibility tree, which is what an empty reserve has to do. */
-  private reservedBar(proc: DynProcessor, m: Messages): HTMLElement {
+  private reservedBar(proc: DynProcessor, ctx: DynCtx): HTMLElement {
+    const title = proc.title(ctx.m, ctx);
     const sec = this.displayBar({
-      label: proc.title(m),
-      items: [{ label: proc.title(m), id: "", sel: 0 }],
+      label: title,
+      items: [{ label: title, id: "", sel: 0 }],
       inert: true,
     });
     sec.classList.add("gt-reserved");
@@ -1438,7 +1524,9 @@ export class DynScreen {
     const m = t();
     cap.setAttribute(
       "aria-label",
-      (field && this.p().fieldLabel?.(field, m)) ?? (m.inspector.dyn as Record<string, string>)[this.capKey] ?? "",
+      (field && this.p().fieldLabel?.(field, m, this.ctx())) ??
+        (m.inspector.dyn as Record<string, string>)[this.capKey] ??
+        "",
     );
     cap.setAttribute("aria-valuemin", String(this.capField()?.min ?? this.p().loDb));
     cap.setAttribute("aria-valuemax", String(HI_DB));
@@ -1616,7 +1704,7 @@ export class DynScreen {
 
     const params = settingsSection(g.parameters, proc.paramsTag?.(ctx));
     const labels = m.inspector.dyn as Record<string, string>;
-    const label = (f: DynField): string => proc.fieldLabel?.(f, m) ?? labels[f.key] ?? f.key;
+    const label = (f: DynField): string => proc.fieldLabel?.(f, m, ctx) ?? labels[f.key] ?? f.key;
     // One snapshot for the whole column: `read()` walks the plan and allocates, and this
     // used to run once per field on top of once for the rows and once for the states.
     const vals = this.vals();
@@ -1815,9 +1903,10 @@ export class DynScreen {
   /** Plot coordinates for the current size. Cached: it depends only on the size and
    *  the descriptor, and the alternative was two fresh closures plus a spread on
    *  every frame of the loop this file otherwise keeps allocation-free. */
-  private geo(w: number, h: number): DynPlotGeo {
+  private geo(w: number, h: number): DynPlotGeo | null {
     if (this.geoCache && this.geoCache.w === w && this.geoCache.h === h) return this.geoCache;
-    return (this.geoCache = this.p().plotGeo(w, h, this.ctx()));
+    const geo = this.p().plotGeo?.(w, h, this.ctx());
+    return geo ? (this.geoCache = geo) : null;
   }
 
   /** Split into a cached static layer and a live overlay. Everything but the overlay
@@ -1848,7 +1937,8 @@ export class DynScreen {
     c.clearRect(0, 0, cv.width, cv.height);
     if (this.plotLayer) c.drawImage(this.plotLayer, 0, 0);
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.p().drawLive?.(c, this.geo(w, h), this.readLane, this.plotTokens, this.ctx());
+    const geo = this.geo(w, h);
+    if (geo) this.p().drawLive?.(c, geo, this.readLane, this.plotTokens, this.ctx());
   }
 
   /** The static plot, rendered once per parameter / size / theme change. */
@@ -1862,7 +1952,8 @@ export class DynScreen {
     const proc = this.p();
     const geo = this.geo(w, h);
     const ctx = this.ctx();
-    proc.drawAxes(c, geo, this.plotTokens, ctx);
+    if (!geo) return layer;
+    proc.drawAxes?.(c, geo, this.plotTokens, ctx);
     // The curve is clipped to the plot area, so a value past the axis leaves the frame
     // instead of lying along its edge. Structural rather than each descriptor's to
     // remember: a plot that clamps draws a response its processor does not have.
@@ -1870,7 +1961,7 @@ export class DynScreen {
     c.beginPath();
     c.rect(geo.pad.l, geo.pad.t, w - geo.pad.l - geo.pad.r, h - geo.pad.t - geo.pad.b);
     c.clip();
-    proc.drawCurve(c, geo, this.values(), this.plotTokens, ctx);
+    proc.drawCurve?.(c, geo, this.values(), this.plotTokens, ctx);
     c.restore();
     return layer;
   }

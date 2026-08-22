@@ -63,7 +63,7 @@ import type { DynField } from "../core/control/translate";
 import { SSMCS_INITIAL } from "../core/plan";
 import type { SsmcsParams } from "../core/plan";
 import { setLang, t } from "../i18n";
-import type { DynCtx, DynProcessor } from "./dyn-screen";
+import type { DynCtx, DynPlotProcessor, DynProcessor } from "./dyn-screen";
 
 let h: DynHost | undefined;
 let screen: DynScreen | undefined;
@@ -751,7 +751,7 @@ describe("what the curves draw", () => {
   });
 
   /** Every `fillText` the descriptor made, with the style it was drawn in. */
-  const draw = (proc: DynProcessor, sel = 0): void => {
+  const draw = (proc: DynPlotProcessor, sel = 0): void => {
     const ctx = ctxOf(h!, sel);
     const geo = proc.plotGeo(700, 320, ctx);
     proc.drawAxes(h!.canvas.ctx, geo, NAMED_TOKENS, ctx);
@@ -759,21 +759,21 @@ describe("what the curves draw", () => {
   };
 
   /** The curve's own points, on a recorder nothing else has drawn into. */
-  const recordCurve = (proc: DynProcessor, sel = 0): ReturnType<typeof recorder> => {
+  const recordCurve = (proc: DynPlotProcessor, sel = 0): ReturnType<typeof recorder> => {
     const ctx = ctxOf(h!, sel);
     const rec = recorder();
     proc.drawCurve(rec.ctx, proc.plotGeo(700, 320, ctx), vals(), NAMED_TOKENS, ctx);
     return rec;
   };
   /** The 120-segment stroke, before any annotation. */
-  const curveYs = (proc: DynProcessor, sel = 0): number[] => recordCurve(proc, sel).ys.slice(0, 121);
+  const curveYs = (proc: DynPlotProcessor, sel = 0): number[] => recordCurve(proc, sel).ys.slice(0, 121);
 
   /** The reduction annotation's text, by the token it is drawn in, on a recorder nothing
    *  else has drawn into — the shared canvas KEEPS what earlier draws put there, so a case
    *  that walks several settings would read the first one's label back at the second. Named
    *  once for a second reason: a `--gr` that moved would leave every copy of this filter
    *  matching nothing, and a copy asserting a count would stay green on the empty list. */
-  const grTexts = (proc: DynProcessor = SSMCS_COMP_DYN, sel = 0): string[] =>
+  const grTexts = (proc: DynPlotProcessor = SSMCS_COMP_DYN, sel = 0): string[] =>
     recordCurve(proc, sel)
       .texts.filter((tx) => tx.style === "--gr")
       .map((tx) => tx.text);
@@ -942,7 +942,7 @@ describe("what the curves draw", () => {
   // that drops the fill leaves a curve that looks like the EQ's and says something else.
   it("shades the area under the side-chain curve, which no other face does", () => {
     withSc({ on: true, gain: 360 });
-    const shaded = (proc: DynProcessor, sel: number): number => {
+    const shaded = (proc: DynPlotProcessor, sel: number): number => {
       const rec = recorder();
       const ctx = ctxOf(h!, sel);
       proc.drawCurve(rec.ctx, proc.plotGeo(700, 320, ctx), vals(), NAMED_TOKENS, ctx);
@@ -982,7 +982,7 @@ describe("what the curves draw", () => {
         ssmcs: { ...SSMCS_INITIAL, outGain },
       };
     };
-    const eqYs = (proc: DynProcessor, sel = 0): number[] => recordCurve(proc, sel).ys;
+    const eqYs = (proc: DynPlotProcessor, sel = 0): number[] => recordCurve(proc, sel).ys;
     withOut(180); // 0.0 dB
     const eqFlat = eqYs(SSMCS_EQ_DYN);
     const compFlat = eqYs(SSMCS_COMP_DYN, 0);
