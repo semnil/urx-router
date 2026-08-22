@@ -1125,9 +1125,10 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
 // raw. The selector (emitted by the caller) binds the engine first.
 // Only slots the plan explicitly carries are written; absent slots are left to
 // the device's per-type defaults populated by the selector (guitar-amp common
-// params differ per type, so a single catalog default would clobber them). A
-// plan read back from the device carries every slot, so it still round-trips in
-// full.
+// params differ per type, so a single catalog default would clobber them). The
+// writable list is a deliberate subset of what a readback fills: a slot the unit
+// answers but this app must not write back is in insertFxReadableSlots and not
+// here, so a read does not round-trip in full.
 // A slot is read under the selected family's own key, then under the bare slot
 // number — the device-shaped namespace a readback writes, which is by construction
 // the family the selector named at the time. Anything the plan stored for ANOTHER
