@@ -17,7 +17,17 @@ import {
   waitQuiet,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf } from "./analyze";
-import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, graphNode, openEqScreen, param, paramExact } from "./ui";
+import {
+  CH1_FADER,
+  CH1_HPF_FREQ,
+  closeDynScreen,
+  faderOf,
+  faderReadout,
+  graphNode,
+  openEqScreen,
+  openInsertFxScreen,
+  paramExact,
+} from "./ui";
 
 // T1 overtake — the core stale-read / lost-edit ladders of the race harness
 // (docs/{en,ja}/live-race-harness.md). Each test drives one operator gesture into a
@@ -263,10 +273,17 @@ test.describe("T1 overtake", () => {
     // waited quiet: an edit's flush is debounced, so the quiet a `waitQuiet` finds is
     // the one BEFORE it — measured, the slot write then landed 119 ms after the next
     // mark and read as part of the re-apply.
+    // The Threshold lives on the insert-FX tuning screen. Opened BEFORE the mark, because
+    // the open is not what this window measures, and closed after: the excursion below
+    // asserts on the writes, and a modal left standing would sit over the rest of the case.
+    await openInsertFxScreen(page, "ch1");
+    const threshold = page.locator('#dyn-screen-box input[data-dyn="ifx:compander:6"]');
+    await expect(threshold).toBeEnabled();
     await mark(page, "edit-engine-slot");
-    await param(page, "Threshold").locator('input[type="range"]').focus();
+    await threshold.focus();
     await page.keyboard.press("ArrowUp");
     await settleAfter(page, "edit-engine-slot", 1800);
+    await closeDynScreen(page);
     // Read back rather than hard-coded: the slot's value is one detent from the device's
     // own default, and pinning the number here would make this case fail on a default
     // change instead of on the thing it watches.
