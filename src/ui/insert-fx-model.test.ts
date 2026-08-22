@@ -8,12 +8,14 @@ import {
   insertFxVal,
   parkOutgoingInsertFxParams,
   pitchMidiMode,
+  pitchKeyPatch,
   pitchScalePatch,
   reKeyInsertFxParams,
 } from "./insert-fx-model";
 import {
   PITCH_NOTE_SLOTS,
   PITCH_SCALE_CHROMATIC,
+  PITCH_KEY_SLOT,
   PITCH_SCALE_CUSTOM,
   PITCH_SCALE_SINGLE,
   PITCH_SCALE_NATURAL_MINOR,
@@ -179,6 +181,23 @@ describe("pitch scale presets", () => {
         ).toEqual(offsets.map((o) => (o + key) % 12).sort((a, b) => a - b));
       }
     }
+  });
+
+  // The Key half of the same rule, which is the half that regressed: a mask rooted at C,
+  // written at another key, is a different scale. The unit re-derives on a Key write, so a
+  // plan written offline has to carry what it would have derived.
+  it("re-roots the mask when the Key moves, keeping the scale it spells", () => {
+    const patch = pitchKeyPatch(PITCH_SCALE_MAJOR, 7);
+    expect(patch[PITCH_KEY_SLOT]).toBe(7);
+    expect(patch[PITCH_SCALE_SLOT]).toBe(PITCH_SCALE_MAJOR);
+    expect(onNotes(patch)).toEqual([0, 2, 4, 6, 7, 9, 11]); // G major, written from C
+  });
+
+  it("writes the Key alone under Custom, which names no pattern", () => {
+    expect(pitchKeyPatch(PITCH_SCALE_CUSTOM, 7)).toEqual({
+      [PITCH_KEY_SLOT]: 7,
+      [PITCH_SCALE_SLOT]: PITCH_SCALE_CUSTOM,
+    });
   });
 
   // Custom is not a pattern: it names whatever mask is already there, which is also what

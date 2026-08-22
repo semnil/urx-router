@@ -654,8 +654,11 @@ describe("coverage sweep: every control of every selection", () => {
     expect(rowLabels().length).toBeGreaterThan(0);
   });
 
-  // Every insert-FX family has its own editor; the selector is what reaches them.
-  it("drives every insert-FX family's editor", () => {
+  // What the inspector offers per family, now that the tuning screen owns all but one of
+  // them: a launcher, or the multi-band compressor's own editor. Driving every control is
+  // still the point — an editor that throws on some family is what this catches — but the
+  // shape is asserted too, since `not.toThrow()` passes over a surface that has gone empty.
+  it("offers a launcher for the families the screen shows, and an editor for the one it does not", () => {
     const model = getModel("URX44V");
     const id = model.nodes.find((n) => insertFxControl(model, n.id))?.id;
     if (!id) return;
@@ -666,6 +669,16 @@ describe("coverage sweep: every control of every selection", () => {
       document.body.append(host);
       renderInspector(host, model, plan, nodeSel(id), actions());
       expect(() => driveEverything(host)).not.toThrow();
+      const launcher = host.querySelector("#btn-insfx-screen");
+      const editor = host.querySelector<HTMLElement>('.insp-section[data-key="insertFxEffect"]');
+      if (option.value === INSERT_FX_NONE) {
+        expect(launcher, option.label).toBeNull();
+        expect(editor, option.label).toBeNull();
+      } else {
+        // One surface or the other, never both: two editors over one value is how a stale
+        // slider gets written back.
+        expect(Boolean(launcher) !== Boolean(editor), option.label).toBe(true);
+      }
       host.remove();
     }
   });
