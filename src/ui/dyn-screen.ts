@@ -242,6 +242,16 @@ export interface DynRowCtx extends DynCtx {
   /** What `rowStates` reported, resolved — so a row that is not a slider reads the same
    *  answer the sliders do instead of restating the rule. Absent for a key = editable. */
   states: ReadonlyMap<string, SettingsRowOptions>;
+  /** The context as it stands NOW, rather than when the row was built.
+   *
+   *  A row's handlers close over the context they were built with, and the rebuild that
+   *  would replace them is DEFERRED for as long as a pointer is down — a press anywhere in
+   *  the box sets that, a `<select>` included — while a device follow goes on writing the
+   *  plan underneath. A handler that reads a plan value the row does not itself edit has to
+   *  take it from here, or it computes from a value the plan has already left behind.
+   *  Measured: choosing a Scale with a Key follow arriving under a held pointer wrote the
+   *  mask for the Key the row was drawn with, and the next flush sent it. */
+  live: () => DynCtx;
   /** Set a value that decides which other rows exist or are editable (COMP's
    *  1-knob and Auto Makeup): rebuilds the control column. */
   set: (patch: Record<string, number | boolean>) => void;
@@ -1719,6 +1729,7 @@ export class DynScreen {
     const rowCtx: DynRowCtx = {
       ...ctx,
       midi: (row, key) => this.armable(row, key, ctx),
+      live: () => this.ctx(),
       vals,
       states: this.states,
       set: (patch) => {

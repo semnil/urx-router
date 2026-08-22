@@ -832,7 +832,16 @@ when it acts.
 
 **The twelve note slots are ABSOLUTE semitones.** Slot 22 is C whatever the Key is, measured by
 setting Key = G with Scale = Major and reading them back as C D E F# G A B. So the buttons are named
-from C and sit in one plain row: a black-and-white keyboard would draw a root that is not there.
+from C and are not laid out as a keyboard: black and white keys would draw a root that is not there.
+
+**A gesture reads the Key the plan holds, not the one the row was drawn with.** A row's handlers
+close over the context they were built with, and the rebuild that would replace them is deferred for
+as long as a pointer is down — a press anywhere in the box sets that, a `<select>` included — while a
+device follow goes on writing the plan underneath. Choosing a Scale then rooted its mask at the old
+Key and the next flush sent it; a note button read its own drawn state and wrote a value straight
+back over the follow that had just moved it. Both now read through `DynRowCtx.live()`. What a button
+SHOWS is still what it was drawn from — the panel catches up at the deferred rebuild — and what it
+WRITES is the negation of what the plan holds when it is pressed.
 
 **Every preset is selectable.** The unit derives the twelve notes itself from the Scale and the Key,
 for all eight presets — read at Key = C and Key = G, the offsets came back identical while the
@@ -875,6 +884,7 @@ top of the same ruler cannot meet.
 Everything but the multi-band compressor, whose bands and globals are a structured layout that the
 flat catalogue carries none of. It stays in the Inspector's own editor, and `bind` refuses it, so the
 two surfaces cannot disagree about where a family is edited.
+
 
 ## Off the scale is off the frame
 

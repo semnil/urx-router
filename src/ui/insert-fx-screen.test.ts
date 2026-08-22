@@ -12,7 +12,7 @@ import type { DynHost } from "./dyn-screen.test-util";
 import { DynScreen } from "./dyn-screen";
 import type { DynCtx } from "./dyn-screen";
 import { INSFX_CAB_DYN, INSFX_DYN, insertFxScreenFamily } from "./insert-fx-screen";
-import { insertFxParamKey, insertFxParams } from "../core/control/insert-fx-effect";
+import { PITCH_KEY_SLOT, PITCH_SCALE_MAJOR, insertFxParamKey, insertFxParams } from "../core/control/insert-fx-effect";
 import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { t } from "../i18n";
 
@@ -393,6 +393,57 @@ describe("what the note under the display says", () => {
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_DYN, "ch1");
     expect(note()).toBe(t().dynTuning.insfx.bypassed);
+    screen.close();
+  });
+});
+
+describe("a gesture taken while the rebuild is deferred", () => {
+  const K = (slot: number): string => insertFxParamKey("pitch", slot);
+  const MASK = [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33];
+  const maskOf = (): number[] => {
+    const p = h.plan.nodeParams.ch1!.insertFxParams!;
+    return MASK.map((s) => p[K(s)] ?? 0);
+  };
+  /** A press anywhere in the box defers the rebuild, then the plan moves underneath. */
+  const followKeyTo = (screen: DynScreen, key: number): void => {
+    h.box.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    h.plan.nodeParams.ch1!.insertFxParams = {
+      ...(h.plan.nodeParams.ch1!.insertFxParams ?? {}),
+      [K(PITCH_KEY_SLOT)]: key,
+    };
+    screen.refresh();
+  };
+
+  it("roots a Scale at the Key the plan holds, not the one the row was drawn with", () => {
+    // Measured before the fix: the plan read Key = 7 and the mask written was C major.
+    holding("ch1", "Pitch Fix");
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_CAB_DYN, "ch1");
+    const sel = [...h.box.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
+      [...s.options].some((o) => o.textContent === t().inspector.insertFxEffect.scaleMajor),
+    )!;
+    followKeyTo(screen, 7);
+    sel.value = String(PITCH_SCALE_MAJOR);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(maskOf()).toEqual([1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1]); // G major
+    screen.close();
+  });
+
+  it("toggles a note from the value the plan holds, not the one the button shows", () => {
+    holding("ch1", "Pitch Fix");
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_CAB_DYN, "ch1");
+    const f = h.box.querySelectorAll<HTMLButtonElement>(".gt-notes button")[5]!; // F
+    expect(f.getAttribute("aria-pressed")).toBe("true");
+    // A follow switches F off under the deferred rebuild; the button still shows it on.
+    h.box.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    h.plan.nodeParams.ch1!.insertFxParams = { ...(h.plan.nodeParams.ch1!.insertFxParams ?? {}), [K(27)]: 0 };
+    screen.refresh();
+    expect(f.getAttribute("aria-pressed")).toBe("true");
+    f.click();
+    // Pressing it turns it ON, because OFF is what the plan holds. Reading the button's own
+    // state would have written 0 over a 0 and left the operator pressing a dead control.
+    expect(h.plan.nodeParams.ch1!.insertFxParams![K(27)]).toBe(1);
     screen.close();
   });
 });

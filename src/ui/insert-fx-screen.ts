@@ -485,7 +485,9 @@ const scaleOf = (ctx: DynCtx): number =>
 function pitchScaleRows(ctx: DynRowCtx): HTMLElement[] {
   const t = ctx.m.inspector.insertFxEffect;
   const scale = scaleOf(ctx);
-  const key = insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_KEY_SLOT, 0);
+  // Read at the gesture, not here: `ctx.live()` is the whole reason the Key that reaches
+  // the mask is the one the plan holds when the operator picks, rather than the one drawn.
+  const keyNow = (): number => insertFxVal(ctx.live().plan, ctx.nodeId, "pitch", PITCH_KEY_SLOT, 0);
   const scales = [
     { value: PITCH_SCALE_CHROMATIC, label: t.scaleChromatic },
     { value: PITCH_SCALE_MAJOR, label: t.scaleMajor },
@@ -504,14 +506,18 @@ function pitchScaleRows(ctx: DynRowCtx): HTMLElement[] {
     const on = insertFxVal(ctx.plan, ctx.nodeId, "pitch", slot, 1) !== 0;
     b.classList.toggle("on", on);
     b.setAttribute("aria-pressed", String(on));
-    b.addEventListener("click", () =>
-      ctx.set({ [slotKey("pitch", slot)]: on ? 0 : 1, [slotKey("pitch", PITCH_SCALE_SLOT)]: PITCH_SCALE_CUSTOM }),
-    );
+    // What the button SHOWS is the value it was drawn from; what it WRITES is the negation
+    // of the value the plan holds when it is pressed. A follow that moved this note under a
+    // deferred rebuild would otherwise be written straight back.
+    b.addEventListener("click", () => {
+      const now = insertFxVal(ctx.live().plan, ctx.nodeId, "pitch", slot, 1) !== 0;
+      ctx.set({ [slotKey("pitch", slot)]: now ? 0 : 1, [slotKey("pitch", PITCH_SCALE_SLOT)]: PITCH_SCALE_CUSTOM });
+    });
     notes.append(b);
   });
   return [
     enumRow(t.scale, scales, scales.some((o) => o.value === scale) ? scale : PITCH_SCALE_CUSTOM, (v) =>
-      ctx.set(slotPatch(pitchScalePatch(v, key))),
+      ctx.set(slotPatch(pitchScalePatch(v, keyNow()))),
     ),
     settingsRow(t.scaleNotes, notes),
   ];
