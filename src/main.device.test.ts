@@ -1046,6 +1046,89 @@ describe("the live session", () => {
     await endLive();
   });
 
+  // …and it consumes it however much else is open. A side-effect refetch is a follow read
+  // that establishes no rate of its own, so it never consumes one; gating the consumption
+  // on an empty in-flight set therefore left the announcement standing after the read it
+  // belonged to had finished with it, and the hand clearing above was then held against a
+  // rate the unit had left long before. Ownership is the sequence an announcement arrived
+  // at, not a count of what else is running — which is what this case measures and the one
+  // above cannot, nothing else being open there.
+  it("consumes the announcement with a side-effect refetch still open", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    // The EQ 1-Knob is a `sideEffect: "refetch"` write: its flush reads the owner node
+    // back through the same follow-read path, which is the second read this case needs.
+    selectNode("ch1");
+    $("inspector").querySelector<HTMLButtonElement>("#btn-eq-screen")!.click();
+
+    // What the unit answers for CH 1's selector, moved by hand: the stub's own
+    // write-then-read store is replaced below, so the excursion and the re-send it
+    // provokes are stated here instead of inferred from what was written.
+    let unitInsertFx = COMPANDER_H;
+    // Park every read from here, so the refetch opens and cannot finish. Parked rather
+    // than merely slow: the full read below has to finish INSIDE it, and a delay long
+    // enough to be sure of that is one every read of a whole-device sweep would spend.
+    const parked: Array<(v: number) => void> = [];
+    shell.answer("vd_get", () => new Promise<number>((r) => parked.push(r)));
+    $("dyn-screen-box")
+      .querySelector<HTMLElement>("#dyn-oneknob-level")!
+      .closest(".prefs-section")!
+      .querySelector<HTMLButtonElement>(".prefs-toggle button")!
+      .click();
+    await vi.waitFor(() => expect(parked.length).toBeGreaterThan(0), { timeout: 25_000 });
+
+    // The excursion lands while it is parked, and answers at once — a NEW answer, so the
+    // refetch's own parked read stays parked while the read below runs to the end.
+    unitInsertFx = denormalizeInsertFx(INSERT_FX_NONE);
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      const v =
+        a.paramId === PARAMS.SAMPLE_RATE.id
+          ? 48_000
+          : a.paramId === PARAMS.INSERT_FX.id && a.y === 0
+            ? unitInsertFx
+            : 0;
+      return new Promise((r) => setTimeout(() => r(v), 1));
+    });
+    notifyChannel(shell).onmessage([
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
+    ]);
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    // The arrangement itself, asserted rather than assumed: the read that decided from
+    // the announcement has finished and the refetch has NOT. Without this the case would
+    // pass on the two never overlapping at all.
+    expect(parked.length).toBeGreaterThan(0);
+
+    // The re-send put the effect back on the unit, so nothing that reads CH 1 from here
+    // has a clearing of its own to decide about — including the replay the escalation
+    // schedules behind the read above, which runs while the refetch is still parked.
+    unitInsertFx = COMPANDER_H;
+    await quiet(shell);
+
+    // Now the operator clears it by hand, at a rate that runs it — adopted, because the
+    // read that decided from the announcement consumed it on the way out. The refetch is
+    // STILL parked, so no read has yet ended with nothing else open: an in-flight count
+    // would have left every announcement standing and held this clearing.
+    expect(parked.length).toBeGreaterThan(0);
+    unitInsertFx = denormalizeInsertFx(INSERT_FX_NONE);
+    notifyChannel(shell).onmessage([
+      { param_id: PARAMS.INSERT_FX.id, x: 0, y: 0, value: denormalizeInsertFx(INSERT_FX_NONE) },
+    ]);
+    // Settled rather than waited for the followed line: a held clearing prints the other
+    // line and re-sends, so waiting for this one would report the difference as a bare
+    // timeout with the status it did print nowhere in the failure.
+    await quiet(shell);
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN();
+
+    for (const answer of parked.splice(0)) answer(0);
+    await quiet(shell);
+    await endLive();
+  });
+
   // The Signal Type transition is announced on the PAIR's primary and clears the effect
   // on both members (measured), so recording the announcement without its partner leaves
   // the other half of the pair held and re-sent — half a clearing undone.

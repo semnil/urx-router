@@ -327,16 +327,19 @@ test.describe("T1 overtake", () => {
   // nothing else open would consume it too, and the two are indistinguishable from the
   // outcome alone.
   //
-  // What this case does NOT reach is the arrangement that made the rule wrong in the
-  // first place: a side-effect refetch still OPEN when the read finishes, which is what
-  // the withdrawn `!followReads.size` gate turned into a skipped consumption. The 1-knob
-  // toggle below opens that refetch inside the read, but not in a placement where it
-  // outlives it — the link is one queue, so the two flows interleave one command each and
-  // the refetch's node read (about 50) is spent well before a whole-device sweep's tail.
+  // The arrangement that made the rule wrong in the first place — a side-effect refetch
+  // still OPEN when the read finishes, which is what the withdrawn `!followReads.size`
+  // gate turned into a skipped consumption — is NOT reachable here. The 1-knob toggle
+  // below opens that refetch inside the read, but not in a placement where it outlives
+  // it: the link is one queue, so the two flows interleave one command each and the
+  // refetch's node read (about 50) is spent well before a whole-device sweep's tail.
   // Barrier placements leaving 30, 60 and 120 reads were measured and none of them left
-  // the refetch open at the moment of consumption; restoring the gate leaves this case
-  // green. Settling it needs `followReads` itself observable at that moment, which is a
-  // probe field this one does not add.
+  // the refetch open at the moment of consumption, so restoring the gate leaves this case
+  // green. It is held in the unit tier instead, where the refetch's own read can be parked
+  // and the full read run to the end inside it — main.device.test.ts, "consumes the
+  // announcement with a side-effect refetch still open", which the gate fails. What this
+  // case carries that the unit tier cannot is the other end: the addresses and values a
+  // held clearing actually re-sends.
   test("a full read consumes the rate announcement it decided from", async ({ page }) => {
     await goLive(page);
     await graphNode(page, "ch1").click();
