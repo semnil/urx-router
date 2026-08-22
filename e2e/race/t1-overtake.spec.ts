@@ -11,10 +11,13 @@ import {
   blockAt,
   releaseBarrier,
   memOf,
+  ratesOf,
+  setMemAt,
+  settleAfter,
   waitQuiet,
 } from "./fake-device";
-import { analyze, report, timeline, markTime } from "./analyze";
-import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, graphNode, openEqScreen } from "./ui";
+import { analyze, report, timeline, markTime, setsOf } from "./analyze";
+import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, graphNode, openEqScreen, param, paramExact } from "./ui";
 
 // T1 overtake — the core stale-read / lost-edit ladders of the race harness
 // (docs/{en,ja}/live-race-harness.md). Each test drives one operator gesture into a
@@ -36,6 +39,15 @@ const oneKnobOn = (page: Page) =>
     .locator("#dyn-screen-box .prefs-section", { has: page.locator("#dyn-oneknob-level") })
     .locator(".prefs-toggle button")
     .first();
+/** CH 1's insert-FX selector and bypass, and the compander engine the selector binds.
+ *  `INSERT_FX_NONE_RAW` is what the unit reports for No Effect — the app maps it to -1. */
+const CH1_INSERT_FX = "135:0:0";
+const CH1_INSERT_FX_ON = "134:0:0";
+const COMPANDER_ENGINE = "689:";
+const COMPANDER_H = 1793;
+const INSERT_FX_NONE_RAW = 0xffffffff;
+const RATE_ADDR = "766:0:0";
+
 test.describe("T1 overtake", () => {
   test.beforeEach(async ({ page }) => {
     await installFake(page);
@@ -229,5 +241,176 @@ test.describe("T1 overtake", () => {
     // Ordering, not just values: a selector must reach the device before the bypass
     // it types, or the unit's own auto-engage stands.
     expect(analyze(trace, { order: ["135:0:0", "134:0:0"] })).toHaveLength(0);
+  });
+
+  // overtake-rate-cleared-insert-fx. The unit clears a selected effect when the sample
+  // rate leaves the ceiling that effect runs under, and it announces only the rate: the
+  // selector, the pointer and the bypass all move with no notify of their own. The read
+  // that the rate notify escalates to is therefore the first thing that sees the cleared
+  // values, and adopting them would spend the plan's intent on a change the operator
+  // never made — coming back to a supported rate restores nothing on the unit either.
+  test("an insert FX the unit cleared for the sample rate is held and re-sent, not adopted", async ({ page }) => {
+    await goLive(page);
+    await graphNode(page, "ch1").click();
+    await setLatency(page, { get: 2, set: 10 });
+
+    await mark(page, "select-compander");
+    await paramExact(page, "Insert FX").locator("select").selectOption({ label: "Compander-H" });
+    await settleAfter(page, "select-compander", 1800);
+    // One authored engine value. translate writes only the slots the plan carries, so
+    // without this the engine array is not in the write set and the re-apply below has
+    // two stages to reproduce rather than three. Settled from its own mark rather than
+    // waited quiet: an edit's flush is debounced, so the quiet a `waitQuiet` finds is
+    // the one BEFORE it — measured, the slot write then landed 119 ms after the next
+    // mark and read as part of the re-apply.
+    await mark(page, "edit-engine-slot");
+    await param(page, "Threshold").locator('input[type="range"]').focus();
+    await page.keyboard.press("ArrowUp");
+    await settleAfter(page, "edit-engine-slot", 1800);
+    // Read back rather than hard-coded: the slot's value is one detent from the device's
+    // own default, and pinning the number here would make this case fail on a default
+    // change instead of on the thing it watches.
+    const slotWrites = setsOf(await traceOf(page)).filter((s) => s.addr?.startsWith(COMPANDER_ENGINE));
+    const slotValue = slotWrites[slotWrites.length - 1]!.value!;
+
+    // The excursion, in the shape the unit performs it: 192 kHz is past the compander's
+    // 96 kHz ceiling, its addresses read cleared, and the rate is the only announcement.
+    await mark(page, "rate-excursion");
+    await setMemAt(page, {
+      [RATE_ADDR]: 192000,
+      [CH1_INSERT_FX]: INSERT_FX_NONE_RAW,
+      [CH1_INSERT_FX_ON]: 0,
+    });
+    await pushNotify(page, [[766, 0, 0, 192000]]);
+    await settleAfter(page, "rate-excursion", 2500);
+
+    const trace = await traceOf(page);
+    const at = markTime(trace, "rate-excursion")!;
+    const after = setsOf(trace).filter((s) => s.start > at);
+    console.log(timeline(trace, { from: at - 50, limit: 60 }));
+    console.log(
+      `mark at ${Math.round(at)} ms; written after the excursion: ` +
+        (after.map((s) => `#${s.seq}@${Math.round(s.start)} ${s.addr}=${s.value}`).join(", ") || "(nothing)"),
+    );
+
+    const reSel = after.find((s) => s.addr === CH1_INSERT_FX);
+    const reOn = after.find((s) => s.addr === CH1_INSERT_FX_ON);
+    const engine = after.filter((s) => s.addr?.startsWith(COMPANDER_ENGINE));
+    // The plan kept the effect and the app put it back. Asserted on the WRITES rather
+    // than on the screen, because at 192 kHz every option is rate-locked and the row
+    // stops being a select — while a plan that had adopted the clearing would write
+    // nothing here at all, which is the difference this case exists to see.
+    expect(reSel?.value).toBe(COMPANDER_H);
+    // The VALUES, not just the addresses: an effect re-selected and then re-sent bypassed
+    // is restored and muted, which is the failure the emit order exists to prevent, and a
+    // re-sent engine slot at the type's default is the plan's tuning quietly gone.
+    expect(engine.map((s) => s.value)).toEqual([slotValue]);
+    expect(reOn?.value).toBe(1);
+    // …and in the order the unit takes it: selector, the values it applies to, then the
+    // bypass intent (t2-shape-change pins the same order for an ordinary selection).
+    expect(reSel!.seq).toBeLessThan(Math.min(...engine.map((s) => s.seq)));
+    expect(Math.max(...engine.map((s) => s.seq))).toBeLessThan(reOn!.seq);
+
+    // Back at a rate that runs it, the effect is still the plan's — which is the half
+    // the unit does not do for itself.
+    await mark(page, "rate-back");
+    await setMemAt(page, { [RATE_ADDR]: 48000 });
+    await pushNotify(page, [[766, 0, 0, 48000]]);
+    await settleAfter(page, "rate-back", 2500);
+    await expect(paramExact(page, "Insert FX").locator("select")).toHaveValue(String(COMPANDER_H));
+  });
+
+  // The read that decided from an announcement CONSUMES it, and the next clearing —
+  // the operator's own, by hand at a rate that runs the effect — is then adopted rather
+  // than held against a rate the unit left long before. The consumption is read directly
+  // (`ratesOf`, the trace probe) as well as through that clearing: a later read with
+  // nothing else open would consume it too, and the two are indistinguishable from the
+  // outcome alone.
+  //
+  // The arrangement that made the rule wrong in the first place — a side-effect refetch
+  // still OPEN when the read finishes, which is what the withdrawn `!followReads.size`
+  // gate turned into a skipped consumption — is NOT reachable here. The 1-knob toggle
+  // below opens that refetch inside the read, but not in a placement where it outlives
+  // it: the link is one queue, so the two flows interleave one command each and the
+  // refetch's node read (about 50) is spent well before a whole-device sweep's tail.
+  // Barrier placements leaving 30, 60 and 120 reads were measured and none of them left
+  // the refetch open at the moment of consumption, so restoring the gate leaves this case
+  // green. It is held in the unit tier instead, where the refetch's own read can be parked
+  // and the full read run to the end inside it — main.device.test.ts, "consumes the
+  // announcement with a side-effect refetch still open", which the gate fails. What this
+  // case carries that the unit tier cannot is the other end: the addresses and values a
+  // held clearing actually re-sends.
+  test("a full read consumes the rate announcement it decided from", async ({ page }) => {
+    await goLive(page);
+    await graphNode(page, "ch1").click();
+    await setLatency(page, { get: 2, set: 2 });
+
+    await mark(page, "select-compander");
+    await paramExact(page, "Insert FX").locator("select").selectOption({ label: "Compander-H" });
+    await settleAfter(page, "select-compander", 1800);
+    // Open before the excursion: the screen is modal, and reaching it afterwards would
+    // put a click in the middle of the window this case is placing.
+    await openEqScreen(page, "ch1");
+
+    // 615 of the sweep's own 675 reads — measured, not guessed. The barrier counts from
+    // the moment it is armed and the link is otherwise idle, so read #615 leaves 60. The
+    // number is what places the overlap: the flush takes about 40 commands to reach its
+    // refetch, and the refetch's own node read is about 50, so a tail of 60 has the sweep
+    // finishing (120 interleaved slots) while the refetch is still reading (140). At 30 —
+    // measured — the sweep ended before the refetch had opened at all.
+    await blockAt(page, "vd_get", 555);
+    await mark(page, "excursion");
+    await setMemAt(page, {
+      [RATE_ADDR]: 192000,
+      [CH1_INSERT_FX]: INSERT_FX_NONE_RAW,
+      [CH1_INSERT_FX_ON]: 0,
+    });
+    await pushNotify(page, [[766, 0, 0, 192000]]);
+    await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 25_000 });
+
+    // The 1-knob write is `sideEffect: "refetch"`, so its flush reads the node back —
+    // a second follow read, opened while the first is still finishing.
+    await mark(page, "oneknob");
+    await oneKnobOn(page).click();
+    await releaseBarrier(page);
+    await settleAfter(page, "oneknob", 2500, 25_000);
+    // The rule itself, read where the IPC log cannot see it: the read that decided from
+    // the announcement has finished, so nothing announced before it may still be standing.
+    // Asserted here rather than through the next clearing alone — a later read with
+    // nothing open would consume it too, and the two are then indistinguishable.
+    console.log(`rates still standing after the read: ${JSON.stringify(await ratesOf(page))}`);
+    expect(await ratesOf(page)).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#dyn-screen-box")).toBeHidden();
+
+    // The operator clears it by hand on the unit, back at a rate that runs it. The rate
+    // is put back WITHOUT announcing it: a second rate notify would escalate to another
+    // whole-device read, and that read — with nothing else open — would consume the stale
+    // announcement on its own, which is the very thing this case is asking about.
+    //
+    // Nothing about their clearing is the app's to undo, and only a consumed announcement
+    // leaves the merge able to say so: the notify for it arrives BEFORE the scoped read it
+    // escalates to, so it falls outside the window `announced` covers, and the rate
+    // history is what decides.
+    await mark(page, "hand-clear");
+    await setMemAt(page, {
+      [RATE_ADDR]: 48000,
+      [CH1_INSERT_FX]: INSERT_FX_NONE_RAW,
+      [CH1_INSERT_FX_ON]: 0,
+    });
+    await pushNotify(page, [[135, 0, 0, INSERT_FX_NONE_RAW]]);
+    await settleAfter(page, "hand-clear", 2500, 25_000);
+
+    const trace = await traceOf(page);
+    const at = markTime(trace, "hand-clear")!;
+    const resent = setsOf(trace).filter((s) => s.start > at && s.addr === CH1_INSERT_FX);
+    console.log(
+      `after the hand clear: ` +
+        (resent.map((s) => `#${s.seq}@${Math.round(s.start)} ${s.addr}=${s.value}`).join(", ") ||
+          "(no selector write)"),
+    );
+    // The plan adopted it: nothing was sent back, and the row reads No Effect.
+    expect(resent).toEqual([]);
+    await expect(paramExact(page, "Insert FX").locator("select")).toHaveValue("-1");
   });
 });

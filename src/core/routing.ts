@@ -6,6 +6,7 @@ import { isSingleInput, parseRef, ref } from "../models/types";
 import type { DeviceModel, NodeKind, RoutingRule } from "../models/types";
 import type { NodeParams, Plan, PlanConnection } from "./plan";
 import { hasConnection } from "./plan";
+import { connParamContestKey, nodeParamContestKey } from "./plan-history";
 import { BUS_TYPE_FIXED, BUS_TYPE_VARI, PAN_BAL_BAL, PAN_BAL_PAN, STEREO_PAN_DEFAULT } from "./control/params";
 
 // Language-agnostic failure codes. The UI maps these to localized messages so
@@ -196,32 +197,45 @@ export function isBalLinkedPair(model: DeviceModel, plan: Plan, id: string): boo
  *  together — PAN hard-pans the odd channel left and the even one right, BAL and
  *  unlinking centre both. A channel's CH_PAN is the pan of its fixed send into
  *  STEREO, so the send loop covers it; the SD Rec assign is a `sendSwitch` and has
- *  no pan. Call it before `mirrorBalPair` so the mirror copies settled values. */
-export function applyPairTransition(model: DeviceModel, plan: Plan, primary: string, patch: NodeParams): void {
+ *  no pan. Call it before `mirrorBalPair` so the mirror copies settled values.
+ *
+ *  Returns the contest keys it wrote, for the caller's write witness. Every one of them
+ *  can be written without MOVING — unlinking a BAL pair centres pans that are already
+ *  centred, and clears an insert FX on a member that never had one — so the plan's own
+ *  diff cannot tell them from a key nobody touched, and a device read in flight takes
+ *  them all back. What the gesture asserts is the settled state, not the delta. */
+export function applyPairTransition(model: DeviceModel, plan: Plan, primary: string, patch: NodeParams): string[] {
+  const written: string[] = [];
   const pair = model.channelPairs.find(([a]) => a === primary);
-  if (!pair) return;
+  if (!pair) return written;
   if (patch.stereoLink !== undefined) {
     const np = plan.nodeParams[primary];
     plan.nodeParams[primary] = { ...np, panBal: patch.stereoLink ? PAN_BAL_BAL : PAN_BAL_PAN };
+    written.push(nodeParamContestKey(primary, "panBal"));
     // Measured: a Signal Type transition clears the insert-FX selector and its ON on BOTH
     // members, in either direction and whichever member was holding the effect. Follow it —
     // a selection left in the plan would make the next live converge re-select an effect the
     // unit has just dropped. The stored engine values go with it: they are read through the
     // selected family, so a cleared selector leaves them nothing to bind to.
     for (const ch of pair) {
+      // Named whether or not there was anything to delete: the assertion is that this
+      // member carries no insert FX afterwards, which is as true of one that had none.
+      for (const key of INSERT_FX_PAIR_KEYS) written.push(nodeParamContestKey(ch, key));
       const cp = plan.nodeParams[ch];
       if (!cp) continue;
-      delete cp.insertFx;
-      delete cp.insertFxOn;
-      delete cp.insertFxParams;
+      for (const key of INSERT_FX_PAIR_KEYS) delete cp[key];
     }
   }
   const centre = plan.nodeParams[primary]?.stereoLink !== true || isBalLinkedPair(model, plan, primary);
   pair.forEach((ch, idx) => {
     const pan = centre ? 0 : idx === 0 ? -STEREO_PAN_DEFAULT : STEREO_PAN_DEFAULT;
     for (const c of plan.connections)
-      if (c.from === ref(ch, "out") && c.kind === "send") c.params = { ...c.params, pan };
+      if (c.from === ref(ch, "out") && c.kind === "send") {
+        c.params = { ...c.params, pan };
+        written.push(connParamContestKey(c.from, c.to, "pan"));
+      }
   });
+  return written;
 }
 
 /** Mirror `id`'s mixer state onto its linked partner when the pair is in BAL mode,
@@ -268,6 +282,10 @@ export function mirrorBalPair(model: DeviceModel, plan: Plan, id: string): boole
  *  mirrorBalPair from every edit funnel, and in BAL the two write the same values.
  *  The engine values are deep-copied for the aliasing reason mirrorBalPair documents.
  *  Returns false — a no-op — unless the pair is STEREO-linked. */
+/** The pair state this mirror carries, and the whole of it — the caller that has to name
+ *  what the mirror asserted reads the same list rather than keeping a second copy. */
+export const INSERT_FX_PAIR_KEYS = ["insertFx", "insertFxOn", "insertFxParams"] as const;
+
 export function mirrorLinkedInsertFx(model: DeviceModel, plan: Plan, id: string): boolean {
   if (!isStereoLinkedPair(model, plan, id)) return false;
   const partner = partnerChannel(model, id);
@@ -276,9 +294,7 @@ export function mirrorLinkedInsertFx(model: DeviceModel, plan: Plan, id: string)
   const dst = (plan.nodeParams[partner] ??= {});
   // An absent key stays absent on the partner: a key held as undefined would outlive
   // the copy through the history differ and the JSON round-trip.
-  delete dst.insertFx;
-  delete dst.insertFxOn;
-  delete dst.insertFxParams;
+  for (const key of INSERT_FX_PAIR_KEYS) delete dst[key];
   if (insertFx !== undefined) dst.insertFx = insertFx;
   if (insertFxOn !== undefined) dst.insertFxOn = insertFxOn;
   if (insertFxParams !== undefined) dst.insertFxParams = structuredClone(insertFxParams);

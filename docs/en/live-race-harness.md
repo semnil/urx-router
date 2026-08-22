@@ -689,16 +689,12 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
-**The current array, and the cut the tool would not take.** `[38, 74, 51]` is derived from the race run
-of the 163-case corpus (2026-08-17). The derivation's own optimum is `[38, 73, 52]`, and it refused to
-print it: that cut falls INSIDE a `test.describe.serial` block in `t5-drop`, which Playwright moves
-whole, so the runner assigns 74 / 51 against the plan's 73 / 52 — the refusal the paragraph above
-describes, doing its job. The reachable cut is what the array carries. Measured against that run's
-durations, under the two-worker model: `38:66:59` (what a deletion left behind, corrected by
-subtraction) runs 253 / 248 / 262 s, `38:74:51` runs 253 / 256 / 253 s, and a division with no
-contiguity constraint at all would be 248 s. So the worst shard comes down 6 s — the point of
-re-deriving is not that number but that the cut is a duration reading again rather than the residue of
-an edit, since nothing reports an array whose durations have moved.
+**The current array.** `[36, 59, 70]` is derived from the race run of the 165-case corpus
+(2026-08-23), which timed 158 of them and left the 7 declared skips at zero. Measured against that
+run's durations, under the two-worker model, its three shards run 277 / 269 / 276 s, against 266 s for
+a division with no contiguity constraint at all, and the runner reproduced the plan case for case. The
+point of re-deriving is not that remaining gap but that the cut is a duration reading again rather than
+the residue of an edit, since nothing reports an array whose durations have moved.
 
 A log assembled from two runs is the case none of that reaches on its own: where the halves overlap, a
 case timed twice with no retry between them gives it away, but halves that do not overlap cover the
@@ -763,8 +759,9 @@ Invariants 1 / 2 / 4 / 8 / 12 / 16 are statements about IPC that either happened
 are decided entirely by what the fake device saw, plus the DOM and the status line. None of them needs
 to reach the app's module scope.
 
-The remaining two — 13 (authorship attribution) and the general form of 3 (snapshot poisoning) — need
-the probe. `src/ui/trace-probe.ts` exists only in the `VITE_TRACE=1` build (`.env.trace`,
+The remaining three need the probe — 13 (authorship attribution), the general form of 3 (snapshot
+poisoning), and which sample rates the unit has announced that no read has consumed yet.
+`src/ui/trace-probe.ts` exists only in the `VITE_TRACE=1` build (`.env.trace`,
 `vite build --mode trace`). **A plain build folds it away, and `ci.yml` greps the bundle to keep it
 out**, beside `__urxConsole` and `__urxKeyProbe`. It is a build flag rather than
 `import.meta.env.DEV` because the E2E suite serves a production build on purpose; running the
@@ -774,7 +771,13 @@ instrumented tier on a dev bundle would be testing a different bundle.
 | --- | --- |
 | Which plan key did **who** write (13) | `ledgerOf(page)` |
 | What does the live snapshot **hold** (3) | `snapshotOf(page)` |
+| Which announced sample rates are **still standing** | `ratesOf(page)` |
 | Committed undo / redo depth | `depthOf(page)` |
+
+The rate history is there for the same reason the ledger is: the announcement is what tells a silent
+insert-FX clearing from the operator's own (`readback.ts`, `HoldContext.ratesSeen`), and whether it was
+consumed decides the NEXT clearing rather than the one in front of it — so the IPC log shows the
+consequence a whole gesture later, or not at all.
 
 The ledger reuses the differ the undo stack already uses (`clonePlanState` + `diffPlans`). A key that
 reaches the plan without reaching that differ is an edit the user cannot undo, so the ledger and the
@@ -830,6 +833,13 @@ agreement, zero findings.
   sweep then pulled that `0` back into the plan, so the move made on the unit was reverted end to end.
   The same defect is what `stress-three-operators-one-node` had been counting without being able to
   assert: **0 / 2 / 3 / 3 write-backs across four runs of one case**, all on pan, now 0 in four
+
+- **An insert FX the unit cleared for the rate is held and re-sent.** The unit announces only the rate, so the
+  read that notify escalates to is what finds the selector and the bypass gone. Without the merge's hold the
+  flush that follows writes **nothing at all** — the plan has adopted the clearing and has nothing left to send
+  — and with it the three stages leave in order: `135:0:0=1793`, `689:0:6=-990`, `134:0:0=1`. The case asserts
+  on the writes rather than on the screen, because at 192 kHz every option is rate-locked and the inspector row
+  stops being a select; that the effect is still the plan's is read from the screen once the rate comes back
 
 **T2 — address-set shape**
 

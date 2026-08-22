@@ -1257,6 +1257,13 @@ export const depthOf = (page: Page): Promise<{ undo: number; redo: number }> =>
   );
 
 /** True when the served bundle is a trace build. */
+/** The announced sample rates no read has consumed yet (main.ts's `announcedRates`).
+ *  Whether an announcement was consumed decides the NEXT clearing rather than the one in
+ *  front of it, so the IPC log shows the consequence a whole gesture later or not at all —
+ *  this reads the rule itself. */
+export const ratesOf = (page: Page): Promise<number[]> =>
+  page.evaluate(() => (window as unknown as { __urxTrace?: { rates: () => number[] } }).__urxTrace?.rates() ?? []);
+
 export const hasProbe = (page: Page): Promise<boolean> =>
   page.evaluate(() => (window as unknown as { __urxTrace?: unknown }).__urxTrace !== undefined);
 
@@ -1369,6 +1376,13 @@ export const countersOf = (page: Page): Promise<FakeHandle["counters"]> =>
 
 export const meterAddrsOf = (page: Page): Promise<Array<[number, number]>> =>
   page.evaluate(() => window.__urxFake.meterAddrs);
+
+/** Put values into the unit's own state with no write behind them — a device-side
+ *  change the app never asked for and, for the addresses the unit does not announce,
+ *  was never told about. Unlike `divergeAt`, the next write LANDS on the address: a
+ *  case asserting that the app repaired something needs the repair able to stick. */
+export const setMemAt = (page: Page, entries: Record<string, number>): Promise<void> =>
+  page.evaluate((e) => void Object.assign(window.__urxFake.mem, e), entries);
 
 export const divergeAt = (page: Page, addr: string, value: number): Promise<void> =>
   page.evaluate(

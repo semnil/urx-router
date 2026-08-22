@@ -9,6 +9,7 @@ interface InstalledTrace {
   ledger: LedgerEntry[];
   snapshot: () => Record<string, number> | null;
   depth: () => { undo: number; redo: number };
+  rates: () => number[];
   sample: (source: WriteSource) => number;
   clear: () => void;
 }
@@ -21,10 +22,12 @@ function install() {
   let plan = defaultPlan("URX44V");
   let snapshot: Record<string, number> | null = { "1:2:3": 4 };
   let depth = { undo: 2, redo: 1 };
+  let rates: number[] = [];
   const hooks: TraceProbeHooks = {
     getPlan: () => plan,
     liveSnapshot: () => snapshot,
     depth: () => depth,
+    rates: () => rates,
   };
   const probe = installTraceProbe(hooks);
   return {
@@ -33,6 +36,7 @@ function install() {
     setPlan: (next: Plan) => void (plan = next),
     setSnapshot: (next: Record<string, number> | null) => void (snapshot = next),
     setDepth: (next: { undo: number; redo: number }) => void (depth = next),
+    setRates: (next: number[]) => void (rates = next),
   };
 }
 
@@ -78,14 +82,20 @@ describe("installTraceProbe", () => {
   });
 
   it("exposes live accessors and clear retakes the current plan baseline", () => {
-    const { probe, plan, setSnapshot, setDepth } = install();
+    const { probe, plan, setSnapshot, setDepth, setRates } = install();
     expect(trace().snapshot()).toEqual({ "1:2:3": 4 });
     expect(trace().depth()).toEqual({ undo: 2, redo: 1 });
+    expect(trace().rates()).toEqual([]);
 
     setSnapshot(null);
     setDepth({ undo: 5, redo: 0 });
+    // Read through the hook on every call rather than captured at install: what it
+    // answers is whether an announcement is STILL standing, which is a question about
+    // the moment it is asked.
+    setRates([192_000, 48_000]);
     expect(trace().snapshot()).toBeNull();
     expect(trace().depth()).toEqual({ undo: 5, redo: 0 });
+    expect(trace().rates()).toEqual([192_000, 48_000]);
 
     plan().notes.ch1 = "before clear";
     trace().clear();

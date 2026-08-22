@@ -3,7 +3,7 @@
 // to a constant, so a plain build drops the whole module the way DEMO drops the
 // control layer, and ci.yml greps the bundle to keep it dropped.
 //
-// It answers exactly the two questions the fake device's IPC log cannot:
+// It answers exactly the questions the fake device's IPC log cannot:
 //   - WHO wrote which plan key (invariant 13, authorship attribution). Every writer
 //     samples through one call, and the delta is taken by the differ the undo stack
 //     already uses — a key that reaches the plan without reaching that differ is an
@@ -12,6 +12,11 @@
 //   - What the live snapshot HOLDS (invariant 3, snapshot poisoning in its general
 //     form). A poisoned snapshot is one that records a value that was never sent;
 //     the IPC log has the sends, so the missing half is the snapshot itself.
+//   - Which sample rates the unit has ANNOUNCED and no read has consumed yet. The
+//     announcement is what tells a silent insert-FX clearing from an operator's own
+//     (readback.ts, `HoldContext.ratesSeen`), and whether it was consumed decides the
+//     NEXT clearing rather than the one in front of it — so the IPC log shows the
+//     consequence a whole gesture later, or not at all.
 //
 // Sampling is explicit rather than a Proxy: the plan is mutated in place by eight
 // writers through paths that assign whole nodes, whole connection params and whole
@@ -58,6 +63,8 @@ export interface TraceProbeHooks {
   liveSnapshot: () => Record<string, number> | null;
   /** Undo / redo depth, so a case can count entries without driving the UI. */
   depth: () => { undo: number; redo: number };
+  /** The announced sample rates no read has consumed yet, in notify order. */
+  rates: () => number[];
 }
 
 export interface TraceProbe {
@@ -107,6 +114,7 @@ export function installTraceProbe(hooks: TraceProbeHooks): TraceProbe {
     ledger,
     snapshot: () => hooks.liveSnapshot(),
     depth: () => hooks.depth(),
+    rates: () => hooks.rates(),
     sample: probe.sample,
     clear: () => {
       ledger.length = 0;

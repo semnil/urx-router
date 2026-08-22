@@ -80,7 +80,11 @@ carries a one-line map of the same directories and points here.
   `keyof Plan` and `plan-history.contract.test.ts` round-trips one real mutation per entry — a field that
   reaches the plan without reaching the differ is an edit the user cannot undo, silently. It also arbitrates
   the device-read merge: `entryInContext` narrows a contested nested group (comp / gate / eqBands / …) to
-  its sub-keys so an app edit and a device edit to *different* fields of one group both survive, and
+  its LEAVES — however deep they sit — so an app edit and a device edit to *different* fields of one group
+  both survive. Depth is not a detail: `fxEffect.params` is a record inside a record, and a walk that stopped
+  at the first one made the whole map a single contested key, so an edit to a reverb time and the device's own
+  room size were the same key and the app won both. The SSMCS bank's sections and eqBands, whose bands are
+  objects inside an array, have the same shape. And
   `PlanWriteWitness` records **which keys the app wrote while a read was in flight**, so `readIntoPlan`
   drops those by authorship rather than by value — an edit that went A→B→A is indistinguishable from an
   untouched key otherwise, and the read's transient B would be enshrined) / `routing.ts` connection
@@ -563,6 +567,11 @@ The constraint core (`core/routing.ts`):
   the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
   linked pair as a single holder — the app follows what the device does instead of modelling a second copy of
   the rule ([What the app models, and what it leaves to the unit](#what-the-app-models-and-what-it-leaves-to-the-unit)).
+  The transition also **names every key it wrote** to the edit funnel's write witness, because none of them
+  has to move: the three deletions land on a member that carried no effect, and unlinking a BAL pair re-centres
+  pans that are already centred. A device read in flight arbitrates by authorship for exactly that reason, and
+  a gesture that named nothing would have both halves taken back — the effect the unit had just dropped
+  re-selected, and the pans it had just centred put back where the read found them.
 - A STEREO-linked pair is tied on canvas by a heart connector and drags as one unit. Linking
   (`alignStereoPair`, called from `onUpdateNodeParams` when `stereoLink` turns on) first snaps the partner back
   beside the kept node — the selected member stays put, the other moves to its default-layout relative offset —
@@ -1469,7 +1478,7 @@ a no-device state is reported plainly without first disturbing the plan.
 
 ### What the app models, and what it leaves to the unit
 
-Two kinds of device-side change are handled differently, and the distinction decides whether any code is
+Three kinds of device-side change are handled differently, and the distinction decides whether any code is
 written at all:
 
 - **The unit switches what a value reflects.** A meter that follows the output patch, the engine array an
@@ -1482,6 +1491,41 @@ written at all:
   ON parameter is emitted *after* the selector and after the engine values it applies to, to put the unit
   back where the plan says. Leaving this one to
   the unit would silently make an effect the user switched off audible again.
+- **The unit changes actual state and announces none of it.** A sample-rate excursion past a selected insert
+  effect's ceiling clears the selector, the pointer and the bypass, and the only address the unit reports is
+  the rate; coming back to a supported rate restores nothing. The read that rate notify escalates to is the
+  first thing that sees the cleared values, so this one is settled in the MERGE: `insertFxHoldKeys` names the
+  keys a device-follow read keeps the plan's own value for, and `readIntoPlan`'s `hold` takes them out of the
+  patch. The device view still carries what the unit answered — that is what leaves the plan and the live
+  snapshot disagreeing, and the ordinary outgoing diff is then what sends the effect back, selector first,
+  then the stored engine values, then the bypass intent. Measured on a URX44V on 2026-08-18: that re-send is
+  accepted at the rate that cleared the effect and survives the return, checked across all 64 engine slots
+  with non-default sentinels, which is why the app does not wait for the rate to come back before sending.
+  What separates it from the OTHER clearing — a Signal Type transition, which drops the effect on both
+  members of a pair — is the notify stream rather than the read's own values: measured on a URX44V, the
+  transition announces the selector and the bypass on both members while the excursion announces the rate and
+  nothing else. That distinction has to come from the notifies because a read is not a snapshot — its
+  addresses are answered hundreds of milliseconds apart, and the pair's Signal Type is read *before* the
+  selector, so a transition landing in that gap leaves the two values equal and stale. A route the unit
+  announced during the read is therefore left alone (`HoldContext.announced`, fed from `DeviceFollow`'s
+  `onDeviceParam`).
+  The rate is read from the notify stream for the same reason: an excursion can be over before the read asks
+  for the rate address at all — 48 → 96 → 48 leaves the read holding a rate the effect runs at — so the hold
+  asks the read's rate AND every rate the unit announced on the way (`HoldContext.ratesSeen`). That list is
+  deliberately NOT scoped to the read's own window, unlike the announcements above: the rate notify that
+  escalated to the read arrives before it starts, and it is the one carrying the rate that did the clearing.
+  It also survives a read that established no rate, rather than being emptied by whichever read ends first —
+  reconciles run one at a time, so a SCOPED read for another node sits between the notify and the full read
+  it escalates to. That scoped read is where both halves matter: it never asks for the rate address, and it
+  is not therefore blind — it reads a node's insert FX like any other body value, so one already running when
+  the unit clears an effect is the FIRST to see the cleared selector. Deciding only from a read's own rate
+  left it adopting the clearing, with nothing for the full read behind it to keep.
+  What separates this from an operator's own No Effect on the unit is the rate the READ has evidence of —
+  the one it established (`ReadbackResult.deviceSampleRate`) or one the unit announced while it ran — never
+  the plan's own copy, which under the *Scene only* device scope is restored across a read and can name a
+  rate the unit left long ago. A read with NEITHER holds nothing, so an operator clearing an effect by hand
+  is adopted as it always was. The status line says how many values were kept, since the console is not reachable in an installed
+  build.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being

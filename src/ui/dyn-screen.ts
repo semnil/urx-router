@@ -411,7 +411,7 @@ export interface DynScreenHooks {
   isLive: () => boolean;
   /** The shared plan-edit funnel (the inspector's own path): flags the plan dirty
    *  and mirrors to the device when live. */
-  onUpdateNodeParams: (id: string, patch: NodeParams) => void;
+  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[]) => void;
   /** Hand this session's one meter subscription over / give it back. */
   releaseMeters: () => void;
   regainMeters: () => void;

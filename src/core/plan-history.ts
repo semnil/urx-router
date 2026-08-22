@@ -218,9 +218,58 @@ function diffKeys(before: AnyRecord, after: AnyRecord): [KeySlots, KeySlots] | n
   return changed ? [b, a] : null;
 }
 
+/** Every LEAF two group values differ at, keyed by the path to it — the sub-keys joined
+ *  the way a contest name joins its own parts, so a caller matching one against an
+ *  authored name never has to know how deep the field sat.
+ *
+ *  Descends as far as the two sides stay groups of the same kind. Stopping at the first
+ *  one made `fxEffect.params` a single contested key, so the app moving one of its fields
+ *  and the device moving another were one key and the app won both — measured: a device's
+ *  reverb room size read during an edit to the reverb time was thrown away with it. The
+ *  same shape is in the SSMCS bank's comp / sc / eq sections and in eqBands, whose bands
+ *  are objects inside an array. */
+function diffLeaves(before: AnyRecord, after: AnyRecord, prefix = ""): [KeySlots, KeySlots] | null {
+  const b: KeySlots = {};
+  const a: KeySlots = {};
+  let changed = false;
+  for (const key of unionKeys(before, after)) {
+    if (sameAt(before, after, key)) continue;
+    const path = prefix ? contestName(prefix, key) : key;
+    const bs = slotOf(before, key);
+    const as = slotOf(after, key);
+    const deeper =
+      bs.present && as.present && sameKindGroup(bs.value, as.value)
+        ? diffLeaves(bs.value as AnyRecord, as.value as AnyRecord, path)
+        : null;
+    if (deeper) {
+      Object.assign(b, deeper[0]);
+      Object.assign(a, deeper[1]);
+    } else {
+      b[path] = bs;
+      a[path] = as;
+    }
+    changed = true;
+  }
+  return changed ? [b, a] : null;
+}
+
+/** A leaf path resolved against a live value: the record that directly holds the leaf,
+ *  and the leaf's own key. `parent` is undefined when the path runs through something
+ *  that is not there, which every caller reads as "the plan does not hold this". */
+function atPath(rec: AnyRecord, path: string): { parent: AnyRecord; key: string } {
+  const parts = path.split(WIRE_SEP);
+  const key = parts[parts.length - 1];
+  let cur: unknown = rec;
+  for (const part of parts.slice(0, -1)) {
+    if (typeof cur !== "object" || cur === null) return { parent: undefined, key };
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return { parent: typeof cur === "object" && cur !== null ? (cur as Record<string, unknown>) : undefined, key };
+}
+
 /** Whether both values are records, or both arrays — something the contest can descend
- *  into one level. A group replaced by an array of the same keys is a shape change, not
- *  a per-field edit. */
+ *  into. A group replaced by an array of the same keys is a shape change, not a per-field
+ *  edit. */
 function sameKindGroup(a: unknown, b: unknown): boolean {
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
   return Array.isArray(a) === Array.isArray(b);
@@ -232,7 +281,7 @@ function sameKindGroup(a: unknown, b: unknown): boolean {
 function groupSubKeys(before: Slot<unknown> | undefined, after: Slot<unknown> | undefined): string[] | null {
   if (!before?.present || !after?.present) return null;
   if (!sameKindGroup(before.value, after.value)) return null;
-  const sub = diffKeys(before.value as AnyRecord, after.value as AnyRecord);
+  const sub = diffLeaves(before.value as AnyRecord, after.value as AnyRecord);
   return sub ? Object.keys(sub[0]) : null;
 }
 
@@ -434,18 +483,25 @@ export function applyPatch(plan: Plan, patch: PlanPatch): string[] {
 }
 
 function applySlots(rec: Record<string, unknown>, slots: KeySlots): void {
-  for (const [key, slot] of Object.entries(slots)) {
-    if (slot.present) rec[key] = structuredClone(slot.value);
-    else delete rec[key];
+  for (const [path, slot] of Object.entries(slots)) {
+    // A top-level key carries no separator, so it resolves to `rec` itself; a leaf path
+    // walks to the record that holds it. A path whose way is not there writes nothing —
+    // `slotHolds` refused it already, and creating the branch would put a value into a
+    // shape the plan does not have.
+    const { parent, key } = atPath(rec, path);
+    if (!parent) continue;
+    if (slot.present) parent[key] = structuredClone(slot.value);
+    else delete parent[key];
   }
 }
 
 /** Whether `rec[key]` is what the slot describes, presence included — one key's worth
  *  of the context a patch was computed against. */
-function slotHolds(rec: AnyRecord, key: string, slot: Slot<unknown>): boolean {
-  const present = rec !== undefined && Object.hasOwn(rec, key);
+function slotHolds(rec: AnyRecord, path: string, slot: Slot<unknown>): boolean {
+  const { parent, key } = rec === undefined ? { parent: undefined, key: path } : atPath(rec, path);
+  const present = parent !== undefined && Object.hasOwn(parent, key);
   if (!present || !slot.present) return present === slot.present;
-  return deepEqual(rec![key], slot.value);
+  return deepEqual(parent![key], slot.value);
 }
 
 /** The part of one nested group value (comp, gate, eqBands, …) the plan still holds the
@@ -463,7 +519,7 @@ function slotHolds(rec: AnyRecord, key: string, slot: Slot<unknown>): boolean {
 function narrowGroup(current: unknown, before: Slot<unknown>, after: Slot<unknown> | undefined): Slot<unknown> | null {
   if (!before.present || !after?.present) return null;
   if (!sameKindGroup(current, before.value) || !sameKindGroup(current, after.value)) return null;
-  const sub = diffKeys(before.value as AnyRecord, after.value as AnyRecord);
+  const sub = diffLeaves(before.value as AnyRecord, after.value as AnyRecord);
   if (!sub) return null;
   const keep: KeySlots = {};
   let any = false;
@@ -572,10 +628,35 @@ function contestName(...parts: string[]): string {
   return parts.join(WIRE_SEP);
 }
 
+/** The name `dropAuthored` matches a nodeParams sub-key by. Exported so a caller that
+ *  arbitrates one — a device read holding a key it must not adopt — spells it the way
+ *  the witness and the merge already do, rather than rebuilding the separator. */
+export function nodeParamContestKey(nodeId: string, param: string, sub?: string): string {
+  return sub === undefined ? contestName("nodeParams", nodeId, param) : contestName("nodeParams", nodeId, param, sub);
+}
+
+/** The same, from a dotted path: `"osc"` names the whole group, `"osc.on"` one field of
+ *  it. The distinction is the difference between keeping a value and throwing one away —
+ *  every funnel that edits a nested group REBUILDS it, writing one field and copying the
+ *  rest, so naming the group claims the siblings too and a device read in flight loses
+ *  its answer for all of them. Measured: with the group named, a device's OSC frequency
+ *  read during an OSC ON toggle was dropped whole; with the field named, it landed. */
+export function nodeParamContestPath(nodeId: string, path: string): string {
+  return contestName("nodeParams", nodeId, ...path.split("."));
+}
+
+/** The same, for one param of one wire. A caller names the wire by its endpoints — the
+ *  key the patch carries joins them the way a wire key does, which is a separator no
+ *  caller should be spelling out. */
+export function connParamContestKey(from: string, to: string, param: string): string {
+  return contestName("connParams", wireKey(from, to), param);
+}
+
 /** The printable label of the same piece, in the spelling applyPatchInContext reports. */
 function contestLabel(field: PatchField, key?: string, rest?: string[]): string {
   const head = key === undefined ? field : `${field} ${key}`;
-  return rest?.length ? `${head}.${rest.join(".")}` : head;
+  // A leaf path arrives joined the way a contest name is; printed, it reads as dots.
+  return rest?.length ? `${head}.${rest.join(".").replaceAll(WIRE_SEP, ".")}` : head;
 }
 
 /** Every piece of `patch`, named at the granularity the merge arbitrates: one name per
@@ -604,7 +685,10 @@ function revertSubKeys(before: Slot<unknown>, after: Slot<unknown>, keys: string
   if (!before.present || !after.present) return after;
   const value = structuredClone(after.value) as Record<string, unknown>;
   const slots: KeySlots = {};
-  for (const key of keys) slots[key] = slotOf(before.value as Record<string, unknown>, key);
+  for (const path of keys) {
+    const { parent, key } = atPath(before.value as Record<string, unknown>, path);
+    slots[path] = parent === undefined ? { present: false } : slotOf(parent, key);
+  }
   applySlots(value, slots);
   return { present: true, value };
 }
@@ -693,9 +777,25 @@ export class PlanWriteWitness {
 
   constructor(private readonly getPlan: () => Plan) {}
 
-  /** An edit funnel has just written to the plan. */
-  note(): void {
-    if (this.open) this.sample();
+  /**
+   * An edit funnel has just written to the plan.
+   *
+   * `names` are the keys the funnel MEANT to write, in contest spelling, for a funnel
+   * that carries a list. The sample below can only see a key whose VALUE moved, and a
+   * funnel writing a patch asserts every member of it — selecting an insert effect over
+   * an engaged one writes `insertFxOn: true` again, which moves nothing. Without the
+   * list that key authors nothing, a device read in flight is left free to take it back
+   * to whatever the unit held, and the operator's newly selected effect lands bypassed
+   * (measured before this argument existed). A funnel with no list — a view that mutated
+   * the plan itself, an undo applying a patch — passes none and the diff is the floor.
+   *
+   * What makes a funnel need one is a MULTI-key patch: with a single key, a write that
+   * moves nothing changed nothing, and there is no second key whose assertion could be
+   * lost. Every connection-parameter write is single-key today, which is why only the
+   * node-parameter funnel carries a list.
+   */
+  note(names?: Iterable<string>): void {
+    if (this.open) this.sample(names);
   }
 
   /** Watch the writes made from now until the read being issued resolves. */
@@ -721,14 +821,15 @@ export class PlanWriteWitness {
     };
   }
 
-  private sample(): void {
+  private sample(names?: Iterable<string>): void {
     if (!this.last) return;
     const plan = this.getPlan();
     const patch = diffPlans(this.last, plan);
     this.last = clonePlanState(plan);
-    if (!patch.length) return;
+    const written = [...patchContestNames(patch), ...(names ?? [])];
+    if (!written.length) return;
     const at = ++this.samples;
-    for (const name of patchContestNames(patch)) this.written.set(name, at);
+    for (const name of written) this.written.set(name, at);
   }
 }
 

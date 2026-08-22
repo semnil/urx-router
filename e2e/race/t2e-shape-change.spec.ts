@@ -19,7 +19,7 @@ import {
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
-import { graphNode, strip } from "./ui";
+import { graphNode, param, paramExact, strip } from "./ui";
 
 // T2e shape-change — the two catalog cases whose subject is a constraint that lives in
 // DATA rather than in the emit path (docs/{en,ja}/live-race-harness.md).
@@ -122,10 +122,6 @@ const seedMem = (page: Page, entries: Record<string, number>): Promise<void> =>
     Object.assign(window.__urxFake.mem, e);
   }, entries);
 
-const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
-/** A .param whose label is EXACTLY `label` — "Pan" must not match "Pan Link". */
-const paramExact = (page: Page, label: string) =>
-  page.locator("#inspector .param", { has: page.getByText(label, { exact: true }) });
 /** Every strip's send mini-fader for one destination, addressed by the aria-label the
  *  rack gives it (console.ts SEND_LABEL) rather than by column position. */
 const sendFaders = (page: Page, dest: string) => page.locator(`.con-strip .con-vfad[aria-label="${dest}"]`);

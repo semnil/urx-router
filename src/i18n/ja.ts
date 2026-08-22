@@ -641,6 +641,8 @@ export const ja: Messages = {
     liveSynced: (n: number): string => `→ デバイス (${n})`,
     liveFollowing: "← デバイス…",
     liveFollowed: (n: number): string => `← デバイス (${n})`,
+    liveHeld: (read: number, held: number): string =>
+      `← デバイス (${read}) · ${held} 件を保持して再送 (実機のサンプルレートでは動かせない設定)`,
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} は ${kept} と本体上の設定を共有しています${more > 0 ? ` (他 ${more} 件)` : ""} — 本体に届くのは ${kept} の値だけです`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
@@ -891,6 +893,7 @@ export const ja: Messages = {
       `${n} 件の設定を読み取れず、デバイスの状態を完全には把握できません。Live sync の開始には完全な読み取りが必要です。`,
     liveFollowStopped:
       "セッション開始中にデバイス追従が停止したため、実機側の変更がプランに届かない状態でした。Live sync は開始していません。",
+    followReadHeld: (cause: string, n: number): string => `${cause}。実機が消去した ${n} 件はプランに保持したまま`,
     followReadIncomplete: (n: number): string =>
       `デバイス側の変更後、${n} 件の設定を読み戻せず、プランが実機と一致しなくなりました。取得し直して同期してください。`,
     clockUnread: (message: string): string =>

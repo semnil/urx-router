@@ -4,7 +4,14 @@ import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
-import { applyPairTransition, mirrorBalPair, mirrorLinkedInsertFx, mixSendLocks, partnerChannel } from "./core/routing";
+import {
+  applyPairTransition,
+  INSERT_FX_PAIR_KEYS,
+  mirrorBalPair,
+  mirrorLinkedInsertFx,
+  mixSendLocks,
+  partnerChannel,
+} from "./core/routing";
 import {
   decodePlanParam,
   deserializeDocument,
@@ -19,7 +26,13 @@ import {
 import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
-import { clonePlanState, diffPlans, PlanWriteWitness, type PatchTouch } from "./core/plan-history";
+import {
+  clonePlanState,
+  diffPlans,
+  nodeParamContestPath,
+  PlanWriteWitness,
+  type PatchTouch,
+} from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import { isRefusal, planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
@@ -35,7 +48,13 @@ import {
   saveTextDocument,
 } from "./core/storage";
 import type { RecentEntry } from "./core/storage";
-import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
+import {
+  COMP_EQ_SSMCS,
+  INSERT_FX_ANNOUNCED,
+  PARAMS,
+  REC_POINT_PRE_COMP,
+  REC_POINT_PRE_EQ,
+} from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
@@ -109,6 +128,7 @@ import {
   applyNodeState,
   applySourceState,
   formatReadbackReport,
+  insertFxHoldKeys,
   readIntoPlan,
 } from "./core/control/readback";
 import type { MergedRead, ReadbackResult } from "./core/control/readback";
@@ -447,7 +467,7 @@ const consoleView = new Console(consoleHost, {
   // A console edit changed the plan: flag dirty + schedule live sync. The console
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
-  onChange: () => markChanged(),
+  onChange: (written) => markChanged("ui", written),
   // The meter stream failed to register. Floor-stuck bars read as "no signal",
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
@@ -564,10 +584,20 @@ function reflectFollow(): void {
 // edit on the hardware. Throwing takes DeviceFollow's stop-following path, which
 // its hook contract already declares. Shared by both reconcile hooks so the rule
 // has one spelling.
-function assertReadComplete(result: ReadbackResult, label: string): void {
-  if (!result.errors.length) return;
-  console.warn(label, result.errors);
-  throw new Error(linkFailureIn(result.errors) ?? t().error.followReadIncomplete(result.errors.length));
+function assertReadComplete(merged: MergedRead, label: string): void {
+  // What the read HELD is reported first and unconditionally. The hold has already taken
+  // effect inside the merge, so a report that ran only past this throw would leave the
+  // plan keeping values the unit does not have with nothing saying so — and reporting it
+  // here rather than at each call site is what stops a fourth caller getting that order
+  // wrong.
+  if (merged.held.length) console.warn("device read: the plan keeps what the unit cleared", merged.held);
+  if (!merged.errors.length) return;
+  console.warn(label, merged.errors);
+  const cause = linkFailureIn(merged.errors) ?? t().error.followReadIncomplete(merged.errors.length);
+  // The count travels with the teardown's own message: the status line this read would
+  // have written is about to be replaced by `stopLiveOnError`, and the console does not
+  // reach an installed build.
+  throw new Error(merged.held.length ? t().error.followReadHeld(cause, merged.held.length) : cause);
 }
 // A merged device read could not place part of its result: a wire the operator removed
 // while it was in flight, or an edit a device-side routing change left nowhere to land.
@@ -575,6 +605,36 @@ function assertReadComplete(result: ReadbackResult, label: string): void {
 // same rule the history's own apply follows. Not a link failure, so it does not abort.
 function noteMergeConflicts(merged: MergedRead): void {
   if (merged.unplaced.length) console.warn("device read: merge targets no longer in the plan", merged.unplaced);
+}
+// The send-back, which only a complete read may ask for: a partial read is about to
+// drop the link, and a flush issued into that writes nothing and reports nothing. The
+// snapshot has just re-based onto the unit's values, so plan and device disagree exactly
+// where the read held, and the ordinary outgoing diff is what puts them back — for insert
+// FX, the selector, then the stored engine values, then the bypass intent. Nothing else
+// would schedule that flush: no plan key moved, so no edit funnel ran.
+//
+// A read holds only where it has rate evidence (insertFxHoldKeys) — its own, or one the
+// unit announced while it ran. Both reconcile paths hand over the same hold for that
+// reason: a scoped read establishes no rate of its own and is still the first thing to
+// see a selector the unit has just cleared, so the pairing cannot be skipped at one of
+// them.
+function reapplyHeld(merged: MergedRead): void {
+  if (!merged.held.length) {
+    setStatus(t().status.liveFollowed(merged.applied));
+    return;
+  }
+  // A follow read outlives a session that merely ended (`abandonFollowWork` is not called
+  // from `deactivateLive`), and `schedule()` is a no-op once it has — worth telling apart
+  // in the log from a flush that went out.
+  if (live?.isActive()) {
+    live.schedule();
+    setStatus(t().status.liveHeld(merged.applied, merged.held.length));
+    return;
+  }
+  // Nothing left to send them through: the values stay in the plan, and the status line
+  // belongs to whatever ended the session. Writing "re-sent" over it would name an action
+  // that did not happen and cannot.
+  console.warn("device read: no session left to send the held values back through", merged.held);
 }
 // Single funnel for every device-follow reflect (direct notifies and the scoped /
 // full read-backs alike): a knob sweep delivers notifies in ~30/s IPC batches, any
@@ -610,6 +670,33 @@ function requestReflect(): void {
 // abandonFollowWork's clear also ends the refusal — a read bound to a discarded plan
 // provably cannot touch the open one, so it must not keep undo shut.
 const followReads = new Set<AbortController>();
+// Routes the UNIT announced an insert-FX change on, appended in notify order. A read is
+// not a snapshot: its addresses are answered hundreds of milliseconds apart, so a change
+// landing inside one is caught on the addresses read after it and missed on those read
+// before, and comparing two of its values says nothing about what happened between them.
+// The notify stream is what carries the order — and it tells the two clearings apart,
+// where the read's values cannot: a Signal Type transition announces the insert-FX
+// addresses it clears, the sample-rate excursion announces only the rate. Appended
+// rather than cleared per read, because two follow reads can be in flight at once and a
+// reset would take the evidence of one out from under the other; each takes the slice
+// that arrived inside it, and the list is emptied when the last read ends.
+const announcedInsertFx: string[] = [];
+// Every sample rate the unit announced, from the same stream. Taken WHOLE rather than
+// sliced to a read's own window, unlike the list above: the rate notify that escalates to
+// the read arrives before it starts, and it is the one carrying the rate that cleared the
+// effect. An excursion can also be over before the read asks for the rate at all — 48 →
+// 96 → 48 leaves the read holding 48, where the effect runs and the clearing then reads
+// as the operator's own.
+//
+// Each entry carries the sequence number it arrived at, and a read consumes the ones that
+// were already there when it started — what arrived while it ran belongs to the reconcile
+// it scheduled. By SEQUENCE rather than by array position, and independently of whatever
+// else is in flight: a side-effect refetch overlapping the read establishes no rate of its
+// own, so tying the consumption to an empty in-flight set left the announcement standing
+// after the read it was for had finished with it, and the next clearing the operator made
+// by hand on the unit was held against a rate the unit had left long before.
+const announcedRates: Array<{ seq: number; hz: number }> = [];
+let rateSeq = 0;
 
 // Everything device-follow has in flight for a plan that is being replaced. Called at
 // each wholesale reassignment of `plan`, and deliberately not from deactivateLive: with
@@ -622,6 +709,9 @@ const followReads = new Set<AbortController>();
 function abandonFollowWork(): void {
   for (const c of followReads) c.abort();
   followReads.clear();
+  // The reads that would have consumed these are gone, so nothing is left to own them.
+  announcedInsertFx.length = 0;
+  announcedRates.length = 0;
   if (reflectTimer) {
     clearTimeout(reflectTimer);
     reflectTimer = 0;
@@ -643,16 +733,45 @@ async function followRead(
 ): Promise<MergedRead | null> {
   const controller = new AbortController();
   followReads.add(controller);
+  const mark = announcedInsertFx.length;
+  // Where this read's own share of the rate history ends. Everything after it arrived
+  // WHILE the read ran, which means it belongs to the reconcile it scheduled rather than
+  // to this one.
+  const rateMark = rateSeq;
+  let establishedRate = false;
   try {
     const merged = await readIntoPlan(
       () => plan,
       (into) => read(into, controller.signal),
       planWrites,
+      (ctx) => {
+        establishedRate = ctx.deviceSampleRate !== undefined;
+        return insertFxHoldKeys(getModel(modelId), {
+          ...ctx,
+          announced: new Set(announcedInsertFx.slice(mark)),
+          ratesSeen: announcedRates.map((r) => r.hz),
+        });
+      },
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
     return merged;
   } finally {
     followReads.delete(controller);
+    if (!followReads.size) announcedInsertFx.length = 0;
+    // The rate history outlives a read that established no rate of its own, and a read
+    // that did takes only what was already there when it started. Both halves are about
+    // the same thing — the read that CONSUMES an announcement is not always the one that
+    // was running when it arrived. A scoped read holds no rate at all, so emptying on
+    // whichever read finished first took the evidence out from under the full read the
+    // notify was for; and a full read already in flight has read the selector before the
+    // unit cleared it, so it holds nothing itself and the announcement belongs to the
+    // replay it scheduled. Measured: clearing the whole list there left that replay
+    // adopting the clearing.
+    if (establishedRate) {
+      const keep = announcedRates.filter((r) => r.seq > rateMark);
+      announcedRates.length = 0;
+      announcedRates.push(...keep);
+    }
   }
 }
 
@@ -677,6 +796,18 @@ const follow =
             ? live?.isEchoName(p.paramId, p.y, p.valueStr)
             : live?.isEcho(p.paramId, p.x, p.y, p.value)) ?? false,
         lookup: (paramId, x, y) => live?.lookup(paramId, x, y),
+        // Read for one thing only: which routes the unit announced an insert-FX change
+        // on while a read was running (see `announcedInsertFx`). A Signal Type notify
+        // names the pair's primary, and the transition it reports clears BOTH members,
+        // so the partner is recorded with it.
+        onDeviceParam: (p) => {
+          if (p.paramId === PARAMS.SAMPLE_RATE.id) announcedRates.push({ seq: ++rateSeq, hz: p.value });
+          const addr = live?.lookup(p.paramId, p.x, p.y);
+          if (!addr?.node || !INSERT_FX_ANNOUNCED.has(addr.name)) return;
+          announcedInsertFx.push(addr.node);
+          const partner = partnerChannel(getModel(modelId), addr.node);
+          if (partner) announcedInsertFx.push(partner);
+        },
         // A direct (node-local scalar) change: decode the notify value straight into
         // the plan, no read-back, and record the node so the coalesced reflect
         // repaints just it. The reflect is scheduled by flushDirect.
@@ -746,7 +877,7 @@ const follow =
           followFull = true;
           requestReflect();
           assertReadComplete(merged, "device-follow scoped readback issues:");
-          setStatus(t().status.liveFollowed(merged.applied));
+          reapplyHeld(merged);
         },
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
@@ -766,7 +897,7 @@ const follow =
           followFull = true;
           requestReflect();
           assertReadComplete(merged, "device-follow readback issues:");
-          setStatus(t().status.liveFollowed(merged.applied));
+          reapplyHeld(merged);
         },
         onFollow: () => setStatus(t().status.liveFollowing),
         onError: (message) => stopLiveOnError(errorText(message)),
@@ -993,14 +1124,15 @@ let planHistory: PlanHistory | null = null;
 // LED) follows edits made anywhere in the UI. The undo history opens its entry
 // here too, and closes it at the next gesture boundary — which is why the diff is
 // taken then and not now: several funnels mutate the plan further after calling.
-function markChanged(source: WriteSource = "ui"): void {
+function markChanged(source: WriteSource = "ui", written?: Iterable<string>): void {
   dirty = true;
   // Attribute the write before the funnel's own side effects run: note() may commit an
   // entry, and the ledger has to say who authored the keys that entry carries.
   traceProbe?.sample(source);
   // Name the keys for any device read in flight, so a value the app moved and moved back
-  // inside the read's window is not overwritten by what the device held in between.
-  planWrites.note();
+  // inside the read's window is not overwritten by what the device held in between —
+  // and, for a funnel that carries a patch, the keys it asserted without moving them.
+  planWrites.note(written);
   live?.schedule();
   midi?.scheduleFeedback();
   planHistory?.note();
@@ -1116,14 +1248,19 @@ const inspectorActions = {
     // ducked-channel PRE-send note appears/clears with the tap.
     if (patch.oscL !== undefined || patch.oscR !== undefined || patch.tap !== undefined) refreshInspector();
   },
-  onUpdateNodeParams: (id: string, patch: NodeParams) => {
+  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[]) => {
     const prev = plan.nodeParams[id];
+    const partner = partnerChannel(getModel(modelId), id);
     plan.nodeParams[id] = { ...prev, ...patch };
     // Signal Type / PAN-BAL move the pair's pans — and PAN-BAL itself on a link —
     // the way the unit does. Applied before the BAL mirror below, so the mirror
-    // copies the settled values onto the partner.
-    if (patch.stereoLink !== undefined || patch.panBal !== undefined)
-      applyPairTransition(getModel(modelId), plan, id, patch);
+    // copies the settled values onto the partner. It names its own writes: every one
+    // of them can land on the value already there, so nothing downstream can recover
+    // them from the plan's diff.
+    const transitionKeys =
+      patch.stereoLink !== undefined || patch.panBal !== undefined
+        ? applyPairTransition(getModel(modelId), plan, id, patch)
+        : [];
     // A STEREO-linked pair in BAL mode moves as one: copy this channel's params to
     // the partner (the pair-level Signal Type / PAN-BAL fields stay on the primary).
     const mirrored = mirrorBalPair(getModel(modelId), plan, id);
@@ -1131,7 +1268,33 @@ const inspectorActions = {
     // takes a pass of its own beside the BAL-gated mirror above. In BAL both run and
     // write the same values.
     const insFxMirrored = mirrorLinkedInsertFx(getModel(modelId), plan, id);
-    markChanged();
+    // The patch's own keys, not only the ones whose value moved: this funnel asserts
+    // every member it carries, and a device read in flight must not take back one that
+    // happened to already hold the asserted value.
+    //
+    // A NESTED GROUP is the exception, and it is the default rather than a caller's
+    // responsibility: every funnel edits one by REBUILDING it — one field set, the rest
+    // copied — and the merge drops a named group WHOLE, so naming it hands the device's
+    // answer for every untouched sibling away with it (measured: an OSC frequency the
+    // unit moved during an OSC ON toggle was thrown out with the toggle's own key). A
+    // group therefore falls through to the plan's own diff, which names the fields that
+    // moved. A caller with a field that can be written WITHOUT moving names it itself, as
+    // a dotted path — that is what `written` carries, and it replaces this derivation.
+    const names = written ?? Object.keys(patch).filter((key) => typeof patch[key as keyof NodeParams] !== "object");
+    const keys = [...names.map((name) => nodeParamContestPath(id, name)), ...transitionKeys];
+    // A mirror asserts the PARTNER's keys the same way, and it can assert one that already
+    // holds the value it writes — the insert-FX mirror re-writes a bypass that was already
+    // on. Each names only what IT wrote, and for the BAL mirror that is THIS EDIT's keys,
+    // not the whole record it copies: the other keys it carries over were already equal on
+    // both sides, so copying them writes nothing, while claiming them takes the device's
+    // answer away from the partner alone. Measured before the narrowing: a read that moved
+    // both members' HPF, with an unrelated Phase edit inside it, left CH 1 on the device's
+    // ON and CH 2 on the plan's OFF — one gesture splitting a pair that moves as one.
+    const mirroredKeys = new Set<string>();
+    if (mirrored) for (const name of names) mirroredKeys.add(name);
+    if (insFxMirrored) for (const key of INSERT_FX_PAIR_KEYS) mirroredKeys.add(key);
+    if (partner) for (const name of mirroredKeys) keys.push(nodeParamContestPath(partner, name));
+    markChanged("ui", keys);
     // Two of the side effects below write the plan AFTER markChanged took the ledger
     // sample, so their keys would land in whatever samples next — under live follow a
     // device notify, which invariant 13 then reads as the device authoring a key the
@@ -2038,7 +2201,7 @@ const dynScreen = new DynScreen({
   getModel: () => getModel(modelId),
   getPlan: () => plan,
   isLive: () => liveSessionUp,
-  onUpdateNodeParams: (id, patch) => inspectorActions.onUpdateNodeParams(id, patch),
+  onUpdateNodeParams: (id, patch, written) => inspectorActions.onUpdateNodeParams(id, patch, written),
   releaseMeters: () => consoleView.releaseMeters(),
   regainMeters: () => consoleView.regainMeters(),
   onMeterError: (message) => stopLiveOnError(errorText(message)),
@@ -2105,6 +2268,7 @@ const traceProbe = TRACE
       // clearing there would not answer null either. isActive() is what "no session" is.
       liveSnapshot: () => (live?.isActive() ? live.snapshotEntries() : null),
       depth: () => planHistory?.depth() ?? { undo: 0, redo: 0 },
+      rates: () => announcedRates.map((r) => r.hz),
     })
   : null;
 
