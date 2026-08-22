@@ -535,6 +535,9 @@ test("the channel tuning screens show every processor, both displays and their n
   // A guitar amp is the one family with two faces, and the only one whose face bar and
   // the tag on its locked modulation rows are on screen at all.
   await openInsFx("ch1", "Clean", ["#dyn-face-insfx-cab", "#dyn-face-insfx-amp"]);
+  // Pitch Fix is the other two-face family, and its scale face is the only place the note
+  // strip and the read-only MIDI Control row appear.
+  await openInsFx("ch3", "Pitch Fix", ["#dyn-face-insfx-cab", "#dyn-face-insfx-amp"]);
   // Back to the strip that already holds it: the compander takes a device-wide 1-of slot,
   // so a third channel cannot select one while CH 2 has it.
   await openInsFx("ch2", "Compander-H", [], true);

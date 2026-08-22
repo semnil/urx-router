@@ -16,18 +16,35 @@
 // than a parameter (`ifx6`), and the catalogue's own formatter prints it. The catalogue is
 // the single value definition: nothing here restates a range, a default or an enum.
 
-import { insertFxFamilyOf, insertFxParams } from "../core/control/insert-fx-effect";
+import {
+  insertFxFamilyOf,
+  insertFxParams,
+  PITCH_KEY_SLOT,
+  PITCH_MIDI_ENABLE_SLOT,
+  PITCH_MIDI_REALTIME_SLOT,
+  PITCH_NOTE_SLOTS,
+  PITCH_SCALE_CHROMATIC,
+  PITCH_SCALE_CUSTOM,
+  PITCH_SCALE_HARMONIC_MINOR,
+  PITCH_SCALE_MAJOR,
+  PITCH_SCALE_MELODIC_MINOR,
+  PITCH_SCALE_NATURAL_MINOR,
+  PITCH_SCALE_PENTATONIC,
+  PITCH_SCALE_SINGLE,
+  PITCH_SCALE_SLOT,
+  SEMITONE_NAMES,
+} from "../core/control/insert-fx-effect";
 import type { InsertFxFamily, InsertFxParamDesc } from "../core/control/insert-fx-effect";
 import { insertFxSelected } from "../core/control/params";
 import { insertFxControl } from "../core/control/translate";
 import type { DynField, InsertFxFieldKey } from "../core/control/translate";
 import { grAddr, insertFxOutGrAddr, tapFor } from "../core/meters";
 import type { NodeParams, Plan } from "../core/plan";
-import { onOff, settingsRow } from "./dom";
+import { el, onOff, settingsChoice, settingsRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { enumRow } from "./dyn-chan";
-import type { DynBinding, DynCtx, DynLane, DynProcessor } from "./dyn-screen";
-import { insertFxVal, reKeyInsertFxParams } from "./insert-fx-model";
+import type { DynBinding, DynCtx, DynLane, DynProcessor, DynRowCtx } from "./dyn-screen";
+import { insertFxVal, pitchKeyPatch, pitchMidiMode, pitchScalePatch, reKeyInsertFxParams } from "./insert-fx-model";
 import type { Messages } from "../i18n/en";
 
 /** Lane ruler floor. The taps either side of an insert effect are ordinary channel
@@ -53,11 +70,15 @@ const ROW_ORDER: Partial<Record<InsertFxFamily, readonly string[]>> = {
   compander: ["threshold", "ratio", "width", "outGain", "attack", "release"],
 };
 
-/** Which face of a guitar amp a row belongs to. */
+/** Which face a row belongs to. A guitar amp is split into the amp and its cabinet, and
+ *  Pitch Fix into what the correction does to a note and what decides which notes exist. */
 export type InsFxFace = "amp" | "cab";
 
 /** The cabinet's four rows, in the order the signal meets them. */
 const CAB_ORDER: readonly string[] = ["gate", "gateLevel", "spType", "micPosition"];
+
+/** Pitch Fix's second face: what the correction is aimed at, rather than what it does. */
+const PITCH_SCALE_ORDER: readonly string[] = ["key", "speed", "tolerance", "noteLow", "noteHigh"];
 
 /**
  * The amp's own rows: this type's own values first, then the tone stack, then the
@@ -73,6 +94,13 @@ const CAB_ORDER: readonly string[] = ["gate", "gateLevel", "spType", "micPositio
  * still appears, after the ones it does, rather than disappearing from a face silently.
  */
 const AMP_ORDER: readonly string[] = [
+  // Pitch Fix's first face, in the unit's own read order.
+  "coarse",
+  "fine",
+  "formant",
+  "correction",
+  "mix",
+  // The guitar amps.
   "blend",
   "distortion",
   "character",
@@ -97,6 +125,10 @@ const MOD_SPEED_SLOT = 20;
 const MOD_DEPTH_SLOT = 21;
 
 const isGuitar = (fam: InsertFxFamily): boolean => fam.startsWith("guitar-");
+/** The families this screen shows as two faces. */
+const isBanked = (fam: InsertFxFamily): boolean => isGuitar(fam) || fam === "pitch";
+/** The second face's own rows, for a family that has one. */
+const secondFaceOrder = (fam: InsertFxFamily): readonly string[] => (fam === "pitch" ? PITCH_SCALE_ORDER : CAB_ORDER);
 
 /** The family a node holds, or null where it holds nothing (No Effect, or nothing at all). */
 function familyOf(ctx: DynCtx): InsertFxFamily | null {
@@ -109,16 +141,13 @@ function familyOf(ctx: DynCtx): InsertFxFamily | null {
  * the Inspector's choice between its own editor and the launcher cannot disagree with
  * whether the screen would open.
  *
- * Two families answer null. The multi-band compressor's values are not in the flat
- * catalogue at all. Pitch Fix's are, but only in part: its Key, its Scale and its twelve-
- * note mask are edited through rules of their own (a note edit sets Custom; only two
- * presets have a pattern this app can author), and a screen built from the flat rows alone
- * would be an editor missing the half that decides what the effect corrects to.
+ * One family answers null: the multi-band compressor's bands and globals are a structured
+ * layout rather than a list, and the flat catalogue carries none of it.
  */
 export function insertFxScreenFamily(plan: Plan, nodeId: string): InsertFxFamily | null {
   const v = plan.nodeParams[nodeId]?.insertFx;
   const fam = v === undefined ? null : insertFxFamilyOf(v);
-  return fam && fam !== "pitch" && rowsOf(fam).length ? fam : null;
+  return fam && rowsOf(fam).length ? fam : null;
 }
 
 /**
@@ -130,12 +159,13 @@ export function insertFxScreenFamily(plan: Plan, nodeId: string): InsertFxFamily
  */
 function rowsOf(fam: InsertFxFamily, face: InsFxFace = "amp"): InsertFxParamDesc[] {
   const descs = insertFxParams(fam);
-  // A guitar amp is two faces: the cabinet's four rows, and everything else.
-  const order = isGuitar(fam) ? (face === "cab" ? CAB_ORDER : AMP_ORDER) : ROW_ORDER[fam];
+  const second = secondFaceOrder(fam);
+  const order = isBanked(fam) ? (face === "cab" ? second : AMP_ORDER) : ROW_ORDER[fam];
   if (!order) return [...descs];
-  if (isGuitar(fam)) {
+  if (isBanked(fam)) {
+    // The second face names its own rows; the first takes everything else.
     const onFace = (d: InsertFxParamDesc): boolean =>
-      face === "cab" ? CAB_ORDER.includes(d.label) : !CAB_ORDER.includes(d.label);
+      face === "cab" ? second.includes(d.label) : !second.includes(d.label);
     return descs.filter(onFace).sort((a, b) => rankIn(order, descs, a) - rankIn(order, descs, b));
   }
   return [...descs].sort((a, b) => rankIn(order, descs, a) - rankIn(order, descs, b));
@@ -232,8 +262,8 @@ function insFxFace(face: InsFxFace): DynProcessor {
       const ifx = insertFxControl(ctx.model, ctx.nodeId);
       const fam = insertFxScreenFamily(ctx.plan, ctx.nodeId);
       if (!ifx || !fam) return null;
-      // Only a guitar amp has a second face; nothing else may be reached on one.
-      if (face === "cab" && !isGuitar(fam)) return null;
+      // Only a banked family has a second face; nothing else may be reached on one.
+      if (face === "cab" && !isBanked(fam)) return null;
       const fields: DynField[] = rowsOf(fam, face)
         .filter((d) => d.control === "slider")
         .map((d) => ({
@@ -261,13 +291,14 @@ function insFxFace(face: InsFxFace): DynProcessor {
     // below start at the same height on every effect.
     bar: (ctx) => {
       const fam = familyOf(ctx);
-      if (!fam || !isGuitar(fam)) return undefined;
+      if (!fam || !isBanked(fam)) return undefined;
       const g = ctx.m.dynTuning.insfx;
+      const [first, second] = fam === "pitch" ? [g.facePitch, g.faceScale] : [g.faceAmp, g.faceCab];
       return {
         label: g.faceBar,
         items: [
-          { label: g.faceAmp, id: "dyn-face-insfx-amp", face: INSFX_DYN, sel: 0 },
-          { label: g.faceCab, id: "dyn-face-insfx-cab", face: INSFX_CAB_DYN, sel: 0 },
+          { label: first, id: "dyn-face-insfx-amp", face: INSFX_DYN, sel: 0 },
+          { label: second, id: "dyn-face-insfx-cab", face: INSFX_CAB_DYN, sel: 0 },
         ],
       };
     },
@@ -350,19 +381,28 @@ function insFxFace(face: InsFxFace): DynProcessor {
         const key = slotKey(d.slot);
         const cur = rawOf(ctx, fam, d);
         const label = labelOf(d, ctx.m);
+        // The Key is a plain enum in the catalogue, but writing it alone would leave the
+        // mask spelling the old root: the unit re-derives on a Key write and an offline
+        // plan has to agree with what it would have derived.
         pending.push(
-          d.control === "toggle"
-            ? ctx.midi(
-                settingsRow(
-                  label,
-                  onOff(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 })),
-                ),
-                key,
-              )
-            : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v })),
+          fam === "pitch" && d.label === "key"
+            ? enumRow(label, d.options ?? [], cur, (v) => ctx.set(slotPatch(pitchKeyPatch(scaleOf(ctx), v))))
+            : d.control === "toggle"
+              ? ctx.midi(
+                  settingsRow(
+                    label,
+                    onOff(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 })),
+                  ),
+                  key,
+                )
+              : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v })),
         );
+        // The Scale and the twelve notes are not in the flat catalogue at all; they belong
+        // beside the Key, which is the value they are rooted at.
+        if (fam === "pitch" && d.label === "key") pending.push(...pitchScaleRows(ctx));
       }
       tail.push(...pending);
+      if (fam === "pitch" && face === "cab") tail.push(pitchMidiRow(ctx));
       return { before, tail };
     },
 
@@ -372,6 +412,78 @@ function insFxFace(face: InsFxFace): DynProcessor {
     // multi-band compressor) get a plot with their own faces.
     display: (parts) => parts.lanes(),
   };
+}
+
+/** A slot→raw patch, as the field keys `patch` speaks. */
+const slotPatch = (patch: Record<number, number>): Record<string, number> =>
+  Object.fromEntries(Object.entries(patch).map(([slot, raw]) => [slotKey(Number(slot)), raw]));
+
+const scaleOf = (ctx: DynCtx): number =>
+  insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_SCALE_SLOT, PITCH_SCALE_CHROMATIC);
+
+/**
+ * The Scale selector and the twelve notes it turns on.
+ *
+ * Every preset is selectable: the unit derives the mask from the Scale and the Key for all
+ * eight, measured at two keys, and the app authors the same offsets. The twelve slots are
+ * ABSOLUTE semitones — slot 22 is C whatever the Key is — so the buttons are named from C
+ * and are not laid out as a keyboard, which would imply a root that is not there.
+ *
+ * Editing a note takes the Scale to Custom. The unit does that itself; the app writes it
+ * too, because the plan is what the next flush emits and a plan still spelling a preset
+ * would re-derive the mask over the edit.
+ */
+function pitchScaleRows(ctx: DynRowCtx): HTMLElement[] {
+  const t = ctx.m.inspector.insertFxEffect;
+  const scale = scaleOf(ctx);
+  const key = insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_KEY_SLOT, 0);
+  const scales = [
+    { value: PITCH_SCALE_CHROMATIC, label: t.scaleChromatic },
+    { value: PITCH_SCALE_MAJOR, label: t.scaleMajor },
+    { value: PITCH_SCALE_CUSTOM, label: t.scaleCustom },
+    { value: PITCH_SCALE_SINGLE, label: t.scaleSingle },
+    { value: PITCH_SCALE_NATURAL_MINOR, label: t.scaleNaturalMinor },
+    { value: PITCH_SCALE_HARMONIC_MINOR, label: t.scaleHarmonicMinor },
+    { value: PITCH_SCALE_MELODIC_MINOR, label: t.scaleMelodicMinor },
+    { value: PITCH_SCALE_PENTATONIC, label: t.scalePentatonic },
+  ];
+  const notes = el("span", "ctl gt-notes");
+  PITCH_NOTE_SLOTS.forEach((slot, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = SEMITONE_NAMES[i];
+    const on = insertFxVal(ctx.plan, ctx.nodeId, "pitch", slot, 1) !== 0;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", String(on));
+    b.addEventListener("click", () =>
+      ctx.set({ [slotKey(slot)]: on ? 0 : 1, [slotKey(PITCH_SCALE_SLOT)]: PITCH_SCALE_CUSTOM }),
+    );
+    notes.append(b);
+  });
+  return [
+    enumRow(t.scale, scales, scales.some((o) => o.value === scale) ? scale : PITCH_SCALE_CUSTOM, (v) =>
+      ctx.set(slotPatch(pitchScalePatch(v, key))),
+    ),
+    settingsRow(t.scaleNotes, notes),
+  ];
+}
+
+/** MIDI Control, shown and never written. The unit takes those notes on a USB-MIDI port of
+ *  its own — not the port this app reads external control from — and switching it on erases
+ *  a twelve-note mask that is FULL, taking the Scale enum to Custom with it. */
+function pitchMidiRow(ctx: DynRowCtx): HTMLElement {
+  const t = ctx.m.inspector.insertFxEffect;
+  const mode = pitchMidiMode(
+    insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_ENABLE_SLOT, 0),
+    insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_REALTIME_SLOT, 0),
+  );
+  const row = settingsRow(
+    t.params.midiControl,
+    settingsChoice(["Off", "Setting", "Real Time"], mode, () => {}, true),
+    { locked: true },
+  );
+  row.title = t.midiControlDeviceOnly;
+  return row;
 }
 
 /** The face a launcher opens on, and the one the bar reaches from it. */

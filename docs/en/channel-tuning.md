@@ -819,6 +819,28 @@ a face whose `bind` answers null closes the screen, which is right for a bank ta
 for one replaced, and a `sel` nothing resets would carry a cabinet segment onto an effect with no
 cabinet. `DynProcessor.bankIdentity` is what the host compares to tell those apart.
 
+### Pitch Fix is two faces as well
+
+PITCH is what the correction does to a note — Coarse, Fine, Formant, Correction, Mix. SCALE is what
+it is aimed at: the Key, the Scale, the twelve notes, and the two limits and two timings that decide
+when it acts.
+
+**The twelve note slots are ABSOLUTE semitones.** Slot 22 is C whatever the Key is, measured by
+setting Key = G with Scale = Major and reading them back as C D E F# G A B. So the buttons are named
+from C and sit in one plain row: a black-and-white keyboard would draw a root that is not there.
+
+**Every preset is selectable.** The unit derives the twelve notes itself from the Scale and the Key,
+for all eight presets — read at Key = C and Key = G, the offsets came back identical while the
+absolute bits moved — so the app authors the same offsets rather than only the two patterns it could
+once spell. Editing a note takes the Scale to Custom, which the unit also does on its own; the app
+writes it too, because the plan is what the next flush emits and a plan still spelling a preset would
+re-derive the mask over the edit.
+
+**MIDI Control is shown and never written.** The unit takes those notes on a USB-MIDI port of its
+own — not the port this app reads external control from, so writing here would be a second route into
+one setting — and switching it on erases a twelve-note mask that is FULL, taking the Scale enum to
+Custom with it. Both measured. The row is inert, with the reason on it.
+
 ### The two reduction meters are indexed differently
 
 They are not one table, and the difference is the reason:
@@ -838,12 +860,9 @@ top of the same ruler cannot meet.
 
 ### Which families the screen shows
 
-The guitar amps and the two companders. Pitch Fix and the multi-band compressor stay in the Inspector's
-own editor, and `bind` refuses them, so the two surfaces cannot disagree about where a family is
-edited. Pitch Fix keeps its Key, its Scale and its twelve-note mask outside the flat catalogue and
-under rules of their own — a note edit sets Custom, and only two presets have a pattern this app can
-author — so a screen built from the flat rows alone would be missing the half that decides what the
-effect corrects to. The multi-band compressor is not in the flat catalogue at all.
+Everything but the multi-band compressor, whose bands and globals are a structured layout that the
+flat catalogue carries none of. It stays in the Inspector's own editor, and `bind` refuses it, so the
+two surfaces cannot disagree about where a family is edited.
 
 ## Off the scale is off the frame
 

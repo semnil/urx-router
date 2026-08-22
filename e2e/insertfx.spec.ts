@@ -8,8 +8,6 @@ import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const insertSelect = (page: Page) => page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select");
-const paramSelect = (page: Page, label: string) =>
-  page.locator("#inspector .param", { hasText: label }).locator("select");
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 // The families the tuning screen shows whole (the guitar amps and the companders) keep
 // their sliders there rather than in the Inspector, so a case about one of those opens
@@ -111,34 +109,41 @@ test("multi-band comp on a MIX bus reveals three bands", async ({ page }) => {
 test("pitch fix reveals key + scale keyboard", async ({ page }) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Pitch Fix" });
-  await expect(param(page, "Coarse")).toBeVisible();
-  await expect(paramSelect(page, "Key").locator("option")).toHaveCount(12);
-  await expect(param(page, "MIDI Control")).toBeVisible();
+  await openScreen(page);
+  // What the correction does to a note is the first face…
+  await expect(screenRow(page, "Coarse")).toBeVisible();
+  // …and what it is aimed at is the second.
+  await showCab(page);
+  await expect(screenSelect(page, "Key").locator("option")).toHaveCount(12);
+  await expect(screenRow(page, "MIDI Control")).toBeVisible();
+  // Shown and never written: the unit takes those notes on a port of its own, and
+  // switching it on erases a full note mask.
+  await expect(screenRow(page, "MIDI Control").locator("button").first()).toBeDisabled();
 });
 
-// A pitch note toggle row: a .param whose label is the bare semitone name (so it
-// is not confused with the Key select, whose options also list the note names).
+// One of the twelve semitone buttons on the scale face. They are absolute — named from C
+// whatever the Key is — and are a plain row rather than a keyboard for that reason.
 const noteToggle = (page: Page, note: string) =>
-  page
-    .locator("#inspector .param")
-    .filter({ has: page.getByRole("button", { name: "ON", exact: true }) })
-    .filter({ hasText: new RegExp(`^${note.replace("#", "\\#")}`) });
+  page.locator("#dyn-screen-box .gt-notes button", { hasText: new RegExp(`^${note.replace("#", "\\#")}$`) });
 
 test("pitch scale select seeds the note keyboard, and a note edit persists as Custom", async ({ page }, testInfo) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Pitch Fix" });
+  await openScreen(page);
+  await showCab(page);
   // Defaults to Chromatic. Every preset is selectable: the unit derives the twelve notes
   // for each of them from the Key, and the app now authors the same pattern.
-  await expect(paramSelect(page, "Scale")).toHaveValue("7");
-  await expect(paramSelect(page, "Scale").locator("option:disabled")).toHaveCount(0);
+  await expect(screenSelect(page, "Scale")).toHaveValue("7");
+  await expect(screenSelect(page, "Scale").locator("option:disabled")).toHaveCount(0);
 
   // Major seeds the major-scale note set (F# a non-major degree is cleared), then
-  // toggling F# on rewrites Scale to Custom. The note keyboard and the Scale select
-  // depend on each other but only refresh on a full re-render, so verify the result
-  // through save → open rather than the live DOM.
-  await paramSelect(page, "Scale").selectOption({ label: "Major" });
-  await expect(paramSelect(page, "Scale")).toHaveValue("2");
-  await noteToggle(page, "F#").getByRole("button", { name: "ON", exact: true }).click();
+  // toggling F# on rewrites Scale to Custom. Verified through save → open, which is also
+  // what says the edit reached the plan rather than only the panel.
+  await screenSelect(page, "Scale").selectOption({ label: "Major" });
+  await expect(screenSelect(page, "Scale")).toHaveValue("2");
+  await expect(noteToggle(page, "F#")).toHaveAttribute("aria-pressed", "false");
+  await noteToggle(page, "F#").click();
+  await closeScreen(page);
   await page.click("#btn-file");
   const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
   const saved = testInfo.outputPath("pitch.json");
@@ -150,9 +155,11 @@ test("pitch scale select seeds the note keyboard, and a note edit persists as Cu
   const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
   await chooser.setFiles(saved);
   await node(page, "ch1").click();
-  await expect(paramSelect(page, "Scale")).toHaveValue("0"); // Custom
-  await expect(paramSelect(page, "Scale").locator("option", { hasText: "Custom" })).toBeEnabled();
-  await expect(noteToggle(page, "F#").getByRole("button", { name: "ON", exact: true })).toHaveClass(/on/);
+  await openScreen(page);
+  await showCab(page);
+  await expect(screenSelect(page, "Scale")).toHaveValue("0"); // Custom
+  await expect(screenSelect(page, "Scale").locator("option", { hasText: "Custom" })).toBeEnabled();
+  await expect(noteToggle(page, "F#")).toHaveAttribute("aria-pressed", "true");
 });
 
 // A plan can carry any Scale preset: it must display verbatim instead of collapsing to
@@ -167,7 +174,9 @@ test("a device-preset pitch scale (Pentatonic) loaded from a plan displays verba
   };
   await page.goto(`/?plan=${planParamZ(plan)}`);
   await node(page, "ch1").click();
-  const scale = paramSelect(page, "Scale");
+  await openScreen(page);
+  await showCab(page);
+  const scale = screenSelect(page, "Scale");
   await expect(scale).toHaveValue("6");
   await expect(scale.locator("option", { hasText: "Pentatonic" })).toBeEnabled();
   await expect(scale.locator("option", { hasText: "Melodic Minor" })).toBeEnabled();
