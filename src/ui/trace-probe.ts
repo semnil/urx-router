@@ -3,7 +3,7 @@
 // to a constant, so a plain build drops the whole module the way DEMO drops the
 // control layer, and ci.yml greps the bundle to keep it dropped.
 //
-// It answers exactly the two questions the fake device's IPC log cannot:
+// It answers exactly the questions the fake device's IPC log cannot:
 //   - WHO wrote which plan key (invariant 13, authorship attribution). Every writer
 //     samples through one call, and the delta is taken by the differ the undo stack
 //     already uses — a key that reaches the plan without reaching that differ is an

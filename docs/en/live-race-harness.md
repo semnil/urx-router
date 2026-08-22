@@ -763,8 +763,9 @@ Invariants 1 / 2 / 4 / 8 / 12 / 16 are statements about IPC that either happened
 are decided entirely by what the fake device saw, plus the DOM and the status line. None of them needs
 to reach the app's module scope.
 
-The remaining two — 13 (authorship attribution) and the general form of 3 (snapshot poisoning) — need
-the probe. `src/ui/trace-probe.ts` exists only in the `VITE_TRACE=1` build (`.env.trace`,
+The remaining three need the probe — 13 (authorship attribution), the general form of 3 (snapshot
+poisoning), and which sample rates the unit has announced that no read has consumed yet.
+`src/ui/trace-probe.ts` exists only in the `VITE_TRACE=1` build (`.env.trace`,
 `vite build --mode trace`). **A plain build folds it away, and `ci.yml` greps the bundle to keep it
 out**, beside `__urxConsole` and `__urxKeyProbe`. It is a build flag rather than
 `import.meta.env.DEV` because the E2E suite serves a production build on purpose; running the
@@ -774,7 +775,13 @@ instrumented tier on a dev bundle would be testing a different bundle.
 | --- | --- |
 | Which plan key did **who** write (13) | `ledgerOf(page)` |
 | What does the live snapshot **hold** (3) | `snapshotOf(page)` |
+| Which announced sample rates are **still standing** | `ratesOf(page)` |
 | Committed undo / redo depth | `depthOf(page)` |
+
+The rate history is there for the same reason the ledger is: the announcement is what tells a silent
+insert-FX clearing from the operator's own (`readback.ts`, `HoldContext.ratesSeen`), and whether it was
+consumed decides the NEXT clearing rather than the one in front of it — so the IPC log shows the
+consequence a whole gesture later, or not at all.
 
 The ledger reuses the differ the undo stack already uses (`clonePlanState` + `diffPlans`). A key that
 reaches the plan without reaching that differ is an edit the user cannot undo, so the ledger and the
