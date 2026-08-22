@@ -47,11 +47,10 @@ import type { MidiLearnHooks } from "./midi-learn";
 import {
   channelEqUnavailable,
   formatRate,
-  insertFxAllRateLocked,
+  insertFxRateLock,
   insertFxCensus,
   insertFxFree,
   insertFxMenu,
-  insertFxSelectedEntry,
   isMonitorBus,
   type InsertFxCensus,
 } from "../core/constraints";
@@ -1960,11 +1959,8 @@ export class Console {
       const holds = insertFxSelected(planOf());
       // The lock the HELD effect carries, not the menu's: Pitch Fix stops at 48 kHz where
       // the amps and companders reach 96, so a strip holding it at 88.2 kHz is off while
-      // the menu it came from still offers effects that run. A held value this app's own
-      // table does not carry has no ceiling to read, and falls back to the menu-wide
-      // answer — above 96 kHz nothing runs whatever the value names.
-      const selected = insertFxSelectedEntry(menu, planOf().insertFx);
-      const rateLocked = selected ? selected.lock === "rate" : insertFxAllRateLocked(menu);
+      // the menu it came from still offers effects that run.
+      const { locked: rateLocked, entry: selected } = insertFxRateLock(menu, planOf().insertFx);
       const locked = holds ? rateLocked : !free.length;
       if (locked)
         this.makeChip(m.id, proc, "INS FX", false, false, () => false, {

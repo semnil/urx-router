@@ -35,7 +35,7 @@ import {
   SEMITONE_NAMES,
 } from "../core/control/insert-fx-effect";
 import type { InsertFxFamily, InsertFxParamDesc } from "../core/control/insert-fx-effect";
-import { formatRate, insertFxMenu, insertFxSelectedEntry } from "../core/constraints";
+import { formatRate, insertFxMenu, insertFxRateLock } from "../core/constraints";
 import { insertFxSelected } from "../core/control/params";
 import { insertFxControl } from "../core/control/translate";
 import type { DynField, InsertFxFieldKey } from "../core/control/translate";
@@ -384,9 +384,9 @@ function insFxFace(face: InsFxFace): DynProcessor {
       // all, which the Inspector and the CONSOLE chip already say. Saying it in different
       // words on the third surface — or not at all — is how one panel tells the operator
       // the effect is off while another hands them a live editor for it.
-      const entry = insertFxSelectedEntry(insertFxMenu(ctx.model, ctx.plan, ctx.nodeId), np?.insertFx);
-      if (entry?.lock === "rate") {
-        return entry.option.maxRate === undefined
+      const { locked, entry } = insertFxRateLock(insertFxMenu(ctx.model, ctx.plan, ctx.nodeId), np?.insertFx);
+      if (locked) {
+        return entry?.option.maxRate === undefined
           ? ctx.m.inspector.insFxRateLocked
           : ctx.m.inspector.insFxRateLockedAt(entry.option.label, formatRate(entry.option.maxRate));
       }
