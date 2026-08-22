@@ -201,6 +201,15 @@ export interface ReadbackResult {
    * never appear here. Transient: not serialized into the plan.
    */
   unreadNodes: Set<string>;
+  /**
+   * The sample rate this read established ON THE UNIT, when it read one at all: a
+   * scoped read never asks (the address has no owner node), and a full read whose
+   * `766` failed leaves it unset. Separate from the plan's own `sampleRate` because
+   * the two are not the same number — under the "Scene only" device scope the read's
+   * rate is discarded from the plan again (`main.ts` applyDeviceStateScoped), and a
+   * merge deciding anything from the plan's copy would be reading its own input.
+   */
+  deviceSampleRate?: number;
 }
 
 /** A node's fixed main path into STEREO — the send connection carrying its
@@ -323,6 +332,7 @@ async function readPass(
   const attempted = new Set<string>();
   const failed = new Set<string>();
   let applied = 0;
+  let deviceSampleRate: number | undefined;
 
   for (const node of model.nodes) {
     signal?.throwIfAborted();
@@ -789,6 +799,7 @@ async function readPass(
   if (only === undefined) {
     try {
       plan.sampleRate = await vdGet(PARAMS.SAMPLE_RATE.id, 0, 0);
+      deviceSampleRate = plan.sampleRate;
       applied++;
     } catch (e) {
       errors.push(`sample rate: ${e instanceof Error ? e.message : String(e)}`);
@@ -944,7 +955,7 @@ async function readPass(
   // never attempted (inputs, record-track slots) and fully-read nodes stay out.
   const unreadNodes = new Set<string>();
   for (const id of attempted) if (failed.has(id)) unreadNodes.add(id);
-  return { applied, errors, unreadNodes };
+  return { applied, errors, unreadNodes, deviceSampleRate };
 }
 
 /**
@@ -1014,26 +1025,53 @@ export interface MergedRead extends ReadbackResult {
  * Adopting them ends the effect: the plan would agree with the unit, and nothing would be
  * left to put back.
  *
- * The rate decides which clearing this is. A No Effect the CURRENT rate cannot explain is
+ * The rate decides which clearing this is. A No Effect the unit's CURRENT rate can run is
  * the operator's own, made on the unit, and is adopted like any other device-side edit.
- * `deviceView` carries the rate the same read established, so the read that sees the
- * cleared effect is the read that sees why.
+ * That rate is the one the read established (`ReadbackResult.deviceSampleRate`) and never
+ * the plan's own: under the "Scene only" device scope the plan keeps its rate across a
+ * read, so the plan's copy can name a rate the unit left long ago.
  *
  * A node whose read failed keeps its plan value in `deviceView` and so reads as still
  * selected, which takes it out of scope here: there is nothing to hold against.
  */
-export function insertFxHoldKeys(model: DeviceModel, before: Plan, deviceView: Plan): Set<string> {
+export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<string> {
   const held = new Set<string>();
+  // No rate from the read, nothing to decide with. A scoped read never asks for the
+  // address (it has no owner node) and a full read whose 766 failed has none either, so
+  // this is the ordinary case rather than the exceptional one — and deciding from the
+  // plan's own rate instead would let a stale number overwrite an operator who cleared
+  // the effect on the unit by hand.
+  if (ctx.deviceSampleRate === undefined) return held;
   for (const node of model.nodes) {
     const ifx = insertFxControl(model, node.id);
     if (!ifx) continue;
-    const was = before.nodeParams[node.id];
-    if (!insertFxSelected(was) || insertFxSelected(deviceView.nodeParams[node.id])) continue;
+    const was = ctx.before.nodeParams[node.id];
+    if (!insertFxSelected(was) || insertFxSelected(ctx.deviceView.nodeParams[node.id])) continue;
+    // The operator re-selected this route's effect while the read was in flight: the
+    // selector is already the merge's to leave standing, and holding the other two keys
+    // beside it would put the OLD effect's bypass and engine values under the new
+    // selection. The keys move together or not at all.
+    if (ctx.authored.has(nodeParamContestKey(node.id, "insertFx"))) continue;
     const option = ifx.options.find((o) => o.value === was?.insertFx);
-    if (!option || insertFxAvailable(option, deviceView.sampleRate)) continue;
+    // A selector this model's control does not offer — a plan carried across models.
+    // Adopted rather than held: translate will not emit it either, so holding it would
+    // keep a value in the plan that has no way of ever reaching the unit.
+    if (!option) continue;
+    if (insertFxAvailable(option, ctx.deviceSampleRate)) continue;
     for (const key of INSERT_FX_KEYS) held.add(nodeParamContestKey(node.id, key));
   }
   return held;
+}
+
+/** What a hold is decided from: the plan as the read found it, what the read wrote into
+ *  its private copy, the rate the read established on the unit (absent when it read none),
+ *  and the keys an edit funnel authored while it was in flight — which the merge has
+ *  already taken out of the patch, and which a hold must therefore not put back. */
+export interface HoldContext {
+  before: Plan;
+  deviceView: Plan;
+  deviceSampleRate?: number;
+  authored: ReadonlySet<string>;
 }
 
 /** What one insert-FX route stores: the selector, the bypass intent and the engine
@@ -1083,7 +1121,7 @@ export async function readIntoPlan(
   current: () => Plan,
   read: (into: Plan) => Promise<ReadbackResult>,
   witness?: PlanWriteWitness,
-  hold?: (before: Plan, deviceView: Plan) => ReadonlySet<string>,
+  hold?: (ctx: HoldContext) => ReadonlySet<string>,
 ): Promise<MergedRead | null> {
   const plan = current();
   const before = clonePlanState(plan);
@@ -1103,7 +1141,14 @@ export async function readIntoPlan(
     // Held keys go through the same filter and stay a SEPARATE list. Folding them into
     // `dropped` would put a deliberate repair into the list whose whole meaning is
     // "this had nowhere to land", which one caller prints and another warns on.
-    const { patch: devicePatch, dropped: held } = dropAuthored(contested, hold?.(before, target) ?? new Set());
+    const holdKeys =
+      hold?.({
+        before,
+        deviceView: target,
+        deviceSampleRate: result.deviceSampleRate,
+        authored: authored ?? new Set(),
+      }) ?? new Set<string>();
+    const { patch: devicePatch, dropped: held } = dropAuthored(contested, holdKeys);
     const unplaced = [...applyPatchInContext(plan, devicePatch), ...dropped];
     return { ...result, deviceView: target, devicePatch, unplaced, held };
   } finally {

@@ -401,18 +401,38 @@ describe("MergedRead.devicePatch and the context-checked absorb", () => {
 // the held ones stay OUT of the device view, since that is the copy the outgoing diff
 // measures against and the only thing that can send the effect back.
 describe("insertFxHoldKeys", () => {
-  const hold = (before: Plan, deviceView: Plan) => insertFxHoldKeys(model, before, deviceView);
-  const PITCH_FIX = 512; // 48 kHz ceiling
+  const hold = (ctx: Parameters<typeof insertFxHoldKeys>[1]) => insertFxHoldKeys(model, ctx);
+  const PITCH_FIX = 512; // input route, 48 kHz ceiling
+  const COMPANDER_H = 1793; // input route, 96 kHz ceiling
+  const MBAND_COMP = 1792; // OUTPUT routes only, 96 kHz ceiling
   const selected = (plan: Plan) => ({
     ...plan.nodeParams.ch1,
     insertFx: PITCH_FIX,
     insertFxOn: true,
     insertFxParams: { "18": 37 },
   });
-  const cleared = (into: Plan, rate: number) => {
-    into.nodeParams.ch1 = { ...into.nodeParams.ch1, insertFx: -1, insertFxOn: false, insertFxParams: undefined };
+  /** The unit answering "no effect here" on ch1, at `rate`, on a read that established
+   *  that rate — a full one. `sibling` is anything else the same read found, so a case
+   *  can show the device's own keys landing beside the held ones. */
+  const cleared = (into: Plan, rate: number, sibling: Record<string, unknown> = {}): ReadbackResult => {
+    into.nodeParams.ch1 = {
+      ...into.nodeParams.ch1,
+      insertFx: -1,
+      insertFxOn: false,
+      insertFxParams: undefined,
+      ...sibling,
+    };
     into.sampleRate = rate;
-    return OK;
+    return { ...OK, deviceSampleRate: rate };
+  };
+  /** The same answer from a read that established NO rate — every scoped one, and a full
+   *  one whose 766 failed. Spelled as its own helper rather than an `undefined` argument:
+   *  a default parameter takes effect for `undefined`, so passing it would have handed
+   *  the predicate the very rate the case exists to withhold (measured — the case passed
+   *  a rate it believed it had suppressed). */
+  const clearedNoRate = (into: Plan, planRate: number): ReadbackResult => {
+    const result = cleared(into, planRate);
+    return { ...result, deviceSampleRate: undefined };
   };
 
   it("keeps an effect the unit cleared for a rate that cannot run it, and still reports the unit's own value", async () => {
@@ -428,7 +448,7 @@ describe("insertFxHoldKeys", () => {
 
     expect(merged).not.toBeNull();
     // The plan keeps the intent, whole: a selector without its engine values would be
-    // re-applied against whatever defaults the unit refilled the engine with.
+    // re-applied against whatever defaults the device refilled the engine with.
     expect(plan.nodeParams.ch1?.insertFx).toBe(PITCH_FIX);
     expect(plan.nodeParams.ch1?.insertFxOn).toBe(true);
     expect(plan.nodeParams.ch1?.insertFxParams).toEqual({ "18": 37 });
@@ -445,7 +465,9 @@ describe("insertFxHoldKeys", () => {
     ]);
   });
 
-  it("adopts a No Effect the current rate can run, because that one is the operator's own", async () => {
+  // 48000 IS Pitch Fix's ceiling, so this is the boundary of `sampleRate <= maxRate` and
+  // not merely a rate below it.
+  it("adopts a No Effect at the effect's own ceiling rate, because that one is the operator's own", async () => {
     const plan = basePlan();
     plan.nodeParams.ch1 = selected(plan);
 
@@ -459,6 +481,52 @@ describe("insertFxHoldKeys", () => {
     expect(plan.nodeParams.ch1?.insertFx).toBe(-1);
     expect(plan.nodeParams.ch1?.insertFxOn).toBe(false);
     expect(merged!.held).toEqual([]);
+  });
+
+  // The rate the PLAN holds is not the rate to decide from, and the two really do come
+  // apart: a scoped read never asks for the address, and under the "Scene only" device
+  // scope a full read's answer is discarded from the plan again. Deciding from the plan's
+  // copy would overwrite an operator who cleared the effect on the unit by hand.
+  it("holds nothing when the read established no rate of its own, whatever the plan says", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = selected(plan);
+
+    const merged = await readIntoPlan(
+      () => plan,
+      // The plan's own rate says the effect cannot run — and it is still not the input.
+      async (into) => clearedNoRate(into, 96000),
+      undefined,
+      hold,
+    );
+
+    expect(merged!.held).toEqual([]);
+    expect(plan.nodeParams.ch1?.insertFx).toBe(-1);
+  });
+
+  it("holds nothing for a route whose selector the operator moved while the read ran", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = selected(plan);
+    const witness = new PlanWriteWitness(() => plan);
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        const result = cleared(into, 96000);
+        // The operator picks a different effect in the app, mid-read.
+        plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 1793 };
+        witness.note();
+        return result;
+      },
+      witness,
+      hold,
+    );
+
+    // The selector is the operator's, left standing by the value contest — and the other
+    // two keys are NOT held beside it, which would put the old effect's bypass and engine
+    // values under the new selection.
+    expect(plan.nodeParams.ch1?.insertFx).toBe(1793);
+    expect(merged!.held).toEqual([]);
+    expect(plan.nodeParams.ch1?.insertFxOn).toBe(false);
   });
 
   it("adopts the cleared values when no hold is passed at all", async () => {
@@ -478,13 +546,17 @@ describe("insertFxHoldKeys", () => {
     const plan = basePlan();
     plan.nodeParams.ch1 = selected(plan);
 
-    // The read raised the rate but never reached ch1's insert FX, so the view carries the
-    // plan's own effect forward — there is no cleared value to hold against.
+    // The read raised the rate and reached ch1's other groups, but its insert-FX group
+    // threw — so the view carries the plan's own effect forward and there is nothing
+    // cleared to hold against. The sibling key is what makes that a decision rather than
+    // an empty patch: without it the node has no entry at all, and `held` would read
+    // empty whatever the predicate did.
     const merged = await readIntoPlan(
       () => plan,
       async (into) => {
         into.sampleRate = 96000;
-        return { applied: 0, errors: ["ch1: read timeout"], unreadNodes: new Set(["ch1"]) };
+        into.nodeParams.ch1 = { ...into.nodeParams.ch1, hpf: true };
+        return { applied: 1, errors: ["CH 1: read timeout"], unreadNodes: new Set(["ch1"]), deviceSampleRate: 96000 };
       },
       undefined,
       hold,
@@ -492,5 +564,103 @@ describe("insertFxHoldKeys", () => {
 
     expect(merged!.held).toEqual([]);
     expect(plan.nodeParams.ch1?.insertFx).toBe(PITCH_FIX);
+    expect(plan.nodeParams.ch1?.hpf).toBe(true);
+  });
+
+  // The clause that separates "the unit cleared this" from "the unit holds something
+  // else": the operator picked a different effect on the unit after the excursion, and
+  // theirs is one the new rate can run. Holding here would revert their choice and then
+  // write the old effect back at a unit that cannot run it.
+  it("adopts a different effect the unit now holds, rather than reverting to the plan's", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = selected(plan);
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        into.sampleRate = 96000;
+        into.nodeParams.ch1 = { ...into.nodeParams.ch1, insertFx: COMPANDER_H, insertFxOn: true };
+        return { ...OK, deviceSampleRate: 96000 };
+      },
+      undefined,
+      hold,
+    );
+
+    expect(merged!.held).toEqual([]);
+    expect(plan.nodeParams.ch1?.insertFx).toBe(COMPANDER_H);
+  });
+
+  // An output bus: a different option table, a node id carrying a dot, and the one route
+  // kind whose selector writes two instances.
+  it("holds an output bus route the same way, under its own option table", async () => {
+    const plan = basePlan();
+    plan.nodeParams["bus.mix1"] = {
+      ...plan.nodeParams["bus.mix1"],
+      insertFx: MBAND_COMP,
+      insertFxOn: true,
+      insertFxParams: { "9": 99 },
+    };
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        into.sampleRate = 192000;
+        into.nodeParams["bus.mix1"] = {
+          ...into.nodeParams["bus.mix1"],
+          insertFx: -1,
+          insertFxOn: false,
+          insertFxParams: undefined,
+        };
+        return { ...OK, deviceSampleRate: 192000 };
+      },
+      undefined,
+      hold,
+    );
+
+    expect(plan.nodeParams["bus.mix1"]?.insertFx).toBe(MBAND_COMP);
+    expect(plan.nodeParams["bus.mix1"]?.insertFxParams).toEqual({ "9": 99 });
+    expect(merged!.held.sort()).toEqual([
+      "nodeParams bus.mix1.insertFx",
+      "nodeParams bus.mix1.insertFxOn",
+      "nodeParams bus.mix1.insertFxParams",
+    ]);
+  });
+
+  // A selector this model's control does not offer — what a plan carried across models
+  // leaves behind. Adopted, because translate will not emit it either: holding it would
+  // keep a value in the plan with no way of ever reaching the unit.
+  it("adopts a clearing of a selector the route does not offer", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: MBAND_COMP, insertFxOn: true };
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => cleared(into, 96000),
+      undefined,
+      hold,
+    );
+
+    expect(merged!.held).toEqual([]);
+    expect(plan.nodeParams.ch1?.insertFx).toBe(-1);
+  });
+
+  // The hold is per KEY, not per node: the device's own siblings in the same entry still
+  // land. Without this, an implementation that dropped the whole node entry whenever one
+  // of its keys was held would pass every case above.
+  it("lets the device's own keys land in the same entry it holds three of", async () => {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = selected(plan);
+
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => cleared(into, 96000, { hpf: true, hpfFreq: 120 }),
+      undefined,
+      hold,
+    );
+
+    expect(plan.nodeParams.ch1?.insertFx).toBe(PITCH_FIX);
+    expect(plan.nodeParams.ch1?.hpf).toBe(true);
+    expect(plan.nodeParams.ch1?.hpfFreq).toBe(120);
+    expect(merged!.held).toHaveLength(3);
   });
 });

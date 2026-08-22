@@ -1489,9 +1489,15 @@ written at all:
   keys a device-follow read keeps the plan's own value for, and `readIntoPlan`'s `hold` takes them out of the
   patch. The device view still carries what the unit answered — that is what leaves the plan and the live
   snapshot disagreeing, and the ordinary outgoing diff is then what sends the effect back, selector first,
-  then the stored engine values, then the bypass intent. What separates this from an operator's own No Effect
-  on the unit is the rate the same read established: a clearing that rate cannot explain is adopted like any
-  other device-side edit.
+  then the stored engine values, then the bypass intent. Measured on a URX44V on 2026-08-18: that re-send is
+  accepted at the rate that cleared the effect and survives the return, checked across all 64 engine slots
+  with non-default sentinels, which is why the app does not wait for the rate to come back before sending.
+  What separates this from an operator's own No Effect on the unit is the rate the READ established
+  (`ReadbackResult.deviceSampleRate`) — never the plan's own copy, which under the *Scene only* device scope
+  is restored across a read and can name a rate the unit left long ago. A read that established no rate at
+  all — every scoped one — holds nothing, so an operator clearing an effect by hand is adopted as it always
+  was. The status line says how many values were kept, since the console is not reachable in an installed
+  build.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being

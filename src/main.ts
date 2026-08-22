@@ -661,7 +661,7 @@ async function followRead(
       () => plan,
       (into) => read(into, controller.signal),
       planWrites,
-      (before, deviceView) => insertFxHoldKeys(getModel(modelId), before, deviceView),
+      (ctx) => insertFxHoldKeys(getModel(modelId), ctx),
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
     return merged;
