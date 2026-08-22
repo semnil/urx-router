@@ -398,9 +398,9 @@ export const MBC_ONE_KNOB_LEVEL_MAX = 48;
 export const MBC_OUT_GAIN_RAW_MIN = 52;
 export const MBC_OUT_GAIN_RAW_MAX = 76;
 /** Calibrated raw bounds for the writable MBC global slots — the single source the
- *  emit-path firewall (insertFxWritableSlots) and the inspector share. The two
- *  device-managed bool flags (oneKnobOn / bypass) carry the bool range: a slot
- *  reaching the emit path without bounds opts out of that firewall silently. */
+ *  emit-path firewall (insertFxWritableSlots) and the inspector share. The one
+ *  device-managed bool flag (oneKnobOn) carries the bool range: a slot reaching the emit
+ *  path without bounds opts out of that firewall silently. */
 export const MBC_GLOBAL_BOUNDS: Record<keyof typeof MBC_GLOBAL, { rawMin: number; rawMax: number }> = {
   oneKnobOn: { rawMin: 0, rawMax: 1 },
   oneKnobLevel: { rawMin: 0, rawMax: MBC_ONE_KNOB_LEVEL_MAX },
@@ -685,6 +685,38 @@ function descBounds(d: InsertFxParamDesc): { rawMin: number; rawMax: number } {
   return { rawMin: d.rawMin as number, rawMax: d.rawMax as number };
 }
 
+/**
+ * Slots the app READS from the unit but never writes.
+ *
+ * The writable list decides both halves — `translate` emits from it and `readback` fills
+ * the plan from it — so a slot dropped from it to stop a write also stops being read, and a
+ * row that displays the value then shows a default instead of what the unit holds. These
+ * are the ones where the app has to know and must not write:
+ *
+ *   Pitch Fix MIDI Control (34 / 35) — setting the enable bit erases a twelve-note mask
+ *     that is FULL and takes the Scale enum to Custom with it (measured), and the notes it
+ *     listens for arrive on a USB-MIDI port of the unit's own. The screen shows the mode.
+ */
+function insertFxReadOnlySlotsOf(family: InsertFxFamily): InsertFxSlotSpec[] {
+  if (family !== "pitch") return [];
+  return [
+    { slot: PITCH_MIDI_ENABLE_SLOT, rawMin: 0, rawMax: 1 },
+    { slot: PITCH_MIDI_REALTIME_SLOT, rawMin: 0, rawMax: 1 },
+  ];
+}
+
+const READ_ONLY_CACHE = new Map<InsertFxFamily, InsertFxSlotSpec[]>();
+
+/** Every slot a device read fills the plan from: the writable ones plus the read-only ones. */
+export function insertFxReadableSlots(family: InsertFxFamily): InsertFxSlotSpec[] {
+  let cached = READ_ONLY_CACHE.get(family);
+  if (!cached) {
+    cached = [...insertFxWritableSlots(family), ...insertFxReadOnlySlotsOf(family)];
+    READ_ONLY_CACHE.set(family, cached);
+  }
+  return cached;
+}
+
 export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[] {
   let cached = SLOTS_CACHE.get(family);
   if (cached) return cached;
@@ -708,10 +740,12 @@ export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[
     }));
     if (family === "pitch") {
       out.push({ slot: PITCH_SCALE_SLOT, rawMin: PITCH_SCALE_CUSTOM, rawMax: PITCH_SCALE_CHROMATIC });
-      // The note keyboard and the two MIDI Control bits are bools.
+      // The note keyboard is bools. MIDI Control (34 / 35) is deliberately NOT here: this
+      // is the list the emit path walks, and setting the enable bit erases a twelve-note
+      // mask that is FULL, taking the Scale enum to Custom with it — measured. A device
+      // readback puts a 1 in the plan without anyone touching the app, so leaving the slot
+      // in the writable set is what would carry that erase to the unit on the next flush.
       for (const slot of PITCH_NOTE_SLOTS) out.push({ slot, rawMin: 0, rawMax: 1 });
-      out.push({ slot: PITCH_MIDI_ENABLE_SLOT, rawMin: 0, rawMax: 1 });
-      out.push({ slot: PITCH_MIDI_REALTIME_SLOT, rawMin: 0, rawMax: 1 });
     }
     cached = out;
   }

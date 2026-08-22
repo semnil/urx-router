@@ -28,6 +28,11 @@ import {
   insertFxFamilyOf,
   insertFxParamKey,
   insertFxParams,
+  PITCH_SCALE_SLOT,
+  PITCH_NOTE_SLOTS,
+  PITCH_MIDI_ENABLE_SLOT,
+  PITCH_MIDI_REALTIME_SLOT,
+  insertFxReadableSlots,
   insertFxWritableSlots,
   mbcOutGainLabel,
   mbcXoverHz,
@@ -128,19 +133,22 @@ describe("insert-fx family / engine / slot mapping", () => {
     expect(insertFxEngine("pitch", false)).toBe(ENGINE_PITCH);
     expect(insertFxEngine("mbc", true)).toBe(ENGINE_OUTPUT);
   });
-  it("pitch writable slots include scale + 12 notes + MIDI bits, with mirrors", () => {
-    const slots = insertFxWritableSlots("pitch");
-    const ids = slots.map((s) => s.slot);
-    expect(ids).toContain(16); // scale
-    for (const note of [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]) expect(ids).toContain(note);
-    expect(ids).toContain(34); // MIDI enable
-    expect(ids).toContain(35); // MIDI realtime
-    // Coarse/Fine/Formant carry a mirror slot.
-    expect(slots.filter((s) => s.mirror !== undefined).map((s) => `${s.slot}->${s.mirror}`)).toEqual([
-      "6->9",
-      "7->10",
-      "8->11",
-    ]);
+  it("pitch writable slots carry the scale and the 12 notes, and NOT the MIDI bits", () => {
+    const w = insertFxWritableSlots("pitch");
+    const slots = w.map((s) => s.slot);
+    expect(slots).toContain(PITCH_SCALE_SLOT);
+    for (const n of PITCH_NOTE_SLOTS) expect(slots).toContain(n);
+    // Setting the enable bit erases a twelve-note mask that is FULL and takes the Scale
+    // enum to Custom with it, and a device read puts a 1 in the plan with nobody touching
+    // the app — so the slot must not be in the list the emit path walks.
+    expect(slots).not.toContain(PITCH_MIDI_ENABLE_SLOT);
+    expect(slots).not.toContain(PITCH_MIDI_REALTIME_SLOT);
+    // …but it is still READ, or the row that shows the mode would print a default.
+    const r = insertFxReadableSlots("pitch").map((s) => s.slot);
+    expect(r).toContain(PITCH_MIDI_ENABLE_SLOT);
+    expect(r).toContain(PITCH_MIDI_REALTIME_SLOT);
+    // The three mirrored values keep their twin.
+    expect(w.filter((s) => s.mirror !== undefined).length).toBe(3);
   });
 });
 
