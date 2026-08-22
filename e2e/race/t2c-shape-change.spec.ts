@@ -19,7 +19,7 @@ import {
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf } from "./analyze";
-import { faderOf, graphNode, openEqScreen } from "./ui";
+import { faderOf, graphNode, openEqScreen, openInsertFxScreen, closeDynScreen } from "./ui";
 import { pickBand } from "../dyn-helpers";
 
 // T2c shape-change — the two T2 cases whose subject is the ENGINE side of the write
@@ -534,11 +534,11 @@ test.describe("T2c shape-change", () => {
     expect(engineCounts).toEqual(COMPANDER_SLOTS.map(() => 1));
 
     // ---- one owner edits, and the OTHER owner is what the unit holds --------------
-    await graphNode(page, "ch1").click();
-    const threshold = page
-      .locator("#inspector .insp-section", { has: page.locator("summary", { hasText: "Insert Effect" }) })
-      .locator(".param", { hasText: "Threshold" })
-      .locator('input[type="range"]');
+    // The Threshold is on the insert-FX tuning screen. The screen is family-keyed rather
+    // than node-keyed, so ONE locator serves both channels and each read below opens it on
+    // the node it is asking about.
+    await openInsertFxScreen(page, "ch1");
+    const threshold = page.locator('#dyn-screen-box input[data-dyn="ifx:compander:6"]');
     await expect(threshold).toHaveValue(String(COMPANDER_DEFAULTS[6]));
     await mark(page, "ch1-threshold");
     await threshold.focus();
@@ -546,6 +546,7 @@ test.describe("T2c shape-change", () => {
     const ch1Raw = Number(await threshold.inputValue());
     expect(ch1Raw).not.toBe(COMPANDER_DEFAULTS[6]);
     await settleAfter(page, "ch1-threshold", 1200);
+    await closeDynScreen(page);
 
     let trace = await traceOf(page);
     const editAt = markTime(trace, "ch1-threshold")!;
@@ -619,14 +620,12 @@ test.describe("T2c shape-change", () => {
     const notifyCost = fullReadsAfter(trace, notifyAt);
 
     await page.click("#btn-view-graph");
-    await graphNode(page, "ch1").click();
+    await openInsertFxScreen(page, "ch1");
     const ch1After = await threshold.inputValue();
-    await graphNode(page, "ch2").click();
-    const ch2After = await page
-      .locator("#inspector .insp-section", { has: page.locator("summary", { hasText: "Insert Effect" }) })
-      .locator(".param", { hasText: "Threshold" })
-      .locator('input[type="range"]')
-      .inputValue();
+    await closeDynScreen(page);
+    await openInsertFxScreen(page, "ch2");
+    const ch2After = await threshold.inputValue();
+    await closeDynScreen(page);
     console.log(
       `notify on ${ENGINE_THRESHOLD}: ${notifyCost} full reconcile(s); ch1 Threshold ${ch1Raw} → ${ch1After},` +
         ` ch2 ${COMPANDER_DEFAULTS[6]} → ${ch2After}`,
@@ -672,14 +671,22 @@ test.describe("T2c shape-change", () => {
     // re-armed it. The reconcile runs `live.resync()` and no flush at all (device follow
     // funnels through planValuesChanged, which unlike markChanged does not schedule one),
     // so a latch cleared only inside flush() leaves this second loss silent.
+    // Reaching the Threshold means opening its screen, which is a view action and not an
+    // edit — and the paragraph above turns on that, so it is MEASURED rather than assumed:
+    // the window between the open and the gesture must carry no write at all.
     await page.click("#btn-view-graph");
-    await graphNode(page, "ch1").click();
+    await mark(page, "open-screen");
+    await openInsertFxScreen(page, "ch1");
     await mark(page, "re-diverge");
     await threshold.focus();
     await page.keyboard.press("ArrowUp");
     await settleAfter(page, "re-diverge", 1200);
     trace = await traceOf(page);
+    const openAt = markTime(trace, "open-screen")!;
     const reAt = markTime(trace, "re-diverge")!;
+    const onOpen = setsOf(trace).filter((w) => w.start > openAt && w.start < reAt);
+    console.log(`opening the screen emitted: ${onOpen.map((w) => `${w.addr}=${w.value}`).join(", ") || "(nothing)"}`);
+    expect(onOpen).toHaveLength(0);
     const reWrites = setsBetween(trace, ENGINE_THRESHOLD, reAt);
     console.log(`re-diverged CH 1: ${reWrites.length} write(s) to ${ENGINE_THRESHOLD}, status line re-reported`);
     // Silence and the sentence together: the gesture put nothing on the wire (CH 2 is the
@@ -691,6 +698,7 @@ test.describe("T2c shape-change", () => {
 
     // And now it IS latched: an unrelated edit flushes with the same collision standing
     // and does not repeat the sentence — it reports its own write instead.
+    await closeDynScreen(page);
     await page.click("#btn-view-console");
     await mark(page, "idle-edit-3");
     await faderOf(page, "CH 4").focus();
