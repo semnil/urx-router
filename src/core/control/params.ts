@@ -291,7 +291,8 @@ export const PARAMS = {
   INSERT_FX: { id: 135, encoding: "insertFx", sideEffect: "converge" },
   /** Input channel insert FX ON/OFF (bypass) — independent of the selector (135).
    *  The device auto-engages it whenever an effect is (re)selected, so translate
-   *  emits it after the selector to enforce the plan's state. Confirmed by notify
+   *  emits it after the selector and after the engine values it applies to, to
+   *  enforce the plan's state. Confirmed by notify
    *  reverse-lookup (LCD INS FX button). */
   INSERT_FX_ON: { id: 134, encoding: "bool" },
   /** Input channel Rec Point: the signal-path tap fed to the recording / direct

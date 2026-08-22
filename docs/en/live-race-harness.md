@@ -246,7 +246,7 @@ single source of truth. This table states what each case measures.
 | `shape-comp-eq-type-bank-swap` | inspector | The only param that changes address identity and value polarity at once |
 | `shape-eq-oneknob-registration-blindspot` | tuning | The boolean that triggers a recomputation is the one that removes its notify addresses, registration included, so the announcement is refused rather than delivered unplaceable — plus clause B's firing control |
 | `shape-eq-oneknob-level-refetch-storm` | tuning | A readback per flush window during a drag, rebasing the history throughout |
-| `shape-insert-fx-select-ordering` | inspector | The only case where correctness depends on the order of two commands, not their values |
+| `shape-insert-fx-select-ordering` | inspector | Correctness decided by the order of three groups inside one flush — selector, the engine array it refills, then the bypass — rather than by their values, because the unit refills and engages on every selection |
 | `shape-insert-fx-engine-array-collision` | inspector | Two plan owners sharing one device address |
 | `shape-fx-effect-type-slot-family` | inspector | The slot set varies rather than the param id, and undo is incomplete by construction |
 | `shape-signal-type-pair-link` | inspector | The only param whose write resets an entire other node on the device |
@@ -853,7 +853,7 @@ agreement, zero findings.
 - **Signal Type = STEREO** writes both pair indices and **re-authors the partner node wholesale**; one
   undo restores all of it. But the converge round is a **re-send, not a repair** — it keeps pushing the
   app's value back at a channel the unit has reset
-- **Insert-FX ordering is clean** (selector 135 before bypass 134) — it works as the counter-example
+- **Insert-FX ordering is clean** (selector 135, then its engine array, then bypass 134) — it works as the counter-example
 
 **T3 — undo**
 
@@ -1126,7 +1126,8 @@ pair's pan addresses on the wire ahead of `891:0:0`, and the undo repeated it.
 same ±63 encoding. What it does is a write SIDE EFFECT: BAL→PAN slams `141` and eight send pans to
 ±63, PAN→BAL and unlink drive the same nine to 0 (measured by a whole-settings-file `.urxf` diff plus a
 targeted probe). So a pan written ahead of the selector is not misread — it is DISCARDED. The ordering
-rule is the one insert FX (135 → 134) and the FX effect type (679 → its 681 array) already keep.
+rule is the one insert FX (135 → its engine array → 134) and the FX effect type (679 → its 681 array)
+already keep.
 
 The fix is a relocation of the two blocks and nothing else: the command set, the values and the owner
 stamps are identical (sorting the added and removed diff lines leaves no difference). `PAN_BAL` keeps
