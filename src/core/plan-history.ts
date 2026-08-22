@@ -579,6 +579,13 @@ export function nodeParamContestKey(nodeId: string, param: string): string {
   return contestName("nodeParams", nodeId, param);
 }
 
+/** The same, for one param of one wire. A caller names the wire by its endpoints — the
+ *  key the patch carries joins them the way a wire key does, which is a separator no
+ *  caller should be spelling out. */
+export function connParamContestKey(from: string, to: string, param: string): string {
+  return contestName("connParams", wireKey(from, to), param);
+}
+
 /** The printable label of the same piece, in the spelling applyPatchInContext reports. */
 function contestLabel(field: PatchField, key?: string, rest?: string[]): string {
   const head = key === undefined ? field : `${field} ${key}`;

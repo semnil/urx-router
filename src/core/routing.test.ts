@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
 import {
+  INSERT_FX_PAIR_KEYS,
   applyPairTransition,
   canConnect,
   duckerKeySource,
@@ -22,6 +23,7 @@ import {
   upstreamNodes,
   validatePlan,
 } from "./routing";
+import { connParamContestKey, nodeParamContestKey } from "./plan-history";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
 import { defaultPlan } from "../models/initial-state";
 import { INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
@@ -320,9 +322,47 @@ describe("applyPairTransition", () => {
 
   it("leaves a node that is not a pair primary alone", () => {
     const before = JSON.stringify(plan.connections);
-    applyPairTransition(u44, plan, "ch2", { stereoLink: true }); // partner, not primary
-    applyPairTransition(u44, plan, "bus.mix1", { stereoLink: true });
+    expect(applyPairTransition(u44, plan, "ch2", { stereoLink: true })).toEqual([]); // partner, not primary
+    expect(applyPairTransition(u44, plan, "bus.mix1", { stereoLink: true })).toEqual([]);
     expect(JSON.stringify(plan.connections)).toBe(before);
+  });
+
+  // What it wrote, for a caller's write witness. Every one of these can be written
+  // without moving — the pans it centres are already centred whenever the pair was in
+  // BAL, and the insert-FX keys it clears are absent on a member that carried none — so
+  // a caller that recovered them from the plan's own diff would recover nothing.
+  describe("the keys it reports having written", () => {
+    it("names both members' insert FX, the pair's PAN/BAL and every send pan it wrote", () => {
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true };
+      const written = applyPairTransition(u44, plan, "ch1", { stereoLink: true });
+      for (const ch of ["ch1", "ch2"])
+        for (const key of INSERT_FX_PAIR_KEYS) expect(written).toContain(nodeParamContestKey(ch, key));
+      expect(written).toContain(nodeParamContestKey("ch1", "panBal"));
+      // Named for the pair, not only for the edited member.
+      for (const ch of ["ch1", "ch2"])
+        expect(written).toContain(connParamContestKey(ref(ch, "out"), ref("bus.stereo", "in"), "pan"));
+    });
+
+    // A member with no params object at all had nothing to delete, and the assertion is
+    // the same either way: it carries no insert FX afterwards.
+    it("names a member's insert FX even where there was nothing to clear", () => {
+      delete plan.nodeParams.ch2;
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true };
+      const written = applyPairTransition(u44, plan, "ch1", { stereoLink: true });
+      for (const key of INSERT_FX_PAIR_KEYS) expect(written).toContain(nodeParamContestKey("ch2", key));
+    });
+
+    // A PAN/BAL toggle moves the pans and leaves the effect standing, so it names the
+    // pans alone — claiming the insert-FX keys there would throw away a device read's
+    // answer for a key this call never touched.
+    it("names no insert FX when only PAN/BAL switches", () => {
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_BAL };
+      const written = applyPairTransition(u44, plan, "ch1", { panBal: PAN_BAL_PAN });
+      expect(written).toContain(connParamContestKey(ref("ch1", "out"), ref("bus.stereo", "in"), "pan"));
+      for (const ch of ["ch1", "ch2"])
+        for (const key of INSERT_FX_PAIR_KEYS) expect(written).not.toContain(nodeParamContestKey(ch, key));
+      expect(written).not.toContain(nodeParamContestKey("ch1", "panBal"));
+    });
   });
 });
 

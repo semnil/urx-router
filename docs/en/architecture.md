@@ -563,6 +563,11 @@ The constraint core (`core/routing.ts`):
   the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
   linked pair as a single holder — the app follows what the device does instead of modelling a second copy of
   the rule ([What the app models, and what it leaves to the unit](#what-the-app-models-and-what-it-leaves-to-the-unit)).
+  The transition also **names every key it wrote** to the edit funnel's write witness, because none of them
+  has to move: the three deletions land on a member that carried no effect, and unlinking a BAL pair re-centres
+  pans that are already centred. A device read in flight arbitrates by authorship for exactly that reason, and
+  a gesture that named nothing would have both halves taken back — the effect the unit had just dropped
+  re-selected, and the pans it had just centred put back where the read found them.
 - A STEREO-linked pair is tied on canvas by a heart connector and drags as one unit. Linking
   (`alignStereoPair`, called from `onUpdateNodeParams` when `stereoLink` turns on) first snaps the partner back
   beside the kept node — the selected member stays put, the other moves to its default-layout relative offset —

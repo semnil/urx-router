@@ -303,6 +303,70 @@ describe("Fetch from device", () => {
     expect(paramRow("HPF").querySelector("button.on")?.textContent).toBe("OFF");
   });
 
+  // A pair transition is the case where NOTHING the gesture wrote has to move. Signal
+  // Type clears the insert FX on both members — on a pair that carried none, that is
+  // three deletions of keys already absent, so the plan reads identically before and
+  // after and the read's own diff has nothing to tell it from a key nobody touched. The
+  // device then re-selected an effect the operator had just told the unit to drop.
+  it("keeps a Signal Type transition's insert-FX clear through a read in flight", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickSignalType(1); // STEREO, with no effect selected on either member
+
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.INSERT_FX.id ? 1793 : 0), 1)),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    selectNode("ch1");
+    pickSignalType(0); // MONO x2 — the transition clears the pair's insert FX
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch1");
+    expect(paramRow("Insert FX").querySelector("select")!.value).toBe("-1");
+    selectNode("ch2");
+    expect(paramRow("Insert FX").querySelector("select")!.value).toBe("-1");
+  });
+
+  // The same transition's other half, and the one that moves nothing by construction:
+  // STEREO leaves the pair in BAL, whose pans are centred, and unlinking centres them —
+  // so every send of both members is written the value it already holds, every time. The
+  // plan is read through a save rather than the inspector because a channel's pan lives
+  // on its send wire, and this asserts every send the pair carries rather than one row.
+  it("keeps its pan centring too, on a transition that moved nothing", SLOW, async () => {
+    const shell = await bootDevice(SAVES);
+    selectNode("ch1");
+    pickSignalType(1); // STEREO — lands in BAL, which centres both members' pans
+
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) =>
+          setTimeout(() => r(a.paramId === PARAMS.CH_PAN.id || a.paramId === PARAMS.SEND_PAN.id ? 63 : 0), 1),
+        ),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    selectNode("ch1");
+    pickSignalType(0); // MONO x2 — the transition centres the pair's pans (0 over 0)
+    await invoked(shell, "vd_disconnect");
+
+    const before = shell.count("write_text_file");
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+    const saved = shell.args[shell.invokes.lastIndexOf("write_text_file")];
+    const doc = JSON.parse(String((saved as { contents: string }).contents));
+    const pans = (doc.connections as Array<Record<string, never>>)
+      .filter((c) => String(c.from).startsWith("ch1:") && c.kind === "send")
+      .map((c) => (c.params as { pan?: number } | undefined)?.pan ?? 0);
+    expect(pans.length).toBeGreaterThan(0);
+    expect(pans.every((p) => p === 0)).toBe(true);
+  });
+
   // The write witness names what a funnel WROTE, not only what its write MOVED. Selecting
   // an insert effect over one that is already engaged writes `insertFxOn: true` again —
   // the value does not move, so the read's own diff cannot tell that key from one nobody

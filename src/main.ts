@@ -1174,9 +1174,13 @@ const inspectorActions = {
     plan.nodeParams[id] = { ...prev, ...patch };
     // Signal Type / PAN-BAL move the pair's pans — and PAN-BAL itself on a link —
     // the way the unit does. Applied before the BAL mirror below, so the mirror
-    // copies the settled values onto the partner.
-    if (patch.stereoLink !== undefined || patch.panBal !== undefined)
-      applyPairTransition(getModel(modelId), plan, id, patch);
+    // copies the settled values onto the partner. It names its own writes: every one
+    // of them can land on the value already there, so nothing downstream can recover
+    // them from the plan's diff.
+    const transitionKeys =
+      patch.stereoLink !== undefined || patch.panBal !== undefined
+        ? applyPairTransition(getModel(modelId), plan, id, patch)
+        : [];
     // A STEREO-linked pair in BAL mode moves as one: copy this channel's params to
     // the partner (the pair-level Signal Type / PAN-BAL fields stay on the primary).
     const mirrored = mirrorBalPair(getModel(modelId), plan, id);
@@ -1187,7 +1191,7 @@ const inspectorActions = {
     // The patch's own keys, not only the ones whose value moved: this funnel asserts
     // every member it carries, and a device read in flight must not take back one that
     // happened to already hold the asserted value.
-    const written = Object.keys(patch).map((key) => nodeParamContestKey(id, key));
+    const written = [...Object.keys(patch).map((key) => nodeParamContestKey(id, key)), ...transitionKeys];
     // A mirror asserts the PARTNER's keys the same way, and it can assert one that already
     // holds the value it writes — the insert-FX mirror re-writes a bypass that was already
     // on, and the BAL mirror replaces the partner's params wholesale. Each names only what
