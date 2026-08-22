@@ -226,7 +226,8 @@ test.describe("T2d shape-change", () => {
     );
 
     // ORDER. The selector types the array, so it must precede every slot write in the
-    // same flush — the FX-channel twin of the insert-FX rule T2 pinned at 135 / 134.
+    // same flush — the FX-channel twin of the insert-FX rule T2 pins, where 135 leads
+    // its own engine array the same way.
     // Asked of this flush alone (see `from`): over the whole run the analyzer would
     // compare the selector against slot 15's phase-1 write and report an inversion
     // that belongs to two different gestures.
@@ -415,9 +416,9 @@ test.describe("T2d shape-change", () => {
   // PAN_BAL 891) ahead of the two connection blocks that carry the pans, because
   // writing 891 makes the unit slam all ten of them (measured: BAL→PAN hard-pans to
   // ±63, PAN→BAL and unlinking centre), so a pan sent ahead of the selector is
-  // discarded. The same selector-leads rule insert FX (135 before 134) and the FX
-  // effect type (679 before its 681 array) keep. Measured on the switch and again on
-  // its undo.
+  // discarded. The same selector-leads rule insert FX (135 before its engine array,
+  // and 134 after it) and the FX effect type (679 before its 681 array) keep. Measured
+  // on the switch and again on its undo.
   test("PAN/BAL sends the selector before the pans it re-authors, and the undo does too", async ({ page }) => {
     expect(await hasProbe(page)).toBe(true);
     await goLive(page);
