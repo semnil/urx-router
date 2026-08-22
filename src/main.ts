@@ -686,10 +686,17 @@ const announcedInsertFx: string[] = [];
 // the read arrives before it starts, and it is the one carrying the rate that cleared the
 // effect. An excursion can also be over before the read asks for the rate at all — 48 →
 // 96 → 48 leaves the read holding 48, where the effect runs and the clearing then reads
-// as the operator's own. Emptied only when a read that ESTABLISHED a rate ends, so the
-// scope is one coalescing window plus every read up to and including the full one the
-// notify escalated to.
-const announcedRates: number[] = [];
+// as the operator's own.
+//
+// Each entry carries the sequence number it arrived at, and a read consumes the ones that
+// were already there when it started — what arrived while it ran belongs to the reconcile
+// it scheduled. By SEQUENCE rather than by array position, and independently of whatever
+// else is in flight: a side-effect refetch overlapping the read establishes no rate of its
+// own, so tying the consumption to an empty in-flight set left the announcement standing
+// after the read it was for had finished with it, and the next clearing the operator made
+// by hand on the unit was held against a rate the unit had left long before.
+const announcedRates: Array<{ seq: number; hz: number }> = [];
+let rateSeq = 0;
 
 // Everything device-follow has in flight for a plan that is being replaced. Called at
 // each wholesale reassignment of `plan`, and deliberately not from deactivateLive: with
@@ -702,6 +709,9 @@ const announcedRates: number[] = [];
 function abandonFollowWork(): void {
   for (const c of followReads) c.abort();
   followReads.clear();
+  // The reads that would have consumed these are gone, so nothing is left to own them.
+  announcedInsertFx.length = 0;
+  announcedRates.length = 0;
   if (reflectTimer) {
     clearTimeout(reflectTimer);
     reflectTimer = 0;
@@ -727,7 +737,7 @@ async function followRead(
   // Where this read's own share of the rate history ends. Everything after it arrived
   // WHILE the read ran, which means it belongs to the reconcile it scheduled rather than
   // to this one.
-  const rateMark = announcedRates.length;
+  const rateMark = rateSeq;
   let establishedRate = false;
   try {
     const merged = await readIntoPlan(
@@ -739,7 +749,7 @@ async function followRead(
         return insertFxHoldKeys(getModel(modelId), {
           ...ctx,
           announced: new Set(announcedInsertFx.slice(mark)),
-          ratesSeen: [...announcedRates],
+          ratesSeen: announcedRates.map((r) => r.hz),
         });
       },
     );
@@ -757,7 +767,11 @@ async function followRead(
     // unit cleared it, so it holds nothing itself and the announcement belongs to the
     // replay it scheduled. Measured: clearing the whole list there left that replay
     // adopting the clearing.
-    if (establishedRate && !followReads.size) announcedRates.splice(0, rateMark);
+    if (establishedRate) {
+      const keep = announcedRates.filter((r) => r.seq > rateMark);
+      announcedRates.length = 0;
+      announcedRates.push(...keep);
+    }
   }
 }
 
@@ -787,7 +801,7 @@ const follow =
         // names the pair's primary, and the transition it reports clears BOTH members,
         // so the partner is recorded with it.
         onDeviceParam: (p) => {
-          if (p.paramId === PARAMS.SAMPLE_RATE.id) announcedRates.push(p.value);
+          if (p.paramId === PARAMS.SAMPLE_RATE.id) announcedRates.push({ seq: ++rateSeq, hz: p.value });
           const addr = live?.lookup(p.paramId, p.x, p.y);
           if (!addr?.node || !INSERT_FX_ANNOUNCED.has(addr.name)) return;
           announcedInsertFx.push(addr.node);

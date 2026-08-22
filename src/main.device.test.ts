@@ -1000,6 +1000,52 @@ describe("the live session", () => {
     await endLive();
   });
 
+  // …and the read it was for CONSUMES it. What the announcement must not do is outlive
+  // that read: the next clearing is the operator's own, made by hand on the unit at a
+  // rate that runs the effect, and holding it against a rate the unit left long before
+  // overrides them. (Their clearing IS announced on the insert-FX addresses, but that
+  // announcement arrives BEFORE the read it escalates to, so it falls outside the window
+  // `announced` covers — the rate history is what decides it.)
+  it("adopts the operator's own clearing once the announcement has been consumed", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    let cleared = false;
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      const v =
+        a.paramId === PARAMS.SAMPLE_RATE.id
+          ? 48_000
+          : a.paramId === PARAMS.INSERT_FX.id && a.y === 0 && cleared
+            ? denormalizeInsertFx(INSERT_FX_NONE)
+            : a.paramId === PARAMS.INSERT_FX.id && a.y === 0
+              ? COMPANDER_H
+              : 0;
+      return new Promise((r) => setTimeout(() => r(v), 1));
+    });
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+
+    // The excursion, held and re-sent by the full read it escalates to.
+    cleared = true;
+    channel.onmessage([
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
+    ]);
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    await quiet(shell);
+
+    // Now the operator clears it by hand, at a rate that runs it. The unit announces the
+    // selector, which settles into a scoped read of CH 1.
+    channel.onmessage([{ param_id: PARAMS.INSERT_FX.id, x: 0, y: 0, value: denormalizeInsertFx(INSERT_FX_NONE) }]);
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    await endLive();
+  });
+
   // The Signal Type transition is announced on the PAIR's primary and clears the effect
   // on both members (measured), so recording the announcement without its partner leaves
   // the other half of the pair held and re-sent — half a clearing undone.
