@@ -744,6 +744,15 @@ describe("the live session", () => {
     await quiet(shell);
   };
 
+  /** End the session before the case does. A follow read outlives one that merely ended,
+   *  so a case that walks away from a live session leaves its teardown to fire after the
+   *  shell is gone — which surfaces as an unhandled "not running under Tauri" rejection
+   *  attributed to whichever file is running then. */
+  const endLive = async (): Promise<void> => {
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+  };
+
   // `delayMs` stretches each read, for the case that has to end the session inside one.
   // `refuseY` refuses every read of one channel index, for the case that needs the read
   // to be partial as well as holding — CH 1 is y0, so a later index leaves the held
@@ -783,6 +792,7 @@ describe("the live session", () => {
     // …and the send-back really was scheduled, rather than only reported.
     await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
     expect(insertFxWrites(shell).at(-1)).toBe(COMPANDER_H);
+    await endLive();
   });
 
   it("claims no send-back when the session ended under the read", SLOW, async () => {
@@ -2548,5 +2558,74 @@ describe("MIDI feedback and the live session", () => {
     await invoked(shell, "vd_disconnect");
     expect(errors(shell)).toEqual([t().status.liveError(t().error.unknownModel("URX88"))]);
     expect(shell.count("midi_send")).toBe(0);
+  });
+});
+
+// Two funnels write the plan, and both have to name what they asserted. These drive the
+// CONSOLE half and the BAL mirror's half against a read in flight.
+describe("an edit funnel against a device read", () => {
+  const face = (label: string): string | undefined =>
+    paramRow(label)?.querySelector("button.on")?.textContent ?? undefined;
+
+  // The CONSOLE's INS FX chip is the one console write that is not a flip: taking a slot
+  // writes the bypass ON, which a No Effect route can already be holding (the inspector
+  // leaves it engaged when the operator picks No Effect). The plan then reads the same
+  // before and after, so the read's own diff cannot tell that key from one nobody
+  // touched — and the operator's new effect landed selected and BYPASSED.
+  it("keeps a bypass the CONSOLE asserted while a read was in flight", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickInsertFx(COMPANDER_H);
+    pickInsertFx(INSERT_FX_NONE); // selector alone: the bypass stays engaged
+
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) =>
+          setTimeout(() => r(a.paramId === PARAMS.INSERT_FX.id ? denormalizeInsertFx(INSERT_FX_NONE) : 0), 1),
+        ),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    $("btn-view-console").click();
+    const strip = $("console-host").querySelectorAll<HTMLElement>(".con-strip")[0];
+    [...strip.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === "INS FX")!.click();
+    await invoked(shell, "vd_disconnect");
+
+    $("btn-view-graph").click();
+    selectNode("ch1");
+    expect(paramRow("Insert FX").querySelector("select")!.value).not.toBe(String(INSERT_FX_NONE));
+    expect(insertFxOnFace()).toBe("ON");
+  });
+
+  // …and the BAL mirror names THIS EDIT's keys on the partner, not the whole record it
+  // copies. The other keys were already equal on both sides, so copying them writes
+  // nothing — while claiming them takes the device's answer away from the partner alone
+  // and splits a pair that moves as one.
+  it("lets both members of a BAL pair take a device change the edit never touched", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickSignalType(1); // STEREO, which lands the pair in BAL
+
+    // The unit holds HPF ON on every channel; the plan holds the default OFF.
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.HPF_ON.id ? 1 : 0), 1)),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    // An edit that carries Phase alone, mid-read.
+    selectNode("ch1");
+    const btns = [...paramRow(t().inspector.phase).querySelectorAll<HTMLButtonElement>("button")];
+    (btns.find((b) => b.textContent === "ON") ?? btns[0]).click();
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch1");
+    expect(face(t().inspector.hpf)).toBe("ON");
+    selectNode("ch2");
+    expect(face(t().inspector.hpf)).toBe("ON");
   });
 });

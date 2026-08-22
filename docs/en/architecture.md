@@ -1474,7 +1474,7 @@ a no-device state is reported plainly without first disturbing the plan.
 
 ### What the app models, and what it leaves to the unit
 
-Two kinds of device-side change are handled differently, and the distinction decides whether any code is
+Three kinds of device-side change are handled differently, and the distinction decides whether any code is
 written at all:
 
 - **The unit switches what a value reflects.** A meter that follows the output patch, the engine array an

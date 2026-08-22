@@ -455,7 +455,7 @@ const consoleView = new Console(consoleHost, {
   // A console edit changed the plan: flag dirty + schedule live sync. The console
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
-  onChange: () => markChanged(),
+  onChange: (written) => markChanged("ui", written),
   // The meter stream failed to register. Floor-stuck bars read as "no signal",
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
@@ -1166,11 +1166,7 @@ const inspectorActions = {
   },
   onUpdateNodeParams: (id: string, patch: NodeParams) => {
     const prev = plan.nodeParams[id];
-    // Taken before the mirrors below run, so a key one of them REMOVES from the partner
-    // is still nameable: an assertion that a key is absent is one the read's own diff
-    // cannot see either, when it was already absent.
     const partner = partnerChannel(getModel(modelId), id);
-    const partnerKeysBefore = partner ? Object.keys(plan.nodeParams[partner] ?? {}) : [];
     plan.nodeParams[id] = { ...prev, ...patch };
     // Signal Type / PAN-BAL move the pair's pans — and PAN-BAL itself on a link —
     // the way the unit does. Applied before the BAL mirror below, so the mirror
@@ -1194,18 +1190,16 @@ const inspectorActions = {
     const written = [...Object.keys(patch).map((key) => nodeParamContestKey(id, key)), ...transitionKeys];
     // A mirror asserts the PARTNER's keys the same way, and it can assert one that already
     // holds the value it writes — the insert-FX mirror re-writes a bypass that was already
-    // on, and the BAL mirror replaces the partner's params wholesale. Each names only what
-    // IT wrote: the BAL mirror's assertion is every key the partner had and every key it
-    // has now (both, because it deletes as well as writes), and the insert-FX mirror's is
-    // the pair state it carries. Registering the wider set for the narrower mirror threw
-    // away the device's answer for a partner key nobody had written — in STEREO + PAN,
-    // where only the insert FX mirrors, a partner's HPF read in the same window was lost.
-    const mirroredKeys = mirrored
-      ? new Set<string>([...partnerKeysBefore, ...Object.keys(plan.nodeParams[partner ?? ""] ?? {})])
-      : insFxMirrored
-        ? new Set<string>(INSERT_FX_PAIR_KEYS)
-        : null;
-    if (partner && mirroredKeys) for (const key of mirroredKeys) written.push(nodeParamContestKey(partner, key));
+    // on. Each names only what IT wrote, and for the BAL mirror that is THIS EDIT's keys,
+    // not the whole record it copies: the other keys it carries over were already equal on
+    // both sides, so copying them writes nothing, while claiming them takes the device's
+    // answer away from the partner alone. Measured before the narrowing: a read that moved
+    // both members' HPF, with an unrelated Phase edit inside it, left CH 1 on the device's
+    // ON and CH 2 on the plan's OFF — one gesture splitting a pair that moves as one.
+    const mirroredKeys = new Set<string>();
+    if (mirrored) for (const key of Object.keys(patch)) mirroredKeys.add(key);
+    if (insFxMirrored) for (const key of INSERT_FX_PAIR_KEYS) mirroredKeys.add(key);
+    if (partner) for (const key of mirroredKeys) written.push(nodeParamContestKey(partner, key));
     markChanged("ui", written);
     // Two of the side effects below write the plan AFTER markChanged took the ledger
     // sample, so their keys would land in whatever samples next — under live follow a
