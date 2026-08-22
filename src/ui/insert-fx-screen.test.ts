@@ -12,6 +12,7 @@ import type { DynHost } from "./dyn-screen.test-util";
 import { DynScreen } from "./dyn-screen";
 import type { DynCtx } from "./dyn-screen";
 import { INSFX_CAB_DYN, INSFX_DYN, insertFxScreenFamily } from "./insert-fx-screen";
+import { planToCommands } from "../core/control/translate";
 import { PITCH_KEY_SLOT, PITCH_SCALE_MAJOR, insertFxParamKey, insertFxParams } from "../core/control/insert-fx-effect";
 import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { t } from "../i18n";
@@ -43,7 +44,7 @@ describe("what the screen binds to", () => {
     expect(INSFX_DYN.bind(ctx)).toBeNull();
     h.plan.nodeParams.ch1 = { insertFx: INSERT_FX_NONE };
     expect(INSFX_DYN.bind(ctx)).toBeNull();
-    expect(insertFxScreenFamily(h.plan, "ch1")).toBeNull();
+    expect(insertFxScreenFamily(h.model, h.plan, "ch1")).toBeNull();
   });
 
   it("refuses a node with no insert FX at all", () => {
@@ -373,16 +374,15 @@ describe("what the note under the display says", () => {
     screen.close();
   });
 
-  it("still says it for a held value the node's own control does not list", () => {
-    // A bus holding a CHANNEL effect: a device read or a hand-edited plan lands it, and
-    // the menu has no entry to read a ceiling from. Above 96 kHz nothing runs whatever the
-    // value names, so the screen reports the menu-wide answer rather than falling silent
-    // and handing out an editor the other two surfaces have already called off.
-    holding("bus.mix1", "Pitch Fix");
+  it("names the ceiling on a bus too, for an effect the bus itself carries", () => {
+    // The rate half of the same question on an output node. A CHANNEL effect on a bus does
+    // not reach here at all — the screen refuses that plan, since the emit path drops it —
+    // so the case that does reach here is an effect the bus's own control lists.
+    holding("bus.mix1", "Compander-H");
     h.plan.sampleRate = 192000;
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_DYN, "bus.mix1");
-    expect(note()).toBe(t().inspector.insFxRateLocked);
+    expect(note()).toContain("Compander-H");
     screen.close();
   });
 
@@ -394,6 +394,31 @@ describe("what the note under the display says", () => {
     screen.open(INSFX_DYN, "ch1");
     expect(note()).toBe(t().dynTuning.insfx.bypassed);
     screen.close();
+  });
+});
+
+describe("a plan value the device path will not act on", () => {
+  it("refuses the screen for a bus holding a CHANNEL effect, at a rate that runs it", () => {
+    // 48 kHz, so nothing here is about the ceiling. The bus's own control does not carry a
+    // guitar amp or Pitch Fix, and translate.ts coerces such a value to No Effect and emits
+    // no engine parameter at all — measured before the fix: bind answered 4 editable fields
+    // while planToCommands emitted 0 INSERT_FX_EFFECT commands for the node.
+    h.plan.sampleRate = 48000;
+    h.plan.nodeParams["bus.mix1"] = { insertFx: valueOf("Pitch Fix") };
+    const ctx: DynCtx = { model: h.model, plan: h.plan, nodeId: "bus.mix1", sel: 0, m: t() };
+    expect(insertFxScreenFamily(h.model, h.plan, "bus.mix1")).toBeNull();
+    expect(INSFX_DYN.bind(ctx)).toBeNull();
+    const cmds = planToCommands(h.model, h.plan);
+    expect(cmds.filter((c) => c.name === "INSERT_FX_EFFECT")).toHaveLength(0);
+  });
+
+  it("still opens for an effect the node's own control does carry", () => {
+    // The control that says the refusal above is about the option list and not about buses.
+    h.plan.sampleRate = 48000;
+    h.plan.nodeParams["bus.mix1"] = { insertFx: valueOf("Compander-H") };
+    const ctx: DynCtx = { model: h.model, plan: h.plan, nodeId: "bus.mix1", sel: 0, m: t() };
+    expect(insertFxScreenFamily(h.model, h.plan, "bus.mix1")).toBe("compander");
+    expect(INSFX_DYN.bind(ctx)?.fields.length).toBeGreaterThan(0);
   });
 });
 

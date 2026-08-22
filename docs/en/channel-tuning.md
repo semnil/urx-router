@@ -885,6 +885,13 @@ Everything but the multi-band compressor, whose bands and globals are a structur
 flat catalogue carries none of. It stays in the Inspector's own editor, and `bind` refuses it, so the
 two surfaces cannot disagree about where a family is edited.
 
+**And nothing the device path will not act on.** A plan can hold an insert-FX value the node's own
+control does not carry — a bus holding a channel effect, which a file, a `?plan=` link or a device
+read all land, since the loader gates none of them. `translate` coerces such a value to No Effect and
+emits no engine parameter for it at all, so an editor over it collects edits nothing ever sends: at
+48 kHz, where the ceiling is not in question, the screen bound four editable fields against zero
+`INSERT_FX_EFFECT` commands. Both sides now ask one function, `effectiveInsertFx`, so what the screen
+offers to edit and what the unit receives cannot come apart.
 
 ## Off the scale is off the frame
 

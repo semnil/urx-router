@@ -38,10 +38,11 @@ import {
 import type { InsertFxFamily, InsertFxParamDesc } from "../core/control/insert-fx-effect";
 import { formatRate, insertFxMenu, insertFxRateLock } from "../core/constraints";
 import { insertFxSelected } from "../core/control/params";
-import { insertFxControl } from "../core/control/translate";
+import { effectiveInsertFx, insertFxControl } from "../core/control/translate";
 import type { DynField, InsertFxFieldKey } from "../core/control/translate";
 import { grAddr, insertFxOutGrAddr, tapFor } from "../core/meters";
 import type { NodeParams, Plan } from "../core/plan";
+import type { DeviceModel } from "../models/types";
 import { el, onOff, settingsRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { enumRow } from "./dyn-chan";
@@ -154,9 +155,12 @@ const isBanked = (fam: InsertFxFamily): boolean => isGuitar(fam) || fam === "pit
 /** The second face's own rows, for a family that has one. */
 const secondFaceOrder = (fam: InsertFxFamily): readonly string[] => (fam === "pitch" ? PITCH_SCALE_ORDER : CAB_ORDER);
 
-/** The family a node holds, or null where it holds nothing (No Effect, or nothing at all). */
+/** The family a node holds, or null where it holds nothing (No Effect, or nothing at all).
+ *  Asked of the value the DEVICE path acts on, not of the raw plan value: a node's control
+ *  may not carry what the plan holds, and the emit path coerces such a value to No Effect
+ *  and writes no engine parameter for it. */
 function familyOf(ctx: DynCtx): InsertFxFamily | null {
-  const v = ctx.plan.nodeParams[ctx.nodeId]?.insertFx;
+  const v = effectiveInsertFx(ctx.model, ctx.plan, ctx.nodeId);
   return v === undefined ? null : insertFxFamilyOf(v);
 }
 
@@ -165,11 +169,15 @@ function familyOf(ctx: DynCtx): InsertFxFamily | null {
  * the Inspector's choice between its own editor and the launcher cannot disagree with
  * whether the screen would open.
  *
+ * A value the node's own control does not carry answers null as well, because the emit path
+ * turns it into No Effect and writes no engine parameter — an editor over it would collect
+ * edits nothing ever sends.
+ *
  * One family answers null: the multi-band compressor's bands and globals are a structured
  * layout rather than a list, and the flat catalogue carries none of it.
  */
-export function insertFxScreenFamily(plan: Plan, nodeId: string): InsertFxFamily | null {
-  const v = plan.nodeParams[nodeId]?.insertFx;
+export function insertFxScreenFamily(model: DeviceModel, plan: Plan, nodeId: string): InsertFxFamily | null {
+  const v = effectiveInsertFx(model, plan, nodeId);
   const fam = v === undefined ? null : insertFxFamilyOf(v);
   return fam && rowsOf(fam).length ? fam : null;
 }
@@ -285,7 +293,7 @@ function insFxFace(face: InsFxFace): DynProcessor {
 
     bind: (ctx): DynBinding | null => {
       const ifx = insertFxControl(ctx.model, ctx.nodeId);
-      const fam = insertFxScreenFamily(ctx.plan, ctx.nodeId);
+      const fam = insertFxScreenFamily(ctx.model, ctx.plan, ctx.nodeId);
       if (!ifx || !fam) return null;
       // Only a banked family has a second face; nothing else may be reached on one.
       if (face === "cab" && !isBanked(fam)) return null;

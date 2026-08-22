@@ -1676,6 +1676,24 @@ export interface EmitOptions {
   includeDeviceDriven?: boolean;
 }
 
+/**
+ * The insert-FX value the device path acts on for a node: what the plan holds, or No Effect
+ * where the node's own control does not carry it.
+ *
+ * An off-menu value is coerced rather than written — the device would take it verbatim and
+ * could bind an effect the plan never named — and it reaches a plan through a file, a
+ * `?plan=` link or a device read, none of which the loader gates. **Every surface that
+ * offers to EDIT the held effect has to ask this too**: a bus holding a channel effect made
+ * the tuning screen open a live editor over an engine array that never receives a single
+ * write, which is the split this one answer exists to close.
+ */
+export function effectiveInsertFx(model: DeviceModel, plan: Plan, nodeId: string): number | undefined {
+  const ifx = insertFxControl(model, nodeId);
+  const v = plan.nodeParams[nodeId]?.insertFx;
+  if (!ifx || v === undefined) return undefined;
+  return ifx.options.some((o) => o.value === v) ? v : INSERT_FX_NONE;
+}
+
 export function planToCommands(
   model: DeviceModel,
   plan: Plan,
@@ -1939,9 +1957,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     const ifx = insertFxControl(model, node.id);
     const np = plan.nodeParams[node.id] ?? {};
     if (!ifx || np.insertFx === undefined) continue;
-    // An off-menu selector value is coerced to No Effect rather than written: the
-    // device would take it verbatim and could bind an effect the plan never named.
-    const v = ifx.options.some((o) => o.value === np.insertFx) ? np.insertFx : INSERT_FX_NONE;
+    const v = effectiveInsertFx(model, plan, node.id) ?? INSERT_FX_NONE;
     for (const inst of ifx.instances) out.push(rawCommand("INSERT_FX", ifx.param, "insertFx", inst, v));
     const fam = insertFxFamilyOf(v);
     if (fam) pushInsertFxEffectCommands(out, insertFxEngine(fam, ifx.isOutput), fam, np.insertFxParams);

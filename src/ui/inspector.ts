@@ -834,7 +834,7 @@ export function renderInspector(
       // time and writes a stale value back on its next drag. The families the screen
       // does not yet show keep the section below.
       if (ifxSel !== undefined) {
-        if (insertFxScreenFamily(plan, node.id)) {
+        if (insertFxScreenFamily(model, plan, node.id)) {
           (tailBody ?? host).append(dynLauncher("insfx", node.id, actions, m));
         } else {
           const fxSec = insertFxEffectSection(node.id, ifxSel, plan, actions, m);
