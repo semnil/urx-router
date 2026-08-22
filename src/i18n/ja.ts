@@ -641,6 +641,8 @@ export const ja: Messages = {
     liveSynced: (n: number): string => `→ デバイス (${n})`,
     liveFollowing: "← デバイス…",
     liveFollowed: (n: number): string => `← デバイス (${n})`,
+    liveHeld: (read: number, held: number): string =>
+      `← デバイス (${read}) · ${held} 件を保持して再送 (実機のサンプルレートでは動かせない設定)`,
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} は ${kept} と本体上の設定を共有しています${more > 0 ? ` (他 ${more} 件)` : ""} — 本体に届くのは ${kept} の値だけです`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,

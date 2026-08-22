@@ -395,6 +395,7 @@ const live = DEMO
         // entries or as 1 describing only its tail.
         planHistory?.absorb(merged.devicePatch);
         requestReflect();
+        noteHeld(merged);
         assertReadComplete(merged, "side-effect refetch issues:");
         return merged.deviceView;
       },
@@ -577,17 +578,34 @@ function assertReadComplete(result: ReadbackResult, label: string): void {
 function noteMergeConflicts(merged: MergedRead): void {
   if (merged.unplaced.length) console.warn("device read: merge targets no longer in the plan", merged.unplaced);
 }
-// A device read kept plan values the unit had cleared on its own. The snapshot has just
-// re-based onto the unit's values, so plan and device now disagree exactly where the read
-// held, and the ordinary outgoing diff is what puts them back — for insert FX, the
-// selector, then the stored engine values, then the bypass intent. Nothing else would
-// schedule that flush: no plan key moved, so no edit funnel ran. Said out loud rather than
-// repaired in silence, and only after the read is known complete: a partial read is about
-// to drop the link, and a flush issued into that writes nothing and reports nothing.
+// A device read kept plan values the unit had cleared on its own. Said out loud BEFORE
+// anything can throw: the hold has already taken effect inside the merge, and
+// `assertReadComplete` ends the session on a partial read — so a report placed after it
+// is the one case where the plan holds values the unit does not and nothing says so.
+function noteHeld(merged: MergedRead): void {
+  if (merged.held.length) console.warn("device read: the plan keeps what the unit cleared", merged.held);
+}
+// …and the send-back, which only a complete read may ask for: a partial read is about to
+// drop the link, and a flush issued into that writes nothing and reports nothing. The
+// snapshot has just re-based onto the unit's values, so plan and device disagree exactly
+// where the read held, and the ordinary outgoing diff is what puts them back — for insert
+// FX, the selector, then the stored engine values, then the bypass intent. Nothing else
+// would schedule that flush: no plan key moved, so no edit funnel ran.
+//
+// Only a read that established the unit's own rate can hold anything (insertFxHoldKeys),
+// which is the full reconcile. The scoped paths hand over the same hold and it returns
+// nothing, so the pairing cannot be forgotten at one of them.
 function reapplyHeld(merged: MergedRead): void {
-  if (!merged.held.length) return;
-  console.warn("device read: the plan keeps what the unit cleared, and sends it back", merged.held);
-  live?.schedule();
+  if (!merged.held.length) {
+    setStatus(t().status.liveFollowed(merged.applied));
+    return;
+  }
+  // A follow read outlives a session that merely ended (`abandonFollowWork` is not called
+  // from `deactivateLive`), and `schedule()` is a no-op once it has — worth telling apart
+  // in the log from a flush that went out.
+  if (live?.isActive()) live.schedule();
+  else console.warn("device read: no session left to send the held values back through");
+  setStatus(t().status.liveHeld(merged.applied, merged.held.length));
 }
 // Single funnel for every device-follow reflect (direct notifies and the scoped /
 // full read-backs alike): a knob sweep delivers notifies in ~30/s IPC batches, any
@@ -759,9 +777,9 @@ const follow =
           followAuthored += merged.devicePatch.length;
           followFull = true;
           requestReflect();
+          noteHeld(merged);
           assertReadComplete(merged, "device-follow scoped readback issues:");
           reapplyHeld(merged);
-          setStatus(t().status.liveFollowed(merged.applied));
         },
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: async () => {
@@ -780,9 +798,9 @@ const follow =
           followAuthored += merged.devicePatch.length;
           followFull = true;
           requestReflect();
+          noteHeld(merged);
           assertReadComplete(merged, "device-follow readback issues:");
           reapplyHeld(merged);
-          setStatus(t().status.liveFollowed(merged.applied));
         },
         onFollow: () => setStatus(t().status.liveFollowing),
         onError: (message) => stopLiveOnError(errorText(message)),

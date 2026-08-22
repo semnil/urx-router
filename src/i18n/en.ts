@@ -753,6 +753,8 @@ export const en = {
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: tr("← device…"),
     liveFollowed: (n: number): string => `← device (${n})`,
+    liveHeld: (read: number, held: number): string =>
+      `← device (${read}) · ${held} kept and re-sent (the unit's own sample rate cannot run them)`,
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} shares device settings with ${kept}${more > 0 ? ` (+${more} more)` : ""} — only ${kept}'s values reach the device`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
