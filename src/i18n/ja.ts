@@ -364,6 +364,8 @@ export const ja: Messages = {
       scaleHarmonicMinor: "Harmonic Minor",
       scaleMelodicMinor: "Melodic Minor",
       scalePentatonic: "Pentatonic",
+      midiControlDeviceOnly:
+        "MIDI Control は本体側で設定します。本体自身の USB-MIDI ポートで受信し、ON にすると全 on の 12 音マスクが消えます。",
       params: {
         threshold: "Threshold",
         ratio: "Ratio",

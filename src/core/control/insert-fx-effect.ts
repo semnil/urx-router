@@ -235,8 +235,39 @@ export const PITCH_SCALE_HARMONIC_MINOR = 4;
 export const PITCH_SCALE_MELODIC_MINOR = 5;
 export const PITCH_SCALE_PENTATONIC = 6;
 export const PITCH_SCALE_CHROMATIC = 7;
-/** Note-keyboard array slots (12 semitones from the Key root). */
+/**
+ * Note-keyboard array slots. The twelve are ABSOLUTE semitones — slot 22 is C whatever the
+ * Key is — measured on a URX44V by setting Key = G with Scale = Major and reading them
+ * back: C D E F# G A B, which is G major written from C. Every mask the earlier
+ * calibration captured was taken at Key = C, where the two readings coincide.
+ */
 export const PITCH_NOTE_SLOTS = [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33];
+
+/**
+ * Which semitones each Scale preset turns on, as offsets from the Key.
+ *
+ * The unit derives the twelve-note mask itself from the Scale enum and the Key, for every
+ * preset and at every key — read off a URX44V at Key = C and Key = G, where the offsets
+ * came back identical while the absolute bits moved. So the app can author any of them
+ * rather than only the two it could spell, and the mask it writes agrees with what the
+ * unit would have derived instead of overwriting it with a C-rooted one.
+ *
+ * Custom is null: it is not a pattern. Selecting it leaves the mask exactly as it is, which
+ * is also what the unit does to the enum when a note is edited — it sets Custom on its own.
+ */
+export const PITCH_SCALE_OFFSETS: Readonly<Record<number, readonly number[] | null>> = {
+  [PITCH_SCALE_CUSTOM]: null,
+  [PITCH_SCALE_SINGLE]: [0],
+  [PITCH_SCALE_MAJOR]: [0, 2, 4, 5, 7, 9, 11],
+  [PITCH_SCALE_NATURAL_MINOR]: [0, 2, 3, 5, 7, 8, 10],
+  [PITCH_SCALE_HARMONIC_MINOR]: [0, 2, 3, 5, 7, 8, 11],
+  [PITCH_SCALE_MELODIC_MINOR]: [0, 2, 3, 5, 7, 9, 11],
+  [PITCH_SCALE_PENTATONIC]: [0, 2, 4, 7, 9],
+  [PITCH_SCALE_CHROMATIC]: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+};
+
+/** The Key the mask is derived against (engine slot 15, raw 0..11 = C..B). */
+export const PITCH_KEY_SLOT = 15;
 /** MIDI Control: enable bit (slot 34) + realtime bit (slot 35). */
 export const PITCH_MIDI_ENABLE_SLOT = 34;
 export const PITCH_MIDI_REALTIME_SLOT = 35;

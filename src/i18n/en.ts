@@ -438,6 +438,9 @@ export const en = {
       scaleHarmonicMinor: dev("Harmonic Minor"),
       scaleMelodicMinor: dev("Melodic Minor"),
       scalePentatonic: dev("Pentatonic"),
+      midiControlDeviceOnly: tr(
+        "MIDI Control is set on the device. It receives on the unit's own USB-MIDI port, and switching it on clears a full note mask.",
+      ),
       params: {
         threshold: dev("Threshold"),
         ratio: dev("Ratio"),

@@ -127,9 +127,10 @@ const noteToggle = (page: Page, note: string) =>
 test("pitch scale select seeds the note keyboard, and a note edit persists as Custom", async ({ page }, testInfo) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Pitch Fix" });
-  // Defaults to Chromatic; Custom is not directly selectable until a note is edited.
+  // Defaults to Chromatic. Every preset is selectable: the unit derives the twelve notes
+  // for each of them from the Key, and the app now authors the same pattern.
   await expect(paramSelect(page, "Scale")).toHaveValue("7");
-  await expect(paramSelect(page, "Scale").locator("option", { hasText: "Custom" })).toBeDisabled();
+  await expect(paramSelect(page, "Scale").locator("option:disabled")).toHaveCount(0);
 
   // Major seeds the major-scale note set (F# a non-major degree is cleared), then
   // toggling F# on rewrites Scale to Custom. The note keyboard and the Scale select
@@ -154,9 +155,8 @@ test("pitch scale select seeds the note keyboard, and a note edit persists as Cu
   await expect(noteToggle(page, "F#").getByRole("button", { name: "ON", exact: true })).toHaveClass(/on/);
 });
 
-// A plan can carry a device-side Scale preset the app never writes (only
-// Chromatic / Major seed note patterns): it must display verbatim instead of
-// collapsing to Custom. Enum values are LCD-confirmed (insert-fx-effect.ts).
+// A plan can carry any Scale preset: it must display verbatim instead of collapsing to
+// Custom. Enum values are LCD-confirmed (insert-fx-effect.ts).
 test("a device-preset pitch scale (Pentatonic) loaded from a plan displays verbatim", async ({ page }) => {
   const plan = {
     format: "urx-router-plan",
@@ -170,7 +170,7 @@ test("a device-preset pitch scale (Pentatonic) loaded from a plan displays verba
   const scale = paramSelect(page, "Scale");
   await expect(scale).toHaveValue("6");
   await expect(scale.locator("option", { hasText: "Pentatonic" })).toBeEnabled();
-  await expect(scale.locator("option", { hasText: "Melodic Minor" })).toBeDisabled();
+  await expect(scale.locator("option", { hasText: "Melodic Minor" })).toBeEnabled();
 });
 
 test("MBC crossover sliders expose the per-band valid ranges", async ({ page }) => {

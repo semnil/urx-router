@@ -25,6 +25,7 @@ import {
   MBC_OUT_GAIN_RAW_MAX,
   SEMITONE_NAMES,
   PITCH_NOTE_SLOTS,
+  PITCH_KEY_SLOT,
   PITCH_SCALE_SLOT,
   PITCH_SCALE_CHROMATIC,
   PITCH_SCALE_MAJOR,
@@ -131,7 +132,6 @@ import {
   insertFxVal,
   parkOutgoingInsertFxParams,
   pitchMidiMode,
-  pitchMidiPatch,
   pitchScalePatch,
   reKeyInsertFxParams,
 } from "./insert-fx-model";
@@ -1425,12 +1425,13 @@ function renderPitchScale(
   t: Messages["inspector"]["insertFxEffect"],
 ): void {
   const scale = insertFxVal(plan, nodeId, "pitch", PITCH_SCALE_SLOT, PITCH_SCALE_CHROMATIC);
-  // The app only authors note patterns for Chromatic / Major (`editable`); every
-  // other device preset (read back from hardware) is display-only — shown when it
-  // is the current value, never selectable.
+  const key = insertFxVal(plan, nodeId, "pitch", PITCH_KEY_SLOT, 0);
+  // Every preset is selectable. The mask each one turns on was read off the unit at two
+  // keys, so the app authors the same twelve notes the unit derives instead of only the
+  // two patterns it could once spell.
   const scales = [
-    { value: PITCH_SCALE_CHROMATIC, label: t.scaleChromatic, editable: true },
-    { value: PITCH_SCALE_MAJOR, label: t.scaleMajor, editable: true },
+    { value: PITCH_SCALE_CHROMATIC, label: t.scaleChromatic },
+    { value: PITCH_SCALE_MAJOR, label: t.scaleMajor },
     { value: PITCH_SCALE_CUSTOM, label: t.scaleCustom },
     { value: PITCH_SCALE_SINGLE, label: t.scaleSingle },
     { value: PITCH_SCALE_NATURAL_MINOR, label: t.scaleNaturalMinor },
@@ -1441,12 +1442,13 @@ function renderPitchScale(
   body.append(
     selectControl(
       t.scale,
-      scales.map((o) => ({ value: String(o.value), label: o.label, disabled: !o.editable && scale !== o.value })),
+      scales.map((o) => ({ value: String(o.value), label: o.label })),
       String(scales.some((o) => o.value === scale) ? scale : PITCH_SCALE_CUSTOM),
-      (v) => mergeInsertFxParams(actions, plan, nodeId, "pitch", pitchScalePatch(Number(v))),
+      (v) => mergeInsertFxParams(actions, plan, nodeId, "pitch", pitchScalePatch(Number(v), key)),
     ),
   );
-  // 12 note toggles (a semitone row from the Key root). Editing any sets Custom.
+  // The twelve notes, absolute semitones from C — which is how the unit stores them,
+  // whatever the Key. Editing one sets Custom, as the unit does on its own.
   for (let i = 0; i < PITCH_NOTE_SLOTS.length; i++) {
     const slot = PITCH_NOTE_SLOTS[i];
     body.append(
@@ -1470,18 +1472,24 @@ function renderPitchMidi(
   const enable = insertFxVal(plan, nodeId, "pitch", PITCH_MIDI_ENABLE_SLOT, 0);
   const realtime = insertFxVal(plan, nodeId, "pitch", PITCH_MIDI_REALTIME_SLOT, 0);
   const cur = pitchMidiMode(enable, realtime);
-  body.append(
-    selectControl(
-      t.params.midiControl,
-      [
-        { value: "0", label: "Off" },
-        { value: "1", label: "Setting" },
-        { value: "2", label: "Real Time" },
-      ],
-      String(cur),
-      (v) => mergeInsertFxParams(actions, plan, nodeId, "pitch", pitchMidiPatch(Number(v))),
-    ),
+  // Shown, never written. Two reasons, both measured: the unit takes these notes on a
+  // USB-MIDI port of its own, which is not the port this app's external control reads, so
+  // writing here would be a second route into one setting; and switching it on erases a
+  // twelve-note mask that is FULL, taking the Scale enum to Custom with it. Not writing it
+  // is what keeps the app off that edge.
+  const row = selectControl(
+    t.params.midiControl,
+    [
+      { value: "0", label: "Off" },
+      { value: "1", label: "Setting" },
+      { value: "2", label: "Real Time" },
+    ],
+    String(cur),
+    () => {},
+    true,
   );
+  row.title = t.midiControlDeviceOnly;
+  body.append(row);
 }
 
 // Ducker node section: the on/off and the control that opens its tuning screen. The
