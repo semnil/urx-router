@@ -11,10 +11,12 @@ import {
   blockAt,
   releaseBarrier,
   memOf,
+  setMemAt,
+  settleAfter,
   waitQuiet,
 } from "./fake-device";
-import { analyze, report, timeline, markTime } from "./analyze";
-import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, graphNode, openEqScreen } from "./ui";
+import { analyze, report, timeline, markTime, setsOf } from "./analyze";
+import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, graphNode, openEqScreen, param, paramExact } from "./ui";
 
 // T1 overtake — the core stale-read / lost-edit ladders of the race harness
 // (docs/{en,ja}/live-race-harness.md). Each test drives one operator gesture into a
@@ -36,6 +38,15 @@ const oneKnobOn = (page: Page) =>
     .locator("#dyn-screen-box .prefs-section", { has: page.locator("#dyn-oneknob-level") })
     .locator(".prefs-toggle button")
     .first();
+/** CH 1's insert-FX selector and bypass, and the compander engine the selector binds.
+ *  `INSERT_FX_NONE_RAW` is what the unit reports for No Effect — the app maps it to -1. */
+const CH1_INSERT_FX = "135:0:0";
+const CH1_INSERT_FX_ON = "134:0:0";
+const COMPANDER_ENGINE = "689:";
+const COMPANDER_H = 1793;
+const INSERT_FX_NONE_RAW = 0xffffffff;
+const RATE_ADDR = "766:0:0";
+
 test.describe("T1 overtake", () => {
   test.beforeEach(async ({ page }) => {
     await installFake(page);
@@ -229,5 +240,74 @@ test.describe("T1 overtake", () => {
     // Ordering, not just values: a selector must reach the device before the bypass
     // it types, or the unit's own auto-engage stands.
     expect(analyze(trace, { order: ["135:0:0", "134:0:0"] })).toHaveLength(0);
+  });
+
+  // overtake-rate-cleared-insert-fx. The unit clears a selected effect when the sample
+  // rate leaves the ceiling that effect runs under, and it announces only the rate: the
+  // selector, the pointer and the bypass all move with no notify of their own. The read
+  // that the rate notify escalates to is therefore the first thing that sees the cleared
+  // values, and adopting them would spend the plan's intent on a change the operator
+  // never made — coming back to a supported rate restores nothing on the unit either.
+  test("an insert FX the unit cleared for the sample rate is held and re-sent, not adopted", async ({ page }) => {
+    await goLive(page);
+    await graphNode(page, "ch1").click();
+    await setLatency(page, { get: 2, set: 10 });
+
+    await mark(page, "select-compander");
+    await paramExact(page, "Insert FX").locator("select").selectOption({ label: "Compander-H" });
+    await settleAfter(page, "select-compander", 1800);
+    // One authored engine value. translate writes only the slots the plan carries, so
+    // without this the engine array is not in the write set and the re-apply below has
+    // two stages to reproduce rather than three. Settled from its own mark rather than
+    // waited quiet: an edit's flush is debounced, so the quiet a `waitQuiet` finds is
+    // the one BEFORE it — measured, the slot write then landed 119 ms after the next
+    // mark and read as part of the re-apply.
+    await mark(page, "edit-engine-slot");
+    await param(page, "Threshold").locator('input[type="range"]').focus();
+    await page.keyboard.press("ArrowUp");
+    await settleAfter(page, "edit-engine-slot", 1800);
+
+    // The excursion, in the shape the unit performs it: 192 kHz is past the compander's
+    // 96 kHz ceiling, its addresses read cleared, and the rate is the only announcement.
+    await mark(page, "rate-excursion");
+    await setMemAt(page, {
+      [RATE_ADDR]: 192000,
+      [CH1_INSERT_FX]: INSERT_FX_NONE_RAW,
+      [CH1_INSERT_FX_ON]: 0,
+    });
+    await pushNotify(page, [[766, 0, 0, 192000]]);
+    await settleAfter(page, "rate-excursion", 2500);
+
+    const trace = await traceOf(page);
+    const at = markTime(trace, "rate-excursion")!;
+    const after = setsOf(trace).filter((s) => s.start > at);
+    console.log(timeline(trace, { from: at - 50, limit: 60 }));
+    console.log(
+      `mark at ${Math.round(at)} ms; written after the excursion: ` +
+        (after.map((s) => `#${s.seq}@${Math.round(s.start)} ${s.addr}=${s.value}`).join(", ") || "(nothing)"),
+    );
+
+    const reSel = after.find((s) => s.addr === CH1_INSERT_FX);
+    const reOn = after.find((s) => s.addr === CH1_INSERT_FX_ON);
+    const engine = after.filter((s) => s.addr?.startsWith(COMPANDER_ENGINE));
+    // The plan kept the effect and the app put it back. Asserted on the WRITES rather
+    // than on the screen, because at 192 kHz every option is rate-locked and the row
+    // stops being a select — while a plan that had adopted the clearing would write
+    // nothing here at all, which is the difference this case exists to see.
+    expect(reSel?.value).toBe(COMPANDER_H);
+    expect(engine.length).toBeGreaterThan(0);
+    expect(reOn).toBeDefined();
+    // …and in the order the unit takes it: selector, the values it applies to, then the
+    // bypass intent (t2-shape-change pins the same order for an ordinary selection).
+    expect(reSel!.seq).toBeLessThan(Math.min(...engine.map((s) => s.seq)));
+    expect(Math.max(...engine.map((s) => s.seq))).toBeLessThan(reOn!.seq);
+
+    // Back at a rate that runs it, the effect is still the plan's — which is the half
+    // the unit does not do for itself.
+    await mark(page, "rate-back");
+    await setMemAt(page, { [RATE_ADDR]: 48000 });
+    await pushNotify(page, [[766, 0, 0, 48000]]);
+    await settleAfter(page, "rate-back", 2500);
+    await expect(paramExact(page, "Insert FX").locator("select")).toHaveValue(String(COMPANDER_H));
   });
 });

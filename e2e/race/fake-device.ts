@@ -1370,6 +1370,13 @@ export const countersOf = (page: Page): Promise<FakeHandle["counters"]> =>
 export const meterAddrsOf = (page: Page): Promise<Array<[number, number]>> =>
   page.evaluate(() => window.__urxFake.meterAddrs);
 
+/** Put values into the unit's own state with no write behind them — a device-side
+ *  change the app never asked for and, for the addresses the unit does not announce,
+ *  was never told about. Unlike `divergeAt`, the next write LANDS on the address: a
+ *  case asserting that the app repaired something needs the repair able to stick. */
+export const setMemAt = (page: Page, entries: Record<string, number>): Promise<void> =>
+  page.evaluate((e) => void Object.assign(window.__urxFake.mem, e), entries);
+
 export const divergeAt = (page: Page, addr: string, value: number): Promise<void> =>
   page.evaluate(
     ([a, v]) => {

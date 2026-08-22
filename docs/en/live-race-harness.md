@@ -831,6 +831,13 @@ agreement, zero findings.
   The same defect is what `stress-three-operators-one-node` had been counting without being able to
   assert: **0 / 2 / 3 / 3 write-backs across four runs of one case**, all on pan, now 0 in four
 
+- **An insert FX the unit cleared for the rate is held and re-sent.** The unit announces only the rate, so the
+  read that notify escalates to is what finds the selector and the bypass gone. Without the merge's hold the
+  flush that follows writes **nothing at all** — the plan has adopted the clearing and has nothing left to send
+  — and with it the three stages leave in order: `135:0:0=1793`, `689:0:6=-990`, `134:0:0=1`. The case asserts
+  on the writes rather than on the screen, because at 192 kHz every option is rate-locked and the inspector row
+  stops being a select; that the effect is still the plan's is read from the screen once the rate comes back
+
 **T2 — address-set shape**
 
 - **The EQ 1-Knob blind spot**, isolated with a single-notify differential: the ON flush takes the 18
