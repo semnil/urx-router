@@ -2,7 +2,7 @@
 // after a reset and used to seed a new plan (see defaultPlan). Values are the
 // decoded plan-unit defaults the device ships with; the routing wires mirror its
 // default input source / send / patch / ducker-key topology. URX44 reuses this
-// capture verbatim; URX22 has its own capture (see initial-urx22.ts).
+// capture verbatim; URX22 is an inferred remap of it (see initial-urx22.ts).
 
 import type { NodeParams, PlanConnection } from "../core/plan";
 import { SSMCS_INITIAL } from "../core/plan";
