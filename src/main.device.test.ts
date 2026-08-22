@@ -18,7 +18,7 @@ import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
 import { $, bootApp, deviceCommands, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
-import { COMP_EQ_SSMCS } from "./core/control/params";
+import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { PARAMS } from "./core/control/params";
 import { nameControl } from "./core/control/translate";
@@ -242,6 +242,37 @@ const pickPanBal = (value: number): void => {
 const insertFxOnFace = (): string | undefined =>
   paramRow("Insert FX ON")?.querySelector("button.on")?.textContent ?? undefined;
 
+/** An insert effect whose sample-rate ceiling (96 kHz) a 192 kHz clock is above,
+ *  which is what makes the unit drop it. */
+const COMPANDER_H = 1793;
+
+/** Every value written to the insert-FX selector, in order. Read off the ledger by
+ *  ADDRESS: a flush sends hundreds of writes, so counting `vd_set` cannot say whether
+ *  this one went out, nor what it carried. */
+const insertFxWrites = (shell: TauriShell): number[] =>
+  shell.invokes.flatMap((cmd, i) =>
+    cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.INSERT_FX.id ? [shell.args[i]!.value as number] : [],
+  );
+
+/** Wait until the shell stops being asked anything, so what happens next is the only
+ *  thing in flight. A count that has merely grown says nothing about WHOSE reads they
+ *  were. */
+const quiet = async (shell: TauriShell): Promise<void> => {
+  let seen = -1;
+  let stable = 0;
+  await vi.waitFor(
+    () => {
+      const now = shell.invokes.length;
+      stable = now === seen ? stable + 1 : 0;
+      seen = now;
+      // Several readings, not one: a flush pauses between its own phases, and a single
+      // stable sample is satisfied inside one of those pauses.
+      if (stable < 4) throw new Error(`still working (${now})`);
+    },
+    { timeout: 25_000, interval: 200 },
+  );
+};
+
 describe("Fetch from device", () => {
   // The same rule for what a MIRROR wrote. While a pair is linked the insert FX travels
   // to the partner, bypass included — and if the partner's bypass already held the value
@@ -262,11 +293,11 @@ describe("Fetch from device", () => {
     await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
 
     selectNode("ch1");
-    pickInsertFx(1793);
+    pickInsertFx(COMPANDER_H);
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch2");
-    expect(paramRow("Insert FX").querySelector("select")!.value).toBe("1793");
+    expect(paramRow("Insert FX").querySelector("select")!.value).toBe(String(COMPANDER_H));
     expect(insertFxOnFace()).toBe("ON");
   });
 
@@ -293,7 +324,7 @@ describe("Fetch from device", () => {
     await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
 
     selectNode("ch1");
-    pickInsertFx(1793);
+    pickInsertFx(COMPANDER_H);
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch2");
@@ -316,7 +347,7 @@ describe("Fetch from device", () => {
     shell.answer(
       "vd_get",
       (a: Record<string, unknown>) =>
-        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.INSERT_FX.id ? 1793 : 0), 1)),
+        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.INSERT_FX.id ? COMPANDER_H : 0), 1)),
     );
     $("btn-fetch").click();
     await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
@@ -386,11 +417,11 @@ describe("Fetch from device", () => {
 
     // …and the operator picks a different effect while it runs.
     selectNode("ch1");
-    pickInsertFx(1793); // Compander-H
+    pickInsertFx(COMPANDER_H);
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch1");
-    expect(paramRow("Insert FX").querySelector("select")!.value).toBe("1793");
+    expect(paramRow("Insert FX").querySelector("select")!.value).toBe(String(COMPANDER_H));
     expect(insertFxOnFace()).toBe("ON");
   });
 
@@ -687,6 +718,128 @@ describe("the live session", () => {
     // there. Before the fix, the reflect reset both stacks and this chord did nothing.
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(slider().getAttribute("aria-valuenow")).toBe(before), { timeout: 10_000 });
+  });
+
+  // What a read that HELD values tells the operator, and what it does about them. The
+  // race tier owns the re-send's addresses and their order; it uploads no coverage and
+  // its trigger skips a documentation-only pull request, so both branches below were
+  // reachable by nothing that reports on an ordinary one — and the status line is the
+  // only place an installed build says any of this, the console not reaching it.
+  //
+  // Driven by putting the unit where the sample-rate excursion leaves it: a rate the
+  // selected effect's ceiling forbids, and no effect selected, announced on the rate
+  // address alone.
+  const heldByExcursion = async (shell: TauriShell): Promise<void> => {
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    // Selected through the session, so the unit holds it too: the hold is about a value
+    // the app and the device agreed on until the rate moved.
+    selectNode("ch1");
+    pickInsertFx(COMPANDER_H);
+    await vi.waitFor(() => expect(insertFxWrites(shell)).toContain(COMPANDER_H), { timeout: 25_000 });
+    // Settled before the excursion, so what the shell is asked afterwards belongs to the
+    // reconcile alone: the session's own flush is still writing when that first selector
+    // write lands, and a later write of the same address would otherwise read as the
+    // send-back whether or not one was scheduled.
+    await quiet(shell);
+  };
+
+  // `delayMs` stretches each read, for the case that has to end the session inside one.
+  // `refuseY` refuses every read of one channel index, for the case that needs the read
+  // to be partial as well as holding — CH 1 is y0, so a later index leaves the held
+  // route's own addresses answering.
+  const notifyRate = (shell: TauriShell, { delayMs = 0, refuseY = -1 } = {}): void => {
+    const answer = (a: Record<string, unknown>): number => {
+      if (a.y === refuseY) throw new Error("read refused");
+      return a.paramId === PARAMS.SAMPLE_RATE.id
+        ? 192_000
+        : a.paramId === PARAMS.INSERT_FX.id
+          ? denormalizeInsertFx(INSERT_FX_NONE)
+          : 0;
+    };
+    shell.answer("vd_get", (a: Record<string, unknown>) =>
+      delayMs ? new Promise((r) => setTimeout(() => r(answer(a)), delayMs)) : answer(a),
+    );
+    // Taken from the subscribe's own arguments rather than by position, so a second
+    // channel opening beside it cannot silently redirect this.
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+    channel.onmessage([{ param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 }]);
+  };
+
+  it("says how many values a reconcile kept, and sends them back", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    const written = insertFxWrites(shell).length;
+    notifyRate(shell);
+
+    // Two keys held on CH 1 — the selector and its bypass. The third the hold names,
+    // the stored engine values, is not in the plan for an effect selected and not yet
+    // tuned, and a key the read's patch never carried is not one it can keep.
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    // …and the send-back really was scheduled, rather than only reported.
+    await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
+    expect(insertFxWrites(shell).at(-1)).toBe(COMPANDER_H);
+  });
+
+  it("claims no send-back when the session ended under the read", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    // One millisecond per read, so the reconcile is long enough to end the session
+    // inside it. A follow read outlives a session that merely ended, so it still
+    // reaches the hold — with nothing left to flush through.
+    const reads = shell.count("vd_get");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    notifyRate(shell, { delayMs: 1 });
+
+    try {
+      const written = insertFxWrites(shell).length;
+      // Past the settle debounce and INTO the reconcile: the session start has already
+      // read the whole unit, so a bare `count > 5` is satisfied before the notify's
+      // read exists and the click below would cancel the settle instead of racing it.
+      await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 5), {
+        timeout: 25_000,
+        interval: 5,
+      });
+      $("btn-live").click();
+      await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+
+      await vi.waitFor(
+        () =>
+          expect(
+            warn.mock.calls.some((c) => String(c[0]).includes("no session left to send the held values back through")),
+          ).toBe(true),
+        { timeout: 25_000 },
+      );
+      // The positive control is the case above, which takes this same path with the
+      // session up and DOES write: an absence here is the session and not the setup.
+      expect(insertFxWrites(shell).length).toBe(written);
+      expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  // And when the read is partial as well, the count travels with the teardown's own
+  // message rather than the status line: that line is about to be replaced by the one
+  // stopLiveOnError writes, and the console does not reach an installed build.
+  it("names the values it kept inside the failure a partial read raises", SLOW, async () => {
+    const shell = await bootDevice();
+    await heldByExcursion(shell);
+
+    notifyRate(shell, { refuseY: 3 }); // CH 4's reads refused; CH 1, which holds, is y0
+
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    // The same two keys the case above counts, inside the cause rather than beside it.
+    expect(
+      countFor(errors(shell).at(-1) ?? "", (n) =>
+        t().status.liveError(t().error.followReadHeld(t().error.followReadIncomplete(n), 2)),
+      ),
+    ).not.toBeNaN();
   });
 
   it("comes up, prints the tally, and goes down again", SLOW, async () => {
