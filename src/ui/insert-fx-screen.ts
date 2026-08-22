@@ -12,9 +12,10 @@
 // (insert-fx-effect.ts is canonical on this) — so it stays on the surfaces that already
 // treat it as a selection: the Inspector's Insert FX row.
 //
-// Values are RAW broker integers keyed by engine SLOT, so a field names its slot rather
-// than a parameter (`ifx6`), and the catalogue's own formatter prints it. The catalogue is
-// the single value definition: nothing here restates a range, a default or an enum.
+// Values are RAW broker integers keyed by engine SLOT, so a field names a family and a
+// slot rather than a parameter (`ifx:compander:6`), and the catalogue's own formatter
+// prints it. The catalogue is the single value definition: nothing here restates a range,
+// a default or an enum.
 
 import {
   insertFxFamilyOf,
@@ -365,8 +366,8 @@ function insFxFace(face: InsFxFace): DynProcessor {
       return { insertFxParams: params };
     },
 
-    // A field carries a slot, and a slot means a different parameter under every family, so
-    // both of these need the ctx to know which catalogue row they are printing.
+    // A field carries a family and a slot, and a slot means a different parameter under
+    // every family, so both of these read the catalogue row out of the key itself.
     fieldLabel: (f, m, ctx) => {
       const d = descOf(ctx, f.key);
       return d && labelOf(d, m);
