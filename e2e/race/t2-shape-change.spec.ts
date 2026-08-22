@@ -509,10 +509,12 @@ test.describe("T2 shape-change", () => {
     );
   });
 
-  // shape-insert-fx-select-ordering. The only case where correctness is decided by the
-  // ORDER of commands inside one flush rather than by their values: accepting a selector
-  // makes the device refill the engine array with the type's defaults and auto-engage the
-  // bypass, so 135 precedes the engine writes and 134 follows them.
+  // shape-insert-fx-select-ordering. Correctness decided by the ORDER of three groups
+  // inside one flush rather than by their values: accepting a selector makes the device
+  // refill the engine array with the type's defaults and auto-engage the bypass, so 135
+  // precedes the engine writes and 134 follows them. T2d carries the harness's other two
+  // ordering contracts — the FX effect type ahead of its own array, and PAN/BAL ahead of
+  // the pans it re-authors.
   test("insert-FX selection brackets the engine values with the selector and the bypass, and clears it by leaving the set", async ({
     page,
   }) => {

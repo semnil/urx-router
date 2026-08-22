@@ -246,7 +246,7 @@ single source of truth. This table states what each case measures.
 | `shape-comp-eq-type-bank-swap` | inspector | The only param that changes address identity and value polarity at once |
 | `shape-eq-oneknob-registration-blindspot` | tuning | The boolean that triggers a recomputation is the one that removes its notify addresses, registration included, so the announcement is refused rather than delivered unplaceable — plus clause B's firing control |
 | `shape-eq-oneknob-level-refetch-storm` | tuning | A readback per flush window during a drag, rebasing the history throughout |
-| `shape-insert-fx-select-ordering` | inspector | The only case where correctness depends on the order of two commands, not their values |
+| `shape-insert-fx-select-ordering` | inspector | Correctness decided by the order of three groups inside one flush — selector, the engine array it refills, then the bypass — rather than by their values, because the unit refills and engages on every selection |
 | `shape-insert-fx-engine-array-collision` | inspector | Two plan owners sharing one device address |
 | `shape-fx-effect-type-slot-family` | inspector | The slot set varies rather than the param id, and undo is incomplete by construction |
 | `shape-signal-type-pair-link` | inspector | The only param whose write resets an entire other node on the device |

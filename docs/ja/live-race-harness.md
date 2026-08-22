@@ -236,7 +236,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | `shape-comp-eq-type-bank-swap` | inspector | アドレスの同一性と値の極性が同時に変わる唯一の param |
 | `shape-eq-oneknob-registration-blindspot` | tuning | 再計算を起こした当のブール値が、再計算の通知先を登録ごと集合から外す自己盲目。告知は配達されて置けないのではなく拒否される。節 B の発火対照も持つ |
 | `shape-eq-oneknob-level-refetch-storm` | tuning | ドラッグ中に毎フラッシュ読み戻しが走り、履歴が再基準化され続ける |
-| `shape-insert-fx-select-ordering` | inspector | 値ではなくコマンド 2 件の順序が正しさを決める唯一のケース |
+| `shape-insert-fx-select-ordering` | inspector | 値ではなく 1 フラッシュ内の 3 グループの順序 — セレクタ → それが埋め直すエンジン配列 → バイパス — が正しさを決める。実機が選択のたびに配列を既定で埋め直し、バイパスを自分で入れるため |
 | `shape-insert-fx-engine-array-collision` | inspector | 2 つのプラン所有者が 1 つのデバイスアドレスを共有する構造的衝突 |
 | `shape-fx-effect-type-slot-family` | inspector | param id ではなくスロット集合が変わる。undo が構造上不完全になる |
 | `shape-signal-type-pair-link` | inspector | 書込が別ノード全体をデバイス側でリセットする唯一の param |
