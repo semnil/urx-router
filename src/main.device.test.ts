@@ -212,7 +212,50 @@ const diffReadsFail = (a: Record<string, unknown>): number => {
   throw new Error("read-refused");
 };
 
+/** An inspector row by the label it stamps on itself, so "Insert FX" cannot match
+ *  "Insert FX ON" — two rows carrying two different addresses. */
+const paramRow = (label: string): HTMLElement =>
+  $("inspector").querySelector<HTMLElement>(`.param[data-param-label="${label}"]`)!;
+
+/** Pick an insert effect the way the inspector's own select does. */
+const pickInsertFx = (value: number): void => {
+  const sel = paramRow("Insert FX").querySelector("select")!;
+  sel.value = String(value);
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+/** Which half of the bypass toggle is lit. */
+const insertFxOnFace = (): string | undefined =>
+  paramRow("Insert FX ON")?.querySelector("button.on")?.textContent ?? undefined;
+
 describe("Fetch from device", () => {
+  // The write witness names what a funnel WROTE, not only what its write MOVED. Selecting
+  // an insert effect over one that is already engaged writes `insertFxOn: true` again —
+  // the value does not move, so the read's own diff cannot tell that key from one nobody
+  // touched, and the device's value wins it. This stub answers every unwritten address 0,
+  // so the unit's bypass reads OFF: the operator's new effect used to land selected and
+  // muted, which is the failure the emit order elsewhere exists to prevent.
+  it("keeps a bypass the operator's patch asserted while a read was in flight", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickInsertFx(256); // Clean — an engaged effect to select over
+    expect(insertFxOnFace()).toBe("ON");
+
+    // One millisecond per read, so there is a mid-read window at all (see the latch case).
+    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    // …and the operator picks a different effect while it runs.
+    selectNode("ch1");
+    pickInsertFx(1793); // Compander-H
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch1");
+    expect(paramRow("Insert FX").querySelector("select")!.value).toBe("1793");
+    expect(insertFxOnFace()).toBe("ON");
+  });
+
   it("connects, reads the whole unit, and drops the link when it is done", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-fetch").click();

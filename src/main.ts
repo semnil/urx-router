@@ -19,7 +19,7 @@ import {
 import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
-import { clonePlanState, diffPlans, PlanWriteWitness, type PatchTouch } from "./core/plan-history";
+import { clonePlanState, diffPlans, nodeParamContestKey, PlanWriteWitness, type PatchTouch } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
 import { isRefusal, planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
@@ -1033,14 +1033,15 @@ let planHistory: PlanHistory | null = null;
 // LED) follows edits made anywhere in the UI. The undo history opens its entry
 // here too, and closes it at the next gesture boundary — which is why the diff is
 // taken then and not now: several funnels mutate the plan further after calling.
-function markChanged(source: WriteSource = "ui"): void {
+function markChanged(source: WriteSource = "ui", written?: Iterable<string>): void {
   dirty = true;
   // Attribute the write before the funnel's own side effects run: note() may commit an
   // entry, and the ledger has to say who authored the keys that entry carries.
   traceProbe?.sample(source);
   // Name the keys for any device read in flight, so a value the app moved and moved back
-  // inside the read's window is not overwritten by what the device held in between.
-  planWrites.note();
+  // inside the read's window is not overwritten by what the device held in between —
+  // and, for a funnel that carries a patch, the keys it asserted without moving them.
+  planWrites.note(written);
   live?.schedule();
   midi?.scheduleFeedback();
   planHistory?.note();
@@ -1171,7 +1172,13 @@ const inspectorActions = {
     // takes a pass of its own beside the BAL-gated mirror above. In BAL both run and
     // write the same values.
     const insFxMirrored = mirrorLinkedInsertFx(getModel(modelId), plan, id);
-    markChanged();
+    // The patch's own keys, not only the ones whose value moved: this funnel asserts
+    // every member it carries, and a device read in flight must not take back one that
+    // happened to already hold the asserted value.
+    markChanged(
+      "ui",
+      Object.keys(patch).map((key) => nodeParamContestKey(id, key)),
+    );
     // Two of the side effects below write the plan AFTER markChanged took the ledger
     // sample, so their keys would land in whatever samples next — under live follow a
     // device notify, which invariant 13 then reads as the device authoring a key the

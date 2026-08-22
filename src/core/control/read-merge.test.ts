@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
 import { insertFxHoldKeys, readIntoPlan, type ReadbackResult } from "./readback";
-import { applyPatchInContext, clonePlanState, diffPlans, PlanWriteWitness } from "../plan-history";
+import { applyPatchInContext, clonePlanState, diffPlans, nodeParamContestKey, PlanWriteWitness } from "../plan-history";
 
 // readIntoPlan is the contest between a device read and the operator's hands: the read
 // samples the unit before a gesture exists, resolves hundreds of milliseconds to tens of
@@ -400,6 +400,35 @@ describe("MergedRead.devicePatch and the context-checked absorb", () => {
 // cleared values. These pin which of those the merge adopts and which it holds — and that
 // the held ones stay OUT of the device view, since that is the copy the outgoing diff
 // measures against and the only thing that can send the effect back.
+// A funnel asserts every member of the patch it carries, and a member that already
+// holds the asserted value moves nothing for the diff to see. The funnel's own list is
+// the only thing that can name it; without it a device read in flight takes the key
+// back to whatever the unit held, and the operator's assertion is spent.
+it("keeps a key an edit funnel asserted without moving it", async () => {
+  const plan = basePlan();
+  plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hpf: true, hpfFreq: 80 };
+  const witness = new PlanWriteWitness(() => plan);
+
+  const merged = await readIntoPlan(
+    () => plan,
+    async (into) => {
+      // The unit holds something else on both.
+      into.nodeParams.ch1 = { ...into.nodeParams.ch1, hpf: false, hpfFreq: 120 };
+      // The operator's patch moves one member and asserts the other where it already is.
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hpfFreq: 200, hpf: true };
+      witness.note([nodeParamContestKey("ch1", "hpfFreq"), nodeParamContestKey("ch1", "hpf")]);
+      return OK;
+    },
+    witness,
+  );
+
+  expect(plan.nodeParams.ch1?.hpfFreq).toBe(200);
+  expect(plan.nodeParams.ch1?.hpf).toBe(true);
+  // The device view still says what the unit answered, so the next outgoing diff is what
+  // settles the unit on the operator's value.
+  expect(merged!.deviceView.nodeParams.ch1?.hpf).toBe(false);
+});
+
 describe("insertFxHoldKeys", () => {
   const hold = (ctx: Parameters<typeof insertFxHoldKeys>[1]) => insertFxHoldKeys(model, ctx);
   const PITCH_FIX = 512; // input route, 48 kHz ceiling
@@ -512,12 +541,11 @@ describe("insertFxHoldKeys", () => {
       () => plan,
       async (into) => {
         const result = cleared(into, 96000);
-        // The operator picks a different effect in the app, mid-read. Both keys move,
-        // which is what the two funnels that can do this actually write (the inspector's
-        // selector and the CONSOLE strip's): a selector alone is a shape no edit path
-        // produces, and pinning it here would bless a bypassed effect as correct.
+        // The operator picks a different effect in the app, mid-read. The funnel writes
+        // BOTH keys and names both — `insertFxOn` was already true, so its value does not
+        // move and only the funnel's own list can name it.
         plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: COMPANDER_H, insertFxOn: true };
-        witness.note();
+        witness.note([nodeParamContestKey("ch1", "insertFx"), nodeParamContestKey("ch1", "insertFxOn")]);
         return result;
       },
       witness,
@@ -529,12 +557,10 @@ describe("insertFxHoldKeys", () => {
     // values under the new selection.
     expect(plan.nodeParams.ch1?.insertFx).toBe(COMPANDER_H);
     expect(merged!.held).toEqual([]);
-    // The bypass lands on the DEVICE's value, and that is the merge's ordinary contest
-    // rather than anything the hold does: selecting an effect over one that was already
-    // engaged leaves `insertFxOn` at the value the read's own `before` side holds, so the
-    // witness never names it and the device's OFF wins the key. Pinned as the behaviour
-    // it is — the effect arrives selected and bypassed until the next edit moves it.
-    expect(plan.nodeParams.ch1?.insertFxOn).toBe(false);
+    // …and it arrives ENGAGED. The bypass key never moved — it was already true — so the
+    // read's own diff cannot tell it from a key nobody touched, and the device's OFF used
+    // to win it: the operator's new effect landed selected and muted.
+    expect(plan.nodeParams.ch1?.insertFxOn).toBe(true);
   });
 
   it("adopts the cleared values when no hold is passed at all", async () => {

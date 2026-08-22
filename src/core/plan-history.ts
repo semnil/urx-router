@@ -700,9 +700,25 @@ export class PlanWriteWitness {
 
   constructor(private readonly getPlan: () => Plan) {}
 
-  /** An edit funnel has just written to the plan. */
-  note(): void {
-    if (this.open) this.sample();
+  /**
+   * An edit funnel has just written to the plan.
+   *
+   * `names` are the keys the funnel MEANT to write, in contest spelling, for a funnel
+   * that carries a list. The sample below can only see a key whose VALUE moved, and a
+   * funnel writing a patch asserts every member of it — selecting an insert effect over
+   * an engaged one writes `insertFxOn: true` again, which moves nothing. Without the
+   * list that key authors nothing, a device read in flight is left free to take it back
+   * to whatever the unit held, and the operator's newly selected effect lands bypassed
+   * (measured before this argument existed). A funnel with no list — a view that mutated
+   * the plan itself, an undo applying a patch — passes none and the diff is the floor.
+   *
+   * What makes a funnel need one is a MULTI-key patch: with a single key, a write that
+   * moves nothing changed nothing, and there is no second key whose assertion could be
+   * lost. Every connection-parameter write is single-key today, which is why only the
+   * node-parameter funnel carries a list.
+   */
+  note(names?: Iterable<string>): void {
+    if (this.open) this.sample(names);
   }
 
   /** Watch the writes made from now until the read being issued resolves. */
@@ -728,14 +744,15 @@ export class PlanWriteWitness {
     };
   }
 
-  private sample(): void {
+  private sample(names?: Iterable<string>): void {
     if (!this.last) return;
     const plan = this.getPlan();
     const patch = diffPlans(this.last, plan);
     this.last = clonePlanState(plan);
-    if (!patch.length) return;
+    const written = [...patchContestNames(patch), ...(names ?? [])];
+    if (!written.length) return;
     const at = ++this.samples;
-    for (const name of patchContestNames(patch)) this.written.set(name, at);
+    for (const name of written) this.written.set(name, at);
   }
 }
 
