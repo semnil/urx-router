@@ -1313,7 +1313,6 @@ function renderMbc(
     }
   }
   // Global
-  body.append(boolToggle(t.params.bypass, val(MBC_GLOBAL.bypass, 0) !== 0, (v) => set(MBC_GLOBAL.bypass, v ? 1 : 0)));
   body.append(
     rangeSlider(
       t.params.xoverLowMid,
