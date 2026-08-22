@@ -97,6 +97,31 @@ test("compander on the STEREO master reveals dynamics params", async ({ page }) 
   await expect(screenBox(page).locator(".gt-ladders")).toBeVisible();
 });
 
+// The families the screen shows are edited THERE and nowhere else. Restoring the flat
+// renderer beside the launcher would put the same values on two surfaces, and the one in
+// the inspector reads the snapshot taken at render time and writes a stale value back on
+// its next drag — which is the reason the renderer was removed. Nothing else in this file
+// would go red for it, so the absence is asserted with the launcher as the positive
+// control and the multi-band compressor as the family that still edits in place.
+test("a family the screen shows has no editor left in the inspector", async ({ page }) => {
+  for (const [id, effect, row] of [
+    ["ch1", "Clean", "Treble"],
+    ["ch3", "Pitch Fix", "Coarse"],
+    ["bus.stereo", "Compander-H", "Width"],
+  ] as const) {
+    await node(page, id).click();
+    await insertSelect(page).selectOption({ label: effect });
+    await expect(page.locator("#btn-insfx-screen"), effect).toBeVisible();
+    await expect(param(page, row), effect).toHaveCount(0);
+  }
+  // …and the one family that does still edit in place, which is what says the assertion
+  // above can fail at all. On the SAME bus: the compander and the multi-band compressor
+  // share one device-wide slot, so a second output cannot take it while this one holds it.
+  await insertSelect(page).selectOption({ label: "M.Band Comp" });
+  await expect(page.locator("#btn-insfx-screen")).toHaveCount(0);
+  await expect(param(page, "LOW Threshold")).toBeVisible();
+});
+
 test("multi-band comp on a MIX bus reveals three bands", async ({ page }) => {
   await node(page, "bus.mix1").click();
   await insertSelect(page).selectOption({ label: "M.Band Comp" });
