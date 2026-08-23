@@ -15,7 +15,9 @@ import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test
 import type { ConsoleMidiHooks } from "./console";
 import { sendConnection } from "../core/plan";
 import { PAN_BAL_BAL } from "../core/control/params";
-import { INSERT_FX_OPTIONS, insertFxSelected } from "../core/control/params";
+import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, insertFxSelected } from "../core/control/params";
+import { planToCommands } from "../core/control/translate";
+import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { t } from "../i18n";
 
@@ -462,6 +464,71 @@ describe("the INS FX chip", () => {
     expect(chipOf("ch1").getAttribute("aria-pressed")).toBe("false");
     chipOf("ch1").click();
     expect(chipOf("ch1").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // A plan can hold an insert-FX value the node's own control does not carry: a file, a
+  // `?plan=` link and a device read all land one, and the loader gates none of them. The
+  // emit path turns it into No Effect and writes neither the engine array nor the bypass,
+  // so a chip driven from the raw plan value reports a strip as bypassing an effect that
+  // never reaches the unit — and pressing it writes a bypass nothing will ever send.
+  describe.each([
+    ["a channel holding an OUTPUT-only effect", "ch1", "M.Band Comp", OUTPUT_INSERT_FX_OPTIONS],
+    ["a bus holding a CHANNEL-only effect", "bus.mix1", "Pitch Fix", INSERT_FX_OPTIONS],
+  ])("%s", (_name, id, label, options) => {
+    const load = (): void => {
+      const plan = defaultPlan("URX44V");
+      plan.sampleRate = 48000;
+      plan.nodeParams[id] = {
+        ...plan.nodeParams[id],
+        insertFx: options.find((o) => o.label === label)!.value,
+        insertFxOn: true,
+      };
+      h = consoleHost({ plan });
+    };
+
+    it("reads OFF, the way No Effect does", () => {
+      load();
+      expect(chipOf(id).getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("takes a real effect when pressed, instead of writing a bypass", () => {
+      load();
+      const stale = h.plan.nodeParams[id]!.insertFx;
+      chipOf(id).click();
+      const now = h.plan.nodeParams[id]!;
+      expect(now.insertFx).not.toBe(stale);
+      expect(options.some((o) => o.value === now.insertFx)).toBe(false); // …from THIS node's list
+      expect(insertFxSelected(now)).toBe(true);
+      expect(now.insertFxOn).toBe(true);
+      // The half that says the press was not merely cosmetic: the selector the unit is
+      // given now carries the chosen effect, where the stale value was sent as No Effect.
+      // Asserted on the SELECTOR and not on the engine array — translate writes only the
+      // slots the plan carries, and a freshly chosen effect carries none, so a count there
+      // would be zero for the right reason and prove nothing.
+      const sent = planToCommands(getModel("URX44V"), h.plan)
+        .filter((c) => c.name === "INSERT_FX")
+        .map((c) => c.planValue);
+      expect(sent).toContain(now.insertFx);
+      expect(sent).not.toContain(stale);
+    });
+  });
+
+  // The positive control for the pair above: an effect the node's own control DOES carry
+  // keeps the chip a bypass, so a gate that reported OFF for everything cannot pass.
+  it("stays a bypass for an effect the node's own control carries", () => {
+    const plan = defaultPlan("URX44V");
+    plan.sampleRate = 48000;
+    plan.nodeParams["bus.mix1"] = {
+      ...plan.nodeParams["bus.mix1"],
+      insertFx: OUTPUT_INSERT_FX_OPTIONS.find((o) => o.label === "M.Band Comp")!.value,
+      insertFxOn: true,
+    };
+    h = consoleHost({ plan });
+    const held = h.plan.nodeParams["bus.mix1"]!.insertFx;
+    expect(chipOf("bus.mix1").getAttribute("aria-pressed")).toBe("true");
+    chipOf("bus.mix1").click();
+    expect(h.plan.nodeParams["bus.mix1"]!.insertFxOn).toBe(false);
+    expect(h.plan.nodeParams["bus.mix1"]!.insertFx).toBe(held);
   });
 
   // A strip holding NOTHING is locked too above every ceiling, and the reason it gives has

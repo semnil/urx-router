@@ -919,6 +919,16 @@ asserted paths through `DynProcessor.written`, naming per slot the family-qualif
 stores under AND the bare slot the re-key removes — the same pair, for the same reason, that the
 Inspector's own funnel names.
 
+**Every surface asks the same question, not only this one.** The Inspector's selector, its bypass
+switch and its editor, and the CONSOLE's INS FX chip all read `effectiveInsertFx` — so a value the
+node's own control does not carry reads as No Effect everywhere, which is what the unit is given.
+The chip is where it bit hardest: driven from the raw value it reported the strip as bypassing an
+effect that never reaches the unit, and pressing it wrote a bypass nothing would ever send. Pressing
+it now takes a real effect from the node's own free list, which is also what clears the stale value
+out of the plan. The Inspector's selector shows No Effect for a second reason on top of that: a
+`<select>` handed a value none of its options carry lands at selectedIndex -1 and draws an empty
+field. Nothing rewrites the plan to say so — the raw value stands until the operator picks.
+
 **And nothing the device path will not act on.** A plan can hold an insert-FX value the node's own
 control does not carry — a bus holding a channel effect, which a file, a `?plan=` link or a device
 read all land, since the loader gates none of them. `translate` coerces such a value to No Effect and
