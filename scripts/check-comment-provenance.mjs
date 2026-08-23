@@ -97,11 +97,16 @@ const RULES = [
   },
 ];
 
-// A `/` after one of these starts a PATTERN, not a division. The character before it is a
-// letter, so the operator test alone reads `return /["]/` as division — and the `"` inside
-// the character class then opens a string that swallows the rest of the line, comment
-// included. Keywords rather than every identifier: `x /2/ y` after a variable is division.
-const REGEX_KEYWORDS = new Set([
+// Whether a `/` opens a PATTERN or divides is not decidable from the preceding character:
+// `)` ends a value after a call and starts an expression after `if (…)`, `}` ends a value
+// after an object literal and starts one after a block, and `+` is an operator in `a + /re/`
+// and part of a postfix `++` in `x++ / 2`. So the lexer carries the goal as STATE, the way
+// the grammar does: the last significant token, plus a stack per bracket kind saying what
+// that bracket was.
+
+/** After these keywords a `/` opens a PATTERN; after any other name — an identifier, or a
+ *  keyword that IS a value like `this` — it divides. */
+const REGEX_AFTER = new Set([
   "return",
   "typeof",
   "instanceof",
@@ -117,52 +122,80 @@ const REGEX_KEYWORDS = new Set([
   "void",
   "throw",
 ]);
+/** A `(` that follows one of these heads a control structure, so its `)` does not end a
+ *  value and a `/` after it opens a pattern. Every other `(` is a call or a group. */
+const CONTROL_HEADS = new Set(["if", "for", "while", "with", "switch", "catch"]);
+/** A `{` after one of these is an OBJECT literal, because each demands an expression. After
+ *  anything else — a `)`, a `;`, `=>`, another block, the start of input — it is a block. */
+const OBJECT_AFTER = new Set([
+  "return",
+  "typeof",
+  "case",
+  "in",
+  "of",
+  "instanceof",
+  "yield",
+  "await",
+  "new",
+  "delete",
+  "void",
+  "throw",
+]);
+
+const isIdStart = (c) => /[A-Za-z_$]/.test(c);
+const isIdPart = (c) => /[A-Za-z0-9_$]/.test(c);
 
 /**
  * Comment spans of one source file, as {line, text}.
  *
- * A hand lexer rather than a parser: it has to tell a comment from a string and from a
- * regex literal, and nothing more. The regex/division ambiguity is resolved by what
- * precedes the slash — after a value a `/` divides, after an operator or an opener it
- * starts a pattern — which is the rule that matters here because a pattern can contain
- * `//` and a division cannot.
+ * A hand lexer rather than a parser: it has to tell a comment from a string, a template and
+ * a regex literal, and nothing more. The goal is carried as STATE — the last significant
+ * token, and a stack per bracket kind recording what that bracket was — because the
+ * preceding CHARACTER cannot decide it.
  */
 export function comments(src, css = false) {
   const out = [];
   let line = 1;
   let i = 0;
-  let prev = ""; // last significant character, for the regex/division decision
-  // …and the identifier TOKEN before it, which is the other half of that decision. Three
-  // things the accumulation has to get right, each of which produced a real miss: whitespace
-  // ENDS a token (`return await /` is two of them, not `returnawait`), a token after a dot is
-  // a property and not a keyword (`obj.return / 2` divides), and reading a regex CLEARS it
-  // (`return /x/ / 2` divides on the second slash).
-  let word = ""; // the identifier being accumulated
-  let token = ""; // the last completed one, "" when the last thing read was not an identifier
-  let afterDot = false; // whether `word` began immediately after a `.`
-  /** Finish the identifier being accumulated, if any. */
-  const endWord = () => {
-    if (word !== "") token = afterDot ? "" : word;
-    word = "";
-  };
-  /** The identifier immediately before the cursor: the one still accumulating, or the last
-   *  completed one when whitespace has already ended it. */
-  const currentToken = () => (word !== "" ? (afterDot ? "" : word) : token);
-  // Template literals nest: `${}` holds CODE, which can hold another template, and a
-  // comment inside one is a comment. Skipping the literal whole — which is what a
-  // string-shaped reading does — loses it. The stack holds one frame per open `${`,
-  // remembering the brace depth to return to the literal at.
-  const tpl = [];
-  let depth = 0;
+  // {kind: "value"|"name"|"punct", text, regexOk?, paren?, brace?, postfix?}
+  let last = null;
+  const parens = []; // "control" | "call"
+  const braces = []; // "block" | "object"
+  const tpl = []; // the brace-stack depth each open `${` returns to
+
   const push = (startLine, text) => {
     text.split("\n").forEach((t, n) => out.push({ line: startLine + n, text: t }));
   };
-  /** Nothing that follows a literal is an identifier, so the token is spent. */
-  const clearToken = () => {
-    word = "";
-    token = "";
-    afterDot = false;
+  const value = () => (last = { kind: "value", text: "" });
+  const punct = (text, extra = {}) => (last = { kind: "punct", text, ...extra });
+  const afterDot = () => last?.kind === "punct" && last.text === ".";
+  /** True where the grammar would be looking for an expression, so a `/` opens a pattern. */
+  const regexAllowed = () => {
+    if (!last) return true;
+    if (last.kind === "value") return false;
+    if (last.kind === "name") return last.regexOk;
+    const t = last.text;
+    if (t === ")") return last.paren === "control";
+    if (t === "}") return last.brace === "block";
+    if (t === "]") return false;
+    if (t === "++" || t === "--") return !last.postfix;
+    return true;
   };
+  /** Whether the token just read ends a value, which is what makes a `++` postfix. */
+  const endsValue = () => {
+    if (!last) return false;
+    if (last.kind === "value") return true;
+    if (last.kind === "name") return !last.regexOk;
+    return last.text === ")" || last.text === "]";
+  };
+  const braceKind = () => {
+    if (!last) return "block";
+    if (last.kind === "name") return OBJECT_AFTER.has(last.text) ? "object" : "block";
+    if (last.kind === "value") return "object";
+    const t = last.text;
+    return t === ")" || t === "]" || t === "}" || t === ";" || t === "{" || t === "=>" ? "block" : "object";
+  };
+
   /** Consume a quoted string starting at `i`, which is its opening quote. */
   const quoted = (q) => {
     i++;
@@ -173,9 +206,10 @@ export function comments(src, css = false) {
     }
     i++;
   };
-  /** Consume a template literal from its opening backtick, stopping at a `${`. */
+  /** Consume a template literal from its opening backtick, or from the `}` that resumed it,
+   *  stopping at a `${`. Returns whether an interpolation opened. */
   const template = () => {
-    i++; // past the opening backtick, or past the `}` that resumed it
+    i++;
     while (i < src.length) {
       const c = src[i];
       if (c === "\\") {
@@ -185,103 +219,132 @@ export function comments(src, css = false) {
       if (c === "\n") line++;
       if (c === "`") {
         i++;
-        return false; // the literal closed
+        return false;
       }
       if (c === "$" && src[i + 1] === "{") {
         i += 2;
-        return true; // an interpolation opened; read it as code
+        return true;
       }
       i++;
     }
     return false;
   };
+
   while (i < src.length) {
     const c = src[i];
-    const two = src.slice(i, i + 2);
     if (c === "\n") {
       line++;
       i++;
       continue;
     }
+    if (/\s/.test(c)) {
+      i++;
+      continue;
+    }
+    const two = src.slice(i, i + 2);
     if (!css && two === "//") {
-      const end = src.indexOf("\n", i);
-      const stop = end === -1 ? src.length : end;
+      const nl = src.indexOf("\n", i);
+      const stop = nl === -1 ? src.length : nl;
       push(line, src.slice(i + 2, stop));
       i = stop;
       continue;
     }
     if (two === "/*") {
-      const end = src.indexOf("*/", i + 2);
-      const stop = end === -1 ? src.length : end;
+      const close = src.indexOf("*/", i + 2);
+      const stop = close === -1 ? src.length : close;
       push(line, src.slice(i + 2, stop));
       line += (src.slice(i, stop).match(/\n/g) ?? []).length;
       i = stop + 2;
       continue;
     }
     if (c === '"' || c === "'") {
-      endWord();
       quoted(c);
-      clearToken();
-      prev = "x";
+      value();
       continue;
     }
-    if (c === "`") {
-      endWord();
-      if (template()) tpl.push(depth);
-      clearToken();
-      prev = "x";
+    if (!css && c === "`") {
+      if (template()) tpl.push(braces.length);
+      value();
+      continue;
+    }
+    if (isIdStart(c)) {
+      let j = i;
+      while (j < src.length && isIdPart(src[j])) j++;
+      const text = src.slice(i, j);
+      const property = afterDot();
+      last = { kind: "name", text, regexOk: !property && REGEX_AFTER.has(text) };
+      i = j;
+      continue;
+    }
+    if (/[0-9]/.test(c)) {
+      let j = i;
+      while (j < src.length && /[0-9a-fA-FxXoObBnEe._]/.test(src[j])) j++;
+      i = j;
+      value();
+      continue;
+    }
+    if (!css && c === "/") {
+      if (regexAllowed()) {
+        let j = i + 1;
+        let cls = false;
+        while (j < src.length && src[j] !== "\n") {
+          if (src[j] === "\\") j++;
+          else if (src[j] === "[") cls = true;
+          else if (src[j] === "]") cls = false;
+          else if (src[j] === "/" && !cls) break;
+          j++;
+        }
+        if (src[j] === "/") {
+          i = j + 1;
+          while (i < src.length && isIdPart(src[i])) i++; // flags
+          value();
+          continue;
+        }
+      }
+      punct("/");
+      i++;
+      continue;
+    }
+    if (c === "(") {
+      parens.push(last?.kind === "name" && CONTROL_HEADS.has(last.text) ? "control" : "call");
+      punct("(");
+      i++;
+      continue;
+    }
+    if (c === ")") {
+      punct(")", { paren: parens.pop() ?? "call" });
+      i++;
       continue;
     }
     if (c === "{") {
-      endWord();
-      depth++;
-      prev = c;
+      braces.push(braceKind());
+      punct("{");
       i++;
       continue;
     }
     if (c === "}") {
-      endWord();
-      if (tpl.length && tpl[tpl.length - 1] === depth) {
-        // The interpolation closed: back into the literal it interrupted.
+      if (tpl.length && tpl[tpl.length - 1] === braces.length) {
         tpl.pop();
         i--; // template() steps past one character, and this `}` is it
-        if (template()) tpl.push(depth);
-        prev = "x";
+        if (template()) tpl.push(braces.length);
+        value();
         continue;
       }
-      depth = Math.max(0, depth - 1);
-      prev = c;
+      punct("}", { brace: braces.pop() ?? "block" });
       i++;
       continue;
     }
-    if (!css && c === "/" && (/[({[,;:=!&|?+\-*%<>~^]|^$/.test(prev) || REGEX_KEYWORDS.has(currentToken()))) {
-      // A regex literal: skip to its unescaped closing slash, staying on one line.
-      let j = i + 1;
-      let cls = false;
-      while (j < src.length && src[j] !== "\n") {
-        if (src[j] === "\\") j++;
-        else if (src[j] === "[") cls = true;
-        else if (src[j] === "]") cls = false;
-        else if (src[j] === "/" && !cls) break;
-        j++;
-      }
-      if (src[j] === "/") {
-        i = j + 1;
-        clearToken();
-        prev = "x";
-        continue;
-      }
+    if (two === "++" || two === "--") {
+      punct(two, { postfix: endsValue() });
+      i += 2;
+      continue;
     }
-    if (/[A-Za-z_$0-9]/.test(c)) {
-      if (word === "") afterDot = prev === ".";
-      word += c;
-    } else {
-      // Whitespace ENDS the identifier and keeps it (`return await /` is two tokens);
-      // punctuation ends it and spends it (`return[0] / 2` divides).
-      endWord();
-      if (!/\s/.test(c)) token = "";
+    if (two === "=>") {
+      punct("=>");
+      i += 2;
+      continue;
     }
-    if (!/\s/.test(c)) prev = c;
+    punct(c);
     i++;
   }
   return out;

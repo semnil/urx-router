@@ -81,6 +81,32 @@ describe("what counts as a comment", () => {
     expect(shapes("const r = arr[0] / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
   });
 
+  // Where the grammar looks for an EXPRESSION a slash opens a pattern, and where it has a
+  // value it divides. Neither is decidable from the preceding character: `)` ends a value
+  // after a call and starts an expression after `if (…)`, `}` ends one after an object
+  // literal and starts one after a block, and `+` is an operator in `a + /re/` and half of a
+  // postfix `++` in `x++ / 2`. Every case here is valid JavaScript that returned [].
+  it("decides regex-versus-division from the grammatical position, not the last character", () => {
+    // a control `)` starts an expression; a call `)` and a group `)` end a value
+    expect(shapes('if (x) /["]/.test(y); // measured on URX44V\n')).toEqual(["hedge-sentence"]);
+    expect(shapes("while (n) /x/.test(s); // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const g = fn(1) / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const d = (a + b) / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    // a postfix ++ ends a value
+    expect(shapes("const n = x++ / 2; // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    expect(shapes("let i = 0; i-- / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    // `{}` after `return` is an OBJECT, so the slash divides; after `=>` it is a block
+    expect(shapes("function f() { return {} / 2; } // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    expect(shapes("const f = (a) => { return 1; }; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    // a newline ENDS a token: this is `return` then `await`, not `returnawait`
+    expect(shapes('function f(x){\nreturn\nawait /["]/.test(x);\n} // measured on URX44V\n')).toEqual([
+      "hedge-sentence",
+    ]);
+    // a keyword that IS a value, and a regex's own flags
+    expect(shapes("const h = this / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const j = /re/g.test(x) / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+  });
+
   it("does not read a regex literal as a comment", () => {
     expect(shapes("const re = /a\\/\\/(measured)/;\n")).toEqual([]);
     expect(shapes("const half = total / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
