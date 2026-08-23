@@ -237,9 +237,7 @@ export const PITCH_SCALE_PENTATONIC = 6;
 export const PITCH_SCALE_CHROMATIC = 7;
 /**
  * Note-keyboard array slots. The twelve are ABSOLUTE semitones — slot 22 is C whatever the
- * Key is — measured on a URX44V by setting Key = G with Scale = Major and reading them
- * back: C D E F# G A B, which is G major written from C. Every mask the earlier
- * calibration captured was taken at Key = C, where the two readings coincide.
+ * Key is — so a mask authored here is written from C and not from the Key.
  */
 export const PITCH_NOTE_SLOTS = [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33];
 
@@ -373,11 +371,8 @@ export const MBC_BANDS: Array<{ band: "low" | "mid" | "high" } & Record<MbcBandK
  * enumeration walks — a slot listed there is emitted from the plan on every flush.
  *
  * It bypasses the band the UNIT has selected, not all three and not one this app can
- * name: measured on a URX44V by driving LOW / MID / HIGH to different reduction depths
- * (`133:0/1/2` reading -10 / -4 / 0 dB) and setting the slot, after which MID alone
- * stopped reducing while LOW stayed where it was. Which band that is comes from the
- * panel, and the panel's selection is on no address — it is not the last band written
- * either, since the write before it was LOW's.
+ * name. Which band that is comes from the panel, and the panel's selection is on no
+ * address — nor is it the last band this app wrote.
  *
  * So the app can neither predict nor choose what a write here would do, and it writes
  * nothing. Keeping the number is what stops it being rediscovered as an unused slot.

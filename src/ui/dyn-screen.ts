@@ -248,9 +248,7 @@ export interface DynRowCtx extends DynCtx {
    *  would replace them is DEFERRED for as long as a pointer is down — a press anywhere in
    *  the box sets that, a `<select>` included — while a device follow goes on writing the
    *  plan underneath. A handler that reads a plan value the row does not itself edit has to
-   *  take it from here, or it computes from a value the plan has already left behind.
-   *  Measured: choosing a Scale with a Key follow arriving under a held pointer wrote the
-   *  mask for the Key the row was drawn with, and the next flush sent it. */
+   *  take it from here, or it computes from a value the plan has already left behind. */
   live: () => DynCtx;
   /** Set a value that decides which other rows exist or are editable (COMP's
    *  1-knob and Auto Makeup): rebuilds the control column. */

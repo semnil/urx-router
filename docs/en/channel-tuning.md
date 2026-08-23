@@ -841,9 +841,20 @@ the same at 1280x900 and at the 960x640 minimum the app admits — and twelve ta
 inherits `gap: 8px` from `.prefs-row .ctl`, and under `flex-shrink: 0` it sized itself for all twelve
 on one line (522px, wider than the column), wrapped five per row, and had the rest clipped off the
 modal at the minimum window. That same rule is declared later in the stylesheet and out-specifies a
-bare `.gt-notes`, so the layout half is written as `.prefs-row .ctl.gt-notes`. `--led-ink` IS
-`--led-face`, so the separator was drawn in the face colour and a full mask read as one solid block
-once the gap was gone; lit, it now takes the ink the label takes, softened.
+bare `.gt-notes`, so the layout half is written as `.prefs-row .ctl.gt-notes` — written as
+`.gt-notes` the grid never applied at all, the eight-pixel gap stayed and all twelve sat on one line
+at 16.63px. `--led-ink` IS `--led-face`, so the separator was drawn in the face colour and a full
+mask read as one solid block once the gap was gone; lit, it now takes the ink the label takes,
+softened.
+
+**The bank's reserved height moved with it.** A taller note row put the SCALE face over the reserve
+and the modal jumped 41px (EN) / 49px (JA) on the segment between the faces — the defect the reserve
+exists to stop. Re-taken from each face's own height with the reserve lifted in the page, so the
+number is the face rather than the reserve read back at itself: Chromium on macOS at 1280x900, the
+guitar amp's AMP face is 614px (EN) / 622px (JA) against its cabinet's 520, and Pitch Fix's SCALE
+face is 549px (EN) / 557px (JA) against PITCH's 493. Each reserve clears its bank's tallest face with
+headroom for a wider font stack; Windows renders this app in a different stack and is not measured
+here.
 
 **A gesture reads the Key the plan holds, not the one the row was drawn with.** A row's handlers
 close over the context they were built with, and the rebuild that would replace them is deferred for
@@ -883,7 +894,10 @@ They are not one table, and the difference is the reason:
 | Output bus | PRE INS FX (post-fader) | POST (post-insert) | `133:band` — x is the effect's BAND |
 
 `133` takes no node at all: one output insert effect runs device-wide (the `out-dyn` 1-of slot), so
-which bus holds it does not enter the address. A single-band effect reads band 0.
+which bus holds it does not enter the address. A single-band effect reads band 0. Measured on a
+URX44V (2026-07-28): a Compander-S on CH 1 driven into reduction read `132:0`; the multi-band
+compressor at full reduction read `133:0/1/2` as LOW / MID / HIGH with `133:3` unused, and a
+single-band output compander read `133:0` alone.
 
 The reduction merges into the OUTPUT column, as every reduction on every screen does, and takes no
 offset: the rule is to subtract whatever gain the processor adds, and these add none — the compander's

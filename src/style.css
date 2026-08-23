@@ -1952,17 +1952,11 @@ input[type="range"]:focus-visible,
    and they are named from C in a straight row on purpose: the slots are absolute semitones,
    and a black-and-white keyboard would draw a root that is not there. Each button takes the
    narrowest padding the mono face allows, because twelve of them share one control column. */
-/* Six per row, not twelve. The control column does not grow with the window -- this span
-   measures the same at 1280x900 and at the 960x640 minimum the app admits -- so twelve
-   targets cannot reach the 36px desktop minimum on one line, and six reach it with room
-   over. A grid rather than a wrapped flex row: the row inherits `gap: 8px` from
-   `.prefs-row .ctl`, and a wrapped flex row then sized itself for all twelve on one line
-   (522px, wider than the column that holds it), wrapped five per row, and had the rest
-   clipped off the modal at the minimum window. */
-/* `.prefs-row .ctl` (0,2,0) is declared later in this file and carries `display: flex`
-   and `gap: 8px`, so the layout half has to out-SPECIFY it rather than merely follow it:
-   written as `.gt-notes` the grid never applied, the eight-pixel gap stayed, and all
-   twelve sat on one line at 16.63px wide. */
+/* Six per row, not twelve: the control column does not grow with the window, and twelve
+   targets do not reach the 36px desktop minimum across it. A grid rather than a wrapped
+   flex row, so the six sit on their own track instead of on whatever the row's inherited
+   gap leaves. Written to out-SPECIFY `.prefs-row .ctl` (0,2,0), which is declared later in
+   this file and carries `display: flex` and `gap: 8px`. */
 .prefs-row .ctl.gt-notes {
   display: grid;
   grid-template-columns: repeat(6, minmax(36px, 1fr));
@@ -1992,10 +1986,9 @@ input[type="range"]:focus-visible,
 .gt-notes button:nth-child(-n + 6) {
   border-bottom: 1px solid var(--ctl-border);
 }
-/* `--led-ink` IS `--led-face` (both #ffc24d in dark), so a separator drawn in the ink is
-   invisible the moment two neighbours are both lit -- with the eight-pixel gap gone, a full
-   mask read as one solid block rather than twelve targets. On the lit face the separator
-   takes the ink the LABEL takes, softened to a groove. */
+/* `--led-ink` IS `--led-face`, so a separator drawn in the ink would be invisible wherever
+   two neighbours are both lit. On the lit face it takes the ink the LABEL takes, softened
+   to a groove. */
 .gt-notes button[aria-pressed="true"] {
   color: var(--on-accent-ink);
   background: var(--led-face);
@@ -4011,8 +4004,8 @@ button.consent-btn-primary {
 /* The EQ face keeps its plot beside its lanes all the way down to the 960px minimum
    window, where the shipped 4-band screen wraps instead. Wrapping is the right answer for
    a screen that is only ever itself — the plot takes the full width on its own row — but
-   inside a bank it is a 291px height change on one of three faces, which is the jump the
-   reserve above exists to remove. So a bank does not wrap at all, and the plot takes
+   inside a bank it changes the height of one face and not its siblings, which is the jump
+   the reserve above exists to remove. So a bank does not wrap at all, and the plot takes
    whatever the row has left after the rack: the rack is the part with a width of its own
    (a fixed number of fixed-width slots) and the plot is the part that can be any width.
    A floor here would have to be re-measured against the WIDEST rack any face carries every

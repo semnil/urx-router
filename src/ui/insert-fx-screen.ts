@@ -128,16 +128,11 @@ const AMP_ORDER: readonly string[] = [
 
 /**
  * The height each bank reserves for its faces, where the stylesheet's shared 520px is not
- * enough for the taller one. Without it the modal resizes on the segment that moves between
- * them, which is what the reserve exists to stop.
+ * enough for the taller one. Both faces of a bank answer the same number, so the modal
+ * holds still on the segment that moves between them.
  *
- * Measured with the faces rendered and the reserve lifted in the page, so each number is
- * the face's own height rather than the reserve read back at itself. Chromium on macOS at
- * 1280x900, in both languages: the guitar amp's AMP face is 614px (EN) / 622px (JA) against
- * its cabinet's 520, and Pitch Fix's SCALE face is 549px (EN) / 557px (JA) against PITCH's
- * 493. Each reserve carries the headroom a wider font stack takes -- Windows renders this
- * app in a different stack and is not measured here -- on the same reasoning as the shipped
- * bank's own.
+ * Each value clears its bank's tallest face with headroom for a wider font stack; the
+ * readings behind them are in channel-tuning.md.
  */
 const FACE_RESERVE: Partial<Record<InsertFxFamily, number>> = {
   "guitar-clean": 650,
@@ -500,7 +495,7 @@ const scaleOf = (ctx: DynCtx): number =>
  * The Scale selector and the twelve notes it turns on.
  *
  * Every preset is selectable: the unit derives the mask from the Scale and the Key for all
- * eight, measured at two keys, and the app authors the same offsets. The twelve slots are
+ * eight, and the app authors the same offsets. The twelve slots are
  * ABSOLUTE semitones — slot 22 is C whatever the Key is — so the buttons are named from C
  * and are not laid out as a keyboard, which would imply a root that is not there.
  *
