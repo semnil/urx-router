@@ -41,7 +41,7 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const SKIP_ANYWHERE = new Set(["node_modules", ".git", "dist", "dist-trace", "coverage"]);
+const SKIP_ANYWHERE = new Set(["node_modules", ".git", "dist", "dist-trace", "coverage", "target"]);
 const SKIP_PATHS = new Set(["reference", "src-tauri/target", ".claude/skills/urx-routing-planner-workspace"]);
 // `.tsx` is deliberately absent. JSX text is neither code nor a comment, and read as code a
 // URL in it opens a line comment at the `//` — `<div>https://x.test/(measured)</div>` was
@@ -133,6 +133,7 @@ const REGEX_AFTER = new Set([
   "delete",
   "void",
   "throw",
+  "extends",
 ]);
 /** A `(` that follows one of these heads a control structure, so its `)` does not end a
  *  value and a `/` after it opens a pattern. Every other `(` is a call or a group. */
@@ -175,7 +176,11 @@ export function comments(src, mode = "js") {
   let last = null;
   const parens = []; // "control" | "call"
   const braces = []; // "block" | "object" | "value-body" (a function or class EXPRESSION)
-  let pendingValueBody = null; // {depth, value} set at a `function`/`class` keyword
+  // One entry per `function`/`class` keyword still waiting for its body brace, because they
+  // NEST: `function (x = function(){}) {}` sets a second while the first is outstanding, and
+  // a single slot loses the outer one.
+  const pendingBodies = []; // {depth, value}
+  let prevName = ""; // the name token before `last`, for `async function` and `for await`
   const tpl = []; // the brace-stack depth each open `${` returns to
 
   const push = (startLine, text) => {
@@ -206,8 +211,16 @@ export function comments(src, mode = "js") {
   };
   /** True where a STATEMENT could begin, which is what separates a function declaration
    *  from a function expression. */
-  const atStatementStart = () => {
-    if (!last) return true;
+  const atStatementStart = (skipModifier = false) => {
+    const t0 = skipModifier ? { kind: "name", text: prevName } : last;
+    const last0 = last;
+    last = t0;
+    const r = atStatementStartOf();
+    last = last0;
+    return r;
+  };
+  const atStatementStartOf = () => {
+    if (!last || (last.kind === "name" && last.text === "")) return true;
     if (last.kind === "name") return last.text === "else" || last.text === "do";
     if (last.kind === "value") return false;
     const t = last.text;
@@ -225,8 +238,12 @@ export function comments(src, mode = "js") {
   const quoted = (q) => {
     i++;
     while (i < src.length && src[i] !== q) {
-      if (src[i] === "\\") i++;
-      else if (src[i] === "\n") line++;
+      // A line continuation is a backslash and a NEWLINE, and skipping the pair without
+      // counting it reports every finding below by one line too few.
+      if (src[i] === "\\") {
+        if (src[i + 1] === "\n") line++;
+        i++;
+      } else if (src[i] === "\n") line++;
       i++;
     }
     i++;
@@ -238,6 +255,7 @@ export function comments(src, mode = "js") {
     while (i < src.length) {
       const c = src[i];
       if (c === "\\") {
+        if (src[i + 1] === "\n") line++;
         i += 2;
         continue;
       }
@@ -300,16 +318,22 @@ export function comments(src, mode = "js") {
       let j = i;
       while (j < src.length && isIdPart(src[j])) j++;
       const text = src.slice(i, j);
-      const property = afterDot();
+      // A private member is `#name`, and its name is no more a keyword than `obj.catch` is:
+      // read as one, `#catch(x)` heads a control structure and its `)` starts an expression.
+      const property = afterDot() || (last?.kind === "punct" && last.text === "#");
       // `property` outlives the regex question: `obj.catch(x)` is a call, and reading its
       // `catch` as the control keyword makes the `)` start an expression.
       if ((text === "function" || text === "class") && !property) {
+        // `async` is transparent here: `async function f() {}` is a DECLARATION, and reading
+        // the `async` as the preceding token made every one of them an expression.
+        const modifier = last?.kind === "name" && last.text === "async";
         // A function or class EXPRESSION ends a value at its closing brace, where a
         // DECLARATION ends a statement. Which one this is, is decided here — at the
         // keyword — and the flag is spent by the body brace at the same paren depth, so a
         // default parameter's own object literal cannot take it.
-        pendingValueBody = { depth: parens.length, value: !atStatementStart() };
+        pendingBodies.push({ depth: parens.length, value: !atStatementStart(modifier) });
       }
+      prevName = last?.kind === "name" ? last.text : "";
       last = { kind: "name", text, property, regexOk: !property && REGEX_AFTER.has(text) };
       i = j;
       continue;
@@ -344,7 +368,15 @@ export function comments(src, mode = "js") {
       continue;
     }
     if (c === "(") {
-      parens.push(last?.kind === "name" && !last.property && CONTROL_HEADS.has(last.text) ? "control" : "call");
+      // `for await (…)` heads a control structure just as `for (…)` does, so the `await`
+      // between them is transparent — read as the head it made the `)` end a value.
+      const head =
+        last?.kind === "name" && !last.property
+          ? last.text === "await" && prevName === "for"
+            ? "for"
+            : last.text
+          : "";
+      parens.push(CONTROL_HEADS.has(head) ? "control" : "call");
       punct("(");
       i++;
       continue;
@@ -356,9 +388,10 @@ export function comments(src, mode = "js") {
     }
     if (c === "{") {
       let kind = braceKind();
-      if (pendingValueBody && pendingValueBody.depth === parens.length) {
-        if (pendingValueBody.value) kind = "value-body";
-        pendingValueBody = null;
+      const pending = pendingBodies[pendingBodies.length - 1];
+      if (pending && pending.depth === parens.length) {
+        if (pending.value) kind = "value-body";
+        pendingBodies.pop();
       }
       braces.push(kind);
       punct("{");
@@ -448,7 +481,9 @@ export function rustComments(src) {
     }
     // A raw string: r, br, then hashes, then the quote. It closes on a quote followed by
     // the same number of hashes, and nothing inside it escapes.
-    const raw = /^b?r(#*)"/.exec(src.slice(i, i + 16));
+    // The delimiter is scanned to its quote rather than inside a fixed window: rustc takes
+    // up to 255 hashes, and a 16-character slice stops reading at 15.
+    const raw = /^b?r(#*)"/.exec(src.slice(i, i + 264));
     if (raw) {
       const close = '"' + raw[1];
       const from = i + raw[0].length;
@@ -670,7 +705,9 @@ if (invokedDirectly) {
   // configs at the root are TypeScript the check simply never opened, and `src-tauri` is a
   // whole language of it. Named explicitly rather than scanning `.` so node_modules, dist and
   // the private reference tree are not walked at all.
-  const DEFAULT_ROOTS = ["src", "e2e", "scripts", "src-tauri/src", ...ROOT_CONFIGS];
+  // `src-tauri` whole, not its `src`: `build.rs` sits beside it and is Rust the scan simply
+  // never opened. `target` is skipped by name, so the crate's build output is not walked.
+  const DEFAULT_ROOTS = ["src", "e2e", "scripts", "src-tauri", ...ROOT_CONFIGS];
   const scanRoots = roots.length ? roots : DEFAULT_ROOTS;
   const targets = scanRoots.flatMap((r) => (existsSync(r) ? collect(r) : []));
   const found = targets.flatMap((p) => findingsIn(readFileSync(p, "utf8"), p));

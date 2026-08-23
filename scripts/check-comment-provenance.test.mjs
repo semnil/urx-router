@@ -8,6 +8,7 @@
 // this is the same measurement on every run.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -122,6 +123,36 @@ describe("what counts as a comment", () => {
     expect(shapes("function f(a = {}) {} /x/.test(s); // (measured)\n")).toEqual(["hedge-parenthetical"]);
   });
 
+  // Five more positions, each valid JavaScript that returned []. The body flag is a STACK
+  // because these nest, and `async`, `for await` and `#name` are each a token the state has
+  // to see through rather than take at face value.
+  it("holds the goal through modifiers, nesting, private members and heritage", () => {
+    // `async` is transparent: this is a DECLARATION, so its brace ends a statement
+    expect(shapes('async function f() {} /["]/.test(x); // measured on URX44V\n')).toEqual(["hedge-sentence"]);
+    // a function expression inside a default parameter, with the outer one still outstanding
+    expect(shapes("const n = function (x = function(){}) {} / 2; // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    // `for await (…)` heads a control structure just as `for (…)` does
+    expect(
+      shapes('async function f(xs) {\n  for await (const x of xs) /["]/.test(x); // measured on URX44V\n}\n'),
+    ).toEqual(["hedge-sentence"]);
+    // A private member's name is no more a keyword than a property's. The comment has to be
+    // on the SAME line as the division: a newline stops the regex scan, so with it below the
+    // brace the comment survives the mis-reading and the case measures nothing.
+    expect(shapes("class C { #catch(x){return x} g(x){ return this.#catch(x) / 2 } } // measured on URX44V\n")).toEqual(
+      ["hedge-sentence"],
+    );
+    // `extends` takes an expression
+    expect(shapes('class X extends /["]/.constructor {} // measured on URX44V\n')).toEqual(["hedge-sentence"]);
+  });
+
+  // A line continuation is a backslash and a NEWLINE. Skipping the pair without counting it
+  // reports every finding below it one line too few, which is a wrong file:line in a message
+  // whose whole job is to point at one.
+  it("counts a line continuation, in a string and in a template", () => {
+    expect(findingsIn('const a = "x\\\n y";\n// (measured)\n', "x.ts").map((f) => f.line)).toEqual([3]);
+    expect(findingsIn("const a = `x\\\n y`;\n// (measured)\n", "x.ts").map((f) => f.line)).toEqual([3]);
+  });
+
   it("does not read a regex literal as a comment", () => {
     expect(shapes("const re = /a\\/\\/(measured)/;\n")).toEqual([]);
     expect(shapes("const half = total / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
@@ -166,6 +197,18 @@ describe("what counts as a comment in Rust", () => {
     // this case asserted. The unpaired one opens a string that runs to the end of the file.
     expect(rs("fn f<'a>(x: &'a str, y: &'a u8) {} // measured on URX44V\n")).toEqual(["hedge-sentence"]);
     expect(rs("let c = 'x'; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+  });
+
+  // rustc takes up to 255 hashes. Reading the delimiter inside a fixed window stops at 15,
+  // and the rest of the string is then lexed as code.
+  it("reads a raw string whose delimiter is longer than any fixed window", () => {
+    const h = "#".repeat(15);
+    // The inner quote is bare, which is what a raw string is FOR. Read as an ordinary string
+    // it closes there and the rest of the line becomes a comment.
+    expect(rs(`let s = r${h}"a " // measured on URX44V"${h};\n`)).toEqual([]);
+    expect(rs(`let s = r${"#".repeat(40)}"x (measured)"${"#".repeat(40)}; // real (measured)\n`)).toEqual([
+      "hedge-parenthetical",
+    ]);
   });
 
   it("still reads an ordinary string as a string", () => {
@@ -347,9 +390,26 @@ describe("what the default scan reaches", () => {
   const ledger = JSON.parse(readFileSync(join(HERE, "comment-provenance-baseline.json"), "utf8"));
 
   it("names the Rust crate and the configs at the repository root", () => {
-    expect(roots).toContain('"src-tauri/src"');
+    // The CRATE, not its `src`: `build.rs` sits beside it and was Rust the scan never opened.
+    expect(roots).toContain('"src-tauri"');
+    expect(roots).not.toContain('"src-tauri/src"');
     expect(roots).toContain("ROOT_CONFIGS");
     expect(src).toMatch(/ROOT_CONFIGS = \[[^\]]*"vitest\.config\.ts"/);
+  });
+
+  it("reaches build.rs, which sits beside src rather than inside it", () => {
+    const collected = execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), "src-tauri"], {
+      cwd: join(HERE, ".."),
+      encoding: "utf8",
+    });
+    expect(collected).toMatch(/source file\(s\)/);
+    // The count a `src-tauri/src`-only root would give, plus build.rs.
+    const files = Number(/OK: (\d+) source file/.exec(collected)[1]);
+    const srcOnly = execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), "src-tauri/src"], {
+      cwd: join(HERE, ".."),
+      encoding: "utf8",
+    });
+    expect(files).toBeGreaterThan(Number(/OK: (\d+) source file/.exec(srcOnly)[1]));
   });
 
   // …and the ledger proves the scan actually opened them, which the root list alone cannot.
