@@ -89,6 +89,13 @@ const PROSE_TOKENS = new Map([
   ["forced-colors", "the CSS media feature, named as itself"],
   ["WebSocket", "the platform global the CDP route is driven with"],
   ["Runtime.evaluate", "a DevTools-protocol method"],
+  // The provenance checker's row quotes its own corpus: three comment fragments it must
+  // NOT refuse, and one expression a line grep would have reported as a comment. None of
+  // them is an entity in any tree — they are the readings the rule was shaped against.
+  ["the level meters are measured", "a comment fragment the provenance rule must not refuse"],
+  ["the measured EQ model", "a comment fragment the provenance rule must not refuse"],
+  ["measured against the cap's own top edge", "a comment fragment the provenance rule must not refuse"],
+  ["Object.entries(measured)", "an expression, named as the thing a line grep misreads as a comment"],
   ["Input.dispatchMouseEvent", "a DevTools-protocol method"],
   ["Page.captureScreenshot", "a DevTools-protocol method"],
   // Four more from the same row: the DOM method and the evaluate parameter that name

@@ -49,3 +49,7 @@ jobs:
       # reports it on every pull request. ci.yml's `preflight` runs this too, so a change
       # that breaks ci.yml's own trigger is still caught here.
       - run: node scripts/check-merge-gates.mjs
+      # Comments that record where a fact came from rather than what the code does. The
+      # ledger beside the script holds a per-file ceiling for the backlog that predates the
+      # rule, so this job is red only for a NEW one. Zero-dep, like its neighbours.
+      - run: node scripts/check-comment-provenance.mjs

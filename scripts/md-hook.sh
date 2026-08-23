@@ -19,7 +19,7 @@ command -v node >/dev/null 2>&1 || {
 payload=$(cat)
 self=$(dirname "$0")
 status=0
-for check in check-md-tables check-assets-index check-merge-gates; do
+for check in check-md-tables check-assets-index check-merge-gates check-comment-provenance; do
   printf '%s' "$payload" | node "$self/$check.mjs" --hook || status=$?
 done
 exit $status
