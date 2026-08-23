@@ -30,7 +30,10 @@
 //   node scripts/check-comment-provenance.mjs [path ...]  check files/directories (cwd)
 //   node scripts/check-comment-provenance.mjs --hook      check the file named in a Claude
 //                                                         Code PostToolUse payload on stdin
-//   node scripts/check-comment-provenance.mjs --update    rewrite the ledger from the tree
+//   node scripts/check-comment-provenance.mjs --update    LOWER the ledger to what the tree
+//                                                         now carries; it refuses to raise
+//   node scripts/check-comment-provenance.mjs --reseed    take the counts as they are, for a
+//                                                         RULE change that grows the corpus
 //
 // Exits 1 on findings above the ledger; --hook exits 2 so the message is fed back to Claude.
 
@@ -129,7 +132,22 @@ export function comments(src, css = false) {
   let line = 1;
   let i = 0;
   let prev = ""; // last significant character, for the regex/division decision
-  let word = ""; // …and the identifier it ended, which is the other half of that decision
+  // …and the identifier TOKEN before it, which is the other half of that decision. Three
+  // things the accumulation has to get right, each of which produced a real miss: whitespace
+  // ENDS a token (`return await /` is two of them, not `returnawait`), a token after a dot is
+  // a property and not a keyword (`obj.return / 2` divides), and reading a regex CLEARS it
+  // (`return /x/ / 2` divides on the second slash).
+  let word = ""; // the identifier being accumulated
+  let token = ""; // the last completed one, "" when the last thing read was not an identifier
+  let afterDot = false; // whether `word` began immediately after a `.`
+  /** Finish the identifier being accumulated, if any. */
+  const endWord = () => {
+    if (word !== "") token = afterDot ? "" : word;
+    word = "";
+  };
+  /** The identifier immediately before the cursor: the one still accumulating, or the last
+   *  completed one when whitespace has already ended it. */
+  const currentToken = () => (word !== "" ? (afterDot ? "" : word) : token);
   // Template literals nest: `${}` holds CODE, which can hold another template, and a
   // comment inside one is a comment. Skipping the literal whole — which is what a
   // string-shaped reading does — loses it. The stack holds one frame per open `${`,
@@ -138,6 +156,12 @@ export function comments(src, css = false) {
   let depth = 0;
   const push = (startLine, text) => {
     text.split("\n").forEach((t, n) => out.push({ line: startLine + n, text: t }));
+  };
+  /** Nothing that follows a literal is an identifier, so the token is spent. */
+  const clearToken = () => {
+    word = "";
+    token = "";
+    afterDot = false;
   };
   /** Consume a quoted string starting at `i`, which is its opening quote. */
   const quoted = (q) => {
@@ -195,22 +219,28 @@ export function comments(src, css = false) {
       continue;
     }
     if (c === '"' || c === "'") {
+      endWord();
       quoted(c);
+      clearToken();
       prev = "x";
       continue;
     }
     if (c === "`") {
+      endWord();
       if (template()) tpl.push(depth);
+      clearToken();
       prev = "x";
       continue;
     }
     if (c === "{") {
+      endWord();
       depth++;
       prev = c;
       i++;
       continue;
     }
     if (c === "}") {
+      endWord();
       if (tpl.length && tpl[tpl.length - 1] === depth) {
         // The interpolation closed: back into the literal it interrupted.
         tpl.pop();
@@ -224,7 +254,7 @@ export function comments(src, css = false) {
       i++;
       continue;
     }
-    if (!css && c === "/" && (/[({[,;:=!&|?+\-*%<>~^]|^$/.test(prev) || REGEX_KEYWORDS.has(word))) {
+    if (!css && c === "/" && (/[({[,;:=!&|?+\-*%<>~^]|^$/.test(prev) || REGEX_KEYWORDS.has(currentToken()))) {
       // A regex literal: skip to its unescaped closing slash, staying on one line.
       let j = i + 1;
       let cls = false;
@@ -237,12 +267,20 @@ export function comments(src, css = false) {
       }
       if (src[j] === "/") {
         i = j + 1;
+        clearToken();
         prev = "x";
         continue;
       }
     }
-    if (/[A-Za-z_$0-9]/.test(c)) word += c;
-    else if (!/\s/.test(c)) word = "";
+    if (/[A-Za-z_$0-9]/.test(c)) {
+      if (word === "") afterDot = prev === ".";
+      word += c;
+    } else {
+      // Whitespace ENDS the identifier and keeps it (`return await /` is two tokens);
+      // punctuation ends it and spends it (`return[0] / 2` divides).
+      endWord();
+      if (!/\s/.test(c)) token = "";
+    }
     if (!/\s/.test(c)) prev = c;
     i++;
   }
@@ -370,6 +408,37 @@ export function hookDecision(path, src, ledger) {
   };
 }
 
+/**
+ * The ledger the tree earns, and what a write of it would give away.
+ *
+ * The ledger only ever shrinks — that is the whole of what it promises. `--update` taking
+ * the current counts unconditionally breaks it: a run that adds a comment, is refused by the
+ * scan, and then updates the ledger has the ceiling raised to fit, and the next whole-tree
+ * scan is green with the violation inside it. So a write reports what it would RAISE, and
+ * the caller refuses on that rather than applying it.
+ *
+ * `scope` is the set of paths the run read; rows outside it are carried over untouched.
+ */
+export function nextLedger(grouped, ledger, scope = null) {
+  const inScope = (path) => scope === null || scope.has(path);
+  const files = {};
+  const raised = [];
+  for (const [path, ceiling] of Object.entries(ledger)) {
+    if (!inScope(path)) {
+      files[path] = ceiling;
+      continue;
+    }
+    const count = grouped[path]?.length ?? 0;
+    if (count > ceiling) raised.push({ path, ceiling, count });
+    if (count > 0) files[path] = Math.min(ceiling, count);
+  }
+  for (const [path, findings] of Object.entries(grouped)) {
+    if (path in ledger || !inScope(path)) continue;
+    raised.push({ path, ceiling: 0, count: findings.length });
+  }
+  return { files: Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b))), raised };
+}
+
 const report = (found) => {
   for (const f of found) {
     console.error(`${f.path}:${f.line}  ${f.say}: ${JSON.stringify(f.hit)}`);
@@ -410,15 +479,33 @@ const grouped = byFile(found);
 const scanned = new Set(targets.map((p) => repoPath(p)));
 const partial = roots.length > 0;
 
-if (process.argv.includes("--update")) {
-  // A partial --update MERGES: rewriting the whole ledger from a subset would delete every
-  // row the run never looked at, silently taking the ceiling of 102 files to zero.
-  const kept = partial ? Object.fromEntries(Object.entries(readLedger()).filter(([p]) => !scanned.has(p))) : {};
-  const files = Object.fromEntries(
-    Object.entries({ ...kept, ...Object.fromEntries(Object.entries(grouped).map(([path, f]) => [path, f.length])) })
-      .filter(([, n]) => n > 0)
-      .sort(([a], [b]) => a.localeCompare(b)),
-  );
+const reseed = process.argv.includes("--reseed");
+if (process.argv.includes("--update") || reseed) {
+  // A partial write MERGES: rewriting the whole ledger from a subset would delete every row
+  // the run never looked at, silently taking the ceiling of 102 files to zero.
+  const { files: lowered, raised } = nextLedger(grouped, readLedger(), partial ? scanned : null);
+  if (raised.length && !reseed) {
+    for (const r of raised) {
+      console.error(`${r.path}: ${r.count} finding(s), ledger allows ${r.ceiling}`);
+    }
+    console.error(
+      `\n--update lowers a ceiling; it does not raise one. ${raised.length} file(s) above theirs.` +
+        ` Move the run, the reading and the date to the pull request or to docs/.` +
+        ` A RULE change that legitimately grows the corpus is --reseed, which is a separate` +
+        ` decision and shows in the diff as one.`,
+    );
+    process.exit(1);
+  }
+  const files = reseed
+    ? Object.fromEntries(
+        Object.entries({
+          ...(partial ? Object.fromEntries(Object.entries(readLedger()).filter(([p]) => !scanned.has(p))) : {}),
+          ...Object.fromEntries(Object.entries(grouped).map(([path, f]) => [path, f.length])),
+        })
+          .filter(([, n]) => n > 0)
+          .sort(([a], [b]) => a.localeCompare(b)),
+      )
+    : lowered;
   writeFileSync(
     LEDGER,
     JSON.stringify(
@@ -432,7 +519,8 @@ if (process.argv.includes("--update")) {
   );
   const total = Object.values(files).reduce((a, b) => a + b, 0);
   console.log(
-    `ledger ${partial ? "merged" : "written"}: ${Object.keys(files).length} file(s), ${total} finding(s)` +
+    `ledger ${reseed ? "reseeded" : partial ? "merged" : "written"}: ${Object.keys(files).length} file(s),` +
+      ` ${total} finding(s)` +
       (partial ? ` (${scanned.size} scanned, the rest carried over)` : ""),
   );
   process.exit(0);

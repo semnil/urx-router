@@ -17,6 +17,7 @@ import {
   escapesRoot,
   findingsIn,
   hookDecision,
+  nextLedger,
   repoPath,
   verdict,
 } from "./check-comment-provenance.mjs";
@@ -65,6 +66,19 @@ describe("what counts as a comment", () => {
     expect(shapes('const y = typeof /["]/; // (measured)\n')).toEqual(["hedge-parenthetical"]);
     // …and an identifier is still not a keyword: after a variable a slash divides.
     expect(shapes("const q = a / b / c; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+  });
+
+  // The identifier before the slash has to be a TOKEN, not the characters that happen to
+  // have accumulated. Each of these is valid JavaScript and each returned [].
+  it("treats the identifier before a slash as one token, ended and spent correctly", () => {
+    // whitespace ENDS a token: this is `return` then `await`, not `returnawait`
+    expect(shapes('function f(x){ return await /["]/.test(x); } // measured on URX44V\n')).toEqual(["hedge-sentence"]);
+    // a token after a dot is a PROPERTY, so the slash divides and the comment survives
+    expect(shapes("const n = obj.return / 2; // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    // reading a regex SPENDS the token, so the next slash divides
+    expect(shapes("function g(){ return /x/ / 2; } // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    // punctuation spends it too
+    expect(shapes("const r = arr[0] / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
   });
 
   it("does not read a regex literal as a comment", () => {
@@ -248,6 +262,34 @@ describe("which file kinds are claimed", () => {
     expect(exts).not.toContain(".tsx");
     expect(exts).toContain(".ts");
     expect(Object.keys(ledger.files).some((p) => p.endsWith(".tsx"))).toBe(false);
+  });
+});
+
+// The ledger only ever shrinks — that is the whole of what it promises. A write that takes
+// the current counts unconditionally breaks it: add a comment, be refused by the scan, run
+// --update, and the ceiling is raised to fit while the next whole-tree scan is green.
+describe("what a ledger write may do", () => {
+  const at = (path, n) => byFile(findingsIn(`// x (measured)\n`.repeat(n), path));
+
+  it("refuses to raise a ceiling, and says which file would have", () => {
+    const { raised } = nextLedger(at("src/a.ts", 8), { "src/a.ts": 7 });
+    expect(raised).toEqual([{ path: "src/a.ts", ceiling: 7, count: 8 }]);
+  });
+
+  it("refuses to add a row for a file the ledger does not name", () => {
+    expect(nextLedger(at("src/new.ts", 1), {}).raised).toEqual([{ path: "src/new.ts", ceiling: 0, count: 1 }]);
+  });
+
+  it("lowers a cleaned file, and drops a row that reached zero", () => {
+    const { files, raised } = nextLedger(at("src/a.ts", 3), { "src/a.ts": 8, "src/b.ts": 2 });
+    expect(raised).toEqual([]);
+    expect(files).toEqual({ "src/a.ts": 3 });
+  });
+
+  it("carries a row outside the scanned set over untouched", () => {
+    const { files, raised } = nextLedger(at("src/a.ts", 1), { "src/a.ts": 4, "src/b.ts": 9 }, new Set(["src/a.ts"]));
+    expect(raised).toEqual([]);
+    expect(files).toEqual({ "src/a.ts": 1, "src/b.ts": 9 });
   });
 });
 
