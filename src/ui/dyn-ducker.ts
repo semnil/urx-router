@@ -20,7 +20,7 @@ import { incomingConnection } from "../core/plan";
 import type { NodeParams } from "../core/plan";
 import { parseRef, ref } from "../models/types";
 import { channelLabel, PLOT_FONT, splitDisplay } from "./dyn-screen";
-import type { DynCtx, DynLane, DynProcessor } from "./dyn-screen";
+import type { DynCtx, DynLane, DynPlotProcessor } from "./dyn-screen";
 
 /** Lane ruler floor: the threshold's own domain, and no more. A ducker triggers on
  *  programme rather than on a noise floor, so the key levels worth reading sit above
@@ -91,7 +91,7 @@ const cur = (ctx: DynCtx): Record<string, unknown> =>
 const tPos = (ms: number): number =>
   (Math.log10(Math.max(ms, T_MIN_MS)) - Math.log10(T_MIN_MS)) / (Math.log10(T_MAX_MS) - Math.log10(T_MIN_MS));
 
-export const DUCKER_DYN: DynProcessor = {
+export const DUCKER_DYN: DynPlotProcessor = {
   key: "ducker",
   loDb: LO_DB,
   tickStep: 6,

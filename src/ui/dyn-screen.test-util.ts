@@ -26,8 +26,10 @@ export interface DynHost {
   hooks: DynScreenHooks;
   model: DeviceModel;
   plan: Plan;
-  /** Every `onUpdateNodeParams` the screen made, in order. */
-  patches: Array<{ id: string; patch: NodeParams }>;
+  /** Every `onUpdateNodeParams` the screen made, in order — `written` included, because a
+   *  descriptor that names its asserted paths and a host that drops them on the floor look
+   *  identical from the patch alone. */
+  patches: Array<{ id: string; patch: NodeParams; written?: readonly string[] }>;
   /** Live-sync state the screen reads through `isLive`. */
   setLive: (on: boolean) => void;
   /** Meter-slot and error hooks, counted. */
@@ -161,8 +163,8 @@ export function dynHost(opts: DynHostOptions = {}): DynHost {
     getModel: () => model,
     getPlan: () => plan,
     isLive: () => isLive,
-    onUpdateNodeParams: (id, patch) => {
-      patches.push({ id, patch });
+    onUpdateNodeParams: (id, patch, written) => {
+      patches.push({ id, patch, written });
       plan.nodeParams[id] = { ...plan.nodeParams[id], ...patch };
     },
     releaseMeters: () => void released++,

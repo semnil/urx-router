@@ -8,9 +8,24 @@ import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const insertSelect = (page: Page) => page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select");
-const paramSelect = (page: Page, label: string) =>
-  page.locator("#inspector .param", { hasText: label }).locator("select");
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
+// The families the tuning screen shows whole (the guitar amps and the companders) keep
+// their sliders there rather than in the Inspector, so a case about one of those opens
+// the screen and reads its rows. Pitch Fix and the multi-band compressor still edit in
+// the Inspector, and their cases below still read `param`.
+const screenBox = (page: Page) => page.locator("#dyn-screen-box");
+const screenRow = (page: Page, label: string) =>
+  screenBox(page)
+    .locator(".prefs-row")
+    .filter({ has: page.getByText(label, { exact: true }) });
+const openScreen = async (page: Page): Promise<void> => {
+  await page.locator("#btn-insfx-screen").click();
+  await expect(screenBox(page)).toBeVisible();
+};
+const closeScreen = (page: Page) => page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+const screenSelect = (page: Page, label: string) => screenRow(page, label).locator("select");
+// A guitar amp is two faces; the cabinet's four rows are on the second one.
+const showCab = (page: Page) => page.click("#dyn-face-insfx-cab");
 // COMPANDER_PARAMS writable slots: threshold / ratio / attack / release / outGain / width.
 const COMPANDER_SLOT_COUNT = 6;
 
@@ -27,12 +42,20 @@ test.beforeEach(async ({ page }) => {
 test("guitar amp (Clean) reveals common params + cabinet list", async ({ page }) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Clean" });
-  // Common params appear.
-  await expect(param(page, "Treble")).toBeVisible();
-  await expect(param(page, "Output")).toBeVisible();
-  await expect(param(page, "Blend")).toBeVisible(); // Clean-only
+  await openScreen(page);
+  // Common params appear. Slot 7 reads Volume here and Gain on the other three amps —
+  // the unit's own labelling, and the one row whose name depends on the type.
+  await expect(screenRow(page, "Volume")).toBeVisible();
+  await expect(screenRow(page, "Gain")).toHaveCount(0);
+  await expect(screenRow(page, "Treble")).toBeVisible();
+  await expect(screenRow(page, "Output")).toBeVisible();
+  await expect(screenRow(page, "Blend")).toBeVisible(); // Clean-only
+  // The cabinet is the other face, and the amp's rows are not on it.
+  await showCab(page);
+  await expect(screenRow(page, "Treble")).toHaveCount(0);
+  await expect(screenRow(page, "Gate Level")).toBeVisible();
   // SP Type lists the eight cabinets in order.
-  await expect(paramSelect(page, "SP Type").locator("option")).toHaveText([
+  await expect(screenSelect(page, "SP Type").locator("option")).toHaveText([
     "BS 4x12",
     "AC 2x12",
     "AC 1x12",
@@ -47,19 +70,56 @@ test("guitar amp (Clean) reveals common params + cabinet list", async ({ page })
 test("switching guitar amp type swaps the type-specific control", async ({ page }) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Clean" });
-  await expect(param(page, "Blend")).toBeVisible();
+  await openScreen(page);
+  await expect(screenRow(page, "Blend")).toBeVisible();
+  // The selector is outside the screen, so the type changes underneath an open one and
+  // the same modal re-binds — which is the whole reason the screen carries no Type row.
+  await closeScreen(page);
   await insertSelect(page).selectOption({ label: "Drive" });
-  await expect(param(page, "Blend")).toHaveCount(0);
-  await expect(param(page, "Amp Type")).toBeVisible(); // Drive-only
-  await expect(param(page, "Master")).toBeVisible();
+  await openScreen(page);
+  await expect(screenRow(page, "Blend")).toHaveCount(0);
+  await expect(screenRow(page, "Amp Type")).toBeVisible(); // Drive-only
+  await expect(screenRow(page, "Master")).toBeVisible();
+  // …and slot 7 changed its name with the type.
+  await expect(screenRow(page, "Gain")).toBeVisible();
+  await expect(screenRow(page, "Volume")).toHaveCount(0);
 });
 
 test("compander on the STEREO master reveals dynamics params", async ({ page }) => {
   await node(page, "bus.stereo").click();
   await insertSelect(page).selectOption({ label: "Compander-H" });
-  await expect(param(page, "Threshold")).toBeVisible();
-  await expect(param(page, "Ratio")).toBeVisible();
-  await expect(param(page, "Width")).toBeVisible();
+  await openScreen(page);
+  await expect(screenRow(page, "Threshold")).toBeVisible();
+  await expect(screenRow(page, "Ratio")).toBeVisible();
+  await expect(screenRow(page, "Width")).toBeVisible();
+  // The taps either side of the insert point, which is what the screen adds over the
+  // Inspector's list.
+  await expect(screenBox(page).locator(".gt-ladders")).toBeVisible();
+});
+
+// The families the screen shows are edited THERE and nowhere else. Restoring the flat
+// renderer beside the launcher would put the same values on two surfaces, and the one in
+// the inspector reads the snapshot taken at render time and writes a stale value back on
+// its next drag — which is the reason the renderer was removed. Nothing else in this file
+// would go red for it, so the absence is asserted with the launcher as the positive
+// control and the multi-band compressor as the family that still edits in place.
+test("a family the screen shows has no editor left in the inspector", async ({ page }) => {
+  for (const [id, effect, row] of [
+    ["ch1", "Clean", "Treble"],
+    ["ch3", "Pitch Fix", "Coarse"],
+    ["bus.stereo", "Compander-H", "Width"],
+  ] as const) {
+    await node(page, id).click();
+    await insertSelect(page).selectOption({ label: effect });
+    await expect(page.locator("#btn-insfx-screen"), effect).toBeVisible();
+    await expect(param(page, row), effect).toHaveCount(0);
+  }
+  // …and the one family that does still edit in place, which is what says the assertion
+  // above can fail at all. On the SAME bus: the compander and the multi-band compressor
+  // share one device-wide slot, so a second output cannot take it while this one holds it.
+  await insertSelect(page).selectOption({ label: "M.Band Comp" });
+  await expect(page.locator("#btn-insfx-screen")).toHaveCount(0);
+  await expect(param(page, "LOW Threshold")).toBeVisible();
 });
 
 test("multi-band comp on a MIX bus reveals three bands", async ({ page }) => {
@@ -74,33 +134,43 @@ test("multi-band comp on a MIX bus reveals three bands", async ({ page }) => {
 test("pitch fix reveals key + scale keyboard", async ({ page }) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Pitch Fix" });
-  await expect(param(page, "Coarse")).toBeVisible();
-  await expect(paramSelect(page, "Key").locator("option")).toHaveCount(12);
-  await expect(param(page, "MIDI Control")).toBeVisible();
+  await openScreen(page);
+  // What the correction does to a note is the first face…
+  await expect(screenRow(page, "Coarse")).toBeVisible();
+  // …and what it is aimed at is the second.
+  await showCab(page);
+  await expect(screenSelect(page, "Key").locator("option")).toHaveCount(12);
+  await expect(screenRow(page, "MIDI Control")).toBeVisible();
+  // Shown and never written: the unit takes those notes on a port of its own, and
+  // switching it on erases a full note mask. The pill is what says so on the panel; the
+  // select is inert.
+  await expect(screenSelect(page, "MIDI Control")).toBeDisabled();
+  await expect(screenRow(page, "MIDI Control")).toContainText("Set on the device");
 });
 
-// A pitch note toggle row: a .param whose label is the bare semitone name (so it
-// is not confused with the Key select, whose options also list the note names).
+// One of the twelve semitone buttons on the scale face. They are absolute — named from C
+// whatever the Key is — and are a plain row rather than a keyboard for that reason.
 const noteToggle = (page: Page, note: string) =>
-  page
-    .locator("#inspector .param")
-    .filter({ has: page.getByRole("button", { name: "ON", exact: true }) })
-    .filter({ hasText: new RegExp(`^${note.replace("#", "\\#")}`) });
+  page.locator("#dyn-screen-box .gt-notes button", { hasText: new RegExp(`^${note.replace("#", "\\#")}$`) });
 
 test("pitch scale select seeds the note keyboard, and a note edit persists as Custom", async ({ page }, testInfo) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Pitch Fix" });
-  // Defaults to Chromatic; Custom is not directly selectable until a note is edited.
-  await expect(paramSelect(page, "Scale")).toHaveValue("7");
-  await expect(paramSelect(page, "Scale").locator("option", { hasText: "Custom" })).toBeDisabled();
+  await openScreen(page);
+  await showCab(page);
+  // Defaults to Chromatic. Every preset is selectable: the unit derives the twelve notes
+  // for each of them from the Key, and the app now authors the same pattern.
+  await expect(screenSelect(page, "Scale")).toHaveValue("7");
+  await expect(screenSelect(page, "Scale").locator("option:disabled")).toHaveCount(0);
 
   // Major seeds the major-scale note set (F# a non-major degree is cleared), then
-  // toggling F# on rewrites Scale to Custom. The note keyboard and the Scale select
-  // depend on each other but only refresh on a full re-render, so verify the result
-  // through save → open rather than the live DOM.
-  await paramSelect(page, "Scale").selectOption({ label: "Major" });
-  await expect(paramSelect(page, "Scale")).toHaveValue("2");
-  await noteToggle(page, "F#").getByRole("button", { name: "ON", exact: true }).click();
+  // toggling F# on rewrites Scale to Custom. Verified through save → open, which is also
+  // what says the edit reached the plan rather than only the panel.
+  await screenSelect(page, "Scale").selectOption({ label: "Major" });
+  await expect(screenSelect(page, "Scale")).toHaveValue("2");
+  await expect(noteToggle(page, "F#")).toHaveAttribute("aria-pressed", "false");
+  await noteToggle(page, "F#").click();
+  await closeScreen(page);
   await page.click("#btn-file");
   const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
   const saved = testInfo.outputPath("pitch.json");
@@ -112,14 +182,15 @@ test("pitch scale select seeds the note keyboard, and a note edit persists as Cu
   const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
   await chooser.setFiles(saved);
   await node(page, "ch1").click();
-  await expect(paramSelect(page, "Scale")).toHaveValue("0"); // Custom
-  await expect(paramSelect(page, "Scale").locator("option", { hasText: "Custom" })).toBeEnabled();
-  await expect(noteToggle(page, "F#").getByRole("button", { name: "ON", exact: true })).toHaveClass(/on/);
+  await openScreen(page);
+  await showCab(page);
+  await expect(screenSelect(page, "Scale")).toHaveValue("0"); // Custom
+  await expect(screenSelect(page, "Scale").locator("option", { hasText: "Custom" })).toBeEnabled();
+  await expect(noteToggle(page, "F#")).toHaveAttribute("aria-pressed", "true");
 });
 
-// A plan can carry a device-side Scale preset the app never writes (only
-// Chromatic / Major seed note patterns): it must display verbatim instead of
-// collapsing to Custom. Enum values are LCD-confirmed (insert-fx-effect.ts).
+// A plan can carry any Scale preset: it must display verbatim instead of collapsing to
+// Custom. Enum values are LCD-confirmed (insert-fx-effect.ts).
 test("a device-preset pitch scale (Pentatonic) loaded from a plan displays verbatim", async ({ page }) => {
   const plan = {
     format: "urx-router-plan",
@@ -130,10 +201,12 @@ test("a device-preset pitch scale (Pentatonic) loaded from a plan displays verba
   };
   await page.goto(`/?plan=${planParamZ(plan)}`);
   await node(page, "ch1").click();
-  const scale = paramSelect(page, "Scale");
+  await openScreen(page);
+  await showCab(page);
+  const scale = screenSelect(page, "Scale");
   await expect(scale).toHaveValue("6");
   await expect(scale.locator("option", { hasText: "Pentatonic" })).toBeEnabled();
-  await expect(scale.locator("option", { hasText: "Melodic Minor" })).toBeDisabled();
+  await expect(scale.locator("option", { hasText: "Melodic Minor" })).toBeEnabled();
 });
 
 test("MBC crossover sliders expose the per-band valid ranges", async ({ page }) => {
@@ -217,17 +290,24 @@ test("sample-rate ceilings gate the insert FX options", async ({ page }) => {
 test("selecting No Effect removes the effect parameter editor", async ({ page }) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Clean" });
-  await expect(param(page, "Treble")).toBeVisible();
+  await openScreen(page);
+  await expect(screenRow(page, "Treble")).toBeVisible();
+  await closeScreen(page);
   await insertSelect(page).selectOption({ label: "No Effect" });
-  await expect(param(page, "Treble")).toHaveCount(0);
+  // Nothing to tune, so the way in goes with the effect rather than opening on an
+  // empty panel.
+  await expect(page.locator("#btn-insfx-screen")).toHaveCount(0);
   await expect(insertSelect(page)).toHaveValue("-1");
 });
 
 test("insert-fx param round-trips through save and open", async ({ page }, testInfo) => {
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Clean" });
-  await paramSelect(page, "SP Type").selectOption({ label: "JC 2x12" });
-  await expect(paramSelect(page, "SP Type")).toHaveValue("8");
+  await openScreen(page);
+  await showCab(page);
+  await screenSelect(page, "SP Type").selectOption({ label: "JC 2x12" });
+  await expect(screenSelect(page, "SP Type")).toHaveValue("8");
+  await closeScreen(page);
 
   await page.click("#btn-file");
   const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
@@ -244,7 +324,12 @@ test("insert-fx param round-trips through save and open", async ({ page }, testI
   await chooser.setFiles(saved);
   await node(page, "ch1").click();
   await expect(insertSelect(page)).toHaveValue("256"); // Clean
-  await expect(paramSelect(page, "SP Type")).toHaveValue("8"); // JC 2x12
+  await openScreen(page);
+  // The face is a cursor into the panel, not part of the plan: a fresh open lands on the
+  // amp whatever the last one was showing.
+  await expect(screenRow(page, "Volume")).toBeVisible();
+  await showCab(page);
+  await expect(screenSelect(page, "SP Type")).toHaveValue("8"); // JC 2x12
 });
 
 test("selecting an effect reveals the ON/OFF (bypass) toggle; bypass keeps the selection", async ({ page }) => {
@@ -301,10 +386,13 @@ test("a write says which node's insert-FX values reach the device", async ({ pag
   await expect(page.locator("#statusbar")).toContainText("Fetched", { timeout: 20000 });
 
   await node(page, "ch1").click();
-  // CH 1 is the FIRST owner in model order, so its command is the one dropped.
-  const threshold = param(page, "Threshold").locator('input[type="range"]');
+  // CH 1 is the FIRST owner in model order, so its command is the one dropped. The
+  // compander every MONO IN reports is edited on the tuning screen.
+  await openScreen(page);
+  const threshold = screenRow(page, "Threshold").locator('input[type="range"]');
   await threshold.focus();
   await page.keyboard.press("ArrowUp");
+  await closeScreen(page);
   // A second, unshared edit so the write has something of its own to confirm — the
   // dropped owner's own change is on no address and would report "no changes".
   await param(page, "HPF").getByRole("button", { name: "ON", exact: true }).click();
@@ -348,4 +436,42 @@ test("a write says which node's insert-FX values reach the device", async ({ pag
   );
   expect(engine.length).toBeGreaterThan(0);
   expect(engine.length).toBeLessThanOrEqual(COMPANDER_SLOT_COUNT);
+});
+
+// The desktop minimum pointer target, from the project's UI defaults: 36x36 CSS px.
+const MIN_TARGET = 36;
+
+test("every semitone button meets the desktop minimum target, at the smallest window", async ({ page }) => {
+  // The SMALLEST window the app admits (tauri.conf.json minWidth / minHeight), because the
+  // note row's width does not grow with the viewport, so a reading taken on a wide window
+  // would not be the worst case and one taken here covers both. Twelve targets do not reach
+  // 36px on one line in this column; six per row do, which is what the stylesheet lays them
+  // out as.
+  await page.setViewportSize({ width: 960, height: 640 });
+  await node(page, "ch1").click();
+  await insertSelect(page).selectOption({ label: "Pitch Fix" });
+  await openScreen(page);
+  await showCab(page);
+  const buttons = page.locator("#dyn-screen-box .gt-notes button");
+  await expect(buttons).toHaveCount(12);
+
+  const rects: { label: string; w: number; h: number }[] = [];
+  for (let i = 0; i < 12; i++) {
+    const b = buttons.nth(i);
+    const box = await b.boundingBox();
+    expect(box, `note ${i} has no box`).not.toBeNull();
+    rects.push({ label: (await b.textContent()) ?? "", w: box!.width, h: box!.height });
+  }
+  console.log(`note targets: ${rects.map((r) => `${r.label} ${r.w.toFixed(2)}x${r.h.toFixed(2)}`).join("  ")}`);
+  for (const r of rects) {
+    expect(r.w, `${r.label} width`).toBeGreaterThanOrEqual(MIN_TARGET);
+    expect(r.h, `${r.label} height`).toBeGreaterThanOrEqual(MIN_TARGET);
+  }
+  // Two rows of six, not one row of twelve and not some other wrap: distinct top edges,
+  // and six buttons sharing each. Without this the size assertions above pass on any wrap
+  // the layout happens to produce, an uneven one included.
+  const tops = await buttons.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+  const rows = [...new Set(tops)];
+  expect(rows).toHaveLength(2);
+  for (const top of rows) expect(tops.filter((t) => t === top)).toHaveLength(6);
 });

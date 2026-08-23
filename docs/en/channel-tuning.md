@@ -753,6 +753,190 @@ one-value row on every band — which is not why the 4-band screen keeps its Typ
 bands are typed, and dropping it would change the panel's height per band). The two shelves' Q row does
 stay, locked and tagged, for exactly that reason.
 
+## INS FX
+
+**One screen for every insert effect, resolved from the plan.** What a node holds is a selector value
+the operator changes on another surface, and a device follow can change it underneath an open screen —
+so `insert-fx-screen.ts` reads the family on every call rather than existing once per family. One
+registry entry, one modal: a follow re-binds it instead of closing one screen and opening another. The
+title carries the effect's own name (`INS FX — Compander-H`), because the heading would otherwise name
+a slot rather than what is in it.
+
+- **No Effect Type row, deliberately.** Writing the selector makes the unit refill the bound engine
+  array with that type's defaults, and it is not reversible — re-selecting the original type fills it
+  with that type's defaults, not with the values that were there. Putting that beside the sliders would
+  give it the weight of a slider. Selecting stays on the Inspector's Insert FX row, and this screen
+  adjusts what was selected.
+- **No plot.** A guitar amp's frequency response and a pitch tracker are not derivable from the
+  parameters, and the unit meters neither, so the display is the lane rack alone. That is what
+  `plotGeo` / `drawAxes` / `drawCurve` being optional together is for.
+- **Fields name an engine slot, not a parameter.** Insert-FX values live in `insertFxParams` keyed by
+  family and slot, so a field's key is `ifx6` and only the catalogue knows what slot 6 is under the
+  family on screen — which is why `fieldLabel` and `fieldText` are asked with the context. Every range,
+  default, enum and formatter comes from `core/control/insert-fx-effect.ts`; nothing here restates one.
+- **The compander's rows are grouped by what shapes the response** — Threshold, Ratio, Width, then the
+  makeup, then Attack and Release — rather than in the device's read order, which is what the catalogue
+  carries for the emit path.
+- **No MIDI ids.** The control catalog carries none for these values, so the screen marks nothing —
+  the same position DUCKER is in, and for the same reason.
+
+**The note under the display says when nothing reaches the signal**, in either of the two ways
+that happens. Above the held effect's own ceiling it names the effect and the ceiling, in the same
+words the Inspector and the CONSOLE chip use — the alternative was one panel saying the effect is
+off while another handed over a live editor for it. Switched out by its own bypass, it says that
+instead. Either way the values are still kept and edited here, and the two level lanes beside the
+note read the same thing. The launcher stays available: an effect held and not running is still an
+effect to tune.
+
+### The guitar amp is two faces
+
+Everything else this screen shows is one panel. A guitar amp is an amp and a cabinet, and the
+cabinet's four rows are a different job from the tone stack, so they are a bank in the sense the
+SSMCS section defines: two descriptors, one bar, one reserved height, moved between without closing.
+
+| Face | Rows |
+| --- | --- |
+| AMP | this type's own values, then Volume (Clean) / Gain, Bass, Middle, Treble, Presence, then the modulation group, then Output |
+| CAB | Gate, Gate Level, SP Type, Mic Position — in the order the signal meets them |
+
+The type's own values lead because they are what makes one amp a different amp. The modulation
+group is placed by name rather than with them: Clean's Cho/Off/Vib, Speed and Depth are
+type-specific too, and putting them at the head would separate Speed and Depth both from the
+switch that drives them and from the Output they sit before. **Speed and Depth stay where they
+are when that switch is not on vibrato** — dimmed and tagged, never dropped, because a panel that
+loses two rows moves everything under them out from under the pointer. The effect guide's CLEAN Only
+table is what says they apply only there: "Sets vibrato speed/depth when 'Vib' is On. Not available
+when 'Cho' is On."
+
+**Slot 7 is Volume on Clean and Gain on the other three**, which is what the unit prints. The
+catalogue swaps the label alone: the slot, its encoding and its range are one thing across the
+four, and the row keeps the position the emit path walks.
+
+**The columns reverse for an amp.** Its panel is a dozen controls and its display is a level rack
+with nothing else in it, so the parameters take the flexible column and the meters a narrow fixed
+one. The companders keep the ordinary order — their display is the point of the screen — and the
+binding declares which, since it is a property of what the node holds rather than of the
+descriptor.
+
+**A follow that replaces the effect returns to the AMP face.** The faces belong to the effect, so
+a compander arriving under an open CAB face is neither of the two things the host does on its own:
+a face whose `bind` answers null closes the screen, which is right for a bank taken away and wrong
+for one replaced, and a `sel` nothing resets would carry a cabinet segment onto an effect with no
+cabinet. `DynProcessor.bankIdentity` is what the host compares to tell those apart.
+
+### Pitch Fix is two faces as well
+
+PITCH is what the correction does to a note — Coarse, Fine, Formant, Correction, Mix. SCALE is what
+it is aimed at: the Key, the Scale, the twelve notes, and the two limits and two timings that decide
+when it acts.
+
+**The twelve note slots are ABSOLUTE semitones.** Slot 22 is C whatever the Key is, measured by
+setting Key = G with Scale = Major and reading them back as C D E F# G A B. So the buttons are named
+from C and are not laid out as a keyboard: black and white keys would draw a root that is not there.
+
+**Six per row, in two rows.** The column that holds them does not grow with the window — it measures
+the same at 1280x900 and at the 960x640 minimum the app admits — and twelve targets cannot reach the
+36px desktop minimum across it, while six reach it with room over. They were 16.03-23.05px wide and
+25px tall on one line. The row is a grid rather than a wrapped flex row for two measured reasons: it
+inherits `gap: 8px` from `.prefs-row .ctl`, and under `flex-shrink: 0` it sized itself for all twelve
+on one line (522px, wider than the column), wrapped five per row, and had the rest clipped off the
+modal at the minimum window. That same rule is declared later in the stylesheet and out-specifies a
+bare `.gt-notes`, so the layout half is written as `.prefs-row .ctl.gt-notes` — written as
+`.gt-notes` the grid never applied at all, the eight-pixel gap stayed and all twelve sat on one line
+at 16.63px. `--led-ink` IS `--led-face`, so the separator was drawn in the face colour and a full
+mask read as one solid block once the gap was gone; lit, it now takes the ink the label takes,
+softened.
+
+**The bank's reserved height moved with it.** A taller note row put the SCALE face over the reserve
+and the modal jumped 41px (EN) / 49px (JA) on the segment between the faces — the defect the reserve
+exists to stop. Re-taken from each face's own height with the reserve lifted in the page, so the
+number is the face rather than the reserve read back at itself: Chromium on macOS at 1280x900, the
+guitar amp's AMP face is 614px (EN) / 622px (JA) against its cabinet's 520, and Pitch Fix's SCALE
+face is 549px (EN) / 557px (JA) against PITCH's 493. Each reserve clears its bank's tallest face with
+headroom for a wider font stack; Windows renders this app in a different stack and is not measured
+here.
+
+**A gesture reads the Key the plan holds, not the one the row was drawn with.** A row's handlers
+close over the context they were built with, and the rebuild that would replace them is deferred for
+as long as a pointer is down — a press anywhere in the box sets that, a `<select>` included — while a
+device follow goes on writing the plan underneath. Choosing a Scale then rooted its mask at the old
+Key and the next flush sent it; a note button read its own drawn state and wrote a value straight
+back over the follow that had just moved it. Both now read through `DynRowCtx.live()`. What a button
+SHOWS is still what it was drawn from — the panel catches up at the deferred rebuild — and what it
+WRITES is the negation of what the plan holds when it is pressed.
+
+**Every preset is selectable.** The unit derives the twelve notes itself from the Scale and the Key,
+for all eight presets — read at Key = C and Key = G, the offsets came back identical while the
+absolute bits moved — so the app authors the same offsets rather than only the two patterns it could
+once spell. Editing a note takes the Scale to Custom, which the unit also does on its own; the app
+writes it too, because the plan is what the next flush emits and a plan still spelling a preset would
+re-derive the mask over the edit.
+
+**MIDI Control is shown and never written.** The unit takes those notes on a USB-MIDI port of its
+own — not the port this app reads external control from, so writing here would be a second route into
+one setting — and switching it on erases a twelve-note mask that is FULL, taking the Scale enum to
+Custom with it. Both measured. The row is inert, with the reason on it.
+
+**Never written means the emit path, not the row.** The two slots are out of
+`insertFxWritableSlots`, which is the list `translate` emits from — an inert row alone would not have
+been enough, because a device read fills the plan from that same list and the next flush would have
+written the enable bit with nobody having touched the app. They stay in `insertFxReadableSlots`, so
+the read that feeds the row is unaffected: dropping a slot from the writable list drops the read with
+it, and the row would then print a default instead of what the unit holds.
+
+### The two reduction meters are indexed differently
+
+They are not one table, and the difference is the reason:
+
+| Effect sits on | Input lane | Output lane | Reduction |
+| --- | --- | --- | --- |
+| MONO IN channel | PRE INS FX (`112:ch`) | PRE FADER (`113:ch`) | `132:ch` — x is the mono channel |
+| Output bus | PRE INS FX (post-fader) | POST (post-insert) | `133:band` — x is the effect's BAND |
+
+`133` takes no node at all: one output insert effect runs device-wide (the `out-dyn` 1-of slot), so
+which bus holds it does not enter the address. A single-band effect reads band 0. Measured on a
+URX44V (2026-07-28): a Compander-S on CH 1 driven into reduction read `132:0`; the multi-band
+compressor at full reduction read `133:0/1/2` as LOW / MID / HIGH with `133:3` unused, and a
+single-band output compander read `133:0` alone.
+
+The reduction merges into the OUTPUT column, as every reduction on every screen does, and takes no
+offset: the rule is to subtract whatever gain the processor adds, and these add none — the compander's
+makeup reaches 0 dB and only attenuates below it, so the level bar and the reduction hanging off the
+top of the same ruler cannot meet.
+
+### Which families the screen shows
+
+Everything but the multi-band compressor, whose bands and globals are a structured layout that the
+flat catalogue carries none of. It stays in the Inspector's own editor, and `bind` refuses it, so the
+two surfaces cannot disagree about where a family is edited.
+
+**An edit names the paths it asserted.** The funnel drops a named nested group — naming it
+would claim every sibling the rebuild merely copied — and falls back to the plan's own diff, which
+sees only what MOVED. `insertFxParams` is exactly that group, and the Scale selector writes twelve
+mask slots at once with several already holding the value it writes, so those would be invisible
+there and a device read in flight would take them back. The descriptor therefore reports its
+asserted paths through `DynProcessor.written`, naming per slot the family-qualified key the plan
+stores under AND the bare slot the re-key removes — the same pair, for the same reason, that the
+Inspector's own funnel names.
+
+**Every surface asks the same question, not only this one.** The Inspector's selector, its bypass
+switch and its editor, and the CONSOLE's INS FX chip all read `effectiveInsertFx` — so a value the
+node's own control does not carry reads as No Effect everywhere, which is what the unit is given.
+The chip is where it bit hardest: driven from the raw value it reported the strip as bypassing an
+effect that never reaches the unit, and pressing it wrote a bypass nothing would ever send. Pressing
+it now takes a real effect from the node's own free list, which is also what clears the stale value
+out of the plan. The Inspector's selector shows No Effect for a second reason on top of that: a
+`<select>` handed a value none of its options carry lands at selectedIndex -1 and draws an empty
+field. Nothing rewrites the plan to say so — the raw value stands until the operator picks.
+
+**And nothing the device path will not act on.** A plan can hold an insert-FX value the node's own
+control does not carry — a bus holding a channel effect, which a file, a `?plan=` link or a device
+read all land, since the loader gates none of them. `translate` coerces such a value to No Effect and
+emits no engine parameter for it at all, so an editor over it collects edits nothing ever sends: at
+48 kHz, where the ceiling is not in question, the screen bound four editable fields against zero
+`INSERT_FX_EFFECT` commands. Both sides now ask one function, `effectiveInsertFx`, so what the screen
+offers to edit and what the unit receives cannot come apart.
+
 ## Off the scale is off the frame
 
 Every plot draws its curve at the **true** value, and the host **clips it to the plot area**. Clamping
@@ -913,6 +1097,7 @@ per address, so a batch carrying more than one frame for an address keeps only t
 | --- | --- |
 | GRAPH inspector, GATE / SSMCS / COMP / EQ section | A full-width button below the ON/OFF toggle, its label centred and a caret at the trailing edge |
 | CONSOLE strip | A narrow chip beside each processor chip the strip has, labelled `▸` |
+| GRAPH inspector, Insert FX | The same full-width button, below the Insert FX selector and its ON toggle — shown once an effect this screen tunes is selected, since with none there is nothing to open on |
 
 In SSMCS mode the inspector keeps all four sections and hands each launcher over: the SSMCS section
 opens the MAIN face, and the COMP and EQ sections open the COMP and EQ faces of the same bank. They

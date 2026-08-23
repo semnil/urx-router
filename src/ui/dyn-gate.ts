@@ -13,7 +13,7 @@ import type { ControlParam } from "../core/midi/controls";
 import { bindChannelStrip, subObjectIo } from "./dyn-chan";
 import { transferPlot } from "./dyn-plot";
 import { HI_DB } from "./dyn-screen";
-import type { DynProcessor } from "./dyn-screen";
+import type { DynPlotProcessor } from "./dyn-screen";
 
 /** Input axis: the exact domain a GATE threshold can occupy, so a cap position
  *  maps to a threshold value linearly. */
@@ -36,7 +36,7 @@ const OUT_TICKS = [0, -24, -48, -72, -96, -128];
 
 const io = subObjectIo("gate");
 
-export const GATE_DYN: DynProcessor = {
+export const GATE_DYN: DynPlotProcessor = {
   key: "gate",
   loDb: LO_DB,
   tickStep: 5,

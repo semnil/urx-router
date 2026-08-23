@@ -93,7 +93,9 @@ describe("open / close", () => {
     expect(screen.isOpen()).toBe(true);
     expect(host.scrim.hidden).toBe(false);
     const title = host.box.querySelector("#dyn-screen-title")!;
-    expect(title.textContent).toContain(GATE.title(t()));
+    expect(title.textContent).toContain(
+      GATE.title(t(), { model: host.model, plan: host.plan, nodeId: "ch1", sel: 0, m: t() }),
+    );
     expect(host.box.querySelector(".gt-ladders")).not.toBeNull();
     expect(host.box.querySelector(".consent-btn-secondary")).not.toBeNull();
   });

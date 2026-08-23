@@ -9,7 +9,7 @@
 
 import { METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB } from "../core/meters";
 import { HI_DB, PLOT_FONT, splitDisplay } from "./dyn-screen";
-import type { DynCtx, DynPlotGeo, DynProcessor } from "./dyn-screen";
+import type { DynCtx, DynPlotGeo, DynPlotProcessor } from "./dyn-screen";
 import type { Messages } from "../i18n/en";
 
 /** Plot-area inset. The left gutter carries the output tick labels, the bottom the
@@ -259,7 +259,7 @@ export function transferPlot(o: {
    * bar selects nothing else.
    */
   on?: (ctx: DynCtx) => boolean;
-}): Pick<DynProcessor, "hint" | "display" | "plotGeo" | "drawAxes" | "drawLive" | "liveOn"> {
+}): Pick<DynPlotProcessor, "hint" | "display" | "plotGeo" | "drawAxes" | "drawLive" | "liveOn"> {
   const onCurve = (ctx: DynCtx): boolean => o.on?.(ctx) ?? true;
   return {
     liveOn: onCurve,

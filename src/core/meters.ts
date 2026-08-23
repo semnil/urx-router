@@ -172,10 +172,25 @@ const GR_TAPS: Record<GrKind, Record<string, readonly [number, number]>> = {
   // have to vary by model, and getting that wrong returns the neighbouring pair's
   // reduction — a value, so nothing on screen would look wrong.
   ducker: { "out.ducker1": [119, 0], "out.ducker2": [119, 1], "out.ducker3": [119, 2], "out.ducker4": [119, 3] },
+  // The INPUT insert effect, on the mono channel it sits on. Only the input half is a node
+  // table — the output half is `insertFxOutGrAddr`, whose x axis is not a node at all.
+  insfx: { ch1: [132, 0], ch2: [132, 1], ch3: [132, 2], ch4: [132, 3] },
 };
 
 /** Which processor's reduction to meter. */
-export type GrKind = "gate" | "comp" | "ducker";
+export type GrKind = "gate" | "comp" | "ducker" | "insfx";
+
+/**
+ * The OUTPUT insert effect's reduction, by the effect's own BAND.
+ *
+ * It takes no node, deliberately. `133`'s x axis is the band and not the bus: one output
+ * insert effect runs device-wide (the "out-dyn" 1-of slot in params.ts), so which output
+ * channel holds it does not enter the address. The multi-band compressor occupies bands
+ * 0-2 (LOW / MID / HIGH) and a single-band output effect reads band 0 alone.
+ */
+export function insertFxOutGrAddr(band: number): readonly [number, number] {
+  return [133, band];
+}
 
 /** The gain-reduction meter address for one processor on a node, or undefined when
  *  the node has none (every channel but MONO IN, for GATE and COMP). Which channels a

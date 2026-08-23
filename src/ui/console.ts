@@ -46,14 +46,22 @@ import { markMidi } from "./midi-learn";
 import type { MidiLearnHooks } from "./midi-learn";
 import {
   channelEqUnavailable,
-  insertFxAllRateLocked,
+  formatRate,
+  insertFxRateLock,
   insertFxCensus,
   insertFxFree,
   insertFxMenu,
   isMonitorBus,
   type InsertFxCensus,
 } from "../core/constraints";
-import { busBalance, channelControl, channelDynamics, hasEq, insertFxControl } from "../core/control/translate";
+import {
+  busBalance,
+  channelControl,
+  channelDynamics,
+  effectiveInsertFx,
+  hasEq,
+  insertFxControl,
+} from "../core/control/translate";
 import { nodeParamContestPath } from "../core/plan-history";
 import {
   INSERT_FX_PAIR_KEYS,
@@ -1975,30 +1983,52 @@ export class Console {
       // The chip has two duties, and its lock composes them off the one menu
       // core/constraints.ts computes — the menu the inspector's selector renders,
       // so the chip cannot hand a strip what that selector greys out. Holding an
-      // effect makes it a bypass, locked only where the rate rules every effect out
-      // (above 96 kHz none of them runs): forced off and read-only, the treatment
-      // the stereo EQ gets. Holding none makes it take a slot, locked when nothing
-      // is free — the tooltip naming which of the two reasons applies.
+      // effect makes it a bypass, locked where the rate rules THAT effect out: forced
+      // off and read-only, the treatment the stereo EQ gets. Holding none makes it take
+      // a slot, locked when nothing is free — the tooltip naming which of the two
+      // reasons applies, which is why the rate question is asked of a strip holding
+      // nothing too: above every ceiling it is the rate and not the slots.
       const menu = insertFxMenu(model, this.hooks.getPlan(), m.id, this.ifxCensus ?? undefined);
       const free = insertFxFree(menu);
-      const rateLocked = insertFxAllRateLocked(menu);
-      const holds = insertFxSelected(planOf());
+      // Every question below is asked of the value the DEVICE path will act on, not of the
+      // raw plan value — the same answer the Inspector reads. A node's own control may not
+      // carry what the plan holds, and translate turns such a value into No Effect and
+      // writes neither the engine array nor the bypass, so a chip driven from the raw value
+      // reports a strip as bypassing an effect that never reaches the unit.
+      const eff = effectiveInsertFx(model, this.hooks.getPlan(), m.id);
+      const holds = insertFxSelected({ insertFx: eff });
+      // The lock the HELD effect carries, not the menu's: Pitch Fix stops at 48 kHz where
+      // the amps and companders reach 96, so a strip holding it at 88.2 kHz is off while
+      // the menu it came from still offers effects that run.
+      const { locked: rateLocked, entry: selected } = insertFxRateLock(menu, eff);
       const locked = holds ? rateLocked : !free.length;
       if (locked)
         this.makeChip(m.id, proc, "INS FX", false, false, () => false, {
-          readonlyTitle: rateLocked ? t().inspector.insFxRateLocked : t().inspector.insFxSlotLocked,
+          readonlyTitle: !rateLocked
+            ? t().inspector.insFxSlotLocked
+            : selected?.option.maxRate !== undefined
+              ? t().inspector.insFxRateLockedAt(selected.option.label, formatRate(selected.option.maxRate))
+              : t().inspector.insFxRateLocked,
         });
       // Taking a slot removes it from every other strip's chip and menu, so that
       // branch rebuilds the whole view; a bypass changes this strip alone and keeps
       // the in-place chip update.
       else
-        this.makeChip(m.id, proc, "INS FX", false, insertFxEngaged(planOf()), () => this.toggleInsFx(m.id, free), {
-          rerender: !holds,
-          // Both, because taking a slot writes the bypass ON over a bypass a No Effect
-          // route can already be holding — the plan reads the same before and after,
-          // and a read in flight then landed the new effect BYPASSED.
-          keys: ["insertFx", "insertFxOn"],
-        });
+        this.makeChip(
+          m.id,
+          proc,
+          "INS FX",
+          false,
+          insertFxEngaged({ insertFx: eff, insertFxOn: planOf().insertFxOn }),
+          () => this.toggleInsFx(m.id, free),
+          {
+            rerender: !holds,
+            // Both, because taking a slot writes the bypass ON over a bypass a No Effect
+            // route can already be holding — the plan reads the same before and after,
+            // and a read in flight then landed the new effect BYPASSED.
+            keys: ["insertFx", "insertFxOn"],
+          },
+        );
     }
     // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
     // A shelved ducker drops its chip even while the parent strip stays.
@@ -2621,7 +2651,11 @@ export class Console {
   // a remembered one can be an effect this node may not take.
   private toggleInsFx(id: string, options: InsertFxOption[]): boolean {
     const np = this.nodeParamsOf(id);
-    if (insertFxSelected(np)) {
+    // The effective value, not the raw one: a held effect this node's own control does not
+    // carry reaches the unit as No Effect, so pressing the chip has to SELECT rather than
+    // bypass — which is also what clears the stale value out of the plan.
+    const eff = effectiveInsertFx(this.hooks.getModel(), this.hooks.getPlan(), id);
+    if (insertFxSelected({ insertFx: eff })) {
       this.lastInsFx.set(id, np.insertFx!);
       np.insertFxOn = np.insertFxOn === false;
       return np.insertFxOn;

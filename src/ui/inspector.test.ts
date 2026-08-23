@@ -12,7 +12,9 @@ import { resetSettingsCache } from "../core/settings";
 import { holdInertOnBlur, resetPointerTracking } from "./dom";
 import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
-import { COMP_EQ_SSMCS, INSERT_FX_NONE } from "../core/control/params";
+import { COMP_EQ_SSMCS, INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
+import { planToCommands } from "../core/control/translate";
+import type { DeviceModel } from "../models/types";
 import { setLang, t } from "../i18n";
 
 // The panel renders one selection, and which controls it renders is derived from that
@@ -523,6 +525,74 @@ describe("insert FX", () => {
     expect(none.insertFxOn).toBeUndefined();
   });
 
+  // A plan can hold an insert-FX value the node's own control does not carry: a file, a
+  // `?plan=` link and a device read all land one, and the loader gates none of them. The
+  // emit path turns it into No Effect and writes no engine parameter, so a bypass switch
+  // and an editor over it would change nothing that leaves the app.
+  describe.each([
+    ["a channel holding an OUTPUT-only effect", "ch1", "M.Band Comp", OUTPUT_INSERT_FX_OPTIONS],
+    ["a bus holding a CHANNEL-only effect", "bus.mix1", "Pitch Fix", INSERT_FX_OPTIONS],
+  ])("%s", (_name, id, label, options) => {
+    const held = (): { model: DeviceModel; plan: Plan } => {
+      const model = getModel("URX44V");
+      const plan = emptyPlan("URX44V");
+      plan.nodeParams[id] = { insertFx: options.find((o) => o.label === label)!.value, insertFxOn: true };
+      return { model, plan };
+    };
+
+    it("offers neither a bypass switch nor an editor for it", () => {
+      const { model, plan } = held();
+      renderInspector(panel, model, plan, nodeSel(id), act);
+      const labels = rowLabels();
+      // The selector itself stays: it is the control that gets the operator out of this.
+      expect(labels).toContain(t().inspector.insertFx);
+      expect(labels).not.toContain(t().inspector.insertFxOn);
+      expect(labels).not.toContain(t().inspector.insertFxEffect.params.threshold);
+      expect(sectionByTitle(t().inspector.insertFxEffect.title)).toBeUndefined();
+      expect(panel.querySelector("#btn-insfx-screen")).toBeNull();
+    });
+
+    it("shows No Effect on the selector rather than an empty field", () => {
+      // A `<select>` handed a value none of its options carry lands at selectedIndex -1
+      // and draws nothing at all, which reads as a control that failed to render. What it
+      // shows instead is what the unit will be given.
+      const { model, plan } = held();
+      renderInspector(panel, model, plan, nodeSel(id), act);
+      const sel = [...panel.querySelectorAll<HTMLElement>(".param")]
+        .find((r) => r.dataset.paramLabel === t().inspector.insertFx)!
+        .querySelector("select")!;
+      expect(sel.selectedIndex).toBeGreaterThanOrEqual(0);
+      expect(sel.value).toBe(String(INSERT_FX_NONE));
+      expect(sel.selectedOptions[0]?.textContent).toBe("No Effect");
+      // …and the plan is not rewritten to say so. Nothing here edits, so the raw value is
+      // still what the next render, a save and an undo all see.
+      expect(plan.nodeParams[id]!.insertFx).not.toBe(INSERT_FX_NONE);
+    });
+
+    it("is what the device path does with it — nothing", () => {
+      // The half that says the refusal above is not merely a taste: the surface and the
+      // wire agree because both ask effectiveInsertFx.
+      const { model, plan } = held();
+      const cmds = planToCommands(model, plan);
+      expect(cmds.filter((c) => c.name === "INSERT_FX_EFFECT")).toHaveLength(0);
+      expect(cmds.filter((c) => c.name === "INSERT_FX_ON")).toHaveLength(0);
+    });
+  });
+
+  it("keeps both for an effect the node's own control does carry", () => {
+    // The control for the pair above. Without it a gate that refused everything would
+    // pass them both.
+    const model = getModel("URX44V");
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = {
+      insertFx: OUTPUT_INSERT_FX_OPTIONS.find((o) => o.label === "M.Band Comp")!.value,
+      insertFxOn: true,
+    };
+    renderInspector(panel, model, plan, nodeSel("bus.mix1"), act);
+    expect(rowLabels()).toContain(t().inspector.insertFxOn);
+    expect(sectionByTitle(t().inspector.insertFxEffect.title)).toBeDefined();
+  });
+
   // A bare slot number left behind after a selector change would be read as the NEW
   // family's slot, under a different law, and emitted as absolute state on the next
   // device flush.
@@ -654,8 +724,11 @@ describe("coverage sweep: every control of every selection", () => {
     expect(rowLabels().length).toBeGreaterThan(0);
   });
 
-  // Every insert-FX family has its own editor; the selector is what reaches them.
-  it("drives every insert-FX family's editor", () => {
+  // What the inspector offers per family, now that the tuning screen owns all but one of
+  // them: a launcher, or the multi-band compressor's own editor. Driving every control is
+  // still the point — an editor that throws on some family is what this catches — but the
+  // shape is asserted too, since `not.toThrow()` passes over a surface that has gone empty.
+  it("offers a launcher for the families the screen shows, and an editor for the one it does not", () => {
     const model = getModel("URX44V");
     const id = model.nodes.find((n) => insertFxControl(model, n.id))?.id;
     if (!id) return;
@@ -666,6 +739,16 @@ describe("coverage sweep: every control of every selection", () => {
       document.body.append(host);
       renderInspector(host, model, plan, nodeSel(id), actions());
       expect(() => driveEverything(host)).not.toThrow();
+      const launcher = host.querySelector("#btn-insfx-screen");
+      const editor = host.querySelector<HTMLElement>('.insp-section[data-key="insertFxEffect"]');
+      if (option.value === INSERT_FX_NONE) {
+        expect(launcher, option.label).toBeNull();
+        expect(editor, option.label).toBeNull();
+      } else {
+        // One surface or the other, never both: two editors over one value is how a stale
+        // slider gets written back.
+        expect(Boolean(launcher) !== Boolean(editor), option.label).toBe(true);
+      }
       host.remove();
     }
   });

@@ -10,6 +10,8 @@ import {
   insertFxAllRateLocked,
   insertFxFree,
   insertFxMenu,
+  insertFxRateLock,
+  insertFxSelectedEntry,
   canPatchFromMonitor,
   isMonitorBus,
   outputMono,
@@ -216,6 +218,92 @@ describe("insertFxAllRateLocked", () => {
     const menu = insertFxMenu(u44v, plan, "bus.mix1");
     expect(insertFxFree(menu)).toEqual([]);
     expect(insertFxAllRateLocked(menu)).toBe(false);
+  });
+});
+
+describe("insertFxSelectedEntry", () => {
+  const u44v = getModel("URX44V");
+  const valueOf = (label: string): number => INSERT_FX_OPTIONS.find((o) => o.label === label)!.value;
+  const holding = (rate: number, label: string) => {
+    const plan = planAt(rate);
+    plan.nodeParams.ch1 = { insertFx: valueOf(label) };
+    return { plan, menu: insertFxMenu(u44v, plan, "ch1") };
+  };
+
+  it("reports the HELD effect's own ceiling, which the menu-wide answer misses", () => {
+    // 88.2 kHz is above Pitch Fix's 48 and below every amp's and compander's 96, so the
+    // node is off while six effects in the same menu still run.
+    const { plan, menu } = holding(88200, "Pitch Fix");
+    expect(insertFxSelectedEntry(menu, plan.nodeParams.ch1!.insertFx)?.lock).toBe("rate");
+    expect(insertFxAllRateLocked(menu)).toBe(false);
+    expect(insertFxFree(menu).length).toBeGreaterThan(0);
+  });
+
+  it("is null where the held effect runs", () => {
+    const { plan, menu } = holding(88200, "Clean");
+    expect(insertFxSelectedEntry(menu, plan.nodeParams.ch1!.insertFx)?.lock).toBeNull();
+  });
+
+  it("is null for a node holding nothing — a rate takes nothing away from No Effect", () => {
+    const menu = insertFxMenu(u44v, planAt(192000), "ch1");
+    expect(insertFxSelectedEntry(menu, undefined)).toBeNull();
+    expect(insertFxSelectedEntry(menu, INSERT_FX_NONE)).toBeNull();
+    expect(insertFxAllRateLocked(menu)).toBe(true);
+  });
+
+  it("reports a slot taken by another node", () => {
+    const plan = planAt(48000);
+    plan.nodeParams.ch1 = { insertFx: valueOf("Clean") };
+    plan.nodeParams.ch2 = { insertFx: valueOf("Crunch") };
+    // Both claim the one device-wide amp slot, so each reads the other as holding it.
+    expect(insertFxSelectedEntry(insertFxMenu(u44v, plan, "ch2"), plan.nodeParams.ch2!.insertFx)?.lock).toBe("slot");
+  });
+
+  it("answers null for a value this model's own control does not offer", () => {
+    // A readback can carry an effect the app's table has no row for; it has no ceiling
+    // to read, and claiming one would name a number nothing measured.
+    const menu = insertFxMenu(u44v, planAt(48000), "ch1");
+    expect(insertFxSelectedEntry(menu, 4242)).toBeNull();
+  });
+});
+
+describe("insertFxRateLock", () => {
+  const u44v = getModel("URX44V");
+  const valueOf = (label: string): number => INSERT_FX_OPTIONS.find((o) => o.label === label)!.value;
+
+  it("reads the held effect's own ceiling, and hands back the entry that carried it", () => {
+    const plan = planAt(88200);
+    plan.nodeParams.ch1 = { insertFx: valueOf("Pitch Fix") };
+    const { locked, entry } = insertFxRateLock(insertFxMenu(u44v, plan, "ch1"), plan.nodeParams.ch1.insertFx);
+    expect(locked).toBe(true);
+    expect(entry?.option.label).toBe("Pitch Fix");
+  });
+
+  it("is unlocked where the held effect runs", () => {
+    const plan = planAt(88200);
+    plan.nodeParams.ch1 = { insertFx: valueOf("Clean") };
+    expect(insertFxRateLock(insertFxMenu(u44v, plan, "ch1"), plan.nodeParams.ch1.insertFx).locked).toBe(false);
+  });
+
+  it("falls back to the menu-wide answer for a held value the node's own control does not list", () => {
+    // A bus holding a CHANNEL effect — a shape a device read or a hand-edited plan can
+    // land, since the loader does not gate the value. There is no entry to read a ceiling
+    // from, and above 96 kHz nothing runs whatever the value names. Without the fallback
+    // this reads unlocked and the surfaces hand out a live editor for an effect that is
+    // off, which is what the CONSOLE chip and the Inspector already refuse to do.
+    const plan = planAt(192000);
+    plan.nodeParams["bus.mix1"] = { insertFx: valueOf("Pitch Fix") };
+    const menu = insertFxMenu(u44v, plan, "bus.mix1");
+    expect(insertFxSelectedEntry(menu, plan.nodeParams["bus.mix1"].insertFx)).toBeNull();
+    expect(insertFxAllRateLocked(menu)).toBe(true);
+    expect(insertFxRateLock(menu, plan.nodeParams["bus.mix1"].insertFx).locked).toBe(true);
+  });
+
+  it("leaves an unlisted value unlocked while the menu still offers something", () => {
+    // The other half of the fallback: the menu-wide answer is false at 48 kHz, so an
+    // unreadable ceiling does not turn into a claim that the effect is off.
+    const menu = insertFxMenu(u44v, planAt(48000), "bus.mix1");
+    expect(insertFxRateLock(menu, 4242).locked).toBe(false);
   });
 });
 
