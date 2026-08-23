@@ -7,7 +7,7 @@
 // a cleaned file printing its lower count. The hand runs measured the guard on one day;
 // this is the same measurement on every run.
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,10 +18,11 @@ import {
   escapesRoot,
   findingsIn,
   hookDecision,
-  hashComments,
   htmlComments,
   nextLedger,
   repoPath,
+  shellComments,
+  yamlComments,
   rustComments,
   verdict,
 } from "./check-comment-provenance.mjs";
@@ -179,6 +180,34 @@ describe("what counts as a comment", () => {
     expect(shapes('function h() { while (t) { break\n /["]/.test("z"); } } // measured on URX44V\n')).toEqual([
       "hedge-sentence",
     ]);
+  });
+
+  // The union's cost, named exactly: a forced-DIVIDE reading invents a comment by walking
+  // INTO a regex the goal reading read correctly. `+/x//(measured)` is a regex and then a
+  // division, and forcing division reads the boundary `//` as a line comment. So a comment
+  // starting inside one of the goal's regex spans is the union's own artefact.
+  // The union's one cost: a forced-DIVIDE reading invents a comment by walking into a regex
+  // the goal read correctly. It is not filtered, because the span it starts inside looks the
+  // same whether the goal's regex was right or wrong, and filtering took real catches with
+  // it. What makes it harmless here is that the shape cannot survive `format`, which is one
+  // of the four checks a merge waits for — asserted by running Prettier rather than assumed.
+  it("has its one false positive removed by the formatter a merge waits for", () => {
+    expect(shapes("const measured = 2;\nconst n = +/x//(measured);\n")).toEqual(["hedge-parenthetical"]);
+    const formatted = execFileSync(
+      process.execPath,
+      [join(HERE, "..", "node_modules", "prettier", "bin", "prettier.cjs"), "--parser", "typescript"],
+      { input: "const measured = 2;\nconst n = +/x//(measured);\n", encoding: "utf8", cwd: join(HERE, "..") },
+    );
+    expect(formatted).toContain("/x/ / measured");
+    expect(shapes(formatted)).toEqual([]);
+  });
+
+  // Two comments on one line are two comments. Keyed by line and text they folded into one,
+  // under which a file at a ceiling of 1 took a second copy of the same comment for free.
+  it("counts two identical comments on one line as two", () => {
+    expect(findingsIn("/* (measured) */ const x = 1; /* (measured) */\n", "x.ts")).toHaveLength(2);
+    const grouped = byFile(findingsIn("/* (measured) */ const x = 1; /* (measured) */\n", "src/a.ts"));
+    expect(verdict(grouped, { "src/a.ts": 1 }).over).toHaveLength(1);
   });
 
   // The union's cost is a FALSE positive where a real regex carries something that reads as
@@ -461,11 +490,38 @@ describe("what a partial scan may conclude", () => {
 // scalar; HTML has only the one form. Both were outside the extension list, so the workflows
 // and index.html were never read at all.
 describe("what counts as a comment in the # languages and in HTML", () => {
+  // YAML's two string forms are a quoted scalar and a BLOCK scalar, and a shared
+  // quote-and-hash scan reported the second one's body as comments.
+  it("reads a YAML block scalar's body as text", () => {
+    expect(findingsIn("message: |\n  # measured on URX44V\n", "x.yml")).toEqual([]);
+    expect(findingsIn("message: >-\n  # measured on URX44V\n", "x.yml")).toEqual([]);
+    // …and the block ends where the indentation does.
+    expect(findingsIn("message: |\n  body\nkey: 1  # measured on URX44V\n", "x.yml").map((f) => f.line)).toEqual([3]);
+  });
+
+  // A here-document's body is text, and a `$( … )` inside a double-quoted string is code
+  // again — the first was reported and the second was lost.
+  it("reads a shell here-document as text and a command substitution as code", () => {
+    expect(findingsIn("cat <<EOF\n# measured on URX44V\nEOF\n", "x.sh")).toEqual([]);
+    expect(findingsIn("cat <<-EOF\n\t# measured on URX44V\n\tEOF\n", "x.sh")).toEqual([]);
+    expect(findingsIn("cat <<EOF\nbody\nEOF\necho x  # measured on URX44V\n", "x.sh").map((f) => f.line)).toEqual([4]);
+    expect(findingsIn('x="$(echo a  # measured on URX44V\n)"\n', "x.sh").map((f) => f.rule)).toEqual([
+      "hedge-sentence",
+    ]);
+    expect(findingsIn('echo "a # measured on URX44V"\n', "x.sh")).toEqual([]);
+    expect(findingsIn("echo 'a # measured on URX44V'\n", "x.sh")).toEqual([]);
+  });
+
+  it("keeps each reader to its own language", () => {
+    expect(yamlComments("a: 1  # note\n").map((c) => c.text.trim())).toEqual(["note"]);
+    expect(shellComments("echo 1  # note\n").map((c) => c.text.trim())).toEqual(["note"]);
+  });
+
   it("reads a YAML comment, and not a hash inside a quoted scalar", () => {
     expect(
       findingsIn('key: value  # (measured)\nother: "a # not a comment (measured)"\n', "x.yml").map((f) => f.line),
     ).toEqual([1]);
-    expect(hashComments("a: 1\n# note\n").map((c) => c.text.trim())).toEqual(["note"]);
+    expect(yamlComments("a: 1\n# note\n").map((c) => c.text.trim())).toEqual(["note"]);
   });
 
   it("reads a shell comment the same way", () => {
@@ -494,9 +550,9 @@ describe("what the default scan reaches", () => {
     // The CRATE, not its `src`: `build.rs` sits beside it and was Rust the scan never opened.
     expect(roots).toContain('"src-tauri"');
     expect(roots).toContain('".github"');
+    expect(roots).toContain("rootFiles()");
     expect(roots).not.toContain('"src-tauri/src"');
-    expect(roots).toContain("ROOT_CONFIGS");
-    expect(src).toMatch(/ROOT_CONFIGS = \[[^\]]*"vitest\.config\.ts"/);
+    expect(roots).toContain("rootFiles()");
   });
 
   it("reaches build.rs, which sits beside src rather than inside it", () => {
@@ -518,6 +574,27 @@ describe("what the default scan reaches", () => {
   // A dialect the lexer knows but the extension list does not claim is a dialect nothing
   // reads. The reading and the SCANNING are separate gates, and only running the scan asks
   // the second one.
+  // A hand-written list of root files is a list that goes stale: `midi.html` sat beside
+  // `index.html` and the default scan never opened it, because three names had been spelled
+  // out and it was not one of them.
+  it("collects the repository root rather than naming files in it", () => {
+    const src = readFileSync(join(HERE, "check-comment-provenance.mjs"), "utf8");
+    expect(src).toMatch(/function rootFiles\(/);
+    expect(src).toMatch(/\.\.\.rootFiles\(\)/);
+    expect(src).not.toMatch(/const ROOT_CONFIGS/);
+    // …and every root file the extension list claims is in what it collects.
+    const out = execFileSync(process.execPath, ["-e", `import("${join(HERE, "check-comment-provenance.mjs")}")`], {
+      cwd: join(HERE, ".."),
+      encoding: "utf8",
+    });
+    expect(out).toBe("");
+    const roots = readdirSync(join(HERE, ".."), { withFileTypes: true })
+      .filter((e) => e.isFile() && /\.(ts|mjs|cjs|js|css|rs|ya?ml|sh|html|toml)$/i.test(e.name))
+      .map((e) => e.name);
+    expect(roots).toContain("index.html");
+    expect(roots).toContain("midi.html");
+  });
+
   it("actually opens the YAML the workflows are written in", () => {
     const out = execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), ".github"], {
       cwd: join(HERE, ".."),
