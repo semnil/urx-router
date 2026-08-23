@@ -11,7 +11,16 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { byFile, comments, findingsIn, hookDecision, repoPath, verdict } from "./check-comment-provenance.mjs";
+import {
+  byFile,
+  comments,
+  escapesRoot,
+  findingsIn,
+  hookDecision,
+  repoPath,
+  verdict,
+} from "./check-comment-provenance.mjs";
+import { win32 } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const shapes = (src, path = "x.ts") => findingsIn(src, path).map((f) => f.rule);
@@ -48,6 +57,16 @@ describe("what counts as a comment", () => {
 
   // A regex can contain `//`, and division cannot. Read as division, the rest of the line
   // would be swallowed as a comment and every finding after it lost.
+  // The character before the slash is a letter, so the operator test alone reads this as
+  // division — and the `"` inside the character class then opens a string that swallows the
+  // rest of the line, comment included. Valid JavaScript, and it returned [].
+  it("reads a regex that a KEYWORD introduces, not only one an operator does", () => {
+    expect(shapes('function f(x) { return /["]/.test(x); } // measured on URX44V\n')).toEqual(["hedge-sentence"]);
+    expect(shapes('const y = typeof /["]/; // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    // …and an identifier is still not a keyword: after a variable a slash divides.
+    expect(shapes("const q = a / b / c; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+  });
+
   it("does not read a regex literal as a comment", () => {
     expect(shapes("const re = /a\\/\\/(measured)/;\n")).toEqual([]);
     expect(shapes("const half = total / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
@@ -102,6 +121,15 @@ describe("which shapes are refused", () => {
     expect(shapes("// the measured EQ model, which a textbook biquad would not reproduce\n")).toEqual([]);
     expect(shapes("// the drag is measured against the cap's own top edge\n")).toEqual([]);
     expect(shapes("// a floor measured in device units\n")).toEqual([]);
+  });
+
+  // 実測値 NAMES the data, the way "the measured EQ model" does. Refusing it would refuse
+  // the thing rather than its sourcing — the same equivalence class, in the other language.
+  it("takes the Japanese word where it names the data rather than the sourcing", () => {
+    expect(shapes("// 実測値は device units で保持する\n")).toEqual([]);
+    expect(shapes("// 実測データをそのまま渡す\n")).toEqual([]);
+    // …while a date stays provenance in either language.
+    expect(shapes("// 実測日 2026-01-01\n")).toEqual(["hedge-sentence-ja", "capture-date"]);
   });
 
   it("takes a version or an address that merely looks like a date", () => {
@@ -163,6 +191,27 @@ describe("what the edit-time hook decides", () => {
   });
 });
 
+describe("what counts as outside the repository", () => {
+  // `relative()` between two DRIVES cannot express the step, so it returns the target
+  // ABSOLUTE — and `startsWith("..")` reads that as a path INSIDE the tree with a ceiling of
+  // zero, which refuses an edit to a file the ledger has no business knowing about.
+  it("knows a different Windows drive is outside, where a leading .. cannot say so", () => {
+    const rel = win32.relative("G:\\repo", "C:\\tmp\\outside.ts");
+    expect(rel.startsWith("..")).toBe(false); // the reading the first version trusted
+    expect(escapesRoot(rel, win32)).toBe(true);
+  });
+
+  it("knows a UNC root is outside too", () => {
+    expect(escapesRoot(win32.relative("G:\\repo", "\\\\srv\\share\\x.ts"), win32)).toBe(true);
+  });
+
+  it("still calls a path under the root inside it", () => {
+    expect(escapesRoot(win32.relative("G:\\repo", "G:\\repo\\src\\a.ts"), win32)).toBe(false);
+    expect(escapesRoot("src/a.ts")).toBe(false);
+    expect(escapesRoot("../elsewhere.ts")).toBe(true);
+  });
+});
+
 describe("what a partial scan may conclude", () => {
   const at = (path, n) => byFile(findingsIn(`// x (measured)\n`.repeat(n), path));
 
@@ -184,6 +233,21 @@ describe("what a partial scan may conclude", () => {
   it("reports a vanished row only when the scan was the whole tree", () => {
     expect(verdict({}, { "src/gone.ts": 4 }, null).under).toEqual([{ path: "src/gone.ts", ceiling: 4, count: 0 }]);
     expect(verdict({}, { "src/gone.ts": 4 }, new Set(["src/other.ts"])).under).toEqual([]);
+  });
+});
+
+// JSX text is neither code nor a comment: read as code, a URL in it opens a line comment at
+// the `//`. Nothing here lexes that, so the extension is not claimed — and this asserts the
+// claim rather than the absence, since a `.tsx` silently scanned is the failure.
+describe("which file kinds are claimed", () => {
+  const ledger = JSON.parse(readFileSync(join(HERE, "comment-provenance-baseline.json"), "utf8"));
+
+  it("claims no .tsx while no JSX state exists", () => {
+    const src = readFileSync(join(HERE, "check-comment-provenance.mjs"), "utf8");
+    const exts = /const EXTS = new Set\(\[([^\]]*)\]\)/.exec(src)[1];
+    expect(exts).not.toContain(".tsx");
+    expect(exts).toContain(".ts");
+    expect(Object.keys(ledger.files).some((p) => p.endsWith(".tsx"))).toBe(false);
   });
 });
 

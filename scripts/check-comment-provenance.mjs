@@ -35,12 +35,17 @@
 // Exits 1 on findings above the ledger; --hook exits 2 so the message is fed back to Claude.
 
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { extname, join, relative, resolve, sep } from "node:path";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SKIP_ANYWHERE = new Set(["node_modules", ".git", "dist", "dist-trace", "coverage"]);
 const SKIP_PATHS = new Set(["reference", "src-tauri/target", ".claude/skills/urx-routing-planner-workspace"]);
-const EXTS = new Set([".ts", ".tsx", ".mjs", ".cjs", ".js", ".css"]);
+// `.tsx` is deliberately absent. JSX text is neither code nor a comment, and read as code a
+// URL in it opens a line comment at the `//` — `<div>https://x.test/(measured)</div>` was
+// reported as a finding. This tree carries no JSX at all, so lexing it would be a state
+// machine written against no input; the day one arrives, the extension and the JSX state go
+// in together rather than the extension alone.
+const EXTS = new Set([".ts", ".mjs", ".cjs", ".js", ".css"]);
 // This checker and its own pins quote the shapes they refuse, so they are not scanned.
 const SELF = /(^|\/)check-comment-provenance(\.test)?\.mjs$/;
 
@@ -75,7 +80,10 @@ const RULES = [
     // The same sentence in Japanese. Its boundary is the particle or punctuation that
     // follows, not `\b` — and a following Latin word (実測 on a URX44V) counts too, which
     // is the shape a mixed comment takes.
-    re: /実測(?:[でにをはがのしすさ済値日]|[:：]|\s*[A-Za-z(（])/g,
+    // 値 is deliberately absent: 実測値 NAMES the data, the way "the measured EQ model"
+    // does in English, and refusing it would be refusing the thing rather than its sourcing.
+    // 日 stays — a measurement's DATE is provenance whatever language it is written in.
+    re: /実測(?:[でにをはがのしすさ済日]|[:：]|\s*[A-Za-z(（])/g,
     say: "a sentence recording how the fact was measured",
   },
   {
@@ -85,6 +93,27 @@ const RULES = [
     say: "a capture date",
   },
 ];
+
+// A `/` after one of these starts a PATTERN, not a division. The character before it is a
+// letter, so the operator test alone reads `return /["]/` as division — and the `"` inside
+// the character class then opens a string that swallows the rest of the line, comment
+// included. Keywords rather than every identifier: `x /2/ y` after a variable is division.
+const REGEX_KEYWORDS = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+  "new",
+  "delete",
+  "void",
+  "throw",
+]);
 
 /**
  * Comment spans of one source file, as {line, text}.
@@ -100,6 +129,7 @@ export function comments(src, css = false) {
   let line = 1;
   let i = 0;
   let prev = ""; // last significant character, for the regex/division decision
+  let word = ""; // …and the identifier it ended, which is the other half of that decision
   // Template literals nest: `${}` holds CODE, which can hold another template, and a
   // comment inside one is a comment. Skipping the literal whole — which is what a
   // string-shaped reading does — loses it. The stack holds one frame per open `${`,
@@ -194,7 +224,7 @@ export function comments(src, css = false) {
       i++;
       continue;
     }
-    if (!css && c === "/" && /[({[,;:=!&|?+\-*%<>~^]|^$/.test(prev)) {
+    if (!css && c === "/" && (/[({[,;:=!&|?+\-*%<>~^]|^$/.test(prev) || REGEX_KEYWORDS.has(word))) {
       // A regex literal: skip to its unescaped closing slash, staying on one line.
       let j = i + 1;
       let cls = false;
@@ -211,6 +241,8 @@ export function comments(src, css = false) {
         continue;
       }
     }
+    if (/[A-Za-z_$0-9]/.test(c)) word += c;
+    else if (!/\s/.test(c)) word = "";
     if (!/\s/.test(c)) prev = c;
     i++;
   }
@@ -254,6 +286,19 @@ const LEDGER = new URL("./comment-provenance-baseline.json", import.meta.url);
 // git — the hook runs with no cwd guarantee of its own.
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 export const repoPath = (path) => relative(ROOT, resolve(path)).split(sep).join("/");
+
+/**
+ * True when a `relative()` result leaves the root it was taken from.
+ *
+ * `startsWith("..")` is not that test on Windows: `relative()` between two DRIVES cannot
+ * express the step, so it returns the target ABSOLUTE — `C:\tmp\x.ts` against a repo on
+ * `G:` — and a check for a leading `..` reads that as a path inside the tree with a ceiling
+ * of zero. The same holds for a UNC root. `p` is the path module to reason with, so the
+ * Windows semantics are testable from any platform.
+ */
+export function escapesRoot(rel, p = { isAbsolute, sep }) {
+  return rel === ".." || rel.startsWith(".." + p.sep) || rel.startsWith("../") || p.isAbsolute(rel);
+}
 
 /** The per-file ceilings, keyed by repo-relative path. */
 export function readLedger() {
@@ -312,7 +357,8 @@ export function verdict(grouped, ledger, scanned = null) {
  */
 export function hookDecision(path, src, ledger) {
   const key = repoPath(path);
-  if (key.startsWith("..")) return { exit: 0, key, ceiling: 0, findings: [], reason: "outside this repository" };
+  if (escapesRoot(relative(ROOT, resolve(path))))
+    return { exit: 0, key, ceiling: 0, findings: [], reason: "outside this repository" };
   const findings = findingsIn(src, path);
   const ceiling = ledger[key] ?? 0;
   return {
