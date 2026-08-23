@@ -39,7 +39,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SKIP_ANYWHERE = new Set(["node_modules", ".git", "dist", "dist-trace", "coverage"]);
 const SKIP_PATHS = new Set(["reference", "src-tauri/target", ".claude/skills/urx-routing-planner-workspace"]);
@@ -48,9 +48,21 @@ const SKIP_PATHS = new Set(["reference", "src-tauri/target", ".claude/skills/urx
 // reported as a finding. This tree carries no JSX at all, so lexing it would be a state
 // machine written against no input; the day one arrives, the extension and the JSX state go
 // in together rather than the extension alone.
-const EXTS = new Set([".ts", ".mjs", ".cjs", ".js", ".css"]);
+const EXTS = new Set([".ts", ".mjs", ".cjs", ".js", ".css", ".rs"]);
+/** Which comment syntax a file is read with. Rust is not JavaScript with different
+ *  keywords: its block comments NEST, its raw strings carry any number of hashes, and a
+ *  leading `'` is a lifetime far more often than a character literal — read as a quote it
+ *  runs to the next one and takes every comment in between with it. */
+const dialect = (path) => {
+  const ext = extname(path).toLowerCase();
+  if (ext === ".css") return "css";
+  if (ext === ".rs") return "rust";
+  return "js";
+};
 // This checker and its own pins quote the shapes they refuse, so they are not scanned.
 const SELF = /(^|\/)check-comment-provenance(\.test)?\.mjs$/;
+/** The TypeScript configs that sit at the repository root rather than under a directory. */
+const ROOT_CONFIGS = ["vite.config.ts", "vitest.config.ts", "playwright.config.ts"];
 
 /** The enforced shapes, each named for what it is so the finding can say it. */
 const RULES = [
@@ -153,14 +165,17 @@ const isIdPart = (c) => /[A-Za-z0-9_$]/.test(c);
  * token, and a stack per bracket kind recording what that bracket was — because the
  * preceding CHARACTER cannot decide it.
  */
-export function comments(src, css = false) {
+export function comments(src, mode = "js") {
+  if (mode === "rust") return rustComments(src);
+  const css = mode === "css" || mode === true;
   const out = [];
   let line = 1;
   let i = 0;
   // {kind: "value"|"name"|"punct", text, regexOk?, paren?, brace?, postfix?}
   let last = null;
   const parens = []; // "control" | "call"
-  const braces = []; // "block" | "object"
+  const braces = []; // "block" | "object" | "value-body" (a function or class EXPRESSION)
+  let pendingValueBody = null; // {depth, value} set at a `function`/`class` keyword
   const tpl = []; // the brace-stack depth each open `${` returns to
 
   const push = (startLine, text) => {
@@ -176,7 +191,7 @@ export function comments(src, css = false) {
     if (last.kind === "name") return last.regexOk;
     const t = last.text;
     if (t === ")") return last.paren === "control";
-    if (t === "}") return last.brace === "block";
+    if (t === "}") return last.brace === "block"; // "object" and "value-body" end a value
     if (t === "]") return false;
     if (t === "++" || t === "--") return !last.postfix;
     return true;
@@ -186,7 +201,17 @@ export function comments(src, css = false) {
     if (!last) return false;
     if (last.kind === "value") return true;
     if (last.kind === "name") return !last.regexOk;
+    if (last.text === "}") return last.brace !== "block";
     return last.text === ")" || last.text === "]";
+  };
+  /** True where a STATEMENT could begin, which is what separates a function declaration
+   *  from a function expression. */
+  const atStatementStart = () => {
+    if (!last) return true;
+    if (last.kind === "name") return last.text === "else" || last.text === "do";
+    if (last.kind === "value") return false;
+    const t = last.text;
+    return t === ";" || t === "{" || (t === "}" && last.brace === "block");
   };
   const braceKind = () => {
     if (!last) return "block";
@@ -263,8 +288,12 @@ export function comments(src, css = false) {
       continue;
     }
     if (!css && c === "`") {
-      if (template()) tpl.push(braces.length);
-      value();
+      const opened = template();
+      if (opened) tpl.push(braces.length);
+      // Inside `${` the grammar is at an EXPRESSION start, so a regex may open there; only
+      // a literal that CLOSED leaves a value behind.
+      if (opened) punct("${");
+      else value();
       continue;
     }
     if (isIdStart(c)) {
@@ -272,7 +301,16 @@ export function comments(src, css = false) {
       while (j < src.length && isIdPart(src[j])) j++;
       const text = src.slice(i, j);
       const property = afterDot();
-      last = { kind: "name", text, regexOk: !property && REGEX_AFTER.has(text) };
+      // `property` outlives the regex question: `obj.catch(x)` is a call, and reading its
+      // `catch` as the control keyword makes the `)` start an expression.
+      if ((text === "function" || text === "class") && !property) {
+        // A function or class EXPRESSION ends a value at its closing brace, where a
+        // DECLARATION ends a statement. Which one this is, is decided here — at the
+        // keyword — and the flag is spent by the body brace at the same paren depth, so a
+        // default parameter's own object literal cannot take it.
+        pendingValueBody = { depth: parens.length, value: !atStatementStart() };
+      }
+      last = { kind: "name", text, property, regexOk: !property && REGEX_AFTER.has(text) };
       i = j;
       continue;
     }
@@ -306,7 +344,7 @@ export function comments(src, css = false) {
       continue;
     }
     if (c === "(") {
-      parens.push(last?.kind === "name" && CONTROL_HEADS.has(last.text) ? "control" : "call");
+      parens.push(last?.kind === "name" && !last.property && CONTROL_HEADS.has(last.text) ? "control" : "call");
       punct("(");
       i++;
       continue;
@@ -317,7 +355,12 @@ export function comments(src, css = false) {
       continue;
     }
     if (c === "{") {
-      braces.push(braceKind());
+      let kind = braceKind();
+      if (pendingValueBody && pendingValueBody.depth === parens.length) {
+        if (pendingValueBody.value) kind = "value-body";
+        pendingValueBody = null;
+      }
+      braces.push(kind);
       punct("{");
       i++;
       continue;
@@ -326,8 +369,10 @@ export function comments(src, css = false) {
       if (tpl.length && tpl[tpl.length - 1] === braces.length) {
         tpl.pop();
         i--; // template() steps past one character, and this `}` is it
-        if (template()) tpl.push(braces.length);
-        value();
+        const opened = template();
+        if (opened) tpl.push(braces.length);
+        if (opened) punct("${");
+        else value();
         continue;
       }
       punct("}", { brace: braces.pop() ?? "block" });
@@ -350,11 +395,95 @@ export function comments(src, css = false) {
   return out;
 }
 
+/**
+ * Comment spans of a Rust file.
+ *
+ * Three things separate it from the JavaScript reader, each of which loses comments when
+ * borrowed from there: block comments NEST, so the first `*&#47;` does not necessarily close
+ * one; a raw string is `r`, any number of `#`, a quote, and closes only on a quote followed
+ * by the same number of hashes; and `'` is a LIFETIME unless it is a complete character
+ * literal, so a quote scanner runs to the next apostrophe and swallows whatever lies
+ * between. There is no regex literal, so none of the goal state is needed.
+ */
+export function rustComments(src) {
+  const out = [];
+  let line = 1;
+  let i = 0;
+  const push = (startLine, text) => {
+    text.split("\n").forEach((t, n) => out.push({ line: startLine + n, text: t }));
+  };
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\n") {
+      line++;
+      i++;
+      continue;
+    }
+    if (src.startsWith("//", i)) {
+      const nl = src.indexOf("\n", i);
+      const stop = nl === -1 ? src.length : nl;
+      push(line, src.slice(i + 2, stop));
+      i = stop;
+      continue;
+    }
+    if (src.startsWith("/*", i)) {
+      let j = i + 2;
+      let depth = 1;
+      while (j < src.length && depth > 0) {
+        if (src.startsWith("/*", j)) {
+          depth++;
+          j += 2;
+        } else if (src.startsWith("*/", j)) {
+          depth--;
+          j += 2;
+        } else {
+          j++;
+        }
+      }
+      const body = src.slice(i + 2, Math.max(i + 2, j - 2));
+      push(line, body);
+      line += (src.slice(i, j).match(/\n/g) ?? []).length;
+      i = j;
+      continue;
+    }
+    // A raw string: r, br, then hashes, then the quote. It closes on a quote followed by
+    // the same number of hashes, and nothing inside it escapes.
+    const raw = /^b?r(#*)"/.exec(src.slice(i, i + 16));
+    if (raw) {
+      const close = '"' + raw[1];
+      const from = i + raw[0].length;
+      const end = src.indexOf(close, from);
+      const stop = end === -1 ? src.length : end + close.length;
+      line += (src.slice(i, stop).match(/\n/g) ?? []).length;
+      i = stop;
+      continue;
+    }
+    if (c === '"') {
+      i++;
+      while (i < src.length && src[i] !== '"') {
+        if (src[i] === "\\") i++;
+        else if (src[i] === "\n") line++;
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (c === "'") {
+      // A character literal is `'x'`, `'\n'` or `'\u{1F600}'`; anything else beginning with
+      // an apostrophe is a lifetime, and consuming it as a quote would swallow the rest.
+      const lit = /^'(\\u\{[0-9a-fA-F]{1,6}\}|\\.|[^\\'])'/.exec(src.slice(i, i + 12));
+      i += lit ? lit[0].length : 1;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
 /** Findings in one file's comments. */
 export function findingsIn(src, path) {
-  const css = extname(path).toLowerCase() === ".css";
   const found = [];
-  for (const { line, text } of comments(src, css)) {
+  for (const { line, text } of comments(src, dialect(path))) {
     for (const rule of RULES) {
       rule.re.lastIndex = 0;
       for (const m of text.matchAll(rule.re))
@@ -512,7 +641,11 @@ const report = (found) => {
   );
 };
 
-const hook = process.argv.includes("--hook");
+// Everything below is the command line. Guarded, because importing this module ran ALL of
+// it: the pins import `findingsIn`, and each import scanned the tree with vitest's own argv
+// and could reach `process.exit`. A test that imports a checker must not run it.
+const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+const hook = invokedDirectly && process.argv.includes("--hook");
 if (hook) {
   let raw = "";
   for await (const chunk of process.stdin) raw += chunk;
@@ -531,82 +664,89 @@ if (hook) {
   process.exit(2);
 }
 
-const roots = process.argv.slice(2).filter((a) => !a.startsWith("--"));
-const scanRoots = roots.length ? roots : ["src", "e2e", "scripts"];
-const targets = scanRoots.flatMap((r) => (existsSync(r) ? collect(r) : []));
-const found = targets.flatMap((p) => findingsIn(readFileSync(p, "utf8"), p));
-const grouped = byFile(found);
+if (invokedDirectly) {
+  const roots = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+  // Every source this repository carries, not the three directories it started with: the
+  // configs at the root are TypeScript the check simply never opened, and `src-tauri` is a
+  // whole language of it. Named explicitly rather than scanning `.` so node_modules, dist and
+  // the private reference tree are not walked at all.
+  const DEFAULT_ROOTS = ["src", "e2e", "scripts", "src-tauri/src", ...ROOT_CONFIGS];
+  const scanRoots = roots.length ? roots : DEFAULT_ROOTS;
+  const targets = scanRoots.flatMap((r) => (existsSync(r) ? collect(r) : []));
+  const found = targets.flatMap((p) => findingsIn(readFileSync(p, "utf8"), p));
+  const grouped = byFile(found);
 
-// What this run actually read. A partial scan compares only these, so a ledger row it never
-// opened is neither reported as emptied nor dropped from the file.
-const scanned = new Set(targets.map((p) => repoPath(p)));
-const partial = roots.length > 0;
+  // What this run actually read. A partial scan compares only these, so a ledger row it never
+  // opened is neither reported as emptied nor dropped from the file.
+  const scanned = new Set(targets.map((p) => repoPath(p)));
+  const partial = roots.length > 0;
 
-const reseed = process.argv.includes("--reseed");
-if (process.argv.includes("--update") || reseed) {
-  // A partial write MERGES: rewriting the whole ledger from a subset would delete every row
-  // the run never looked at, silently taking the ceiling of 102 files to zero.
-  const { files: lowered, raised } = nextLedger(grouped, readLedger(), partial ? scanned : null);
-  if (raised.length && !reseed) {
-    for (const r of raised) {
-      console.error(`${r.path}: ${r.count} finding(s), ledger allows ${r.ceiling}`);
+  const reseed = process.argv.includes("--reseed");
+  if (process.argv.includes("--update") || reseed) {
+    // A partial write MERGES: rewriting the whole ledger from a subset would delete every row
+    // the run never looked at, silently taking the ceiling of 102 files to zero.
+    const { files: lowered, raised } = nextLedger(grouped, readLedger(), partial ? scanned : null);
+    if (raised.length && !reseed) {
+      for (const r of raised) {
+        console.error(`${r.path}: ${r.count} finding(s), ledger allows ${r.ceiling}`);
+      }
+      console.error(
+        `\n--update lowers a ceiling; it does not raise one. ${raised.length} file(s) above theirs.` +
+          ` Move the run, the reading and the date to the pull request or to docs/.` +
+          ` A RULE change that legitimately grows the corpus is --reseed, which is a separate` +
+          ` decision and shows in the diff as one.`,
+      );
+      process.exit(1);
+    }
+    const files = reseed
+      ? Object.fromEntries(
+          Object.entries({
+            ...(partial ? Object.fromEntries(Object.entries(readLedger()).filter(([p]) => !scanned.has(p))) : {}),
+            ...Object.fromEntries(Object.entries(grouped).map(([path, f]) => [path, f.length])),
+          })
+            .filter(([, n]) => n > 0)
+            .sort(([a], [b]) => a.localeCompare(b)),
+        )
+      : lowered;
+    writeFileSync(
+      LEDGER,
+      JSON.stringify(
+        {
+          note: "Per-file ceiling for comments that record a fact's provenance. See scripts/check-comment-provenance.mjs. A file may carry what it carried and no more; a cleaned file's lower count belongs here.",
+          files,
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const total = Object.values(files).reduce((a, b) => a + b, 0);
+    console.log(
+      `ledger ${reseed ? "reseeded" : partial ? "merged" : "written"}: ${Object.keys(files).length} file(s),` +
+        ` ${total} finding(s)` +
+        (partial ? ` (${scanned.size} scanned, the rest carried over)` : ""),
+    );
+    process.exit(0);
+  }
+
+  const { over, under } = verdict(grouped, readLedger(), partial ? scanned : null);
+  if (over.length) {
+    for (const f of over) {
+      console.error(`${f.path}: ${f.count} finding(s), ledger allows ${f.ceiling}`);
+      for (const x of f.findings) console.error(`  ${f.path}:${x.line}  ${x.say}: ${JSON.stringify(x.hit)}`);
     }
     console.error(
-      `\n--update lowers a ceiling; it does not raise one. ${raised.length} file(s) above theirs.` +
-        ` Move the run, the reading and the date to the pull request or to docs/.` +
-        ` A RULE change that legitimately grows the corpus is --reseed, which is a separate` +
-        ` decision and shows in the diff as one.`,
+      `\n${over.length} file(s) above the ledger. Keep the claim; move the run, the reading and` +
+        ` the date to the pull request or to docs/, which is where they stay findable.`,
     );
     process.exit(1);
   }
-  const files = reseed
-    ? Object.fromEntries(
-        Object.entries({
-          ...(partial ? Object.fromEntries(Object.entries(readLedger()).filter(([p]) => !scanned.has(p))) : {}),
-          ...Object.fromEntries(Object.entries(grouped).map(([path, f]) => [path, f.length])),
-        })
-          .filter(([, n]) => n > 0)
-          .sort(([a], [b]) => a.localeCompare(b)),
-      )
-    : lowered;
-  writeFileSync(
-    LEDGER,
-    JSON.stringify(
-      {
-        note: "Per-file ceiling for comments that record a fact's provenance. See scripts/check-comment-provenance.mjs. A file may carry what it carried and no more; a cleaned file's lower count belongs here.",
-        files,
-      },
-      null,
-      2,
-    ) + "\n",
-  );
-  const total = Object.values(files).reduce((a, b) => a + b, 0);
   console.log(
-    `ledger ${reseed ? "reseeded" : partial ? "merged" : "written"}: ${Object.keys(files).length} file(s),` +
-      ` ${total} finding(s)` +
-      (partial ? ` (${scanned.size} scanned, the rest carried over)` : ""),
+    `OK: ${targets.length} source file(s)${partial ? " (partial scan)" : ""}, ${found.length} ledgered finding(s),` +
+      ` none above its ceiling`,
   );
-  process.exit(0);
-}
-
-const { over, under } = verdict(grouped, readLedger(), partial ? scanned : null);
-if (over.length) {
-  for (const f of over) {
-    console.error(`${f.path}: ${f.count} finding(s), ledger allows ${f.ceiling}`);
-    for (const x of f.findings) console.error(`  ${f.path}:${x.line}  ${x.say}: ${JSON.stringify(x.hit)}`);
+  if (under.length) {
+    console.log(`\n${under.length} file(s) now carry fewer than the ledger allows. Paste to lower it:`);
+    for (const f of under)
+      console.log(`    ${JSON.stringify(f.path)}: ${f.count},${f.count ? "" : "   // (delete the row)"}`);
   }
-  console.error(
-    `\n${over.length} file(s) above the ledger. Keep the claim; move the run, the reading and` +
-      ` the date to the pull request or to docs/, which is where they stay findable.`,
-  );
-  process.exit(1);
-}
-console.log(
-  `OK: ${targets.length} source file(s)${partial ? " (partial scan)" : ""}, ${found.length} ledgered finding(s),` +
-    ` none above its ceiling`,
-);
-if (under.length) {
-  console.log(`\n${under.length} file(s) now carry fewer than the ledger allows. Paste to lower it:`);
-  for (const f of under)
-    console.log(`    ${JSON.stringify(f.path)}: ${f.count},${f.count ? "" : "   // (delete the row)"}`);
 }

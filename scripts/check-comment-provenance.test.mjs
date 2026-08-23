@@ -19,6 +19,7 @@ import {
   hookDecision,
   nextLedger,
   repoPath,
+  rustComments,
   verdict,
 } from "./check-comment-provenance.mjs";
 import { win32 } from "node:path";
@@ -107,6 +108,20 @@ describe("what counts as a comment", () => {
     expect(shapes("const j = /re/g.test(x) / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
   });
 
+  // Four more positions the goal has to hold, each valid JavaScript that returned [].
+  it("holds the goal through interpolations, properties and value-ending bodies", () => {
+    // `${` opens an EXPRESSION, so a regex may start there
+    expect(shapes('const s = `${ /["]/.test(x) /* measured on URX44V */ }`;\n')).toEqual(["hedge-sentence"]);
+    // a control keyword used as a PROPERTY heads a call, not a control structure
+    expect(shapes("const n = obj.catch(x) / 2; // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    // a function or class EXPRESSION ends a value at its brace; a DECLARATION ends a statement
+    expect(shapes("const n = function() {} / 2; // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    expect(shapes("const n = class {} / 2; // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    expect(shapes("function f() {} /x/.test(s); // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    // …and a default parameter's own object literal does not take the body's flag
+    expect(shapes("function f(a = {}) {} /x/.test(s); // (measured)\n")).toEqual(["hedge-parenthetical"]);
+  });
+
   it("does not read a regex literal as a comment", () => {
     expect(shapes("const re = /a\\/\\/(measured)/;\n")).toEqual([]);
     expect(shapes("const half = total / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
@@ -124,6 +139,37 @@ describe("what counts as a comment", () => {
       "hedge-parenthetical",
     ]);
     expect(findingsIn("a { color: red; } // (measured)\n", "x.css").map((f) => f.rule)).toEqual([]);
+  });
+});
+
+// Rust is not JavaScript with different keywords, and each of these loses comments when
+// read by the JavaScript lexer. The crate carries a third of the ledger's backlog, and none
+// of it was being read at all: the extension was not claimed.
+describe("what counts as a comment in Rust", () => {
+  const rs = (src) => findingsIn(src, "x.rs").map((f) => f.rule);
+
+  it("closes a block comment on the NESTING depth, not the first close", () => {
+    expect(rs("/* outer /* nested */ still inside (measured) */\n")).toEqual(["hedge-parenthetical"]);
+    expect(rustComments("/* a /* b */ c */ after\n").map((c) => c.text.trim())).toEqual(["a /* b */ c"]);
+  });
+
+  it("reads a raw string as a string, whatever its hash count", () => {
+    expect(rs('let s = r#"a (measured) string"#; // real (measured)\n')).toEqual(["hedge-parenthetical"]);
+    expect(rs('let s = br##"x (measured)"##; // (measured)\n')).toEqual(["hedge-parenthetical"]);
+  });
+
+  // A lifetime has no closing apostrophe: consumed as a quote it runs to the next one and
+  // takes every comment in between with it.
+  it("tells a lifetime from a character literal", () => {
+    // An ODD number of them, deliberately: with an even count a naive quote scanner pairs
+    // them off and the comment survives by accident, which is what two earlier versions of
+    // this case asserted. The unpaired one opens a string that runs to the end of the file.
+    expect(rs("fn f<'a>(x: &'a str, y: &'a u8) {} // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    expect(rs("let c = 'x'; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+  });
+
+  it("still reads an ordinary string as a string", () => {
+    expect(rs('let s = "a (measured) value";\n')).toEqual([]);
   });
 });
 
@@ -199,6 +245,19 @@ describe("the ledger's verdict", () => {
 
   it("reports a file that left the tree entirely, so its row does not outlive it", () => {
     expect(verdict({}, { "src/gone.ts": 4 }).under).toEqual([{ path: "src/gone.ts", ceiling: 4, count: 0 }]);
+  });
+});
+
+// Importing this module used to run its whole command line, with vitest's argv: every pin
+// below scanned the tree on import, and could reach process.exit.
+describe("importing the module", () => {
+  it("does not run the command line", () => {
+    const src = readFileSync(join(HERE, "check-comment-provenance.mjs"), "utf8");
+    expect(src).toMatch(
+      /const invokedDirectly = [\s\S]*?import\.meta\.url === pathToFileURL\(process\.argv\[1\]\)\.href/,
+    );
+    expect(src).toMatch(/if \(invokedDirectly\) \{/);
+    expect(src).toMatch(/const hook = invokedDirectly &&/);
   });
 });
 
@@ -279,6 +338,27 @@ describe("what a partial scan may conclude", () => {
 // JSX text is neither code nor a comment: read as code, a URL in it opens a line comment at
 // the `//`. Nothing here lexes that, so the extension is not claimed — and this asserts the
 // claim rather than the absence, since a `.tsx` silently scanned is the failure.
+// The scan's default roots ARE the contract: a source the check never opens is a source it
+// does not check, however well it lexes. The root configs and the Rust crate were both
+// outside them, and both carry findings.
+describe("what the default scan reaches", () => {
+  const src = readFileSync(join(HERE, "check-comment-provenance.mjs"), "utf8");
+  const roots = /const DEFAULT_ROOTS = \[([^\]]*)\]/.exec(src)[1];
+  const ledger = JSON.parse(readFileSync(join(HERE, "comment-provenance-baseline.json"), "utf8"));
+
+  it("names the Rust crate and the configs at the repository root", () => {
+    expect(roots).toContain('"src-tauri/src"');
+    expect(roots).toContain("ROOT_CONFIGS");
+    expect(src).toMatch(/ROOT_CONFIGS = \[[^\]]*"vitest\.config\.ts"/);
+  });
+
+  // …and the ledger proves the scan actually opened them, which the root list alone cannot.
+  it("has ledgered what those roots carry", () => {
+    expect(Object.keys(ledger.files).some((p) => p.endsWith(".rs"))).toBe(true);
+    expect(ledger.files["vitest.config.ts"]).toBeGreaterThan(0);
+  });
+});
+
 describe("which file kinds are claimed", () => {
   const ledger = JSON.parse(readFileSync(join(HERE, "comment-provenance-baseline.json"), "utf8"));
 
