@@ -96,6 +96,15 @@ const PROSE_TOKENS = new Map([
   ["the measured EQ model", "a comment fragment the provenance rule must not refuse"],
   ["measured against the cap's own top edge", "a comment fragment the provenance rule must not refuse"],
   ["Object.entries(measured)", "an expression, named as the thing a line grep misreads as a comment"],
+  // Five more from that row, once it named the languages the checker reads and the two
+  // spellings of one path its entry guard compares. None is an entity in any tree: two are
+  // grammar being discussed (`run:` is YAML's key, `)` is the character a shell closes on),
+  // one is a command run as a positive control, and two are node's own globals.
+  ["run:", "a YAML key, named as the one block scalar that holds shell rather than text"],
+  [")", "the character, named as what a shell closes the innermost thing on"],
+  ["bash -n", "the syntax check, named as the positive control a shell fixture is confirmed with"],
+  ["import.meta.url", "a node global, named as one side of the entry guard's comparison"],
+  ["process.argv[1]", "a node global, named as the other side of it"],
   ["Input.dispatchMouseEvent", "a DevTools-protocol method"],
   ["Page.captureScreenshot", "a DevTools-protocol method"],
   // Four more from the same row: the DOM method and the evaluate parameter that name

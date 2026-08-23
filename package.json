@@ -28,7 +28,7 @@
     "check:gates": "node scripts/check-merge-gates.mjs",
     "check:skips": "node scripts/check-race-skips.mjs",
     "check:platform": "node scripts/check-macho-platform.mjs",
-    "format": "prettier --write \"src/**/*.ts\" \"src/**/*.css\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.ts\" \"index.html\"",
+    "format": "node scripts/format.mjs",
     "preview": "vite preview --port 4173 --strictPort",
     "e2e:serve": "node scripts/e2e-serve.mjs",
     "e2e:serve:trace": "node scripts/e2e-serve.mjs --trace",

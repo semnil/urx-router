@@ -37,9 +37,10 @@
 //
 // Exits 1 on findings above the ledger; --hook exits 2 so the message is fed back to Claude.
 
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const SKIP_ANYWHERE = new Set(["node_modules", ".git", "dist", "dist-trace", "coverage", "target"]);
 const SKIP_PATHS = new Set(["reference", "src-tauri/target", ".claude/skills/urx-routing-planner-workspace"]);
@@ -48,7 +49,20 @@ const SKIP_PATHS = new Set(["reference", "src-tauri/target", ".claude/skills/urx
 // reported as a finding. This tree carries no JSX at all, so lexing it would be a state
 // machine written against no input; the day one arrives, the extension and the JSX state go
 // in together rather than the extension alone.
-const EXTS = new Set([".ts", ".mjs", ".cjs", ".js", ".css", ".rs", ".yml", ".yaml", ".sh", ".html", ".toml"]);
+const EXTS = new Set([
+  ".ts",
+  ".mjs",
+  ".cjs",
+  ".js",
+  ".css",
+  ".rs",
+  ".yml",
+  ".yaml",
+  ".sh",
+  ".html",
+  ".toml",
+  ".py",
+]);
 /** Which comment syntax a file is read with. Rust is not JavaScript with different
  *  keywords: its block comments NEST, its raw strings carry any number of hashes, and a
  *  leading `'` is a lifetime far more often than a character literal — read as a quote it
@@ -57,24 +71,15 @@ const dialect = (path) => {
   const ext = extname(path).toLowerCase();
   if (ext === ".css") return "css";
   if (ext === ".rs") return "rust";
-  if (ext === ".yml" || ext === ".yaml" || ext === ".sh") return ext === ".sh" ? "shell" : "yaml";
+  if (ext === ".sh") return "shell";
+  if (ext === ".yml" || ext === ".yaml") return "yaml";
   if (ext === ".html") return "html";
   if (ext === ".toml") return "toml";
+  if (ext === ".py") return "python";
   return "js";
 };
 // This checker and its own pins quote the shapes they refuse, so they are not scanned.
 const SELF = /(^|\/)check-comment-provenance(\.test)?\.mjs$/;
-/** The TypeScript configs that sit at the repository root rather than under a directory. */
-/** The repository root's own files, collected rather than listed. A hand-written list is a
- *  list that goes stale: `midi.html` sat beside `index.html` and was never opened, because
- *  three names had been spelled out and it was not one of them. */
-function rootFiles(root = ROOT) {
-  return readdirSync(root, { withFileTypes: true })
-    .filter((e) => e.isFile() && EXTS.has(extname(e.name).toLowerCase()))
-    .map((e) => join(root, e.name))
-    .sort();
-}
-
 /** The enforced shapes, each named for what it is so the finding can say it. */
 const RULES = [
   {
@@ -212,9 +217,9 @@ const isIdPart = (c) => /[A-Za-z0-9_$]/.test(c);
  */
 export function comments(src, mode = "js") {
   if (mode === "rust") return rustComments(src);
-  // TOML's comment is YAML's: a `#` outside a quoted string, to the end of the line. It has
-  // no block scalar, and a reader that knows about one still reads TOML correctly.
-  if (mode === "yaml" || mode === "toml") return yamlComments(src);
+  if (mode === "yaml") return yamlComments(src);
+  if (mode === "toml") return tomlComments(src);
+  if (mode === "python") return pyComments(src);
   if (mode === "shell") return shellComments(src);
   if (mode === "html") return htmlComments(src);
   if (mode === "css") return scanJs(src, "css", null);
@@ -607,72 +612,130 @@ export function rustComments(src) {
 /**
  * Comment spans of a YAML file.
  *
- * Line-oriented, because YAML's two string forms are: a quoted scalar, where a `#` is text,
- * and a BLOCK scalar (`key: |`, `key: >`, with any of the indicators), whose body is every
- * following line indented past the key — and a `#` there is text as well, which a shared
- * quote-and-hash scan reported as a comment.
+ * Line-oriented, because a `#` is a comment only outside YAML's three string forms: a
+ * quoted scalar, which MAY span lines; a BLOCK scalar, whose body is every following line
+ * indented past the line that opened it; and a plain scalar, where a `#` only opens a
+ * comment after whitespace.
+ *
+ * One block scalar is not data: a workflow's `run:` holds shell source, and its comments
+ * are comments. Its body goes to the shell reader with its offsets carried over, so a span
+ * found there points at the same characters it would in a `.sh` file.
  */
 export function yamlComments(src) {
   const out = [];
   const lines = src.split("\n");
-  let blockIndent = null; // the key's indentation while a block scalar's body is open
-  let offset = 0;
+  // The absolute offset each line starts at, so a span can name its characters and not only
+  // its line — two comments at one line number are two comments.
+  const starts = [];
+  for (let n = 0, at = 0; n < lines.length; n++) {
+    starts.push(at);
+    at += lines[n].length + 1;
+  }
+  // A quoted scalar that did not close on its line: `'` closes on a doubled `''`, `"` on an
+  // unescaped `"`. Read one line at a time, a scan that opened one ran off the end and read
+  // the NEXT line's `#` as a comment — the line was string content.
+  let quote = null;
   for (let n = 0; n < lines.length; n++) {
     const raw = lines[n];
-    const indent = raw.length - raw.trimStart().length;
-    if (blockIndent !== null) {
-      // A blank line stays inside the block; anything indented no further than the key ends it.
-      if (raw.trim() === "" || indent > blockIndent) {
-        offset += raw.length + 1;
-        continue;
-      }
-      blockIndent = null;
-    }
     let i = 0;
-    let prev = "\n";
+    if (quote) {
+      const close = closeQuote(raw, 0, quote);
+      if (close === -1) continue;
+      i = close;
+      quote = null;
+    }
+    let prev = i === 0 ? "\n" : "x";
+    let comment = -1;
     while (i < raw.length) {
       const c = raw[i];
       if (c === '"' || c === "'") {
-        const q = c;
-        i++;
-        while (i < raw.length && raw[i] !== q) {
-          if (q === '"' && raw[i] === "\\") i++;
-          i++;
+        const close = closeQuote(raw, i + 1, c);
+        if (close === -1) {
+          quote = c;
+          i = raw.length;
+          break;
         }
-        i++;
+        i = close;
         prev = "x";
         continue;
       }
-      if (c === "#" && /\s|^$/.test(prev)) {
-        out.push({ line: n + 1, text: raw.slice(i + 1), start: offset + i, end: offset + raw.length });
+      if (c === "#" && /\s|\n/.test(prev)) {
+        comment = i;
+        out.push({ line: n + 1, text: raw.slice(i + 1), start: starts[n] + i, end: starts[n] + raw.length });
         break;
       }
       prev = c;
       i++;
     }
-    // A block scalar opens when the line's value is `|` or `>` plus its indicators alone.
-    if (/(?:^|:\s*)[|>][-+]?\d*\s*$/.test(raw.replace(/\s#.*$/, ""))) blockIndent = indent;
-    offset += raw.length + 1;
+    if (quote) continue;
+    // The header is the line's VALUE, so the indicator has to sit right after `key:` or a
+    // `-` sequence entry. Its two indicators come in EITHER order (`|2-` and `|-2` are one
+    // scalar each), and reading only chomping-then-digit left `|2-` a plain scalar whose
+    // body was then read as lines of YAML.
+    const head = (comment === -1 ? raw : raw.slice(0, comment)).replace(/\s+$/, "");
+    const m = /(?::|(?:^|\s)-)[ \t]*[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head);
+    if (!m) continue;
+    const indent = raw.length - raw.trimStart().length;
+    let end = n + 1;
+    while (end < lines.length) {
+      const body = lines[end];
+      // A blank line stays inside the block; anything indented no further than the header
+      // ends it.
+      if (body.trim() !== "" && body.length - body.trimStart().length <= indent) break;
+      end++;
+    }
+    const key = /(?:^|[\s-])([\w.-]+)[ \t]*:[ \t]*[|>]/.exec(head);
+    if (key && key[1] === "run" && end > n + 1) {
+      const from = starts[n + 1];
+      // The last line's own newline is not part of the body, and past the last line there is
+      // no next start to subtract it from — indexed anyway, the slice ran to NaN and handed
+      // the shell reader an empty string.
+      const to = end < lines.length ? starts[end] - 1 : src.length;
+      for (const span of shellComments(src.slice(from, Math.max(from, to)))) {
+        out.push({ line: n + 1 + span.line, text: span.text, start: from + span.start, end: from + span.end });
+      }
+    }
+    n = end - 1;
   }
-  return out;
+  return out.sort((a, b) => a.start - b.start);
+}
+
+/** The index just past the closing `q` at or after `from`, or -1 if the line does not close it. */
+function closeQuote(line, from, q) {
+  let i = from;
+  while (i < line.length) {
+    if (q === '"' && line[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (line[i] === q) {
+      // A single-quoted scalar escapes its quote by DOUBLING it, so `''` inside one is a
+      // literal `'` and not the end of the string.
+      if (q === "'" && line[i + 1] === "'") {
+        i += 2;
+        continue;
+      }
+      return i + 1;
+    }
+    i++;
+  }
+  return -1;
 }
 
 /**
- * Comment spans of a shell script.
+ * Comment spans of a TOML file.
  *
- * A `#` opens a comment at a word start. Three things are not word starts: a single-quoted
- * string, a HERE-DOCUMENT's body (`<<EOF` … `EOF`, and `<<-` which allows leading tabs), and
- * the middle of a word. Inside a DOUBLE-quoted string a `#` is text — but a `$( … )` within
- * one is code again, and a comment there is a comment, which a quote-only scan lost.
+ * Its comment is YAML's — a `#` outside a string, to the end of the line — and its strings
+ * are not: TOML has no block scalar and four string forms, two of which SPAN LINES. Read as
+ * YAML, the `#` in a `"""…"""` value was reported as a comment, because a line-oriented
+ * scan closes every quote at the newline.
  */
-export function shellComments(src) {
+export function tomlComments(src) {
   const out = [];
   let line = 1;
   let i = 0;
   let prev = "\n";
-  const dq = []; // one entry per open double quote, holding the `$(` depth it was opened at
-  let subst = 0; // open `$(` depth
-  const inDoubleQuote = () => dq.length > 0 && dq[dq.length - 1] === subst;
+  const count = (text) => (text.match(/\n/g) ?? []).length;
   while (i < src.length) {
     const c = src[i];
     if (c === "\n") {
@@ -681,34 +744,175 @@ export function shellComments(src) {
       i++;
       continue;
     }
+    if (c === '"' || c === "'") {
+      const triple = src.startsWith(c.repeat(3), i);
+      const close = triple ? c.repeat(3) : c;
+      let j = i + close.length;
+      while (j < src.length) {
+        // A literal string (`'`) has no escapes at all, so a backslash in one is a character.
+        if (c === '"' && src[j] === "\\") {
+          j += 2;
+          continue;
+        }
+        if (src.startsWith(close, j)) break;
+        if (!triple && src[j] === "\n") break;
+        j++;
+      }
+      line += count(src.slice(i, Math.min(j, src.length)));
+      i = src.startsWith(close, j) ? j + close.length : j;
+      prev = "x";
+      continue;
+    }
+    if (c === "#") {
+      const nl = src.indexOf("\n", i);
+      const stop = nl === -1 ? src.length : nl;
+      out.push({ line, text: src.slice(i + 1, stop), start: i, end: stop });
+      i = stop;
+      continue;
+    }
+    prev = c;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Comment spans of a Python file.
+ *
+ * A `#` outside a string literal. The three-quote forms span lines, and a backslash escapes
+ * the quote in a RAW string too — `r"\""` is one string — so the escape is read the same
+ * way in both. A docstring is a string and not a comment here, which is the same line every
+ * other reader draws: what the language stores as a value is data.
+ */
+export function pyComments(src) {
+  const out = [];
+  let line = 1;
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\n") {
+      line++;
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      const triple = src.startsWith(c.repeat(3), i);
+      const close = triple ? c.repeat(3) : c;
+      let j = i + close.length;
+      while (j < src.length) {
+        if (src[j] === "\\") {
+          if (src[j + 1] === "\n") line++;
+          j += 2;
+          continue;
+        }
+        if (src.startsWith(close, j)) break;
+        if (src[j] === "\n") {
+          if (!triple) break;
+          line++;
+        }
+        j++;
+      }
+      i = src.startsWith(close, j) ? j + close.length : j;
+      continue;
+    }
+    if (c === "#") {
+      const nl = src.indexOf("\n", i);
+      const stop = nl === -1 ? src.length : nl;
+      out.push({ line, text: src.slice(i + 1, stop), start: i, end: stop });
+      i = stop;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Comment spans of a shell script.
+ *
+ * A `#` opens a comment at a word start. What is not a word start: a single-quoted string,
+ * a HERE-DOCUMENT's body, and the middle of a word. Inside a DOUBLE-quoted string a `#` is
+ * text — but a `$( … )` within one is code again, and a comment there is a comment.
+ *
+ * Both halves of a here-document cost a comment each when they are read as one thing. The
+ * REST OF THE DECLARATION LINE is still code (`cat <<EOF # why`), and the delimiter is a
+ * WORD rather than an identifier: read as `[A-Za-z_]\w*`, `<<END-DATA` looked for a line
+ * saying `END`, never found one, and swallowed the file from there to the end.
+ */
+export function shellComments(src) {
+  const out = [];
+  let line = 1;
+  let i = 0;
+  let prev = "\n";
+  // `$( … )` and a plain `( … )` subshell both nest, and counting only the first made any
+  // `)` close the substitution: `$( (x); # why` left the comment outside it.
+  const stack = []; // "subst" | "group"
+  const dq = []; // the stack depth each open double quote was opened at
+  const inDoubleQuote = () => dq.length > 0 && dq[dq.length - 1] === stack.length;
+  const pending = []; // here-documents whose bodies start after this line's newline
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\n") {
+      line++;
+      i++;
+      prev = c;
+      while (pending.length) {
+        const { dash, word } = pending.shift();
+        for (;;) {
+          const nl = src.indexOf("\n", i);
+          const stop = nl === -1 ? src.length : nl;
+          const text = src.slice(i, stop);
+          if ((dash ? text.replace(/^\t+/, "") : text) === word || nl === -1) {
+            i = nl === -1 ? src.length : nl + 1;
+            if (nl !== -1) line++;
+            break;
+          }
+          line++;
+          i = stop + 1;
+        }
+      }
+      continue;
+    }
     if (c === "\\") {
       if (src[i + 1] === "\n") line++;
       i += 2;
       prev = "x";
       continue;
     }
-    // A here-document: skip to the line that is exactly its delimiter.
-    const here = !inDoubleQuote() && /^<<(-?)\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/.exec(src.slice(i, i + 64));
-    if (here) {
-      const [, dash, , word] = here;
-      i += here[0].length;
-      const bodyStart = src.indexOf("\n", i);
-      if (bodyStart === -1) break;
-      let j = bodyStart + 1;
-      line++;
-      for (;;) {
-        const nl = src.indexOf("\n", j);
-        const stop = nl === -1 ? src.length : nl;
-        const text = src.slice(j, stop);
-        if ((dash ? text.replace(/^\t+/, "") : text) === word || nl === -1) {
-          i = nl === -1 ? src.length : nl;
-          break;
-        }
-        line++;
-        j = stop + 1;
-      }
+    // `<<<` is a here-STRING and takes no body; matched as a here-document it would look for
+    // a delimiter line that never comes. Consumed WHOLE, because stepping over one `<` and
+    // looking again finds a `<<` in the remaining two.
+    if (!inDoubleQuote() && src.startsWith("<<<", i)) {
+      i += 3;
       prev = "x";
       continue;
+    }
+    if (!inDoubleQuote() && src.startsWith("<<", i)) {
+      let j = i + 2;
+      const dash = src[j] === "-";
+      if (dash) j++;
+      while (src[j] === " " || src[j] === "\t") j++;
+      const word = [];
+      while (j < src.length && !/[\s;&|<>()]/.test(src[j])) {
+        if (src[j] === "'" || src[j] === '"') {
+          const q = src[j++];
+          while (j < src.length && src[j] !== q) word.push(src[j++]);
+          j++;
+          continue;
+        }
+        if (src[j] === "\\") {
+          j++;
+          if (j < src.length) word.push(src[j++]);
+          continue;
+        }
+        word.push(src[j++]);
+      }
+      if (word.length) {
+        pending.push({ dash, word: word.join("") });
+        i = j;
+        prev = "x";
+        continue;
+      }
     }
     if (c === "'" && !inDoubleQuote()) {
       i++;
@@ -722,21 +926,27 @@ export function shellComments(src) {
     }
     if (c === '"') {
       if (inDoubleQuote()) dq.pop();
-      else dq.push(subst);
+      else dq.push(stack.length);
       prev = "x";
       i++;
       continue;
     }
     if (c === "$" && src[i + 1] === "(") {
-      subst++;
+      stack.push("subst");
       i += 2;
       prev = "(";
       continue;
     }
-    if (c === ")" && subst > 0 && !inDoubleQuote()) {
-      subst--;
-      prev = c;
+    if (c === "(" && !inDoubleQuote()) {
+      stack.push("group");
       i++;
+      prev = "(";
+      continue;
+    }
+    if (c === ")" && stack.length && !inDoubleQuote()) {
+      stack.pop();
+      i++;
+      prev = c;
       continue;
     }
     if (c === "#" && !inDoubleQuote() && /[\s\n(;&|]|^$/.test(prev)) {
@@ -802,6 +1012,39 @@ function collect(root, dir = root, found = []) {
   }
   return found;
 }
+
+/**
+ * Every source this repository carries, asked of git rather than of a list of directories.
+ *
+ * A hand-written root list answers a question nobody asked: it says which directories were
+ * thought of, and a file outside all of them is not reported as unscanned but as absent.
+ * `.claude/skills/urx-routing-planner/scripts/plan_tool.py` sat outside five named roots and
+ * scanned as `0 source file(s)` — a green run naming the file it had not opened. What the
+ * check is asking is whether this REPOSITORY carries a violation, and what the repository
+ * carries is what git tracks, so nothing has to be kept in step by hand.
+ *
+ * It throws rather than falling back to a walk: a scan that quietly reads a different set
+ * than it was asked for is the failure this replaces.
+ */
+export function trackedSources(root = ROOT, run = gitLsFiles, exists = existsSync) {
+  const listed = run(root)
+    .split("\0")
+    .filter(Boolean)
+    .filter((rel) => EXTS.has(extname(rel).toLowerCase()) && !SELF.test(rel));
+  // A tracked path can be missing from the worktree (deleted, not yet committed). Reading it
+  // would throw in the middle of the scan; it is simply not there to carry a comment.
+  return listed.map((rel) => join(root, rel)).filter((abs) => exists(abs));
+}
+
+// `--others --exclude-standard` as well as the index: a file written but not yet added is
+// source this repository is about to carry, and a check that waits for `git add` reports a
+// violation one step after it could have. `--exclude-standard` is what keeps node_modules,
+// dist and the private reference tree out — the same answer the skip lists were maintained
+// by hand to give.
+const gitLsFiles = (root) =>
+  execFileSync("git", ["-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+    maxBuffer: 1 << 28,
+  }).toString();
 
 const LEDGER = new URL("./comment-provenance-baseline.json", import.meta.url);
 // The ledger is keyed by repo-relative path, and the hook is handed an absolute one. This
@@ -937,7 +1180,25 @@ const report = (found) => {
 // Everything below is the command line. Guarded, because importing this module ran ALL of
 // it: the pins import `findingsIn`, and each import scanned the tree with vitest's own argv
 // and could reach `process.exit`. A test that imports a checker must not run it.
-const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+/**
+ * Whether THIS module is the program, rather than something a test imported.
+ *
+ * Compared as REAL paths on both sides. Node resolves the entry module's symlinks before it
+ * stamps `import.meta.url`, and leaves `process.argv[1]` exactly as it was typed, so on a
+ * path through a link the two are different strings for one file — on macOS every path under
+ * `/tmp` and `/var/folders` is one. Read as "not the program", the command line was skipped
+ * and the process exited 0 having scanned nothing, which is the shape of a green run that
+ * asked no question.
+ */
+function isEntry(url) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return realpathSync(fileURLToPath(url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
+const invokedDirectly = isEntry(import.meta.url);
 const hook = invokedDirectly && process.argv.includes("--hook");
 if (hook) {
   let raw = "";
@@ -959,15 +1220,18 @@ if (hook) {
 
 if (invokedDirectly) {
   const roots = process.argv.slice(2).filter((a) => !a.startsWith("--"));
-  // Every source this repository carries, not the three directories it started with: the
-  // configs at the root are TypeScript the check simply never opened, and `src-tauri` is a
-  // whole language of it. Named explicitly rather than scanning `.` so node_modules, dist and
-  // the private reference tree are not walked at all.
-  // `src-tauri` whole, not its `src`: `build.rs` sits beside it and is Rust the scan simply
-  // never opened. `target` is skipped by name, so the crate's build output is not walked.
-  const DEFAULT_ROOTS = ["src", "e2e", "scripts", "src-tauri", ".github", ...rootFiles()];
-  const scanRoots = roots.length ? roots : DEFAULT_ROOTS;
-  const targets = scanRoots.flatMap((r) => (existsSync(r) ? collect(r) : []));
+  let targets;
+  if (roots.length) {
+    targets = roots.flatMap((r) => (existsSync(r) ? collect(r) : []));
+  } else {
+    try {
+      targets = trackedSources();
+    } catch (err) {
+      console.error(`Cannot list this repository's files: ${err.message}`);
+      console.error("The whole-tree scan reads what git tracks. Name paths to scan without it.");
+      process.exit(1);
+    }
+  }
   const found = targets.flatMap((p) => findingsIn(readFileSync(p, "utf8"), p));
   const grouped = byFile(found);
 

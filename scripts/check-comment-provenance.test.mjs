@@ -7,9 +7,10 @@
 // a cleaned file printing its lower count. The hand runs measured the guard on one day;
 // this is the same measurement on every run.
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import { dirname, extname, join, relative, sep } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -20,12 +21,16 @@ import {
   hookDecision,
   htmlComments,
   nextLedger,
+  pyComments,
   repoPath,
   shellComments,
+  tomlComments,
+  trackedSources,
   yamlComments,
   rustComments,
   verdict,
 } from "./check-comment-provenance.mjs";
+import { formatTargets, JS_FAMILY } from "./format.mjs";
 import { win32 } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -394,15 +399,35 @@ describe("the ledger's verdict", () => {
 });
 
 // Importing this module used to run its whole command line, with vitest's argv: every pin
-// below scanned the tree on import, and could reach process.exit.
+// below scanned the tree on import, and could reach process.exit. Both halves are asked by
+// RUNNING the module — the guard is a comparison between two spellings of one path, and a
+// test that reads the comparison cannot tell which spellings reach it.
 describe("importing the module", () => {
+  const checker = join(HERE, "check-comment-provenance.mjs");
+
   it("does not run the command line", () => {
-    const src = readFileSync(join(HERE, "check-comment-provenance.mjs"), "utf8");
-    expect(src).toMatch(
-      /const invokedDirectly = [\s\S]*?import\.meta\.url === pathToFileURL\(process\.argv\[1\]\)\.href/,
-    );
-    expect(src).toMatch(/if \(invokedDirectly\) \{/);
-    expect(src).toMatch(/const hook = invokedDirectly &&/);
+    const out = execFileSync(process.execPath, ["-e", `import(${JSON.stringify(checker)})`], {
+      cwd: join(HERE, ".."),
+      encoding: "utf8",
+    });
+    expect(out).toBe("");
+  });
+
+  // …and still runs it when it IS the program, reached by a path that is not the one node
+  // resolves. `process.argv[1]` stays as typed while `import.meta.url` is the real path, so
+  // comparing the two as strings answered "not the program" and the run exited 0 having
+  // scanned nothing. Every path under macOS's temporary directory is such a path.
+  it("runs it through a symlinked path, rather than exiting 0 having scanned nothing", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "prov-link-"));
+    const link = join(tmp, "linked");
+    symlinkSync(join(HERE, ".."), link, "dir");
+    const out = execFileSync(process.execPath, [join(link, "scripts", "check-comment-provenance.mjs"), "src-tauri"], {
+      cwd: join(HERE, ".."),
+      encoding: "utf8",
+    });
+    rmSync(tmp, { recursive: true, force: true });
+    expect(out).toMatch(/source file\(s\)/);
+    expect(Number(/OK: (\d+) source file/.exec(out)[1])).toBeGreaterThan(0);
   });
 });
 
@@ -539,65 +564,248 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       [4, ""],
     ]);
   });
+
+  // The header's two indicators come in EITHER order, and a block scalar is a VALUE — so it
+  // sits after a `-` sequence entry as readily as after a key. Read as chomping-then-digit
+  // and only after a `:`, `|2-` and `- |` were plain scalars whose bodies were then scanned
+  // as YAML, and three lines of string content were reported as comments. Ruby's own YAML
+  // parser is the positive control: it loaded the `|2-` body, the `- |` body and the
+  // two-line quoted scalar below as string values.
+  it("opens a block scalar on either indicator order, and on a sequence entry", () => {
+    expect(findingsIn("a: |2-\n    # measured on URX44V\n", "x.yml")).toEqual([]);
+    expect(findingsIn("a: |-2\n    # measured on URX44V\n", "x.yml")).toEqual([]);
+    expect(findingsIn("b:\n  - |\n    # measured on URX44V\n", "x.yml")).toEqual([]);
+    expect(findingsIn("- |\n  # measured on URX44V\n", "x.yml")).toEqual([]);
+    // …and a plain scalar that merely ends in a pipe still opens nothing.
+    expect(findingsIn("cmd: a | b  # measured on URX44V\n", "x.yml").map((f) => f.line)).toEqual([1]);
+  });
+
+  // A quoted scalar may span lines. Closed at the newline, the scan ran off the end and read
+  // the NEXT line's `#` as a comment — the line was the middle of a string.
+  it("carries a quoted scalar across the line it did not close on", () => {
+    expect(findingsIn('c: "first\n  second # measured on URX44V"\n', "x.yml")).toEqual([]);
+    expect(findingsIn("c: 'first\n  second # measured on URX44V'\n", "x.yml")).toEqual([]);
+    // …and a doubled quote inside a single-quoted scalar is a character, not the end of it.
+    expect(findingsIn("c: 'it''s # measured on URX44V'\n", "x.yml")).toEqual([]);
+    // …while the line after it closes is YAML again.
+    expect(findingsIn('c: "first\n  second"\nd: 1 # measured on URX44V\n', "x.yml").map((f) => f.line)).toEqual([3]);
+  });
+
+  // One block scalar is not data. A workflow's `run:` is shell source, and read as text its
+  // comments were the only comments in this repository that nothing looked at.
+  it("reads a run: block as the shell it is, and every other block as text", () => {
+    const wf = (key) => `jobs:\n  a:\n    steps:\n      - ${key}: |\n          echo hi  # measured on URX44V\n`;
+    expect(findingsIn(wf("run"), "x.yml").map((f) => f.line)).toEqual([5]);
+    expect(findingsIn(wf("message"), "x.yml")).toEqual([]);
+    // …and the shell reader's own rules apply inside it: a hash in a string is not a comment.
+    expect(findingsIn('jobs:\n  a:\n    steps:\n      - run: |\n          echo "# measured on URX44V"\n', "x.yml")).toEqual(
+      [],
+    );
+  });
+
+  // The rest of a here-document's DECLARATION line is still code, and the delimiter is a
+  // WORD. Read as one thing and as an identifier, `cat <<EOF # why` lost its comment, and
+  // `<<END-DATA` looked for a line saying `END`: never finding one, it swallowed the file
+  // from there to the end, taking every later comment with it. `bash -n` is the control.
+  it("reads the rest of a here-document's declaration line, and takes its delimiter as a word", () => {
+    expect(findingsIn("cat <<EOF  # measured on URX44V\nbody\nEOF\n", "x.sh").map((f) => f.line)).toEqual([1]);
+    expect(findingsIn("cat <<END-DATA\ndata\nEND-DATA\n# measured on URX44V\n", "x.sh").map((f) => f.line)).toEqual([4]);
+    expect(findingsIn("cat <<'E O F'\ndata\nE O F\n# measured on URX44V\n", "x.sh").map((f) => f.line)).toEqual([4]);
+    // …and a here-STRING has no body at all, so nothing after it is swallowed.
+    expect(findingsIn("cat <<<word\n# measured on URX44V\n", "x.sh").map((f) => f.line)).toEqual([2]);
+    // …and two on one line take their bodies in order.
+    expect(findingsIn("f <<A <<B\na\nA\nb\nB\n# measured on URX44V\n", "x.sh").map((f) => f.line)).toEqual([6]);
+  });
+
+  // A `)` closes whatever is innermost. Counted as one depth, a plain subshell's `)` closed
+  // the substitution and the comment after it fell outside.
+  it("closes a command substitution on its own paren, not on any", () => {
+    expect(findingsIn("x=$( (printf a); # measured on URX44V\n)\n", "x.sh").map((f) => f.line)).toEqual([1]);
+    expect(findingsIn('x="$( (printf a); # measured on URX44V\n)"\n', "x.sh").map((f) => f.line)).toEqual([1]);
+    // …and a paren inside a double-quoted string is a character.
+    expect(findingsIn('echo "a ) # measured on URX44V"\n', "x.sh")).toEqual([]);
+  });
+});
+
+// TOML's comment is YAML's; its strings are not. It has no block scalar, and two of its four
+// string forms SPAN LINES — read by a line-oriented scanner that closes every quote at the
+// newline, the `#` in a `"""…"""` value was reported as a comment. Python's tomllib is the
+// positive control: it loaded that value as a string.
+describe("what counts as a comment in TOML", () => {
+  it("carries a multi-line string past the newline that did not close it", () => {
+    expect(findingsIn('name = """\nblock # measured on URX44V string\n"""\n', "x.toml")).toEqual([]);
+    expect(findingsIn("name = '''\nblock # measured on URX44V string\n'''\n", "x.toml")).toEqual([]);
+    expect(findingsIn('name = "a # measured on URX44V"\n', "x.toml")).toEqual([]);
+    // …and a literal string has no escapes at all, so a trailing backslash does not extend it.
+    expect(findingsIn("name = 'a\\'\nother = 1  # measured on URX44V\n", "x.toml").map((f) => f.line)).toEqual([2]);
+  });
+
+  it("still reads a TOML comment, and reports its line", () => {
+    expect(tomlComments('# note\nname = "x"  # second\n').map((c) => [c.line, c.text.trim()])).toEqual([
+      [1, "note"],
+      [2, "second"],
+    ]);
+  });
+
+  // The two languages disagree about where a comment may start, which is the reading that
+  // separates them: TOML ends a value at a `#` wherever it appears, and YAML needs a space
+  // in front of one or the `#` is part of the plain scalar. Python's tomllib loads
+  // `a = 1# …` as the integer 1; Ruby's YAML loads `a: 1# …` as the string "1# …".
+  it("ends a value at a hash with no space in front of it", () => {
+    expect(findingsIn("a = 1# measured on URX44V\n", "x.toml").map((f) => f.line)).toEqual([1]);
+    expect(findingsIn("a: 1# measured on URX44V\n", "x.yml")).toEqual([]);
+  });
+
+  // A block scalar is a YAML shape. A reader that looks for one in TOML has a state TOML can
+  // never leave, which is why the two are separate rather than sharing the hash rule.
+  it("does not open a YAML block scalar in a TOML value", () => {
+    expect(findingsIn('cmd = "a | b"\nx = 1  # measured on URX44V\n', "x.toml").map((f) => f.line)).toEqual([2]);
+  });
+});
+
+// The skill ships a Python script, and nothing read it: `.py` was in no extension list and
+// `.claude` was under no scan root, so naming the file on the command line printed
+// `0 source file(s)` and exited 0.
+describe("what counts as a comment in Python", () => {
+  it("reads a hash comment, and not one inside a string", () => {
+    expect(findingsIn("# measured on URX44V\nx = 1\n", "x.py").map((f) => f.line)).toEqual([1]);
+    expect(findingsIn('x = 1  # measured on URX44V\n', "x.py").map((f) => f.line)).toEqual([1]);
+    expect(findingsIn('x = "a # measured on URX44V"\n', "x.py")).toEqual([]);
+    expect(findingsIn("x = 'a # measured on URX44V'\n", "x.py")).toEqual([]);
+  });
+
+  // A docstring is a string, which is the line every other reader here draws: what the
+  // language stores as a value is data. Stated by a case rather than left to be inferred:
+  // a docstring is what Python uses where another language writes a comment, so the choice
+  // is worth asserting instead of leaving to be read off the scanner.
+  it("reads a triple-quoted string as a string, across the lines it spans", () => {
+    expect(findingsIn('"""\ndoc # measured on URX44V\n"""\nx = 1\n', "x.py")).toEqual([]);
+    expect(findingsIn("'''\ndoc # measured on URX44V\n'''\n", "x.py")).toEqual([]);
+    // …and the code after it is code again, on the right line.
+    expect(findingsIn('"""\ndoc\n"""\nx = 1  # measured on URX44V\n', "x.py").map((f) => f.line)).toEqual([4]);
+  });
+
+  // A backslash escapes the quote in a RAW string too, so both are read the same way.
+  it("does not end a raw string on an escaped quote", () => {
+    expect(pyComments('x = r"\\"# not a comment"\ny = 1  # note\n').map((c) => [c.line, c.text.trim()])).toEqual([
+      [2, "note"],
+    ]);
+  });
 });
 
 describe("what the default scan reaches", () => {
-  const src = readFileSync(join(HERE, "check-comment-provenance.mjs"), "utf8");
-  const roots = /const DEFAULT_ROOTS = \[([^\]]*)\]/.exec(src)[1];
   const ledger = JSON.parse(readFileSync(join(HERE, "comment-provenance-baseline.json"), "utf8"));
+  const ROOT = join(HERE, "..");
+  // A stub git, so a rule can be shown a tree this repository does not have. The real one is
+  // asked for in the cases below that need it.
+  const listing =
+    (...rels) =>
+    () =>
+      rels.map((r) => r + "\0").join("");
+  const rel = (paths) => paths.map((p) => relative(ROOT, p).split(sep).join("/"));
 
-  it("names the Rust crate and the configs at the repository root", () => {
-    // The CRATE, not its `src`: `build.rs` sits beside it and was Rust the scan never opened.
-    expect(roots).toContain('"src-tauri"');
-    expect(roots).toContain('".github"');
-    expect(roots).toContain("rootFiles()");
-    expect(roots).not.toContain('"src-tauri/src"');
-    expect(roots).toContain("rootFiles()");
+  it("keeps the extensions it reads, and never its own two files", () => {
+    const out = trackedSources(
+      ROOT,
+      listing(
+        "src/a.ts",
+        "README.md",
+        "scripts/check-comment-provenance.mjs",
+        "scripts/check-comment-provenance.test.mjs",
+        "anywhere/deep/b.py",
+      ),
+      () => true,
+    );
+    expect(rel(out)).toEqual(["src/a.ts", "anywhere/deep/b.py"]);
+  });
+
+  // The list of directories this replaced is the mutation, and it is shown beside the good
+  // arrangement rather than described: the Python file the skill ships sat outside all five
+  // of its roots, and the scan reported `0 source file(s)` while naming it on the command
+  // line — a green run over a file it had not opened.
+  it("reaches a tracked file no list of roots named", () => {
+    const NAMED_ROOTS = ["src", "e2e", "scripts", "src-tauri", ".github"];
+    const skill = ".claude/skills/urx-routing-planner/scripts/plan_tool.py";
+    expect(rel(trackedSources())).toContain(skill);
+    expect(NAMED_ROOTS.some((r) => skill.startsWith(r + "/"))).toBe(false);
+  });
+
+  it("drops a tracked path that is not in the worktree rather than reading it", () => {
+    expect(trackedSources(ROOT, listing("src/gone.ts"), () => false)).toEqual([]);
+  });
+
+  // A scan that cannot ask git must not answer with a smaller tree. Silently walking a few
+  // directories instead is the arrangement above, and it reads as success.
+  it("throws when git cannot answer, instead of scanning what it can reach", () => {
+    expect(() =>
+      trackedSources(ROOT, () => {
+        throw new Error("not a git repository");
+      }),
+    ).toThrow(/not a git repository/);
+  });
+
+  it("exits 1 rather than scanning nothing, when the tree is not a repository", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "prov-norepo-"));
+    mkdirSync(join(tmp, "scripts"));
+    copyFileSync(join(HERE, "check-comment-provenance.mjs"), join(tmp, "scripts", "check-comment-provenance.mjs"));
+    copyFileSync(join(HERE, "comment-provenance-baseline.json"), join(tmp, "scripts", "comment-provenance-baseline.json"));
+    let status = 0;
+    let stderr = "";
+    try {
+      execFileSync(process.execPath, [join(tmp, "scripts", "check-comment-provenance.mjs")], {
+        cwd: tmp,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      status = err.status;
+      stderr = err.stderr;
+    }
+    rmSync(tmp, { recursive: true, force: true });
+    expect(status).toBe(1);
+    expect(stderr).toMatch(/Cannot list this repository's files/);
+  });
+
+  // The flags are asked of a real git rather than read off the source: `--others` is what
+  // puts a file written but not yet added in scope, and `--exclude-standard` is the whole of
+  // what keeps node_modules, dist and the private reference tree out.
+  it("scans a file not yet added, and never one the ignore rules cover", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "prov-repo-"));
+    const git = (...args) => execFileSync("git", ["-C", tmp, ...args], { encoding: "utf8" });
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(tmp, ".gitignore"), "ignored/\n");
+    mkdirSync(join(tmp, "ignored"));
+    writeFileSync(join(tmp, "ignored", "a.ts"), "// x\n");
+    writeFileSync(join(tmp, "added.ts"), "// x\n");
+    writeFileSync(join(tmp, "written.ts"), "// x\n");
+    git("add", "added.ts");
+    const out = trackedSources(tmp).map((p) => relative(tmp, p).split(sep).join("/"));
+    rmSync(tmp, { recursive: true, force: true });
+    expect(out.sort()).toEqual(["added.ts", "written.ts"]);
   });
 
   it("reaches build.rs, which sits beside src rather than inside it", () => {
     const collected = execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), "src-tauri"], {
-      cwd: join(HERE, ".."),
+      cwd: ROOT,
       encoding: "utf8",
     });
     expect(collected).toMatch(/source file\(s\)/);
     // The count a `src-tauri/src`-only root would give, plus build.rs.
     const files = Number(/OK: (\d+) source file/.exec(collected)[1]);
     const srcOnly = execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), "src-tauri/src"], {
-      cwd: join(HERE, ".."),
+      cwd: ROOT,
       encoding: "utf8",
     });
     expect(files).toBeGreaterThan(Number(/OK: (\d+) source file/.exec(srcOnly)[1]));
   });
 
-  // …and the ledger proves the scan actually opened them, which the root list alone cannot.
+  // …and the ledger proves the scan actually opened them, which a file list alone cannot.
   // A dialect the lexer knows but the extension list does not claim is a dialect nothing
   // reads. The reading and the SCANNING are separate gates, and only running the scan asks
   // the second one.
-  // A hand-written list of root files is a list that goes stale: `midi.html` sat beside
-  // `index.html` and the default scan never opened it, because three names had been spelled
-  // out and it was not one of them.
-  it("collects the repository root rather than naming files in it", () => {
-    const src = readFileSync(join(HERE, "check-comment-provenance.mjs"), "utf8");
-    expect(src).toMatch(/function rootFiles\(/);
-    expect(src).toMatch(/\.\.\.rootFiles\(\)/);
-    expect(src).not.toMatch(/const ROOT_CONFIGS/);
-    // …and every root file the extension list claims is in what it collects.
-    const out = execFileSync(process.execPath, ["-e", `import("${join(HERE, "check-comment-provenance.mjs")}")`], {
-      cwd: join(HERE, ".."),
-      encoding: "utf8",
-    });
-    expect(out).toBe("");
-    const roots = readdirSync(join(HERE, ".."), { withFileTypes: true })
-      .filter((e) => e.isFile() && /\.(ts|mjs|cjs|js|css|rs|ya?ml|sh|html|toml)$/i.test(e.name))
-      .map((e) => e.name);
-    expect(roots).toContain("index.html");
-    expect(roots).toContain("midi.html");
-  });
-
   it("actually opens the YAML the workflows are written in", () => {
     const out = execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), ".github"], {
-      cwd: join(HERE, ".."),
+      cwd: ROOT,
       encoding: "utf8",
     });
     expect(Number(/OK: (\d+) source file/.exec(out)[1])).toBeGreaterThan(0);
@@ -608,6 +816,48 @@ describe("what the default scan reaches", () => {
     expect(Object.keys(ledger.files).some((p) => p.endsWith(".rs"))).toBe(true);
     expect(Object.keys(ledger.files).some((p) => p.startsWith(".github/"))).toBe(true);
     expect(ledger.files["vitest.config.ts"]).toBeGreaterThan(0);
+  });
+});
+
+// The union's false positive is unreachable in FORMATTED text, and that argument is only as
+// wide as the formatter's reach. So the two file lists are one list, and this is where that
+// is measured rather than stated.
+describe("what the formatter reaches", () => {
+  const ROOT = join(HERE, "..");
+  const rel = (paths) => paths.map((p) => relative(ROOT, p).split(sep).join("/"));
+
+  it("keeps what Prettier parses out of everything the checker reads", () => {
+    const sources = ["src/a.ts", "x.mjs", "e2e/b.cjs", "src/style.css", "midi.html", "s.sh", "a.yml", "p.py", "c.rs"];
+    expect(formatTargets(sources.map((p) => join(ROOT, p)))).toEqual([
+      "e2e/b.cjs",
+      "midi.html",
+      "src/a.ts",
+      "src/style.css",
+      "x.mjs",
+    ]);
+  });
+
+  // The glob list this replaced, beside the derived one. Both are asked about the same three
+  // files, and the glob answers for one of them: a `.mjs` at the repository root and one
+  // under e2e/ were scanned by the checker and formatted by nothing, which is what made the
+  // false positive reachable in a file that `pnpm format` left exactly as it found it.
+  it("covers a JavaScript file the glob list it replaced did not", () => {
+    const GLOBS = [/^src\/.*\.ts$/, /^e2e\/.*\.ts$/, /^scripts\/.*\.mjs$/, /^[^/]*\.ts$/];
+    const outside = ["x.mjs", "e2e/helper.mjs", "src/legacy.js"];
+    const covered = formatTargets(outside.map((p) => join(ROOT, p)));
+    expect(covered).toEqual(["e2e/helper.mjs", "src/legacy.js", "x.mjs"]);
+    expect(outside.filter((p) => GLOBS.some((g) => g.test(p)))).toEqual([]);
+  });
+
+  // The property itself, over the tree as it stands: nothing the union reads is outside the
+  // formatter. It is an identity by construction, and asserted anyway — a filter narrowed by
+  // one extension would leave it false without anything else changing.
+  it("leaves no file the union reads unformatted", () => {
+    const sources = trackedSources();
+    const unionRead = rel(sources).filter((p) => JS_FAMILY.has(extname(p).toLowerCase()));
+    const formatted = new Set(formatTargets(sources));
+    expect(unionRead.length).toBeGreaterThan(300);
+    expect(unionRead.filter((p) => !formatted.has(p))).toEqual([]);
   });
 });
 

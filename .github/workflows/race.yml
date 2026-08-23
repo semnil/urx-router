@@ -327,8 +327,8 @@ jobs:
     runs-on: ubuntu-latest
     # The one job in this repository that does not build its environment out of the
     # Ubuntu mirror. `--with-deps webkit` fetches an order of magnitude more .debs than
-    # chromium, one at a time, and on 2026-08-05 a degraded mirror stalled it past this
-    # job's whole budget: it was killed with the package list unfinished, tests never
+    # chromium, one at a time, and a degraded mirror has stalled it past this job's whole
+    # budget: it was killed with the package list unfinished, tests never
     # started, and the release PR carried a check that said only "cancelled". The image
     # carries those libraries and the browsers already, and pulling it costs about what
     # the apt path costs on a good day — so this is not a trade of speed for reliability,
