@@ -12,7 +12,9 @@ import { resetSettingsCache } from "../core/settings";
 import { holdInertOnBlur, resetPointerTracking } from "./dom";
 import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
-import { COMP_EQ_SSMCS, INSERT_FX_NONE } from "../core/control/params";
+import { COMP_EQ_SSMCS, INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
+import { planToCommands } from "../core/control/translate";
+import type { DeviceModel } from "../models/types";
 import { setLang, t } from "../i18n";
 
 // The panel renders one selection, and which controls it renders is derived from that
@@ -521,6 +523,59 @@ describe("insert FX", () => {
     const none = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)![1];
     expect(none.insertFx).toBe(INSERT_FX_NONE);
     expect(none.insertFxOn).toBeUndefined();
+  });
+
+  // A plan can hold an insert-FX value the node's own control does not carry: a file, a
+  // `?plan=` link and a device read all land one, and the loader gates none of them. The
+  // emit path turns it into No Effect and writes no engine parameter, so a bypass switch
+  // and an editor over it change nothing that leaves the app. Measured before the fix:
+  // CH 1 holding the output-only M.Band Comp rendered the bypass row and eighteen editing
+  // rows against zero INSERT_FX_EFFECT commands.
+  describe.each([
+    ["a channel holding an OUTPUT-only effect", "ch1", "M.Band Comp", OUTPUT_INSERT_FX_OPTIONS],
+    ["a bus holding a CHANNEL-only effect", "bus.mix1", "Pitch Fix", INSERT_FX_OPTIONS],
+  ])("%s", (_name, id, label, options) => {
+    const held = (): { model: DeviceModel; plan: Plan } => {
+      const model = getModel("URX44V");
+      const plan = emptyPlan("URX44V");
+      plan.nodeParams[id] = { insertFx: options.find((o) => o.label === label)!.value, insertFxOn: true };
+      return { model, plan };
+    };
+
+    it("offers neither a bypass switch nor an editor for it", () => {
+      const { model, plan } = held();
+      renderInspector(panel, model, plan, nodeSel(id), act);
+      const labels = rowLabels();
+      // The selector itself stays: it is the control that gets the operator out of this.
+      expect(labels).toContain(t().inspector.insertFx);
+      expect(labels).not.toContain(t().inspector.insertFxOn);
+      expect(labels).not.toContain(t().inspector.insertFxEffect.params.threshold);
+      expect(sectionByTitle(t().inspector.insertFxEffect.title)).toBeUndefined();
+      expect(panel.querySelector("#btn-insfx-screen")).toBeNull();
+    });
+
+    it("is what the device path does with it — nothing", () => {
+      // The half that says the refusal above is not merely a taste: the surface and the
+      // wire agree because both ask effectiveInsertFx.
+      const { model, plan } = held();
+      const cmds = planToCommands(model, plan);
+      expect(cmds.filter((c) => c.name === "INSERT_FX_EFFECT")).toHaveLength(0);
+      expect(cmds.filter((c) => c.name === "INSERT_FX_ON")).toHaveLength(0);
+    });
+  });
+
+  it("keeps both for an effect the node's own control does carry", () => {
+    // The control for the pair above. Without it a gate that refused everything would
+    // pass them both.
+    const model = getModel("URX44V");
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = {
+      insertFx: OUTPUT_INSERT_FX_OPTIONS.find((o) => o.label === "M.Band Comp")!.value,
+      insertFxOn: true,
+    };
+    renderInspector(panel, model, plan, nodeSel("bus.mix1"), act);
+    expect(rowLabels()).toContain(t().inspector.insertFxOn);
+    expect(sectionByTitle(t().inspector.insertFxEffect.title)).toBeDefined();
   });
 
   // A bare slot number left behind after a selector change would be read as the NEW

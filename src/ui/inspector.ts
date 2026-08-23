@@ -27,6 +27,7 @@ import {
 } from "../core/control/insert-fx-effect";
 import { isFixedConnection, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import {
+  effectiveInsertFx,
   busBalance,
   busFader,
   busMasterOn,
@@ -782,6 +783,13 @@ export function renderInspector(
     if (ifx) {
       const ifxMenu = insertFxMenu(model, plan, node.id);
       const ifxSel = plan.nodeParams[node.id]?.insertFx;
+      // Every control BELOW the selector reads the value the device path will act on
+      // rather than the raw plan value. A node's own control may not carry what the plan
+      // holds — an output effect on a channel, a channel effect on a bus — and the emit
+      // path turns such a value into No Effect and writes no engine parameter for it, so
+      // a bypass switch and an editor over it change nothing that leaves. The SELECTOR
+      // keeps the raw value: it is the control that gets the operator out of that state.
+      const ifxEff = effectiveInsertFx(model, plan, node.id);
       (tailBody ?? host).append(
         selectControl(
           m.inspector.insertFx,
@@ -808,12 +816,12 @@ export function renderInspector(
       // and OFF, the display/plan split the stereo CH EQ toggle already has. The
       // plan keeps its value and translate.ts keeps emitting it, so the control
       // shows what the operator may change, not what will be written.
-      if (ifxSel !== undefined && ifxSel !== INSERT_FX_NONE) {
+      if (ifxEff !== undefined && ifxEff !== INSERT_FX_NONE) {
         // The ceiling that decides this is the SELECTED effect's, not the menu's: Pitch
         // Fix stops at 48 kHz where the amps and companders reach 96. A selection this
         // app's own table does not carry (read back from a unit) has no ceiling to name
         // and falls back to the menu-wide answer.
-        const { locked: ifxRateLocked, entry: ifxEntry } = insertFxRateLock(ifxMenu, ifxSel);
+        const { locked: ifxRateLocked, entry: ifxEntry } = insertFxRateLock(ifxMenu, ifxEff);
         (tailBody ?? host).append(
           boolToggle(
             m.inspector.insertFxOn,
@@ -833,11 +841,11 @@ export function renderInspector(
       // and for the same reason: a slider built here reads the snapshot taken at render
       // time and writes a stale value back on its next drag. The families the screen
       // does not yet show keep the section below.
-      if (ifxSel !== undefined) {
+      if (ifxEff !== undefined) {
         if (insertFxScreenFamily(model, plan, node.id)) {
           (tailBody ?? host).append(dynLauncher("insfx", node.id, actions, m));
         } else {
-          const fxSec = insertFxEffectSection(node.id, ifxSel, plan, actions, m);
+          const fxSec = insertFxEffectSection(node.id, ifxEff, plan, actions, m);
           if (fxSec) (tailBody ?? host).append(fxSec);
         }
       }
