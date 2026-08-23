@@ -4,7 +4,7 @@
     ".github/actions/install-browsers/action.yml": 3,
     ".github/codecov.yml": 3,
     ".github/workflows/ci.yml": 2,
-    ".github/workflows/race.yml": 2,
+    ".github/workflows/race.yml": 1,
     ".github/workflows/release.yml": 1,
     "e2e/bustype.spec.ts": 2,
     "e2e/chrome.spec.ts": 1,

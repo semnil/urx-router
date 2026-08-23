@@ -120,7 +120,7 @@ jobs:
           # file list, rather than `printf | grep -q`. That pipeline reads a match
           # correctly under the bare `run:` default (errexit, no pipefail) but folds two
           # other statuses into "no match": grep's exit 2, and a SIGPIPE on printf once
-          # `grep -q` has exited early — measured, the latter turns an 8000-path diff into
+          # `grep -q` has exited early. The latter turns an 8000-path diff into
           # `run=false` the moment a step declares `shell: bash`, which adds pipefail.
           # Both fold toward not running, which is the direction this whole job is
           # written against.
