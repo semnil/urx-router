@@ -18,8 +18,8 @@
 // COMMENTS ONLY. `Object.entries(measured)` is an identifier and must not be reported, so
 // the file is lexed rather than grepped.
 //
-// THE LEDGER. This idiom predates the rule by a long way — 318 comments across 103 files
-// carried it when the check was written — and removing them in one sweep would be a
+// THE LEDGER. This idiom predates the rule by a long way — the count is in the ledger file
+// itself, which is the only place it stays true — and removing it in one sweep would be a
 // comment-only diff across a third of the tree, which no one can review and which deletes
 // provenance that in places has no other home. So `comment-provenance-baseline.json` holds
 // a per-file CEILING: a file may carry what it carried, and no more. A new one fails, and a
@@ -137,6 +137,9 @@ const REGEX_AFTER = new Set([
 ]);
 /** A `(` that follows one of these heads a control structure, so its `)` does not end a
  *  value and a `/` after it opens a pattern. Every other `(` is a call or a group. */
+/** Modifiers a declaration may wear before `function` or `class`. They are transparent:
+ *  what decides declaration-versus-expression is the token before the whole run. */
+const MODIFIERS = new Set(["async", "export", "default"]);
 const CONTROL_HEADS = new Set(["if", "for", "while", "with", "switch", "catch"]);
 /** A `{` after one of these is an OBJECT literal, because each demands an expression. After
  *  anything else — a `)`, a `;`, `=>`, another block, the start of input — it is a block. */
@@ -180,14 +183,23 @@ export function comments(src, mode = "js") {
   // NEST: `function (x = function(){}) {}` sets a second while the first is outstanding, and
   // a single slot loses the outer one.
   const pendingBodies = []; // {depth, value}
-  let prevName = ""; // the name token before `last`, for `async function` and `for await`
+  // The tokens behind `last`, most recent first. A single previous NAME is not enough: a
+  // declaration can wear a run of modifiers (`export async function`), and what decides it
+  // is the token before all of them.
+  const history = [];
+  const setLast = (tok) => {
+    if (last) history.unshift(last);
+    if (history.length > 8) history.pop();
+    last = tok;
+    return tok;
+  };
   const tpl = []; // the brace-stack depth each open `${` returns to
 
   const push = (startLine, text) => {
     text.split("\n").forEach((t, n) => out.push({ line: startLine + n, text: t }));
   };
-  const value = () => (last = { kind: "value", text: "" });
-  const punct = (text, extra = {}) => (last = { kind: "punct", text, ...extra });
+  const value = () => setLast({ kind: "value", text: "" });
+  const punct = (text, extra = {}) => setLast({ kind: "punct", text, ...extra });
   const afterDot = () => last?.kind === "punct" && last.text === ".";
   /** True where the grammar would be looking for an expression, so a `/` opens a pattern. */
   const regexAllowed = () => {
@@ -211,20 +223,14 @@ export function comments(src, mode = "js") {
   };
   /** True where a STATEMENT could begin, which is what separates a function declaration
    *  from a function expression. */
-  const atStatementStart = (skipModifier = false) => {
-    const t0 = skipModifier ? { kind: "name", text: prevName } : last;
-    const last0 = last;
-    last = t0;
-    const r = atStatementStartOf();
-    last = last0;
-    return r;
-  };
-  const atStatementStartOf = () => {
-    if (!last || (last.kind === "name" && last.text === "")) return true;
-    if (last.kind === "name") return last.text === "else" || last.text === "do";
-    if (last.kind === "value") return false;
-    const t = last.text;
-    return t === ";" || t === "{" || (t === "}" && last.brace === "block");
+  /** True where a STATEMENT could begin after `tok`, which is what separates a function
+   *  declaration from a function expression. */
+  const startsStatement = (tok) => {
+    if (!tok) return true;
+    if (tok.kind === "name") return tok.text === "else" || tok.text === "do";
+    if (tok.kind === "value") return false;
+    const t = tok.text;
+    return t === ";" || t === "{" || (t === "}" && tok.brace === "block");
   };
   const braceKind = () => {
     if (!last) return "block";
@@ -324,17 +330,21 @@ export function comments(src, mode = "js") {
       // `property` outlives the regex question: `obj.catch(x)` is a call, and reading its
       // `catch` as the control keyword makes the `)` start an expression.
       if ((text === "function" || text === "class") && !property) {
-        // `async` is transparent here: `async function f() {}` is a DECLARATION, and reading
-        // the `async` as the preceding token made every one of them an expression.
-        const modifier = last?.kind === "name" && last.text === "async";
-        // A function or class EXPRESSION ends a value at its closing brace, where a
-        // DECLARATION ends a statement. Which one this is, is decided here — at the
-        // keyword — and the flag is spent by the body brace at the same paren depth, so a
-        // default parameter's own object literal cannot take it.
-        pendingBodies.push({ depth: parens.length, value: !atStatementStart(modifier) });
+        // Walk back over the modifier run — `export`, `default`, `async` — because what
+        // separates a declaration from an expression is the token BEFORE all of them.
+        // Reading only the one immediately behind made `export function` an expression and
+        // `= async function` a declaration, each the opposite of what it is.
+        let k = 0;
+        while (
+          k < history.length &&
+          history[k].kind === "name" &&
+          !history[k].property &&
+          MODIFIERS.has(history[k].text)
+        )
+          k++;
+        pendingBodies.push({ depth: parens.length, value: !startsStatement(history[k] ?? null) });
       }
-      prevName = last?.kind === "name" ? last.text : "";
-      last = { kind: "name", text, property, regexOk: !property && REGEX_AFTER.has(text) };
+      setLast({ kind: "name", text, property, regexOk: !property && REGEX_AFTER.has(text) });
       i = j;
       continue;
     }
@@ -372,7 +382,7 @@ export function comments(src, mode = "js") {
       // between them is transparent — read as the head it made the `)` end a value.
       const head =
         last?.kind === "name" && !last.property
-          ? last.text === "await" && prevName === "for"
+          ? last.text === "await" && history[0]?.kind === "name" && history[0].text === "for"
             ? "for"
             : last.text
           : "";
@@ -388,8 +398,11 @@ export function comments(src, mode = "js") {
     }
     if (c === "{") {
       let kind = braceKind();
+      // Only a brace in BLOCK position is a body: a TypeScript return type sits at the same
+      // paren depth (`function (): { x: number } { … }`) and would otherwise take the flag,
+      // leaving the real body to be read as a block.
       const pending = pendingBodies[pendingBodies.length - 1];
-      if (pending && pending.depth === parens.length) {
+      if (pending && pending.depth === parens.length && kind === "block") {
         if (pending.value) kind = "value-body";
         pendingBodies.pop();
       }
@@ -496,8 +509,11 @@ export function rustComments(src) {
     if (c === '"') {
       i++;
       while (i < src.length && src[i] !== '"') {
-        if (src[i] === "\\") i++;
-        else if (src[i] === "\n") line++;
+        // The same line continuation the JavaScript reader counts: `\` and a NEWLINE.
+        if (src[i] === "\\") {
+          if (src[i + 1] === "\n") line++;
+          i++;
+        } else if (src[i] === "\n") line++;
         i++;
       }
       i++;

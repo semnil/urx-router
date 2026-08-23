@@ -145,12 +145,29 @@ describe("what counts as a comment", () => {
     expect(shapes('class X extends /["]/.constructor {} // measured on URX44V\n')).toEqual(["hedge-sentence"]);
   });
 
+  // What separates a function DECLARATION from an EXPRESSION is the token before the whole
+  // modifier run, not the one immediately behind the keyword. Reading only that one made
+  // `export function` an expression and `= async function` a declaration — each the opposite
+  // of what it is — and a TypeScript return type sits at the body's own paren depth.
+  it("reads through a modifier run, and does not mistake a return type for a body", () => {
+    expect(shapes("const n = async function() {} / 2; // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    expect(shapes('export function f() {} /["]/.test("x"); // measured on URX44V\n')).toEqual(["hedge-sentence"]);
+    expect(shapes('export async function f() {} /["]/.test("x"); // measured on URX44V\n')).toEqual(["hedge-sentence"]);
+    expect(shapes('export default function f() {} /["]/.test("x"); // measured on URX44V\n')).toEqual([
+      "hedge-sentence",
+    ]);
+    expect(
+      shapes("const n = function (): { x: number } {\n  return { x: 1 };\n} / 2; // measured on URX44V\n"),
+    ).toEqual(["hedge-sentence"]);
+  });
+
   // A line continuation is a backslash and a NEWLINE. Skipping the pair without counting it
   // reports every finding below it one line too few, which is a wrong file:line in a message
   // whose whole job is to point at one.
   it("counts a line continuation, in a string and in a template", () => {
     expect(findingsIn('const a = "x\\\n y";\n// (measured)\n', "x.ts").map((f) => f.line)).toEqual([3]);
     expect(findingsIn("const a = `x\\\n y`;\n// (measured)\n", "x.ts").map((f) => f.line)).toEqual([3]);
+    expect(findingsIn('const a = "x\\\r\n y";\r\n// (measured)\r\n', "x.ts").map((f) => f.line)).toEqual([3]);
   });
 
   it("does not read a regex literal as a comment", () => {
@@ -209,6 +226,13 @@ describe("what counts as a comment in Rust", () => {
     expect(rs(`let s = r${"#".repeat(40)}"x (measured)"${"#".repeat(40)}; // real (measured)\n`)).toEqual([
       "hedge-parenthetical",
     ]);
+  });
+
+  // The JavaScript reader learned to count a continuation; the Rust one had not, and the
+  // finding below it came back one line short.
+  it("counts a line continuation in a Rust string, LF and CRLF alike", () => {
+    expect(findingsIn('let s = "a\\\nb";\n// measured on URX44V\n', "x.rs").map((f) => f.line)).toEqual([3]);
+    expect(findingsIn('let s = "a\\\r\nb";\r\n// measured on URX44V\r\n', "x.rs").map((f) => f.line)).toEqual([3]);
   });
 
   it("still reads an ordinary string as a string", () => {
@@ -456,6 +480,16 @@ describe("what a ledger write may do", () => {
     const { files, raised } = nextLedger(at("src/a.ts", 1), { "src/a.ts": 4, "src/b.ts": 9 }, new Set(["src/a.ts"]));
     expect(raised).toEqual([]);
     expect(files).toEqual({ "src/a.ts": 1, "src/b.ts": 9 });
+  });
+});
+
+// A count in prose is wrong the moment the corpus moves, and this one moved three times
+// while the header still said 318 across 103 files. The ledger file is where it stays true.
+describe("what the header may claim", () => {
+  it("states no finding or file count of its own", () => {
+    const header = readFileSync(join(HERE, "check-comment-provenance.mjs"), "utf8").split("\nimport ")[0];
+    expect(header).not.toMatch(/\b\d{2,}\s+(?:comments?|findings?|files?)\b/);
+    expect(header).toMatch(/the count is in the ledger file/i);
   });
 });
 
