@@ -48,7 +48,7 @@ const SKIP_PATHS = new Set(["reference", "src-tauri/target", ".claude/skills/urx
 // reported as a finding. This tree carries no JSX at all, so lexing it would be a state
 // machine written against no input; the day one arrives, the extension and the JSX state go
 // in together rather than the extension alone.
-const EXTS = new Set([".ts", ".mjs", ".cjs", ".js", ".css", ".rs"]);
+const EXTS = new Set([".ts", ".mjs", ".cjs", ".js", ".css", ".rs", ".yml", ".yaml", ".sh", ".html"]);
 /** Which comment syntax a file is read with. Rust is not JavaScript with different
  *  keywords: its block comments NEST, its raw strings carry any number of hashes, and a
  *  leading `'` is a lifetime far more often than a character literal — read as a quote it
@@ -57,12 +57,14 @@ const dialect = (path) => {
   const ext = extname(path).toLowerCase();
   if (ext === ".css") return "css";
   if (ext === ".rs") return "rust";
+  if (ext === ".yml" || ext === ".yaml" || ext === ".sh") return ext === ".sh" ? "shell" : "yaml";
+  if (ext === ".html") return "html";
   return "js";
 };
 // This checker and its own pins quote the shapes they refuse, so they are not scanned.
 const SELF = /(^|\/)check-comment-provenance(\.test)?\.mjs$/;
 /** The TypeScript configs that sit at the repository root rather than under a directory. */
-const ROOT_CONFIGS = ["vite.config.ts", "vitest.config.ts", "playwright.config.ts"];
+const ROOT_CONFIGS = ["vite.config.ts", "vitest.config.ts", "playwright.config.ts", "index.html"];
 
 /** The enforced shapes, each named for what it is so the finding can say it. */
 const RULES = [
@@ -183,9 +185,42 @@ const isIdPart = (c) => /[A-Za-z0-9_$]/.test(c);
  * token, and a stack per bracket kind recording what that bracket was — because the
  * preceding CHARACTER cannot decide it.
  */
+/**
+ * Comment spans of one source file, as {line, text}.
+ *
+ * For JavaScript and TypeScript this is the UNION of three readings of the same text: the
+ * goal state's own, one where every ambiguous `/` divides, and one where every ambiguous `/`
+ * opens a pattern. A MISS then needs all three to miss, which is what takes "valid syntax
+ * hides a comment" off the table — eight review rounds found that class one shape at a time
+ * (a generic constraint, `export default`, a `case` clause, a semicolon the grammar inserts)
+ * and each fix was another keyword list. TypeScript's own scanner would end it outright, but
+ * the 7.x package exports `version` and nothing else.
+ *
+ * The cost is a FALSE positive where a real regex contains something that reads as a comment
+ * (`/a\/\/x/`), and on this tree that cost is zero: all three readings of every ledgered file
+ * agree, finding for finding. A false positive is also the failure that shows itself, where a
+ * miss is the one that lets a violation through quietly.
+ */
 export function comments(src, mode = "js") {
   if (mode === "rust") return rustComments(src);
-  const css = mode === "css" || mode === true;
+  if (mode === "yaml" || mode === "shell") return hashComments(src);
+  if (mode === "html") return htmlComments(src);
+  if (mode === "css") return scanJs(src, "css", null);
+  const seen = new Set();
+  const out = [];
+  for (const force of [null, "divide", "regex"]) {
+    for (const span of scanJs(src, mode, force)) {
+      const key = span.line + "\u0000" + span.text;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(span);
+    }
+  }
+  return out.sort((a, b) => a.line - b.line);
+}
+
+function scanJs(src, mode = "js", force = null) {
+  const css = mode === "css";
   const out = [];
   let line = 1;
   let i = 0;
@@ -370,7 +405,7 @@ export function comments(src, mode = "js") {
       continue;
     }
     if (!css && c === "/") {
-      if (regexAllowed()) {
+      if (force === "regex" || (force !== "divide" && regexAllowed())) {
         let j = i + 1;
         let cls = false;
         while (j < src.length && src[j] !== "\n") {
@@ -540,6 +575,71 @@ export function rustComments(src) {
       i += lit ? lit[0].length : 1;
       continue;
     }
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Comment spans of a `#` language — YAML and shell.
+ *
+ * A `#` opens a comment only at a line start or after whitespace: `a#b` is a value in YAML
+ * and a word in shell. Quoted scalars are skipped, because a `#` inside one is text.
+ */
+export function hashComments(src) {
+  const out = [];
+  let line = 1;
+  let i = 0;
+  let prev = "\n";
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\n") {
+      line++;
+      prev = c;
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      const q = c;
+      i++;
+      while (i < src.length && src[i] !== q) {
+        if (q === '"' && src[i] === "\\") i++;
+        else if (src[i] === "\n") line++;
+        i++;
+      }
+      i++;
+      prev = "x";
+      continue;
+    }
+    if (c === "#" && /[\s\n]|^$/.test(prev)) {
+      const nl = src.indexOf("\n", i);
+      const stop = nl === -1 ? src.length : nl;
+      out.push({ line, text: src.slice(i + 1, stop) });
+      i = stop;
+      continue;
+    }
+    prev = c;
+    i++;
+  }
+  return out;
+}
+
+/** Comment spans of an HTML file: `<!-- … -->` and nothing else. */
+export function htmlComments(src) {
+  const out = [];
+  let line = 1;
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith("<!--", i)) {
+      const close = src.indexOf("-->", i + 4);
+      const stop = close === -1 ? src.length : close;
+      const body = src.slice(i + 4, stop);
+      body.split("\n").forEach((t, n) => out.push({ line: line + n, text: t }));
+      line += (src.slice(i, stop).match(/\n/g) ?? []).length;
+      i = stop + 3;
+      continue;
+    }
+    if (src[i] === "\n") line++;
     i++;
   }
   return out;
@@ -737,7 +837,7 @@ if (invokedDirectly) {
   // the private reference tree are not walked at all.
   // `src-tauri` whole, not its `src`: `build.rs` sits beside it and is Rust the scan simply
   // never opened. `target` is skipped by name, so the crate's build output is not walked.
-  const DEFAULT_ROOTS = ["src", "e2e", "scripts", "src-tauri", ...ROOT_CONFIGS];
+  const DEFAULT_ROOTS = ["src", "e2e", "scripts", "src-tauri", ".github", ...ROOT_CONFIGS];
   const scanRoots = roots.length ? roots : DEFAULT_ROOTS;
   const targets = scanRoots.flatMap((r) => (existsSync(r) ? collect(r) : []));
   const found = targets.flatMap((p) => findingsIn(readFileSync(p, "utf8"), p));

@@ -18,6 +18,8 @@ import {
   escapesRoot,
   findingsIn,
   hookDecision,
+  hashComments,
+  htmlComments,
   nextLedger,
   repoPath,
   rustComments,
@@ -159,6 +161,34 @@ describe("what counts as a comment", () => {
     expect(
       shapes("const n = function (): { x: number } {\n  return { x: 1 };\n} / 2; // measured on URX44V\n"),
     ).toEqual(["hedge-sentence"]);
+  });
+
+  // Eight review rounds found "valid syntax hides a comment" one shape at a time, and each
+  // fix was another keyword list. The reading is now the UNION of three — the goal state's
+  // own, one where every ambiguous slash divides, one where every ambiguous slash opens a
+  // pattern — so a MISS needs all three to miss. These four are the shapes that were still
+  // getting through when that was decided.
+  it("finds the comment whichever reading is the right one", () => {
+    expect(shapes("const f = +function<T extends () => {}>() {} / 2; // measured on URX44V\n")).toEqual([
+      "hedge-sentence",
+    ]);
+    expect(shapes(`export default /["']/.test("x"); // measured on URX44V\n`)).toEqual(["hedge-sentence"]);
+    expect(shapes('switch (k) { case 1: function g() {} /["]/.test("y"); // measured on URX44V\n }\n')).toEqual([
+      "hedge-sentence",
+    ]);
+    expect(shapes('function h() { while (t) { break\n /["]/.test("z"); } } // measured on URX44V\n')).toEqual([
+      "hedge-sentence",
+    ]);
+  });
+
+  // The union's cost is a FALSE positive where a real regex carries something that reads as
+  // a comment. Every negative control has to survive it, or the union bought the misses back
+  // as noise.
+  it("still reads a string, a template and a regex as themselves", () => {
+    expect(shapes('const s = "a (measured) value";\n')).toEqual([]);
+    expect(shapes("const re = /a\\/\\/(measured)/;\n")).toEqual([]);
+    expect(shapes("const x = `${a} plain (measured) text`;\n")).toEqual([]);
+    expect(shapes("for (const k of Object.entries(measured)) {}\n")).toEqual([]);
   });
 
   // A generic constraint puts a brace at the SIGNATURE's own paren depth, where a block
@@ -427,6 +457,34 @@ describe("what a partial scan may conclude", () => {
 // The scan's default roots ARE the contract: a source the check never opens is a source it
 // does not check, however well it lexes. The root configs and the Rust crate were both
 // outside them, and both carry findings.
+// A `#` opens a comment at a line start or after whitespace, and not inside a quoted
+// scalar; HTML has only the one form. Both were outside the extension list, so the workflows
+// and index.html were never read at all.
+describe("what counts as a comment in the # languages and in HTML", () => {
+  it("reads a YAML comment, and not a hash inside a quoted scalar", () => {
+    expect(
+      findingsIn('key: value  # (measured)\nother: "a # not a comment (measured)"\n', "x.yml").map((f) => f.line),
+    ).toEqual([1]);
+    expect(hashComments("a: 1\n# note\n").map((c) => c.text.trim())).toEqual(["note"]);
+  });
+
+  it("reads a shell comment the same way", () => {
+    expect(findingsIn("echo hi  # measured on URX44V\n", "x.sh").map((f) => f.rule)).toEqual(["hedge-sentence"]);
+  });
+
+  it("reads an HTML comment, and reports the line inside a multi-line one", () => {
+    expect(findingsIn("<p>a</p>\n<!-- (measured) -->\n", "x.html").map((f) => f.line)).toEqual([2]);
+    // One span per line the body covers, the opener's own remainder included — the same
+    // shape the block-comment reader produces, so a finding's line is the line it is on.
+    expect(htmlComments("<!--\n a\n b\n-->\n").map((c) => [c.line, c.text])).toEqual([
+      [1, ""],
+      [2, " a"],
+      [3, " b"],
+      [4, ""],
+    ]);
+  });
+});
+
 describe("what the default scan reaches", () => {
   const src = readFileSync(join(HERE, "check-comment-provenance.mjs"), "utf8");
   const roots = /const DEFAULT_ROOTS = \[([^\]]*)\]/.exec(src)[1];
@@ -435,6 +493,7 @@ describe("what the default scan reaches", () => {
   it("names the Rust crate and the configs at the repository root", () => {
     // The CRATE, not its `src`: `build.rs` sits beside it and was Rust the scan never opened.
     expect(roots).toContain('"src-tauri"');
+    expect(roots).toContain('".github"');
     expect(roots).not.toContain('"src-tauri/src"');
     expect(roots).toContain("ROOT_CONFIGS");
     expect(src).toMatch(/ROOT_CONFIGS = \[[^\]]*"vitest\.config\.ts"/);
@@ -456,8 +515,21 @@ describe("what the default scan reaches", () => {
   });
 
   // …and the ledger proves the scan actually opened them, which the root list alone cannot.
+  // A dialect the lexer knows but the extension list does not claim is a dialect nothing
+  // reads. The reading and the SCANNING are separate gates, and only running the scan asks
+  // the second one.
+  it("actually opens the YAML the workflows are written in", () => {
+    const out = execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), ".github"], {
+      cwd: join(HERE, ".."),
+      encoding: "utf8",
+    });
+    expect(Number(/OK: (\d+) source file/.exec(out)[1])).toBeGreaterThan(0);
+    expect(Number(/, (\d+) ledgered finding/.exec(out)[1])).toBeGreaterThan(0);
+  });
+
   it("has ledgered what those roots carry", () => {
     expect(Object.keys(ledger.files).some((p) => p.endsWith(".rs"))).toBe(true);
+    expect(Object.keys(ledger.files).some((p) => p.startsWith(".github/"))).toBe(true);
     expect(ledger.files["vitest.config.ts"]).toBeGreaterThan(0);
   });
 });
