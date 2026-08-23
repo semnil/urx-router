@@ -156,6 +156,20 @@ const OBJECT_AFTER = new Set([
   "delete",
   "void",
   "throw",
+  // TypeScript type positions. A brace after one of these is a type literal, and a generic
+  // constraint puts one at the SIGNATURE's own paren depth — `function<T extends {}>() {}`
+  // — where a block reading takes the flag the real body was waiting for. A list of
+  // keywords rather than a type grammar, and that is the limit: a brace inside a type this
+  // list does not name can still be read as a block.
+  "extends",
+  "implements",
+  "satisfies",
+  "infer",
+  "keyof",
+  "readonly",
+  "asserts",
+  "as",
+  "is",
 ]);
 
 const isIdStart = (c) => /[A-Za-z_$]/.test(c);

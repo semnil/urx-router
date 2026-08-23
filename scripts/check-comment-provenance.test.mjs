@@ -161,6 +161,25 @@ describe("what counts as a comment", () => {
     ).toEqual(["hedge-sentence"]);
   });
 
+  // A generic constraint puts a brace at the SIGNATURE's own paren depth, where a block
+  // reading takes the flag the real body was waiting for — and the comment after the
+  // division then vanishes, which is a check that can be stepped around by writing one.
+  it("reads a brace in a TypeScript type position as a type, not as a body", () => {
+    expect(shapes("const n = function<T extends {}>() {} / 2; // measured on URX44V\n")).toEqual(["hedge-sentence"]);
+    expect(shapes("const n = function<T extends { a: number }>() {} / 2; // measured on URX44V\n")).toEqual([
+      "hedge-sentence",
+    ]);
+    expect(shapes("const n = function<T extends { a: 1 }, U extends {}>() {} / 2; // measured on URX44V\n")).toEqual([
+      "hedge-sentence",
+    ]);
+    expect(shapes('function f(x: unknown): asserts x is { a: 1 } {} /["]/.test("y"); // measured on URX44V\n')).toEqual(
+      ["hedge-sentence"],
+    );
+    // …and a class heritage is still a heritage: the brace after `extends Y` is the body.
+    expect(shapes('class X extends Y {} /["]/.test("z"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    expect(shapes('class X extends /["]/.constructor {} // measured on URX44V\n')).toEqual(["hedge-sentence"]);
+  });
+
   // A line continuation is a backslash and a NEWLINE. Skipping the pair without counting it
   // reports every finding below it one line too few, which is a wrong file:line in a message
   // whose whole job is to point at one.
