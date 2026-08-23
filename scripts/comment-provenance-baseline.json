@@ -1,6 +1,11 @@
 {
   "note": "Per-file ceiling for comments that record a fact's provenance. See scripts/check-comment-provenance.mjs. A file may carry what it carried and no more; a cleaned file's lower count belongs here.",
   "files": {
+    ".github/actions/install-browsers/action.yml": 3,
+    ".github/codecov.yml": 3,
+    ".github/workflows/ci.yml": 2,
+    ".github/workflows/race.yml": 3,
+    ".github/workflows/release.yml": 1,
     "e2e/bustype.spec.ts": 2,
     "e2e/chrome.spec.ts": 1,
     "e2e/console.spec.ts": 3,
