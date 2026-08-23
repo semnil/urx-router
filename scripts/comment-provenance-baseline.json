@@ -32,6 +32,7 @@
     "e2e/sdrec.spec.ts": 2,
     "e2e/signaltype.spec.ts": 1,
     "e2e/ssmcs.spec.ts": 3,
+    "playwright.config.ts": 1,
     "scripts/check-assets-index.mjs": 8,
     "scripts/check-assets-index.test.mjs": 2,
     "scripts/check-race-skips.mjs": 2,
@@ -39,6 +40,10 @@
     "scripts/release-tag.test.mjs": 1,
     "scripts/shard-weights.mjs": 3,
     "scripts/shard-weights.test.mjs": 2,
+    "src-tauri/src/lib.rs": 8,
+    "src-tauri/src/midiwin.rs": 1,
+    "src-tauri/src/vd.rs": 8,
+    "src-tauri/src/winfit.rs": 18,
     "src/core/control/client.test.ts": 4,
     "src/core/control/client.ts": 1,
     "src/core/control/device-setup.ts": 2,
@@ -103,6 +108,7 @@
     "src/ui/midi-probe.ts": 4,
     "src/ui/midi-window-app.test.ts": 2,
     "src/ui/midi.ts": 3,
-    "src/ui/rate-choice.ts": 2
+    "src/ui/rate-choice.ts": 2,
+    "vitest.config.ts": 2
   }
 }
