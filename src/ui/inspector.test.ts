@@ -554,6 +554,23 @@ describe("insert FX", () => {
       expect(panel.querySelector("#btn-insfx-screen")).toBeNull();
     });
 
+    it("shows No Effect on the selector rather than an empty field", () => {
+      // A `<select>` handed a value none of its options carry lands at selectedIndex -1
+      // and draws nothing at all, which reads as a control that failed to render. What it
+      // shows instead is what the unit will be given.
+      const { model, plan } = held();
+      renderInspector(panel, model, plan, nodeSel(id), act);
+      const sel = [...panel.querySelectorAll<HTMLElement>(".param")]
+        .find((r) => r.dataset.paramLabel === t().inspector.insertFx)!
+        .querySelector("select")!;
+      expect(sel.selectedIndex).toBeGreaterThanOrEqual(0);
+      expect(sel.value).toBe(String(INSERT_FX_NONE));
+      expect(sel.selectedOptions[0]?.textContent).toBe("No Effect");
+      // …and the plan is not rewritten to say so. Nothing here edits, so the raw value is
+      // still what the next render, a save and an undo all see.
+      expect(plan.nodeParams[id]!.insertFx).not.toBe(INSERT_FX_NONE);
+    });
+
     it("is what the device path does with it — nothing", () => {
       // The half that says the refusal above is not merely a taste: the surface and the
       // wire agree because both ask effectiveInsertFx.

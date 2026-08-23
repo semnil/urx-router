@@ -782,13 +782,14 @@ export function renderInspector(
     const ifx = insertFxControl(model, node.id);
     if (ifx) {
       const ifxMenu = insertFxMenu(model, plan, node.id);
-      const ifxSel = plan.nodeParams[node.id]?.insertFx;
-      // Every control BELOW the selector reads the value the device path will act on
-      // rather than the raw plan value. A node's own control may not carry what the plan
+      // Every control here reads the value the device path will act on rather than the raw
+      // plan value, the selector included. A node's own control may not carry what the plan
       // holds — an output effect on a channel, a channel effect on a bus — and the emit
-      // path turns such a value into No Effect and writes no engine parameter for it, so
-      // a bypass switch and an editor over it change nothing that leaves. The SELECTOR
-      // keeps the raw value: it is the control that gets the operator out of that state.
+      // path turns such a value into No Effect and writes no engine parameter for it, so a
+      // bypass switch and an editor over it would change nothing that leaves. The selector
+      // shows it for a second reason: the raw value matches no option, and a `<select>`
+      // handed one lands at selectedIndex -1 and draws an EMPTY field. The plan keeps the
+      // raw value until the operator picks something, and picking writes a real one.
       const ifxEff = effectiveInsertFx(model, plan, node.id);
       (tailBody ?? host).append(
         selectControl(
@@ -798,7 +799,7 @@ export function renderInspector(
             label: e.option.label,
             disabled: e.lock !== null,
           })),
-          String(ifxSel ?? INSERT_FX_NONE),
+          String(ifxEff ?? INSERT_FX_NONE),
           // Selecting an effect auto-engages it on the device, so mirror that in
           // the plan; selecting No Effect leaves the dormant switch state alone.
           (v) => {
