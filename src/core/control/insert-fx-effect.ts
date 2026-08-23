@@ -689,7 +689,7 @@ function descBounds(d: InsertFxParamDesc): { rawMin: number; rawMax: number } {
  * are the ones where the app has to know and must not write:
  *
  *   Pitch Fix MIDI Control (34 / 35) — setting the enable bit erases a twelve-note mask
- *     that is FULL and takes the Scale enum to Custom with it (measured), and the notes it
+ *     that is FULL and takes the Scale enum to Custom with it, and the notes it
  *     listens for arrive on a USB-MIDI port of the unit's own. The screen shows the mode.
  */
 function insertFxReadOnlySlotsOf(family: InsertFxFamily): InsertFxSlotSpec[] {
@@ -737,7 +737,7 @@ export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[
       out.push({ slot: PITCH_SCALE_SLOT, rawMin: PITCH_SCALE_CUSTOM, rawMax: PITCH_SCALE_CHROMATIC });
       // The note keyboard is bools. MIDI Control (34 / 35) is deliberately NOT here: this
       // is the list the emit path walks, and setting the enable bit erases a twelve-note
-      // mask that is FULL, taking the Scale enum to Custom with it — measured. A device
+      // mask that is FULL, taking the Scale enum to Custom with it. A device
       // readback puts a 1 in the plan without anyone touching the app, so leaving the slot
       // in the writable set is what would carry that erase to the unit on the next flush.
       for (const slot of PITCH_NOTE_SLOTS) out.push({ slot, rawMin: 0, rawMax: 1 });
