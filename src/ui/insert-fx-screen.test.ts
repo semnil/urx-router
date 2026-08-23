@@ -401,8 +401,7 @@ describe("a plan value the device path will not act on", () => {
   it("refuses the screen for a bus holding a CHANNEL effect, at a rate that runs it", () => {
     // 48 kHz, so nothing here is about the ceiling. The bus's own control does not carry a
     // guitar amp or Pitch Fix, and translate.ts coerces such a value to No Effect and emits
-    // no engine parameter at all — measured before the fix: bind answered 4 editable fields
-    // while planToCommands emitted 0 INSERT_FX_EFFECT commands for the node.
+    // no engine parameter at all, so an editor over it collects edits nothing ever sends.
     h.plan.sampleRate = 48000;
     h.plan.nodeParams["bus.mix1"] = { insertFx: valueOf("Pitch Fix") };
     const ctx: DynCtx = { model: h.model, plan: h.plan, nodeId: "bus.mix1", sel: 0, m: t() };
@@ -472,7 +471,6 @@ describe("a gesture taken while the rebuild is deferred", () => {
   };
 
   it("roots a Scale at the Key the plan holds, not the one the row was drawn with", () => {
-    // Measured before the fix: the plan read Key = 7 and the mask written was C major.
     holding("ch1", "Pitch Fix");
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_CAB_DYN, "ch1");

@@ -443,10 +443,10 @@ const MIN_TARGET = 36;
 
 test("every semitone button meets the desktop minimum target, at the smallest window", async ({ page }) => {
   // The SMALLEST window the app admits (tauri.conf.json minWidth / minHeight), because the
-  // note row's width does not grow with the viewport — measured identical at 1280x900 and
-  // here — so a reading taken on a wide window would not be the worst case and a reading
-  // taken here covers both. Twelve targets do not reach 36px on one line in this column;
-  // six per row do, which is what the stylesheet lays them out as.
+  // note row's width does not grow with the viewport, so a reading taken on a wide window
+  // would not be the worst case and one taken here covers both. Twelve targets do not reach
+  // 36px on one line in this column; six per row do, which is what the stylesheet lays them
+  // out as.
   await page.setViewportSize({ width: 960, height: 640 });
   await node(page, "ch1").click();
   await insertSelect(page).selectOption({ label: "Pitch Fix" });
@@ -469,7 +469,7 @@ test("every semitone button meets the desktop minimum target, at the smallest wi
   }
   // Two rows of six, not one row of twelve and not some other wrap: distinct top edges,
   // and six buttons sharing each. Without this the size assertions above pass on any wrap
-  // the flex box happens to produce, including the ten-then-two one an earlier basis gave.
+  // the layout happens to produce, an uneven one included.
   const tops = await buttons.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
   const rows = [...new Set(tops)];
   expect(rows).toHaveLength(2);

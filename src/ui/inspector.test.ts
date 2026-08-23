@@ -528,9 +528,7 @@ describe("insert FX", () => {
   // A plan can hold an insert-FX value the node's own control does not carry: a file, a
   // `?plan=` link and a device read all land one, and the loader gates none of them. The
   // emit path turns it into No Effect and writes no engine parameter, so a bypass switch
-  // and an editor over it change nothing that leaves the app. Measured before the fix:
-  // CH 1 holding the output-only M.Band Comp rendered the bypass row and eighteen editing
-  // rows against zero INSERT_FX_EFFECT commands.
+  // and an editor over it would change nothing that leaves the app.
   describe.each([
     ["a channel holding an OUTPUT-only effect", "ch1", "M.Band Comp", OUTPUT_INSERT_FX_OPTIONS],
     ["a bus holding a CHANNEL-only effect", "bus.mix1", "Pitch Fix", INSERT_FX_OPTIONS],
