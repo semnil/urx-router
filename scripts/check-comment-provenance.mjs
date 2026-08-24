@@ -49,20 +49,7 @@ const SKIP_PATHS = new Set(["reference", "src-tauri/target", ".claude/skills/urx
 // reported as a finding. This tree carries no JSX at all, so lexing it would be a state
 // machine written against no input; the day one arrives, the extension and the JSX state go
 // in together rather than the extension alone.
-const EXTS = new Set([
-  ".ts",
-  ".mjs",
-  ".cjs",
-  ".js",
-  ".css",
-  ".rs",
-  ".yml",
-  ".yaml",
-  ".sh",
-  ".html",
-  ".toml",
-  ".py",
-]);
+const EXTS = new Set([".ts", ".mjs", ".cjs", ".js", ".css", ".rs", ".yml", ".yaml", ".sh", ".html", ".toml", ".py"]);
 /** Which comment syntax a file is read with. Rust is not JavaScript with different
  *  keywords: its block comments NEST, its raw strings carry any number of hashes, and a
  *  leading `'` is a lifetime far more often than a character literal — read as a quote it
@@ -72,7 +59,10 @@ const dialect = (path) => {
   if (ext === ".css") return "css";
   if (ext === ".rs") return "rust";
   if (ext === ".sh") return "shell";
-  if (ext === ".yml" || ext === ".yaml") return "yaml";
+  // A `run:` block holds shell only where something runs it. GitHub Actions is the one
+  // thing in this tree that does, so ordinary YAML keeps its `run:` as the text it is.
+  if (ext === ".yml" || ext === ".yaml")
+    return /(^|\/)\.github\/(workflows|actions)\//.test(path.split(sep).join("/")) ? "yaml-actions" : "yaml";
   if (ext === ".html") return "html";
   if (ext === ".toml") return "toml";
   if (ext === ".py") return "python";
@@ -217,7 +207,7 @@ const isIdPart = (c) => /[A-Za-z0-9_$]/.test(c);
  */
 export function comments(src, mode = "js") {
   if (mode === "rust") return rustComments(src);
-  if (mode === "yaml") return yamlComments(src);
+  if (mode === "yaml" || mode === "yaml-actions") return yamlComments(src, mode === "yaml-actions");
   if (mode === "toml") return tomlComments(src);
   if (mode === "python") return pyComments(src);
   if (mode === "shell") return shellComments(src);
@@ -621,7 +611,7 @@ export function rustComments(src) {
  * are comments. Its body goes to the shell reader with its offsets carried over, so a span
  * found there points at the same characters it would in a `.sh` file.
  */
-export function yamlComments(src) {
+export function yamlComments(src, actions = false) {
   const out = [];
   const lines = src.split("\n");
   // The absolute offset each line starts at, so a span can name its characters and not only
@@ -685,19 +675,61 @@ export function yamlComments(src) {
       end++;
     }
     const key = /(?:^|[\s-])([\w.-]+)[ \t]*:[ \t]*[|>]/.exec(head);
-    if (key && key[1] === "run" && end > n + 1) {
-      const from = starts[n + 1];
-      // The last line's own newline is not part of the body, and past the last line there is
-      // no next start to subtract it from — indexed anyway, the slice ran to NaN and handed
-      // the shell reader an empty string.
-      const to = end < lines.length ? starts[end] - 1 : src.length;
-      for (const span of shellComments(src.slice(from, Math.max(from, to)))) {
-        out.push({ line: n + 1 + span.line, text: span.text, start: from + span.start, end: from + span.end });
+    if (actions && key && key[1] === "run" && end > n + 1) {
+      // What the shell is handed is the block's VALUE, which is these lines with their
+      // common indentation removed — the indentation indicator's if it has one, and the
+      // first non-empty line's otherwise. Handed the raw lines instead, a here-document's
+      // `EOF` never equalled its indented delimiter line, so the scan swallowed the rest of
+      // the block as body and every comment after it went unread.
+      const strip = blockStrip(head, lines.slice(n + 1, end));
+      // Each dedented character's offset in the source, so a span found in the value points
+      // at the characters it came from.
+      const at = [];
+      let value = "";
+      for (let k = n + 1; k < end; k++) {
+        const l = lines[k];
+        for (let col = Math.min(strip, l.length); col < l.length; col++) {
+          at.push(starts[k] + col);
+          value += l[col];
+        }
+        at.push(starts[k] + l.length);
+        value += "\n";
+      }
+      for (const span of shellComments(value)) {
+        out.push({
+          line: n + 1 + span.line,
+          text: span.text,
+          start: at[span.start],
+          end: span.end < at.length ? at[span.end] : at[at.length - 1] + 1,
+        });
       }
     }
     n = end - 1;
   }
   return out.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * How many columns YAML removes from a block scalar's body, which is what makes the value
+ * the value rather than the lines it was written on.
+ *
+ * Without an indentation indicator it is the first non-empty line's own indentation. WITH
+ * one, the count is from the column of the node the scalar BELONGS TO, and that is not the
+ * header line's indentation: for `- run: |2` it is the key's column, and for a bare `- |2`
+ * it is the sequence entry's dash. Measured against Ruby's YAML, which the differential at
+ * the foot of the pins re-measures rather than trusting this comment.
+ */
+export function blockStrip(head, body) {
+  const digit = /[|>][-+]?([1-9])|[|>]([1-9])[-+]?/.exec(head);
+  const columns = digit ? Number(digit[1] ?? digit[2]) : 0;
+  if (!columns) {
+    const first = body.find((l) => l.trim() !== "") ?? "";
+    return first.length - first.trimStart().length;
+  }
+  const lead = /^(\s*)((?:-\s+)*)/.exec(head);
+  const rest = lead[1].length + lead[2].length;
+  const entry = lead[2] !== "" && /^[|>]/.test(head.slice(rest));
+  return (entry ? lead[1].length + lead[2].lastIndexOf("-") : rest) + columns;
 }
 
 /** The index just past the closing `q` at or after `from`, or -1 if the line does not close it. */
@@ -754,7 +786,18 @@ export function tomlComments(src) {
           j += 2;
           continue;
         }
-        if (src.startsWith(close, j)) break;
+        if (src.startsWith(close, j)) {
+          // Up to two of the delimiter's own characters may sit INSIDE a multi-line value,
+          // and what closes it is the last three of the run. Closed at the first three,
+          // `""""quoted""""` left a fourth quote behind that opened a string of its own and
+          // swallowed the comment after it; tomllib reads that value as `"quoted"`.
+          if (triple) {
+            let run = 0;
+            while (src[j + run] === c) run++;
+            if (run > 3) j += Math.min(run - 3, 2);
+          }
+          break;
+        }
         if (!triple && src[j] === "\n") break;
         j++;
       }
@@ -779,15 +822,150 @@ export function tomlComments(src) {
 /**
  * Comment spans of a Python file.
  *
- * A `#` outside a string literal. The three-quote forms span lines, and a backslash escapes
- * the quote in a RAW string too — `r"\""` is one string — so the escape is read the same
- * way in both. A docstring is a string and not a comment here, which is the same line every
- * other reader draws: what the language stores as a value is data.
+ * A `#` outside a string literal — and, since PEP 701, inside a multi-line f-string's
+ * replacement FIELD, which is Python code the string only looks like it contains. Read as
+ * one opaque string, `f"""{ 1  # why \n }"""` carried a comment CPython's own tokenizer
+ * reports and this saw nothing at all.
+ *
+ * The three parts are the f-string body (text, `{{` an escape, `{` a field), the field
+ * itself (code, where a comment is legal only when the f-string is triple-quoted — a
+ * single-line one cannot hold the newline that would end it), and the format spec after a
+ * `:` or a `!` conversion, which is f-string TEXT again: a `#` there is a fill character.
+ *
+ * A docstring is a string and not a comment, which is the same line every other reader here
+ * draws — what the language stores as a value is data. A backslash escapes the quote in a
+ * RAW string too (`r"\""` is one string), so the escape is read the same way in both.
  */
 export function pyComments(src) {
   const out = [];
   let line = 1;
   let i = 0;
+
+  const comment = () => {
+    const nl = src.indexOf("\n", i);
+    const stop = nl === -1 ? src.length : nl;
+    out.push({ line, text: src.slice(i + 1, stop), start: i, end: stop });
+    i = stop;
+  };
+
+  /** Whether the letters immediately before `at` are a string prefix carrying an `f`. */
+  const fPrefix = (at) => {
+    let k = at;
+    while (k > 0 && /[A-Za-z]/.test(src[k - 1])) k--;
+    const pre = src.slice(k, at);
+    return pre.length > 0 && pre.length <= 2 && /f/i.test(pre) && !/[\w]/.test(src[k - 1] ?? " ");
+  };
+
+  /** Consume a string whose opening quote is at `i`. `fmt` = its prefix carried an `f`. */
+  const string = (fmt) => {
+    const q = src[i];
+    const triple = src.startsWith(q.repeat(3), i);
+    const close = triple ? q.repeat(3) : q;
+    i += close.length;
+    for (;;) {
+      if (i >= src.length) return;
+      if (src.startsWith(close, i)) {
+        i += close.length;
+        return;
+      }
+      if (src[i] === "\\") {
+        if (src[i + 1] === "\n") line++;
+        i += 2;
+        continue;
+      }
+      if (src[i] === "\n") {
+        if (!triple) return;
+        line++;
+        i++;
+        continue;
+      }
+      if (fmt && (src[i] === "{" || src[i] === "}") && src[i + 1] === src[i]) {
+        i += 2;
+        continue;
+      }
+      if (fmt && src[i] === "{") {
+        i++;
+        field();
+        continue;
+      }
+      i++;
+    }
+  };
+
+  /** Consume a replacement field whose `{` has been read.
+   *
+   *  A comment is legal here only in a MULTI-LINE f-string — a single-line one cannot hold
+   *  the newline that would end one — and that condition is not carried, because no valid
+   *  program separates the two: reaching a `#` here at all takes a newline to come after it.
+   *  A branch nothing can turn red is a branch that says it was tested. */
+  const field = () => {
+    let depth = 0;
+    for (;;) {
+      if (i >= src.length) return;
+      const c = src[i];
+      if (c === "\n") {
+        line++;
+        i++;
+        continue;
+      }
+      if (c === "#") {
+        comment();
+        continue;
+      }
+      if (c === '"' || c === "'") {
+        string(fPrefix(i));
+        continue;
+      }
+      if (c === "(" || c === "[" || c === "{") {
+        depth++;
+        i++;
+        continue;
+      }
+      if (c === ")" || c === "]") {
+        depth--;
+        i++;
+        continue;
+      }
+      if (c === "}") {
+        i++;
+        if (depth === 0) return;
+        depth--;
+        continue;
+      }
+      // `!=` is an operator; a lone `!` is the conversion, and either one ends the
+      // expression only at the field's own depth.
+      if (depth === 0 && (c === ":" || (c === "!" && src[i + 1] !== "="))) {
+        i++;
+        spec();
+        return;
+      }
+      i++;
+    }
+  };
+
+  /** The format spec, which is f-string text: a `#` in it is a fill character. */
+  const spec = () => {
+    for (;;) {
+      if (i >= src.length) return;
+      const c = src[i];
+      if (c === "}") {
+        i++;
+        return;
+      }
+      if (c === "\n") {
+        line++;
+        i++;
+        continue;
+      }
+      if (c === "{") {
+        i++;
+        field();
+        continue;
+      }
+      i++;
+    }
+  };
+
   while (i < src.length) {
     const c = src[i];
     if (c === "\n") {
@@ -795,38 +973,18 @@ export function pyComments(src) {
       i++;
       continue;
     }
-    if (c === '"' || c === "'") {
-      const triple = src.startsWith(c.repeat(3), i);
-      const close = triple ? c.repeat(3) : c;
-      let j = i + close.length;
-      while (j < src.length) {
-        if (src[j] === "\\") {
-          if (src[j + 1] === "\n") line++;
-          j += 2;
-          continue;
-        }
-        if (src.startsWith(close, j)) break;
-        if (src[j] === "\n") {
-          if (!triple) break;
-          line++;
-        }
-        j++;
-      }
-      i = src.startsWith(close, j) ? j + close.length : j;
+    if (c === "#") {
+      comment();
       continue;
     }
-    if (c === "#") {
-      const nl = src.indexOf("\n", i);
-      const stop = nl === -1 ? src.length : nl;
-      out.push({ line, text: src.slice(i + 1, stop), start: i, end: stop });
-      i = stop;
+    if (c === '"' || c === "'") {
+      string(fPrefix(i));
       continue;
     }
     i++;
   }
   return out;
 }
-
 /**
  * Comment spans of a shell script.
  *
@@ -845,17 +1003,27 @@ export function shellComments(src) {
   let i = 0;
   let prev = "\n";
   // `$( … )` and a plain `( … )` subshell both nest, and counting only the first made any
-  // `)` close the substitution: `$( (x); # why` left the comment outside it.
-  const stack = []; // "subst" | "group"
+  // `)` close the substitution: `$( (x); # why` left the comment outside it. A BACKTICK
+  // substitution is a third frame: its body is code even inside a double quote, which a
+  // `$(`-only state read as string text.
+  const stack = []; // "subst" | "group" | "backtick"
   const dq = []; // the stack depth each open double quote was opened at
   const inDoubleQuote = () => dq.length > 0 && dq[dq.length - 1] === stack.length;
   const pending = []; // here-documents whose bodies start after this line's newline
+  // The stack depth each open `case` was read at. Its patterns end on a `)` that never had
+  // an opener, and popped unconditionally that `)` closed the substitution around it — so a
+  // comment inside a case arm fell outside and was never read.
+  const cases = [];
+  // Whether a command word could start here, which is what separates the keyword `case`
+  // from the argument in `echo case`.
+  let cmdStart = true;
   while (i < src.length) {
     const c = src[i];
     if (c === "\n") {
       line++;
       i++;
       prev = c;
+      cmdStart = true;
       while (pending.length) {
         const { dash, word } = pending.shift();
         for (;;) {
@@ -931,22 +1099,50 @@ export function shellComments(src) {
       i++;
       continue;
     }
+    if (c === "`") {
+      // Backticks do not nest — the inner ones have to be escaped — so one frame toggles.
+      if (stack[stack.length - 1] === "backtick") stack.pop();
+      else stack.push("backtick");
+      i++;
+      prev = "(";
+      cmdStart = true;
+      continue;
+    }
     if (c === "$" && src[i + 1] === "(") {
       stack.push("subst");
       i += 2;
       prev = "(";
+      cmdStart = true;
       continue;
     }
     if (c === "(" && !inDoubleQuote()) {
       stack.push("group");
       i++;
       prev = "(";
+      cmdStart = true;
       continue;
     }
-    if (c === ")" && stack.length && !inDoubleQuote()) {
-      stack.pop();
+    if (c === ")" && !inDoubleQuote()) {
+      // A case PATTERN's `)` has no opener. It is the one at the depth the `case` was read
+      // at — an optional leading `(` in a pattern raises the depth and is closed normally.
+      if (cases.length && stack.length === cases[cases.length - 1]) {
+        i++;
+        prev = c;
+        cmdStart = true;
+        continue;
+      }
+      if (stack.length) stack.pop();
       i++;
       prev = c;
+      continue;
+    }
+    if (cmdStart && (c === "c" || c === "e") && /^(case|esac)\b/.test(src.slice(i, i + 5))) {
+      const word = src.startsWith("case", i) ? "case" : "esac";
+      if (word === "case") cases.push(stack.length);
+      else cases.pop();
+      i += 4;
+      prev = "x";
+      cmdStart = false;
       continue;
     }
     if (c === "#" && !inDoubleQuote() && /[\s\n(;&|]|^$/.test(prev)) {
@@ -956,6 +1152,7 @@ export function shellComments(src) {
       i = stop;
       continue;
     }
+    cmdStart = c === ";" || c === "&" || c === "|" || c === "{";
     prev = c;
     i++;
   }
@@ -1030,11 +1227,21 @@ export function trackedSources(root = ROOT, run = gitLsFiles, exists = existsSyn
   const listed = run(root)
     .split("\0")
     .filter(Boolean)
-    .filter((rel) => EXTS.has(extname(rel).toLowerCase()) && !SELF.test(rel));
+    .filter((rel) => EXTS.has(extname(rel).toLowerCase()));
   // A tracked path can be missing from the worktree (deleted, not yet committed). Reading it
   // would throw in the middle of the scan; it is simply not there to carry a comment.
   return listed.map((rel) => join(root, rel)).filter((abs) => exists(abs));
 }
+
+/**
+ * The sources this check READS, which is the inventory minus its own two files.
+ *
+ * Separate from the inventory because the formatter takes that list too, and folding the
+ * self-exclusion into it made `pnpm format` skip this file and its pins — narrower than the
+ * `scripts/**` glob it replaced. Not being scanned and not being formatted are different
+ * questions, and one filter cannot answer both.
+ */
+export const scanTargets = (sources) => sources.filter((path) => !SELF.test(path.split(sep).join("/")));
 
 // `--others --exclude-standard` as well as the index: a file written but not yet added is
 // source this repository is about to carry, and a check that waits for `git add` reports a
@@ -1225,7 +1432,7 @@ if (invokedDirectly) {
     targets = roots.flatMap((r) => (existsSync(r) ? collect(r) : []));
   } else {
     try {
-      targets = trackedSources();
+      targets = scanTargets(trackedSources());
     } catch (err) {
       console.error(`Cannot list this repository's files: ${err.message}`);
       console.error("The whole-tree scan reads what git tracks. Name paths to scan without it.");

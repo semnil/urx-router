@@ -101,6 +101,13 @@ const PROSE_TOKENS = new Map([
   // grammar being discussed (`run:` is YAML's key, `)` is the character a shell closes on),
   // one is a command run as a positive control, and two are node's own globals.
   ["run:", "a YAML key, named as the one block scalar that holds shell rather than text"],
+  // Three more from that row, once it named what the block scalars are measured against.
+  // Two are YAML written as itself — a block header with its indentation indicator — and
+  // one is the CPython module the f-string reader is differentialled against.
+  ["- run: |2", "a YAML block header, named as the shape whose indicator counts from the key's column"],
+  ["- |2", "the same header without a key, where the indicator counts from the dash instead"],
+  ["tokenize", "CPython's module, named as the authority the f-string reader is measured against"],
+  ["#", "the character, named as itself — the comment marker three of the languages share"],
   [")", "the character, named as what a shell closes the innermost thing on"],
   ["bash -n", "the syntax check, named as the positive control a shell fixture is confirmed with"],
   ["import.meta.url", "a node global, named as one side of the entry guard's comparison"],

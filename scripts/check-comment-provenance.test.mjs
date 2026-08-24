@@ -8,7 +8,7 @@
 // this is the same measurement on every run.
 import { describe, expect, it } from "vitest";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { dirname, extname, join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,8 @@ import {
   repoPath,
   shellComments,
   tomlComments,
+  blockStrip,
+  scanTargets,
   trackedSources,
   yamlComments,
   rustComments,
@@ -595,12 +597,13 @@ describe("what counts as a comment in the # languages and in HTML", () => {
   // comments were the only comments in this repository that nothing looked at.
   it("reads a run: block as the shell it is, and every other block as text", () => {
     const wf = (key) => `jobs:\n  a:\n    steps:\n      - ${key}: |\n          echo hi  # measured on URX44V\n`;
-    expect(findingsIn(wf("run"), "x.yml").map((f) => f.line)).toEqual([5]);
-    expect(findingsIn(wf("message"), "x.yml")).toEqual([]);
+    const path = ".github/workflows/x.yml";
+    expect(findingsIn(wf("run"), path).map((f) => f.line)).toEqual([5]);
+    expect(findingsIn(wf("message"), path)).toEqual([]);
     // …and the shell reader's own rules apply inside it: a hash in a string is not a comment.
-    expect(findingsIn('jobs:\n  a:\n    steps:\n      - run: |\n          echo "# measured on URX44V"\n', "x.yml")).toEqual(
-      [],
-    );
+    expect(
+      findingsIn('jobs:\n  a:\n    steps:\n      - run: |\n          echo "# measured on URX44V"\n', path),
+    ).toEqual([]);
   });
 
   // The rest of a here-document's DECLARATION line is still code, and the delimiter is a
@@ -609,7 +612,9 @@ describe("what counts as a comment in the # languages and in HTML", () => {
   // from there to the end, taking every later comment with it. `bash -n` is the control.
   it("reads the rest of a here-document's declaration line, and takes its delimiter as a word", () => {
     expect(findingsIn("cat <<EOF  # measured on URX44V\nbody\nEOF\n", "x.sh").map((f) => f.line)).toEqual([1]);
-    expect(findingsIn("cat <<END-DATA\ndata\nEND-DATA\n# measured on URX44V\n", "x.sh").map((f) => f.line)).toEqual([4]);
+    expect(findingsIn("cat <<END-DATA\ndata\nEND-DATA\n# measured on URX44V\n", "x.sh").map((f) => f.line)).toEqual([
+      4,
+    ]);
     expect(findingsIn("cat <<'E O F'\ndata\nE O F\n# measured on URX44V\n", "x.sh").map((f) => f.line)).toEqual([4]);
     // …and a here-STRING has no body at all, so nothing after it is swallowed.
     expect(findingsIn("cat <<<word\n# measured on URX44V\n", "x.sh").map((f) => f.line)).toEqual([2]);
@@ -625,12 +630,167 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     // …and a paren inside a double-quoted string is a character.
     expect(findingsIn('echo "a ) # measured on URX44V"\n', "x.sh")).toEqual([]);
   });
+
+  // What the shell is handed has to be the block's VALUE. YAML strips the block's common
+  // indentation, and the raw lines have it: a here-document's delimiter line then read as
+  // `          EOF` never equalled the `EOF` it was declared with, so the scan swallowed the
+  // rest of the block and every comment after it. `bash -n` on what Ruby's YAML returns for
+  // this block exits 0.
+  it("hands a run: block the value, not the lines it was written on", () => {
+    const wf = [
+      "jobs:",
+      "  a:",
+      "    steps:",
+      "      - run: |",
+      "          cat <<EOF",
+      "          body",
+      "          EOF",
+      "          echo x  # measured on URX44V",
+      "",
+    ].join("\n");
+    expect(findingsIn(wf, ".github/workflows/x.yml").map((f) => f.line)).toEqual([8]);
+    // …and the indentation indicator decides it where one is given.
+    // …and where an indicator is given it is what decides the value, not the first line:
+    // Ruby loads this block as "    deep continuation\n# measured on URX44V\n", so a reader
+    // taking the first line's own indentation strips four columns too many and eats the `#`.
+    const indicated = [
+      "jobs:",
+      "  a:",
+      "    steps:",
+      "      - run: |2",
+      "              deep continuation",
+      "          # measured on URX44V",
+      "",
+    ].join("\n");
+    expect(findingsIn(indicated, ".github/workflows/x.yml").map((f) => f.line)).toEqual([6]);
+  });
+
+  // A `run:` holds shell only where something runs it, and nothing in this tree runs one
+  // outside GitHub Actions. Read as shell everywhere, an ordinary document's `run:` block
+  // would have its text lexed against a grammar it was never written in.
+  it("reads a run: block as shell under .github, and as text anywhere else", () => {
+    const wf = "jobs:\n  a:\n    steps:\n      - run: |\n          echo hi  # measured on URX44V\n";
+    expect(findingsIn(wf, ".github/workflows/ci.yml").map((f) => f.line)).toEqual([5]);
+    expect(findingsIn(wf, ".github/actions/install/action.yml").map((f) => f.line)).toEqual([5]);
+    expect(findingsIn(wf, "docs/example.yml")).toEqual([]);
+    expect(findingsIn(wf, "x.yml")).toEqual([]);
+  });
+
+  // A backtick substitution's body is CODE even inside a double quote, and read as string
+  // text a comment in one was never looked at. `bash -n` accepts the script and running it
+  // prints `a`.
+  it("reads a backtick substitution inside a double quote as code", () => {
+    expect(findingsIn('x="`echo a  # measured on URX44V\n`"\n', "x.sh").map((f) => f.line)).toEqual([1]);
+    // …and the text after it closes is string again.
+    expect(findingsIn('x="`echo a` # measured on URX44V"\n', "x.sh")).toEqual([]);
+    // …and an escaped backtick opens nothing.
+    expect(findingsIn('x="\\` # measured on URX44V"\n', "x.sh")).toEqual([]);
+  });
+
+  // A case PATTERN's `)` has no opener. Popped unconditionally it closed the substitution
+  // around it, so the arm's comment fell outside the `$( … )` and back inside the double
+  // quote, where a `#` is text. `bash -n` accepts it and running it prints `a`.
+  it("does not let a case pattern's paren close the substitution around it", () => {
+    const src = 'y="$(case x in\n  x)  # measured on URX44V\n    printf a\n    ;;\nesac)"\n';
+    expect(findingsIn(src, "x.sh").map((f) => f.line)).toEqual([2]);
+    // …and a pattern written with its optional leading paren closes that one, not the case.
+    expect(
+      findingsIn('y="$(case x in\n  (x)  # measured on URX44V\n    printf a\n  ;;\nesac)"\n', "x.sh").map(
+        (f) => f.line,
+      ),
+    ).toEqual([2]);
+    // …and `case` is a keyword only where a command could start. Read as one after `echo`,
+    // its marker sits at the substitution's own depth, so the `)` that closes the
+    // substitution is taken for a pattern terminator, the double quote never reopens, and
+    // the comment outside it is read as string text.
+    expect(findingsIn('y="$(echo case; printf a)"  # measured on URX44V\n', "x.sh").map((f) => f.line)).toEqual([1]);
+  });
+
+  // Up to two of the delimiter's own characters may sit INSIDE a TOML multi-line value, and
+  // the last three of the run are what close it. Closed at the first three, `""""quoted""""`
+  // left a fourth quote that opened a string of its own and swallowed the comment after it.
+  // Python's tomllib loads that value as `"quoted"`.
+  it("closes a TOML multi-line string on the last three quotes of the run", () => {
+    expect(findingsIn('value = """"quoted"""" # measured on URX44V\n', "x.toml").map((f) => f.line)).toEqual([1]);
+    expect(findingsIn("value = ''''quoted'''' # measured on URX44V\n", "x.toml").map((f) => f.line)).toEqual([1]);
+    expect(findingsIn('value = """a""quoted""""" # measured on URX44V\n', "x.toml").map((f) => f.line)).toEqual([1]);
+    // …and the ordinary terminator still ends it where the run is exactly three.
+    expect(findingsIn('value = """quoted""" # measured on URX44V\n', "x.toml").map((f) => f.line)).toEqual([1]);
+  });
 });
 
 // TOML's comment is YAML's; its strings are not. It has no block scalar, and two of its four
 // string forms SPAN LINES — read by a line-oriented scanner that closes every quote at the
 // newline, the `#` in a `"""…"""` value was reported as a comment. Python's tomllib is the
 // positive control: it loaded that value as a string.
+
+// How many columns YAML removes from a block scalar's body is what makes the value the
+// value. Without an indicator it is the first non-empty line's indentation; WITH one the
+// count is from the column of the node the scalar belongs to, which is not the header
+// line's — for `- run: |2` it is the key's column and for a bare `- |2` the dash's. The
+// table is what Ruby answers; the differential below re-measures it.
+const BLOCKS = [
+  ["key: |2\n    a\n     b\n", 0, 2],
+  ["m:\n  key: |2\n      a\n       b\n", 1, 4],
+  ["s:\n  - run: |2\n      a\n       b\n", 1, 6],
+  ["s:\n  - run: |\n      a\n       b\n", 1, 6],
+  ["s:\n  - |2\n      a\n       b\n", 1, 4],
+  ["s:\n  - |\n      a\n       b\n", 1, 6],
+  ["key: |1\n   a\n", 0, 1],
+  ["key: |4\n        a\n", 0, 4],
+  ["jobs:\n  a:\n    steps:\n      - run: |2\n              deep\n          x\n", 3, 10],
+];
+
+describe("what a block scalar's value is indented by", () => {
+  const stripOf = ([doc, head]) => {
+    const lines = doc.split("\n");
+    return blockStrip(lines[head], lines.slice(head + 1));
+  };
+
+  it("counts from the owning node's column, not from the header line's", () => {
+    for (const block of BLOCKS) expect(stripOf(block), block[0]).toBe(block[2]);
+  });
+});
+
+// The table above is a copy of Ruby's answers, and a copy can drift from what it copied.
+// Where ruby exists — this machine, and the ubuntu runner ci.yml uses — ask it directly:
+// the columns removed are the raw line's indentation minus what survived in the value.
+// Skipped elsewhere, and the skip is named rather than silent.
+const ruby = spawnSync("ruby", ["-e", "puts 1"], { encoding: "utf8" });
+const rubyAvailable = !ruby.error && ruby.status === 0;
+
+describe.skipIf(!rubyAvailable)("block scalars, differentially against Ruby's YAML", () => {
+  it("removes what Ruby removes, on every block in the table", () => {
+    const script = `
+      require "yaml"
+      require "json"
+      def scalar(o)
+        case o
+        when String then o.include?("\\n") ? o : nil
+        when Array then o.map { |v| scalar(v) }.compact.first
+        when Hash then o.values.map { |v| scalar(v) }.compact.first
+        end
+      end
+      puts JSON.generate(JSON.parse(STDIN.read).map { |doc| scalar(YAML.load(doc)) })
+    `;
+    const run = spawnSync("ruby", ["-e", script], {
+      input: JSON.stringify(BLOCKS.map(([doc]) => doc)),
+      encoding: "utf8",
+    });
+    expect(run.status, run.stderr).toBe(0);
+    const values = JSON.parse(run.stdout);
+    const measured = BLOCKS.map(([doc, head], n) => {
+      const raw = doc
+        .split("\n")
+        .slice(head + 1)
+        .find((l) => l.trim() !== "");
+      const kept = values[n].split("\n")[0];
+      return raw.length - raw.trimStart().length - (kept.length - kept.trimStart().length);
+    });
+    expect(measured).toEqual(BLOCKS.map((b) => b[2]));
+  });
+});
+
 describe("what counts as a comment in TOML", () => {
   it("carries a multi-line string past the newline that did not close it", () => {
     expect(findingsIn('name = """\nblock # measured on URX44V string\n"""\n', "x.toml")).toEqual([]);
@@ -669,7 +829,7 @@ describe("what counts as a comment in TOML", () => {
 describe("what counts as a comment in Python", () => {
   it("reads a hash comment, and not one inside a string", () => {
     expect(findingsIn("# measured on URX44V\nx = 1\n", "x.py").map((f) => f.line)).toEqual([1]);
-    expect(findingsIn('x = 1  # measured on URX44V\n', "x.py").map((f) => f.line)).toEqual([1]);
+    expect(findingsIn("x = 1  # measured on URX44V\n", "x.py").map((f) => f.line)).toEqual([1]);
     expect(findingsIn('x = "a # measured on URX44V"\n', "x.py")).toEqual([]);
     expect(findingsIn("x = 'a # measured on URX44V'\n", "x.py")).toEqual([]);
   });
@@ -693,6 +853,70 @@ describe("what counts as a comment in Python", () => {
   });
 });
 
+// PEP 701 made a replacement field ordinary Python, comments included, so a multi-line
+// f-string is not the opaque string a docstring is. The table below is what CPython's own
+// tokenizer answers, and the differential at the foot of this describe re-measures it
+// wherever python3 exists — a table alone would pin whatever the reader happened to do.
+const F_STRINGS = [
+  ['value = f"""{\n    1  # measured on URX44V\n}"""\n', [2]],
+  ['v = f"{x}"  # c\n', [1]],
+  // A `#` in a FORMAT SPEC is a fill character, and a `!` is the conversion unless it is `!=`.
+  ['v = f"{x:#>10}"  # c\n', [1]],
+  // The same where the field spans lines and a comment in it WOULD be one: read without a
+  // format-spec state, the fill character opens a comment that swallows the rest of the line.
+  ['v = f"""{\n  x:#>10\n}"""\nw = 1  # c\n', [4]],
+  ['v = f"{x:>{w}}"  # c\n', [1]],
+  ['v = f"{x!r}"  # c\n', [1]],
+  ['v = f"{a != b}"  # c\n', [1]],
+  // A field may carry the same quote the string is written with, which is also PEP 701.
+  ['v = f"{d["a"]}"  # c\n', [1]],
+  ['v = f"{{x}}"  # c\n', [1]],
+  ['v = f"a # b {x}"  # c\n', [1]],
+  ['v = f"""{\n  a  # one\n}{\n  b  # two\n}"""\n', [2, 4]],
+  ['v = f"""{ f"{y}" }"""  # c\n', [1]],
+  ['v = fr"""{\n  1  # c\n}"""\n', [2]],
+  ['v = rb"# not"\nw = 1  # c\n', [2]],
+  ['def f(): return "# not"\nx = 1  # c\n', [2]],
+];
+
+describe("what counts as a comment inside an f-string", () => {
+  it("reads a replacement field as code and a format spec as text", () => {
+    for (const [src, lines] of F_STRINGS) {
+      expect(
+        pyComments(src).map((c) => c.line),
+        src,
+      ).toEqual(lines);
+    }
+  });
+});
+
+// The table above is a copy of CPython's answers, and a copy can drift from what it copied.
+// Where python3 exists — this machine, and the ubuntu runner ci.yml uses — ask it directly.
+// Skipped elsewhere, and the skip is named rather than silent.
+const python = spawnSync("python3", ["-c", "print(1)"], { encoding: "utf8" });
+const pythonAvailable = !python.error && python.status === 0;
+
+describe.skipIf(!pythonAvailable)("f-strings, differentially against CPython's tokenizer", () => {
+  it("agrees with tokenize on every case in the table", () => {
+    const script = [
+      "import io, json, sys, tokenize",
+      "out = []",
+      "for src in json.loads(sys.argv[1]):",
+      "    compile(src, '<case>', 'exec')",
+      "    lines = []",
+      "    for t in tokenize.tokenize(io.BytesIO(src.encode()).readline):",
+      "        if t.type == tokenize.COMMENT:",
+      "            lines.append(t.start[0])",
+      "    out.append(lines)",
+      "print(json.dumps(out))",
+    ].join("\n");
+    const sources = F_STRINGS.map(([src]) => src);
+    const run = spawnSync("python3", ["-c", script, JSON.stringify(sources)], { encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    expect(JSON.parse(run.stdout)).toEqual(F_STRINGS.map(([, lines]) => lines));
+  });
+});
+
 describe("what the default scan reaches", () => {
   const ledger = JSON.parse(readFileSync(join(HERE, "comment-provenance-baseline.json"), "utf8"));
   const ROOT = join(HERE, "..");
@@ -704,19 +928,23 @@ describe("what the default scan reaches", () => {
       rels.map((r) => r + "\0").join("");
   const rel = (paths) => paths.map((p) => relative(ROOT, p).split(sep).join("/"));
 
-  it("keeps the extensions it reads, and never its own two files", () => {
-    const out = trackedSources(
-      ROOT,
-      listing(
-        "src/a.ts",
-        "README.md",
-        "scripts/check-comment-provenance.mjs",
-        "scripts/check-comment-provenance.test.mjs",
-        "anywhere/deep/b.py",
-      ),
-      () => true,
+  it("keeps the extensions it reads, and drops its own two files from what it SCANS", () => {
+    const listed = listing(
+      "src/a.ts",
+      "README.md",
+      "scripts/check-comment-provenance.mjs",
+      "scripts/check-comment-provenance.test.mjs",
+      "anywhere/deep/b.py",
     );
-    expect(rel(out)).toEqual(["src/a.ts", "anywhere/deep/b.py"]);
+    const inventory = trackedSources(ROOT, listed, () => true);
+    // The inventory keeps them, because the formatter takes this list too.
+    expect(rel(inventory)).toEqual([
+      "src/a.ts",
+      "scripts/check-comment-provenance.mjs",
+      "scripts/check-comment-provenance.test.mjs",
+      "anywhere/deep/b.py",
+    ]);
+    expect(rel(scanTargets(inventory))).toEqual(["src/a.ts", "anywhere/deep/b.py"]);
   });
 
   // The list of directories this replaced is the mutation, and it is shown beside the good
@@ -748,7 +976,10 @@ describe("what the default scan reaches", () => {
     const tmp = mkdtempSync(join(tmpdir(), "prov-norepo-"));
     mkdirSync(join(tmp, "scripts"));
     copyFileSync(join(HERE, "check-comment-provenance.mjs"), join(tmp, "scripts", "check-comment-provenance.mjs"));
-    copyFileSync(join(HERE, "comment-provenance-baseline.json"), join(tmp, "scripts", "comment-provenance-baseline.json"));
+    copyFileSync(
+      join(HERE, "comment-provenance-baseline.json"),
+      join(tmp, "scripts", "comment-provenance-baseline.json"),
+    );
     let status = 0;
     let stderr = "";
     try {
@@ -858,6 +1089,20 @@ describe("what the formatter reaches", () => {
     const formatted = new Set(formatTargets(sources));
     expect(unionRead.length).toBeGreaterThan(300);
     expect(unionRead.filter((p) => !formatted.has(p))).toEqual([]);
+  });
+
+  // Being scanned and being formatted are different questions, and one filter answered
+  // both: the self-exclusion sat in the inventory, so `pnpm format` skipped this checker
+  // and its pins — narrower than the `scripts/**/*.mjs` glob it replaced, and it shipped a
+  // commit of unformatted edits past a green `format` check.
+  it("formats its own two files, which it does not scan", () => {
+    const sources = trackedSources();
+    const formatted = new Set(formatTargets(sources));
+    const scanned = new Set(rel(scanTargets(sources)));
+    for (const own of ["scripts/check-comment-provenance.mjs", "scripts/check-comment-provenance.test.mjs"]) {
+      expect(formatted.has(own), own).toBe(true);
+      expect(scanned.has(own), own).toBe(false);
+    }
   });
 });
 
