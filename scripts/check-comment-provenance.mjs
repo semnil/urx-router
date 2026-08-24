@@ -140,6 +140,15 @@ const REGEX_AFTER = new Set([
   "void",
   "throw",
   "extends",
+  // `export default /re/.test(x)` — an expression follows, so a `/` here opens a pattern.
+  // Absent, the goal divided and then desynchronised on a quote inside what was the
+  // pattern, losing the comment after it.
+  "default",
+  // A `/` can never DIVIDE one of these — `break / x` is not a program — so whatever the
+  // newline in between, the slash begins a new statement and opens a pattern.
+  "break",
+  "continue",
+  "debugger",
 ]);
 /** A `(` that follows one of these heads a control structure, so its `)` does not end a
  *  value and a `/` after it opens a pattern. Every other `(` is a call or a group. */
@@ -182,30 +191,24 @@ const isIdStart = (c) => /[A-Za-z_$]/.test(c);
 const isIdPart = (c) => /[A-Za-z0-9_$]/.test(c);
 
 /**
- * Comment spans of one source file, as {line, text}.
+ * Comment spans of one source file, as {line, text, start, end}.
  *
- * A hand lexer rather than a parser: it has to tell a comment from a string, a template and
- * a regex literal, and nothing more. The goal is carried as STATE — the last significant
- * token, and a stack per bracket kind recording what that bracket was — because the
- * preceding CHARACTER cannot decide it.
- */
-/**
- * Comment spans of one source file, as {line, text}.
+ * For JavaScript and TypeScript this is ONE reading, the lexical goal's own. It was the
+ * union of three for a while — the goal's, one where every ambiguous slash divides, one
+ * where every ambiguous slash opens a pattern — so that a miss needed all three to miss.
+ * That is withdrawn. A forced reading has no grammar, so what it produces where it differs
+ * from the goal is a recovery or an invention with nothing to tell them apart: three rounds
+ * of review each found one valid, Prettier-stable file it refused — `[/\//, "…"]`,
+ * `[/[//]/, "…"]`, `[a / "x///y", "…"]` — and each proposed discriminator turned out to have
+ * the same shape as the recovery it was meant to keep.
  *
- * For JavaScript and TypeScript this is the UNION of three readings of the same text: the
- * goal state's own, one where every ambiguous `/` divides, and one where every ambiguous `/`
- * opens a pattern. A MISS then needs all three to miss, which is what takes "valid syntax
- * hides a comment" off the table — eight review rounds found that class one shape at a time
- * (a generic constraint, `export default`, a `case` clause, a semicolon the grammar inserts)
- * and each fix was another keyword list. TypeScript's own scanner would end it outright, but
- * the 7.x package exports `version` and nothing else.
- *
- * The cost is a FALSE positive where a real pattern contains something that reads as a
- * comment. Most of that class is answered below, by the goal's own terminator; what is left
- * is a pattern whose closing slash is followed immediately by a division, and that shape
- * cannot survive `format`. On this tree the cost is zero either way — every ledgered file
- * reads the same under each of the three readings. A false positive is also the failure that
- * shows itself, where a miss is the one that lets a violation through quietly.
+ * What the union was covering was five defects in the goal, every one of them determinate
+ * and now fixed: `export default` and `break` were missing from the keywords a pattern may
+ * follow, a postfix `!` left no value behind, a brace after `=>` took the body flag a
+ * declaration was waiting for, and the modifier-run walk started one token too far back. So
+ * the trade is a MISS class this reading can still have, for a FALSE-POSITIVE class it
+ * cannot: a defect here is a grammar bug with one correct answer, which is the kind that can
+ * be fixed once and pinned.
  */
 export function comments(src, mode = "js") {
   if (mode === "rust") return rustComments(src);
@@ -214,44 +217,10 @@ export function comments(src, mode = "js") {
   if (mode === "python") return pyComments(src);
   if (mode === "shell") return shellComments(src);
   if (mode === "html") return htmlComments(src);
-  if (mode === "css") return scanJs(src, "css", null);
-  // The union's one cost, named: a forced-DIVIDE reading invents a comment by walking INTO a
-  // regex the goal read correctly — `+/x//(measured)` is a regex and then a division, and
-  // the boundary `//` reads as a line comment. It is not filtered out, because the span it
-  // starts inside looks the same whether the goal's regex was right (an artefact) or wrong
-  // (the recovery this reading exists for), and filtering took real catches with it.
-  //
-  // What makes it harmless HERE is Prettier: `+/x//(measured)` formats to `+/x/ / measured`,
-  // so the boundary cannot survive `format` — one of the four checks a merge waits for. A
-  // pin holds that, so the day Prettier stops separating them, the reason is not silent.
-  const terminators = new Set();
-  const seen = new Set();
-  const out = [];
-  const key = (s) => s.start + "\u0000" + s.end + "\u0000" + s.line;
-  for (const force of [null, "regex"]) {
-    for (const span of scanJs(src, mode, force, force === null ? terminators : null)) {
-      if (seen.has(key(span))) continue;
-      seen.add(key(span));
-      out.push(span);
-    }
-  }
-  // A span ONLY the forced-divide reading produces begins inside a pattern the goal read —
-  // otherwise the goal would have seen the `//` itself. Two things look like that, and the
-  // goal's own terminator separates them. Where the goal was WRONG to open a pattern, what
-  // it swallowed ends at the comment's first `/`: that `/` is the terminator, and this is
-  // the recovery the reading exists for. Where the goal was RIGHT, the `//` sits INSIDE the
-  // pattern and its terminator is further on — `[/\//, "…"]` and `[/[//]/, "…"]` are both
-  // valid, and Prettier leaves them exactly as they are, so the formatter cannot be what
-  // answers for them.
-  for (const span of scanJs(src, mode, "divide")) {
-    if (seen.has(key(span)) || !terminators.has(span.start)) continue;
-    seen.add(key(span));
-    out.push(span);
-  }
-  return out.sort((a, b) => a.line - b.line || a.start - b.start);
+  return scanJs(src, mode);
 }
 
-function scanJs(src, mode = "js", force = null, terminators = null) {
+function scanJs(src, mode = "js") {
   const css = mode === "css";
   const out = [];
   let line = 1;
@@ -294,7 +263,7 @@ function scanJs(src, mode = "js", force = null, terminators = null) {
     if (t === ")") return last.paren === "control";
     if (t === "}") return last.brace === "block"; // "object" and "value-body" end a value
     if (t === "]") return false;
-    if (t === "++" || t === "--") return !last.postfix;
+    if (t === "++" || t === "--" || t === "!") return !last.postfix;
     return true;
   };
   /** Whether the token just read ends a value, which is what makes a `++` postfix. */
@@ -303,6 +272,7 @@ function scanJs(src, mode = "js", force = null, terminators = null) {
     if (last.kind === "value") return true;
     if (last.kind === "name") return !last.regexOk;
     if (last.text === "}") return last.brace !== "block";
+    if (last.text === "!") return last.postfix === true;
     return last.text === ")" || last.text === "]";
   };
   /** True where a STATEMENT could begin, which is what separates a function declaration
@@ -314,7 +284,10 @@ function scanJs(src, mode = "js", force = null, terminators = null) {
     if (tok.kind === "name") return tok.text === "else" || tok.text === "do";
     if (tok.kind === "value") return false;
     const t = tok.text;
-    return t === ";" || t === "{" || (t === "}" && tok.brace === "block");
+    // A `case 1:` label ends with a colon and what follows it is a statement, so a
+    // `function` there is a DECLARATION. Read as an expression, its body brace became a
+    // value and the `/` after it divided into a pattern that swallowed the line.
+    return t === ";" || t === "{" || t === ":" || (t === "}" && tok.brace === "block");
   };
   const braceKind = () => {
     if (!last) return "block";
@@ -418,15 +391,14 @@ function scanJs(src, mode = "js", force = null, terminators = null) {
         // separates a declaration from an expression is the token BEFORE all of them.
         // Reading only the one immediately behind made `export function` an expression and
         // `= async function` a declaration, each the opposite of what it is.
+        // The run starts at the token immediately before the keyword, which is `last` —
+        // `history` begins one further back. Walked from `history` alone, the token right
+        // in front was never looked at, so `case 1: function g() {}` was decided by the `1`
+        // rather than by the label's colon and read as an expression.
+        const chain = [last, ...history];
         let k = 0;
-        while (
-          k < history.length &&
-          history[k].kind === "name" &&
-          !history[k].property &&
-          MODIFIERS.has(history[k].text)
-        )
-          k++;
-        pendingBodies.push({ depth: parens.length, value: !startsStatement(history[k] ?? null) });
+        while (k < chain.length && chain[k]?.kind === "name" && !chain[k].property && MODIFIERS.has(chain[k].text)) k++;
+        pendingBodies.push({ depth: parens.length, value: !startsStatement(chain[k] ?? null) });
       }
       setLast({ kind: "name", text, property, regexOk: !property && REGEX_AFTER.has(text) });
       i = j;
@@ -440,7 +412,7 @@ function scanJs(src, mode = "js", force = null, terminators = null) {
       continue;
     }
     if (!css && c === "/") {
-      if (force === "regex" || (force !== "divide" && regexAllowed())) {
+      if (regexAllowed()) {
         let j = i + 1;
         let cls = false;
         while (j < src.length && src[j] !== "\n") {
@@ -451,9 +423,6 @@ function scanJs(src, mode = "js", force = null, terminators = null) {
           j++;
         }
         if (src[j] === "/") {
-          // Where this reading CLOSED a pattern, which is what tells an invented comment
-          // from a recovered one further down.
-          if (terminators) terminators.add(j);
           i = j + 1;
           while (i < src.length && isIdPart(src[i])) i++; // flags
           value();
@@ -461,6 +430,15 @@ function scanJs(src, mode = "js", force = null, terminators = null) {
         }
       }
       punct("/");
+      i++;
+      continue;
+    }
+    // A `!` after a value is TypeScript's non-null assertion and leaves a value behind, so
+    // the `/` after it divides. Read as an ordinary punctuator it allowed a pattern, which
+    // swallowed the rest of the line and the comment on it. `!=` and a prefix `!` are not
+    // that: the first is an operator and the second wants an expression after it.
+    if (c === "!" && src[i + 1] !== "=" && endsValue()) {
+      punct("!", { postfix: true });
       i++;
       continue;
     }
@@ -489,7 +467,10 @@ function scanJs(src, mode = "js", force = null, terminators = null) {
       // paren depth (`function (): { x: number } { … }`) and would otherwise take the flag,
       // leaving the real body to be read as a block.
       const pending = pendingBodies[pendingBodies.length - 1];
-      if (pending && pending.depth === parens.length && kind === "block") {
+      // …and a brace right after `=>` is an arrow's body or a function TYPE's, never a
+      // declaration's. Inside `function<T extends () => {}>()` it took the flag the real
+      // body was waiting for, and the `/` after that body then opened a pattern.
+      if (pending && pending.depth === parens.length && kind === "block" && last?.text !== "=>") {
         if (pending.value) kind = "value-body";
         pendingBodies.pop();
       }
@@ -644,6 +625,8 @@ export function yamlComments(src, actions = false) {
   // unescaped `"`. Read one line at a time, a scan that opened one ran off the end and read
   // the NEXT line's `#` as a comment — the line was string content.
   let quote = null;
+  // An explicit key waiting for the `:` line that carries its value.
+  let pendingKey = null;
   for (let n = 0; n < lines.length; n++) {
     const raw = lines[n];
     let i = 0;
@@ -685,7 +668,14 @@ export function yamlComments(src, actions = false) {
     // An anchor or a tag may sit between the `:` and the indicator — `run: &script |` is a
     // block scalar, and read as a plain one its body was scanned as YAML, where the `#`
     // lines of a here-document inside it are comments.
+    const explicit = yamlExplicitKey(head);
+    if (explicit !== null) {
+      pendingKey = explicit;
+      continue;
+    }
     const m = /(?::|(?:^|\s)-)[ \t]*(?:[&!]\S+[ \t]+)*[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head);
+    const carried = pendingKey;
+    pendingKey = null;
     if (!m) continue;
     const indent = raw.length - raw.trimStart().length;
     let end = n + 1;
@@ -696,7 +686,7 @@ export function yamlComments(src, actions = false) {
       if (body.trim() !== "" && body.length - body.trimStart().length <= indent) break;
       end++;
     }
-    if (actions && yamlKey(head) === "run" && end > n + 1) {
+    if (actions && (yamlKey(head) ?? carried) === "run" && end > n + 1) {
       // What the shell is handed is the block's VALUE, which is these lines with their
       // common indentation removed — the indentation indicator's if it has one, and the
       // first non-empty line's otherwise. Handed the raw lines instead, a here-document's
@@ -759,7 +749,25 @@ export function yamlKey(head) {
   const m = /(?:^|[\s-])(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([\w.-]+))[ \t]*:[ \t]*(?:[&!]\S+[ \t]+)*[|>]/.exec(
     head,
   );
-  if (!m) return null;
+  return m ? scalarText(m) : null;
+}
+
+/**
+ * The key of an EXPLICIT mapping entry — `? run` on its own line, with the `: |` that
+ * carries its value on a later one.
+ *
+ * The same key written the other way round, and read only where the two sit on one line, a
+ * workflow's `run` block written this way was left as text.
+ */
+export function yamlExplicitKey(head) {
+  const m = /^[ \t]*(?:-[ \t]+)*\?[ \t]+(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([\w.-]+))[ \t]*$/.exec(head);
+  return m ? scalarText(m) : null;
+}
+
+/** The three capture groups every key match uses, decoded: double-quoted, single-quoted,
+ *  plain. A double-quoted scalar's escapes are decoded, so an encoded spelling of a key is
+ *  not a way round the reader. */
+function scalarText(m) {
   if (m[3] !== undefined) return m[3];
   if (m[2] !== undefined) return m[2].replace(/''/g, "'");
   return m[1].replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[\s\S])/g, (_, e) =>
@@ -1236,7 +1244,7 @@ export function shellComments(src) {
     // space, an indented `case` — the shape a `$( … )` block is written in — stopped being
     // a keyword, its arms' `)` closed the substitution, and their comments fell back inside
     // the double quote around it.
-    if (c !== " " && c !== "\t") cmdStart = c === ";" || c === "&" || c === "|" || c === "{";
+    if (c !== " " && c !== "\t") cmdStart = c === ";" || c === "&" || c === "|" || c === "{" || c === "!";
     prev = c;
     i++;
   }
@@ -1342,7 +1350,18 @@ const LEDGER = new URL("./comment-provenance-baseline.json", import.meta.url);
 // script lives in <root>/scripts/, which is what makes the root derivable without asking
 // git — the hook runs with no cwd guarantee of its own.
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-export const repoPath = (path) => relative(ROOT, resolve(path)).split(sep).join("/");
+/** One name per file on disk. `resolve()` is not that: `/tmp` and `/private/tmp` are the
+ *  same directory on macOS, so a file named through each was read twice and its findings
+ *  counted twice — against a ceiling that had no row for the second spelling at all. */
+const canonical = (path) => {
+  try {
+    return realpathSync(resolve(path));
+  } catch {
+    return resolve(path);
+  }
+};
+
+export const repoPath = (path) => relative(ROOT, canonical(path)).split(sep).join("/");
 
 /**
  * True when a `relative()` result leaves the root it was taken from.
@@ -1519,7 +1538,7 @@ if (invokedDirectly) {
     const named = new Map();
     for (const root of roots) {
       if (!existsSync(root)) continue;
-      for (const path of collect(root)) named.set(resolve(path), path);
+      for (const path of collect(root)) named.set(canonical(path), path);
     }
     targets = [...named.values()];
   } else {

@@ -29,6 +29,7 @@ import {
   scanTargets,
   trackedSources,
   yamlComments,
+  yamlExplicitKey,
   yamlKey,
   rustComments,
   verdict,
@@ -172,12 +173,15 @@ describe("what counts as a comment", () => {
     ).toEqual(["hedge-sentence"]);
   });
 
-  // Eight review rounds found "valid syntax hides a comment" one shape at a time, and each
-  // fix was another keyword list. The reading is now the UNION of three — the goal state's
-  // own, one where every ambiguous slash divides, one where every ambiguous slash opens a
-  // pattern — so a MISS needs all three to miss. These four are the shapes that were still
-  // getting through when that was decided.
-  it("finds the comment whichever reading is the right one", () => {
+  // These five were reaching the check as "valid syntax hides a comment", and each was met
+  // for a while by a UNION of three readings — the goal's, one forcing division, one
+  // forcing a pattern — so that a miss needed all three to miss. That is withdrawn: what
+  // the union was covering is five determinate defects in the goal, and each is fixed here.
+  // Two keywords a pattern may follow (`export default`, and `break` across the newline the
+  // grammar ends a statement at), a postfix `!` that left no value behind, a brace after
+  // `=>` taking the body flag a declaration was waiting for, and a modifier-run walk that
+  // began one token behind the keyword, deciding `case 1: function g()` by the `1`.
+  it("reads each of the shapes the union was carried for", () => {
     expect(shapes("const f = +function<T extends () => {}>() {} / 2; // measured on URX44V\n")).toEqual([
       "hedge-sentence",
     ]);
@@ -188,45 +192,31 @@ describe("what counts as a comment", () => {
     expect(shapes('function h() { while (t) { break\n /["]/.test("z"); } } // measured on URX44V\n')).toEqual([
       "hedge-sentence",
     ]);
-  });
-
-  // The union's cost, named exactly: a forced-DIVIDE reading invents a comment by walking
-  // INTO a regex the goal reading read correctly. `+/x//(measured)` is a regex and then a
-  // division, and forcing division reads the boundary `//` as a line comment. So a comment
-  // starting inside one of the goal's regex spans is the union's own artefact.
-  // The union's one cost: a forced-DIVIDE reading invents a comment by walking into a regex
-  // the goal read correctly. It is not filtered, because the span it starts inside looks the
-  // same whether the goal's regex was right or wrong, and filtering took real catches with
-  // it. What makes it harmless here is that the shape cannot survive `format`, which is one
-  // of the four checks a merge waits for — asserted by running Prettier rather than assumed.
-
-  // A span only the forced-DIVIDE reading produces begins inside a pattern the goal read,
-  // and the goal's own TERMINATOR is what separates the two things that look like that.
-  // Where the goal was wrong to open a pattern, what it swallowed ends at the comment's
-  // first `/` — that `/` is the terminator, and the reading recovers a comment nothing else
-  // sees. Where the goal was right, the `//` sits inside the pattern and the terminator is
-  // further on. Both of these are valid JavaScript that Prettier leaves exactly as it is,
-  // so the formatter is not what answers for them.
-  it("keeps a divide-only comment at the goal's terminator, and nowhere inside a pattern", () => {
-    // Recovered: the goal opens a pattern after a non-null assertion and swallows the line.
     expect(shapes("const n = x! / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
     expect(shapes("const n = f()! / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
-    // Invented: an escaped slash, and a slash inside a character class.
-    expect(shapes('const values = [/\\//, "(measured)"];\n')).toEqual([]);
-    expect(shapes('const values = [/[//]/, "(measured)"];\n')).toEqual([]);
-    // …and the comment after such a pattern is still read.
-    expect(shapes("const values = [/\\//]; // (measured)\n")).toEqual(["hedge-parenthetical"]);
   });
 
-  it("has its one false positive removed by the formatter a merge waits for", () => {
-    expect(shapes("const measured = 2;\nconst n = +/x//(measured);\n")).toEqual(["hedge-parenthetical"]);
-    const formatted = execFileSync(
-      process.execPath,
-      [join(HERE, "..", "node_modules", "prettier", "bin", "prettier.cjs"), "--parser", "typescript"],
-      { input: "const measured = 2;\nconst n = +/x//(measured);\n", encoding: "utf8", cwd: join(HERE, "..") },
-    );
-    expect(formatted).toContain("/x/ / measured");
-    expect(shapes(formatted)).toEqual([]);
+  // …and the four files a forced reading refused. Every one is valid JavaScript that
+  // Prettier leaves exactly as it is, so the formatter could never have answered for them:
+  // a forced reading walks into a pattern or a string the goal read correctly and calls
+  // what it finds there a comment. THAT is what a single reading cannot do.
+  it("invents no comment inside a pattern or a string it read correctly", () => {
+    expect(shapes('const values = [/\\//, "(measured)"];\n')).toEqual([]);
+    expect(shapes('const values = [/[//]/, "(measured)"];\n')).toEqual([]);
+    expect(shapes('const values = [a / "x///y", "(measured)"];\n')).toEqual([]);
+    expect(shapes("const measured = 2;\nconst n = +/x//(measured);\n")).toEqual([]);
+    // …and the comment after such a pattern is still read.
+    expect(shapes("const values = [/\\//]; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes('const values = [a / "x///y"]; // (measured)\n')).toEqual(["hedge-parenthetical"]);
+  });
+
+  // The one reading is a lexical GOAL and not a character rule, and a `!` is where those two
+  // answers differ: after a value it is TypeScript's non-null assertion and leaves one
+  // behind, before one it is negation and wants an expression.
+  it("tells a postfix ! from a prefix one", () => {
+    expect(shapes("const n = !/x/.test(a) ? 1 : 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const n = a != b; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const n = x! / 2 / 3; // (measured)\n")).toEqual(["hedge-parenthetical"]);
   });
 
   // Two comments on one line are two comments. Keyed by line and text they folded into one,
@@ -755,6 +745,32 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     expect(findingsIn('y="$(printf then; printf a)"  # measured on URX44V\n', "x.sh").map((f) => f.line)).toEqual([1]);
   });
 
+  // The same key written the other way round. An EXPLICIT mapping entry puts `? run` on one
+  // line and the `: |` that carries its value on the next, and read only where the two sit
+  // together, a workflow's run block written this way was left as text.
+  it("carries an explicit mapping key to the line its value is on", () => {
+    const explicit = "steps:\n  - ? run\n    : |\n        echo hi  # measured on URX44V\n";
+    expect(findingsIn(explicit, ".github/workflows/x.yml").map((f) => f.line)).toEqual([4]);
+    const quoted = 'steps:\n  - ? "run"\n    : |\n        echo hi  # measured on URX44V\n';
+    expect(findingsIn(quoted, ".github/workflows/x.yml").map((f) => f.line)).toEqual([4]);
+    // …and the key belongs to the entry it was written for, not to a later one.
+    const other = "steps:\n  - ? message\n    : |\n        echo hi  # measured on URX44V\n";
+    expect(findingsIn(other, ".github/workflows/x.yml")).toEqual([]);
+    expect(yamlExplicitKey("  - ? run")).toBe("run");
+    expect(yamlExplicitKey('  - ? "r\\u0075n"')).toBe("run");
+    expect(yamlExplicitKey("  - run: |")).toBe(null);
+  });
+
+  // `!` is the negation operator, and what follows it is the pipeline it negates — a command
+  // position. Read as an ordinary punctuator it ended one, so `! case x in …` never reached
+  // `case` and the arm's `)` closed the substitution around it. `bash -n` accepts it.
+  it("keeps the command position through a negation", () => {
+    const negated = 'value="$(! case x in x) # measured on URX44V\n  printf x;; esac)"\n';
+    expect(findingsIn(negated, "x.sh").map((f) => f.line)).toEqual([1]);
+    // …and an ordinary negated pipeline is still just a pipeline.
+    expect(findingsIn('y="$(! printf a)"  # measured on URX44V\n', "x.sh").map((f) => f.line)).toEqual([1]);
+  });
+
   it("keeps the command position through the whitespace in front of a keyword", () => {
     const indented = 'y="$(\n  case x in\n    x)  # measured on URX44V\n      printf a\n      ;;\n  esac\n)"\n';
     expect(findingsIn(indented, "x.sh").map((f) => f.line)).toEqual([3]);
@@ -1167,6 +1183,30 @@ describe("what the default scan reaches", () => {
       encoding: "utf8",
     });
     expect(both).toBe(dir);
+  });
+
+  // `resolve()` is not one name per file: on macOS `/tmp` and `/private/tmp` are the same
+  // directory, so a file named through each was read twice — and the second spelling has no
+  // ledger row at all, so a file at its ceiling failed against a copy of itself.
+  it("reads a file named through a link and by its own path once", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "prov-link-dedupe-"));
+    symlinkSync(ROOT, join(tmp, "link"), "dir");
+    const direct = execFileSync(
+      process.execPath,
+      [join(HERE, "check-comment-provenance.mjs"), "src/core/control/client.ts"],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    const both = execFileSync(
+      process.execPath,
+      [
+        join(HERE, "check-comment-provenance.mjs"),
+        "src/core/control/client.ts",
+        join(tmp, "link", "src", "core", "control", "client.ts"),
+      ],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    rmSync(tmp, { recursive: true, force: true });
+    expect(both).toBe(direct);
   });
 
   it("reaches build.rs, which sits beside src rather than inside it", () => {
