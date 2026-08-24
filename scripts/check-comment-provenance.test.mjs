@@ -29,6 +29,7 @@ import {
   scanTargets,
   trackedSources,
   yamlComments,
+  yamlKey,
   rustComments,
   verdict,
 } from "./check-comment-provenance.mjs";
@@ -676,6 +677,44 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     expect(findingsIn(wf, "x.yml")).toEqual([]);
   });
 
+  // A quoted key is the SAME key — Ruby's YAML loads `"run": |` and `"r\u0075n": |` with the
+  // key `run` — and matched as a plain scalar only, both blocks were left as text.
+  it("reads a run: block whose key is quoted, escapes decoded", () => {
+    const wf = (key) => `jobs:\n  a:\n    steps:\n      - ${key}: |\n          echo hi  # measured on URX44V\n`;
+    for (const key of ["run", '"run"', "'run'", '"r\\u0075n"']) {
+      expect(
+        findingsIn(wf(key), ".github/workflows/x.yml").map((f) => f.line),
+        key,
+      ).toEqual([5]);
+    }
+    for (const key of ['"message"', "'shell'"]) {
+      expect(findingsIn(wf(key), ".github/workflows/x.yml"), key).toEqual([]);
+    }
+  });
+
+  it("names the key a block scalar is the value of, and nothing for a sequence entry", () => {
+    expect(yamlKey("      - run: |")).toBe("run");
+    expect(yamlKey('      - "run": |')).toBe("run");
+    expect(yamlKey("      - 'run': |")).toBe("run");
+    expect(yamlKey('      - "r\\u0075n": |')).toBe("run");
+    expect(yamlKey("      - 'it''s': |")).toBe("it's");
+    expect(yamlKey("      - message: |")).toBe("message");
+    expect(yamlKey("      - |")).toBe(null);
+  });
+
+  // A command position survives WHITESPACE. Cleared by every space, an indented `case` — the
+  // shape a `$( … )` block is written in — stopped being a keyword, its arms' `)` closed the
+  // substitution, and the comments inside them fell back into the double quote around it,
+  // where a `#` is text. `bash -n` accepts both of these and running them prints `a`.
+  it("keeps the command position through the whitespace in front of a keyword", () => {
+    const indented = 'y="$(\n  case x in\n    x)  # measured on URX44V\n      printf a\n      ;;\n  esac\n)"\n';
+    expect(findingsIn(indented, "x.sh").map((f) => f.line)).toEqual([3]);
+    const afterSemicolon = 'y="$(printf b; case x in x)  # measured on URX44V\n printf a;; esac)"\n';
+    expect(findingsIn(afterSemicolon, "x.sh").map((f) => f.line)).toEqual([1]);
+    // …and it is still not a keyword after a word, however much space follows that word.
+    expect(findingsIn('y="$(echo   case; printf a)"  # measured on URX44V\n', "x.sh").map((f) => f.line)).toEqual([1]);
+  });
+
   // A backtick substitution's body is CODE even inside a double quote, and read as string
   // text a comment in one was never looked at. `bash -n` accepts the script and running it
   // prints `a`.
@@ -867,7 +906,15 @@ const F_STRINGS = [
   ['v = f"""{\n  x:#>10\n}"""\nw = 1  # c\n', [4]],
   ['v = f"{x:>{w}}"  # c\n', [1]],
   ['v = f"{x!r}"  # c\n', [1]],
+  // A conversion ends the EXPRESSION and not the field: what follows `!s` is the field
+  // again, so a comment may sit between it and the `}`. Read as the format spec's opening,
+  // this comment was scanned as fill text.
+  ['value = f"""{1!s  # measured on URX44V\n}"""\n', [1]],
+  ['v = f"{x!s:>10}"  # c\n', [1]],
   ['v = f"{a != b}"  # c\n', [1]],
+  // …and a `!` before an identifier that merely starts with one of the three letters is an
+  // operator, not a conversion.
+  ['v = f"{a if not sub else b}"  # c\n', [1]],
   // A field may carry the same quote the string is written with, which is also PEP 701.
   ['v = f"{d["a"]}"  # c\n', [1]],
   ['v = f"{{x}}"  # c\n', [1]],
@@ -879,9 +926,22 @@ const F_STRINGS = [
   ['def f(): return "# not"\nx = 1  # c\n', [2]],
 ];
 
+// PEP 750's template strings carry replacement fields exactly as f-strings do, and read as
+// ordinary strings their fields were skipped whole. Their own table, because a CPython
+// older than 3.14 cannot compile one at all — the differential below says how many it had
+// to leave out rather than passing over them in silence.
+const T_STRINGS = [
+  ['value = t"""{1  # measured on URX44V\n}"""\n', [1]],
+  ['v = t"{x}"  # c\n', [1]],
+  ['v = tr"""{\n  1  # c\n}"""\n', [2]],
+  ['v = t"{x:#>10}"  # c\n', [1]],
+];
+
+const PY_CASES = [...F_STRINGS, ...T_STRINGS];
+
 describe("what counts as a comment inside an f-string", () => {
   it("reads a replacement field as code and a format spec as text", () => {
-    for (const [src, lines] of F_STRINGS) {
+    for (const [src, lines] of PY_CASES) {
       expect(
         pyComments(src).map((c) => c.line),
         src,
@@ -897,12 +957,19 @@ const python = spawnSync("python3", ["-c", "print(1)"], { encoding: "utf8" });
 const pythonAvailable = !python.error && python.status === 0;
 
 describe.skipIf(!pythonAvailable)("f-strings, differentially against CPython's tokenizer", () => {
-  it("agrees with tokenize on every case in the table", () => {
+  it("agrees with tokenize on every case this interpreter can compile", () => {
+    // A case the running CPython cannot compile is reported as `null` rather than dropped:
+    // a template string needs 3.14, and a differential that quietly skipped what it could
+    // not parse would read the same whether it measured four cases or none.
     const script = [
       "import io, json, sys, tokenize",
       "out = []",
       "for src in json.loads(sys.argv[1]):",
-      "    compile(src, '<case>', 'exec')",
+      "    try:",
+      "        compile(src, '<case>', 'exec')",
+      "    except SyntaxError:",
+      "        out.append(None)",
+      "        continue",
       "    lines = []",
       "    for t in tokenize.tokenize(io.BytesIO(src.encode()).readline):",
       "        if t.type == tokenize.COMMENT:",
@@ -910,10 +977,19 @@ describe.skipIf(!pythonAvailable)("f-strings, differentially against CPython's t
       "    out.append(lines)",
       "print(json.dumps(out))",
     ].join("\n");
-    const sources = F_STRINGS.map(([src]) => src);
-    const run = spawnSync("python3", ["-c", script, JSON.stringify(sources)], { encoding: "utf8" });
+    const run = spawnSync("python3", ["-c", script, JSON.stringify(PY_CASES.map(([src]) => src))], {
+      encoding: "utf8",
+    });
     expect(run.status, run.stderr).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual(F_STRINGS.map(([, lines]) => lines));
+    const answers = JSON.parse(run.stdout);
+    // Only a template string may go unread here, and only on a CPython older than 3.14 —
+    // which is a POSITION in the list, not a shape to be matched.
+    const uncompiled = answers.flatMap((a, n) => (a === null ? [n] : []));
+    expect(uncompiled.filter((n) => n < F_STRINGS.length)).toEqual([]);
+    if (uncompiled.length) console.warn(`template strings not compiled by this python3: ${uncompiled.length}`);
+    const compiled = PY_CASES.filter((_, n) => answers[n] !== null);
+    expect(compiled.length).toBeGreaterThanOrEqual(F_STRINGS.length);
+    expect(answers.filter((a) => a !== null)).toEqual(compiled.map(([, lines]) => lines));
   });
 });
 

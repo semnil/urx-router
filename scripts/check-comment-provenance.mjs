@@ -674,8 +674,7 @@ export function yamlComments(src, actions = false) {
       if (body.trim() !== "" && body.length - body.trimStart().length <= indent) break;
       end++;
     }
-    const key = /(?:^|[\s-])([\w.-]+)[ \t]*:[ \t]*[|>]/.exec(head);
-    if (actions && key && key[1] === "run" && end > n + 1) {
+    if (actions && yamlKey(head) === "run" && end > n + 1) {
       // What the shell is handed is the block's VALUE, which is these lines with their
       // common indentation removed — the indentation indicator's if it has one, and the
       // first non-empty line's otherwise. Handed the raw lines instead, a here-document's
@@ -707,6 +706,41 @@ export function yamlComments(src, actions = false) {
     n = end - 1;
   }
   return out.sort((a, b) => a.start - b.start);
+}
+
+/** What a `\`-escape stands for in a YAML double-quoted scalar, beside the numeric forms. */
+const YAML_ESCAPES = {
+  0: "\0",
+  a: "\x07",
+  b: "\b",
+  t: "\t",
+  n: "\n",
+  v: "\v",
+  f: "\f",
+  r: "\r",
+  e: "\x1b",
+  N: "\u0085",
+  _: "\u00a0",
+  L: "\u2028",
+  P: "\u2029",
+};
+
+/**
+ * The mapping key a block scalar is the value of, plain or quoted, or null for a scalar
+ * that is a sequence entry rather than a mapping value.
+ *
+ * A quoted key is the SAME key: `"run": |` is what GitHub reads as `run`, and matched as a
+ * plain scalar only, that block was left as text. The escapes of a double-quoted scalar are
+ * decoded, so a key spelled `"r\u0075n"` is not a way round the reader either.
+ */
+export function yamlKey(head) {
+  const m = /(?:^|[\s-])(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([\w.-]+))[ \t]*:[ \t]*[|>]/.exec(head);
+  if (!m) return null;
+  if (m[3] !== undefined) return m[3];
+  if (m[2] !== undefined) return m[2].replace(/''/g, "'");
+  return m[1].replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[\s\S])/g, (_, e) =>
+    /^[xuU]/.test(e) ? String.fromCodePoint(parseInt(e.slice(1), 16)) : (YAML_ESCAPES[e] ?? e),
+  );
 }
 
 /**
@@ -848,12 +882,15 @@ export function pyComments(src) {
     i = stop;
   };
 
-  /** Whether the letters immediately before `at` are a string prefix carrying an `f`. */
-  const fPrefix = (at) => {
+  /** Whether the letters immediately before `at` are a prefix that gives the string
+   *  REPLACEMENT FIELDS — `f`, and since PEP 750 `t` as well, in either case alone or
+   *  beside an `r`. Read as an ordinary string, a template string's fields were skipped
+   *  whole and the comments CPython reports inside them were never looked at. */
+  const fieldPrefix = (at) => {
     let k = at;
     while (k > 0 && /[A-Za-z]/.test(src[k - 1])) k--;
     const pre = src.slice(k, at);
-    return pre.length > 0 && pre.length <= 2 && /f/i.test(pre) && !/[\w]/.test(src[k - 1] ?? " ");
+    return pre.length > 0 && pre.length <= 2 && /[ft]/i.test(pre) && !/\w/.test(src[k - 1] ?? " ");
   };
 
   /** Consume a string whose opening quote is at `i`. `fmt` = its prefix carried an `f`. */
@@ -913,7 +950,7 @@ export function pyComments(src) {
         continue;
       }
       if (c === '"' || c === "'") {
-        string(fPrefix(i));
+        string(fieldPrefix(i));
         continue;
       }
       if (c === "(" || c === "[" || c === "{") {
@@ -932,9 +969,16 @@ export function pyComments(src) {
         depth--;
         continue;
       }
-      // `!=` is an operator; a lone `!` is the conversion, and either one ends the
-      // expression only at the field's own depth.
-      if (depth === 0 && (c === ":" || (c === "!" && src[i + 1] !== "="))) {
+      // A conversion is `!s`, `!r` or `!a`, and what follows it is the FIELD again — a
+      // comment may sit between it and the `}`. Read as the start of the format spec, the
+      // comment after `{1!s` was scanned as fill text. `!=` is an operator, and so is a `!`
+      // before an identifier that merely starts with one of the three letters.
+      if (depth === 0 && c === "!" && /[sra]/.test(src[i + 1] ?? "") && !/\w/.test(src[i + 2] ?? "")) {
+        i += 2;
+        continue;
+      }
+      // Only a `:` at the field's own depth ends the expression.
+      if (depth === 0 && c === ":") {
         i++;
         spec();
         return;
@@ -978,7 +1022,7 @@ export function pyComments(src) {
       continue;
     }
     if (c === '"' || c === "'") {
-      string(fPrefix(i));
+      string(fieldPrefix(i));
       continue;
     }
     i++;
@@ -1152,7 +1196,11 @@ export function shellComments(src) {
       i = stop;
       continue;
     }
-    cmdStart = c === ";" || c === "&" || c === "|" || c === "{";
+    // Whitespace CARRIES the command position rather than ending it: cleared by every
+    // space, an indented `case` — the shape a `$( … )` block is written in — stopped being
+    // a keyword, its arms' `)` closed the substitution, and their comments fell back inside
+    // the double quote around it.
+    if (c !== " " && c !== "\t") cmdStart = c === ";" || c === "&" || c === "|" || c === "{";
     prev = c;
     i++;
   }
