@@ -244,6 +244,7 @@ function scanJs(src, mode = "js") {
     return tok;
   };
   const tpl = []; // the brace-stack depth each open `${` returns to
+  let angles = 0; // open TypeScript type-argument lists
 
   // The span carries its SOURCE RANGE, not only its line: two comments on one line are two
   // comments, and a key of line-plus-text folded them into one — under which a file at a
@@ -503,6 +504,30 @@ function scanJs(src, mode = "js") {
       i += 2;
       continue;
     }
+    // TypeScript type arguments. `f<string> / 2` divides an instantiation expression, while
+    // `a < b > /re/.test(c)` compares and then matches — one grammar cannot tell them apart,
+    // and what separates them in FORMATTED text is the space: Prettier writes every
+    // comparison as `a < b` and every type argument list tight against its name (measured
+    // both ways, and `format` is one of the four checks a merge waits for). So a `<` counts
+    // only where it touches the name in front of it. Read as an operator, the `>` left the
+    // grammar expecting an expression and the `/` after it opened a pattern that swallowed
+    // the line.
+    if (c === "<" && i > 0 && (isIdPart(src[i - 1]) || src[i - 1] === ">") && last && last.kind !== "punct") {
+      angles++;
+      punct("<");
+      i++;
+      continue;
+    }
+    if (c === ">" && angles > 0) {
+      angles--;
+      if (angles === 0) value();
+      else punct(">");
+      i++;
+      continue;
+    }
+    // A `<` that opened nothing must not poison the rest of the file: a statement boundary
+    // ends any run that never closed.
+    if (c === ";") angles = 0;
     punct(c);
     i++;
   }
@@ -668,6 +693,10 @@ export function yamlComments(src, actions = false) {
     // An anchor or a tag may sit between the `:` and the indicator — `run: &script |` is a
     // block scalar, and read as a plain one its body was scanned as YAML, where the `#`
     // lines of a here-document inside it are comments.
+    // A blank line and a comment-only line are not nodes, so an explicit key still waiting
+    // for its value survives them. Cleared on every line that was not itself an explicit
+    // key, a comment written between `? run` and its `: |` lost the key.
+    if (head.trim() === "") continue;
     const explicit = yamlExplicitKey(head);
     if (explicit !== null) {
       pendingKey = explicit;
@@ -1222,6 +1251,16 @@ export function shellComments(src) {
     // A whole WORD is read at a command position rather than four characters matched
     // against two names: what a reserved word does to the position is the question, and a
     // word that is not one ends it.
+    // An OPTION at a command position is not the command: `time -p case x in …` puts one
+    // between the reserved word and the next command, and read as an ordinary word it ended
+    // the position, so `case` was not a keyword and its arm's `)` closed the substitution.
+    if (cmdStart && c === "-") {
+      let j = i;
+      while (j < src.length && !/[\s;&|<>()]/.test(src[j])) j++;
+      i = j;
+      prev = "x";
+      continue;
+    }
     if (cmdStart && /[A-Za-z_]/.test(c)) {
       let j = i;
       while (j < src.length && /[A-Za-z0-9_]/.test(src[j])) j++;
@@ -1535,9 +1574,17 @@ if (invokedDirectly) {
     // Named twice — as itself, or once under a directory that also contains it — a file was
     // read twice and its findings counted twice, so a path at its ceiling failed against
     // itself. Resolved, because `./src/a.ts` and `src/a.ts` are one file.
+    // A path that is not there is a question this cannot answer, and answering `0 source
+    // file(s)` with exit 0 says the opposite — a typo in a hook's payload or a CI step read
+    // as a clean tree.
+    const missing = roots.filter((root) => !existsSync(root));
+    if (missing.length) {
+      for (const root of missing) console.error(`${root}: no such file or directory`);
+      console.error(`\n${missing.length} named path(s) do not exist. Nothing was scanned for them.`);
+      process.exit(1);
+    }
     const named = new Map();
     for (const root of roots) {
-      if (!existsSync(root)) continue;
       for (const path of collect(root)) named.set(canonical(path), path);
     }
     targets = [...named.values()];

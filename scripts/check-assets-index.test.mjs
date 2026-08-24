@@ -11,12 +11,22 @@
 // mutating the repository and reading a count.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ENV_CORPUS, ENV_NAME, SELF_FILES, classifyToken, mentions, walk } from "./check-assets-index.mjs";
+import {
+  ENV_CORPUS,
+  ENV_NAME,
+  SELF_FILES,
+  askableProbes,
+  classifyToken,
+  mentions,
+  walk,
+} from "./check-assets-index.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 describe("classifyToken", () => {
   it("routes each shape the section writes to its own oracle", () => {
@@ -142,5 +152,30 @@ describe("ENV_CORPUS", () => {
     }
     const onlyThere = [...inWorkflows].filter((name) => !mentions(outside, name));
     expect(onlyThere.length).toBeGreaterThan(0);
+  });
+});
+
+// One path git refuses to answer for fails the WHOLE batch, and the batch is every private
+// path the documents name. `/private/tmp` exists on macOS and not on the runner, so it was a
+// miss there and not here: the check was green locally and red in CI over one document.
+describe("which paths git can be asked to classify", () => {
+  it("drops the absolute ones, which are outside the repository by construction", () => {
+    expect(askableProbes(["reference/", "/private/tmp", "C:\\tmp", "docs/en/"])).toEqual(["reference/", "docs/en/"]);
+  });
+
+  // …and the reason it has to: git does not skip such a path, it fails on it.
+  it("is asked because git fails the batch over one of them", () => {
+    const withAbsolute = spawnSync("git", ["check-ignore", "--stdin"], {
+      input: "reference/\n/private/tmp\n",
+      cwd: join(HERE, ".."),
+      encoding: "utf8",
+    });
+    expect(withAbsolute.status).toBe(128);
+    const filtered = spawnSync("git", ["check-ignore", "--stdin"], {
+      input: askableProbes(["reference/", "/private/tmp"]).join("\n") + "\n",
+      cwd: join(HERE, ".."),
+      encoding: "utf8",
+    });
+    expect([0, 1]).toContain(filtered.status);
   });
 });

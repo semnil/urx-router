@@ -62,6 +62,18 @@ const SELF = relative(process.cwd(), fileURLToPath(import.meta.url))
 // while living under scripts/. Derived from SELF so a rename carries both.
 export const SELF_FILES = new Set([SELF, SELF.replace(/\.mjs$/, ".test.mjs")]);
 
+/**
+ * The probes `git check-ignore` can be asked about.
+ *
+ * An ABSOLUTE path is outside this repository by construction and can never be
+ * repo-ignored, and asking about one is not merely useless: git answers "outside
+ * repository" with 128 and the whole batch fails, taking every unrelated suppression with
+ * it. Which paths reach the batch differs by MACHINE — `/private/tmp` exists here and not
+ * on the runner, so it was a miss there and not here, and the check was green locally and
+ * red in CI over the same document.
+ */
+export const askableProbes = (probes) => probes.filter((p) => !p.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(p));
+
 // Exact-string allowlist: spans that are prose, not anchors. Every entry needs a
 // reason, because an unreasoned entry here is how a real anchor stops being checked.
 const PROSE_TOKENS = new Map([
@@ -108,6 +120,12 @@ const PROSE_TOKENS = new Map([
   ["- |2", "the same header without a key, where the indicator counts from the dash instead"],
   ["tokenize", "CPython's module, named as the authority the f-string reader is measured against"],
   ["#", "the character, named as itself — the comment marker three of the languages share"],
+  // macOS's two spellings of one directory, named as the reason a path is canonicalised.
+  // Neither is a path in this repository, and `/private/tmp` is not even a path on the
+  // runner — asked of `git check-ignore` it answered "outside repository" and took every
+  // other suppression down with it.
+  ["/tmp", "a directory on the machine, named as one half of a pair that is one directory"],
+  ["/private/tmp", "the other half of it"],
   [")", "the character, named as what a shell closes the innermost thing on"],
   ["bash -n", "the syntax check, named as the positive control a shell fixture is confirmed with"],
   ["import.meta.url", "a node global, named as one side of the entry guard's comparison"],
@@ -339,7 +357,14 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     // Offer each path both bare and with a trailing slash: "dist" does not match the
     // "dist/" pattern while "dist/" does.
     const probes = [...new Set(paths.flatMap((p) => [p, p.endsWith("/") ? p : p + "/"]))];
-    const res = spawnSync("git", ["check-ignore", "--stdin"], { input: probes.join("\n"), encoding: "utf8" });
+    // One path git refuses to answer for FAILS THE WHOLE BATCH, and the batch is every
+    // private path this document names: `/private/tmp` exists on macOS and not on the
+    // runner, so it reached this as a miss, git answered "outside repository" with 128, and
+    // seven suppressions that had nothing to do with it turned into findings. An absolute
+    // path is outside this repository by construction and cannot be repo-ignored, so it is
+    // not asked about at all.
+    const askable = askableProbes(probes);
+    const res = spawnSync("git", ["check-ignore", "--stdin"], { input: askable.join("\n"), encoding: "utf8" });
     if (res.error || (res.status !== 0 && res.status !== 1)) {
       finding(
         DOC,

@@ -213,6 +213,30 @@ describe("what counts as a comment", () => {
   // The one reading is a lexical GOAL and not a character rule, and a `!` is where those two
   // answers differ: after a value it is TypeScript's non-null assertion and leaves one
   // behind, before one it is negation and wants an expression.
+
+  // `f<string> / 2` divides an instantiation expression and `a < b > /re/.test(c)` compares
+  // and then matches. One grammar cannot tell them apart; what separates them in FORMATTED
+  // text is the space, and Prettier writes every comparison as `a < b` and every type
+  // argument list tight against its name. Read as an operator, the `>` left the grammar
+  // expecting an expression and the `/` after it opened a pattern that took the line.
+  it("closes a TypeScript type argument list on a value, and leaves a comparison alone", () => {
+    expect(shapes("const x = f<string> / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const x = f<A<B>> / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const m = new Map<string, number>(); // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    // …and the comparison, where a pattern may follow the `>` and does. The pattern carries
+    // a quote, so reading the `>` as a value's end does not merely divide — it desynchronises
+    // on that quote and the comment is gone.
+    expect(shapes('const r = a < b > /["]/.test("d"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    // …and the operators a `>` is half of are still themselves.
+    expect(shapes("const u = a >= b; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const w = a >> 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const v = (x) => x / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    // …and a `<` that closes nothing does not poison the statements after it: written
+    // without the spaces Prettier would put there, it would otherwise leave a run open for
+    // the next `>` to close.
+    expect(shapes('const t = a<b;\nconst r = c > /["]/.test("d"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+  });
+
   it("tells a postfix ! from a prefix one", () => {
     expect(shapes("const n = !/x/.test(a) ? 1 : 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
     expect(shapes("const n = a != b; // (measured)\n")).toEqual(["hedge-parenthetical"]);
@@ -748,6 +772,36 @@ describe("what counts as a comment in the # languages and in HTML", () => {
   // The same key written the other way round. An EXPLICIT mapping entry puts `? run` on one
   // line and the `: |` that carries its value on the next, and read only where the two sit
   // together, a workflow's run block written this way was left as text.
+
+  // A blank line and a comment-only line are not nodes, so an explicit key still waiting for
+  // its value survives them. Cleared on every line that was not itself an explicit key, a
+  // comment written between `? run` and its `: |` lost the key and the block stayed text.
+  it("carries an explicit key across a comment and a blank line", () => {
+    const commented = "steps:\n  - ? run\n    # separator\n    : |\n        echo ok # measured on URX44V\n";
+    expect(findingsIn(commented, ".github/workflows/x.yml").map((f) => f.line)).toEqual([5]);
+    const blank = "steps:\n  - ? run\n\n    : |\n        echo ok # measured on URX44V\n";
+    expect(findingsIn(blank, ".github/workflows/x.yml").map((f) => f.line)).toEqual([5]);
+    // …and a real node between them still ends the entry.
+    const interrupted = "steps:\n  - ? run\n  - name: x\n    y: |\n        echo ok # measured on URX44V\n";
+    expect(findingsIn(interrupted, ".github/workflows/x.yml")).toEqual([]);
+  });
+
+  // An OPTION at a command position is not the command. `time -p case x in …` puts one
+  // between the reserved word and the next command, and read as an ordinary word it ended
+  // the position, so `case` was not a keyword and its arm's `)` closed the substitution.
+  // `bash -n` accepts all three of these.
+  it("keeps the command position through a reserved word's options", () => {
+    expect(
+      findingsIn('v="$(time -p case x in x) # measured on URX44V\n printf x;; esac)"\n', "x.sh").map((f) => f.line),
+    ).toEqual([1]);
+    expect(
+      findingsIn('v="$(time case x in x) # measured on URX44V\n printf x;; esac)"\n', "x.sh").map((f) => f.line),
+    ).toEqual([1]);
+    expect(
+      findingsIn('v="$(! case x in x) # measured on URX44V\n printf x;; esac)"\n', "x.sh").map((f) => f.line),
+    ).toEqual([1]);
+  });
+
   it("carries an explicit mapping key to the line its value is on", () => {
     const explicit = "steps:\n  - ? run\n    : |\n        echo hi  # measured on URX44V\n";
     expect(findingsIn(explicit, ".github/workflows/x.yml").map((f) => f.line)).toEqual([4]);
@@ -1188,6 +1242,34 @@ describe("what the default scan reaches", () => {
   // `resolve()` is not one name per file: on macOS `/tmp` and `/private/tmp` are the same
   // directory, so a file named through each was read twice — and the second spelling has no
   // ledger row at all, so a file at its ceiling failed against a copy of itself.
+
+  // A path that is not there is a question this cannot answer, and `0 source file(s)` with
+  // exit 0 says the opposite — a typo in a hook's payload or in a CI step read as a clean
+  // tree.
+  it("fails on a named path that does not exist, rather than scanning nothing", () => {
+    let status = 0;
+    let stderr = "";
+    try {
+      execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), "does-not-exist.ts"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      status = err.status;
+      stderr = err.stderr;
+    }
+    expect(status).toBe(1);
+    expect(stderr).toMatch(/does-not-exist\.ts: no such file or directory/);
+    // …and one that does exist is still read.
+    const ok = execFileSync(
+      process.execPath,
+      [join(HERE, "check-comment-provenance.mjs"), "src/core/control/client.ts"],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    expect(ok).toMatch(/OK: 1 source file/);
+  });
+
   it("reads a file named through a link and by its own path once", () => {
     const tmp = mkdtempSync(join(tmpdir(), "prov-link-dedupe-"));
     symlinkSync(ROOT, join(tmp, "link"), "dir");
