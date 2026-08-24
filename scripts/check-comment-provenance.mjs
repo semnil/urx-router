@@ -245,6 +245,7 @@ function scanJs(src, mode = "js") {
   };
   const tpl = []; // the brace-stack depth each open `${` returns to
   let angles = 0; // open TypeScript type-argument lists
+  let typeParams = false; // whether the open run is a declaration's parameters
 
   // The span carries its SOURCE RANGE, not only its line: two comments on one line are two
   // comments, and a key of line-plus-text folded them into one — under which a file at a
@@ -295,6 +296,7 @@ function scanJs(src, mode = "js") {
     if (last.kind === "name") return OBJECT_AFTER.has(last.text) ? "object" : "block";
     if (last.kind === "value") return "object";
     const t = last.text;
+    if (t === ">" && last.typeParams) return "block";
     return t === ")" || t === "]" || t === "}" || t === ";" || t === "{" || t === "=>" ? "block" : "object";
   };
 
@@ -387,7 +389,7 @@ function scanJs(src, mode = "js") {
       const property = afterDot() || (last?.kind === "punct" && last.text === "#");
       // `property` outlives the regex question: `obj.catch(x)` is a call, and reading its
       // `catch` as the control keyword makes the `)` start an expression.
-      if ((text === "function" || text === "class") && !property) {
+      if ((text === "function" || text === "class" || text === "interface") && !property) {
         // Walk back over the modifier run — `export`, `default`, `async` — because what
         // separates a declaration from an expression is the token BEFORE all of them.
         // Reading only the one immediately behind made `export function` an expression and
@@ -512,7 +514,15 @@ function scanJs(src, mode = "js") {
     // only where it touches the name in front of it. Read as an operator, the `>` left the
     // grammar expecting an expression and the `/` after it opened a pattern that swallowed
     // the line.
-    if (c === "<" && i > 0 && (isIdPart(src[i - 1]) || src[i - 1] === ">") && last && last.kind !== "punct") {
+    if (c === "<" && i > 0 && !/\s/.test(src[i - 1]) && endsValue()) {
+      // A DECLARATION's type parameters are not an instantiation expression: what follows
+      // `class C<T>` is the body, and closing the run on a value made that brace an object
+      // literal — after which the `}` ended a value and the pattern on the next line was
+      // read as a division that walked into it.
+      if (angles === 0) {
+        const pending = pendingBodies[pendingBodies.length - 1];
+        typeParams = Boolean(pending && pending.depth === parens.length);
+      }
       angles++;
       punct("<");
       i++;
@@ -520,14 +530,21 @@ function scanJs(src, mode = "js") {
     }
     if (c === ">" && angles > 0) {
       angles--;
-      if (angles === 0) value();
-      else punct(">");
+      if (angles > 0) punct(">");
+      else if (typeParams) punct(">", { typeParams: true });
+      else value();
       i++;
       continue;
     }
     // A `<` that opened nothing must not poison the rest of the file: a statement boundary
-    // ends any run that never closed.
-    if (c === ";") angles = 0;
+    // ends any run that never closed. Nor may a body that never arrived — an ambient
+    // `declare function f(): T;` pushes one and no brace ever consumes it, and the next type
+    // argument list then read itself as that declaration's parameters.
+    if (c === ";") {
+      angles = 0;
+      while (pendingBodies.length && pendingBodies[pendingBodies.length - 1].depth >= parens.length)
+        pendingBodies.pop();
+    }
     punct(c);
     i++;
   }
@@ -1129,6 +1146,9 @@ export function shellComments(src) {
   // Whether a command word could start here, which is what separates the keyword `case`
   // from the argument in `echo case`.
   let cmdStart = true;
+  // Whether the word just read was `time`, which is the one reserved word that takes an
+  // option before the command it measures.
+  let timed = false;
   while (i < src.length) {
     const c = src[i];
     if (c === "\n") {
@@ -1254,7 +1274,10 @@ export function shellComments(src) {
     // An OPTION at a command position is not the command: `time -p case x in …` puts one
     // between the reserved word and the next command, and read as an ordinary word it ended
     // the position, so `case` was not a keyword and its arm's `)` closed the substitution.
-    if (cmdStart && c === "-") {
+    // Only after `time`, though — read as transparent everywhere, `-p case x` made `-p` the
+    // option of nothing and `case` a keyword, so the `)` that CLOSED the substitution was
+    // taken for a pattern's and the string after it was read as code.
+    if (cmdStart && timed && c === "-") {
       let j = i;
       while (j < src.length && !/[\s;&|<>()]/.test(src[j])) j++;
       i = j;
@@ -1267,6 +1290,7 @@ export function shellComments(src) {
       const word = src.slice(i, j);
       if (word === "case") cases.push(stack.length);
       else if (word === "esac") cases.pop();
+      timed = word === "time";
       cmdStart = COMMAND_OPENERS.has(word);
       i = j;
       prev = "x";

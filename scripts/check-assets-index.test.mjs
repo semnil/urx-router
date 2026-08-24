@@ -10,8 +10,9 @@
 // inside the test worker — which is why the classifier could only ever be measured by
 // mutating the repository and reading a count.
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -177,5 +178,37 @@ describe("which paths git can be asked to classify", () => {
       encoding: "utf8",
     });
     expect([0, 1]).toContain(filtered.status);
+  });
+});
+
+// Node resolves the entry module's symlinks before it stamps `import.meta.url` and leaves
+// `process.argv[1]` exactly as it was typed, so on a path through a link the two are
+// different strings for one file — on macOS every path under `/tmp` and `/var/folders` is
+// one. Read as "not the program", this printed nothing and exited 0. The comparison was
+// corrected in the two checkers beside it and not here.
+describe("running the checker through a link", () => {
+  it("runs the check, rather than exiting 0 having printed nothing", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "assets-link-"));
+    symlinkSync(repo, join(tmp, "link"), "dir");
+    const direct = execFileSync(process.execPath, [join(repo, "scripts", "check-assets-index.mjs")], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+    const linked = execFileSync(process.execPath, [join(tmp, "link", "scripts", "check-assets-index.mjs")], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+    rmSync(tmp, { recursive: true, force: true });
+    expect(direct).toMatch(/OK: \d+ tokens/);
+    expect(linked).toBe(direct);
+  });
+
+  it("still does not run it on an import", () => {
+    const out = execFileSync(
+      process.execPath,
+      ["-e", `import(${JSON.stringify(join(repo, "scripts", "check-assets-index.mjs"))})`],
+      { cwd: repo, encoding: "utf8" },
+    );
+    expect(out).toBe("");
   });
 });

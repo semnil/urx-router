@@ -237,6 +237,34 @@ describe("what counts as a comment", () => {
     expect(shapes('const t = a<b;\nconst r = c > /["]/.test("d"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
   });
 
+  // Type arguments apply to any expression that ends a VALUE, not only to an identifier:
+  // `obj["f"]<string>()` and `getF()<string>()` are both TypeScript, and read off the
+  // preceding CHARACTER the `]` and the `)` were not seen. And a body that never arrives
+  // must not outlive its statement — an ambient `declare function f(): T;` leaves one
+  // pending, and the next type argument list then read itself as that declaration's.
+  it("closes a type argument list after an index and after a call", () => {
+    expect(shapes('const x = obj["f"]<string> / 2; // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const y = getF()<string> / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("declare function getF(): <T>() => number;\nconst y = getF()<string> / 2; // (measured)\n")).toEqual([
+      "hedge-parenthetical",
+    ]);
+  });
+
+  // A DECLARATION's type parameters are not an instantiation expression. What follows
+  // `class C<T>` is the body, and closing that run on a value made the brace an object
+  // literal — after which the `}` ended a value, the pattern on the next line was read as a
+  // division, and what it walked into was reported as a comment. The controls are the same
+  // two lines without the type parameters, and with a function in place of the class.
+  it("closes a declaration's type parameters on its body, not on a value", () => {
+    expect(shapes('class C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes('interface I<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    // …and the comment after such a declaration is still read.
+    expect(shapes('class C<T> {}\n/[//]/.test("x"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    expect(shapes('interface I<T> {}\n/[//]/.test("x"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    expect(shapes('class D {}\n/[//]/.test("x"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    expect(shapes('function g<T>() {}\n/[//]/.test("x"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+  });
+
   it("tells a postfix ! from a prefix one", () => {
     expect(shapes("const n = !/x/.test(a) ? 1 : 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
     expect(shapes("const n = a != b; // (measured)\n")).toEqual(["hedge-parenthetical"]);
@@ -818,6 +846,18 @@ describe("what counts as a comment in the # languages and in HTML", () => {
   // `!` is the negation operator, and what follows it is the pipeline it negates — a command
   // position. Read as an ordinary punctuator it ended one, so `! case x in …` never reached
   // `case` and the arm's `)` closed the substitution around it. `bash -n` accepts it.
+
+  // …and only after `time`, which is the one reserved word that takes an option before the
+  // command it measures. Transparent everywhere, `-p` became the option of nothing, `case`
+  // a keyword, and the `)` that CLOSED the substitution was taken for a pattern's — leaving
+  // the string after it read as code, where its `#` is a comment. `bash -n` accepts it.
+  it("passes over an option only where a reserved word takes one", () => {
+    expect(findingsIn('v="$(-p case x) # measured on URX44V"\n', "x.sh")).toEqual([]);
+    expect(
+      findingsIn('v="$(time -p case x in x) # measured on URX44V\n printf x;; esac)"\n', "x.sh").map((f) => f.line),
+    ).toEqual([1]);
+  });
+
   it("keeps the command position through a negation", () => {
     const negated = 'value="$(! case x in x) # measured on URX44V\n  printf x;; esac)"\n';
     expect(findingsIn(negated, "x.sh").map((f) => f.line)).toEqual([1]);

@@ -44,10 +44,20 @@
 //   - git check-ignore is trailing-slash sensitive ("dist" does not match the
 //     "dist/" pattern while "dist/" does), so every miss is offered both ways.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, relative, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+
+/** Whether THIS module is the program, rather than something a test imported. */
+export function isEntry(url) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return realpathSync(fileURLToPath(url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
 
 const DOC = "CLAUDE.md";
 const SECTION = "## Reusable assets";
@@ -280,7 +290,13 @@ export function walk(dir, out = []) {
 //
 // Guarded so a test can import the two above without the walk, the git spawn and the
 // process.exit below running as a side effect of the import.
-if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+//
+// Compared as REAL paths on both sides. Node resolves the entry module's symlinks before it
+// stamps `import.meta.url` and leaves `process.argv[1]` exactly as it was typed, so on a
+// path through a link the two are different strings for one file — on macOS every path under
+// `/tmp` and `/var/folders` is one. Read as "not the program", this printed nothing and
+// exited 0. The same comparison was corrected in the two checkers beside it and not here.
+if (isEntry(import.meta.url)) {
   const HOOK = process.argv.includes("--hook");
 
   // Fail closed everywhere but the hook: an infrastructure failure (git unavailable, an
