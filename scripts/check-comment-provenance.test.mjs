@@ -199,6 +199,25 @@ describe("what counts as a comment", () => {
   // same whether the goal's regex was right or wrong, and filtering took real catches with
   // it. What makes it harmless here is that the shape cannot survive `format`, which is one
   // of the four checks a merge waits for — asserted by running Prettier rather than assumed.
+
+  // A span only the forced-DIVIDE reading produces begins inside a pattern the goal read,
+  // and the goal's own TERMINATOR is what separates the two things that look like that.
+  // Where the goal was wrong to open a pattern, what it swallowed ends at the comment's
+  // first `/` — that `/` is the terminator, and the reading recovers a comment nothing else
+  // sees. Where the goal was right, the `//` sits inside the pattern and the terminator is
+  // further on. Both of these are valid JavaScript that Prettier leaves exactly as it is,
+  // so the formatter is not what answers for them.
+  it("keeps a divide-only comment at the goal's terminator, and nowhere inside a pattern", () => {
+    // Recovered: the goal opens a pattern after a non-null assertion and swallows the line.
+    expect(shapes("const n = x! / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const n = f()! / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    // Invented: an escaped slash, and a slash inside a character class.
+    expect(shapes('const values = [/\\//, "(measured)"];\n')).toEqual([]);
+    expect(shapes('const values = [/[//]/, "(measured)"];\n')).toEqual([]);
+    // …and the comment after such a pattern is still read.
+    expect(shapes("const values = [/\\//]; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+  });
+
   it("has its one false positive removed by the formatter a merge waits for", () => {
     expect(shapes("const measured = 2;\nconst n = +/x//(measured);\n")).toEqual(["hedge-parenthetical"]);
     const formatted = execFileSync(
@@ -706,6 +725,36 @@ describe("what counts as a comment in the # languages and in HTML", () => {
   // shape a `$( … )` block is written in — stopped being a keyword, its arms' `)` closed the
   // substitution, and the comments inside them fell back into the double quote around it,
   // where a `#` is text. `bash -n` accepts both of these and running them prints `a`.
+
+  // An anchor or a tag may sit between the `:` and the indicator — `run: &script |` is a
+  // block scalar, and GitHub Actions supports anchors. Read as a plain scalar, its body was
+  // scanned as YAML, where the `#` lines of a here-document inside it are comments.
+  it("opens a block scalar behind an anchor or a tag", () => {
+    const anchored = "x-common: &script |\n  cat <<EOF\n  # measured on URX44V\n  EOF\n";
+    expect(findingsIn(anchored, ".github/workflows/x.yml")).toEqual([]);
+    const tagged = "x-common: !!str |\n  cat <<EOF\n  # measured on URX44V\n  EOF\n";
+    expect(findingsIn(tagged, ".github/workflows/x.yml")).toEqual([]);
+    // …and the key behind the property is still the key, so a run: block is still shell.
+    const run = "jobs:\n  a:\n    steps:\n      - run: &script |\n          echo hi  # measured on URX44V\n";
+    expect(findingsIn(run, ".github/workflows/x.yml").map((f) => f.line)).toEqual([5]);
+    expect(yamlKey("      - run: &script |")).toBe("run");
+    expect(yamlKey('      - "run": !!str |')).toBe("run");
+  });
+
+  // A reserved word that opens a compound list leaves the next word at a command position
+  // too, ON THE SAME LINE. Restored only by a newline or a control operator, `if true; then
+  // case x in …` never reached `case`, so the arm's `)` closed the substitution around it
+  // and the comment fell back into the double quote. `bash -n` accepts both of these and
+  // running them prints what they print.
+  it("restores the command position after a reserved word, on the same line", () => {
+    const ifThen = 'value="$(if true; then case x in x) # measured on URX44V\n  printf x;; esac; fi)"\n';
+    expect(findingsIn(ifThen, "x.sh").map((f) => f.line)).toEqual([1]);
+    const whileDo = 'value="$(while false; do case x in x) # measured on URX44V\n  printf x;; esac; done)"\n';
+    expect(findingsIn(whileDo, "x.sh").map((f) => f.line)).toEqual([1]);
+    // …and a word that opens nothing still ends the position, however it is spelled.
+    expect(findingsIn('y="$(printf then; printf a)"  # measured on URX44V\n', "x.sh").map((f) => f.line)).toEqual([1]);
+  });
+
   it("keeps the command position through the whitespace in front of a keyword", () => {
     const indented = 'y="$(\n  case x in\n    x)  # measured on URX44V\n      printf a\n      ;;\n  esac\n)"\n';
     expect(findingsIn(indented, "x.sh").map((f) => f.line)).toEqual([3]);
@@ -1089,6 +1138,35 @@ describe("what the default scan reaches", () => {
     const out = trackedSources(tmp).map((p) => relative(tmp, p).split(sep).join("/"));
     rmSync(tmp, { recursive: true, force: true });
     expect(out.sort()).toEqual(["added.ts", "written.ts"]);
+  });
+
+  // Named twice — as itself, or once under a directory that also contains it — a file was
+  // read twice and its findings counted twice, so a path sitting at its ceiling failed
+  // against itself. The run below names one that carries a ledgered finding.
+  it("reads a file named twice once", () => {
+    const once = execFileSync(
+      process.execPath,
+      [join(HERE, "check-comment-provenance.mjs"), "src/core/control/client.ts"],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    const twice = execFileSync(
+      process.execPath,
+      [join(HERE, "check-comment-provenance.mjs"), "src/core/control/client.ts", "src/core/control/client.ts"],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    expect(Number(/OK: (\d+) source file/.exec(once)[1])).toBe(1);
+    expect(twice).toBe(once);
+    // …and the same file reached through a directory and by name is still one file.
+    const both = execFileSync(
+      process.execPath,
+      [join(HERE, "check-comment-provenance.mjs"), "src/core/control", "src/core/control/client.ts"],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    const dir = execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), "src/core/control"], {
+      cwd: ROOT,
+      encoding: "utf8",
+    });
+    expect(both).toBe(dir);
   });
 
   it("reaches build.rs, which sits beside src rather than inside it", () => {

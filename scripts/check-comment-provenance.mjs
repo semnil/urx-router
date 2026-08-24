@@ -200,10 +200,12 @@ const isIdPart = (c) => /[A-Za-z0-9_$]/.test(c);
  * and each fix was another keyword list. TypeScript's own scanner would end it outright, but
  * the 7.x package exports `version` and nothing else.
  *
- * The cost is a FALSE positive where a real regex contains something that reads as a comment
- * (`/a\/\/x/`), and on this tree that cost is zero: all three readings of every ledgered file
- * agree, finding for finding. A false positive is also the failure that shows itself, where a
- * miss is the one that lets a violation through quietly.
+ * The cost is a FALSE positive where a real pattern contains something that reads as a
+ * comment. Most of that class is answered below, by the goal's own terminator; what is left
+ * is a pattern whose closing slash is followed immediately by a division, and that shape
+ * cannot survive `format`. On this tree the cost is zero either way — every ledgered file
+ * reads the same under each of the three readings. A false positive is also the failure that
+ * shows itself, where a miss is the one that lets a violation through quietly.
  */
 export function comments(src, mode = "js") {
   if (mode === "rust") return rustComments(src);
@@ -222,20 +224,34 @@ export function comments(src, mode = "js") {
   // What makes it harmless HERE is Prettier: `+/x//(measured)` formats to `+/x/ / measured`,
   // so the boundary cannot survive `format` — one of the four checks a merge waits for. A
   // pin holds that, so the day Prettier stops separating them, the reason is not silent.
+  const terminators = new Set();
   const seen = new Set();
   const out = [];
-  for (const force of [null, "divide", "regex"]) {
-    for (const span of scanJs(src, mode, force)) {
-      const key = span.start + "\u0000" + span.end + "\u0000" + span.line;
-      if (seen.has(key)) continue;
-      seen.add(key);
+  const key = (s) => s.start + "\u0000" + s.end + "\u0000" + s.line;
+  for (const force of [null, "regex"]) {
+    for (const span of scanJs(src, mode, force, force === null ? terminators : null)) {
+      if (seen.has(key(span))) continue;
+      seen.add(key(span));
       out.push(span);
     }
+  }
+  // A span ONLY the forced-divide reading produces begins inside a pattern the goal read —
+  // otherwise the goal would have seen the `//` itself. Two things look like that, and the
+  // goal's own terminator separates them. Where the goal was WRONG to open a pattern, what
+  // it swallowed ends at the comment's first `/`: that `/` is the terminator, and this is
+  // the recovery the reading exists for. Where the goal was RIGHT, the `//` sits INSIDE the
+  // pattern and its terminator is further on — `[/\//, "…"]` and `[/[//]/, "…"]` are both
+  // valid, and Prettier leaves them exactly as they are, so the formatter cannot be what
+  // answers for them.
+  for (const span of scanJs(src, mode, "divide")) {
+    if (seen.has(key(span)) || !terminators.has(span.start)) continue;
+    seen.add(key(span));
+    out.push(span);
   }
   return out.sort((a, b) => a.line - b.line || a.start - b.start);
 }
 
-function scanJs(src, mode = "js", force = null) {
+function scanJs(src, mode = "js", force = null, terminators = null) {
   const css = mode === "css";
   const out = [];
   let line = 1;
@@ -435,6 +451,9 @@ function scanJs(src, mode = "js", force = null) {
           j++;
         }
         if (src[j] === "/") {
+          // Where this reading CLOSED a pattern, which is what tells an invented comment
+          // from a recovered one further down.
+          if (terminators) terminators.add(j);
           i = j + 1;
           while (i < src.length && isIdPart(src[i])) i++; // flags
           value();
@@ -663,7 +682,10 @@ export function yamlComments(src, actions = false) {
     // scalar each), and reading only chomping-then-digit left `|2-` a plain scalar whose
     // body was then read as lines of YAML.
     const head = (comment === -1 ? raw : raw.slice(0, comment)).replace(/\s+$/, "");
-    const m = /(?::|(?:^|\s)-)[ \t]*[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head);
+    // An anchor or a tag may sit between the `:` and the indicator — `run: &script |` is a
+    // block scalar, and read as a plain one its body was scanned as YAML, where the `#`
+    // lines of a here-document inside it are comments.
+    const m = /(?::|(?:^|\s)-)[ \t]*(?:[&!]\S+[ \t]+)*[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head);
     if (!m) continue;
     const indent = raw.length - raw.trimStart().length;
     let end = n + 1;
@@ -734,7 +756,9 @@ const YAML_ESCAPES = {
  * decoded, so a key spelled `"r\u0075n"` is not a way round the reader either.
  */
 export function yamlKey(head) {
-  const m = /(?:^|[\s-])(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([\w.-]+))[ \t]*:[ \t]*[|>]/.exec(head);
+  const m = /(?:^|[\s-])(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([\w.-]+))[ \t]*:[ \t]*(?:[&!]\S+[ \t]+)*[|>]/.exec(
+    head,
+  );
   if (!m) return null;
   if (m[3] !== undefined) return m[3];
   if (m[2] !== undefined) return m[2].replace(/''/g, "'");
@@ -762,7 +786,7 @@ export function blockStrip(head, body) {
   }
   const lead = /^(\s*)((?:-\s+)*)/.exec(head);
   const rest = lead[1].length + lead[2].length;
-  const entry = lead[2] !== "" && /^[|>]/.test(head.slice(rest));
+  const entry = lead[2] !== "" && /^(?:[&!]\S+[ \t]+)*[|>]/.test(head.slice(rest));
   return (entry ? lead[1].length + lead[2].lastIndexOf("-") : rest) + columns;
 }
 
@@ -1029,6 +1053,13 @@ export function pyComments(src) {
   }
   return out;
 }
+/** The reserved words that open a compound list, after which the NEXT word is at a command
+ *  position again — on the same line. Restored only by a newline or a control operator,
+ *  `if true; then case x in …` never reached `case`, so its arms' `)` closed whatever was
+ *  around them. `in` is deliberately absent: it introduces a pattern or a word list, not a
+ *  command, and reading `for x in case` as a keyword would plant a marker nothing pops. */
+const COMMAND_OPENERS = new Set(["then", "do", "else", "elif", "if", "while", "until", "time"]);
+
 /**
  * Comment spans of a shell script.
  *
@@ -1180,13 +1211,18 @@ export function shellComments(src) {
       prev = c;
       continue;
     }
-    if (cmdStart && (c === "c" || c === "e") && /^(case|esac)\b/.test(src.slice(i, i + 5))) {
-      const word = src.startsWith("case", i) ? "case" : "esac";
+    // A whole WORD is read at a command position rather than four characters matched
+    // against two names: what a reserved word does to the position is the question, and a
+    // word that is not one ends it.
+    if (cmdStart && /[A-Za-z_]/.test(c)) {
+      let j = i;
+      while (j < src.length && /[A-Za-z0-9_]/.test(src[j])) j++;
+      const word = src.slice(i, j);
       if (word === "case") cases.push(stack.length);
-      else cases.pop();
-      i += 4;
+      else if (word === "esac") cases.pop();
+      cmdStart = COMMAND_OPENERS.has(word);
+      i = j;
       prev = "x";
-      cmdStart = false;
       continue;
     }
     if (c === "#" && !inDoubleQuote() && /[\s\n(;&|]|^$/.test(prev)) {
@@ -1477,7 +1513,15 @@ if (invokedDirectly) {
   const roots = process.argv.slice(2).filter((a) => !a.startsWith("--"));
   let targets;
   if (roots.length) {
-    targets = roots.flatMap((r) => (existsSync(r) ? collect(r) : []));
+    // Named twice — as itself, or once under a directory that also contains it — a file was
+    // read twice and its findings counted twice, so a path at its ceiling failed against
+    // itself. Resolved, because `./src/a.ts` and `src/a.ts` are one file.
+    const named = new Map();
+    for (const root of roots) {
+      if (!existsSync(root)) continue;
+      for (const path of collect(root)) named.set(resolve(path), path);
+    }
+    targets = [...named.values()];
   } else {
     try {
       targets = scanTargets(trackedSources());
