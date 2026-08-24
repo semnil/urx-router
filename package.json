@@ -45,7 +45,7 @@
     "cross-env": "^10.1.0",
     "esbuild": "^0.28.2",
     "jsdom": "^30.0.1",
-    "monocart-coverage-reports": "^2.12.12",
+    "monocart-coverage-reports": "^2.13.0",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
