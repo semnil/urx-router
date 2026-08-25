@@ -34,6 +34,7 @@ import {
   yamlExplicitKey,
   yamlKey,
   lineEntries,
+  lineScan,
   plainScalar,
   yamlPlainAll,
   rustComments,
@@ -1087,6 +1088,77 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       ["j", 0],
       ["k", 1],
     ]);
+  });
+
+  // A flow collection is ONE node however many lines it is written across, and read as
+  // though every line began outside one, the keys above were lost: an action's `with:` input
+  // read at the path of a step's `run`, and a `run:` whose value sat on the next line read
+  // at no path at all. Ruby loads the first of these as `steps[0].with.run` and the second
+  // as `steps[0].run`.
+  it("carries a flow collection's keys across the lines it is written on", () => {
+    const wf = ".github/workflows/x.yml";
+    expect(
+      findingsIn(
+        'jobs:\n  a:\n    steps: [\n      { uses: owner/repo@v1, with: {\n          run: "echo ok # measured by device"\n        } }\n    ]\n',
+        wf,
+      ),
+    ).toEqual([]);
+    expect(
+      findingsIn(
+        'jobs:\n  a:\n    steps: [\n      { run:\n          "echo ok # measured by device" }\n    ]\n',
+        wf,
+      ).map((f) => f.line),
+    ).toEqual([5]);
+    // …and the key a collection is opened UNDER may be on the line before its `{`, which is
+    // what says the input here is an input and not a command.
+    expect(
+      findingsIn(
+        'jobs:\n  a:\n    steps:\n      - uses: o/r@v1\n        with:\n          {run: "echo ok # measured by device"}\n',
+        wf,
+      ),
+    ).toEqual([]);
+    // …while the same shape under a `run:` is the command, so the reader is not simply
+    // refusing everything written across a line break.
+    expect(
+      findingsIn('jobs:\n  a:\n    steps:\n      -\n        run:\n          "echo ok # measured by device"\n', wf).map(
+        (f) => f.line,
+      ),
+    ).toEqual([6]);
+    // …and the lines inside it unwind no block key, however far to the left they are
+    // written, while a collection that CLOSES leaves the keys above it as they were.
+    expect(
+      findingsIn('jobs:\n  a:\n    steps: [\n{ run: "echo ok # measured by device" }\n]\n', wf).map((f) => f.line),
+    ).toEqual([4]);
+    expect(
+      findingsIn(
+        'jobs:\n  a:\n    steps: [\n      { uses: x }\n    ]\n  b:\n    steps:\n      - run: "echo ok # measured by device"\n',
+        wf,
+      ).map((f) => f.line),
+    ).toEqual([8]);
+    // …and a `[`, a `]` or a `{` inside a plain scalar is a CHARACTER: block context lets
+    // one hold either, and taken as an opener it left a collection open for every line after
+    // it. Ruby loads this step's run as `grep '[' f`.
+    expect(
+      findingsIn(
+        "jobs:\n  a:\n    steps:\n      - run: grep '[' f\n      - run: \"echo ok # measured by device\"\n",
+        wf,
+      ).map((f) => f.line),
+    ).toEqual([5]);
+    // …and inside one the lines are one node, so what carries a key to its value there is
+    // the ORDER alone: Ruby loads this run as `echo ok # measured by device` though the
+    // value is written in front of the key's own column.
+    expect(
+      findingsIn('jobs:\n  a:\n    steps: [\n      { run:\n     "echo ok # measured by device" }\n]\n', wf).map(
+        (f) => f.line,
+      ),
+    ).toEqual([5]);
+    expect(lineScan("k: echo a[0").scope).toEqual([]);
+    // …and a bracket that is no indicator opens nothing even where a key follows it, which
+    // is what keeps a document YAML refuses from leaving a collection open for the rest of
+    // the file.
+    expect(lineScan("k: a [b: c").scope).toEqual([]);
+    expect(lineScan("k: [a, b]").scope).toEqual([]);
+    expect(lineScan("k: [a").scope).toEqual(["k"]);
   });
 
   // Nothing a line BEGINS with ends a plain scalar that has already started, and a colon

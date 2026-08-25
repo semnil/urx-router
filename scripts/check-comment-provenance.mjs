@@ -796,7 +796,7 @@ export function yamlComments(src, actions = false) {
       });
     }
   };
-  const takeValues = (head, n, under, carried, carriedAnchor) => {
+  const takeValues = (head, n, under, carried, carriedAnchor, entering) => {
     if (!actions) return;
     // What GitHub runs is a STEP's `run`, so what decides an entry is the path to it and not
     // the name of its key alone.
@@ -804,7 +804,7 @@ export function yamlComments(src, actions = false) {
       const key = entry.key ?? carried;
       return key != null && isRunPath([...under, ...entry.within, key]);
     };
-    for (const entry of yamlQuotedAll(head)) {
+    for (const entry of yamlQuotedAll(head, entering.scope, entering.pending)) {
       const isRun = runs(entry);
       // An anchor written in front of the key belongs to the value the key owns, wherever
       // that value is written.
@@ -818,12 +818,12 @@ export function yamlComments(src, actions = false) {
       if (isRun) readShell(value);
     }
     // Aliases after the anchors on the line, since an alias cannot refer forward.
-    for (const entry of yamlAliasAll(head)) {
+    for (const entry of yamlAliasAll(head, entering.scope, entering.pending)) {
       if (!runs(entry)) continue;
       const held = anchors.get(entry.name);
       if (held) readShell(held);
     }
-    for (const entry of yamlPlainAll(head)) {
+    for (const entry of yamlPlainAll(head, entering.scope, entering.pending)) {
       if (runs(entry)) readShell(plainValue(entry, n));
     }
   };
@@ -848,6 +848,9 @@ export function yamlComments(src, actions = false) {
   // at, and the path they make to what is written under them.
   const stack = [];
   let under = [];
+  // The flow collection open across the line break, and the key inside it still waiting for
+  // its value.
+  let flow = { scope: [], pending: null };
   for (let n = 0; n < lines.length; n++) {
     const raw = lines[n];
     let i = 0;
@@ -887,7 +890,15 @@ export function yamlComments(src, actions = false) {
     if (head.trim() === "") continue;
     const indent = head.length - head.trimStart().length;
     const explicit = yamlExplicitKey(head);
-    const block = lineEntries(head).find((e) => e.depth === 0) ?? null;
+    // The flow collection this line is ENTERED inside, which a `[` or a `{` on an earlier
+    // line opened. Read as though every line began outside one, the keys above were lost:
+    // an action's `with:` input read at the path of a step's `run`, and a `run:` whose value
+    // sat on the next line read at no path at all.
+    const inside = flow;
+    const scanned = lineScan(head, flow.scope, flow.pending);
+    const entries = scanned.entries;
+    flow = { scope: scanned.scope, pending: scanned.pending };
+    const block = entries.find((e) => e.depth === 0) ?? null;
     const opens = explicit ?? block?.key ?? null;
     // A SEQUENCE entry written with nothing after its dash. Its own node begins somewhere to
     // the right, so nothing to the left of that is unwound — and taken at its indentation,
@@ -898,16 +909,25 @@ export function yamlComments(src, actions = false) {
     // behind a `:` at the key's own column, and an ordinary `run:` with nothing after it
     // takes the next node indented further. Either way it is the same key, read at the same
     // path, and a line that opens a key of its own is neither.
+    // Inside a flow collection the lines are one node and their indentation says nothing,
+    // so what carries a key to its value there is the order alone.
     const carries =
-      pending !== null && opens === null && (pending.explicit ? indent === pending.col : indent > pending.col);
+      pending !== null &&
+      opens === null &&
+      (inside.scope.length > 0 || (pending.explicit ? indent === pending.col : indent > pending.col));
     // A key is unwound by anything written at its column or to the left of it, and what is
     // left is the path to this line. A line that opens no key of its own — a `: value`, a
     // value on its own line, or a flow collection continued across lines — pushes nothing.
     const col =
       explicit !== null ? /^[ \t]*(?:-[ \t]+)*/.exec(head)[0].length : dashes ? head.length : (block?.col ?? indent);
-    while (stack.length && stack[stack.length - 1].col >= col) stack.pop();
-    under = stack.map((s) => s.key);
-    if (opens !== null) stack.push({ col, key: opens });
+    // A flow collection is ONE node however many lines it is written across, so the lines
+    // inside it open no block key and unwind none — a `{ … }` written at column 0 inside one
+    // would otherwise unwind every key above it.
+    if (inside.scope.length === 0) {
+      while (stack.length && stack[stack.length - 1].col >= col) stack.pop();
+      under = stack.map((s) => s.key);
+      if (opens !== null) stack.push({ col, key: opens });
+    }
     // The path this line's value sits at, and the key it belongs to where that key is on an
     // earlier line.
     const path = carries ? pending.under : under;
@@ -919,7 +939,7 @@ export function yamlComments(src, actions = false) {
     if (quote) {
       // The value of a `run:` written as a quoted scalar that spans lines starts here, and
       // the lines it covers are skipped above — so the handoff has to happen before them.
-      takeValues(head, n, path, carried, held);
+      takeValues(head, n, path, carried, held, inside);
       continue;
     }
     if (explicit !== null) {
@@ -940,12 +960,22 @@ export function yamlComments(src, actions = false) {
       (carries ? /^[ \t]*(?:[&!]\S+[ \t]+)*[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head) : null);
     // A key whose line ends after its colon — or after the properties behind it — owns the
     // node on the next line, not nothing.
+    // The LAST entry on the line is the one whose value can be on the next: in a flow
+    // collection that is not the line's block key, and `{ run:` leaves its value for the
+    // line below as much as a `run:` of its own does.
+    const last = entries.at(-1) ?? null;
     pending =
-      !m && block !== null && /^(?:[&!]\S+[ \t]*)*$/.test(head.slice(block.at))
-        ? { key: block.key, under, col: block.col, explicit: false, anchor: anchorName(head.slice(block.at)) }
+      !m && last !== null && /^(?:[&!]\S+[ \t]*)*$/.test(head.slice(last.at))
+        ? {
+            key: last.key,
+            under: [...under, ...last.within],
+            col: last.col,
+            explicit: false,
+            anchor: anchorName(head.slice(last.at)),
+          }
         : null;
     if (!m) {
-      takeValues(head, n, path, carried, held);
+      takeValues(head, n, path, carried, held, inside);
       continue;
     }
     // What the block ends at is the column of the node it belongs to, which for a header
@@ -1066,10 +1096,16 @@ export function yamlQuoted(head) {
  * on — `steps: [{ run: "…" }]` is a step's `run` — so the keys it was opened under belong
  * to the path of each entry inside it, and an anonymous `[` or `{` contributes none.
  */
-export function lineEntries(head) {
+export function lineScan(head, opening = [], carried = null) {
   const found = [];
-  const scope = [];
-  let pending = null;
+  const scope = opening.slice();
+  let pending = carried;
+  // Where this line's next node may begin. A `[` or a `{` is an INDICATOR only there, or
+  // inside a collection already open: once a plain scalar has begun, block context lets it
+  // hold either character — `echo a[0`, `grep \'[\' f` — and taken as an opener one of those
+  // left a collection open for every line after it.
+  let value = /^[ \t]*(?:-[ \t]+)*/.exec(head)[0].length;
+  const atValue = (i) => scope.length > 0 || head.slice(value, i).trim() === "";
   const re = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "|([\"'])|([{\\[])|([}\\]])", "g");
   for (let m; (m = re.exec(head));) {
     if (m[5] !== undefined) {
@@ -1081,8 +1117,10 @@ export function lineEntries(head) {
       continue;
     }
     if (m[6] !== undefined || m[7] !== undefined) {
-      if (m[6] !== undefined) scope.push(pending);
-      else scope.pop();
+      if (m[6] === undefined) scope.pop();
+      else if (atValue(m.index)) scope.push(pending);
+      else continue;
+      value = m.index + 1;
       pending = null;
       continue;
     }
@@ -1093,7 +1131,7 @@ export function lineEntries(head) {
     // flow collection as much as one the scan reaches on its own: `[k: a` and `{run: x` are
     // a key inside one. Taken as a separator alone, such an entry read at flow depth zero,
     // where its value runs to the end of the line rather than to the `,` that ends it.
-    if (head[m.index] === "[" || head[m.index] === "{") {
+    if ((head[m.index] === "[" || head[m.index] === "{") && atValue(m.index)) {
       scope.push(pending);
       pending = null;
     }
@@ -1105,9 +1143,22 @@ export function lineEntries(head) {
       at: m.index + m[0].length,
       anchor: anchorName(m[4]),
     });
+    value = m.index + m[0].length;
     pending = key;
   }
-  return found;
+  return { entries: found, scope, pending };
+}
+
+/**
+ * The entries alone, for a line read on its own.
+ *
+ * A flow collection OPENED on an earlier line is passed in as `opening`: `[`, `{`, a key and
+ * its value can each sit on a line of their own, and a scan that began each line empty lost
+ * the keys above — so a `with:` input read at the path of a step's `run`, and a `run:` whose
+ * value was on the next line read at no path at all.
+ */
+export function lineEntries(head, opening = [], carried = null) {
+  return lineScan(head, opening, carried).entries;
 }
 
 /**
@@ -1117,8 +1168,8 @@ export function lineEntries(head) {
  * first one only, a `run` behind any other key was never looked at. The node property a
  * block scalar may wear is allowed in front of each: `run: &script "…"` is the same value.
  */
-export function yamlQuotedAll(head) {
-  const found = lineEntries(head).filter((e) => head[e.at] === '"' || head[e.at] === "'");
+export function yamlQuotedAll(head, opening = [], carried = null) {
+  const found = lineEntries(head, opening, carried).filter((e) => head[e.at] === '"' || head[e.at] === "'");
   if (found.length) return found;
   // A value line has no key on it; the key was written on an earlier one. An EXPLICIT entry
   // writes a `:` in front of it and an ordinary key writes nothing at all, so the marker is
@@ -1203,9 +1254,9 @@ export function plainScalar(entry, first, rest) {
  * In BLOCK context the scalar runs to the end of the line; inside a FLOW collection it ends
  * at the first `,`, `]` or `}`, none of which a plain scalar may contain.
  */
-export function yamlPlainAll(head) {
+export function yamlPlainAll(head, opening = [], carried = null) {
   const found = [];
-  for (const entry of lineEntries(head)) {
+  for (const entry of lineEntries(head, opening, carried)) {
     const c = head[entry.at];
     if (c === undefined || c === '"' || c === "'" || c === "*" || c === "[" || c === "{") continue;
     const tail = head.slice(entry.at);
@@ -1232,9 +1283,9 @@ export function yamlPlainAll(head) {
  * A flow mapping ends the name with `,`, `]` or `}` rather than with the line, so matched
  * to the end of the line instead, `steps: [{ run: *script }]` was no alias at all.
  */
-export function yamlAliasAll(head) {
+export function yamlAliasAll(head, opening = [], carried = null) {
   const found = [];
-  for (const entry of lineEntries(head)) {
+  for (const entry of lineEntries(head, opening, carried)) {
     ALIAS_NAME.lastIndex = entry.at;
     const m = ALIAS_NAME.exec(head);
     if (m) found.push({ key: entry.key, within: entry.within, name: m[1] });
