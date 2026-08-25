@@ -744,6 +744,125 @@ export function rustComments(src) {
 }
 
 /**
+ * The comments in a POWERSHELL script, which is what GitHub runs a `shell: pwsh` step with
+ * and what a Windows runner defaults to.
+ *
+ * PowerShell has two: `#` to the end of the line, and `<# … #>`, which NESTS. Its strings
+ * are not the shell's either — `'…'` takes no escape and doubles the quote to hold one,
+ * `"…"` escapes with a BACKTICK rather than a backslash, and a here-string runs from `@"` to
+ * a line beginning `"@`. Lexed as bash, a `<# … #>` was no comment at all, and a backtick
+ * opened a command substitution that ran to the next one.
+ */
+export function pwshComments(src) {
+  const out = [];
+  let line = 1;
+  let prev = "\n";
+  for (let i = 0; i < src.length;) {
+    const c = src[i];
+    if (c === "\n") {
+      line++;
+      prev = "\n";
+      i++;
+      continue;
+    }
+    // The backtick is PowerShell's escape, not a substitution: it hides the next character,
+    // and a line ending in one continues onto the next.
+    if (c === "`") {
+      if (src[i + 1] === "\n") line++;
+      i += 2;
+      prev = "x";
+      continue;
+    }
+    // A here-string runs to a line that BEGINS with the closing pair, so a quote inside one
+    // closes nothing.
+    if (c === "@" && (src[i + 1] === '"' || src[i + 1] === "'")) {
+      const close = "\n" + src[i + 1] + "@";
+      const found = src.indexOf(close, i + 2);
+      const stop = found === -1 ? src.length : found + close.length;
+      for (let k = i; k < stop; k++) if (src[k] === "\n") line++;
+      i = stop;
+      prev = "x";
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      let k = i + 1;
+      while (k < src.length) {
+        if (c === '"' && src[k] === "`") {
+          if (src[k + 1] === "\n") line++;
+          k += 2;
+          continue;
+        }
+        if (src[k] === c) {
+          if (c === "'" && src[k + 1] === "'") {
+            k += 2;
+            continue;
+          }
+          break;
+        }
+        if (src[k] === "\n") line++;
+        k++;
+      }
+      i = k + 1;
+      prev = "x";
+      continue;
+    }
+    if (c === "<" && src[i + 1] === "#") {
+      const from = i;
+      const at = line;
+      let depth = 1;
+      let k = i + 2;
+      while (k < src.length && depth > 0) {
+        if (src[k] === "<" && src[k + 1] === "#") {
+          depth++;
+          k += 2;
+          continue;
+        }
+        if (src[k] === "#" && src[k + 1] === ">") {
+          depth--;
+          k += 2;
+          continue;
+        }
+        if (src[k] === "\n") line++;
+        k++;
+      }
+      out.push({ line: at, text: src.slice(from + 2, depth === 0 ? k - 2 : k), start: from, end: k });
+      i = k;
+      prev = "x";
+      continue;
+    }
+    if (c === "#" && /[\s;(){}|&,]/.test(prev)) {
+      let k = i;
+      while (k < src.length && src[k] !== "\n") k++;
+      out.push({ line, text: src.slice(i + 1, k), start: i, end: k });
+      i = k;
+      prev = "x";
+      continue;
+    }
+    prev = c;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * The comments in a CMD script: `rem` opening a line, and a `::` label written as one.
+ *
+ * `#` is not a comment in cmd at all, and lexed as bash a step written for it reported its
+ * `echo #` as one. What this does NOT claim is a `rem` behind a `&` — no machine this runs
+ * on carries a cmd to measure that against, so it is left unread rather than guessed.
+ */
+export function cmdComments(src) {
+  const out = [];
+  const lines = src.split("\n");
+  for (let n = 0, at = 0; n < lines.length; n++) {
+    const line = lines[n];
+    const m = /^([ \t]*)(rem(?=[ \t]|$)|::)/i.exec(line);
+    if (m) out.push({ line: n + 1, text: line.slice(m[0].length), start: at + m[1].length, end: at + line.length });
+    at += line.length + 1;
+  }
+  return out;
+}
+/**
  * Comment spans of a YAML file.
  *
  * Line-oriented, because a `#` is a comment only outside YAML's three string forms: a
@@ -784,25 +903,92 @@ export function yamlComments(src, actions = false) {
     while (k + 1 < starts.length && starts[k + 1] <= offset) k++;
     return k + 1;
   };
-  /** Hand one decoded value to the shell reader, with its offsets carried over. */
-  const readShell = ({ text, map }) => {
-    for (const span of shellComments(text)) {
-      const start = map[span.start];
-      out.push({
-        line: lineOf(start),
-        text: span.text,
-        start,
-        end: span.end < map.length ? map[span.end] : map[map.length - 1] + 1,
-      });
+  // What GitHub will run each `run:` WITH is not known when the value is read: a step's
+  // `shell:` may be written after its `run:`, and a job's `runs-on` after its steps. So the
+  // values are queued with the step they belong to, and lexed once the document is read.
+  const queued = [];
+  const jobs = new Map();
+  const jobOf = (id) => {
+    if (!jobs.has(id)) jobs.set(id, { shell: null, runsOn: null });
+    return jobs.get(id);
+  };
+  /** The workflow-wide `defaults.run.shell`. */
+  let documentShell = null;
+  /** The step being read: a sequence entry, or an entry of a flow-written steps list. */
+  let step = null;
+  /** Queue one decoded value for the shell its step will be run with. */
+  const readShell = ({ text, map }) => queued.push({ text, map, step });
+  /**
+   * The shell a queued value will be run with: the step's own, then its job's defaults, then
+   * the workflow's, then the runner's own — bash everywhere but Windows, where it is pwsh.
+   *
+   * A COMPOSITE action's run step has no default at all — GitHub requires every one of them
+   * to declare its own — so one that does not is left unread. A runner this cannot resolve,
+   * written as an expression or absent, takes the default of every platform BUT Windows: the
+   * two defaults are the only ones in play, they agree about `#`, and reading either for the
+   * other can cost a miss where it cannot produce a finding, since neither of them is cmd. A
+   * step that needs the other says so with a `shell:`.
+   */
+  const shellFor = (at) => {
+    const job = at == null || at.job == null ? null : jobOf(at.job);
+    if (at?.ambiguous) return null;
+    const named = at?.shell ?? job?.shell ?? documentShell;
+    if (named != null) return named.trim();
+    if (job === null) return null;
+    const on = job.runsOn;
+    return on != null && !on.includes("${{") && /windows/i.test(on) ? "pwsh" : "bash";
+  };
+  const flushShell = () => {
+    for (const { text, map, step: at } of queued) {
+      const read = SHELL_READERS[shellFor(at)];
+      if (!read) continue;
+      for (const span of read(text)) {
+        const start = map[span.start];
+        out.push({
+          line: lineOf(start),
+          text: span.text,
+          start,
+          end: span.end < map.length ? map[span.end] : map[map.length - 1] + 1,
+        });
+      }
     }
   };
   const takeValues = (head, n, under, carried, carriedAnchor, entering) => {
     if (!actions) return;
     // What GitHub runs is a STEP's `run`, so what decides an entry is the path to it and not
     // the name of its key alone.
-    const runs = (entry) => {
+    const pathOf = (entry) => {
       const key = entry.key ?? carried;
-      return key != null && isRunPath([...under, ...entry.within, key]);
+      return key == null ? null : [...under, ...entry.within, key];
+    };
+    const runs = (entry) => {
+      const at = pathOf(entry);
+      return at !== null && isRunPath(at);
+    };
+    /**
+     * A `shell:`, a `runs-on:` or a `defaults.run.shell:` — the three that decide what a
+     * queued `run:` is lexed as.
+     */
+    const declare = (entry, text) => {
+      const at = pathOf(entry);
+      if (at === null) return;
+      const owner = at.slice(0, -1);
+      if (at[at.length - 1] === "shell") {
+        if (isStepsPath(owner)) {
+          if (step !== null) step.shell = text;
+        } else if (owner.length === 4 && owner[0] === "jobs" && owner[2] === "defaults" && owner[3] === "run") {
+          jobOf(owner[1]).shell = text;
+        } else if (owner.length === 2 && owner[0] === "defaults" && owner[1] === "run") {
+          documentShell = text;
+        }
+      } else if (at[at.length - 1] === "runs-on" && owner.length === 2 && owner[0] === "jobs") {
+        jobOf(owner[1]).runsOn = text;
+      }
+    };
+    /** Whether an entry could be one of those three, which is what a value is decoded for. */
+    const declares = (entry) => {
+      const key = entry.key ?? carried;
+      return key === "shell" || key === "runs-on";
     };
     for (const entry of yamlQuotedAll(head, entering.scope, entering.pending)) {
       const isRun = runs(entry);
@@ -811,11 +997,12 @@ export function yamlComments(src, actions = false) {
       const anchor = entry.anchor ?? (entry.key === null ? carriedAnchor : null);
       // A value carrying an anchor is decoded wherever it is written: `run: *script` reads it
       // later, and by then the line it was written on is behind us.
-      if (!isRun && !anchor) continue;
+      if (!isRun && !anchor && !declares(entry)) continue;
       const value = decodeQuoted(src, starts[n] + entry.at);
       if (!value) continue;
       if (anchor) anchors.set(anchor, value);
       if (isRun) readShell(value);
+      else if (declares(entry)) declare(entry, value.text);
     }
     // Aliases after the anchors on the line, since an alias cannot refer forward.
     for (const entry of yamlAliasAll(head, entering.scope, entering.pending)) {
@@ -825,6 +1012,7 @@ export function yamlComments(src, actions = false) {
     }
     for (const entry of yamlPlainAll(head, entering.scope, entering.pending)) {
       if (runs(entry)) readShell(plainValue(entry, n));
+      else if (declares(entry)) declare(entry, plainValue(entry, n).text);
     }
   };
   /**
@@ -928,6 +1116,18 @@ export function yamlComments(src, actions = false) {
       under = stack.map((s) => s.key);
       if (opens !== null) stack.push({ col, key: opens });
     }
+    // A STEP is a sequence entry, and its own `shell:` belongs to it rather than to the
+    // steps beside it. Written as a block sequence it opens on a dash; written in flow it
+    // opens on the `{` whose first key this is.
+    if (isStepsPath(under) && /^[ \t]*-/.test(head)) step = { shell: null, job: under[0] === "jobs" ? under[1] : null };
+    // A line that opens TWO of them cannot say which one a value on it belongs to — the
+    // entries are read by kind rather than in source order — so its values are left unread
+    // rather than attributed to whichever step was opened last.
+    const opened = entries.filter((e) => e.opensEntry && isStepsPath([...under, ...e.within]));
+    if (opened.length > 0) {
+      const owner = [...under, ...opened[0].within];
+      step = { shell: null, job: owner[0] === "jobs" ? owner[1] : null, ambiguous: opened.length > 1 };
+    }
     // The path this line's value sits at, and the key it belongs to where that key is on an
     // earlier line.
     const path = carries ? pending.under : under;
@@ -1012,6 +1212,7 @@ export function yamlComments(src, actions = false) {
     }
     n = end - 1;
   }
+  flushShell();
   // One source range is ONE comment, however many aliases read the value it is in: the text
   // is written once, and counted per reference the ledger would grow with every `*script`.
   const seen = new Set();
@@ -1106,6 +1307,9 @@ export function lineScan(head, opening = [], carried = null) {
   // left a collection open for every line after it.
   let value = /^[ \t]*(?:-[ \t]+)*/.exec(head)[0].length;
   const atValue = (i) => scope.length > 0 || head.slice(value, i).trim() === "";
+  // Whether the next key is the FIRST of a collection just opened, which is what makes a
+  // flow-written step a step of its own rather than one shared with the entries beside it.
+  let fresh = false;
   const re = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "|([\"'])|([{\\[])|([}\\]])", "g");
   for (let m; (m = re.exec(head));) {
     if (m[5] !== undefined) {
@@ -1118,8 +1322,10 @@ export function lineScan(head, opening = [], carried = null) {
     }
     if (m[6] !== undefined || m[7] !== undefined) {
       if (m[6] === undefined) scope.pop();
-      else if (atValue(m.index)) scope.push(pending);
-      else continue;
+      else if (atValue(m.index)) {
+        scope.push(pending);
+        fresh = true;
+      } else continue;
       value = m.index + 1;
       pending = null;
       continue;
@@ -1133,6 +1339,7 @@ export function lineScan(head, opening = [], carried = null) {
     // where its value runs to the end of the line rather than to the `,` that ends it.
     if ((head[m.index] === "[" || head[m.index] === "{") && atValue(m.index)) {
       scope.push(pending);
+      fresh = true;
       pending = null;
     }
     found.push({
@@ -1142,7 +1349,9 @@ export function lineScan(head, opening = [], carried = null) {
       within: scope.filter((k) => k !== null),
       at: m.index + m[0].length,
       anchor: anchorName(m[4]),
+      opensEntry: fresh,
     });
+    fresh = false;
     value = m.index + m[0].length;
     pending = key;
   }
@@ -1303,8 +1512,34 @@ const RUN_PATHS = [
   ["jobs", ANY_JOB, "steps", "run"],
   ["runs", "steps", "run"],
 ];
-const isRunPath = (path) =>
-  RUN_PATHS.some((want) => want.length === path.length && want.every((seg, k) => seg === ANY_JOB || seg === path[k]));
+const samePath = (want, path) =>
+  want.length === path.length && want.every((seg, k) => seg === ANY_JOB || seg === path[k]);
+const isRunPath = (path) => RUN_PATHS.some((want) => samePath(want, path));
+/** The sequence a run step is an entry of, which is what a step's own `shell:` belongs to. */
+const STEPS_PATHS = [
+  ["jobs", ANY_JOB, "steps"],
+  ["runs", "steps"],
+];
+const isStepsPath = (path) => STEPS_PATHS.some((want) => samePath(want, path));
+
+/**
+ * What GitHub runs a `run:` value WITH, by the reader that lexes it.
+ *
+ * A step chooses its shell, and lexed as bash whatever it chose, a `shell: cmd` step's
+ * `echo #` was reported as a comment it is not and a `shell: pwsh` step's `<# … #>` was not
+ * reported at all. `sh` is the shell reader's own grammar; `powershell` is Windows
+ * PowerShell, whose comments are pwsh's. A shell NOT named here is a custom command line
+ * (`perl {0}`), and its value is left unread rather than lexed against a grammar it was not
+ * written in.
+ */
+const SHELL_READERS = {
+  bash: shellComments,
+  sh: shellComments,
+  pwsh: pwshComments,
+  powershell: pwshComments,
+  python: pyComments,
+  cmd: cmdComments,
+};
 
 /**
  * The VALUE of a quoted scalar whose opening quote is at `at`, with each character's offset

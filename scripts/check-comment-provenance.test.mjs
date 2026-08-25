@@ -997,6 +997,162 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     expect(findingsIn(held + "steps: [{ name: *script }]\n", wf)).toEqual([]);
   });
 
+  // What GitHub runs a `run:` WITH, and what each of those lexes as a comment. Lexed as bash
+  // whatever the step chose, a `shell: cmd` step's `echo #` was reported as a comment it is
+  // not and a `shell: pwsh` step's `<# … #>` was not reported at all. One row per shell, with
+  // the value that IS a comment in it and the one that is not.
+  //
+  // Each row is a pair, and the SECOND half is what separates that shell from the one it would
+  // otherwise be confused with: run it and the words come out, because they are data there and
+  // not a comment. A bash here-document's body and a Python triple-quoted string both begin a
+  // line with a `#` that only bash outside a heredoc calls a comment, and a PowerShell block
+  // comment is one no other shell here has.
+  const SHELLS = [
+    ["bash", "echo ok # measured by device", "cat <<EOF\n# measured by device\nEOF"],
+    ["sh", "echo ok # measured by device", "cat <<EOF\n# measured by device\nEOF"],
+    ["pwsh", "echo ok # measured by device", "Write-Output '# measured by device'"],
+    ["pwsh", "<# measured by device #>", "Write-Output '<# measured by device #>'"],
+    ["powershell", "<# measured by device #>", "Write-Output '<# measured by device #>'"],
+    ["cmd", "rem measured by device", "echo # measured by device"],
+    // Python's own row is written with NO space in front of the hash: it is a comment there
+    // wherever it is not in a string, while the shell needs a word boundary in front of one.
+    ["python", "print('ok')#measured by device", 'print("""\n# measured by device\n""")'],
+  ];
+
+  describe("what a run: is lexed as", () => {
+    const wf = ".github/workflows/x.yml";
+    const step = (shell, value) =>
+      `jobs:\n  a:\n    steps:\n      - shell: ${shell}\n        run: ${JSON.stringify(value)}\n`;
+
+    it("reads each shell with its own comment syntax, and no other", () => {
+      for (const [shell, hit, miss] of SHELLS) {
+        expect(
+          findingsIn(step(shell, hit), wf).map((f) => f.line),
+          `${shell}: ${hit}`,
+        ).toEqual([5]);
+        expect(findingsIn(step(shell, miss), wf), `${shell}: ${miss}`).toEqual([]);
+      }
+    });
+
+    // A shell NOT in that table is a custom command line, and its value is left unread rather
+    // than lexed against a grammar it was not written in.
+    it("reads nothing for a shell it does not know", () => {
+      expect(findingsIn(step("perl {0}", "# measured by device"), wf)).toEqual([]);
+      expect(findingsIn(step("bash", "# measured by device"), wf).map((f) => f.line)).toEqual([5]);
+    });
+
+    // The most specific declaration wins: the step's own, then its job's defaults, then the
+    // workflow's, then the runner's — bash everywhere but Windows, where GitHub's default is
+    // pwsh. A step's `shell:` may be written AFTER its `run:`, and a job's `runs-on` after its
+    // steps, which is why the values are lexed once the document has been read and not where
+    // they are found.
+    it("resolves the shell from the most specific declaration", () => {
+      const hedge = '"echo # measured by device"';
+      const job = (body) => `jobs:\n  a:\n${body}`;
+      // The runner's default, and Windows' own.
+      expect(findingsIn(job(`    steps:\n      - run: ${hedge}\n`), wf).map((f) => f.line)).toEqual([4]);
+      expect(
+        findingsIn(job(`    runs-on: windows-latest\n    steps:\n      - run: "<# measured by device #>"\n`), wf).map(
+          (f) => f.line,
+        ),
+      ).toEqual([5]);
+      // A workflow default, then a job default over it, then a step over that.
+      expect(
+        findingsIn(`defaults:\n  run:\n    shell: cmd\n` + job(`    steps:\n      - run: ${hedge}\n`), wf),
+      ).toEqual([]);
+      expect(
+        findingsIn(job(`    defaults:\n      run:\n        shell: cmd\n    steps:\n      - run: ${hedge}\n`), wf),
+      ).toEqual([]);
+      expect(
+        findingsIn(
+          `defaults:\n  run:\n    shell: cmd\n` + job(`    steps:\n      - shell: bash\n        run: ${hedge}\n`),
+          wf,
+        ).map((f) => f.line),
+      ).toEqual([8]);
+      // …and a step's own declaration counts wherever it is written on the step.
+      expect(findingsIn(job(`    steps:\n      - run: ${hedge}\n        shell: cmd\n`), wf)).toEqual([]);
+      // …for that step and not for the one beside it.
+      expect(
+        findingsIn(job(`    steps:\n      - shell: cmd\n        run: ${hedge}\n      - run: ${hedge}\n`), wf).map(
+          (f) => f.line,
+        ),
+      ).toEqual([6]);
+      // …nor for the next job, which has its own.
+      expect(
+        findingsIn(
+          job(`    steps:\n      - shell: cmd\n        run: ${hedge}\n`) + `  b:\n    steps:\n      - run: ${hedge}\n`,
+          wf,
+        ).map((f) => f.line),
+      ).toEqual([8]);
+      // A COMPOSITE action's run step declares its own — GitHub requires one — so it has no
+      // default to fall back on.
+      expect(
+        findingsIn(
+          `runs:\n  using: composite\n  steps:\n    - shell: cmd\n      run: "rem measured by device"\n`,
+          wf,
+        ).map((f) => f.line),
+      ).toEqual([5]);
+      expect(findingsIn(`runs:\n  using: composite\n  steps:\n    - run: ${hedge}\n`, wf)).toEqual([]);
+      // A runner this cannot resolve takes the default of every platform but Windows, since
+      // the two defaults agree about `#` and neither of them is cmd.
+      expect(
+        findingsIn(job(`    runs-on: \${{ matrix.platform }}\n    steps:\n      - run: ${hedge}\n`), wf).map(
+          (f) => f.line,
+        ),
+      ).toEqual([5]);
+      // A runner named by an EXPRESSION names no platform, whatever words are in it.
+      expect(
+        findingsIn(
+          job(`    runs-on: \${{ matrix.windows-runner }}\n    steps:\n      - run: "<# measured by device #>"\n`),
+          wf,
+        ),
+      ).toEqual([]);
+      // A step written in FLOW is a step of its own, and its `shell:` is its own too.
+      expect(
+        findingsIn(job(`    steps: [{ shell: cmd, run: "rem measured by device" }]\n`), wf).map((f) => f.line),
+      ).toEqual([3]);
+      // …while a line that opens TWO of them says which shell neither one has — the entries
+      // are read by kind rather than in source order — so its values are left unread rather
+      // than given the shell of whichever step was opened last.
+      expect(
+        findingsIn(job(`    steps: [{ run: "rem measured by device" }, { shell: cmd, run: "echo ok" }]\n`), wf),
+      ).toEqual([]);
+    });
+  });
+
+  // bash and python3 are on this machine and on the runner; the table above is what they do
+  // with those two values, and the differential re-measures it. pwsh is on the GitHub runner
+  // and not on this one, so that row is skipped here and named rather than silent. There is
+  // no cmd on any machine this runs on, which is why the cmd reader claims `rem` opening a
+  // line and a `::` label and nothing else — a `rem` behind a `&` is left unread.
+  const RUNNERS = [
+    ["bash", ["bash", "-c"]],
+    ["python", ["python3", "-c"]],
+    ["pwsh", ["pwsh", "-NoProfile", "-Command"]],
+  ];
+
+  describe("what a run: is lexed as, differentially", () => {
+    for (const [shell, argv] of RUNNERS) {
+      const probe = spawnSync(argv[0], [...argv.slice(1), shell === "python" ? "print(1)" : "exit 0"], {
+        encoding: "utf8",
+      });
+      const rows = SHELLS.filter(([name]) => name === shell);
+      it.skipIf(probe.error || probe.status !== 0)(`agrees with ${shell} about what it ignores`, () => {
+        for (const [, hit, miss] of rows) {
+          // The half with the comment in it RUNS and does not print the words, because they are
+          // a comment; the half without prints them, because they are data. That pair is the
+          // whole of what the reader is asked to tell apart.
+          const ran = spawnSync(argv[0], [...argv.slice(1), hit], { encoding: "utf8" });
+          expect(ran.status, `${shell} ${hit}: ${ran.stderr}`).toBe(0);
+          expect(ran.stdout, `${shell} ${hit}`).not.toContain("measured by device");
+          const kept = spawnSync(argv[0], [...argv.slice(1), miss], { encoding: "utf8" });
+          expect(kept.status, `${shell} ${miss}: ${kept.stderr}`).toBe(0);
+          expect(kept.stdout, `${shell} ${miss}`).toContain("measured by device");
+        }
+      });
+    }
+  });
+
   // A plain scalar is shell too — `run: echo ok` is what GitHub runs — and handed to no
   // reader at all it was the one spelling of a `run:` this looked straight past. YAML ends a
   // plain scalar at a ` #`, so what survives into the value is a `#` behind a `;`, and that
@@ -1213,9 +1369,14 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     const wf = ".github/workflows/x.yml";
     const shell = '"echo ok # measured on URX44V"';
     expect(findingsIn(`jobs:\n  a:\n    steps:\n      - run: ${shell}\n`, wf).map((f) => f.line)).toEqual([4]);
-    expect(findingsIn(`runs:\n  using: composite\n  steps:\n    - run: ${shell}\n`, wf).map((f) => f.line)).toEqual([
-      4,
-    ]);
+    expect(
+      findingsIn(`runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: ${shell}\n`, wf).map(
+        (f) => f.line,
+      ),
+    ).toEqual([5]);
+    // …a composite action's run step declares its own shell — GitHub requires one — so one
+    // that names none names nothing to read it with.
+    expect(findingsIn(`runs:\n  using: composite\n  steps:\n    - run: ${shell}\n`, wf)).toEqual([]);
     // …while a variable, an input and a value nested under one carry the name and not the
     // meaning.
     expect(findingsIn(`env:\n  run: ${shell}\n`, wf)).toEqual([]);

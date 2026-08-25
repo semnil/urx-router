@@ -2,13 +2,14 @@
 // Runs Prettier over this repository, on a file list DERIVED rather than written down.
 //
 // It is derived because another check depends on the two sets agreeing. The comment
-// provenance check reads a JavaScript or TypeScript file as the union of three lexings, and
-// the union has one false positive: a regex whose closing slash is followed immediately by a
-// division, so the two slashes touch and the pair reads as a line comment. Formatted text
-// cannot hold that shape, because Prettier puts a space between them — but that argument is
-// only as wide as the formatter's reach, and written as a glob list the checker read `*.mjs`
-// at the repository root while `pnpm format` did not. A valid file there failed the check,
-// and formatting it changed nothing.
+// provenance check reads a JavaScript or TypeScript file by its lexical GOAL, and one shape
+// that reading cannot separate is a `<` — `f<string> / 2` divides while `a < b > /re/`
+// compares and then matches, and one grammar answers both the same way. What separates them
+// in formatted text is the space before any trivia: Prettier writes every comparison spaced
+// and every type argument list tight against its name. That argument is only as wide as the
+// formatter's reach, and written as a glob list the checker read `*.mjs` at the repository
+// root while `pnpm format` did not — so a valid file there failed the check, and formatting
+// it changed nothing.
 //
 // So the JavaScript half of this list is exactly what the checker scans. Widening the
 // checker widens the formatter in the same edit, and neither can be narrowed alone.
