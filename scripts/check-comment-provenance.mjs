@@ -760,8 +760,11 @@ export function yamlComments(src, actions = false) {
   // unescaped `"`. Read one line at a time, a scan that opened one ran off the end and read
   // the NEXT line's `#` as a comment — the line was string content.
   let quote = null;
-  // An explicit key waiting for the `:` line that carries its value.
-  let pendingKey = null;
+  // A key whose value is not on its own line: an explicit `? run` waiting for the `: value`
+  // written at its column, and an ordinary `run:` with nothing after it, whose value is the
+  // next node indented further. Carries the path the key was read at, and the anchor it
+  // wears, so the value found later belongs where the key is.
+  let pending = null;
   /** A workflow's `run:` written as a QUOTED scalar, handed to the shell reader with its
    *  offsets carried over. GitHub runs the value, not the way it was written. */
   /** The scalars an anchor was put on, by name. A value written once and referred to by
@@ -784,7 +787,7 @@ export function yamlComments(src, actions = false) {
       });
     }
   };
-  const takeValues = (head, n, under, carried) => {
+  const takeValues = (head, n, under, carried, carriedAnchor) => {
     if (!actions) return;
     // What GitHub runs is a STEP's `run`, so what decides an entry is the path to it and not
     // the name of its key alone.
@@ -794,12 +797,15 @@ export function yamlComments(src, actions = false) {
     };
     for (const entry of yamlQuotedAll(head)) {
       const isRun = runs(entry);
+      // An anchor written in front of the key belongs to the value the key owns, wherever
+      // that value is written.
+      const anchor = entry.anchor ?? (entry.key === null ? carriedAnchor : null);
       // A value carrying an anchor is decoded wherever it is written: `run: *script` reads it
       // later, and by then the line it was written on is behind us.
-      if (!isRun && !entry.anchor) continue;
+      if (!isRun && !anchor) continue;
       const value = decodeQuoted(src, starts[n] + entry.at);
       if (!value) continue;
-      if (entry.anchor) anchors.set(entry.anchor, value);
+      if (anchor) anchors.set(anchor, value);
       if (isRun) readShell(value);
     }
     // Aliases after the anchors on the line, since an alias cannot refer forward.
@@ -846,32 +852,49 @@ export function yamlComments(src, actions = false) {
       i++;
     }
     const head = (comment === -1 ? raw : raw.slice(0, comment)).replace(/\s+$/, "");
-    // A blank line and a comment-only line are not nodes, so an explicit key still waiting
-    // for its value survives them. Cleared on every line that was not itself an explicit
-    // key, a comment written between `? run` and its `: |` lost the key.
+    // A blank line and a comment-only line are not nodes, so a key still waiting for its
+    // value survives them. Cleared on every line that was not itself an explicit key, a
+    // comment written between `? run` and its `: |` lost the key.
     if (head.trim() === "") continue;
+    const indent = head.length - head.trimStart().length;
     const explicit = yamlExplicitKey(head);
     const block = lineEntries(head).find((e) => e.depth === 0) ?? null;
     const opens = explicit ?? block?.key ?? null;
+    // A SEQUENCE entry written with nothing after its dash. Its own node begins somewhere to
+    // the right, so nothing to the left of that is unwound — and taken at its indentation,
+    // an indentationless sequence's dash sits at the column of the key that owns it and
+    // unwound that key, which put its entries at the path of the mapping above.
+    const dashes = /^[ \t]*-(?:[ \t]+-)*$/.test(head);
+    // The value of a key is not always on the key's own line: an explicit entry writes it
+    // behind a `:` at the key's own column, and an ordinary `run:` with nothing after it
+    // takes the next node indented further. Either way it is the same key, read at the same
+    // path, and a line that opens a key of its own is neither.
+    const carries =
+      pending !== null && opens === null && (pending.explicit ? indent === pending.col : indent > pending.col);
     // A key is unwound by anything written at its column or to the left of it, and what is
-    // left is the path to this line. A line that opens no key of its own — the `: value` of
-    // an explicit entry, or a flow collection continued across lines — pushes nothing, and
-    // its own indentation is what unwinds the keys above it.
+    // left is the path to this line. A line that opens no key of its own — a `: value`, a
+    // value on its own line, or a flow collection continued across lines — pushes nothing.
     const col =
-      explicit !== null
-        ? /^[ \t]*(?:-[ \t]+)*/.exec(head)[0].length
-        : (block?.col ?? head.length - head.trimStart().length);
+      explicit !== null ? /^[ \t]*(?:-[ \t]+)*/.exec(head)[0].length : dashes ? head.length : (block?.col ?? indent);
     while (stack.length && stack[stack.length - 1].col >= col) stack.pop();
     under = stack.map((s) => s.key);
     if (opens !== null) stack.push({ col, key: opens });
+    // The path this line's value sits at, and the key it belongs to where that key is on an
+    // earlier line.
+    const path = carries ? pending.under : under;
+    const carried = carries ? pending.key : null;
+    const held = carries ? pending.anchor : null;
+    // The column an indentation indicator counts from is the OWNING node's, which for a
+    // value on its own line is the key's, on the line above.
+    const owner = carries ? pending.col : undefined;
     if (quote) {
       // The value of a `run:` written as a quoted scalar that spans lines starts here, and
       // the lines it covers are skipped above — so the handoff has to happen before them.
-      takeValues(head, n, under, pendingKey);
+      takeValues(head, n, path, carried, held);
       continue;
     }
     if (explicit !== null) {
-      pendingKey = explicit;
+      pending = { key: explicit, under, col, explicit: true, anchor: null };
       continue;
     }
     // The header is the line's VALUE, so the indicator has to sit right after `key:` or a
@@ -881,25 +904,37 @@ export function yamlComments(src, actions = false) {
     // An anchor or a tag may sit between the `:` and the indicator — `run: &script |` is a
     // block scalar, and read as a plain one its body was scanned as YAML, where the `#`
     // lines of a here-document inside it are comments.
-    const m = /(?::|(?:^|\s)-)[ \t]*(?:[&!]\S+[ \t]+)*[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head);
-    const carried = pendingKey;
-    pendingKey = null;
+    // A value on its own line carries no key and no dash in front of the indicator, and the
+    // column its indentation indicator counts from is the key's, on the line above.
+    const m =
+      /(?::|(?:^|\s)-)[ \t]*(?:[&!]\S+[ \t]+)*[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head) ??
+      (carries ? /^[ \t]*(?:[&!]\S+[ \t]+)*[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head) : null);
+    // A key whose line ends after its colon — or after the properties behind it — owns the
+    // node on the next line, not nothing.
+    pending =
+      !m && block !== null && /^(?:[&!]\S+[ \t]*)*$/.test(head.slice(block.at))
+        ? { key: block.key, under, col: block.col, explicit: false, anchor: anchorName(head.slice(block.at)) }
+        : null;
     if (!m) {
-      takeValues(head, n, under, carried);
+      takeValues(head, n, path, carried, held);
       continue;
     }
-    const indent = raw.length - raw.trimStart().length;
+    // What the block ends at is the column of the node it belongs to, which for a header
+    // written on the key's own line is that line's indentation. A header on a line of its
+    // OWN can sit at the body's indentation instead, and measured against itself such a
+    // block had no body at all and was never read.
+    const stop = carries ? owner : indent;
     let end = n + 1;
     while (end < lines.length) {
       const body = lines[end];
-      // A blank line stays inside the block; anything indented no further than the header
-      // ends it.
-      if (body.trim() !== "" && body.length - body.trimStart().length <= indent) break;
+      // A blank line stays inside the block; anything indented no further than the node the
+      // block belongs to ends it.
+      if (body.trim() !== "" && body.length - body.trimStart().length <= stop) break;
       end++;
     }
-    const blockAnchor = anchorName(m[0]);
+    const blockAnchor = anchorName(m[0]) ?? held;
     const blockKey = yamlKey(head) ?? carried;
-    const blockRuns = blockKey != null && isRunPath([...under, blockKey]);
+    const blockRuns = blockKey != null && isRunPath([...path, blockKey]);
     if (actions && (blockRuns || blockAnchor) && end > n + 1) {
       // What the shell is handed is the block's VALUE, which is these lines with their
       // common indentation removed — the indentation indicator's if it has one, and the
@@ -908,7 +943,7 @@ export function yamlComments(src, actions = false) {
       // the block as body and every comment after it went unread.
       // Each character's offset in the source comes back with it, so a span found in the
       // value points at the characters it came from.
-      const built = blockValue(head, lines.slice(n + 1, end));
+      const built = blockValue(head, lines.slice(n + 1, end), owner);
       const value = built.text;
       const at = built.from.map(([li, col]) =>
         col < 0 ? starts[n + 1 + li] + lines[n + 1 + li].length : starts[n + 1 + li] + col,
@@ -1036,8 +1071,11 @@ export function lineEntries(head) {
 export function yamlQuotedAll(head) {
   const found = lineEntries(head).filter((e) => head[e.at] === '"' || head[e.at] === "'");
   if (found.length) return found;
-  // An EXPLICIT entry's value line has no key on it; the key was written on the line before.
-  const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*:[ \\t]*" + PROPERTY_SOURCE + "([\"'])").exec(head);
+  // A value line has no key on it; the key was written on an earlier one. An EXPLICIT entry
+  // writes a `:` in front of it and an ordinary key writes nothing at all, so the marker is
+  // optional — which key it belongs to is the caller's to know, and an entry with none is
+  // dropped there.
+  const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*(?::[ \\t]*)?" + PROPERTY_SOURCE + "([\"'])").exec(head);
   return bare ? [{ key: null, at: bare[0].length - 1, within: [], anchor: anchorName(bare[1]) }] : [];
 }
 
@@ -1061,7 +1099,7 @@ export function yamlAliasAll(head) {
     if (m) found.push({ key: entry.key, within: entry.within, name: m[1] });
   }
   if (found.length) return found;
-  const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*:[ \\t]*" + PROPERTY_SOURCE + "\\*([^\\s,[\\]{}]+)").exec(head);
+  const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*(?::[ \\t]*)?" + PROPERTY_SOURCE + "\\*([^\\s,[\\]{}]+)").exec(head);
   return bare ? [{ key: null, within: [], name: bare[2] }] : [];
 }
 
@@ -1188,13 +1226,14 @@ function scalarText(m) {
  * it is the sequence entry's dash. Measured against Ruby's YAML, which the differential at
  * the foot of the pins re-measures rather than trusting this comment.
  */
-export function blockStrip(head, body) {
+export function blockStrip(head, body, owner) {
   const digit = /[|>][-+]?([1-9])|[|>]([1-9])[-+]?/.exec(head);
   const columns = digit ? Number(digit[1] ?? digit[2]) : 0;
   if (!columns) {
     const first = body.find((l) => l.trim() !== "") ?? "";
     return first.length - first.trimStart().length;
   }
+  if (owner !== undefined) return owner + columns;
   const lead = /^(\s*)((?:-\s+)*)/.exec(head);
   const rest = lead[1].length + lead[2].length;
   const entry = lead[2] !== "" && /^(?:[&!]\S+[ \t]+)*[|>]/.test(head.slice(rest));
@@ -1212,8 +1251,8 @@ export function blockStrip(head, body) {
  * `from[i]` is `[lineIndex, column]` into `body`, or `[lineIndex, -1]` for a break emitted
  * after that line.
  */
-export function blockValue(head, body) {
-  const strip = blockStrip(head, body);
+export function blockValue(head, body, owner) {
+  const strip = blockStrip(head, body, owner);
   const folded = /([|>])(?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head)?.[1] === ">";
   const text = [];
   const from = [];

@@ -1038,6 +1038,81 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     expect(findingsIn(two, wf).map((f) => f.line)).toEqual([7]);
   });
 
+  // A key's value is not always on the key's own line. Written with nothing after the colon,
+  // a `run:` owns the next node indented further — quoted, block or alias — and read only
+  // where the two sit together, every one of those was left as YAML text. Ruby's YAML loads
+  // each of these as the one string the shell reader is given.
+  it("reads a value written on the line after its key", () => {
+    const wf = ".github/workflows/x.yml";
+    const step = (value) => "jobs:\n  a:\n    steps:\n      - run:\n" + value;
+    expect(findingsIn(step('          "echo ok # measured on URX44V"\n'), wf).map((f) => f.line)).toEqual([5]);
+    expect(findingsIn(step("          |\n          echo ok # measured on URX44V\n"), wf).map((f) => f.line)).toEqual([
+      6,
+    ]);
+    // …where an indentation indicator counts from the KEY's column, on the line above, and
+    // not from the header's own: Ruby loads this block as "  echo ok # measured on URX44V\n".
+    expect(findingsIn(step("          |2\n            echo ok # measured on URX44V\n"), wf).map((f) => f.line)).toEqual(
+      [6],
+    );
+    // …and an anchor written in front of the key belongs to the value the key owns, so an
+    // alias to it further down is the same shell, counted once.
+    const anchored =
+      'jobs:\n  a:\n    steps:\n      - run: &s\n          "echo ok # measured on URX44V"\n      - run: *s\n';
+    expect(findingsIn(anchored, wf).map((f) => f.line)).toEqual([5]);
+    // …an ALIAS on its own line is the value its anchor holds, the same as one behind a key.
+    const aliased =
+      'env:\n  S: &s "echo ok # measured on URX44V"\njobs:\n  a:\n    steps:\n      - run:\n          *s\n';
+    expect(findingsIn(aliased, wf).map((f) => f.line)).toEqual([2]);
+    // …and what such a block holds is SHELL. Read as YAML, a here-document's body is lines
+    // of a document and its `#` is a comment; read as the shell it is, it is text. A header
+    // on its own line may also sit at its BODY's indentation, and a block measured against
+    // the header rather than against the key it belongs to had no body at all.
+    expect(
+      findingsIn(step("          |\n          cat <<EOF\n          # measured on URX44V\n          EOF\n"), wf),
+    ).toEqual([]);
+    // …with the indicator deciding the value: counted from the key's column this block is
+    // what Ruby loads it as, `cat <<EOF\n# x\nEOF\necho y  # measured on URX44V\n`, whose
+    // here-document ENDS and whose last line is a comment. Two columns more and the
+    // delimiter no longer matches the word it was declared with, so nothing after it is
+    // code at all.
+    const indicated =
+      "          |2\n          cat <<EOF\n          # x\n          EOF\n          echo y  # measured on URX44V\n";
+    expect(findingsIn(step(indicated), wf).map((f) => f.line)).toEqual([9]);
+    // …and an anchor in front of the key is the anchor of the whole value the key owns, so
+    // an alias reaches it even where nothing runs the key it was written on…
+    const held = 'env:\n  S: &s\n    "echo ok # measured on URX44V"\njobs:\n  a:\n    steps:\n      - run: *s\n';
+    expect(findingsIn(held, wf).map((f) => f.line)).toEqual([3]);
+    // …and not of an entry INSIDE it: Ruby loads `&s` here as the mapping, so the alias makes
+    // `run` a mapping and there is no shell anywhere.
+    const inner =
+      'env:\n  S: &s\n    { run: "echo ok # measured on URX44V" }\njobs:\n  a:\n    steps:\n      - run: *s\n';
+    expect(findingsIn(inner, wf)).toEqual([]);
+    // …while a SIBLING is not a value: `- run:` with nothing after it owns nothing, and the
+    // sequence entry below it is a string of its own. Ruby loads this as [{run: nil}, "…"].
+    expect(findingsIn('jobs:\n  a:\n    steps:\n      - run:\n      - "echo # measured on URX44V"\n', wf)).toEqual([]);
+    // …and a key on the next line is a key, not a value.
+    expect(findingsIn('jobs:\n  a:\n    steps:\n      - run:\n        name: "x # measured on URX44V"\n', wf)).toEqual(
+      [],
+    );
+  });
+
+  // A sequence entry may be written with nothing after its dash, and its own node then begins
+  // on the line below. Unwound at the dash's own indentation, an INDENTATIONLESS sequence —
+  // whose dash sits at the column of the key that owns it — unwound that key, and its entries
+  // were read at the path of the mapping above. Ruby loads all three of these as jobs.a.steps.
+  it("keeps the key a sequence belongs to when the dash is alone on its line", () => {
+    const wf = ".github/workflows/x.yml";
+    const shell = '"echo ok # measured on URX44V"';
+    expect(findingsIn(`jobs:\n  a:\n    steps:\n    -\n      run: ${shell}\n`, wf).map((f) => f.line)).toEqual([5]);
+    expect(findingsIn(`jobs:\n  a:\n    steps:\n      -\n        run: ${shell}\n`, wf).map((f) => f.line)).toEqual([5]);
+    // …the same sequence with its dash on the key's line, which is the control.
+    expect(findingsIn(`jobs:\n  a:\n    steps:\n    - run: ${shell}\n`, wf).map((f) => f.line)).toEqual([4]);
+    // …and the dash does not hold open what a later line closes: a second job's steps are
+    // its own.
+    const two = `jobs:\n  a:\n    steps:\n    -\n      run: ${shell}\n  b:\n    env:\n      run: ${shell}\n`;
+    expect(findingsIn(two, wf).map((f) => f.line)).toEqual([5]);
+  });
+
   // A `>` block is the same shell written across more lines, so a sentence split by a fold
   // is one sentence. Read as a literal it was two, and the comment on it went unmatched.
 
@@ -1225,6 +1300,9 @@ const BLOCKS = [
   ["key: |1\n   a\n", 0, 1],
   ["key: |4\n        a\n", 0, 4],
   ["jobs:\n  a:\n    steps:\n      - run: |2\n              deep\n          x\n", 3, 10],
+  // …and a header on its own line names no column at all, so the owning key's is passed in.
+  ["s:\n  - run:\n      |2\n        a\n         b\n", 2, 6, 4],
+  ["m:\n  k:\n      |2\n        a\n         b\n", 2, 4, 2],
 ];
 
 // How a quoted scalar's line breaks FOLD is what the shell is handed, and the table is what
@@ -1345,9 +1423,9 @@ describe.skipIf(rubyForBlocks.error || rubyForBlocks.status !== 0)(
 );
 
 describe("what a block scalar's value is indented by", () => {
-  const stripOf = ([doc, head]) => {
+  const stripOf = ([doc, head, , owner]) => {
     const lines = doc.split("\n");
-    return blockStrip(lines[head], lines.slice(head + 1));
+    return blockStrip(lines[head], lines.slice(head + 1), owner);
   };
 
   it("counts from the owning node's column, not from the header line's", () => {
