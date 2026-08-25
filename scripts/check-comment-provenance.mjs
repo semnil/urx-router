@@ -764,26 +764,44 @@ export function yamlComments(src, actions = false) {
   let pendingKey = null;
   /** A workflow's `run:` written as a QUOTED scalar, handed to the shell reader with its
    *  offsets carried over. GitHub runs the value, not the way it was written. */
-  const takeQuotedRun = (head, n, key) => {
-    if (!actions) return;
-    const quotedRun = yamlQuoted(head);
-    if (!quotedRun || (quotedRun.key ?? key) !== "run") return;
-    const value = decodeQuoted(src, starts[n] + quotedRun.at);
-    if (!value) return;
-    const lineOf = (offset) => {
-      let k = n;
-      while (k + 1 < starts.length && starts[k + 1] <= offset) k++;
-      return k + 1;
-    };
-    for (const span of shellComments(value.text)) {
-      const start = value.map[span.start];
+  /** The scalars an anchor was put on, by name. A value written once and referred to by
+   *  alias is the same value, and the finding points at where its text actually is. */
+  const anchors = new Map();
+  const lineOf = (offset) => {
+    let k = 0;
+    while (k + 1 < starts.length && starts[k + 1] <= offset) k++;
+    return k + 1;
+  };
+  /** Hand one decoded value to the shell reader, with its offsets carried over. */
+  const readShell = ({ text, map }) => {
+    for (const span of shellComments(text)) {
+      const start = map[span.start];
       out.push({
         line: lineOf(start),
         text: span.text,
         start,
-        end: span.end < value.map.length ? value.map[span.end] : value.map[value.map.length - 1] + 1,
+        end: span.end < map.length ? map[span.end] : map[map.length - 1] + 1,
       });
     }
+  };
+  const takeQuotedRun = (head, n, key) => {
+    if (!actions) return;
+    const alias = yamlAlias(head);
+    if (alias && (alias.key ?? key) === "run") {
+      const held = anchors.get(alias.name);
+      if (held) readShell(held);
+      return;
+    }
+    const quotedRun = yamlQuoted(head);
+    if (!quotedRun) return;
+    const isRun = (quotedRun.key ?? key) === "run";
+    // A value carrying an anchor is decoded whatever its key is: `run: *script` reads it
+    // later, and by then the line it was written on is behind us.
+    if (!isRun && !quotedRun.anchor) return;
+    const value = decodeQuoted(src, starts[n] + quotedRun.at);
+    if (!value) return;
+    if (quotedRun.anchor) anchors.set(quotedRun.anchor, value);
+    if (isRun) readShell(value);
   };
   for (let n = 0; n < lines.length; n++) {
     const raw = lines[n];
@@ -856,7 +874,8 @@ export function yamlComments(src, actions = false) {
       if (body.trim() !== "" && body.length - body.trimStart().length <= indent) break;
       end++;
     }
-    if (actions && (yamlKey(head) ?? carried) === "run" && end > n + 1) {
+    const blockAnchor = anchorName(m[0]);
+    if (actions && ((yamlKey(head) ?? carried) === "run" || blockAnchor) && end > n + 1) {
       // What the shell is handed is the block's VALUE, which is these lines with their
       // common indentation removed — the indentation indicator's if it has one, and the
       // first non-empty line's otherwise. Handed the raw lines instead, a here-document's
@@ -876,14 +895,8 @@ export function yamlComments(src, actions = false) {
         at.push(starts[k] + l.length);
         value += "\n";
       }
-      for (const span of shellComments(value)) {
-        out.push({
-          line: n + 1 + span.line,
-          text: span.text,
-          start: at[span.start],
-          end: span.end < at.length ? at[span.end] : at[at.length - 1] + 1,
-        });
-      }
+      if (blockAnchor) anchors.set(blockAnchor, { text: value, map: at });
+      if ((yamlKey(head) ?? carried) === "run") readShell({ text: value, map: at });
     }
     n = end - 1;
   }
@@ -916,12 +929,16 @@ const YAML_ESCAPES = {
  * decoded, so a key spelled `"r\u0075n"` is not a way round the reader either.
  */
 export function yamlKey(head) {
-  const m = new RegExp(KEY_SOURCE + "(?:[&!]\\S+[ \\t]+)*[|>]").exec(head);
+  const m = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "[|>]").exec(head);
   return m ? scalarText(m) : null;
 }
 
-/** The anchors and tags a node may wear in front of its value. */
-const PROPERTY_SOURCE = "(?:[&!]\\S+[ \\t]+)*";
+/** The anchors and tags a node may wear in front of its value, captured as one run so the
+ *  ANCHOR name in it can be read back: a value written once and referred to by alias is the
+ *  same value, and `run: *script` is the shell its anchor holds. */
+const PROPERTY_SOURCE = "((?:[&!]\\S+[ \\t]+)*)";
+/** The anchor name in such a run, or null. */
+const anchorName = (properties) => /&([^\s&!]+)/.exec(properties ?? "")?.[1] ?? null;
 
 /** The three shapes a mapping key is written in, and the run of spaces after its colon. */
 const KEY_SOURCE = "(?:^|[\\s-])(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^']|'')*)'|([\\w.-]+))[ \\t]*:[ \\t]*";
@@ -936,10 +953,22 @@ const KEY_SOURCE = "(?:^|[\\s-])(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^']|'')*)'|(
 export function yamlQuoted(head) {
   // The same node property a block scalar may wear — `run: &script "…"` is the same value.
   const m = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "([\"'])").exec(head);
-  if (m) return { key: scalarText(m), at: m.index + m[0].length - 1 };
+  if (m) return { key: scalarText(m), at: m.index + m[0].length - 1, anchor: anchorName(m[4]) };
   // An EXPLICIT entry's value line has no key on it; the key was written on the line before.
   const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*:[ \\t]*" + PROPERTY_SOURCE + "([\"'])").exec(head);
-  return bare ? { key: null, at: bare[0].length - 1 } : null;
+  return bare ? { key: null, at: bare[0].length - 1, anchor: anchorName(bare[1]) } : null;
+}
+
+/**
+ * A mapping entry whose value is an ALIAS — `run: *script`, which is the value its anchor
+ * holds. GitHub Actions supports anchors, and read as neither a block nor a quoted scalar
+ * the shell behind one was never looked at.
+ */
+export function yamlAlias(head) {
+  const m = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "\\*(\\S+)[ \\t]*$").exec(head);
+  if (m) return { key: scalarText(m), name: m[5] };
+  const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*:[ \\t]*" + PROPERTY_SOURCE + "\\*(\\S+)[ \\t]*$").exec(head);
+  return bare ? { key: null, name: bare[2] } : null;
 }
 
 /**
@@ -949,6 +978,9 @@ export function yamlQuoted(head) {
  * A newline inside one FOLDS to a single space, with the indentation after it dropped, which
  * is what YAML hands its consumer — and what the shell would be given to run.
  */
+/** How many characters the line break at `k` takes, or 0 if there is none. */
+const lineBreak = (src, k) => (src[k] === "\r" ? (src[k + 1] === "\n" ? 2 : 1) : src[k] === "\n" ? 1 : 0);
+
 export function decodeQuoted(src, at) {
   const q = src[at];
   const text = [];
@@ -970,8 +1002,11 @@ export function decodeQuoted(src, at) {
     // space — nor is the whitespace before the `\` dropped. Turned into a single space
     // whatever it was, an escaped break lost a comment that continued past it and a blank
     // line invented one that had ended at it. Measured against Ruby's YAML.
-    const escaped = q === '"' && src[i] === "\\" && src[i + 1] === "\n";
-    if (escaped || src[i] === "\n") {
+    // A line break is `\n`, `\r\n` or `\r`. Matched as `\n` alone, a CRLF file's escaped
+    // break was read as an escaped `\r` followed by an ordinary fold, so the value carried
+    // a carriage return and a space where the source had joined two halves of one word.
+    const escaped = q === '"' && src[i] === "\\" && lineBreak(src, i + 1) > 0;
+    if (escaped || lineBreak(src, i) > 0) {
       if (!escaped) {
         while (text.length && (text[text.length - 1] === " " || text[text.length - 1] === "\t")) {
           text.pop();
@@ -980,9 +1015,11 @@ export function decodeQuoted(src, at) {
       }
       let j = escaped ? i + 1 : i;
       let breaks = 0;
-      while (j < src.length && src[j] === "\n") {
+      for (;;) {
+        const width = lineBreak(src, j);
+        if (!width) break;
         breaks++;
-        j++;
+        j += width;
         while (j < src.length && (src[j] === " " || src[j] === "\t")) j++;
       }
       if (!escaped && breaks === 1) {

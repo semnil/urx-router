@@ -930,9 +930,37 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       2,
     ]);
     expect(findingsIn('steps:\n  - run: "echo ok #\n\n      measured on URX44V"\n', wf)).toEqual([]);
+    // …whatever the file's line breaks are. Matched as `\n` alone, a CRLF file's escaped
+    // break was read as an escaped `\r` and then an ordinary fold, so the value carried a
+    // carriage return and a space where the source had joined two halves of one word.
+    expect(
+      findingsIn('steps:\r\n  - run: "echo ok # measu\\\r\n      red on URX44V"\r\n', wf).map((f) => f.line),
+    ).toEqual([2]);
     // …and only `run`, and only where something runs it.
     expect(findingsIn('steps:\n  - message: "echo ok # measured on URX44V"\n', wf)).toEqual([]);
     expect(findingsIn('steps:\n  - run: "echo ok # measured on URX44V"\n', "docs/x.yml")).toEqual([]);
+  });
+
+  // A value written once and referred to by ALIAS is the same value, and GitHub Actions
+  // supports anchors. Read as neither a block nor a quoted scalar, the shell behind
+  // `run: *script` was never looked at. The finding points at the line the text is actually
+  // on, which is the anchor's, not the alias's.
+  it("reads a run: that is an alias to the value its anchor holds", () => {
+    const wf = ".github/workflows/x.yml";
+    const quoted =
+      'env:\n  SCRIPT: &script "echo ok # measured on URX44V"\njobs:\n  t:\n    steps:\n      - run: *script\n';
+    expect(findingsIn(quoted, wf).map((f) => f.line)).toEqual([2]);
+    const block =
+      "x-common: &script |\n  echo ok # measured on URX44V\njobs:\n  t:\n    steps:\n      - run: *script\n";
+    expect(findingsIn(block, wf).map((f) => f.line)).toEqual([2]);
+    // …behind an explicit key too…
+    const explicit =
+      'env:\n  SCRIPT: &script "echo ok # measured on URX44V"\njobs:\n  t:\n    steps:\n      - ? run\n        : *script\n';
+    expect(findingsIn(explicit, wf).map((f) => f.line)).toEqual([2]);
+    // …and only where the alias is a `run`, so an anchor nothing runs stays text.
+    const other =
+      'env:\n  SCRIPT: &script "echo ok # measured on URX44V"\njobs:\n  t:\n    steps:\n      - message: *script\n';
+    expect(findingsIn(other, wf)).toEqual([]);
   });
 
   it("carries an explicit key across a comment and a blank line", () => {
@@ -1099,6 +1127,9 @@ const FOLDS = [
   ["k: 'a\n  b'\n", "a b"],
   ["k: 'a\n\n  b'\n", "a\nb"],
   ["k: 'a''b'\n", "a'b"],
+  ['k: "a\r\n  b"\n', "a b"],
+  ['k: "a\\\r\n  b"\n', "ab"],
+  ['k: "a\\\r\n\r\n  b"\n', "a\nb"],
 ];
 
 describe("what a quoted scalar's line breaks become", () => {
