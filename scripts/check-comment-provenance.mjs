@@ -260,7 +260,12 @@ function scanJs(src, mode = "js") {
    * held.
    */
   let decorator = null; // {from, depth, phase: "expr"|"target", seen}
-  const bracketDepth = () => braces.length + parens.length;
+  // Type arguments are a bracket too: `@dec<string>()` puts a run between the decorator's
+  // name and its call, and counted at the same depth the `string` inside it was read as the
+  // decorated thing and ended the run. That is the whole of what the decorator needs from
+  // them — the `<` itself may leave the expression phase, since what follows at the run's
+  // own depth is still the target.
+  const bracketDepth = () => braces.length + parens.length + angles;
   /** The token in front of a declaration's whole modifier run, which is what decides it. */
   const beforeModifiers = () => {
     const chain = [last, ...history];
@@ -915,6 +920,9 @@ export function yamlKey(head) {
   return m ? scalarText(m) : null;
 }
 
+/** The anchors and tags a node may wear in front of its value. */
+const PROPERTY_SOURCE = "(?:[&!]\\S+[ \\t]+)*";
+
 /** The three shapes a mapping key is written in, and the run of spaces after its colon. */
 const KEY_SOURCE = "(?:^|[\\s-])(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^']|'')*)'|([\\w.-]+))[ \\t]*:[ \\t]*";
 
@@ -926,10 +934,11 @@ const KEY_SOURCE = "(?:^|[\\s-])(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^']|'')*)'|(
  * looked at were the ones written with `|`.
  */
 export function yamlQuoted(head) {
-  const m = new RegExp(KEY_SOURCE + "([\"'])").exec(head);
+  // The same node property a block scalar may wear — `run: &script "…"` is the same value.
+  const m = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "([\"'])").exec(head);
   if (m) return { key: scalarText(m), at: m.index + m[0].length - 1 };
   // An EXPLICIT entry's value line has no key on it; the key was written on the line before.
-  const bare = /^[ \t]*(?:-[ \t]+)*:[ \t]*(["'])/.exec(head);
+  const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*:[ \\t]*" + PROPERTY_SOURCE + "([\"'])").exec(head);
   return bare ? { key: null, at: bare[0].length - 1 } : null;
 }
 
@@ -955,6 +964,39 @@ export function decodeQuoted(src, at) {
       }
       return { text: text.join(""), map, end: i + 1 };
     }
+    // A run of line breaks FOLDS: one becomes a space, n of them become n-1 newlines, and
+    // the whitespace on either side is dropped. A `\` immediately in front of the first one
+    // ESCAPES it in a double-quoted scalar, and the run then yields n-1 newlines and no
+    // space — nor is the whitespace before the `\` dropped. Turned into a single space
+    // whatever it was, an escaped break lost a comment that continued past it and a blank
+    // line invented one that had ended at it. Measured against Ruby's YAML.
+    const escaped = q === '"' && src[i] === "\\" && src[i + 1] === "\n";
+    if (escaped || src[i] === "\n") {
+      if (!escaped) {
+        while (text.length && (text[text.length - 1] === " " || text[text.length - 1] === "\t")) {
+          text.pop();
+          map.pop();
+        }
+      }
+      let j = escaped ? i + 1 : i;
+      let breaks = 0;
+      while (j < src.length && src[j] === "\n") {
+        breaks++;
+        j++;
+        while (j < src.length && (src[j] === " " || src[j] === "\t")) j++;
+      }
+      if (!escaped && breaks === 1) {
+        text.push(" ");
+        map.push(i);
+      } else {
+        for (let k = 1; k < breaks; k++) {
+          text.push("\n");
+          map.push(i);
+        }
+      }
+      i = j;
+      continue;
+    }
     if (q === '"' && src[i] === "\\") {
       const e = /^(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[\s\S])/.exec(src.slice(i + 1));
       if (!e) return null;
@@ -962,14 +1004,6 @@ export function decodeQuoted(src, at) {
       text.push(ch);
       map.push(i);
       i += 1 + e[1].length;
-      continue;
-    }
-    if (src[i] === "\n") {
-      let j = i + 1;
-      while (j < src.length && (src[j] === " " || src[j] === "\t")) j++;
-      text.push(" ");
-      map.push(i);
-      i = j;
       continue;
     }
     text.push(src[i]);

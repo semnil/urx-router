@@ -26,6 +26,7 @@ import {
   shellComments,
   tomlComments,
   blockStrip,
+  decodeQuoted,
   scanTargets,
   trackedSources,
   yamlComments,
@@ -348,6 +349,16 @@ describe("what counts as a comment", () => {
     // …and a dotted decorator, and two of them, still reach their target.
     expect(shapes('@a.b.c\nclass C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
     expect(shapes('@a\n@b(1)\nclass C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+  });
+
+  // A decorator's own call may be GENERIC, and a type argument run is a bracket of its own.
+  // Counted at the same depth, the `string` inside `@dec<string>()` was read as the thing
+  // being decorated and ended the run, so the class after it was an expression.
+  it("holds the decorator run through its call's type arguments", () => {
+    expect(shapes('@dec<string>()\nclass C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes('@ns.dec<string>()\nclass C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    // …and the comment after one is still read.
+    expect(shapes('@dec<string>()\nclass C<T> {}\n/[//]/.test("x"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
   });
 
   it("tells a postfix ! from a prefix one", () => {
@@ -907,6 +918,18 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     expect(findingsIn('steps:\n  - ? run\n    : "echo ok # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([3]);
     // The shell's own rules apply inside it: a `#` in a nested quote is not a comment.
     expect(findingsIn("steps:\n  - run: \"echo '# measured on URX44V'\"\n", wf)).toEqual([]);
+    // …behind an anchor or a tag, which a quoted value may wear as a block one may…
+    expect(findingsIn('steps:\n  - run: &script "echo ok # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([2]);
+    expect(findingsIn('steps:\n  - run: !!str "echo ok # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([2]);
+    expect(
+      findingsIn('steps:\n  - ? run\n    : &script "echo ok # measured on URX44V"\n', wf).map((f) => f.line),
+    ).toEqual([3]);
+    // …with the line breaks folded the way YAML folds them, so an ESCAPED one carries a
+    // comment past it and a blank line ends one there.
+    expect(findingsIn('steps:\n  - run: "echo ok # measured \\\n      on URX44V"\n', wf).map((f) => f.line)).toEqual([
+      2,
+    ]);
+    expect(findingsIn('steps:\n  - run: "echo ok #\n\n      measured on URX44V"\n', wf)).toEqual([]);
     // …and only `run`, and only where something runs it.
     expect(findingsIn('steps:\n  - message: "echo ok # measured on URX44V"\n', wf)).toEqual([]);
     expect(findingsIn('steps:\n  - run: "echo ok # measured on URX44V"\n', "docs/x.yml")).toEqual([]);
@@ -1057,6 +1080,55 @@ const BLOCKS = [
   ["key: |4\n        a\n", 0, 4],
   ["jobs:\n  a:\n    steps:\n      - run: |2\n              deep\n          x\n", 3, 10],
 ];
+
+// How a quoted scalar's line breaks FOLD is what the shell is handed, and the table is what
+// Ruby answers; the differential below re-measures it. One break becomes a space, n of them
+// become n-1 newlines, and a `\` in front of the first ESCAPES it in a double-quoted scalar,
+// after which the run yields n-1 newlines and no space at all — so an escaped break carries
+// a comment past it and a blank line ends one there.
+const FOLDS = [
+  ['k: "a\n  b"\n', "a b"],
+  ['k: "a\n\n  b"\n', "a\nb"],
+  ['k: "a\n\n\n  b"\n', "a\n\nb"],
+  ['k: "a\\\n  b"\n', "ab"],
+  ['k: "a \\\n  b"\n', "a b"],
+  ['k: "a\\\n\n  b"\n', "a\nb"],
+  ['k: "a\\\n\n\n  b"\n', "a\n\nb"],
+  ['k: "a\n  \\\n  b"\n', "a b"],
+  ['k: "a  \n  b"\n', "a b"],
+  ["k: 'a\n  b'\n", "a b"],
+  ["k: 'a\n\n  b'\n", "a\nb"],
+  ["k: 'a''b'\n", "a'b"],
+];
+
+describe("what a quoted scalar's line breaks become", () => {
+  it("folds them the way YAML does", () => {
+    for (const [src, value] of FOLDS) {
+      expect(decodeQuoted(src, src.indexOf(src.includes('"') ? '"' : "'"))?.text, src).toBe(value);
+    }
+  });
+});
+
+// The table above is a copy of Ruby's answers, and a copy can drift from what it copied.
+// Where ruby exists — this machine, and the ubuntu runner ci.yml uses — ask it directly.
+// Skipped elsewhere, and the skip is named rather than silent.
+const rubyForFolds = spawnSync("ruby", ["-e", "puts 1"], { encoding: "utf8" });
+
+describe.skipIf(rubyForFolds.error || rubyForFolds.status !== 0)("quoted scalars, differentially against Ruby", () => {
+  it("decodes each fold to the value Ruby loads", () => {
+    const script = `
+      require "yaml"
+      require "json"
+      puts JSON.generate(JSON.parse(STDIN.read).map { |doc| Psych.load(doc)["k"] })
+    `;
+    const run = spawnSync("ruby", ["-e", script], {
+      input: JSON.stringify(FOLDS.map(([src]) => src)),
+      encoding: "utf8",
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(JSON.parse(run.stdout)).toEqual(FOLDS.map(([, value]) => value));
+  });
+});
 
 describe("what a block scalar's value is indented by", () => {
   const stripOf = ([doc, head]) => {
