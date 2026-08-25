@@ -154,7 +154,7 @@ const REGEX_AFTER = new Set([
  *  value and a `/` after it opens a pattern. Every other `(` is a call or a group. */
 /** Modifiers a declaration may wear before `function` or `class`. They are transparent:
  *  what decides declaration-versus-expression is the token before the whole run. */
-const MODIFIERS = new Set(["async", "export", "default"]);
+const MODIFIERS = new Set(["async", "export", "default", "declare", "abstract"]);
 const CONTROL_HEADS = new Set(["if", "for", "while", "with", "switch", "catch"]);
 /** A `{` after one of these is an OBJECT literal, because each demands an expression. After
  *  anything else — a `)`, a `;`, `=>`, another block, the start of input — it is a block. */
@@ -246,6 +246,7 @@ function scanJs(src, mode = "js") {
   const tpl = []; // the brace-stack depth each open `${` returns to
   let angles = 0; // open TypeScript type-argument lists
   let typeParams = false; // whether the open run is a declaration's parameters
+  let angleDepth = 0; // the bracket depth the open run started at
 
   // The span carries its SOURCE RANGE, not only its line: two comments on one line are two
   // comments, and a key of line-plus-text folded them into one — under which a file at a
@@ -514,7 +515,10 @@ function scanJs(src, mode = "js") {
     // only where it touches the name in front of it. Read as an operator, the `>` left the
     // grammar expecting an expression and the `/` after it opened a pattern that swallowed
     // the line.
-    if (c === "<" && i > 0 && !/\s/.test(src[i - 1]) && endsValue()) {
+    // Inside a type there is no comparison for a `<` to be, so a nested generic signature
+    // opens whatever sits in front of it: `f<new <U>() => U>` and `T extends <U>() => U`
+    // both put one after a space, and unread its `>` closed the run around it.
+    if (c === "<" && (angles > 0 || (i > 0 && !/\s/.test(src[i - 1]) && endsValue()))) {
       // A DECLARATION's type parameters are not an instantiation expression: what follows
       // `class C<T>` is the body, and closing the run on a value made that brace an object
       // literal — after which the `}` ended a value and the pattern on the next line was
@@ -522,6 +526,7 @@ function scanJs(src, mode = "js") {
       if (angles === 0) {
         const pending = pendingBodies[pendingBodies.length - 1];
         typeParams = Boolean(pending && pending.depth === parens.length);
+        angleDepth = braces.length + parens.length;
       }
       angles++;
       punct("<");
@@ -540,7 +545,10 @@ function scanJs(src, mode = "js") {
     // ends any run that never closed. Nor may a body that never arrived — an ambient
     // `declare function f(): T;` pushes one and no brace ever consumes it, and the next type
     // argument list then read itself as that declaration's parameters.
-    if (c === ";") {
+    // …and the boundary is the one at the run's OWN depth. A type literal separates its
+    // properties with `;` too — `f<{ a: string; b: number }>` — and reset there, the outer
+    // run was lost half way through and the `/` after its `>` opened a pattern.
+    if (c === ";" && (angles === 0 || braces.length + parens.length === angleDepth)) {
       angles = 0;
       while (pendingBodies.length && pendingBodies[pendingBodies.length - 1].depth >= parens.length)
         pendingBodies.pop();
@@ -1156,6 +1164,7 @@ export function shellComments(src) {
       i++;
       prev = c;
       cmdStart = true;
+      timed = false;
       while (pending.length) {
         const { dash, word } = pending.shift();
         for (;;) {
@@ -1238,6 +1247,7 @@ export function shellComments(src) {
       i++;
       prev = "(";
       cmdStart = true;
+      timed = false;
       continue;
     }
     if (c === "$" && src[i + 1] === "(") {
@@ -1245,6 +1255,7 @@ export function shellComments(src) {
       i += 2;
       prev = "(";
       cmdStart = true;
+      timed = false;
       continue;
     }
     if (c === "(" && !inDoubleQuote()) {
@@ -1252,6 +1263,7 @@ export function shellComments(src) {
       i++;
       prev = "(";
       cmdStart = true;
+      timed = false;
       continue;
     }
     if (c === ")" && !inDoubleQuote()) {
@@ -1261,6 +1273,7 @@ export function shellComments(src) {
         i++;
         prev = c;
         cmdStart = true;
+        timed = false;
         continue;
       }
       if (stack.length) stack.pop();
@@ -1307,7 +1320,13 @@ export function shellComments(src) {
     // space, an indented `case` — the shape a `$( … )` block is written in — stopped being
     // a keyword, its arms' `)` closed the substitution, and their comments fell back inside
     // the double quote around it.
-    if (c !== " " && c !== "\t") cmdStart = c === ";" || c === "&" || c === "|" || c === "{" || c === "!";
+    if (c !== " " && c !== "\t") {
+      cmdStart = c === ";" || c === "&" || c === "|" || c === "{" || c === "!";
+      // …and `time` measures ONE command. Carried past the boundary, `time; -p case x` read
+      // the `-p` as its option and `case` as a keyword, so the `)` that closed the
+      // substitution was taken for a pattern's and the string after it was read as code.
+      timed = false;
+    }
     prev = c;
     i++;
   }

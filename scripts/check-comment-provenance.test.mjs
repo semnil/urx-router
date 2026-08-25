@@ -265,6 +265,40 @@ describe("what counts as a comment", () => {
     expect(shapes('function g<T>() {}\n/[//]/.test("x"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
   });
 
+  // The modifier run a declaration may wear is TypeScript's, not JavaScript's: `abstract`
+  // and `declare` are part of it. Walked past only `async`, `export` and `default`, the
+  // declaration was decided by the modifier itself and read as an expression, so its body
+  // became an object literal and the pattern on the next line was a division into it.
+  it("walks past every modifier a declaration may wear", () => {
+    expect(shapes('abstract class C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes('declare class D<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes('export abstract class E<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes('declare interface F<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    // …and the comment after each is still read.
+    expect(shapes('abstract class C<T> {}\n/[//]/.test("x"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    expect(shapes('declare interface F<T> {}\n/[//]/.test("x"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+  });
+
+  // A type is not an expression, and two of its shapes broke the run that was reading it. A
+  // type LITERAL separates its properties with `;`, which is not the statement boundary that
+  // ends an unclosed run — the boundary is the one at the run's own bracket depth. And inside
+  // a type there is no comparison for a `<` to be, so a nested generic signature opens
+  // whatever sits in front of it, space included.
+  it("holds a type argument run through a type literal and a nested signature", () => {
+    expect(shapes("const x = f<{ a: string; b: number }> / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes("const x = f<new <U>() => U> / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes('class C<T extends <U>() => U> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes('class C<T extends <U>() => U> {}\n/[//]/.test("x"); // (measured)\n')).toEqual([
+      "hedge-parenthetical",
+    ]);
+    // …and a run that never closes is still dropped at the boundary it opened at — which is
+    // the depth the run STARTED at, not the top of the file.
+    expect(shapes('const t = a<b;\nconst r = c > /["]/.test("d"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    expect(shapes('function h() {\n  const t = a<b;\n  const r = c > /["]/.test("d"); // (measured)\n}\n')).toEqual([
+      "hedge-parenthetical",
+    ]);
+  });
+
   it("tells a postfix ! from a prefix one", () => {
     expect(shapes("const n = !/x/.test(a) ? 1 : 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
     expect(shapes("const n = a != b; // (measured)\n")).toEqual(["hedge-parenthetical"]);
@@ -853,6 +887,8 @@ describe("what counts as a comment in the # languages and in HTML", () => {
   // the string after it read as code, where its `#` is a comment. `bash -n` accepts it.
   it("passes over an option only where a reserved word takes one", () => {
     expect(findingsIn('v="$(-p case x) # measured on URX44V"\n', "x.sh")).toEqual([]);
+    // …and `time` measures ONE command, so the option is not carried past the boundary.
+    expect(findingsIn('v="$(time; -p case x) # measured on URX44V"\n', "x.sh")).toEqual([]);
     expect(
       findingsIn('v="$(time -p case x in x) # measured on URX44V\n printf x;; esac)"\n', "x.sh").map((f) => f.line),
     ).toEqual([1]);
