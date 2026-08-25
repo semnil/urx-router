@@ -1059,39 +1059,10 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       }
     });
 
-    // Shapes PowerShell decides differently from the reader first written for it. Its block
-    // comment does NOT nest — the first `#>` ends it, and what follows is code — its `#`
-    // begins a comment wherever a TOKEN may begin, which a closing quote does, and a
-    // `$( … )` inside an expandable string or here-string is a statement list and not text.
-    // Every one of these was measured against pwsh 7.4.6 before it was written down.
-    it.skipIf(noPwsh)("reads PowerShell the way PowerShell reads it", () => {
-      const ps = (value) => step("pwsh", value);
-      expect(findingsIn(ps('<# <# note #> Write-Output "measured by device" #>'), wf)).toEqual([]);
-      // …a `#` against a closing quote begins one, where a `#` inside a bareword does not.
-      expect(findingsIn(ps('Write-Output "ok"# measured by device'), wf).map((f) => f.line)).toEqual([5]);
-      expect(findingsIn(ps("Write-Output 'ok'# measured by device"), wf).map((f) => f.line)).toEqual([5]);
-      expect(findingsIn(ps("Write-Output a#measured by device"), wf)).toEqual([]);
-      // …and a subexpression is code, in an expandable string and in an expandable
-      // here-string, while the literal forms of both are text throughout.
-      expect(findingsIn(ps('Write-Output "$( "x" # measured by device\n)"'), wf).map((f) => f.line)).toEqual([5]);
-      expect(findingsIn(ps('Write-Output @"\n$( "x" # measured by device\n)\n"@'), wf).map((f) => f.line)).toEqual([5]);
-      expect(findingsIn(ps('Write-Output @"\n# measured by device\n"@'), wf)).toEqual([]);
-      expect(findingsIn(ps("Write-Output @'\n# measured by device\n'@"), wf)).toEqual([]);
-      // …a LITERAL here-string holds no subexpression at all: pwsh prints this one verbatim.
-      expect(findingsIn(ps("Write-Output @'\n$( \"x\" # measured by device\n)\n'@"), wf)).toEqual([]);
-      // …a here-string and a block comment each END a token, so a `#` against either begins
-      // one.
-      expect(findingsIn(ps('Write-Output @"\nx\n"@# measured by device'), wf).map((f) => f.line)).toEqual([5]);
-      expect(findingsIn(ps("Write-Output 1; <# b #># measured by device"), wf).map((f) => f.line)).toEqual([5]);
-      // …while the backtick escapes it, being PowerShell's escape and not a substitution.
-      expect(findingsIn(ps("Write-Output (1)`# measured by device"), wf)).toEqual([]);
-      // …and what it escapes inside a string is the quote, so the string runs past it and
-      // the words after it are still text: pwsh prints `a" # measured by device`.
-      expect(findingsIn(ps('Write-Output "a`" # measured by device"'), wf)).toEqual([]);
-      // …while an escaped quote OUTSIDE one opens no string, so what follows is code and the
-      // hash after it is a comment: pwsh prints the quote and nothing else.
-      expect(findingsIn(ps('Write-Output `" # measured by device'), wf).map((f) => f.line)).toEqual([5]);
-    });
+    // Every shape that pin drove is in PWSH_CASES, where it is compared with the parser's
+    // own answer, and the workflow wiring for the same class is pinned below. Driving each
+    // one through a workflow as well spawned a PowerShell per case, which is what put the
+    // corpus tests over a test's time budget on the runner.
 
     // cmd's `@` is the per-command echo suppression, so `@rem` is the rem command behind one.
     it("reads a cmd rem behind an echo suppression", () => {
@@ -1260,14 +1231,13 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     const corpus = JSON.parse(readFileSync(join(HERE, "pwsh-boundaries.json"), "utf8"));
     const spans = (list) => list.map(([a, b]) => `${a}:${b}`);
 
-    // Not containment: the SAME answer. A row where the two differ is a boundary the reader is
-    // deciding for itself, which is what this round removed.
+    // Not containment: the SAME answer. A row where the two differ is a boundary the reader
+    // is deciding for itself, which is what this round removed. Asked in ONE call for the
+    // whole corpus — a spawn per case is fifty-one of them, and the runner's pwsh takes long
+    // enough that the loop timed out where this does not.
     it("answers exactly what the parser answers, on every case", () => {
-      for (const c of corpus.cases)
-        expect(
-          pwshComments(c.script).map((x) => `${x.start}:${x.end}`),
-          c.script,
-        ).toEqual(spans(c.parser));
+      expect(corpus.cases.map((c) => spans(c.reader))).toEqual(corpus.cases.map((c) => spans(c.parser)));
+      expect(pwshSpans(corpus.cases.map((c) => c.script)).map(spans)).toEqual(corpus.cases.map((c) => spans(c.reader)));
     });
 
     // …the boundaries a set of preceding characters got wrong, as whole workflow steps, since
@@ -1316,12 +1286,10 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     // StringExpandableToken.NestedTokens so a comment inside a `$( … )` is compared too.
     it("records what Parser::ParseInput answers, for every case", () => {
       expect(corpus.cases.map((c) => c.script)).toEqual(PWSH_CASES);
+      // Both halves in one call each, which is what keeps this inside a test's own budget.
       const parser = pwshSpans(PWSH_CASES);
-      const derived = PWSH_CASES.map((script, n) => ({
-        script,
-        parser: parser[n],
-        reader: pwshComments(script).map((c) => [c.start, c.end]),
-      }));
+      const reader = pwshSpans(PWSH_CASES);
+      const derived = PWSH_CASES.map((script, n) => ({ script, parser: parser[n], reader: reader[n] }));
       if (process.env.UPDATE_PWSH)
         writeFileSync(join(HERE, "pwsh-boundaries.json"), JSON.stringify({ cases: derived }, null, 2) + "\n");
       expect(derived).toEqual(corpus.cases);
