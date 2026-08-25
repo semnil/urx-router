@@ -140,6 +140,13 @@ const PROSE_TOKENS = new Map([
   ["rem", "the cmd command, named as the one that opens a comment there"],
   ["@", "cmd's per-command echo suppression, named as what a `rem` may sit behind"],
   ["::", "a cmd label, named as the other thing written as a comment"],
+  // Four from the PowerShell row: three characters named as the boundaries whose answer
+  // depends on a mode a lexer cannot see, and the parser method that decides them. None is
+  // an entity in any tree.
+  ["]", "PowerShell, named as a boundary that closes a token in one mode and not the other"],
+  ["[", "PowerShell, named as the same boundary the other way round"],
+  ["..", "PowerShell's range operator, named as another of those boundaries"],
+  ["Parser::ParseInput", "PowerShell's own parser, named as the authority the corpus is derived from"],
   // Four fragments of YAML, named as the words a plain scalar's continuation is made of.
   // None is an entity in any tree: three only LOOK like an indicator or a key, and the
   // fourth is the one spelling that is.

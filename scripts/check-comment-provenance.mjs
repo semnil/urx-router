@@ -745,12 +745,24 @@ export function rustComments(src) {
   return out;
 }
 
-/** The punctuation a token cannot run past, so a `#` written after one begins a token of
- *  its own — which is where PowerShell begins a comment. Measured against pwsh 7.4.6: it
- *  comments after each of these, after whitespace, and after a token that CLOSED (a string,
- *  a here-string, a block comment); it does not after a character a bareword may hold
- *  (`a#b` is one token, and so is `$x#`) nor after the backtick, which escapes it. */
-const PWSH_BOUNDARY = /[\s;,|&(){}"'=+]/;
+/**
+ * The punctuation a PowerShell token cannot run past, so a `#` after one begins a token of
+ * its own — which is where PowerShell begins a comment.
+ *
+ * Measured against `Parser::ParseInput` (scripts/pwsh-boundaries.json holds the corpus and
+ * its answers): a comment opens after each of these, after whitespace, and after a token
+ * that CLOSED — a string, a here-string, a block comment. Everything else leaves the state
+ * UNCERTAIN rather than open, because PowerShell's answer there depends on a mode a lexer
+ * cannot see: `$x[0]#` is a comment and `Write-Output a]#` is one bareword, and the same
+ * split holds for a digit, a `[`, `..`, `--` and `++`. This reader takes the miss on every
+ * one of those rather than the invention, which is the trade the whole check is built on,
+ * and the corpus names each of them so the set is countable rather than found one at a time.
+ */
+const PWSH_OPENS = /[\s;,|&(){}]/;
+/** The quote characters PowerShell accepts, which are not only the ASCII pair: `“x # y”` is
+ *  a string and the words in it are data. Each class closes on any member of its own. */
+const PWSH_SINGLE = "'\u2018\u2019\u201a\u201b";
+const PWSH_DOUBLE = '"\u201c\u201d\u201e';
 
 /**
  * The comments in a POWERSHELL script, which is what GitHub runs a `shell: pwsh` step with
@@ -778,9 +790,10 @@ export function pwshComments(src) {
     for (let i = open; i < src.length; i++) {
       const c = src[i];
       if (c === "`") i++;
-      else if (c === "'" || c === '"') {
+      else if (PWSH_SINGLE.includes(c) || PWSH_DOUBLE.includes(c)) {
+        const kind = PWSH_SINGLE.includes(c) ? PWSH_SINGLE : PWSH_DOUBLE;
         i++;
-        while (i < src.length && src[i] !== c) i += src[i] === "`" ? 2 : 1;
+        while (i < src.length && !kind.includes(src[i])) i += src[i] === "`" ? 2 : 1;
       } else if (c === "(") depth++;
       else if (c === ")" && --depth === 0) return i;
     }
@@ -807,7 +820,7 @@ export function pwshComments(src) {
         const close = closeParen(i + 1);
         scan(i + 2, close);
         i = close + 1;
-      } else if (src[i] === '"') return i + 1;
+      } else if (PWSH_DOUBLE.includes(src[i])) return i + 1;
       else i++;
     }
     return src.length;
@@ -825,7 +838,9 @@ export function pwshComments(src) {
         opens = false;
         continue;
       }
-      if (c === "<" && src[i + 1] === "#") {
+      // A `<#` opens a block comment only where a token may BEGIN: written against a word,
+      // `Foo<# … #>` is that word and the `#>` at the end is a line comment of its own.
+      if (c === "<" && src[i + 1] === "#" && opens) {
         const shut = src.indexOf("#>", i + 2);
         const end = shut === -1 ? stop : shut + 2;
         out.push({ line: lineOf(i), text: src.slice(i + 2, shut === -1 ? end : shut), start: i, end });
@@ -844,20 +859,20 @@ export function pwshComments(src) {
       // A here-string runs to a line BEGINNING with the closing pair, so a quote inside one
       // closes nothing; the expandable form carries code in its `$( … )` and the other does
       // not.
-      if (c === "@" && (src[i + 1] === '"' || src[i + 1] === "'")) {
+      if (c === "@" && (PWSH_DOUBLE.includes(src[i + 1]) || PWSH_SINGLE.includes(src[i + 1]))) {
         const close = "\n" + src[i + 1] + "@";
         const shut = src.indexOf(close, i + 2);
         const end = shut === -1 ? stop : shut + close.length;
-        if (src[i + 1] === '"') expand(i + 2, shut === -1 ? end : shut);
+        if (PWSH_DOUBLE.includes(src[i + 1])) expand(i + 2, shut === -1 ? end : shut);
         i = end;
         opens = true;
         continue;
       }
-      if (c === "'") {
+      if (PWSH_SINGLE.includes(c)) {
         let k = i + 1;
         while (k < src.length) {
-          if (src[k] === "'") {
-            if (src[k + 1] === "'") k += 2;
+          if (PWSH_SINGLE.includes(src[k])) {
+            if (PWSH_SINGLE.includes(src[k + 1])) k += 2;
             else break;
           } else k++;
         }
@@ -865,12 +880,12 @@ export function pwshComments(src) {
         opens = true;
         continue;
       }
-      if (c === '"') {
+      if (PWSH_DOUBLE.includes(c)) {
         i = closeExpandable(i);
         opens = true;
         continue;
       }
-      opens = PWSH_BOUNDARY.test(c);
+      opens = PWSH_OPENS.test(c);
       i++;
     }
   }

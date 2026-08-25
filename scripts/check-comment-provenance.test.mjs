@@ -36,11 +36,13 @@ import {
   lineEntries,
   lineScan,
   plainScalar,
+  pwshComments,
   yamlPlainAll,
   rustComments,
   verdict,
 } from "./check-comment-provenance.mjs";
 import { formatTargets, JS_FAMILY } from "./format.mjs";
+import { PWSH_CASES, parserSpans } from "./pwsh-boundaries.mjs";
 import { win32 } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1188,6 +1190,84 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     ["python", ["python3", "-c"]],
     ["pwsh", ["pwsh", "-NoProfile", "-Command"]],
   ];
+
+  // PowerShell decides where a comment begins from a token state a lexer cannot fully see: the
+  // same `]`, digit, `..`, `--` or `[` opens one in expression position and continues a
+  // bareword in argument position, and only the parser knows which. So the reader takes the
+  // MISS on every uncertain boundary rather than the invention — the trade the whole check is
+  // built on — and scripts/pwsh-boundaries.json is where that set is written down instead of
+  // being found one review round at a time.
+  describe("what PowerShell calls a comment", () => {
+    const corpus = JSON.parse(readFileSync(join(HERE, "pwsh-boundaries.json"), "utf8"));
+    const spans = (list) => list.map(([a, b]) => `${a}:${b}`);
+    const read = (script) => pwshComments(script).map((x) => `${x.start}:${x.end}`);
+
+    // The load-bearing half, and the one that needs no pwsh: everything the reader reports is
+    // something the parser reports. A boundary it reads wrongly can cost a finding; it may
+    // never cost a line of valid PowerShell.
+    it("reports no comment PowerShell does not have", () => {
+      for (const c of corpus.cases) {
+        const invented = read(c.script).filter((r) => !spans(c.parser).includes(r));
+        expect(invented, c.script).toEqual([]);
+      }
+    });
+
+    // …and the reader's own answer is tracked beside it, so a change to the boundary shows up
+    // here as a diff rather than as a silent widening.
+    it("answers what the corpus records it answering", () => {
+      for (const c of corpus.cases) expect(read(c.script), c.script).toEqual(spans(c.reader));
+    });
+
+    // The accepted misses, named. Every one is a boundary whose answer depends on the mode:
+    // `Write-Output a]#` is one bareword and `$x[0]#` is a comment, and the same `]` is in both.
+    it("accepts a miss only where the boundary is mode-dependent", () => {
+      const missed = corpus.cases
+        .filter((c) => spans(c.parser).some((p) => !read(c.script).includes(p)))
+        .map((c) => c.script);
+      expect(missed).toEqual([
+        "$x[0]# MARK",
+        "[int]# MARK",
+        "1# MARK",
+        "$x--# MARK",
+        "$x++# MARK",
+        "1..3# MARK",
+        "$a = 1 + 2# MARK",
+        "$x -is [int]# MARK",
+        "$x# MARK",
+        "3 -# MARK",
+        "2 *# MARK",
+        "6 /# MARK",
+        "7 %# MARK",
+        "1 -eq# MARK",
+      ]);
+    });
+  });
+
+  // The corpus is a copy of what PowerShell's own parser answers, and a copy can drift from
+  // what it copied. Where a pwsh is on the PATH — the GitHub runner carries one — ask it
+  // again, walking StringExpandableToken.NestedTokens so a comment inside a `$( … )` is
+  // compared too. Skipped elsewhere, and the skip is named rather than silent.
+  const pwshForCorpus = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
+
+  describe.skipIf(pwshForCorpus.error || pwshForCorpus.status !== 0)(
+    "the PowerShell boundary corpus, differentially against the parser",
+    () => {
+      it("records what Parser::ParseInput answers, for every case", () => {
+        const corpus = JSON.parse(readFileSync(join(HERE, "pwsh-boundaries.json"), "utf8"));
+        expect(corpus.cases.map((c) => c.script)).toEqual(PWSH_CASES);
+        const fresh = parserSpans(PWSH_CASES);
+        const derived = PWSH_CASES.map((script, n) => ({
+          script,
+          errors: fresh[n].errors,
+          parser: fresh[n].comments.sort((a, b) => a[0] - b[0]),
+          reader: pwshComments(script).map((c) => [c.start, c.end]),
+        }));
+        if (process.env.UPDATE_PWSH)
+          writeFileSync(join(HERE, "pwsh-boundaries.json"), JSON.stringify({ cases: derived }, null, 2) + "\n");
+        expect(derived).toEqual(corpus.cases);
+      });
+    },
+  );
 
   describe("what a run: is lexed as, differentially", () => {
     const pwsh = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
