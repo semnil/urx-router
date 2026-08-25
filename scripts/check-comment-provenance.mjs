@@ -784,17 +784,17 @@ export function yamlComments(src, actions = false) {
       });
     }
   };
-  const takeQuotedRun = (head, n, key) => {
+  const takeValues = (head, n, under, carried) => {
     if (!actions) return;
-    const alias = yamlAlias(head);
-    if (alias && (alias.key ?? key) === "run") {
-      const held = anchors.get(alias.name);
-      if (held) readShell(held);
-      return;
-    }
+    // What GitHub runs is a STEP's `run`, so what decides an entry is the path to it and not
+    // the name of its key alone.
+    const runs = (entry) => {
+      const key = entry.key ?? carried;
+      return key != null && isRunPath([...under, ...entry.within, key]);
+    };
     for (const entry of yamlQuotedAll(head)) {
-      const isRun = (entry.key ?? key) === "run";
-      // A value carrying an anchor is decoded whatever its key is: `run: *script` reads it
+      const isRun = runs(entry);
+      // A value carrying an anchor is decoded wherever it is written: `run: *script` reads it
       // later, and by then the line it was written on is behind us.
       if (!isRun && !entry.anchor) continue;
       const value = decodeQuoted(src, starts[n] + entry.at);
@@ -802,7 +802,17 @@ export function yamlComments(src, actions = false) {
       if (entry.anchor) anchors.set(entry.anchor, value);
       if (isRun) readShell(value);
     }
+    // Aliases after the anchors on the line, since an alias cannot refer forward.
+    for (const entry of yamlAliasAll(head)) {
+      if (!runs(entry)) continue;
+      const held = anchors.get(entry.name);
+      if (held) readShell(held);
+    }
   };
+  // The block-mapping keys open above the line being read, with the column each one starts
+  // at, and the path they make to what is written under them.
+  const stack = [];
+  let under = [];
   for (let n = 0; n < lines.length; n++) {
     const raw = lines[n];
     let i = 0;
@@ -835,34 +845,47 @@ export function yamlComments(src, actions = false) {
       prev = c;
       i++;
     }
+    const head = (comment === -1 ? raw : raw.slice(0, comment)).replace(/\s+$/, "");
+    // A blank line and a comment-only line are not nodes, so an explicit key still waiting
+    // for its value survives them. Cleared on every line that was not itself an explicit
+    // key, a comment written between `? run` and its `: |` lost the key.
+    if (head.trim() === "") continue;
+    const explicit = yamlExplicitKey(head);
+    const block = lineEntries(head).find((e) => e.depth === 0) ?? null;
+    const opens = explicit ?? block?.key ?? null;
+    // A key is unwound by anything written at its column or to the left of it, and what is
+    // left is the path to this line. A line that opens no key of its own — the `: value` of
+    // an explicit entry, or a flow collection continued across lines — pushes nothing, and
+    // its own indentation is what unwinds the keys above it.
+    const col =
+      explicit !== null
+        ? /^[ \t]*(?:-[ \t]+)*/.exec(head)[0].length
+        : (block?.col ?? head.length - head.trimStart().length);
+    while (stack.length && stack[stack.length - 1].col >= col) stack.pop();
+    under = stack.map((s) => s.key);
+    if (opens !== null) stack.push({ col, key: opens });
     if (quote) {
       // The value of a `run:` written as a quoted scalar that spans lines starts here, and
       // the lines it covers are skipped above — so the handoff has to happen before them.
-      takeQuotedRun(raw, n, pendingKey);
+      takeValues(head, n, under, pendingKey);
+      continue;
+    }
+    if (explicit !== null) {
+      pendingKey = explicit;
       continue;
     }
     // The header is the line's VALUE, so the indicator has to sit right after `key:` or a
     // `-` sequence entry. Its two indicators come in EITHER order (`|2-` and `|-2` are one
     // scalar each), and reading only chomping-then-digit left `|2-` a plain scalar whose
     // body was then read as lines of YAML.
-    const head = (comment === -1 ? raw : raw.slice(0, comment)).replace(/\s+$/, "");
     // An anchor or a tag may sit between the `:` and the indicator — `run: &script |` is a
     // block scalar, and read as a plain one its body was scanned as YAML, where the `#`
     // lines of a here-document inside it are comments.
-    // A blank line and a comment-only line are not nodes, so an explicit key still waiting
-    // for its value survives them. Cleared on every line that was not itself an explicit
-    // key, a comment written between `? run` and its `: |` lost the key.
-    if (head.trim() === "") continue;
-    const explicit = yamlExplicitKey(head);
-    if (explicit !== null) {
-      pendingKey = explicit;
-      continue;
-    }
     const m = /(?::|(?:^|\s)-)[ \t]*(?:[&!]\S+[ \t]+)*[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head);
     const carried = pendingKey;
     pendingKey = null;
     if (!m) {
-      takeQuotedRun(head, n, carried);
+      takeValues(head, n, under, carried);
       continue;
     }
     const indent = raw.length - raw.trimStart().length;
@@ -875,24 +898,23 @@ export function yamlComments(src, actions = false) {
       end++;
     }
     const blockAnchor = anchorName(m[0]);
-    if (actions && ((yamlKey(head) ?? carried) === "run" || blockAnchor) && end > n + 1) {
+    const blockKey = yamlKey(head) ?? carried;
+    const blockRuns = blockKey != null && isRunPath([...under, blockKey]);
+    if (actions && (blockRuns || blockAnchor) && end > n + 1) {
       // What the shell is handed is the block's VALUE, which is these lines with their
       // common indentation removed — the indentation indicator's if it has one, and the
       // first non-empty line's otherwise. Handed the raw lines instead, a here-document's
       // `EOF` never equalled its indented delimiter line, so the scan swallowed the rest of
       // the block as body and every comment after it went unread.
-      const strip = blockStrip(head, lines.slice(n + 1, end));
-      // Each dedented character's offset in the source, so a span found in the value points
-      // at the characters it came from.
-      // Each character's offset in the source, so a span found in the value points at the
-      // characters it came from.
+      // Each character's offset in the source comes back with it, so a span found in the
+      // value points at the characters it came from.
       const built = blockValue(head, lines.slice(n + 1, end));
       const value = built.text;
       const at = built.from.map(([li, col]) =>
         col < 0 ? starts[n + 1 + li] + lines[n + 1 + li].length : starts[n + 1 + li] + col,
       );
       if (blockAnchor) anchors.set(blockAnchor, { text: value, map: at });
-      if ((yamlKey(head) ?? carried) === "run") readShell({ text: value, map: at });
+      if (blockRuns) readShell({ text: value, map: at });
     }
     n = end - 1;
   }
@@ -961,46 +983,98 @@ export function yamlQuoted(head) {
 }
 
 /**
- * EVERY mapping entry on the line whose value is a quoted scalar.
+ * EVERY mapping entry on one line: its key, the column that key starts at, the keys of the
+ * flow collections it sits inside, where its value begins, and the anchor it wears.
  *
- * A FLOW mapping puts several on one — `steps: [{ name: "x", run: "…" }]` — and read as the
- * first one only, a `run` behind any other key was never looked at. The search resumes past
- * each value rather than inside it, so a `key:` written in a string is not one. The node
- * property a block scalar may wear is allowed in front of each: `run: &script "…"` is the
- * same value.
+ * The line is read once, with quoted scalars skipped whole, so a `key:` written in a string
+ * is not an entry. A FLOW collection puts what is written in it on the line its own key is
+ * on — `steps: [{ run: "…" }]` is a step's `run` — so the keys it was opened under belong
+ * to the path of each entry inside it, and an anonymous `[` or `{` contributes none.
  */
-export function yamlQuotedAll(head) {
+export function lineEntries(head) {
   const found = [];
-  const re = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "([\"'])", "g");
-  for (let from = 0; ;) {
-    re.lastIndex = from;
-    const m = re.exec(head);
-    if (!m) break;
-    const at = m.index + m[0].length - 1;
-    found.push({ key: scalarText(m), at, anchor: anchorName(m[4]) });
-    // A scalar that does not close on this line runs into the next, so nothing after it
-    // here is a key.
-    const value = decodeQuoted(head, at);
-    if (!value) break;
-    from = value.end;
+  const scope = [];
+  let pending = null;
+  const re = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "|([\"'])|([{\\[])|([}\\]])", "g");
+  for (let m; (m = re.exec(head));) {
+    if (m[5] !== undefined) {
+      // A scalar that does not close on this line runs into the next, so nothing written
+      // after it here is on this line at all.
+      const value = decodeQuoted(head, m.index);
+      if (!value) break;
+      re.lastIndex = value.end;
+      continue;
+    }
+    if (m[6] !== undefined || m[7] !== undefined) {
+      if (m[6] !== undefined) scope.push(pending);
+      else scope.pop();
+      pending = null;
+      continue;
+    }
+    const raw = m[1] !== undefined ? '"' + m[1] + '"' : m[2] !== undefined ? "'" + m[2] + "'" : m[3];
+    const key = scalarText(m);
+    found.push({
+      key,
+      col: head.startsWith(raw, m.index) ? m.index : m.index + 1,
+      depth: scope.length,
+      within: scope.filter((k) => k !== null),
+      at: m.index + m[0].length,
+      anchor: anchorName(m[4]),
+    });
+    pending = key;
   }
-  if (found.length) return found;
-  // An EXPLICIT entry's value line has no key on it; the key was written on the line before.
-  const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*:[ \\t]*" + PROPERTY_SOURCE + "([\"'])").exec(head);
-  return bare ? [{ key: null, at: bare[0].length - 1, anchor: anchorName(bare[1]) }] : [];
+  return found;
 }
 
 /**
- * A mapping entry whose value is an ALIAS — `run: *script`, which is the value its anchor
- * holds. GitHub Actions supports anchors, and read as neither a block nor a quoted scalar
- * the shell behind one was never looked at.
+ * EVERY mapping entry on the line whose value is a quoted scalar.
+ *
+ * A FLOW mapping puts several on one — `steps: [{ name: "x", run: "…" }]` — and read as the
+ * first one only, a `run` behind any other key was never looked at. The node property a
+ * block scalar may wear is allowed in front of each: `run: &script "…"` is the same value.
  */
-export function yamlAlias(head) {
-  const m = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "\\*(\\S+)[ \\t]*$").exec(head);
-  if (m) return { key: scalarText(m), name: m[5] };
-  const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*:[ \\t]*" + PROPERTY_SOURCE + "\\*(\\S+)[ \\t]*$").exec(head);
-  return bare ? { key: null, name: bare[2] } : null;
+export function yamlQuotedAll(head) {
+  const found = lineEntries(head).filter((e) => head[e.at] === '"' || head[e.at] === "'");
+  if (found.length) return found;
+  // An EXPLICIT entry's value line has no key on it; the key was written on the line before.
+  const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*:[ \\t]*" + PROPERTY_SOURCE + "([\"'])").exec(head);
+  return bare ? [{ key: null, at: bare[0].length - 1, within: [], anchor: anchorName(bare[1]) }] : [];
 }
+
+/** The characters an anchor name is made of: everything but whitespace and the flow
+ *  indicators that end a node written inside a `[` or a `{`. */
+const ALIAS_NAME = /\*([^\s,[\]{}]+)/y;
+
+/**
+ * EVERY mapping entry on the line whose value is an ALIAS — `run: *script`, which is the
+ * value its anchor holds. GitHub Actions supports anchors, and read as neither a block nor
+ * a quoted scalar the shell behind one was never looked at.
+ *
+ * A flow mapping ends the name with `,`, `]` or `}` rather than with the line, so matched
+ * to the end of the line instead, `steps: [{ run: *script }]` was no alias at all.
+ */
+export function yamlAliasAll(head) {
+  const found = [];
+  for (const entry of lineEntries(head)) {
+    ALIAS_NAME.lastIndex = entry.at;
+    const m = ALIAS_NAME.exec(head);
+    if (m) found.push({ key: entry.key, within: entry.within, name: m[1] });
+  }
+  if (found.length) return found;
+  const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*:[ \\t]*" + PROPERTY_SOURCE + "\\*([^\\s,[\\]{}]+)").exec(head);
+  return bare ? [{ key: null, within: [], name: bare[2] }] : [];
+}
+
+/** Where GitHub Actions RUNS a value as shell: a step of a workflow's job, and a step of a
+ *  composite action. Decided by the key's NAME alone, an environment variable or an action
+ *  input that happens to be called `run` was lexed against a grammar it is not written in. */
+const ANY_JOB = Symbol("any job");
+const RUN_PATHS = [
+  ["jobs", ANY_JOB, "steps", "run"],
+  ["runs", "steps", "run"],
+];
+const isRunPath = (path) =>
+  RUN_PATHS.some((want) => want.length === path.length && want.every((seg, k) => seg === ANY_JOB || seg === path[k]));
 
 /**
  * The VALUE of a quoted scalar whose opening quote is at `at`, with each character's offset

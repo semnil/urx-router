@@ -907,39 +907,52 @@ describe("what counts as a comment in the # languages and in HTML", () => {
   // `run:` bodies this looked at were the ones written with `|`. Ruby's YAML loads the
   // double-quoted, the single-quoted, the two-line and the explicit-key forms below as the
   // one string `echo ok # measured on URX44V`.
+
   it("reads a run: written as a quoted scalar", () => {
     const wf = ".github/workflows/x.yml";
-    expect(findingsIn('steps:\n  - run: "echo ok # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([2]);
-    expect(findingsIn("steps:\n  - run: 'echo ok # measured on URX44V'\n", wf).map((f) => f.line)).toEqual([2]);
+    const job = (step) => "jobs:\n  a:\n    steps:\n" + step;
+    expect(findingsIn(job('      - run: "echo ok # measured on URX44V"\n'), wf).map((f) => f.line)).toEqual([4]);
+    expect(findingsIn(job("      - run: 'echo ok # measured on URX44V'\n"), wf).map((f) => f.line)).toEqual([4]);
     // …across the lines a quoted scalar may span, where the newline FOLDS to a space, which
     // is what joins `echo ok #` to the words on the line below into one comment…
-    expect(findingsIn('steps:\n  - run: "echo ok #\n      measured on URX44V"\n', wf).map((f) => f.line)).toEqual([2]);
-    expect(findingsIn('steps:\n  - run: "echo ok\n      # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([3]);
+    expect(findingsIn(job('      - run: "echo ok #\n          measured on URX44V"\n'), wf).map((f) => f.line)).toEqual([
+      4,
+    ]);
+    expect(findingsIn(job('      - run: "echo ok\n          # measured on URX44V"\n'), wf).map((f) => f.line)).toEqual([
+      5,
+    ]);
     // …and behind an explicit key, whose own line carries no key at all.
-    expect(findingsIn('steps:\n  - ? run\n    : "echo ok # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([3]);
+    expect(findingsIn(job('      - ? run\n        : "echo ok # measured on URX44V"\n'), wf).map((f) => f.line)).toEqual(
+      [5],
+    );
     // The shell's own rules apply inside it: a `#` in a nested quote is not a comment.
-    expect(findingsIn("steps:\n  - run: \"echo '# measured on URX44V'\"\n", wf)).toEqual([]);
+    expect(findingsIn(job("      - run: \"echo '# measured on URX44V'\"\n"), wf)).toEqual([]);
     // …behind an anchor or a tag, which a quoted value may wear as a block one may…
-    expect(findingsIn('steps:\n  - run: &script "echo ok # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([2]);
-    expect(findingsIn('steps:\n  - run: !!str "echo ok # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([2]);
+    expect(findingsIn(job('      - run: &script "echo ok # measured on URX44V"\n'), wf).map((f) => f.line)).toEqual([
+      4,
+    ]);
+    expect(findingsIn(job('      - run: !!str "echo ok # measured on URX44V"\n'), wf).map((f) => f.line)).toEqual([4]);
     expect(
-      findingsIn('steps:\n  - ? run\n    : &script "echo ok # measured on URX44V"\n', wf).map((f) => f.line),
-    ).toEqual([3]);
+      findingsIn(job('      - ? run\n        : &script "echo ok # measured on URX44V"\n'), wf).map((f) => f.line),
+    ).toEqual([5]);
     // …with the line breaks folded the way YAML folds them, so an ESCAPED one carries a
     // comment past it and a blank line ends one there.
-    expect(findingsIn('steps:\n  - run: "echo ok # measured \\\n      on URX44V"\n', wf).map((f) => f.line)).toEqual([
-      2,
-    ]);
-    expect(findingsIn('steps:\n  - run: "echo ok #\n\n      measured on URX44V"\n', wf)).toEqual([]);
+    expect(
+      findingsIn(job('      - run: "echo ok # measured \\\n          on URX44V"\n'), wf).map((f) => f.line),
+    ).toEqual([4]);
+    expect(findingsIn(job('      - run: "echo ok #\n\n          measured on URX44V"\n'), wf)).toEqual([]);
     // …whatever the file's line breaks are. Matched as `\n` alone, a CRLF file's escaped
     // break was read as an escaped `\r` and then an ordinary fold, so the value carried a
     // carriage return and a space where the source had joined two halves of one word.
     expect(
-      findingsIn('steps:\r\n  - run: "echo ok # measu\\\r\n      red on URX44V"\r\n', wf).map((f) => f.line),
-    ).toEqual([2]);
+      findingsIn(
+        'jobs:\r\n  a:\r\n    steps:\r\n      - run: "echo ok # measu\\\r\n          red on URX44V"\r\n',
+        wf,
+      ).map((f) => f.line),
+    ).toEqual([4]);
     // …and only `run`, and only where something runs it.
-    expect(findingsIn('steps:\n  - message: "echo ok # measured on URX44V"\n', wf)).toEqual([]);
-    expect(findingsIn('steps:\n  - run: "echo ok # measured on URX44V"\n', "docs/x.yml")).toEqual([]);
+    expect(findingsIn(job('      - message: "echo ok # measured on URX44V"\n'), wf)).toEqual([]);
+    expect(findingsIn(job('      - run: "echo ok # measured on URX44V"\n'), "docs/x.yml")).toEqual([]);
   });
 
   // A value written once and referred to by ALIAS is the same value, and GitHub Actions
@@ -964,49 +977,116 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     expect(findingsIn(other, wf)).toEqual([]);
   });
 
+  // A flow mapping ends an alias with `,`, `]` or `}` rather than with the line. Matched to
+  // the end of the line instead, `steps: [{ run: *script }]` was no alias at all — Ruby's
+  // YAML expands it to the shell the anchor holds, and nothing here looked at it.
+  it("ends an alias where a flow mapping ends it, not where the line ends", () => {
+    const wf = ".github/workflows/x.yml";
+    const held = 'env:\n  SCRIPT: &script "echo ok # measured on URX44V"\njobs:\n  a:\n    ';
+    expect(findingsIn(held + "steps: [{ run: *script }]\n", wf).map((f) => f.line)).toEqual([2]);
+    // …and behind another entry on the same line, which is where the search has to resume.
+    expect(findingsIn(held + "steps: [{ name: x, run: *script }]\n", wf).map((f) => f.line)).toEqual([2]);
+    // …with no space to end the name either, which is the whole of what a flow mapping
+    // adds: `}` and `]` end a node there as the line end does.
+    expect(findingsIn(held + "steps: [{run: *script}]\n", wf).map((f) => f.line)).toEqual([2]);
+    // …while an alias under a key nothing runs is still the string it is.
+    expect(findingsIn(held + "steps: [{ name: *script }]\n", wf)).toEqual([]);
+  });
+
+  // A `run:` is shell where GitHub RUNS it — a step of a job, or a step of a composite
+  // action — and nowhere else. Taken from the key's NAME alone, an environment variable and
+  // an action input that carry that name were both lexed against a grammar they are not
+  // written in. Ruby's YAML loads each of these as a mapping entry under what precedes it.
+  it("reads a run: where a step's is, and not every value written under that name", () => {
+    const wf = ".github/workflows/x.yml";
+    const shell = '"echo ok # measured on URX44V"';
+    expect(findingsIn(`jobs:\n  a:\n    steps:\n      - run: ${shell}\n`, wf).map((f) => f.line)).toEqual([4]);
+    expect(findingsIn(`runs:\n  using: composite\n  steps:\n    - run: ${shell}\n`, wf).map((f) => f.line)).toEqual([
+      4,
+    ]);
+    // …while a variable, an input and a value nested under one carry the name and not the
+    // meaning.
+    expect(findingsIn(`env:\n  run: ${shell}\n`, wf)).toEqual([]);
+    expect(findingsIn(`jobs:\n  a:\n    env:\n      run: ${shell}\n`, wf)).toEqual([]);
+    expect(findingsIn(`jobs:\n  a:\n    steps:\n      - with:\n          run: ${shell}\n`, wf)).toEqual([]);
+    expect(findingsIn(`jobs:\n  a:\n    steps: [{ with: { run: ${shell} } }]\n`, wf)).toEqual([]);
+    // …and a key that follows another one on the same step belongs to the step, not to the
+    // key above it.
+    expect(
+      findingsIn(`jobs:\n  a:\n    steps:\n      - name: x\n        run: ${shell}\n`, wf).map((f) => f.line),
+    ).toEqual([5]);
+    // …and a FLOW collection written across lines opens no block key on any of them, so a
+    // step of it is a step of `steps` and not of whatever the line above put in it. Ruby's
+    // YAML loads this as two steps, the second one carrying the shell.
+    expect(
+      findingsIn(`jobs:\n  a:\n    steps: [\n      { name: x },\n          { run: ${shell} }\n    ]\n`, wf).map(
+        (f) => f.line,
+      ),
+    ).toEqual([5]);
+    // …a block scalar under one of those names is text for the same reason.
+    expect(
+      findingsIn(
+        "jobs:\n  a:\n    steps:\n      - with:\n          run: |\n            echo # measured on URX44V\n",
+        wf,
+      ),
+    ).toEqual([]);
+    // …and a job of a second name is still a job, which is the one segment of the path that
+    // is not a fixed word — so the keys open above a line are unwound when a sibling starts,
+    // and a job that follows one carrying an `env: run:` still has its own steps read.
+    expect(findingsIn(`jobs:\n  b:\n    steps:\n      - run: ${shell}\n`, wf).map((f) => f.line)).toEqual([4]);
+    const two = `jobs:\n  a:\n    env:\n      run: ${shell}\n  b:\n    steps:\n      - run: ${shell}\n`;
+    expect(findingsIn(two, wf).map((f) => f.line)).toEqual([7]);
+  });
+
   // A `>` block is the same shell written across more lines, so a sentence split by a fold
   // is one sentence. Read as a literal it was two, and the comment on it went unmatched.
+
   it("reads a run: written as a folded block", () => {
     const wf = ".github/workflows/x.yml";
+    const job = (step) => "jobs:\n  a:\n    steps:\n" + step;
     expect(
-      findingsIn("steps:\n  - run: >\n      echo ok # measured\n      on URX44V\n", wf).map((f) => f.line),
-    ).toEqual([3]);
+      findingsIn(job("      - run: >\n          echo ok # measured\n          on URX44V\n"), wf).map((f) => f.line),
+    ).toEqual([5]);
     // …and an empty line is kept, so what it separates is two lines and not one comment.
-    expect(findingsIn("steps:\n  - run: >\n      echo ok #\n\n      measured on URX44V\n", wf)).toEqual([]);
+    expect(findingsIn(job("      - run: >\n          echo ok #\n\n          measured on URX44V\n"), wf)).toEqual([]);
     // …while a `|` block keeps every break, as it did before.
-    expect(
-      findingsIn("steps:\n  - run: |\n      echo ok # measured\n      on URX44V\n", wf).map((f) => f.line),
-    ).toEqual([]);
+    expect(findingsIn(job("      - run: |\n          echo ok # measured\n          on URX44V\n"), wf)).toEqual([]);
   });
 
   // A FLOW mapping puts several entries on one line, and read as the first one only a `run`
   // behind any other key was never looked at. `{` and `,` open a key as a line start does.
+
   it("reads every entry a flow mapping puts on one line", () => {
     const wf = ".github/workflows/x.yml";
-    expect(findingsIn('steps: [{ name: "x", run: "echo ok # measured on URX44V" }]\n', wf).map((f) => f.line)).toEqual([
-      1,
-    ]);
-    expect(findingsIn('steps: [{run: "echo ok # measured on URX44V"}]\n', wf).map((f) => f.line)).toEqual([1]);
+    const job = (steps) => "jobs:\n  a:\n    " + steps;
+    expect(
+      findingsIn(job('steps: [{ name: "x", run: "echo ok # measured on URX44V" }]\n'), wf).map((f) => f.line),
+    ).toEqual([3]);
+    expect(findingsIn(job('steps: [{run: "echo ok # measured on URX44V"}]\n'), wf).map((f) => f.line)).toEqual([3]);
     // …and a `key: "…"` written INSIDE a value is not an entry, so the search for the next
     // one resumes past the value rather than inside it.
-    expect(findingsIn("steps: [{ name: 'x, run: \"echo ok # measured on URX44V\"' }]\n", wf)).toEqual([]);
+    expect(findingsIn(job("steps: [{ name: 'x, run: \"echo ok # measured on URX44V\"' }]\n"), wf)).toEqual([]);
   });
 
   // One source range is ONE comment, however many aliases read the value it is in.
+
   it("counts a value read through two aliases once", () => {
     const wf = ".github/workflows/x.yml";
-    const twice = 'steps:\n  - run: &script "echo ok # measured on URX44V"\n  - run: *script\n';
-    expect(findingsIn(twice, wf).map((f) => f.line)).toEqual([2]);
+    const twice =
+      'jobs:\n  a:\n    steps:\n      - run: &script "echo ok # measured on URX44V"\n      - run: *script\n';
+    expect(findingsIn(twice, wf).map((f) => f.line)).toEqual([4]);
   });
 
   it("carries an explicit key across a comment and a blank line", () => {
-    const commented = "steps:\n  - ? run\n    # separator\n    : |\n        echo ok # measured on URX44V\n";
-    expect(findingsIn(commented, ".github/workflows/x.yml").map((f) => f.line)).toEqual([5]);
-    const blank = "steps:\n  - ? run\n\n    : |\n        echo ok # measured on URX44V\n";
-    expect(findingsIn(blank, ".github/workflows/x.yml").map((f) => f.line)).toEqual([5]);
+    const wf = ".github/workflows/x.yml";
+    const job = (step) => "jobs:\n  a:\n    steps:\n" + step;
+    const commented = "      - ? run\n        # separator\n        : |\n            echo ok # measured on URX44V\n";
+    expect(findingsIn(job(commented), wf).map((f) => f.line)).toEqual([7]);
+    const blank = "      - ? run\n\n        : |\n            echo ok # measured on URX44V\n";
+    expect(findingsIn(job(blank), wf).map((f) => f.line)).toEqual([7]);
     // …and a real node between them still ends the entry.
-    const interrupted = "steps:\n  - ? run\n  - name: x\n    y: |\n        echo ok # measured on URX44V\n";
-    expect(findingsIn(interrupted, ".github/workflows/x.yml")).toEqual([]);
+    const interrupted = "      - ? run\n      - name: x\n        y: |\n            echo ok # measured on URX44V\n";
+    expect(findingsIn(job(interrupted), wf)).toEqual([]);
   });
 
   // An OPTION at a command position is not the command. `time -p case x in …` puts one
@@ -1026,13 +1106,15 @@ describe("what counts as a comment in the # languages and in HTML", () => {
   });
 
   it("carries an explicit mapping key to the line its value is on", () => {
-    const explicit = "steps:\n  - ? run\n    : |\n        echo hi  # measured on URX44V\n";
-    expect(findingsIn(explicit, ".github/workflows/x.yml").map((f) => f.line)).toEqual([4]);
-    const quoted = 'steps:\n  - ? "run"\n    : |\n        echo hi  # measured on URX44V\n';
-    expect(findingsIn(quoted, ".github/workflows/x.yml").map((f) => f.line)).toEqual([4]);
+    const wf = ".github/workflows/x.yml";
+    const job = (step) => "jobs:\n  a:\n    steps:\n" + step;
+    const explicit = "      - ? run\n        : |\n            echo hi  # measured on URX44V\n";
+    expect(findingsIn(job(explicit), wf).map((f) => f.line)).toEqual([6]);
+    const quoted = '      - ? "run"\n        : |\n            echo hi  # measured on URX44V\n';
+    expect(findingsIn(job(quoted), wf).map((f) => f.line)).toEqual([6]);
     // …and the key belongs to the entry it was written for, not to a later one.
-    const other = "steps:\n  - ? message\n    : |\n        echo hi  # measured on URX44V\n";
-    expect(findingsIn(other, ".github/workflows/x.yml")).toEqual([]);
+    const other = "      - ? message\n        : |\n            echo hi  # measured on URX44V\n";
+    expect(findingsIn(job(other), wf)).toEqual([]);
     expect(yamlExplicitKey("  - ? run")).toBe("run");
     expect(yamlExplicitKey('  - ? "r\\u0075n"')).toBe("run");
     expect(yamlExplicitKey("  - run: |")).toBe(null);

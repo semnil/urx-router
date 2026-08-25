@@ -123,6 +123,14 @@ const PROSE_TOKENS = new Map([
   // grammar being discussed (`run:` is YAML's key, `)` is the character a shell closes on),
   // one is a command run as a positive control, and two are node's own globals.
   ["run:", "a YAML key, named as the one block scalar that holds shell rather than text"],
+  // Four more from that row, once it named WHERE a `run:` is shell rather than only what it
+  // is. All four are YAML written as itself: two bare keys a workflow hands to something
+  // other than the shell, the path to one of them, and a flow mapping holding a nested one.
+  ["env:", "a YAML key, named as the variable map whose entries GitHub does not run"],
+  ["with:", "a YAML key, named as an action's inputs, which GitHub does not run either"],
+  ["env: run:", "two YAML keys, written as the path to a variable that carries the name"],
+  ["{ with: { run: \u2026 } }", "a YAML flow mapping, named as the nested shape of the same case"],
+  ["[{ run: *script }]", "a YAML flow sequence holding an alias, named as the shape a line-anchored name refused"],
   // Three more from that row, once it named what the block scalars are measured against.
   // Two are YAML written as itself — a block header with its indentation indicator — and
   // one is the CPython module the f-string reader is differentialled against.
