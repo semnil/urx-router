@@ -147,6 +147,14 @@ const PROSE_TOKENS = new Map([
   ["[", "PowerShell, named as the same boundary the other way round"],
   ["..", "PowerShell's range operator, named as another of those boundaries"],
   ["Parser::ParseInput", "PowerShell's own parser, named as the authority the corpus is derived from"],
+  // Five more from that row: two PowerShell fragments written as the pair whose answers
+  // differ, the token type whose nested tokens are walked, the subexpression they are in,
+  // and the shell keyword GitHub spells for Windows PowerShell. None is an entity in any tree.
+  ["$x# \u2026", "PowerShell, named as the half of the pair that IS a comment"],
+  ["Write-Output a#\u2026", "PowerShell, named as the half that is one token"],
+  ["StringExpandableToken.NestedTokens", "a PowerShell token type, named as what the walk descends into"],
+  ["$( \u2026 )", "a PowerShell subexpression, named as where a nested comment sits"],
+  ["powershell", "the GitHub shell keyword for Windows PowerShell, named as itself"],
   // Four fragments of YAML, named as the words a plain scalar's continuation is made of.
   // None is an entity in any tree: three only LOOK like an indicator or a key, and the
   // fourth is the one spelling that is.

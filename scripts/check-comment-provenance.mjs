@@ -37,7 +37,7 @@
 //
 // Exits 1 on findings above the ledger; --hook exits 2 so the message is fed back to Claude.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -745,38 +745,73 @@ export function rustComments(src) {
   return out;
 }
 
-/**
- * The punctuation a PowerShell token cannot run past, so a `#` after one begins a token of
- * its own — which is where PowerShell begins a comment.
- *
- * Measured against `Parser::ParseInput` (scripts/pwsh-boundaries.json holds the corpus and
- * its answers): a comment opens after each of these, after whitespace, and after a token
- * that CLOSED — a string, a here-string, a block comment. Everything else leaves the state
- * UNCERTAIN rather than open, because PowerShell's answer there depends on a mode a lexer
- * cannot see: `$x[0]#` is a comment and `Write-Output a]#` is one bareword, and the same
- * split holds for a digit, a `[`, `..`, `--` and `++`. This reader takes the miss on every
- * one of those rather than the invention, which is the trade the whole check is built on,
- * and the corpus names each of them so the set is countable rather than found one at a time.
- */
-const PWSH_OPENS = /[\s;,|&(){}]/;
-/** The quote characters PowerShell accepts, which are not only the ASCII pair: `“x # y”` is
- *  a string and the words in it are data. Each class closes on any member of its own. */
-const PWSH_SINGLE = "'\u2018\u2019\u201a\u201b";
-const PWSH_DOUBLE = '"\u201c\u201d\u201e';
+/** A value whose comments cannot be established. Not the same as a value with NONE, and the
+ *  difference is the whole reason this is thrown rather than answered. */
+export class Undecidable extends Error {}
 
 /**
- * The comments in a POWERSHELL script, which is what GitHub runs a `shell: pwsh` step with
- * and what a Windows runner defaults to.
+ * The comments in POWERSHELL scripts, as PowerShell's own parser reports them.
  *
- * PowerShell has two: `#` where a token may begin, and `<# … #>`, which does NOT nest — the
- * first `#>` ends it and what follows is code again. Its strings are not the shell's: `'…'`
- * takes no escape and doubles the quote to hold one, `"…"` escapes with a BACKTICK, and a
- * here-string runs to a line beginning `"@`. The EXPANDABLE ones are not opaque — a `$( … )`
- * inside either is a statement list, so a comment written in one is a comment — while the
- * literal `'…'` and `@'…'@` are text throughout.
+ * Where PowerShell begins a comment is a token STATE, and a lexer written here cannot
+ * recover it: the same `]`, digit, `..`, `--` or `[` opens a comment in expression position
+ * and continues a bareword in argument position, `$x# …` is a comment while
+ * `Write-Output a#…` is one token, and only the parser knows which of the two it is in.
+ * Approximated with a set of preceding characters, this read valid workflows both ways —
+ * refusing lines PowerShell calls code, and passing comments PowerShell calls comments — so
+ * it asks the parser instead, in ONE call for every value in the file, and walks
+ * StringExpandableToken.NestedTokens so a comment inside a `$( … )` is reported too.
+ *
+ * THROWS where the parser cannot be reached, or where a script does not parse. A value whose
+ * comments are unknown is not a value with none, and answering "none" is how a comment this
+ * check exists to refuse walks past a green run.
  */
-export function pwshComments(src) {
-  const out = [];
+export function pwshSpans(scripts, exe = "pwsh") {
+  if (!scripts.length) return [];
+  const walk = `
+    $ErrorActionPreference = 'Stop'
+    $all = [Console]::In.ReadToEnd() | ConvertFrom-Json
+    $rows = New-Object System.Collections.ArrayList
+    function Walk($ts, $into) {
+      foreach ($t in $ts) {
+        if ($t.Kind -eq [System.Management.Automation.Language.TokenKind]::Comment) {
+          [void]$into.Add(@($t.Extent.StartOffset, $t.Extent.EndOffset))
+        }
+        if ($t -is [System.Management.Automation.Language.StringExpandableToken] -and $t.NestedTokens) {
+          Walk $t.NestedTokens $into
+        }
+      }
+    }
+    foreach ($src in @($all)) {
+      $tokens = $null; $errs = $null
+      [System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$tokens, [ref]$errs) | Out-Null
+      $found = New-Object System.Collections.ArrayList
+      Walk $tokens $found
+      [void]$rows.Add(@{ errors = @($errs).Count; comments = @($found) })
+    }
+    ConvertTo-Json -InputObject @($rows) -Depth 6 -Compress
+  `;
+  const run = spawnSync(exe, ["-NoProfile", "-Command", walk], {
+    input: JSON.stringify(scripts),
+    encoding: "utf8",
+    maxBuffer: 1 << 26,
+  });
+  if (run.error || run.status !== 0)
+    throw new Undecidable(
+      `${exe} could not be asked what a comment is: ${run.error?.code ?? run.stderr?.trim() ?? "no output"}`,
+    );
+  return JSON.parse(run.stdout).map((r, n) => {
+    if (r.errors > 0) throw new Undecidable(`${exe} does not parse this value: ${JSON.stringify(scripts[n])}`);
+    return (r.comments ?? []).map((c) => [c[0], c[1]]).sort((a, b) => a[0] - b[0]);
+  });
+}
+
+/** The TEXT of a comment span, which is what the rules read: the comment without its
+ *  delimiters — `<#` and `#>` around a block one, the `#` in front of a line one. */
+export const pwshText = (src, start, end) =>
+  src.startsWith("<#", start) ? src.slice(start + 2, end - 2) : src.slice(start + 1, end);
+
+/** The comment spans of ONE script, as `{ line, text, start, end }` like the other readers. */
+export function pwshComments(src, exe = "pwsh") {
   const starts = [0];
   for (let i = 0; i < src.length; i++) if (src[i] === "\n") starts.push(i + 1);
   const lineOf = (at) => {
@@ -784,113 +819,12 @@ export function pwshComments(src) {
     while (k + 1 < starts.length && starts[k + 1] <= at) k++;
     return k + 1;
   };
-  /** Past the `)` that closes a subexpression opened at `open`, whose strings hold no code. */
-  const closeParen = (open) => {
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-      const c = src[i];
-      if (c === "`") i++;
-      else if (PWSH_SINGLE.includes(c) || PWSH_DOUBLE.includes(c)) {
-        const kind = PWSH_SINGLE.includes(c) ? PWSH_SINGLE : PWSH_DOUBLE;
-        i++;
-        while (i < src.length && !kind.includes(src[i])) i += src[i] === "`" ? 2 : 1;
-      } else if (c === "(") depth++;
-      else if (c === ")" && --depth === 0) return i;
-    }
-    return src.length;
-  };
-  /** Walk an expandable body, lexing each `$( … )` in it as code and the rest as text. */
-  const expand = (from, stop) => {
-    let i = from;
-    while (i < stop) {
-      if (src[i] === "`") i += 2;
-      else if (src[i] === "$" && src[i + 1] === "(") {
-        const close = closeParen(i + 1);
-        scan(i + 2, Math.min(close, stop));
-        i = close + 1;
-      } else i++;
-    }
-  };
-  /** Past the `"` that closes an expandable string opened at `open`, its `$( … )` read. */
-  const closeExpandable = (open) => {
-    let i = open + 1;
-    while (i < src.length) {
-      if (src[i] === "`") i += 2;
-      else if (src[i] === "$" && src[i + 1] === "(") {
-        const close = closeParen(i + 1);
-        scan(i + 2, close);
-        i = close + 1;
-      } else if (PWSH_DOUBLE.includes(src[i])) return i + 1;
-      else i++;
-    }
-    return src.length;
-  };
-  function scan(from, stop) {
-    // Whether a `#` written here would BEGIN a token, which is the whole of PowerShell's
-    // rule for one. A character test alone missed the closes: a `#` right after `"@` or
-    // after a `#>` starts a comment, and neither `@` nor `>` is punctuation a token stops at.
-    let opens = true;
-    for (let i = from; i < stop;) {
-      const c = src[i];
-      // The backtick is PowerShell's escape, not a substitution: it hides the next character.
-      if (c === "`") {
-        i += 2;
-        opens = false;
-        continue;
-      }
-      // A `<#` opens a block comment only where a token may BEGIN: written against a word,
-      // `Foo<# … #>` is that word and the `#>` at the end is a line comment of its own.
-      if (c === "<" && src[i + 1] === "#" && opens) {
-        const shut = src.indexOf("#>", i + 2);
-        const end = shut === -1 ? stop : shut + 2;
-        out.push({ line: lineOf(i), text: src.slice(i + 2, shut === -1 ? end : shut), start: i, end });
-        i = end;
-        opens = true;
-        continue;
-      }
-      if (c === "#" && opens) {
-        let k = i;
-        while (k < stop && src[k] !== "\n") k++;
-        out.push({ line: lineOf(i), text: src.slice(i + 1, k), start: i, end: k });
-        i = k;
-        opens = true;
-        continue;
-      }
-      // A here-string runs to a line BEGINNING with the closing pair, so a quote inside one
-      // closes nothing; the expandable form carries code in its `$( … )` and the other does
-      // not.
-      if (c === "@" && (PWSH_DOUBLE.includes(src[i + 1]) || PWSH_SINGLE.includes(src[i + 1]))) {
-        const close = "\n" + src[i + 1] + "@";
-        const shut = src.indexOf(close, i + 2);
-        const end = shut === -1 ? stop : shut + close.length;
-        if (PWSH_DOUBLE.includes(src[i + 1])) expand(i + 2, shut === -1 ? end : shut);
-        i = end;
-        opens = true;
-        continue;
-      }
-      if (PWSH_SINGLE.includes(c)) {
-        let k = i + 1;
-        while (k < src.length) {
-          if (PWSH_SINGLE.includes(src[k])) {
-            if (PWSH_SINGLE.includes(src[k + 1])) k += 2;
-            else break;
-          } else k++;
-        }
-        i = k + 1;
-        opens = true;
-        continue;
-      }
-      if (PWSH_DOUBLE.includes(c)) {
-        i = closeExpandable(i);
-        opens = true;
-        continue;
-      }
-      opens = PWSH_OPENS.test(c);
-      i++;
-    }
-  }
-  scan(0, src.length);
-  return out.sort((a, b) => a.start - b.start);
+  return pwshSpans([src], exe)[0].map(([start, end]) => ({
+    line: lineOf(start),
+    text: pwshText(src, start, end),
+    start,
+    end,
+  }));
 }
 
 /**
@@ -990,19 +924,33 @@ export function yamlComments(src, actions = false) {
     return on != null && !on.includes("${{") && /windows/i.test(on) ? "pwsh" : "bash";
   };
   const flushShell = () => {
-    for (const { text, map, step: at } of queued) {
-      const read = SHELL_READERS[shellFor(at)];
-      if (!read) continue;
-      for (const span of read(text)) {
-        const start = map[span.start];
-        out.push({
-          line: lineOf(start),
-          text: span.text,
-          start,
-          end: span.end < map.length ? map[span.end] : map[map.length - 1] + 1,
-        });
-      }
+    const shells = queued.map((q) => shellFor(q.step));
+    // One parser call per program for the whole file, rather than one per value.
+    const parsed = new Map();
+    for (const exe of new Set(Object.values(PARSED_SHELLS))) {
+      const at = shells.map((s, k) => (PARSED_SHELLS[s] === exe ? k : -1)).filter((k) => k >= 0);
+      const spans = pwshSpans(
+        at.map((k) => queued[k].text),
+        exe,
+      );
+      at.forEach((k, n) => parsed.set(k, spans[n]));
     }
+    const place = (map, start, end, text) =>
+      out.push({
+        line: lineOf(map[start]),
+        text,
+        start: map[start],
+        end: end < map.length ? map[end] : map[map.length - 1] + 1,
+      });
+    queued.forEach(({ text, map }, k) => {
+      if (parsed.has(k)) {
+        for (const [start, end] of parsed.get(k)) place(map, start, end, pwshText(text, start, end));
+        return;
+      }
+      const read = SHELL_READERS[shells[k]];
+      if (!read) return;
+      for (const span of read(text)) place(map, span.start, span.end, span.text);
+    });
   };
   const takeValues = (head, n, under, carried, carriedAnchor, entering) => {
     if (!actions) return;
@@ -1586,11 +1534,14 @@ const isStepsPath = (path) => STEPS_PATHS.some((want) => samePath(want, path));
 const SHELL_READERS = {
   bash: shellComments,
   sh: shellComments,
-  pwsh: pwshComments,
-  powershell: pwshComments,
   python: pyComments,
   cmd: cmdComments,
 };
+/** The two whose comments are decided by a PARSER rather than by a reader written here, and
+ *  the program that owns each one. `powershell` is Windows PowerShell, whose parser is its
+ *  own: asked of `pwsh` it would be an approximation, and an approximation is what this
+ *  round removed. Where the program is absent the value is UNDECIDABLE, not comment-free. */
+const PARSED_SHELLS = { pwsh: "pwsh", powershell: "powershell" };
 
 /**
  * The VALUE of a quoted scalar whose opening quote is at `at`, with each character's offset
@@ -2582,7 +2533,18 @@ if (invokedDirectly) {
       process.exit(1);
     }
   }
-  const found = targets.flatMap((p) => findingsIn(readFileSync(p, "utf8"), p));
+  // A value this cannot decide is not a value with no comments in it. PowerShell's own parser
+  // is what decides a `shell: pwsh` step, and where it cannot be reached the run says so and
+  // stops, rather than reporting the clean scan that a silent "none" would produce.
+  let found;
+  try {
+    found = targets.flatMap((p) => findingsIn(readFileSync(p, "utf8"), p));
+  } catch (err) {
+    if (!(err instanceof Undecidable)) throw err;
+    console.error(`Cannot decide what a comment is here: ${err.message}`);
+    console.error("A PowerShell step is read by PowerShell's parser. Install pwsh, or drop the step.");
+    process.exit(1);
+  }
   const grouped = byFile(found);
 
   // What this run actually read. A partial scan compares only these, so a ledger row it never

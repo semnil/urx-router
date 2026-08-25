@@ -2,7 +2,6 @@
   "cases": [
     {
       "script": "# MARK",
-      "errors": 0,
       "parser": [
         [
           0,
@@ -18,7 +17,6 @@
     },
     {
       "script": "Write-Output x # MARK",
-      "errors": 0,
       "parser": [
         [
           15,
@@ -34,7 +32,6 @@
     },
     {
       "script": "Write-Output x\n# MARK",
-      "errors": 0,
       "parser": [
         [
           15,
@@ -50,7 +47,6 @@
     },
     {
       "script": "Write-Output 1;# MARK",
-      "errors": 0,
       "parser": [
         [
           15,
@@ -66,7 +62,6 @@
     },
     {
       "script": "Write-Output (1)# MARK",
-      "errors": 0,
       "parser": [
         [
           16,
@@ -82,7 +77,6 @@
     },
     {
       "script": "Write-Output @(1)# MARK",
-      "errors": 0,
       "parser": [
         [
           17,
@@ -98,7 +92,6 @@
     },
     {
       "script": "if (1) {}# MARK",
-      "errors": 0,
       "parser": [
         [
           9,
@@ -114,7 +107,6 @@
     },
     {
       "script": "Write-Output @{}# MARK",
-      "errors": 0,
       "parser": [
         [
           16,
@@ -130,7 +122,6 @@
     },
     {
       "script": "Write-Output 1&# MARK",
-      "errors": 0,
       "parser": [
         [
           15,
@@ -146,7 +137,6 @@
     },
     {
       "script": "Write-Output \"ok\"# MARK",
-      "errors": 0,
       "parser": [
         [
           17,
@@ -162,7 +152,6 @@
     },
     {
       "script": "Write-Output 'ok'# MARK",
-      "errors": 0,
       "parser": [
         [
           17,
@@ -178,7 +167,6 @@
     },
     {
       "script": "Write-Output @\"\nx\n\"@# MARK",
-      "errors": 0,
       "parser": [
         [
           20,
@@ -194,7 +182,6 @@
     },
     {
       "script": "Write-Output 1; <# b #># MARK",
-      "errors": 0,
       "parser": [
         [
           16,
@@ -218,7 +205,6 @@
     },
     {
       "script": "<# MARK #>",
-      "errors": 0,
       "parser": [
         [
           0,
@@ -234,7 +220,6 @@
     },
     {
       "script": "<# <# note #> Write-Output \"MARK\" #>",
-      "errors": 0,
       "parser": [
         [
           0,
@@ -258,7 +243,6 @@
     },
     {
       "script": "Foo<# MARK #>",
-      "errors": 0,
       "parser": [
         [
           11,
@@ -274,7 +258,6 @@
     },
     {
       "script": "Write-Output \"$( \"x\" # MARK\n)\"",
-      "errors": 0,
       "parser": [
         [
           21,
@@ -290,7 +273,6 @@
     },
     {
       "script": "Write-Output @\"\n$( \"x\" # MARK\n)\n\"@",
-      "errors": 0,
       "parser": [
         [
           23,
@@ -306,43 +288,36 @@
     },
     {
       "script": "Write-Output @\"\n# MARK\n\"@",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output @'\n# MARK\n'@",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output @'\n$( \"x\" # MARK\n)\n'@",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output '# MARK'",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "“x # MARK”",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "‘x # MARK’",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output “a”# MARK",
-      "errors": 0,
       "parser": [
         [
           16,
@@ -358,19 +333,16 @@
     },
     {
       "script": "Write-Output (1)`# MARK",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output \"a`\" # MARK\"",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output `\" # MARK",
-      "errors": 0,
       "parser": [
         [
           16,
@@ -386,205 +358,268 @@
     },
     {
       "script": "Write-Output a#MARK",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output a]# MARK",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output a[# MARK",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output 1# MARK",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output x1# MARK",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output a..b# MARK",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output a--b# MARK",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "Write-Output -Name# MARK",
-      "errors": 0,
       "parser": [],
       "reader": []
     },
     {
       "script": "$x[0]# MARK",
-      "errors": 0,
       "parser": [
         [
           5,
           11
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          5,
+          11
+        ]
+      ]
     },
     {
       "script": "[int]# MARK",
-      "errors": 0,
       "parser": [
         [
           5,
           11
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          5,
+          11
+        ]
+      ]
     },
     {
       "script": "1# MARK",
-      "errors": 0,
       "parser": [
         [
           1,
           7
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          1,
+          7
+        ]
+      ]
     },
     {
       "script": "$x--# MARK",
-      "errors": 0,
       "parser": [
         [
           4,
           10
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          4,
+          10
+        ]
+      ]
     },
     {
       "script": "$x++# MARK",
-      "errors": 0,
       "parser": [
         [
           4,
           10
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          4,
+          10
+        ]
+      ]
     },
     {
       "script": "1..3# MARK",
-      "errors": 0,
       "parser": [
         [
           4,
           10
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          4,
+          10
+        ]
+      ]
     },
     {
       "script": "$a = 1 + 2# MARK",
-      "errors": 0,
       "parser": [
         [
           10,
           16
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          10,
+          16
+        ]
+      ]
     },
     {
       "script": "$x -is [int]# MARK",
-      "errors": 0,
       "parser": [
         [
           12,
           18
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          12,
+          18
+        ]
+      ]
     },
     {
       "script": "$x# MARK",
-      "errors": 0,
       "parser": [
         [
           2,
           8
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          2,
+          8
+        ]
+      ]
     },
     {
-      "script": "3 -# MARK",
-      "errors": 1,
+      "script": "Write-Output (3 -# MARK\n2)",
       "parser": [
         [
-          3,
-          9
+          17,
+          23
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          17,
+          23
+        ]
+      ]
     },
     {
-      "script": "2 *# MARK",
-      "errors": 1,
+      "script": "Write-Output (1 -eq# MARK\n1)",
       "parser": [
         [
-          3,
-          9
+          19,
+          25
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          19,
+          25
+        ]
+      ]
     },
     {
-      "script": "6 /# MARK",
-      "errors": 1,
+      "script": "Write-Output (6 /# MARK\n2)",
       "parser": [
         [
-          3,
-          9
+          17,
+          23
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          17,
+          23
+        ]
+      ]
     },
     {
-      "script": "7 %# MARK",
-      "errors": 1,
+      "script": "Write-Output (4 *# MARK\n0.5)",
       "parser": [
         [
-          3,
-          9
+          17,
+          23
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          17,
+          23
+        ]
+      ]
     },
     {
-      "script": "1 -eq# MARK",
-      "errors": 1,
+      "script": "Write-Output (7 %# MARK\n2)",
       "parser": [
         [
-          5,
-          11
+          17,
+          23
         ]
       ],
-      "reader": []
+      "reader": [
+        [
+          17,
+          23
+        ]
+      ]
+    },
+    {
+      "script": "$x = 1\n$x# MARK",
+      "parser": [
+        [
+          9,
+          15
+        ]
+      ],
+      "reader": [
+        [
+          9,
+          15
+        ]
+      ]
     }
   ]
 }

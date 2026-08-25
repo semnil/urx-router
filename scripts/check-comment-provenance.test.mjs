@@ -37,12 +37,20 @@ import {
   lineScan,
   plainScalar,
   pwshComments,
+  pwshSpans,
+  Undecidable,
   yamlPlainAll,
   rustComments,
   verdict,
 } from "./check-comment-provenance.mjs";
 import { formatTargets, JS_FAMILY } from "./format.mjs";
-import { PWSH_CASES, parserSpans } from "./pwsh-boundaries.mjs";
+import { PWSH_CASES } from "./pwsh-boundaries.mjs";
+
+// A `shell: pwsh` value is decided by PowerShell's own parser, so a pin that drives one is
+// skipped where no PowerShell is on the PATH — the GitHub runner carries one — and the skip
+// is named rather than silent.
+const pwshHere = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
+const noPwsh = Boolean(pwshHere.error) || pwshHere.status !== 0;
 import { win32 } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1027,8 +1035,22 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     const step = (shell, value) =>
       `jobs:\n  a:\n    steps:\n      - shell: ${shell}\n        run: ${JSON.stringify(value)}\n`;
 
+    // Two of these are decided by a PARSER rather than by a reader written here, and where
+    // that program is absent the value is UNDECIDABLE — `powershell` is Windows PowerShell,
+    // whose parser is its own, so asking `pwsh` for it would be the approximation this round
+    // removed. A refusal is the answer there, not a clean pass.
+    const reachable = (exe) => {
+      const r = spawnSync(exe, ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
+      return !r.error && r.status === 0;
+    };
+    const PARSED = { pwsh: reachable("pwsh"), powershell: reachable("powershell") };
+
     it("reads each shell with its own comment syntax, and no other", () => {
       for (const [shell, hit, miss] of SHELLS) {
+        if (shell in PARSED && !PARSED[shell]) {
+          expect(() => findingsIn(step(shell, hit), wf), `${shell}: no parser`).toThrow(Undecidable);
+          continue;
+        }
         expect(
           findingsIn(step(shell, hit), wf).map((f) => f.line),
           `${shell}: ${hit}`,
@@ -1042,7 +1064,7 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     // begins a comment wherever a TOKEN may begin, which a closing quote does, and a
     // `$( … )` inside an expandable string or here-string is a statement list and not text.
     // Every one of these was measured against pwsh 7.4.6 before it was written down.
-    it("reads PowerShell the way PowerShell reads it", () => {
+    it.skipIf(noPwsh)("reads PowerShell the way PowerShell reads it", () => {
       const ps = (value) => step("pwsh", value);
       expect(findingsIn(ps('<# <# note #> Write-Output "measured by device" #>'), wf)).toEqual([]);
       // …a `#` against a closing quote begins one, where a `#` inside a bareword does not.
@@ -1098,11 +1120,13 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       const job = (body) => `jobs:\n  a:\n${body}`;
       // The runner's default, and Windows' own.
       expect(findingsIn(job(`    steps:\n      - run: ${hedge}\n`), wf).map((f) => f.line)).toEqual([4]);
-      expect(
-        findingsIn(job(`    runs-on: windows-latest\n    steps:\n      - run: "<# measured by device #>"\n`), wf).map(
-          (f) => f.line,
-        ),
-      ).toEqual([5]);
+      // …the runner's own, where a PowerShell is on the PATH to decide it.
+      if (!noPwsh)
+        expect(
+          findingsIn(job(`    runs-on: windows-latest\n    steps:\n      - run: "<# measured by device #>"\n`), wf).map(
+            (f) => f.line,
+          ),
+        ).toEqual([5]);
       // A workflow default, then a job default over it, then a step over that.
       expect(
         findingsIn(`defaults:\n  run:\n    shell: cmd\n` + job(`    steps:\n      - run: ${hedge}\n`), wf),
@@ -1191,83 +1215,118 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     ["pwsh", ["pwsh", "-NoProfile", "-Command"]],
   ];
 
-  // PowerShell decides where a comment begins from a token state a lexer cannot fully see: the
-  // same `]`, digit, `..`, `--` or `[` opens one in expression position and continues a
-  // bareword in argument position, and only the parser knows which. So the reader takes the
-  // MISS on every uncertain boundary rather than the invention — the trade the whole check is
-  // built on — and scripts/pwsh-boundaries.json is where that set is written down instead of
-  // being found one review round at a time.
+  // PowerShell decides where a comment begins from a token STATE, and a lexer written here
+  // cannot recover it: the same `]`, digit, `..`, `--` or `[` opens a comment in expression
+  // position and continues a bareword in argument position, and only the parser knows which of
+  // the two it is in. Approximated with a set of preceding characters, the reader read valid
+  // workflows both ways — refusing lines PowerShell calls code, and passing comments PowerShell
+  // calls comments — so it ASKS the parser, and these pin that it answers what the parser
+  // answers rather than something near it.
   describe("what PowerShell calls a comment", () => {
-    const corpus = JSON.parse(readFileSync(join(HERE, "pwsh-boundaries.json"), "utf8"));
-    const spans = (list) => list.map(([a, b]) => `${a}:${b}`);
-    const read = (script) => pwshComments(script).map((x) => `${x.start}:${x.end}`);
+    // The one that needs no PowerShell: a value whose comments cannot be established is not a
+    // value with none, and answering "none" is how a comment this check exists to refuse walks
+    // past a green run.
+    it("refuses to answer where the parser cannot be reached", () => {
+      expect(() => pwshSpans(["Write-Output 1"], "no-such-powershell-xyz")).toThrow(Undecidable);
+      // …and asks nothing at all where there is nothing to ask about.
+      expect(pwshSpans([], "no-such-powershell-xyz")).toEqual([]);
+    });
 
-    // The load-bearing half, and the one that needs no pwsh: everything the reader reports is
-    // something the parser reports. A boundary it reads wrongly can cost a finding; it may
-    // never cost a line of valid PowerShell.
-    it("reports no comment PowerShell does not have", () => {
-      for (const c of corpus.cases) {
-        const invented = read(c.script).filter((r) => !spans(c.parser).includes(r));
-        expect(invented, c.script).toEqual([]);
+    // …and the same refusal reaches the command line, which is what a green scan would
+    // otherwise be hiding. The checker is run with a PATH that holds no pwsh.
+    it("stops the run rather than reporting a clean scan", () => {
+      const tmp = mkdtempSync(join(tmpdir(), "pwsh-undecidable-"));
+      mkdirSync(join(tmp, ".github", "workflows"), { recursive: true });
+      const file = join(tmp, ".github", "workflows", "x.yml");
+      writeFileSync(file, 'jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: "$x# measured by device"\n');
+      let status = 0;
+      let stderr = "";
+      try {
+        execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), file], {
+          encoding: "utf8",
+          env: { ...process.env, PATH: join(tmp, "empty") },
+        });
+      } catch (err) {
+        status = err.status;
+        stderr = err.stderr;
       }
-    });
-
-    // …and the reader's own answer is tracked beside it, so a change to the boundary shows up
-    // here as a diff rather than as a silent widening.
-    it("answers what the corpus records it answering", () => {
-      for (const c of corpus.cases) expect(read(c.script), c.script).toEqual(spans(c.reader));
-    });
-
-    // The accepted misses, named. Every one is a boundary whose answer depends on the mode:
-    // `Write-Output a]#` is one bareword and `$x[0]#` is a comment, and the same `]` is in both.
-    it("accepts a miss only where the boundary is mode-dependent", () => {
-      const missed = corpus.cases
-        .filter((c) => spans(c.parser).some((p) => !read(c.script).includes(p)))
-        .map((c) => c.script);
-      expect(missed).toEqual([
-        "$x[0]# MARK",
-        "[int]# MARK",
-        "1# MARK",
-        "$x--# MARK",
-        "$x++# MARK",
-        "1..3# MARK",
-        "$a = 1 + 2# MARK",
-        "$x -is [int]# MARK",
-        "$x# MARK",
-        "3 -# MARK",
-        "2 *# MARK",
-        "6 /# MARK",
-        "7 %# MARK",
-        "1 -eq# MARK",
-      ]);
+      rmSync(tmp, { recursive: true, force: true });
+      expect(status).toBe(1);
+      expect(stderr).toContain("Cannot decide what a comment is here");
     });
   });
 
-  // The corpus is a copy of what PowerShell's own parser answers, and a copy can drift from
-  // what it copied. Where a pwsh is on the PATH — the GitHub runner carries one — ask it
-  // again, walking StringExpandableToken.NestedTokens so a comment inside a `$( … )` is
-  // compared too. Skipped elsewhere, and the skip is named rather than silent.
-  const pwshForCorpus = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
+  describe.skipIf(noPwsh)("what PowerShell calls a comment, asked of PowerShell", () => {
+    const corpus = JSON.parse(readFileSync(join(HERE, "pwsh-boundaries.json"), "utf8"));
+    const spans = (list) => list.map(([a, b]) => `${a}:${b}`);
 
-  describe.skipIf(pwshForCorpus.error || pwshForCorpus.status !== 0)(
-    "the PowerShell boundary corpus, differentially against the parser",
-    () => {
-      it("records what Parser::ParseInput answers, for every case", () => {
-        const corpus = JSON.parse(readFileSync(join(HERE, "pwsh-boundaries.json"), "utf8"));
-        expect(corpus.cases.map((c) => c.script)).toEqual(PWSH_CASES);
-        const fresh = parserSpans(PWSH_CASES);
-        const derived = PWSH_CASES.map((script, n) => ({
-          script,
-          errors: fresh[n].errors,
-          parser: fresh[n].comments.sort((a, b) => a[0] - b[0]),
-          reader: pwshComments(script).map((c) => [c.start, c.end]),
-        }));
-        if (process.env.UPDATE_PWSH)
-          writeFileSync(join(HERE, "pwsh-boundaries.json"), JSON.stringify({ cases: derived }, null, 2) + "\n");
-        expect(derived).toEqual(corpus.cases);
-      });
-    },
-  );
+    // Not containment: the SAME answer. A row where the two differ is a boundary the reader is
+    // deciding for itself, which is what this round removed.
+    it("answers exactly what the parser answers, on every case", () => {
+      for (const c of corpus.cases)
+        expect(
+          pwshComments(c.script).map((x) => `${x.start}:${x.end}`),
+          c.script,
+        ).toEqual(spans(c.parser));
+    });
+
+    // …the boundaries a set of preceding characters got wrong, as whole workflow steps, since
+    // a reader that is right about a fragment and never reached is worth nothing.
+    it("reports the boundaries a character test missed, through the workflow", () => {
+      const wf = ".github/workflows/x.yml";
+      const step = (v) => `jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: ${JSON.stringify(v)}\n`;
+      for (const value of [
+        "$x = 1\n$x# measured by device",
+        "Write-Output (3 -# measured by device\n2)",
+        "Write-Output (1 -eq# measured by device\n1)",
+        "$x = @(1)\n$x[0]# measured by device",
+        "[int]# measured by device",
+        "1..3# measured by device",
+      ])
+        expect(
+          findingsIn(step(value), wf).map((f) => f.line),
+          value,
+        ).toEqual([5]);
+      // …while the shapes PowerShell calls code stay code.
+      for (const value of [
+        "Write-Output a#measured by device",
+        "Foo<# measured by device #>",
+        "Write-Output “x # measured by device”",
+        "Write-Output @'\n# measured by device\n'@",
+      ])
+        expect(findingsIn(step(value), wf), value).toEqual([]);
+    });
+
+    // What the RULES read is the comment without its delimiters, the same as every other
+    // reader hands them. Kept, `<#` and `#>` would sit at the ends of the text a rule anchors
+    // against.
+    it("hands the rules the comment's text, not its delimiters", () => {
+      expect(pwshComments("<# measured by device #>").map((c) => c.text)).toEqual([" measured by device "]);
+      expect(pwshComments("Write-Output x # measured by device").map((c) => c.text)).toEqual([" measured by device"]);
+    });
+
+    // A script the parser rejects has no comment set to be held to, so it is refused rather
+    // than read as comment-free.
+    it("refuses a value the parser does not parse", () => {
+      expect(() => pwshSpans(["Write-Output ("])).toThrow(Undecidable);
+    });
+
+    // The corpus is a copy of what the parser answers, and a copy can drift — from the corpus
+    // changing, and from the parser itself changing under it. Ask it again, walking
+    // StringExpandableToken.NestedTokens so a comment inside a `$( … )` is compared too.
+    it("records what Parser::ParseInput answers, for every case", () => {
+      expect(corpus.cases.map((c) => c.script)).toEqual(PWSH_CASES);
+      const parser = pwshSpans(PWSH_CASES);
+      const derived = PWSH_CASES.map((script, n) => ({
+        script,
+        parser: parser[n],
+        reader: pwshComments(script).map((c) => [c.start, c.end]),
+      }));
+      if (process.env.UPDATE_PWSH)
+        writeFileSync(join(HERE, "pwsh-boundaries.json"), JSON.stringify({ cases: derived }, null, 2) + "\n");
+      expect(derived).toEqual(corpus.cases);
+    });
+  });
 
   describe("what a run: is lexed as, differentially", () => {
     const pwsh = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });

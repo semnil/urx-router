@@ -3,19 +3,22 @@
 //
 // PowerShell decides where a comment begins from a token state a lexer cannot fully see: the
 // same `]`, digit, `..`, `--` or `[` opens a comment in expression position and continues a
-// bareword in argument position, and only the parser knows which one it is in. So the reader
-// takes the MISS on every uncertain boundary rather than the invention, and this file is
-// where that set is written down: `parser` is what PowerShell's own parser answers, `reader`
-// is what the reader answers, and a row where they differ is an accepted miss, countable
-// rather than found one review round at a time.
+// bareword in argument position, and only the parser knows which one it is in. Approximated
+// with a set of preceding characters, the reader read valid workflows both ways — refusing
+// lines PowerShell calls code, and passing comments PowerShell calls comments — so it asks
+// the parser instead. `parser` is what PowerShell's own parser answers and `reader` is what
+// the reader answers; on a script that parses they are the SAME answer, and the pin requires
+// it rather than requiring one to contain the other.
 //
-// `parser` is regenerated where a pwsh is on the PATH — the GitHub runner carries one:
+// The reader ASKS that parser rather than approximating it, so on a valid script the two
+// answers are the same one and the file is a regression fixture over the corpus and over the
+// parser's own version. Regenerated where a pwsh is on the PATH — the GitHub runner carries
+// one:
 //
 //   UPDATE_PWSH=1 pnpm test check-comment-provenance
 //
 // Usage: node scripts/pwsh-boundaries.mjs   (prints the cases, one per line)
 
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
@@ -73,53 +76,16 @@ export const PWSH_CASES = [
   `$a = 1 + 2# ${M}`,
   `$x -is [int]# ${M}`,
   `$x# ${M}`,
-  // …and the shapes that are no script at all: PowerShell's parser reports an error for each
-  // of these, so what a comment is in one is not a contract anything can be held to. They are
-  // here because they LOOK like the rows above, and the `errors` beside them is what says
-  // they are not.
-  `3 -# ${M}`,
-  `2 *# ${M}`,
-  `6 /# ${M}`,
-  `7 %# ${M}`,
-  `1 -eq# ${M}`,
+  // …the same boundaries as complete scripts, with the operand on the line below. These are
+  // valid PowerShell — they run, and they print 1, 1, 3, 2 and True — so what a comment is in
+  // one IS a contract, and the reader answers exactly what the parser answers.
+  `Write-Output (3 -# ${M}\n2)`,
+  `Write-Output (1 -eq# ${M}\n1)`,
+  `Write-Output (6 /# ${M}\n2)`,
+  `Write-Output (4 *# ${M}\n0.5)`,
+  `Write-Output (7 %# ${M}\n2)`,
+  `$x = 1\n$x# ${M}`,
 ];
-
-/** What PowerShell's own parser calls a comment, subexpressions included. */
-export function parserSpans(cases, pwsh = "pwsh") {
-  const script = `
-    $ErrorActionPreference = 'Stop'
-    $all = [Console]::In.ReadToEnd() | ConvertFrom-Json
-    $rows = New-Object System.Collections.ArrayList
-    function Walk($ts, $into) {
-      foreach ($t in $ts) {
-        if ($t.Kind -eq [System.Management.Automation.Language.TokenKind]::Comment) {
-          [void]$into.Add(@($t.Extent.StartOffset, $t.Extent.EndOffset))
-        }
-        if ($t -is [System.Management.Automation.Language.StringExpandableToken] -and $t.NestedTokens) {
-          Walk $t.NestedTokens $into
-        }
-      }
-    }
-    foreach ($src in $all) {
-      $tokens = $null; $errs = $null
-      [System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$tokens, [ref]$errs) | Out-Null
-      $found = New-Object System.Collections.ArrayList
-      Walk $tokens $found
-      [void]$rows.Add(@{ errors = @($errs).Count; comments = @($found) })
-    }
-    ConvertTo-Json -InputObject @($rows) -Depth 6 -Compress
-  `;
-  const run = spawnSync(pwsh, ["-NoProfile", "-Command", script], {
-    input: JSON.stringify(cases),
-    encoding: "utf8",
-    maxBuffer: 1 << 26,
-  });
-  if (run.status !== 0) throw new Error(`${pwsh}: ${run.stderr}`);
-  return JSON.parse(run.stdout).map((r) => ({
-    errors: r.errors,
-    comments: (r.comments ?? []).map((c) => [c[0], c[1]]),
-  }));
-}
 
 if (realpathSync(process.argv[1] ?? "") === realpathSync(fileURLToPath(import.meta.url))) {
   for (const c of PWSH_CASES) console.log(JSON.stringify(c));
