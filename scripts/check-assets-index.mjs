@@ -135,6 +135,13 @@ const PROSE_TOKENS = new Map([
   // and one where it does not. Neither is an entity in any tree.
   [";#", "shell, named as the boundary a comment may begin at"],
   ["a#b", "shell, named as a hash inside a word, which begins nothing"],
+  // Four fragments of YAML, named as the words a plain scalar's continuation is made of.
+  // None is an entity in any tree: three only LOOK like an indicator or a key, and the
+  // fourth is the one spelling that is.
+  ["-b", "YAML, named as a dash against a word, which indicates nothing"],
+  ["- b", "YAML, named as the dash that does indicate, written inside a scalar that has begun"],
+  ["?b", "YAML, named as a question mark against a word, which indicates nothing"],
+  ["x:y", "YAML, named as a colon with no separation after it, which is no mapping key"],
   // Three more from that row, once it named what the block scalars are measured against.
   // Two are YAML written as itself — a block header with its indentation indicator — and
   // one is the CPython module the f-string reader is differentialled against.

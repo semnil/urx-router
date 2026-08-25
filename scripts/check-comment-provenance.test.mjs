@@ -33,6 +33,8 @@ import {
   yamlComments,
   yamlExplicitKey,
   yamlKey,
+  lineEntries,
+  plainScalar,
   yamlPlainAll,
   rustComments,
   verdict,
@@ -1048,6 +1050,69 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     expect(findingsIn(job("      - run: echo a\n    echo b;# measured by device\n"), wf)).toEqual([]);
   });
 
+  // A plain scalar continues onto the lines below it inside a FLOW collection as much as in
+  // block context, and it ends there at the `,`, `]` or `}` that closes the entry. Read as
+  // its first line alone, `[{ run: echo ok;#` carried a comment onto the next line and
+  // nothing looked at it — Ruby loads the run here as `echo ok;# measured by device`.
+  it("reads a plain scalar a flow collection carries across lines", () => {
+    const wf = ".github/workflows/x.yml";
+    expect(
+      findingsIn("jobs:\n  a:\n    steps: [{ run: echo ok;#\n              measured by device }]\n", wf).map(
+        (f) => f.line,
+      ),
+    ).toEqual([3]);
+    // …and the `}` that closes the entry ENDS the scalar, on that line and for the lines
+    // after it: Ruby loads the run in both of these as `echo ok;# note more`, so the words
+    // in the entry beside it are not in the comment.
+    expect(
+      findingsIn(
+        "jobs:\n  a:\n    steps: [{ run: echo ok;# note\n              more }, { name: measured by device }]\n",
+        wf,
+      ),
+    ).toEqual([]);
+    expect(
+      findingsIn(
+        "jobs:\n  a:\n    steps: [{ run: echo ok;# note\n              more },\n              { name: measured by device }]\n",
+        wf,
+      ),
+    ).toEqual([]);
+    // …and the entry a flow collection opens IN FRONT of a key is still that key's: a `[` or
+    // a `{` written against the name is swallowed by the key match, and the entry then read
+    // at flow depth zero, where its value runs to the end of the line rather than to the `,`.
+    expect(lineEntries("steps: [{run: x}]").map((e) => [e.key, e.depth])).toEqual([
+      ["steps", 0],
+      ["run", 2],
+    ]);
+    expect(lineEntries("j: [k: a").map((e) => [e.key, e.depth])).toEqual([
+      ["j", 0],
+      ["k", 1],
+    ]);
+  });
+
+  // Nothing a line BEGINS with ends a plain scalar that has already started, and a colon
+  // needs a separation after it to be a mapping's. Read as indicators and as a key, `-b`,
+  // `?b` and `x:y` each ended the scalar they were written in — Ruby loads all four of these
+  // as one string, and the `#` behind the `;` is where the shell comment begins.
+  it("continues a plain scalar past a word that only looks like an indicator", () => {
+    const wf = ".github/workflows/x.yml";
+    const step = (rest) => "jobs:\n  a:\n    steps:\n      - run: echo ok;#\n" + rest;
+    for (const rest of ["          -measured by device\n", "          ?measured by device\n"])
+      expect(
+        findingsIn(step(rest), wf).map((f) => f.line),
+        rest,
+      ).toEqual([4]);
+    expect(findingsIn(step("          x:y measured by device\n"), wf).map((f) => f.line)).toEqual([4]);
+    // …and a real `- ` is not an indicator there either, since the scalar has already begun.
+    expect(findingsIn(step("          - measured by device\n"), wf).map((f) => f.line)).toEqual([4]);
+    // …while a colon FOLLOWED by a separation is a key, wherever it is written, and one that
+    // is not is part of the key: Ruby loads `k:v` as the string and `b:c: d` as the entry
+    // `b:c`, and a `https://` in a command was read as a key called `https`.
+    expect(lineEntries("k:v")).toEqual([]);
+    expect(lineEntries("b:c: d").map((e) => e.key)).toEqual(["b:c"]);
+    expect(lineEntries("run: curl https://x").map((e) => e.key)).toEqual(["run"]);
+    expect(lineEntries("k:").map((e) => e.key)).toEqual(["k"]);
+  });
+
   it("names no plain scalar where a block scalar's header is", () => {
     expect(yamlPlainAll("      - run: |")).toEqual([]);
     expect(yamlPlainAll("      - run: >2-")).toEqual([]);
@@ -1444,6 +1509,80 @@ const BLOCKS_VALUES = [
   ["k: |\n  a\n  b\n", "a\nb\n"],
   ["k: |\n  a\n\n  b\n", "a\n\nb\n"],
 ];
+
+// What a PLAIN scalar's value is: it continues onto the lines below, one break folding to a
+// space and a blank line to a newline, and it ends at the indentation, at a ` #`, or at the
+// `,`, `]` or `}` that closes a flow entry. NOTHING a line begins with ends one — `- b`,
+// `-b`, `?b` and `x:y` are all the words they look like. The table is what Ruby answers; the
+// differential below re-measures it.
+const PLAINS = [
+  ["k: a\n  b\n", "a b"],
+  ["k: a\n\n  b\n", "a\nb"],
+  ["k: a\n\n\n  b\n", "a\n\nb"],
+  ["k: a\n  -b\n", "a -b"],
+  ["k: a\n  - b\n", "a - b"],
+  ["k: a\n  ?b\n", "a ?b"],
+  ["k: a\n  x:y z\n", "a x:y z"],
+  ["k: a\n  b # c\n", "a b"],
+  ["j: [k: a\n  b]\n", "a b"],
+  ["j: {k: a\n  b}\n", "a b"],
+];
+
+describe("what a plain scalar's value is", () => {
+  const built = (doc) => {
+    const lines = doc.split("\n").slice(0, -1);
+    const entry = yamlPlainAll(lines[0]).at(-1);
+    return plainScalar(entry, lines[0], lines.slice(1));
+  };
+
+  it("folds the lines it continues onto, and ends where YAML ends it", () => {
+    for (const [doc, value] of PLAINS) expect(built(doc).text, doc).toBe(value);
+  });
+
+  // …and every character it emits names where it came from, which is what makes a finding
+  // point at the source rather than at the value.
+  it("names a source position for every character", () => {
+    for (const [doc] of PLAINS) {
+      const lines = doc.split("\n").slice(0, -1);
+      const { text, from } = built(doc);
+      expect(from.length, doc).toBe(text.length);
+      for (const [line, col] of from) {
+        expect(line, doc).toBeGreaterThanOrEqual(-1);
+        expect(col, doc).toBeLessThan((line < 0 ? lines[0] : lines[1 + line]).length);
+      }
+    }
+  });
+});
+
+// The table above is a copy of Ruby's answers, and a copy can drift from what it copied.
+// Skipped where ruby is absent, and the skip is named rather than silent.
+const rubyForPlains = spawnSync("ruby", ["-e", "puts 1"], { encoding: "utf8" });
+
+describe.skipIf(rubyForPlains.error || rubyForPlains.status !== 0)(
+  "plain scalar values, differentially against Ruby",
+  () => {
+    it("builds the value Ruby loads, for each continuation", () => {
+      const script = `
+      require "yaml"
+      require "json"
+      def scalar(o)
+        case o
+        when String then o
+        when Array then o.map { |v| scalar(v) }.compact.first
+        when Hash then o.values.map { |v| scalar(v) }.compact.first
+        end
+      end
+      puts JSON.generate(JSON.parse(STDIN.read).map { |doc| scalar(YAML.load(doc)) })
+    `;
+      const run = spawnSync("ruby", ["-e", script], {
+        input: JSON.stringify(PLAINS.map(([doc]) => doc)),
+        encoding: "utf8",
+      });
+      expect(run.status, run.stderr).toBe(0);
+      expect(JSON.parse(run.stdout)).toEqual(PLAINS.map(([, value]) => value));
+    });
+  },
+);
 
 describe("what a block scalar's value is", () => {
   const parts = (doc) => {

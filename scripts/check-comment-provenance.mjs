@@ -836,41 +836,13 @@ export function yamlComments(src, actions = false) {
    * node instead. Read as the key's line alone, a `#` written behind a `;` on a later line
    * was neither a YAML comment nor anything this looked at.
    */
+  /** A plain scalar's value, with each character's offset in the source. */
   const plainValue = (entry, n) => {
-    const text = [];
-    const map = [];
-    const take = (k, from, to) => {
-      for (let col = from; col < to; col++) {
-        text.push(lines[k][col]);
-        map.push(starts[k] + col);
-      }
+    const built = plainScalar(entry, lines[n], lines.slice(n + 1));
+    return {
+      text: built.text,
+      map: built.from.map(([k, col]) => (k < 0 ? starts[n] + col : starts[n + 1 + k] + col)),
     };
-    take(n, entry.at, entry.end);
-    // A BLANK line does not end a plain scalar: n of them fold to n newlines where one break
-    // folds to a space, and they are held until a line that continues the scalar arrives —
-    // a blank line before a line that ends it belongs to neither.
-    let blanks = 0;
-    for (let k = n + 1; entry.depth === 0 && k < lines.length; k++) {
-      const line = lines[k];
-      if (line.trim() === "") {
-        blanks++;
-        continue;
-      }
-      const at = line.length - line.trimStart().length;
-      if (at <= entry.col || /^[-?#]/.test(line.slice(at))) break;
-      const hash = /(^|[ \t])#/.exec(line);
-      const cut = hash ? hash.index : line.length;
-      const body = line.slice(at, cut).replace(/[ \t]+$/, "");
-      if (body === "" || lineEntries(line.slice(0, cut)).some((e) => e.depth === 0)) break;
-      for (let z = 0; z < Math.max(blanks, 1); z++) {
-        text.push(blanks > 0 ? "\n" : " ");
-        map.push(starts[k] + at);
-      }
-      blanks = 0;
-      take(k, at, at + body.length);
-      if (hash) break;
-    }
-    return { text: text.join(""), map };
   };
   // The block-mapping keys open above the line being read, with the column each one starts
   // at, and the path they make to what is written under them.
@@ -1060,8 +1032,19 @@ const PROPERTY_SOURCE = "((?:[&!]\\S+[ \\t]+)*)";
 /** The anchor name in such a run, or null. */
 const anchorName = (properties) => /&([^\s&!]+)/.exec(properties ?? "")?.[1] ?? null;
 
-/** The three shapes a mapping key is written in, and the run of spaces after its colon. */
-const KEY_SOURCE = "(?:^|[\\s\\-{[,])(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^']|'')*)'|([\\w.-]+))[ \\t]*:[ \\t]*";
+/**
+ * The three shapes a mapping key is written in, and the run of spaces after its colon.
+ *
+ * A PLAIN key's colon has to be followed by whitespace or by the end of the line, and a
+ * colon that is not is part of the key: Ruby loads `k:v` as the string `k:v` and `b:c: d`
+ * as the entry `b:c`. Taken as a key wherever a colon appeared, `x:y` inside a plain scalar
+ * read as a mapping entry and ended the scalar it was written in, and a `https://` in a
+ * command read as a key called `https`. The QUOTED spellings keep the adjacency, which is
+ * what a flow collection allows for a JSON-like key (`{"b":1}`); applied in block context
+ * too, that over-accepts a spelling this tree does not write.
+ */
+const KEY_SOURCE =
+  "(?:^|[\\s\\-{[,])(?:\"((?:[^\"\\\\]|\\\\.)*)\"[ \\t]*:|'((?:[^']|'')*)'[ \\t]*:|([\\w.:-]+)[ \\t]*:(?=[ \\t]|$))[ \\t]*";
 
 /**
  * A mapping entry whose value is a QUOTED scalar: its key, and where the opening quote is.
@@ -1105,9 +1088,18 @@ export function lineEntries(head) {
     }
     const raw = m[1] !== undefined ? '"' + m[1] + '"' : m[2] !== undefined ? "'" + m[2] + "'" : m[3];
     const key = scalarText(m);
+    const col = head.startsWith(raw, m.index) ? m.index : m.index + 1;
+    // A key match SWALLOWS the character in front of it, and a `[` or a `{` there opens a
+    // flow collection as much as one the scan reaches on its own: `[k: a` and `{run: x` are
+    // a key inside one. Taken as a separator alone, such an entry read at flow depth zero,
+    // where its value runs to the end of the line rather than to the `,` that ends it.
+    if (head[m.index] === "[" || head[m.index] === "{") {
+      scope.push(pending);
+      pending = null;
+    }
     found.push({
       key,
-      col: head.startsWith(raw, m.index) ? m.index : m.index + 1,
+      col,
       depth: scope.length,
       within: scope.filter((k) => k !== null),
       at: m.index + m[0].length,
@@ -1143,6 +1135,61 @@ const ALIAS_NAME = /\*([^\s,[\]{}]+)/y;
 /** A block scalar's header, written as the whole of what follows a key. */
 const BLOCK_ONLY = /^[|>](?:[1-9][-+]?|[-+][1-9]?)?$/;
 
+/**
+ * The VALUE of a plain scalar, and where each of its characters came from.
+ *
+ * A plain scalar continues onto the lines below it: one break folds to a space and a blank
+ * line to a newline, and each continuation's own indentation is dropped. What ENDS it is the
+ * indentation — a line at or in front of the node's column is the next node — the ` #` that
+ * begins a comment, and, in a FLOW collection, the `,`, `]` or `}` that closes the entry.
+ * Nothing a line begins with ends one: Ruby loads a `- x` line indented past the node as the
+ * words `- x`, and `-measured` and `?measured` as themselves.
+ *
+ * `from[i]` is `[lineIndex, column]` into `rest`, with a lineIndex of -1 for the key's own
+ * line, which is `first`.
+ */
+export function plainScalar(entry, first, rest) {
+  const text = [];
+  const from = [];
+  const take = (k, line, at, to) => {
+    for (let col = at; col < to; col++) {
+      text.push(line[col]);
+      from.push([k, col]);
+    }
+  };
+  take(-1, first, entry.at, entry.end);
+  // In a FLOW collection what a continuation must be indented past is the block node the
+  // flow was opened on, not the column of a key written inside it.
+  const base = entry.depth === 0 ? entry.col : first.length - first.trimStart().length;
+  // A BLANK line does not end a plain scalar: n of them fold to n newlines where one break
+  // folds to a space, and they are held until a line that continues the scalar arrives — a
+  // blank line before a line that ends it belongs to neither.
+  let blanks = 0;
+  for (let k = 0; k < rest.length; k++) {
+    const line = rest[k];
+    if (line.trim() === "") {
+      blanks++;
+      continue;
+    }
+    const at = line.length - line.trimStart().length;
+    if (at <= base) break;
+    const hash = /(^|[ \t])#/.exec(line);
+    const flow = entry.depth === 0 ? null : /[,\]}]/.exec(line.slice(at));
+    const cut = Math.min(hash ? hash.index : line.length, flow ? at + flow.index : line.length);
+    const body = line.slice(at, cut).replace(/[ \t]+$/, "");
+    // A line that is a mapping ENTRY is a document YAML refuses rather than a value it reads
+    // differently, so the reader stops rather than inventing one.
+    if (body === "" || lineEntries(line.slice(0, cut)).some((e) => e.depth === 0)) break;
+    for (let z = 0; z < Math.max(blanks, 1); z++) {
+      text.push(blanks > 0 ? "\n" : " ");
+      from.push([k, at]);
+    }
+    blanks = 0;
+    take(k, line, at, at + body.length);
+    if (hash || flow) break;
+  }
+  return { text: text.join(""), from };
+}
 /**
  * EVERY mapping entry on the line whose value is a PLAIN scalar — no quotes, no indicators,
  * no alias.
