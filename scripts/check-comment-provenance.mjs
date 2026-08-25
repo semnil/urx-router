@@ -247,8 +247,27 @@ function scanJs(src, mode = "js") {
   let angles = 0; // open TypeScript type-argument lists
   let typeParams = false; // whether the open run is a declaration's parameters
   let angleDepth = 0; // the bracket depth the open run started at
-  // The token in front of an open decorator run, or undefined when none is open.
-  let decoratorFrom = undefined;
+  /**
+   * The open decorator run, or null.
+   *
+   * A decorator is transparent to declaration-versus-expression, and it is neither one
+   * token nor one shape: `@sealed` ends on a name, `@a.b` on a dotted one, `@dec(…)` on a
+   * `)`, and what it decorates comes after. So the run has two phases — reading its own
+   * EXPRESSION, then waiting for its TARGET — and it carries the bracket depth it opened
+   * at, which is what keeps its arguments out of the decision. Held as a single token, a
+   * `{` in `@dec({ x: 1 })` ended the run and a `class` in `@dec(class X {} / 2)` consumed
+   * it, and a member's own decorator was consumed by the class EXPRESSION its initialiser
+   * held.
+   */
+  let decorator = null; // {from, depth, phase: "expr"|"target", seen}
+  const bracketDepth = () => braces.length + parens.length;
+  /** The token in front of a declaration's whole modifier run, which is what decides it. */
+  const beforeModifiers = () => {
+    const chain = [last, ...history];
+    let k = 0;
+    while (k < chain.length && chain[k]?.kind === "name" && !chain[k].property && MODIFIERS.has(chain[k].text)) k++;
+    return chain[k] ?? null;
+  };
   let gapSpaced = false; // whitespace has been seen since the last significant token
   let gapCommented = false; // …and a comment has been seen since it too
 
@@ -362,6 +381,19 @@ function scanJs(src, mode = "js") {
     } else if (!gapCommented) {
       gapSpaced = true;
     }
+    // Where the decorator's own expression ends. It is a name, optionally dotted, optionally
+    // called — so a second name at the run's depth, or anything that is not part of that
+    // shape, is the TARGET rather than more of the decorator. The call's arguments are
+    // deeper and never reach this.
+    if (!trivia && decorator?.phase === "expr" && decorator.depth === bracketDepth() && c !== "@") {
+      if (c === ".") decorator.seen = 0;
+      else if (c === "(" && decorator.seen === 1) {
+        // The arguments; the `)` that returns to this depth ends the expression.
+      } else if (isIdStart(c)) {
+        if (decorator.seen === 0) decorator.seen = 1;
+        else decorator.phase = "target";
+      } else decorator.phase = "target";
+    }
     if (c === "\n") {
       line++;
       i++;
@@ -410,6 +442,13 @@ function scanJs(src, mode = "js") {
       const property = afterDot() || (last?.kind === "punct" && last.text === "#");
       // `property` outlives the regex question: `obj.catch(x)` is a call, and reading its
       // `catch` as the control keyword makes the `)` start an expression.
+      // The TARGET of a decorator run. A modifier keeps it waiting and a body-carrying
+      // keyword consumes it; anything else is a member, and the run ends there rather than
+      // outliving it — `@dec field = class Inner {}` had the class EXPRESSION consume it.
+      if (decorator?.phase === "target" && decorator.depth === bracketDepth() && !property) {
+        const keeps = MODIFIERS.has(text) || text === "function" || text === "class" || text === "interface";
+        if (!keeps) decorator = null;
+      }
       if ((text === "function" || text === "class" || text === "interface") && !property) {
         // Walk back over the modifier run — `export`, `default`, `async` — because what
         // separates a declaration from an expression is the token BEFORE all of them.
@@ -424,11 +463,12 @@ function scanJs(src, mode = "js") {
         // What decides the declaration is the token in front of the whole run, recorded
         // when it opened — without it, `@sealed class C<T> {}` was decided by `sealed` and
         // read as an expression.
-        const chain = decoratorFrom !== undefined ? [decoratorFrom] : [last, ...history];
-        decoratorFrom = undefined;
-        let k = 0;
-        while (k < chain.length && chain[k]?.kind === "name" && !chain[k].property && MODIFIERS.has(chain[k].text)) k++;
-        pendingBodies.push({ depth: parens.length, value: !startsStatement(chain[k] ?? null) });
+        // The PHASE is what says the arguments are not the target — a `class` inside them is
+        // read at a depth the run's transitions never reach, so it never leaves "expr".
+        const decorated = decorator?.phase === "target";
+        const from = decorated ? decorator.from : beforeModifiers();
+        if (decorated) decorator = null;
+        pendingBodies.push({ depth: parens.length, value: !startsStatement(from) });
       }
       setLast({ kind: "name", text, property, regexOk: !property && REGEX_AFTER.has(text) });
       i = j;
@@ -505,7 +545,6 @@ function scanJs(src, mode = "js") {
         pendingBodies.pop();
       }
       braces.push(kind);
-      decoratorFrom = undefined;
       punct("{");
       i++;
       continue;
@@ -569,7 +608,14 @@ function scanJs(src, mode = "js") {
       continue;
     }
     if (c === "@") {
-      if (decoratorFrom === undefined && startsStatement(last)) decoratorFrom = last;
+      if (decorator === null) {
+        const from = beforeModifiers();
+        if (startsStatement(from)) decorator = { from, depth: bracketDepth(), phase: "expr", seen: 0 };
+      } else if (decorator.depth === bracketDepth()) {
+        // Another decorator on the same target.
+        decorator.phase = "expr";
+        decorator.seen = 0;
+      }
       punct("@");
       i++;
       continue;
@@ -583,7 +629,7 @@ function scanJs(src, mode = "js") {
     // run was lost half way through and the `/` after its `>` opened a pattern.
     if (c === ";" && (angles === 0 || braces.length + parens.length === angleDepth)) {
       angles = 0;
-      decoratorFrom = undefined;
+      if (decorator && decorator.depth >= bracketDepth()) decorator = null;
       while (pendingBodies.length && pendingBodies[pendingBodies.length - 1].depth >= parens.length)
         pendingBodies.pop();
     }
@@ -711,6 +757,29 @@ export function yamlComments(src, actions = false) {
   let quote = null;
   // An explicit key waiting for the `:` line that carries its value.
   let pendingKey = null;
+  /** A workflow's `run:` written as a QUOTED scalar, handed to the shell reader with its
+   *  offsets carried over. GitHub runs the value, not the way it was written. */
+  const takeQuotedRun = (head, n, key) => {
+    if (!actions) return;
+    const quotedRun = yamlQuoted(head);
+    if (!quotedRun || (quotedRun.key ?? key) !== "run") return;
+    const value = decodeQuoted(src, starts[n] + quotedRun.at);
+    if (!value) return;
+    const lineOf = (offset) => {
+      let k = n;
+      while (k + 1 < starts.length && starts[k + 1] <= offset) k++;
+      return k + 1;
+    };
+    for (const span of shellComments(value.text)) {
+      const start = value.map[span.start];
+      out.push({
+        line: lineOf(start),
+        text: span.text,
+        start,
+        end: span.end < value.map.length ? value.map[span.end] : value.map[value.map.length - 1] + 1,
+      });
+    }
+  };
   for (let n = 0; n < lines.length; n++) {
     const raw = lines[n];
     let i = 0;
@@ -743,7 +812,12 @@ export function yamlComments(src, actions = false) {
       prev = c;
       i++;
     }
-    if (quote) continue;
+    if (quote) {
+      // The value of a `run:` written as a quoted scalar that spans lines starts here, and
+      // the lines it covers are skipped above — so the handoff has to happen before them.
+      takeQuotedRun(raw, n, pendingKey);
+      continue;
+    }
     // The header is the line's VALUE, so the indicator has to sit right after `key:` or a
     // `-` sequence entry. Its two indicators come in EITHER order (`|2-` and `|-2` are one
     // scalar each), and reading only chomping-then-digit left `|2-` a plain scalar whose
@@ -764,7 +838,10 @@ export function yamlComments(src, actions = false) {
     const m = /(?::|(?:^|\s)-)[ \t]*(?:[&!]\S+[ \t]+)*[|>](?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head);
     const carried = pendingKey;
     pendingKey = null;
-    if (!m) continue;
+    if (!m) {
+      takeQuotedRun(head, n, carried);
+      continue;
+    }
     const indent = raw.length - raw.trimStart().length;
     let end = n + 1;
     while (end < lines.length) {
@@ -834,10 +911,72 @@ const YAML_ESCAPES = {
  * decoded, so a key spelled `"r\u0075n"` is not a way round the reader either.
  */
 export function yamlKey(head) {
-  const m = /(?:^|[\s-])(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([\w.-]+))[ \t]*:[ \t]*(?:[&!]\S+[ \t]+)*[|>]/.exec(
-    head,
-  );
+  const m = new RegExp(KEY_SOURCE + "(?:[&!]\\S+[ \\t]+)*[|>]").exec(head);
   return m ? scalarText(m) : null;
+}
+
+/** The three shapes a mapping key is written in, and the run of spaces after its colon. */
+const KEY_SOURCE = "(?:^|[\\s-])(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^']|'')*)'|([\\w.-]+))[ \\t]*:[ \\t]*";
+
+/**
+ * A mapping entry whose value is a QUOTED scalar: its key, and where the opening quote is.
+ *
+ * A workflow's `run: "echo ok # why"` is the same shell as the block form — GitHub runs the
+ * VALUE — and read as a YAML string it was skipped whole, so the only `run:` bodies this
+ * looked at were the ones written with `|`.
+ */
+export function yamlQuoted(head) {
+  const m = new RegExp(KEY_SOURCE + "([\"'])").exec(head);
+  if (m) return { key: scalarText(m), at: m.index + m[0].length - 1 };
+  // An EXPLICIT entry's value line has no key on it; the key was written on the line before.
+  const bare = /^[ \t]*(?:-[ \t]+)*:[ \t]*(["'])/.exec(head);
+  return bare ? { key: null, at: bare[0].length - 1 } : null;
+}
+
+/**
+ * The VALUE of a quoted scalar whose opening quote is at `at`, with each character's offset
+ * in the source, so a span found in it points at the characters it came from.
+ *
+ * A newline inside one FOLDS to a single space, with the indentation after it dropped, which
+ * is what YAML hands its consumer — and what the shell would be given to run.
+ */
+export function decodeQuoted(src, at) {
+  const q = src[at];
+  const text = [];
+  const map = [];
+  let i = at + 1;
+  while (i < src.length) {
+    if (src[i] === q) {
+      if (q === "'" && src[i + 1] === "'") {
+        text.push("'");
+        map.push(i);
+        i += 2;
+        continue;
+      }
+      return { text: text.join(""), map, end: i + 1 };
+    }
+    if (q === '"' && src[i] === "\\") {
+      const e = /^(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[\s\S])/.exec(src.slice(i + 1));
+      if (!e) return null;
+      const ch = /^[xuU]/.test(e[1]) ? String.fromCodePoint(parseInt(e[1].slice(1), 16)) : (YAML_ESCAPES[e[1]] ?? e[1]);
+      text.push(ch);
+      map.push(i);
+      i += 1 + e[1].length;
+      continue;
+    }
+    if (src[i] === "\n") {
+      let j = i + 1;
+      while (j < src.length && (src[j] === " " || src[j] === "\t")) j++;
+      text.push(" ");
+      map.push(i);
+      i = j;
+      continue;
+    }
+    text.push(src[i]);
+    map.push(i);
+    i++;
+  }
+  return null;
 }
 
 /**

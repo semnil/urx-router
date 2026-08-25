@@ -332,6 +332,24 @@ describe("what counts as a comment", () => {
     ]);
   });
 
+  // A decorator run is neither one token nor one shape. `@sealed` ends on a name, `@a.b` on
+  // a dotted one, `@dec(…)` on a `)`, and what it decorates comes after — so it has two
+  // phases, and the bracket depth it opened at is what keeps its ARGUMENTS out of the
+  // decision. Held as a single token: a `{` in `@dec({ x: 1 })` ended the run, a `class` in
+  // `@dec(class X {} / 2)` consumed it, and a member's own decorator was consumed by the
+  // class EXPRESSION its initialiser held.
+  it("keeps a decorator's arguments out of what it decorates", () => {
+    expect(shapes('@dec({ x: 1 })\nclass C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes("@dec(class X<T> {} / 2) // (measured)\nclass C {}\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes('export\n@dec\nclass C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes("class Outer {\n  @dec field = class Inner<T> {} / 2; // (measured)\n}\n")).toEqual([
+      "hedge-parenthetical",
+    ]);
+    // …and a dotted decorator, and two of them, still reach their target.
+    expect(shapes('@a.b.c\nclass C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes('@a\n@b(1)\nclass C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+  });
+
   it("tells a postfix ! from a prefix one", () => {
     expect(shapes("const n = !/x/.test(a) ? 1 : 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
     expect(shapes("const n = a != b; // (measured)\n")).toEqual(["hedge-parenthetical"]);
@@ -871,6 +889,29 @@ describe("what counts as a comment in the # languages and in HTML", () => {
   // A blank line and a comment-only line are not nodes, so an explicit key still waiting for
   // its value survives them. Cleared on every line that was not itself an explicit key, a
   // comment written between `? run` and its `: |` lost the key and the block stayed text.
+
+  // A QUOTED scalar carries the same value the block form does — GitHub runs the value, not
+  // the way it was written — and read as a YAML string it was skipped whole, so the only
+  // `run:` bodies this looked at were the ones written with `|`. Ruby's YAML loads the
+  // double-quoted, the single-quoted, the two-line and the explicit-key forms below as the
+  // one string `echo ok # measured on URX44V`.
+  it("reads a run: written as a quoted scalar", () => {
+    const wf = ".github/workflows/x.yml";
+    expect(findingsIn('steps:\n  - run: "echo ok # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([2]);
+    expect(findingsIn("steps:\n  - run: 'echo ok # measured on URX44V'\n", wf).map((f) => f.line)).toEqual([2]);
+    // …across the lines a quoted scalar may span, where the newline FOLDS to a space, which
+    // is what joins `echo ok #` to the words on the line below into one comment…
+    expect(findingsIn('steps:\n  - run: "echo ok #\n      measured on URX44V"\n', wf).map((f) => f.line)).toEqual([2]);
+    expect(findingsIn('steps:\n  - run: "echo ok\n      # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([3]);
+    // …and behind an explicit key, whose own line carries no key at all.
+    expect(findingsIn('steps:\n  - ? run\n    : "echo ok # measured on URX44V"\n', wf).map((f) => f.line)).toEqual([3]);
+    // The shell's own rules apply inside it: a `#` in a nested quote is not a comment.
+    expect(findingsIn("steps:\n  - run: \"echo '# measured on URX44V'\"\n", wf)).toEqual([]);
+    // …and only `run`, and only where something runs it.
+    expect(findingsIn('steps:\n  - message: "echo ok # measured on URX44V"\n', wf)).toEqual([]);
+    expect(findingsIn('steps:\n  - run: "echo ok # measured on URX44V"\n', "docs/x.yml")).toEqual([]);
+  });
+
   it("carries an explicit key across a comment and a blank line", () => {
     const commented = "steps:\n  - ? run\n    # separator\n    : |\n        echo ok # measured on URX44V\n";
     expect(findingsIn(commented, ".github/workflows/x.yml").map((f) => f.line)).toEqual([5]);
