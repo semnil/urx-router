@@ -792,16 +792,16 @@ export function yamlComments(src, actions = false) {
       if (held) readShell(held);
       return;
     }
-    const quotedRun = yamlQuoted(head);
-    if (!quotedRun) return;
-    const isRun = (quotedRun.key ?? key) === "run";
-    // A value carrying an anchor is decoded whatever its key is: `run: *script` reads it
-    // later, and by then the line it was written on is behind us.
-    if (!isRun && !quotedRun.anchor) return;
-    const value = decodeQuoted(src, starts[n] + quotedRun.at);
-    if (!value) return;
-    if (quotedRun.anchor) anchors.set(quotedRun.anchor, value);
-    if (isRun) readShell(value);
+    for (const entry of yamlQuotedAll(head)) {
+      const isRun = (entry.key ?? key) === "run";
+      // A value carrying an anchor is decoded whatever its key is: `run: *script` reads it
+      // later, and by then the line it was written on is behind us.
+      if (!isRun && !entry.anchor) continue;
+      const value = decodeQuoted(src, starts[n] + entry.at);
+      if (!value) continue;
+      if (entry.anchor) anchors.set(entry.anchor, value);
+      if (isRun) readShell(value);
+    }
   };
   for (let n = 0; n < lines.length; n++) {
     const raw = lines[n];
@@ -884,23 +884,29 @@ export function yamlComments(src, actions = false) {
       const strip = blockStrip(head, lines.slice(n + 1, end));
       // Each dedented character's offset in the source, so a span found in the value points
       // at the characters it came from.
-      const at = [];
-      let value = "";
-      for (let k = n + 1; k < end; k++) {
-        const l = lines[k];
-        for (let col = Math.min(strip, l.length); col < l.length; col++) {
-          at.push(starts[k] + col);
-          value += l[col];
-        }
-        at.push(starts[k] + l.length);
-        value += "\n";
-      }
+      // Each character's offset in the source, so a span found in the value points at the
+      // characters it came from.
+      const built = blockValue(head, lines.slice(n + 1, end));
+      const value = built.text;
+      const at = built.from.map(([li, col]) =>
+        col < 0 ? starts[n + 1 + li] + lines[n + 1 + li].length : starts[n + 1 + li] + col,
+      );
       if (blockAnchor) anchors.set(blockAnchor, { text: value, map: at });
       if ((yamlKey(head) ?? carried) === "run") readShell({ text: value, map: at });
     }
     n = end - 1;
   }
-  return out.sort((a, b) => a.start - b.start);
+  // One source range is ONE comment, however many aliases read the value it is in: the text
+  // is written once, and counted per reference the ledger would grow with every `*script`.
+  const seen = new Set();
+  return out
+    .sort((a, b) => a.start - b.start)
+    .filter((span) => {
+      const key = span.start + "\u0000" + span.end + "\u0000" + span.line;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 /** What a `\`-escape stands for in a YAML double-quoted scalar, beside the numeric forms. */
@@ -941,7 +947,7 @@ const PROPERTY_SOURCE = "((?:[&!]\\S+[ \\t]+)*)";
 const anchorName = (properties) => /&([^\s&!]+)/.exec(properties ?? "")?.[1] ?? null;
 
 /** The three shapes a mapping key is written in, and the run of spaces after its colon. */
-const KEY_SOURCE = "(?:^|[\\s-])(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^']|'')*)'|([\\w.-]+))[ \\t]*:[ \\t]*";
+const KEY_SOURCE = "(?:^|[\\s\\-{[,])(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^']|'')*)'|([\\w.-]+))[ \\t]*:[ \\t]*";
 
 /**
  * A mapping entry whose value is a QUOTED scalar: its key, and where the opening quote is.
@@ -951,12 +957,37 @@ const KEY_SOURCE = "(?:^|[\\s-])(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^']|'')*)'|(
  * looked at were the ones written with `|`.
  */
 export function yamlQuoted(head) {
-  // The same node property a block scalar may wear — `run: &script "…"` is the same value.
-  const m = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "([\"'])").exec(head);
-  if (m) return { key: scalarText(m), at: m.index + m[0].length - 1, anchor: anchorName(m[4]) };
+  return yamlQuotedAll(head)[0] ?? null;
+}
+
+/**
+ * EVERY mapping entry on the line whose value is a quoted scalar.
+ *
+ * A FLOW mapping puts several on one — `steps: [{ name: "x", run: "…" }]` — and read as the
+ * first one only, a `run` behind any other key was never looked at. The search resumes past
+ * each value rather than inside it, so a `key:` written in a string is not one. The node
+ * property a block scalar may wear is allowed in front of each: `run: &script "…"` is the
+ * same value.
+ */
+export function yamlQuotedAll(head) {
+  const found = [];
+  const re = new RegExp(KEY_SOURCE + PROPERTY_SOURCE + "([\"'])", "g");
+  for (let from = 0; ;) {
+    re.lastIndex = from;
+    const m = re.exec(head);
+    if (!m) break;
+    const at = m.index + m[0].length - 1;
+    found.push({ key: scalarText(m), at, anchor: anchorName(m[4]) });
+    // A scalar that does not close on this line runs into the next, so nothing after it
+    // here is a key.
+    const value = decodeQuoted(head, at);
+    if (!value) break;
+    from = value.end;
+  }
+  if (found.length) return found;
   // An EXPLICIT entry's value line has no key on it; the key was written on the line before.
   const bare = new RegExp("^[ \\t]*(?:-[ \\t]+)*:[ \\t]*" + PROPERTY_SOURCE + "([\"'])").exec(head);
-  return bare ? { key: null, at: bare[0].length - 1, anchor: anchorName(bare[1]) } : null;
+  return bare ? [{ key: null, at: bare[0].length - 1, anchor: anchorName(bare[1]) }] : [];
 }
 
 /**
@@ -1094,6 +1125,71 @@ export function blockStrip(head, body) {
   const rest = lead[1].length + lead[2].length;
   const entry = lead[2] !== "" && /^(?:[&!]\S+[ \t]+)*[|>]/.test(head.slice(rest));
   return (entry ? lead[1].length + lead[2].lastIndexOf("-") : rest) + columns;
+}
+
+/**
+ * The VALUE of a block scalar, and where each of its characters came from.
+ *
+ * A `>` block FOLDS its line breaks and a `|` block keeps them, which is the whole
+ * difference between the two headers. Read as a literal, `>` split a sentence written across
+ * two lines and the comment on it went unmatched. What a fold keeps literal: an empty line,
+ * and a line indented FURTHER than the block. Measured against Ruby's YAML.
+ *
+ * `from[i]` is `[lineIndex, column]` into `body`, or `[lineIndex, -1]` for a break emitted
+ * after that line.
+ */
+export function blockValue(head, body) {
+  const strip = blockStrip(head, body);
+  const folded = /([|>])(?:[1-9][-+]?|[-+][1-9]?)?$/.exec(head)?.[1] === ">";
+  const text = [];
+  const from = [];
+  let blanks = 0;
+  let started = false;
+  let deeper = false;
+  for (let k = 0; k < body.length; k++) {
+    const line = body[k];
+    const at = Math.min(strip, line.length);
+    const content = line.slice(at);
+    if (!folded) {
+      for (let col = at; col < line.length; col++) {
+        text.push(line[col]);
+        from.push([k, col]);
+      }
+      text.push("\n");
+      from.push([k, -1]);
+      continue;
+    }
+    if (content.trim() === "") {
+      blanks++;
+      continue;
+    }
+    const more = /^[ \t]/.test(content);
+    if (started) {
+      const breaks = blanks > 0 || more || deeper ? Math.max(blanks, 1) : 0;
+      for (let z = 0; z < breaks; z++) {
+        text.push("\n");
+        from.push([k - 1, -1]);
+      }
+      if (breaks === 0) {
+        text.push(" ");
+        from.push([k - 1, -1]);
+      }
+    }
+    for (let col = at; col < line.length; col++) {
+      text.push(line[col]);
+      from.push([k, col]);
+    }
+    started = true;
+    deeper = more;
+    blanks = 0;
+  }
+  // The trailing break a block carries. Chomping decides how many, and no comment's extent
+  // turns on that — a comment ends at a break or at the end of the value either way.
+  if (folded && started) {
+    text.push("\n");
+    from.push([body.length - 1, -1]);
+  }
+  return { text: text.join(""), from };
 }
 
 /** The index just past the closing `q` at or after `from`, or -1 if the line does not close it. */

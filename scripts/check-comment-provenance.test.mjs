@@ -26,6 +26,7 @@ import {
   shellComments,
   tomlComments,
   blockStrip,
+  blockValue,
   decodeQuoted,
   scanTargets,
   trackedSources,
@@ -963,6 +964,41 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     expect(findingsIn(other, wf)).toEqual([]);
   });
 
+  // A `>` block is the same shell written across more lines, so a sentence split by a fold
+  // is one sentence. Read as a literal it was two, and the comment on it went unmatched.
+  it("reads a run: written as a folded block", () => {
+    const wf = ".github/workflows/x.yml";
+    expect(
+      findingsIn("steps:\n  - run: >\n      echo ok # measured\n      on URX44V\n", wf).map((f) => f.line),
+    ).toEqual([3]);
+    // …and an empty line is kept, so what it separates is two lines and not one comment.
+    expect(findingsIn("steps:\n  - run: >\n      echo ok #\n\n      measured on URX44V\n", wf)).toEqual([]);
+    // …while a `|` block keeps every break, as it did before.
+    expect(
+      findingsIn("steps:\n  - run: |\n      echo ok # measured\n      on URX44V\n", wf).map((f) => f.line),
+    ).toEqual([]);
+  });
+
+  // A FLOW mapping puts several entries on one line, and read as the first one only a `run`
+  // behind any other key was never looked at. `{` and `,` open a key as a line start does.
+  it("reads every entry a flow mapping puts on one line", () => {
+    const wf = ".github/workflows/x.yml";
+    expect(findingsIn('steps: [{ name: "x", run: "echo ok # measured on URX44V" }]\n', wf).map((f) => f.line)).toEqual([
+      1,
+    ]);
+    expect(findingsIn('steps: [{run: "echo ok # measured on URX44V"}]\n', wf).map((f) => f.line)).toEqual([1]);
+    // …and a `key: "…"` written INSIDE a value is not an entry, so the search for the next
+    // one resumes past the value rather than inside it.
+    expect(findingsIn("steps: [{ name: 'x, run: \"echo ok # measured on URX44V\"' }]\n", wf)).toEqual([]);
+  });
+
+  // One source range is ONE comment, however many aliases read the value it is in.
+  it("counts a value read through two aliases once", () => {
+    const wf = ".github/workflows/x.yml";
+    const twice = 'steps:\n  - run: &script "echo ok # measured on URX44V"\n  - run: *script\n';
+    expect(findingsIn(twice, wf).map((f) => f.line)).toEqual([2]);
+  });
+
   it("carries an explicit key across a comment and a blank line", () => {
     const commented = "steps:\n  - ? run\n    # separator\n    : |\n        echo ok # measured on URX44V\n";
     expect(findingsIn(commented, ".github/workflows/x.yml").map((f) => f.line)).toEqual([5]);
@@ -1160,6 +1196,71 @@ describe.skipIf(rubyForFolds.error || rubyForFolds.status !== 0)("quoted scalars
     expect(JSON.parse(run.stdout)).toEqual(FOLDS.map(([, value]) => value));
   });
 });
+
+// A `>` block FOLDS its line breaks and a `|` block keeps them, which is the whole
+// difference between the two headers. The table is what Ruby answers; the differential below
+// re-measures it. What a fold keeps literal: an empty line, and a line indented FURTHER than
+// the block.
+const BLOCKS_VALUES = [
+  ["k: >\n  a\n  b\n", "a b\n"],
+  ["k: >\n  a\n\n  b\n", "a\nb\n"],
+  ["k: >\n  a\n\n\n  b\n", "a\n\nb\n"],
+  ["k: >\n  a\n    x\n  b\n", "a\n  x\nb\n"],
+  ["k: |\n  a\n  b\n", "a\nb\n"],
+  ["k: |\n  a\n\n  b\n", "a\n\nb\n"],
+];
+
+describe("what a block scalar's value is", () => {
+  const parts = (doc) => {
+    const lines = doc.split("\n");
+    return [lines[0], lines.slice(1, -1)];
+  };
+
+  it("folds a > block and keeps a | block", () => {
+    for (const [doc, value] of BLOCKS_VALUES) {
+      const [head, body] = parts(doc);
+      expect(blockValue(head, body).text, doc).toBe(value);
+    }
+  });
+
+  // …and every character it emits names where it came from, which is what makes a finding
+  // point at the source rather than at the value.
+  it("names a source position for every character", () => {
+    for (const [doc] of BLOCKS_VALUES) {
+      const [head, body] = parts(doc);
+      const built = blockValue(head, body);
+      expect(built.from.length, doc).toBe(built.text.length);
+      for (const [line, col] of built.from) {
+        expect(line, doc).toBeGreaterThanOrEqual(0);
+        expect(line, doc).toBeLessThan(body.length);
+        expect(col, doc).toBeLessThan(body[line].length);
+      }
+    }
+  });
+});
+
+// The table above is a copy of Ruby's answers, and a copy can drift from what it copied.
+// Skipped where ruby is absent, and the skip is named rather than silent.
+const rubyForBlocks = spawnSync("ruby", ["-e", "puts 1"], { encoding: "utf8" });
+
+describe.skipIf(rubyForBlocks.error || rubyForBlocks.status !== 0)(
+  "block scalar values, differentially against Ruby",
+  () => {
+    it("builds the value Ruby loads, for each header", () => {
+      const script = `
+      require "yaml"
+      require "json"
+      puts JSON.generate(JSON.parse(STDIN.read).map { |doc| Psych.load(doc)["k"] })
+    `;
+      const run = spawnSync("ruby", ["-e", script], {
+        input: JSON.stringify(BLOCKS_VALUES.map(([doc]) => doc)),
+        encoding: "utf8",
+      });
+      expect(run.status, run.stderr).toBe(0);
+      expect(JSON.parse(run.stdout)).toEqual(BLOCKS_VALUES.map(([, value]) => value));
+    });
+  },
+);
 
 describe("what a block scalar's value is indented by", () => {
   const stripOf = ([doc, head]) => {
