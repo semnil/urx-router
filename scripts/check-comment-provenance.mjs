@@ -225,6 +225,8 @@ export function comments(src, mode = "js") {
   if (mode === "toml") return tomlComments(src);
   if (mode === "python") return pyComments(src);
   if (mode === "shell") return shellComments(src);
+  if (mode === "pwsh") return pwshComments(src);
+  if (mode === "cmd") return cmdComments(src);
   if (mode === "html") return htmlComments(src);
   return scanJs(src, mode);
 }
@@ -743,120 +745,154 @@ export function rustComments(src) {
   return out;
 }
 
+/** The punctuation a token cannot run past, so a `#` written after one begins a token of
+ *  its own — which is where PowerShell begins a comment. Measured against pwsh 7.4.6: it
+ *  comments after each of these, after whitespace, and after a token that CLOSED (a string,
+ *  a here-string, a block comment); it does not after a character a bareword may hold
+ *  (`a#b` is one token, and so is `$x#`) nor after the backtick, which escapes it. */
+const PWSH_BOUNDARY = /[\s;,|&(){}"'=+]/;
+
 /**
  * The comments in a POWERSHELL script, which is what GitHub runs a `shell: pwsh` step with
  * and what a Windows runner defaults to.
  *
- * PowerShell has two: `#` to the end of the line, and `<# … #>`, which NESTS. Its strings
- * are not the shell's either — `'…'` takes no escape and doubles the quote to hold one,
- * `"…"` escapes with a BACKTICK rather than a backslash, and a here-string runs from `@"` to
- * a line beginning `"@`. Lexed as bash, a `<# … #>` was no comment at all, and a backtick
- * opened a command substitution that ran to the next one.
+ * PowerShell has two: `#` where a token may begin, and `<# … #>`, which does NOT nest — the
+ * first `#>` ends it and what follows is code again. Its strings are not the shell's: `'…'`
+ * takes no escape and doubles the quote to hold one, `"…"` escapes with a BACKTICK, and a
+ * here-string runs to a line beginning `"@`. The EXPANDABLE ones are not opaque — a `$( … )`
+ * inside either is a statement list, so a comment written in one is a comment — while the
+ * literal `'…'` and `@'…'@` are text throughout.
  */
 export function pwshComments(src) {
   const out = [];
-  let line = 1;
-  let prev = "\n";
-  for (let i = 0; i < src.length;) {
-    const c = src[i];
-    if (c === "\n") {
-      line++;
-      prev = "\n";
+  const starts = [0];
+  for (let i = 0; i < src.length; i++) if (src[i] === "\n") starts.push(i + 1);
+  const lineOf = (at) => {
+    let k = 0;
+    while (k + 1 < starts.length && starts[k + 1] <= at) k++;
+    return k + 1;
+  };
+  /** Past the `)` that closes a subexpression opened at `open`, whose strings hold no code. */
+  const closeParen = (open) => {
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+      const c = src[i];
+      if (c === "`") i++;
+      else if (c === "'" || c === '"') {
+        i++;
+        while (i < src.length && src[i] !== c) i += src[i] === "`" ? 2 : 1;
+      } else if (c === "(") depth++;
+      else if (c === ")" && --depth === 0) return i;
+    }
+    return src.length;
+  };
+  /** Walk an expandable body, lexing each `$( … )` in it as code and the rest as text. */
+  const expand = (from, stop) => {
+    let i = from;
+    while (i < stop) {
+      if (src[i] === "`") i += 2;
+      else if (src[i] === "$" && src[i + 1] === "(") {
+        const close = closeParen(i + 1);
+        scan(i + 2, Math.min(close, stop));
+        i = close + 1;
+      } else i++;
+    }
+  };
+  /** Past the `"` that closes an expandable string opened at `open`, its `$( … )` read. */
+  const closeExpandable = (open) => {
+    let i = open + 1;
+    while (i < src.length) {
+      if (src[i] === "`") i += 2;
+      else if (src[i] === "$" && src[i + 1] === "(") {
+        const close = closeParen(i + 1);
+        scan(i + 2, close);
+        i = close + 1;
+      } else if (src[i] === '"') return i + 1;
+      else i++;
+    }
+    return src.length;
+  };
+  function scan(from, stop) {
+    // Whether a `#` written here would BEGIN a token, which is the whole of PowerShell's
+    // rule for one. A character test alone missed the closes: a `#` right after `"@` or
+    // after a `#>` starts a comment, and neither `@` nor `>` is punctuation a token stops at.
+    let opens = true;
+    for (let i = from; i < stop;) {
+      const c = src[i];
+      // The backtick is PowerShell's escape, not a substitution: it hides the next character.
+      if (c === "`") {
+        i += 2;
+        opens = false;
+        continue;
+      }
+      if (c === "<" && src[i + 1] === "#") {
+        const shut = src.indexOf("#>", i + 2);
+        const end = shut === -1 ? stop : shut + 2;
+        out.push({ line: lineOf(i), text: src.slice(i + 2, shut === -1 ? end : shut), start: i, end });
+        i = end;
+        opens = true;
+        continue;
+      }
+      if (c === "#" && opens) {
+        let k = i;
+        while (k < stop && src[k] !== "\n") k++;
+        out.push({ line: lineOf(i), text: src.slice(i + 1, k), start: i, end: k });
+        i = k;
+        opens = true;
+        continue;
+      }
+      // A here-string runs to a line BEGINNING with the closing pair, so a quote inside one
+      // closes nothing; the expandable form carries code in its `$( … )` and the other does
+      // not.
+      if (c === "@" && (src[i + 1] === '"' || src[i + 1] === "'")) {
+        const close = "\n" + src[i + 1] + "@";
+        const shut = src.indexOf(close, i + 2);
+        const end = shut === -1 ? stop : shut + close.length;
+        if (src[i + 1] === '"') expand(i + 2, shut === -1 ? end : shut);
+        i = end;
+        opens = true;
+        continue;
+      }
+      if (c === "'") {
+        let k = i + 1;
+        while (k < src.length) {
+          if (src[k] === "'") {
+            if (src[k + 1] === "'") k += 2;
+            else break;
+          } else k++;
+        }
+        i = k + 1;
+        opens = true;
+        continue;
+      }
+      if (c === '"') {
+        i = closeExpandable(i);
+        opens = true;
+        continue;
+      }
+      opens = PWSH_BOUNDARY.test(c);
       i++;
-      continue;
     }
-    // The backtick is PowerShell's escape, not a substitution: it hides the next character,
-    // and a line ending in one continues onto the next.
-    if (c === "`") {
-      if (src[i + 1] === "\n") line++;
-      i += 2;
-      prev = "x";
-      continue;
-    }
-    // A here-string runs to a line that BEGINS with the closing pair, so a quote inside one
-    // closes nothing.
-    if (c === "@" && (src[i + 1] === '"' || src[i + 1] === "'")) {
-      const close = "\n" + src[i + 1] + "@";
-      const found = src.indexOf(close, i + 2);
-      const stop = found === -1 ? src.length : found + close.length;
-      for (let k = i; k < stop; k++) if (src[k] === "\n") line++;
-      i = stop;
-      prev = "x";
-      continue;
-    }
-    if (c === "'" || c === '"') {
-      let k = i + 1;
-      while (k < src.length) {
-        if (c === '"' && src[k] === "`") {
-          if (src[k + 1] === "\n") line++;
-          k += 2;
-          continue;
-        }
-        if (src[k] === c) {
-          if (c === "'" && src[k + 1] === "'") {
-            k += 2;
-            continue;
-          }
-          break;
-        }
-        if (src[k] === "\n") line++;
-        k++;
-      }
-      i = k + 1;
-      prev = "x";
-      continue;
-    }
-    if (c === "<" && src[i + 1] === "#") {
-      const from = i;
-      const at = line;
-      let depth = 1;
-      let k = i + 2;
-      while (k < src.length && depth > 0) {
-        if (src[k] === "<" && src[k + 1] === "#") {
-          depth++;
-          k += 2;
-          continue;
-        }
-        if (src[k] === "#" && src[k + 1] === ">") {
-          depth--;
-          k += 2;
-          continue;
-        }
-        if (src[k] === "\n") line++;
-        k++;
-      }
-      out.push({ line: at, text: src.slice(from + 2, depth === 0 ? k - 2 : k), start: from, end: k });
-      i = k;
-      prev = "x";
-      continue;
-    }
-    if (c === "#" && /[\s;(){}|&,]/.test(prev)) {
-      let k = i;
-      while (k < src.length && src[k] !== "\n") k++;
-      out.push({ line, text: src.slice(i + 1, k), start: i, end: k });
-      i = k;
-      prev = "x";
-      continue;
-    }
-    prev = c;
-    i++;
   }
-  return out;
+  scan(0, src.length);
+  return out.sort((a, b) => a.start - b.start);
 }
 
 /**
- * The comments in a CMD script: `rem` opening a line, and a `::` label written as one.
+ * The comments in a CMD script: `rem` opening a line, behind an `@` or not, and a `::` label
+ * written as one.
  *
  * `#` is not a comment in cmd at all, and lexed as bash a step written for it reported its
- * `echo #` as one. What this does NOT claim is a `rem` behind a `&` — no machine this runs
- * on carries a cmd to measure that against, so it is left unread rather than guessed.
+ * `echo #` as one. The `@` is the per-command echo suppression, and `@rem` is the rem command
+ * behind it. What this does NOT claim is a `rem` behind a `&`: no machine this runs on
+ * carries a cmd to measure that against, so it is left unread rather than guessed.
  */
 export function cmdComments(src) {
   const out = [];
   const lines = src.split("\n");
   for (let n = 0, at = 0; n < lines.length; n++) {
     const line = lines[n];
-    const m = /^([ \t]*)(rem(?=[ \t]|$)|::)/i.exec(line);
+    const m = /^([ \t]*)(@?rem(?=[ \t]|$)|::)/i.exec(line);
     if (m) out.push({ line: n + 1, text: line.slice(m[0].length), start: at + m[1].length, end: at + line.length });
     at += line.length + 1;
   }

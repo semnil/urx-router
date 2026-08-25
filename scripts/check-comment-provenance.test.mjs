@@ -1014,6 +1014,7 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     ["pwsh", "<# measured by device #>", "Write-Output '<# measured by device #>'"],
     ["powershell", "<# measured by device #>", "Write-Output '<# measured by device #>'"],
     ["cmd", "rem measured by device", "echo # measured by device"],
+    ["cmd", "@rem measured by device", "echo # measured by device"],
     // Python's own row is written with NO space in front of the hash: it is a comment there
     // wherever it is not in a string, while the shell needs a word boundary in front of one.
     ["python", "print('ok')#measured by device", 'print("""\n# measured by device\n""")'],
@@ -1032,6 +1033,50 @@ describe("what counts as a comment in the # languages and in HTML", () => {
         ).toEqual([5]);
         expect(findingsIn(step(shell, miss), wf), `${shell}: ${miss}`).toEqual([]);
       }
+    });
+
+    // Shapes PowerShell decides differently from the reader first written for it. Its block
+    // comment does NOT nest — the first `#>` ends it, and what follows is code — its `#`
+    // begins a comment wherever a TOKEN may begin, which a closing quote does, and a
+    // `$( … )` inside an expandable string or here-string is a statement list and not text.
+    // Every one of these was measured against pwsh 7.4.6 before it was written down.
+    it("reads PowerShell the way PowerShell reads it", () => {
+      const ps = (value) => step("pwsh", value);
+      expect(findingsIn(ps('<# <# note #> Write-Output "measured by device" #>'), wf)).toEqual([]);
+      // …a `#` against a closing quote begins one, where a `#` inside a bareword does not.
+      expect(findingsIn(ps('Write-Output "ok"# measured by device'), wf).map((f) => f.line)).toEqual([5]);
+      expect(findingsIn(ps("Write-Output 'ok'# measured by device"), wf).map((f) => f.line)).toEqual([5]);
+      expect(findingsIn(ps("Write-Output a#measured by device"), wf)).toEqual([]);
+      // …and a subexpression is code, in an expandable string and in an expandable
+      // here-string, while the literal forms of both are text throughout.
+      expect(findingsIn(ps('Write-Output "$( "x" # measured by device\n)"'), wf).map((f) => f.line)).toEqual([5]);
+      expect(findingsIn(ps('Write-Output @"\n$( "x" # measured by device\n)\n"@'), wf).map((f) => f.line)).toEqual([5]);
+      expect(findingsIn(ps('Write-Output @"\n# measured by device\n"@'), wf)).toEqual([]);
+      expect(findingsIn(ps("Write-Output @'\n# measured by device\n'@"), wf)).toEqual([]);
+      // …a LITERAL here-string holds no subexpression at all: pwsh prints this one verbatim.
+      expect(findingsIn(ps("Write-Output @'\n$( \"x\" # measured by device\n)\n'@"), wf)).toEqual([]);
+      // …a here-string and a block comment each END a token, so a `#` against either begins
+      // one.
+      expect(findingsIn(ps('Write-Output @"\nx\n"@# measured by device'), wf).map((f) => f.line)).toEqual([5]);
+      expect(findingsIn(ps("Write-Output 1; <# b #># measured by device"), wf).map((f) => f.line)).toEqual([5]);
+      // …while the backtick escapes it, being PowerShell's escape and not a substitution.
+      expect(findingsIn(ps("Write-Output (1)`# measured by device"), wf)).toEqual([]);
+      // …and what it escapes inside a string is the quote, so the string runs past it and
+      // the words after it are still text: pwsh prints `a" # measured by device`.
+      expect(findingsIn(ps('Write-Output "a`" # measured by device"'), wf)).toEqual([]);
+      // …while an escaped quote OUTSIDE one opens no string, so what follows is code and the
+      // hash after it is a comment: pwsh prints the quote and nothing else.
+      expect(findingsIn(ps('Write-Output `" # measured by device'), wf).map((f) => f.line)).toEqual([5]);
+    });
+
+    // cmd's `@` is the per-command echo suppression, so `@rem` is the rem command behind one.
+    it("reads a cmd rem behind an echo suppression", () => {
+      for (const value of ["@rem measured by device", "@REM measured by device", "  @rem measured by device"])
+        expect(
+          findingsIn(step("cmd", value), wf).map((f) => f.line),
+          value,
+        ).toEqual([5]);
+      expect(findingsIn(step("cmd", "echo @rem measured by device"), wf)).toEqual([]);
     });
 
     // A shell NOT in that table is a custom command line, and its value is left unread rather
@@ -1120,11 +1165,24 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     });
   });
 
-  // bash and python3 are on this machine and on the runner; the table above is what they do
-  // with those two values, and the differential re-measures it. pwsh is on the GitHub runner
-  // and not on this one, so that row is skipped here and named rather than silent. There is
-  // no cmd on any machine this runs on, which is why the cmd reader claims `rem` opening a
-  // line and a `::` label and nothing else — a `rem` behind a `&` is left unread.
+  // bash and python3 are on this machine and on the runner, and the differential runs them.
+  // pwsh is on the GitHub runner; where it is absent the rows are skipped and the skip is
+  // named rather than silent. There is no cmd on any machine this runs on, which is why the
+  // cmd reader claims `rem` opening a line — behind an `@` or not — and a `::` label, and
+  // nothing else: a `rem` behind a `&` is left unread rather than guessed.
+  //
+  // The PowerShell rows are the shapes the reader was rewritten for, each phrased so that
+  // RUNNING it says which answer is right: the words come out where they are code, and stay
+  // in where they are a comment.
+  const PWSH_SHAPES = [
+    ['<# <# note #> Write-Output "measured by device" #>', "out"],
+    ['Write-Output "ok"# measured by device', "in"],
+    ["Write-Output a#measured by device", "out"],
+    ['Write-Output "$( "x" # measured by device\n)"', "in"],
+    ['Write-Output @"\n$( "x" # measured by device\n)\n"@', "in"],
+    ['Write-Output @"\n# measured by device\n"@', "out"],
+    ['Write-Output @"\nx\n"@# measured by device', "in"],
+  ];
   const RUNNERS = [
     ["bash", ["bash", "-c"]],
     ["python", ["python3", "-c"]],
@@ -1132,6 +1190,26 @@ describe("what counts as a comment in the # languages and in HTML", () => {
   ];
 
   describe("what a run: is lexed as, differentially", () => {
+    const pwsh = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
+    it.skipIf(pwsh.error || pwsh.status !== 0)("agrees with pwsh about where a comment is", () => {
+      for (const [script, where] of PWSH_SHAPES) {
+        const ran = spawnSync("pwsh", ["-NoProfile", "-Command", script], { encoding: "utf8" });
+        expect(ran.status, `${script}: ${ran.stderr}`).toBe(0);
+        // `out` means the words are OUTSIDE any comment, so running it prints them; `in`
+        // means they are inside one, so it does not. That is the whole of what the reader
+        // decides, and the two are compared on the same script below.
+        // Whitespace-normalised, since a bareword `#` leaves the words as three ARGUMENTS
+        // and Write-Output puts one per line — printed either way, which is the question.
+        const printed = ran.stdout.replace(/\s+/g, " ");
+        if (where === "out") expect(printed, script).toContain("measured by device");
+        else expect(printed, script).not.toContain("measured by device");
+        expect(
+          comments(script, "pwsh").some((c) => c.text.includes("measured by device")),
+          script,
+        ).toBe(where === "in");
+      }
+    });
+
     for (const [shell, argv] of RUNNERS) {
       const probe = spawnSync(argv[0], [...argv.slice(1), shell === "python" ? "print(1)" : "exit 0"], {
         encoding: "utf8",
@@ -2315,9 +2393,10 @@ describe("what the default scan reaches", () => {
   });
 });
 
-// The union's false positive is unreachable in FORMATTED text, and that argument is only as
-// wide as the formatter's reach. So the two file lists are one list, and this is where that
-// is measured rather than stated.
+// The one shape the goal reading cannot separate on its own — a `<` that is either a
+// comparison or a type argument list — is separated in FORMATTED text by the space Prettier
+// puts before any trivia, and that argument is only as wide as the formatter's reach. So the
+// two file lists are one list, and this is where that is measured rather than stated.
 describe("what the formatter reaches", () => {
   const ROOT = join(HERE, "..");
   const rel = (paths) => paths.map((p) => relative(ROOT, p).split(sep).join("/"));

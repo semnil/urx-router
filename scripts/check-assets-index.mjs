@@ -135,6 +135,11 @@ const PROSE_TOKENS = new Map([
   // and one where it does not. Neither is an entity in any tree.
   [";#", "shell, named as the boundary a comment may begin at"],
   ["a#b", "shell, named as a hash inside a word, which begins nothing"],
+  // Three fragments of cmd, named as what a comment is written with in a shell that has no
+  // `#` at all. None is an entity in any tree.
+  ["rem", "the cmd command, named as the one that opens a comment there"],
+  ["@", "cmd's per-command echo suppression, named as what a `rem` may sit behind"],
+  ["::", "a cmd label, named as the other thing written as a comment"],
   // Four fragments of YAML, named as the words a plain scalar's continuation is made of.
   // None is an entity in any tree: three only LOOK like an indicator or a key, and the
   // fourth is the one spelling that is.

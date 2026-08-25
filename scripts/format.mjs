@@ -26,8 +26,8 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /** The extensions Prettier parses, out of everything the provenance checker reads. Rust,
  *  shell, TOML and Python it does not; YAML it does, and formatting seventeen workflows to
- *  buy nothing is a diff nobody asked for — the union's false positive is a JavaScript
- *  shape, and every other dialect is read exactly once. */
+ *  buy nothing is a diff nobody asked for — the shape the goal reading cannot separate on
+ *  its own is a JavaScript one, and no other dialect leans on the formatter at all. */
 const FORMATTED = new Set([".ts", ".mjs", ".cjs", ".js", ".css", ".html"]);
 /** The half the provenance check's argument rests on. */
 export const JS_FAMILY = new Set([".ts", ".mjs", ".cjs", ".js"]);
