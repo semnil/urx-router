@@ -247,6 +247,10 @@ function scanJs(src, mode = "js") {
   let angles = 0; // open TypeScript type-argument lists
   let typeParams = false; // whether the open run is a declaration's parameters
   let angleDepth = 0; // the bracket depth the open run started at
+  // The token in front of an open decorator run, or undefined when none is open.
+  let decoratorFrom = undefined;
+  let gapSpaced = false; // whitespace has been seen since the last significant token
+  let gapCommented = false; // …and a comment has been seen since it too
 
   // The span carries its SOURCE RANGE, not only its line: two comments on one line are two
   // comments, and a key of line-plus-text folded them into one — under which a file at a
@@ -342,6 +346,22 @@ function scanJs(src, mode = "js") {
 
   while (i < src.length) {
     const c = src[i];
+    // Whether the gap since the previous significant token began with whitespace. A block
+    // comment is trivia and a type argument list may sit behind one — Prettier writes
+    // `f/* c */ <string>` and normalises every comparison to `a /* c */ < b`, so what
+    // separates them is the space BEFORE the comment, not the one after it. Read off the
+    // raw character in front of the `<`, the first was a comparison and the second a type
+    // argument list, each the opposite of what it is.
+    const tight = !gapSpaced;
+    const trivia = /\s/.test(c) || src.startsWith("//", i) || src.startsWith("/*", i);
+    if (!trivia) {
+      gapSpaced = false;
+      gapCommented = false;
+    } else if (!/\s/.test(c)) {
+      gapCommented = true;
+    } else if (!gapCommented) {
+      gapSpaced = true;
+    }
     if (c === "\n") {
       line++;
       i++;
@@ -399,7 +419,13 @@ function scanJs(src, mode = "js") {
         // `history` begins one further back. Walked from `history` alone, the token right
         // in front was never looked at, so `case 1: function g() {}` was decided by the `1`
         // rather than by the label's colon and read as an expression.
-        const chain = [last, ...history];
+        // A DECORATOR is transparent to that decision, and it is not one token: `@sealed`
+        // ends on a name and `@dec(1)` on a `)`, so the walk cannot step back over one.
+        // What decides the declaration is the token in front of the whole run, recorded
+        // when it opened — without it, `@sealed class C<T> {}` was decided by `sealed` and
+        // read as an expression.
+        const chain = decoratorFrom !== undefined ? [decoratorFrom] : [last, ...history];
+        decoratorFrom = undefined;
         let k = 0;
         while (k < chain.length && chain[k]?.kind === "name" && !chain[k].property && MODIFIERS.has(chain[k].text)) k++;
         pendingBodies.push({ depth: parens.length, value: !startsStatement(chain[k] ?? null) });
@@ -479,6 +505,7 @@ function scanJs(src, mode = "js") {
         pendingBodies.pop();
       }
       braces.push(kind);
+      decoratorFrom = undefined;
       punct("{");
       i++;
       continue;
@@ -518,7 +545,7 @@ function scanJs(src, mode = "js") {
     // Inside a type there is no comparison for a `<` to be, so a nested generic signature
     // opens whatever sits in front of it: `f<new <U>() => U>` and `T extends <U>() => U`
     // both put one after a space, and unread its `>` closed the run around it.
-    if (c === "<" && (angles > 0 || (i > 0 && !/\s/.test(src[i - 1]) && endsValue()))) {
+    if (c === "<" && (angles > 0 || (tight && endsValue()))) {
       // A DECLARATION's type parameters are not an instantiation expression: what follows
       // `class C<T>` is the body, and closing the run on a value made that brace an object
       // literal — after which the `}` ended a value and the pattern on the next line was
@@ -541,6 +568,12 @@ function scanJs(src, mode = "js") {
       i++;
       continue;
     }
+    if (c === "@") {
+      if (decoratorFrom === undefined && startsStatement(last)) decoratorFrom = last;
+      punct("@");
+      i++;
+      continue;
+    }
     // A `<` that opened nothing must not poison the rest of the file: a statement boundary
     // ends any run that never closed. Nor may a body that never arrived — an ambient
     // `declare function f(): T;` pushes one and no brace ever consumes it, and the next type
@@ -550,6 +583,7 @@ function scanJs(src, mode = "js") {
     // run was lost half way through and the `/` after its `>` opened a pattern.
     if (c === ";" && (angles === 0 || braces.length + parens.length === angleDepth)) {
       angles = 0;
+      decoratorFrom = undefined;
       while (pendingBodies.length && pendingBodies[pendingBodies.length - 1].depth >= parens.length)
         pendingBodies.pop();
     }
@@ -1143,7 +1177,11 @@ export function shellComments(src) {
   // `)` close the substitution: `$( (x); # why` left the comment outside it. A BACKTICK
   // substitution is a third frame: its body is code even inside a double quote, which a
   // `$(`-only state read as string text.
-  const stack = []; // "subst" | "group" | "backtick"
+  // Each frame carries the state of the command it INTERRUPTS. A `$( … )` is a word in the
+  // command around it, and sharing one command position across every frame let an inner `;`
+  // leave the outer one open — `$($(printf printf;) case y)` then read the outer `case` as a
+  // keyword and the `)` that closed the substitution as its pattern's.
+  const stack = []; // {kind: "subst"|"group"|"backtick", cmdStart, timed, cases}
   const dq = []; // the stack depth each open double quote was opened at
   const inDoubleQuote = () => dq.length > 0 && dq[dq.length - 1] === stack.length;
   const pending = []; // here-documents whose bodies start after this line's newline
@@ -1240,30 +1278,37 @@ export function shellComments(src) {
       i++;
       continue;
     }
-    if (c === "`") {
-      // Backticks do not nest — the inner ones have to be escaped — so one frame toggles.
-      if (stack[stack.length - 1] === "backtick") stack.pop();
-      else stack.push("backtick");
-      i++;
-      prev = "(";
+    const open = (kind) => {
+      stack.push({ kind, cmdStart, timed, cases: cases.length });
       cmdStart = true;
       timed = false;
+    };
+    // A closed frame leaves a WORD behind in the command it interrupted, so the position it
+    // returns to is the one after a word.
+    const close = () => {
+      const frame = stack.pop();
+      cases.length = frame.cases;
+      cmdStart = false;
+      timed = false;
+    };
+    if (c === "`") {
+      // Backticks do not nest — the inner ones have to be escaped — so one frame toggles.
+      if (stack[stack.length - 1]?.kind === "backtick") close();
+      else open("backtick");
+      i++;
+      prev = "(";
       continue;
     }
     if (c === "$" && src[i + 1] === "(") {
-      stack.push("subst");
+      open("subst");
       i += 2;
       prev = "(";
-      cmdStart = true;
-      timed = false;
       continue;
     }
     if (c === "(" && !inDoubleQuote()) {
-      stack.push("group");
+      open("group");
       i++;
       prev = "(";
-      cmdStart = true;
-      timed = false;
       continue;
     }
     if (c === ")" && !inDoubleQuote()) {
@@ -1276,7 +1321,7 @@ export function shellComments(src) {
         timed = false;
         continue;
       }
-      if (stack.length) stack.pop();
+      if (stack.length) close();
       i++;
       prev = c;
       continue;

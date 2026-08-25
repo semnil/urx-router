@@ -299,6 +299,39 @@ describe("what counts as a comment", () => {
     ]);
   });
 
+  // A block comment is TRIVIA, and a type argument list may sit behind one. What separates
+  // it from a comparison is still the space, but the one BEFORE the comment: Prettier writes
+  // `f/* c */ <string>` and normalises every comparison to `a /* c */ < b`, keeping the
+  // space it puts in front of the comment (measured on both). Read off the raw character in
+  // front of the `<`, the first was a comparison and the second a type argument list.
+  it("reads the gap in front of a type argument list, not the character", () => {
+    expect(shapes("const y = f/* bridge */ <string> / 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
+    expect(shapes('class C/* bridge */ <T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes('class C/* bridge */ <T> {}\n/[//]/.test("x"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    // …and the comparison behind one is still a comparison, where a pattern may follow.
+    expect(shapes('const r = a /* c */ < b > /["]/.test("d"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+  });
+
+  // A DECORATOR is transparent to declaration-versus-expression, and it is not one token:
+  // `@sealed` ends on a name and `@dec(1)` on a `)`, so the modifier walk cannot step back
+  // over one. Decided by the decorator itself, `@sealed class C<T> {}` was an expression and
+  // its body an object literal, after which the pattern on the next line was a division into
+  // it and what that walked into was reported as a comment that is not there.
+  it("reads a declaration through the decorators in front of it", () => {
+    expect(shapes('@sealed\nclass C<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes('@dec(1)\nclass D<T> {}\n/[//]/.test("(measured)");\n')).toEqual([]);
+    expect(shapes('class E { @dec m<T>() {} }\n/[//]/.test("(measured)");\n')).toEqual([]);
+    // …and the comment after one is still read, as is a comment INSIDE the decorator.
+    expect(shapes('@sealed\nclass C<T> {}\n/[//]/.test("x"); // (measured)\n')).toEqual(["hedge-parenthetical"]);
+    expect(shapes("@dec(/* inner (measured) */ 1)\nclass D {}\n")).toEqual(["hedge-parenthetical"]);
+    // …and a run that a declaration never consumed does not outlive the brace after it: a
+    // class EXPRESSION reached with one still open would be read as a declaration, and the
+    // `/` after its body would open a pattern rather than divide.
+    expect(shapes("class E { @dec m() {} }\nconst x = class C<T> {} / 2; // (measured)\n")).toEqual([
+      "hedge-parenthetical",
+    ]);
+  });
+
   it("tells a postfix ! from a prefix one", () => {
     expect(shapes("const n = !/x/.test(a) ? 1 : 2; // (measured)\n")).toEqual(["hedge-parenthetical"]);
     expect(shapes("const n = a != b; // (measured)\n")).toEqual(["hedge-parenthetical"]);
@@ -889,6 +922,15 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     expect(findingsIn('v="$(-p case x) # measured on URX44V"\n', "x.sh")).toEqual([]);
     // …and `time` measures ONE command, so the option is not carried past the boundary.
     expect(findingsIn('v="$(time; -p case x) # measured on URX44V"\n', "x.sh")).toEqual([]);
+    // …and neither the position nor the option state belongs to every frame at once: a `;`
+    // inside a NESTED substitution left the outer one open, so the outer `case` was a
+    // keyword and the `)` that closed the substitution was taken for its pattern's.
+    expect(findingsIn('v="$($(printf printf;) case y) # measured on URX44V"\n', "x.sh")).toEqual([]);
+    // …and a case inside one still reads, which is what says the frame is restored and not
+    // merely discarded.
+    expect(
+      findingsIn('w="$(case x in x) # measured on URX44V\n printf a;; esac)"\n', "x.sh").map((f) => f.line),
+    ).toEqual([1]);
     expect(
       findingsIn('v="$(time -p case x in x) # measured on URX44V\n printf x;; esac)"\n', "x.sh").map((f) => f.line),
     ).toEqual([1]);
