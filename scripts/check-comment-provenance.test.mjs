@@ -33,6 +33,7 @@ import {
   yamlComments,
   yamlExplicitKey,
   yamlKey,
+  yamlPlainAll,
   rustComments,
   verdict,
 } from "./check-comment-provenance.mjs";
@@ -993,6 +994,80 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     expect(findingsIn(held + "steps: [{ name: *script }]\n", wf)).toEqual([]);
   });
 
+  // A plain scalar is shell too — `run: echo ok` is what GitHub runs — and handed to no
+  // reader at all it was the one spelling of a `run:` this looked straight past. YAML ends a
+  // plain scalar at a ` #`, so what survives into the value is a `#` behind a `;`, and that
+  // is where a shell comment begins. Ruby loads each of these as the string the reader is
+  // given, and bash prints `ok` for the first, which is what says the hash is a comment.
+  it("reads a run: written as a plain scalar", () => {
+    const wf = ".github/workflows/x.yml";
+    const job = (steps) => "jobs:\n  a:\n    steps:\n" + steps;
+    expect(findingsIn(job("      - run: echo ok;# measured by device\n"), wf).map((f) => f.line)).toEqual([4]);
+    // …inside a flow mapping, where the scalar ends at the `}` and not at the line.
+    expect(
+      findingsIn("jobs:\n  a:\n    steps: [{ run: echo ok;# measured by device }]\n", wf).map((f) => f.line),
+    ).toEqual([3]);
+    // …across the lines it continues onto, where one break folds to a space and a blank line
+    // to a newline — Ruby loads these as `echo a b;# …` and `echo a\nc;# …`.
+    expect(findingsIn(job("      - run: echo a\n          b;# measured by device\n"), wf).map((f) => f.line)).toEqual([
+      5,
+    ]);
+    expect(findingsIn(job("      - run: echo a\n\n          c;# measured by device\n"), wf).map((f) => f.line)).toEqual(
+      [6],
+    );
+    // …and it ends where YAML ends it: at a sibling node, and at a ` #`, which is a comment
+    // on a line of the document and is reported there once rather than twice.
+    expect(findingsIn(job("      - run: echo a\n        name: x;# measured by device\n"), wf)).toEqual([]);
+    expect(findingsIn(job("      - run: echo a\n          b # measured by device\n"), wf).map((f) => f.line)).toEqual([
+      5,
+    ]);
+    // …and only under a run, and only where a shell comment begins: a hash inside a word is
+    // not one.
+    expect(findingsIn(job("      - name: echo ok;# measured by device\n"), wf)).toEqual([]);
+    expect(findingsIn(job("      - run: echo a#b measured by device\n"), wf)).toEqual([]);
+    // …and only a SCALAR. Ruby loads this `run` as a sequence, which nothing runs, and read
+    // as text the brackets around it are shell where the hash begins a comment.
+    expect(findingsIn(job("      - run: [echo a;# measured by device]\n"), wf)).toEqual([]);
+    // …inside a flow mapping it ends at the `,` as well: Ruby loads the run here as
+    // `echo ok` and the hash as part of a `name` nothing runs.
+    expect(findingsIn("jobs:\n  a:\n    steps: [{ run: echo ok, name: x;# measured by device }]\n", wf)).toEqual([]);
+    // …a blank line folds to a NEWLINE, which ENDS a shell comment where a space would carry
+    // it on: Ruby loads this as `echo x;# note\necho measured by device`, whose comment is
+    // ` note` alone.
+    expect(findingsIn(job("      - run: echo x;# note\n\n          echo measured by device\n"), wf)).toEqual([]);
+    // …and the ` #` that ends the scalar is not part of it: Ruby loads this as
+    // `echo a;# note b`, so the shell comment is ` note b` and the words after the hash on
+    // the second line are a comment on a line of the DOCUMENT, reported there.
+    expect(
+      findingsIn(job("      - run: echo a;# note\n          b # measured by device\n"), wf).map((f) => f.line),
+    ).toEqual([5]);
+    // …and a line that is a mapping entry is a node, not continuation text. Ruby refuses
+    // both of these documents, so the reader may not invent a value where YAML has none:
+    // one indented past the key, one indented in front of it.
+    expect(findingsIn(job("      - run: echo a\n          name: x;# measured by device\n"), wf)).toEqual([]);
+    expect(findingsIn(job("      - run: echo a\n    echo b;# measured by device\n"), wf)).toEqual([]);
+  });
+
+  it("names no plain scalar where a block scalar's header is", () => {
+    expect(yamlPlainAll("      - run: |")).toEqual([]);
+    expect(yamlPlainAll("      - run: >2-")).toEqual([]);
+    expect(yamlPlainAll("      - run: echo ok").map((e) => e.key)).toEqual(["run"]);
+  });
+
+  // What bash does with those two hashes is stated above, and a statement can drift from
+  // what it describes. Skipped where bash is absent, and the skip is named rather than
+  // silent.
+  const bashForPlain = spawnSync("bash", ["-c", "printf ok"], { encoding: "utf8" });
+  it.skipIf(bashForPlain.error || bashForPlain.status !== 0)("agrees with bash about where a comment begins", () => {
+    const ran = spawnSync("bash", ["-c", "echo ok;# measured by device"], { encoding: "utf8" });
+    expect(ran.status, ran.stderr).toBe(0);
+    expect(ran.stdout).toBe("ok\n");
+    // …while the same hash inside a word is an argument, which is why it is not a finding.
+    expect(spawnSync("bash", ["-c", "echo a#b measured by device"], { encoding: "utf8" }).stdout).toBe(
+      "a#b measured by device\n",
+    );
+  });
+
   // A `run:` is shell where GitHub RUNS it — a step of a job, or a step of a composite
   // action — and nowhere else. Taken from the key's NAME alone, an environment variable and
   // an action input that carry that name were both lexed against a grammar they are not
@@ -1663,6 +1738,25 @@ describe("what the default scan reaches", () => {
       "anywhere/deep/b.py",
     ]);
     expect(rel(scanTargets(inventory))).toEqual(["src/a.ts", "anywhere/deep/b.py"]);
+  });
+
+  // The two files by their PATH in this repository, not by their name. Matched by name, a
+  // file called the same thing under any other directory — or at the root — was exempt from
+  // a check it is source for like any other, and nothing in the scan would have said so.
+  it("drops its own two files by path, and no namesake elsewhere", () => {
+    const listed = listing(
+      "scripts/check-comment-provenance.mjs",
+      "scripts/check-comment-provenance.test.mjs",
+      "src/check-comment-provenance.mjs",
+      "check-comment-provenance.test.mjs",
+      "src/normal.mjs",
+    );
+    const inventory = trackedSources(ROOT, listed, () => true);
+    expect(rel(scanTargets(inventory))).toEqual([
+      "src/check-comment-provenance.mjs",
+      "check-comment-provenance.test.mjs",
+      "src/normal.mjs",
+    ]);
   });
 
   // The list of directories this replaced is the mutation, and it is shown beside the good

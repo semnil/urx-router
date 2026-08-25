@@ -68,8 +68,17 @@ const dialect = (path) => {
   if (ext === ".py") return "python";
   return "js";
 };
-// This checker and its own pins quote the shapes they refuse, so they are not scanned.
-const SELF = /(^|\/)check-comment-provenance(\.test)?\.mjs$/;
+// This checker and its own pins quote the shapes they refuse, so they are not scanned —
+// those two files, by their PATH in this repository. Matched by NAME, a file called the same
+// thing under any other directory was exempt from a check it is source for like any other,
+// and nothing would have said so. Derived from this module's own location so a rename to one
+// directory or another carries the exclusion with it.
+const SELF_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const SELF = relative(SELF_ROOT, fileURLToPath(import.meta.url))
+  .split(sep)
+  .join("/");
+const SELF_FILES = new Set([SELF, SELF.replace(/\.mjs$/, ".test.mjs")]);
+const isSelf = (path) => SELF_FILES.has(relative(SELF_ROOT, resolve(path)).split(sep).join("/"));
 /** The enforced shapes, each named for what it is so the finding can say it. */
 const RULES = [
   {
@@ -814,6 +823,54 @@ export function yamlComments(src, actions = false) {
       const held = anchors.get(entry.name);
       if (held) readShell(held);
     }
+    for (const entry of yamlPlainAll(head)) {
+      if (runs(entry)) readShell(plainValue(entry, n));
+    }
+  };
+  /**
+   * A plain scalar's VALUE: the text on the key's own line, and the lines it continues onto
+   * folded to single spaces the way YAML folds them, with each character's source offset.
+   *
+   * A continuation is indented past the key and opens no node of its own, and the scalar
+   * ends where YAML ends it — at a blank line, at a ` #`, or at the first line that is a
+   * node instead. Read as the key's line alone, a `#` written behind a `;` on a later line
+   * was neither a YAML comment nor anything this looked at.
+   */
+  const plainValue = (entry, n) => {
+    const text = [];
+    const map = [];
+    const take = (k, from, to) => {
+      for (let col = from; col < to; col++) {
+        text.push(lines[k][col]);
+        map.push(starts[k] + col);
+      }
+    };
+    take(n, entry.at, entry.end);
+    // A BLANK line does not end a plain scalar: n of them fold to n newlines where one break
+    // folds to a space, and they are held until a line that continues the scalar arrives —
+    // a blank line before a line that ends it belongs to neither.
+    let blanks = 0;
+    for (let k = n + 1; entry.depth === 0 && k < lines.length; k++) {
+      const line = lines[k];
+      if (line.trim() === "") {
+        blanks++;
+        continue;
+      }
+      const at = line.length - line.trimStart().length;
+      if (at <= entry.col || /^[-?#]/.test(line.slice(at))) break;
+      const hash = /(^|[ \t])#/.exec(line);
+      const cut = hash ? hash.index : line.length;
+      const body = line.slice(at, cut).replace(/[ \t]+$/, "");
+      if (body === "" || lineEntries(line.slice(0, cut)).some((e) => e.depth === 0)) break;
+      for (let z = 0; z < Math.max(blanks, 1); z++) {
+        text.push(blanks > 0 ? "\n" : " ");
+        map.push(starts[k] + at);
+      }
+      blanks = 0;
+      take(k, at, at + body.length);
+      if (hash) break;
+    }
+    return { text: text.join(""), map };
   };
   // The block-mapping keys open above the line being read, with the column each one starts
   // at, and the path they make to what is written under them.
@@ -1083,6 +1140,43 @@ export function yamlQuotedAll(head) {
  *  indicators that end a node written inside a `[` or a `{`. */
 const ALIAS_NAME = /\*([^\s,[\]{}]+)/y;
 
+/** A block scalar's header, written as the whole of what follows a key. */
+const BLOCK_ONLY = /^[|>](?:[1-9][-+]?|[-+][1-9]?)?$/;
+
+/**
+ * EVERY mapping entry on the line whose value is a PLAIN scalar — no quotes, no indicators,
+ * no alias.
+ *
+ * A workflow's `run: echo ok` is the shell GitHub runs, the same as the quoted and the block
+ * forms, and handed to no reader at all it was the one spelling of a `run:` this looked
+ * straight past. What survives into such a value is a `#` behind a `;`, a `|`, a `&` or a
+ * `(` — YAML ends a plain scalar at a ` #`, and every one of those is a place a shell
+ * comment begins.
+ *
+ * In BLOCK context the scalar runs to the end of the line; inside a FLOW collection it ends
+ * at the first `,`, `]` or `}`, none of which a plain scalar may contain.
+ */
+export function yamlPlainAll(head) {
+  const found = [];
+  for (const entry of lineEntries(head)) {
+    const c = head[entry.at];
+    if (c === undefined || c === '"' || c === "'" || c === "*" || c === "[" || c === "{") continue;
+    const tail = head.slice(entry.at);
+    if (BLOCK_ONLY.test(tail)) continue;
+    const stop = entry.depth === 0 ? tail.length : (/[,\]}]/.exec(tail)?.index ?? tail.length);
+    const text = tail.slice(0, stop).replace(/[ \t]+$/, "");
+    if (text === "") continue;
+    found.push({
+      key: entry.key,
+      within: entry.within,
+      depth: entry.depth,
+      at: entry.at,
+      end: entry.at + text.length,
+      col: entry.col,
+    });
+  }
+  return found;
+}
 /**
  * EVERY mapping entry on the line whose value is an ALIAS — `run: *script`, which is the
  * value its anchor holds. GitHub Actions supports anchors, and read as neither a block nor
@@ -1833,7 +1927,7 @@ export function findingsIn(src, path) {
 
 function collect(root, dir = root, found = []) {
   if (statSync(dir).isFile()) {
-    if (EXTS.has(extname(dir).toLowerCase()) && !SELF.test(dir.split(sep).join("/"))) found.push(dir);
+    if (EXTS.has(extname(dir).toLowerCase()) && !isSelf(dir)) found.push(dir);
     return found;
   }
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -1841,7 +1935,7 @@ function collect(root, dir = root, found = []) {
     const rel = relative(root, path).split(sep).join("/");
     if (entry.isDirectory()) {
       if (!SKIP_ANYWHERE.has(entry.name) && !SKIP_PATHS.has(rel)) collect(root, path, found);
-    } else if (EXTS.has(extname(entry.name).toLowerCase()) && !SELF.test(rel)) {
+    } else if (EXTS.has(extname(entry.name).toLowerCase()) && !isSelf(path)) {
       found.push(path);
     }
   }
@@ -1879,7 +1973,7 @@ export function trackedSources(root = ROOT, run = gitLsFiles, exists = existsSyn
  * `scripts/**` glob it replaced. Not being scanned and not being formatted are different
  * questions, and one filter cannot answer both.
  */
-export const scanTargets = (sources) => sources.filter((path) => !SELF.test(path.split(sep).join("/")));
+export const scanTargets = (sources) => sources.filter((path) => !isSelf(path));
 
 // `--others --exclude-standard` as well as the index: a file written but not yet added is
 // source this repository is about to carry, and a check that waits for `git add` reports a
@@ -2065,7 +2159,7 @@ if (hook) {
   } catch {
     process.exit(0);
   }
-  if (!path || !EXTS.has(extname(path).toLowerCase()) || SELF.test(path.split(sep).join("/"))) process.exit(0);
+  if (!path || !EXTS.has(extname(path).toLowerCase()) || isSelf(path)) process.exit(0);
   if (!existsSync(path)) process.exit(0);
   const d = hookDecision(path, readFileSync(path, "utf8"), readLedger());
   if (d.exit === 0) process.exit(0);

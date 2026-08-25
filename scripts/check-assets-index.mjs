@@ -131,6 +131,10 @@ const PROSE_TOKENS = new Map([
   ["env: run:", "two YAML keys, written as the path to a variable that carries the name"],
   ["{ with: { run: \u2026 } }", "a YAML flow mapping, named as the nested shape of the same case"],
   ["[{ run: *script }]", "a YAML flow sequence holding an alias, named as the shape a line-anchored name refused"],
+  // Two fragments of shell, named as the two places a hash sits: one where a comment begins
+  // and one where it does not. Neither is an entity in any tree.
+  [";#", "shell, named as the boundary a comment may begin at"],
+  ["a#b", "shell, named as a hash inside a word, which begins nothing"],
   // Three more from that row, once it named what the block scalars are measured against.
   // Two are YAML written as itself — a block header with its indentation indicator — and
   // one is the CPython module the f-string reader is differentialled against.
