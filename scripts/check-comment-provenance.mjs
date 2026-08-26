@@ -746,8 +746,94 @@ export function rustComments(src) {
 }
 
 /** A value whose comments cannot be established. Not the same as a value with NONE, and the
- *  difference is the whole reason this is thrown rather than answered. */
+ *  difference is the whole reason this is thrown rather than answered. Its four kinds are
+ *  separate because they are separate problems with separate answers. */
 export class Undecidable extends Error {}
+/** The program that owns the grammar is not on the PATH. */
+export class ParserMissing extends Undecidable {}
+/** The program is there and says this is not a script. */
+export class ParseFailed extends Undecidable {}
+/** A GitHub expression sits where its expansion would decide whether a comment begins. */
+export class TemplateAmbiguous extends Undecidable {}
+/** A shell this project does not carry a parser for on the platform its checks run on. */
+export class ShellUnsupported extends Undecidable {}
+
+/**
+ * Every `${{ … }}` in a value, as `[start, end]`.
+ *
+ * Found with a state machine rather than a regex because an expression may hold a
+ * single-quoted string, and a `}}` written inside one closes nothing — `${{ format('}}') }}`
+ * is one expression. A `''` inside such a string is an escaped quote.
+ */
+export function expressions(src) {
+  const found = [];
+  for (let i = 0; i < src.length;) {
+    if (!src.startsWith("${{", i)) {
+      i++;
+      continue;
+    }
+    let k = i + 3;
+    let shut = -1;
+    while (k < src.length) {
+      if (src[k] === "'") {
+        k++;
+        while (k < src.length) {
+          if (src[k] === "'") {
+            if (src[k + 1] === "'") k += 2;
+            else break;
+          } else k++;
+        }
+        k++;
+        continue;
+      }
+      if (src.startsWith("}}", k)) {
+        shut = k + 2;
+        break;
+      }
+      k++;
+    }
+    found.push([i, shut === -1 ? -1 : shut]);
+    i = shut === -1 ? src.length : shut;
+  }
+  return found;
+}
+
+/** A digit, which is a token in every position an expansion can appear in and is neither a
+ *  quote nor a hash. Its LENGTH is what matters: the substitution keeps every later offset
+ *  where it was, so a span the parser reports still points at the source characters. */
+const FILL = "0";
+
+/**
+ * The value GitHub hands the shell, with every `${{ … }}` replaced by a filler of its own
+ * length.
+ *
+ * GitHub evaluates an expression BEFORE the shell runs, so the template is not what
+ * PowerShell is given — and handed the template, PowerShell refused `Write-Output "${{
+ * github.ref }}"` and every other ordinary step. What the expansion IS cannot be known here,
+ * so it is stood in for: a comment written inside an expression is not a comment in this
+ * repository, and a comment written around one still reads from the ORIGINAL text, since the
+ * filler is the same length as what it replaced.
+ *
+ * THROWS where the expansion would decide the answer rather than sit inside it: an
+ * expression against a `#` or a `<#` begins a comment or does not according to what it
+ * expands to, and an unterminated one is no template at all.
+ */
+export function substituted(src) {
+  const spans = expressions(src);
+  if (!spans.length) return src;
+  let out = "";
+  let at = 0;
+  for (const [start, end] of spans) {
+    if (end === -1) throw new TemplateAmbiguous(`this expression never closes: ${JSON.stringify(src.slice(start))}`);
+    if (src.startsWith("#", end) || src.startsWith("<#", end))
+      throw new TemplateAmbiguous(
+        `what this expands to decides whether a comment begins here: ${JSON.stringify(src.slice(start, end + 2))}`,
+      );
+    out += src.slice(at, start) + FILL.repeat(end - start);
+    at = end;
+  }
+  return out + src.slice(at);
+}
 
 /**
  * The comments in POWERSHELL scripts, as PowerShell's own parser reports them.
@@ -767,6 +853,7 @@ export class Undecidable extends Error {}
  */
 export function pwshSpans(scripts, exe = "pwsh") {
   if (!scripts.length) return [];
+  scripts = scripts.map(substituted);
   const walk = `
     $ErrorActionPreference = 'Stop'
     $all = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -796,11 +883,11 @@ export function pwshSpans(scripts, exe = "pwsh") {
     maxBuffer: 1 << 26,
   });
   if (run.error || run.status !== 0)
-    throw new Undecidable(
+    throw new ParserMissing(
       `${exe} could not be asked what a comment is: ${run.error?.code ?? run.stderr?.trim() ?? "no output"}`,
     );
   return JSON.parse(run.stdout).map((r, n) => {
-    if (r.errors > 0) throw new Undecidable(`${exe} does not parse this value: ${JSON.stringify(scripts[n])}`);
+    if (r.errors > 0) throw new ParseFailed(`${exe} does not parse this value: ${JSON.stringify(scripts[n])}`);
     return (r.comments ?? []).map((c) => [c[0], c[1]]).sort((a, b) => a[0] - b[0]);
   });
 }
@@ -927,6 +1014,13 @@ export function yamlComments(src, actions = false) {
     const shells = queued.map((q) => shellFor(q.step));
     // One parser call per program for the whole file, rather than one per value.
     const parsed = new Map();
+    for (const [k, shell] of shells.entries()) {
+      if (shell != null && shell in UNSUPPORTED_SHELLS)
+        throw new ShellUnsupported(
+          `this project reads no \`shell: ${shell}\` step — write ${UNSUPPORTED_SHELLS[shell]}: ` +
+            JSON.stringify(queued[k].text),
+        );
+    }
     for (const exe of new Set(Object.values(PARSED_SHELLS))) {
       const at = shells.map((s, k) => (PARSED_SHELLS[s] === exe ? k : -1)).filter((k) => k >= 0);
       const spans = pwshSpans(
@@ -944,6 +1038,9 @@ export function yamlComments(src, actions = false) {
       });
     queued.forEach(({ text, map }, k) => {
       if (parsed.has(k)) {
+        // The span comes from the substituted value and the TEXT from the original: the
+        // filler is the same length, so the offsets are the same offsets, and a comment
+        // written around an expression still reports what the repository has in it.
         for (const [start, end] of parsed.get(k)) place(map, start, end, pwshText(text, start, end));
         return;
       }
@@ -1537,11 +1634,16 @@ const SHELL_READERS = {
   python: pyComments,
   cmd: cmdComments,
 };
-/** The two whose comments are decided by a PARSER rather than by a reader written here, and
- *  the program that owns each one. `powershell` is Windows PowerShell, whose parser is its
- *  own: asked of `pwsh` it would be an approximation, and an approximation is what this
- *  round removed. Where the program is absent the value is UNDECIDABLE, not comment-free. */
-const PARSED_SHELLS = { pwsh: "pwsh", powershell: "powershell" };
+/** The shell whose comments are decided by a PARSER rather than by a reader written here,
+ *  and the program that owns it. Where the program is absent the value is UNDECIDABLE, not
+ *  comment-free. */
+const PARSED_SHELLS = { pwsh: "pwsh" };
+/** `powershell` is Windows PowerShell, and GitHub runs it on Windows alone. Its parser is
+ *  its own — asked of `pwsh` the answer would be an approximation, and an approximation is
+ *  what this check stopped making — and the platform that owns it is not the one the merge
+ *  gates run on. So this project does not carry it: a step that asks for it is refused by
+ *  name, with the shell that runs everywhere named in the refusal. */
+const UNSUPPORTED_SHELLS = { powershell: "pwsh, which GitHub runs on every platform" };
 
 /**
  * The VALUE of a quoted scalar whose opening quote is at `at`, with each character's offset
@@ -2542,7 +2644,16 @@ if (invokedDirectly) {
   } catch (err) {
     if (!(err instanceof Undecidable)) throw err;
     console.error(`Cannot decide what a comment is here: ${err.message}`);
-    console.error("A PowerShell step is read by PowerShell's parser. Install pwsh, or drop the step.");
+    // One line per kind, because they are four different problems with four different
+    // answers, and "undecidable" alone leaves the reader to guess which one they have.
+    if (err instanceof ParserMissing)
+      console.error("A PowerShell step is read by PowerShell's own parser. Install pwsh, or drop the step.");
+    else if (err instanceof ParseFailed)
+      console.error("PowerShell does not accept this value, so what a comment is in it is not settled. Fix the step.");
+    else if (err instanceof TemplateAmbiguous)
+      console.error("GitHub expands this before PowerShell sees it. Put a space between the expression and the hash.");
+    else if (err instanceof ShellUnsupported)
+      console.error("The shell this step asks for is not one this project reads. Use the one named above.");
     process.exit(1);
   }
   const grouped = byFile(found);

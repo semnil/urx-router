@@ -38,6 +38,10 @@ import {
   plainScalar,
   pwshComments,
   pwshSpans,
+  expressions,
+  ShellUnsupported,
+  substituted,
+  TemplateAmbiguous,
   Undecidable,
   yamlPlainAll,
   rustComments,
@@ -1203,6 +1207,53 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       expect(pwshSpans([], "no-such-powershell-xyz")).toEqual([]);
     });
 
+    // GitHub evaluates a `${{ … }}` BEFORE the shell runs, so the template is not what
+    // PowerShell is given — and handed the template it refused `Write-Output "${{ github.ref
+    // }}"` and every other ordinary step. Found with a state machine and not a regex, because
+    // an expression may hold a single-quoted string and a `}}` written inside one closes
+    // nothing.
+    it("finds an expression by its own grammar, and stands in for it at its own length", () => {
+      expect(expressions("a ${{ x }} b")).toEqual([[2, 10]]);
+      expect(expressions("a ${{ format('}}') }} b")).toEqual([[2, 21]]);
+      expect(expressions("none here")).toEqual([]);
+      // …and the stand-in is the same LENGTH, which is what keeps a span pointing at the
+      // characters it came from.
+      for (const src of ["a ${{ x }} b", "${{ a }}${{ b }}", 'x "${{ github.ref }}" y'])
+        expect(substituted(src).length, src).toBe(src.length);
+      expect(substituted("a ${{ x }} b")).toBe("a 00000000 b");
+    });
+
+    // …and where the expansion would DECIDE the answer rather than sit inside it, there is no
+    // answer to give: what it expands to is what says whether the hash begins a comment.
+    it("refuses an expression written against a hash", () => {
+      expect(() => substituted("Write-Output ${{ github.ref }}# measured")).toThrow(TemplateAmbiguous);
+      expect(() => substituted("Write-Output ${{ github.ref }}<# measured #>")).toThrow(TemplateAmbiguous);
+      expect(() => substituted("Write-Output ${{ github.ref")).toThrow(TemplateAmbiguous);
+      // …a space between them is all it takes, and then the comment is read.
+      const spaced = "Write-Output ${{ github.ref }} # measured";
+      expect(substituted(spaced)).toHaveLength(spaced.length);
+      expect(substituted(spaced).indexOf("#")).toBe(spaced.indexOf("#"));
+      expect(substituted(spaced)).toContain(" # measured");
+    });
+
+    // `powershell` is Windows PowerShell, and GitHub runs it on Windows alone — which is not
+    // the platform the merge gates run on. This project reads no such step, and says so by
+    // name rather than by failing to find a program.
+    it("refuses a shell it carries no parser for, by name", () => {
+      const wf = ".github/workflows/x.yml";
+      const step = (sh) => `jobs:\n  a:\n    steps:\n      - shell: ${sh}\n        run: "Write-Output ok"\n`;
+      expect(() => findingsIn(step("powershell"), wf)).toThrow(ShellUnsupported);
+      let message = "";
+      try {
+        findingsIn(step("powershell"), wf);
+      } catch (err) {
+        message = err.message;
+      }
+      expect(message).toContain("pwsh");
+      // …and a shell it simply does not lex is not refused, only unread.
+      expect(findingsIn(step("perl {0}"), wf)).toEqual([]);
+    });
+
     // …and the same refusal reaches the command line, which is what a green scan would
     // otherwise be hiding. The checker is run with a PATH that holds no pwsh.
     it("stops the run rather than reporting a clean scan", () => {
@@ -1245,6 +1296,23 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     it("reports the boundaries a character test missed, through the workflow", () => {
       const wf = ".github/workflows/x.yml";
       const step = (v) => `jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: ${JSON.stringify(v)}\n`;
+      // …and a `${{ … }}` in the step, which GitHub expands before PowerShell sees it: the
+      // comment beside one is read, the hash inside one is not a comment in this repository,
+      // and a comment holding one reports what the file actually says.
+      expect(findingsIn(step("Write-Output ${{ github.ref }} # measured by device"), wf).map((f) => f.line)).toEqual([
+        5,
+      ]);
+      expect(findingsIn(step("Write-Output \"${{ format('a # measured by device') }}\""), wf)).toEqual([]);
+      expect(pwshComments("Write-Output x # measured by device ${{ github.ref }}").map((c) => c.text)).toEqual([
+        " measured by device ${{ github.ref }}",
+      ]);
+      // …and the position it reports is the position in the FILE, past the expression.
+      expect(
+        findingsIn(
+          "jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: |\n          Write-Output ${{ github.ref }}\n          Write-Output y  # measured by device\n",
+          wf,
+        ).map((f) => f.line),
+      ).toEqual([7]);
       for (const value of [
         "$x = 1\n$x# measured by device",
         "Write-Output (3 -# measured by device\n2)",

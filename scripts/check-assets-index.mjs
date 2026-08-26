@@ -155,6 +155,12 @@ const PROSE_TOKENS = new Map([
   ["StringExpandableToken.NestedTokens", "a PowerShell token type, named as what the walk descends into"],
   ["$( \u2026 )", "a PowerShell subexpression, named as where a nested comment sits"],
   ["powershell", "the GitHub shell keyword for Windows PowerShell, named as itself"],
+  // Three more from that row: a GitHub expression and its closing pair, named as what is
+  // substituted before PowerShell sees it, and the shell keyword that replaces the one
+  // above. None is an entity in any tree.
+  ["${{ \u2026 }}", "a GitHub expression, named as what is expanded before the shell runs"],
+  ["}}", "the pair that closes one, named as what a quoted string inside it does not close"],
+  ["pwsh", "the GitHub shell keyword for PowerShell 7, named as the one that runs everywhere"],
   // Four fragments of YAML, named as the words a plain scalar's continuation is made of.
   // None is an entity in any tree: three only LOOK like an indicator or a key, and the
   // fourth is the one spelling that is.

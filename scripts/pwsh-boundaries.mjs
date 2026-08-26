@@ -85,6 +85,17 @@ export const PWSH_CASES = [
   `Write-Output (4 *# ${M}\n0.5)`,
   `Write-Output (7 %# ${M}\n2)`,
   `$x = 1\n$x# ${M}`,
+  // GitHub evaluates a `${{ … }}` BEFORE the shell runs, so the template is not what
+  // PowerShell is given. Each of these is what the substitution has to leave parseable, and
+  // the last two are what it has to keep OUT of the answer and IN the reported text.
+  `Write-Output "\${{ github.ref }}"`,
+  `Write-Output \${{ github.ref }}`,
+  `$x = \${{ inputs.count }}`,
+  `if (\${{ inputs.enabled }}) { Write-Output ok }`,
+  `Write-Output \${{ github.ref }} # ${M}`,
+  `Write-Output "\${{ format('a # ${M}') }}"`,
+  `Write-Output x # ${M} \${{ github.ref }}`,
+  `Write-Output \${{ format('}}') }} # ${M}`,
 ];
 
 if (realpathSync(process.argv[1] ?? "") === realpathSync(fileURLToPath(import.meta.url))) {
