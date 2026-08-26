@@ -23,6 +23,7 @@ import {
   nextLedger,
   pyComments,
   repoPath,
+  SHELL_READERS,
   shellComments,
   tomlComments,
   blockStrip,
@@ -38,10 +39,12 @@ import {
   plainScalar,
   pwshComments,
   pwshSpans,
-  elided,
+  expand,
+  expansion,
   expressions,
+  OPENS_COMMENT,
+  PARSED_SHELLS,
   ShellUnsupported,
-  substituted,
   TemplateAmbiguous,
   Undecidable,
   yamlPlainAll,
@@ -1229,33 +1232,73 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     // }}"` and every other ordinary step. Found with a state machine and not a regex, because
     // an expression may hold a single-quoted string and a `}}` written inside one closes
     // nothing.
-    it("finds an expression by its own grammar, and stands in for it at its own length", () => {
+    it("finds an expression by its own grammar", () => {
       expect(expressions("a ${{ x }} b")).toEqual([[2, 10]]);
       expect(expressions("a ${{ format('}}') }} b")).toEqual([[2, 21]]);
       expect(expressions("none here")).toEqual([]);
-      // …and the stand-in is the same LENGTH, which is what keeps a span pointing at the
-      // characters it came from.
-      for (const src of ["a ${{ x }} b", "${{ a }}${{ b }}", 'x "${{ github.ref }}" y'])
-        expect(substituted(src).length, src).toBe(src.length);
-      expect(substituted("a ${{ x }} b")).toBe("a 00000000 b");
     });
 
-    // The OTHER reading: an expansion that is empty is the one a word cannot stand in for, so
-    // the value is read a second time with every expression removed, and an offset found
-    // there is carried back onto the characters it came from — which is what lets the two be
-    // compared at all.
-    it("reads the value a second time with the expressions gone, and maps back", () => {
-      expect(elided("echo ${{ x }}# c").text).toBe("echo # c");
-      // …the hash sits where the expression began, and it came from the file's own hash.
-      expect(elided("echo ${{ x }}# c").origin(5)).toBe("echo ${{ x }}# c".indexOf("#"));
-      // …while everything in front of one is where it always was.
-      expect(elided("echo # c ${{ x }}").origin(5)).toBe(5);
-      // …and a value with no expression in it is its own reading.
-      expect(elided("echo # c").text).toBe("echo # c");
-      expect(elided("echo # c").origin(5)).toBe(5);
-      // …an expression that never closes is no template at all, in either reading.
-      expect(() => elided("Write-Output ${{ github.ref")).toThrow(TemplateAmbiguous);
-      expect(() => substituted("Write-Output ${{ github.ref")).toThrow(TemplateAmbiguous);
+    // A body that is a string LITERAL has one value, and that value is written in the file, so
+    // the reading is what the shell really gets. Only that one form: what a number or a
+    // boolean turns into on its way into the script is GitHub's own rendering.
+    it("expands a literal exactly and nothing else", () => {
+      expect(expansion("'main'")).toBe("main");
+      expect(expansion("  'main'  ")).toBe("main");
+      expect(expansion("''")).toBe("");
+      // …the quote is escaped by doubling it, which is one character and not two strings.
+      expect(expansion("'a''b'")).toBe("a'b");
+      // …a body that opens a literal and never closes it is not one, and neither is the empty
+      // body a caller of its own could hand it.
+      expect(expansion("'abc")).toBe(null);
+      expect(expansion("")).toBe(null);
+      // …a quote it can produce is the one neither a word nor an empty string could.
+      expect(expansion(`'" '`)).toBe('" ');
+      // …and everything else has no value here: a comparison of two literals is not one, and
+      // neither is a call, a property, a number or a boolean.
+      expect(expansion("'a' == 'b'")).toBe(null);
+      expect(expansion("format('a')")).toBe(null);
+      expect(expansion("github.ref")).toBe(null);
+      expect(expansion("1")).toBe(null);
+      expect(expansion("true")).toBe(null);
+    });
+
+    // …and the reading carries every offset back onto the value, which is what a finding is
+    // reported against. A literal's value is rarely the length of the expression that wrote
+    // it, so the two are no longer the same offsets.
+    it("carries an offset in the reading back onto the characters it came from", () => {
+      const src = "echo ${{ 'ok' }} x";
+      const one = expand(src);
+      expect(one.text).toBe("echo ok x");
+      expect(one.dynamic).toEqual([]);
+      // …a character the expansion produced points at the expression that produced it…
+      expect(one.starts[5]).toBe(src.indexOf("${{"));
+      // …every character of it, not only the first, which is where the reading's own offset
+      // stops agreeing with the value's.
+      expect(one.starts[6]).toBe(src.indexOf("${{"));
+      expect(one.ends[6]).toBe(src.indexOf(" x"));
+      expect(one.ends[7]).toBe(src.indexOf(" x"));
+      // …one that was copied points at itself…
+      expect(one.starts[8]).toBe(src.length - 1);
+      expect(one.ends[one.text.length]).toBe(src.length);
+      // …and what sits in FRONT of an expansion is what was in front of the expression, not
+      // what is behind it.
+      expect(one.ends[5]).toBe(src.indexOf("${{"));
+      // A body that is not a literal stands in at its own LENGTH, so those offsets do not move
+      // at all, and where each of them begins is recorded.
+      const two = expand("echo ${{ github.ref }} x");
+      expect(two.text).toBe("echo 00000000000000000 x");
+      expect(two.dynamic).toEqual([5]);
+      expect(two.starts[23]).toBe(23);
+      // …and an expression that never closes is no template at all.
+      expect(() => expand("echo ${{ github.ref")).toThrow(TemplateAmbiguous);
+    });
+
+    // Every shell that has a reader has an opener written down. Without one, a dynamic
+    // expansion in a step for it would be read as harmless, which is the whole of what the
+    // rule refuses — so a reader added without one is red here rather than at a run.
+    it("knows where a comment can begin in every shell it reads", () => {
+      const reads = [...Object.keys(SHELL_READERS), ...Object.keys(PARSED_SHELLS)].sort();
+      expect(Object.keys(OPENS_COMMENT).sort()).toEqual(reads);
     });
 
     it("decides a templated value in the shells that need no parser", () => {
@@ -1313,9 +1356,9 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       ["a parser it cannot reach", "pwsh", '"$x# measured by device"', "Install pwsh", true],
       ["a value that does not parse", "pwsh", '"Write-Output ("', "does not accept this value", false],
       [
-        "two readings that disagree",
+        "an expansion that decides it",
         "bash",
-        `"echo \${{ '' }}# measured by device"`,
+        `"echo \${{ github.ref }} # measured by device"`,
         "GitHub expands this before the shell sees it",
         false,
       ],
@@ -1371,18 +1414,18 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       const step = (v) => `jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: ${JSON.stringify(v)}\n`;
       // What a `${{ … }}` in the step does to the answer is TEMPLATE_CASES, one row per
       // shape; here is the one it cannot carry, since its rows are one-liners — a value
-      // written across several lines, where a stand-in shorter than what it replaces would
-      // move every line after it and the finding would name the wrong one.
+      // written across several lines, where the reading is SHORTER than the file and every
+      // line after an expansion has to be recovered rather than counted.
       expect(
         findingsIn(
-          "jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: |\n          Write-Output ${{ github.ref }}\n          Write-Output y  # measured by device\n",
+          "jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: |\n          Write-Output ${{ 'ok' }}\n          Write-Output y  # measured by device\n",
           wf,
         ).map((f) => f.line),
       ).toEqual([7]);
-      // …and with the expression on a line of its OWN, and a second one before the comment.
+      // …and with two of them, one on a line of its own and one on the line in front.
       expect(
         findingsIn(
-          "jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: |\n          ${{ inputs.setup }}\n          Write-Output ${{ github.ref }}\n          Write-Output y  # measured by device\n",
+          "jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: |\n          ${{ 'Write-Output setup' }}\n          Write-Output ${{ 'ok' }}\n          Write-Output y  # measured by device\n",
           wf,
         ).map((f) => f.line),
       ).toEqual([8]);

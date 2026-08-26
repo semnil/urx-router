@@ -90,48 +90,61 @@ export const PWSH_CASES = [
 /**
  * The cases whose value is a workflow TEMPLATE rather than a script.
  *
- * GitHub evaluates a `${{ … }}` BEFORE the shell runs, so what the shell is handed is not
- * what the file says — and what it IS cannot be known here. Each of these is therefore read
- * twice, once where every expression stands for a word and once where every one of them
- * stands for nothing, and the two readings are compared where a comment BEGINS. A row is the
- * shell the step chose, the value as the file has it, and the words the check finds in it —
- * or `REFUSED`, where the two readings disagree and there is no answer to give.
+ * GitHub evaluates a `${{ … }}` BEFORE the shell runs, so what the shell is handed is not what
+ * the file says. Where the expression's body is a string literal the value is known exactly
+ * and the case is read as expanded; where it is anything else the value is not in the file,
+ * and anything the file writes after such an expression that could open a comment makes the
+ * case `REFUSED` — an expansion can close a quote, end a here-document, add a line or open a
+ * comment of its own.
  *
- * They live here rather than in the corpus above because the corpus is asked of
- * `Parser::ParseInput` directly, and a template is a value PowerShell does not parse.
+ * A row is the shell the step chose, the value as the file has it, and the words the check
+ * finds in it — or `REFUSED`. They live here rather than in the corpus above because the
+ * corpus is asked of `Parser::ParseInput` directly, and a template is a value PowerShell does
+ * not parse.
  */
 export const REFUSED = "refused";
 export const TEMPLATE_CASES = [
-  // Expressions in the ordinary places, none of which is a comment.
+  // A literal body has one value and that value is written in the file, so the case is read as
+  // the shell will really get it. Each of these was a MISS while the expansion was stood in
+  // for by a word and by nothing: neither of those two is a quote.
+  ["pwsh", `Write-Output "\${{ 'main' }}#release"`, []],
+  ["pwsh", `Write-Output "\${{ 'main' }}# ${M}"`, []],
+  ["pwsh", `Write-Output "\${{ 'a''b' }}# ${M}"`, []],
+  ["bash", `echo \${{ '' }}# ${M}`, [` ${M}`]],
+  ["bash", `echo "\${{ '" ' }}# ${M}"`, [` ${M}"`]],
+  ["pwsh", `Write-Output "\${{ '" ' }}# ${M}"`, [` ${M}"`]],
+  ["python", `print("\${{ '" ) ' }}# ${M}")`, [` ${M}")`]],
+  ["cmd", `\${{ 'rem ' }}${M} the words`, [`\${{ 'rem ' }}${M} the words`]],
+  // …including the two ends of a block comment, where an expansion CLOSES one and the words
+  // after it are code rather than the comment they read as in the file.
+  ["pwsh", `<# note \${{ '#>' }} ${M} #>`, [" note ", ">"]],
+  // …a line break, which puts what follows it at the start of a line.
+  ["bash", `echo ok\${{ '\n# ${M}' }}`, [`\${{ '\n# ${M}' }}`]],
+  // …and a here-document's delimiter, which ends the body and makes the rest code again.
+  ["bash", `cat <<EOF\n\${{ 'EOF' }}\n# ${M}\nEOF`, [` ${M}`]],
+
+  // A body that is not a literal has no value here. Where nothing the FILE wrote after it
+  // could open a comment, the reading stands: a comment made of the expansion's own
+  // characters is not this repository's.
   ["pwsh", `Write-Output "\${{ github.ref }}"`, []],
   ["pwsh", `Write-Output \${{ github.ref }}`, []],
   ["pwsh", `$x = \${{ inputs.count }}`, []],
   ["pwsh", `if (\${{ inputs.enabled }}) { Write-Output ok }`, []],
-  // A hash INSIDE a string is not a comment however the expression expands, which asked of a
-  // hash's neighbours alone was a valid workflow this refused.
-  ["pwsh", `Write-Output "\${{ 'main' }}#release"`, []],
-  ["pwsh", `Write-Output "\${{ 'main' }}# ${M}"`, []],
-  ["bash", `echo "\${{ github.ref }} # ${M}"`, []],
-  ["bash", `echo "\${{ github.ref }}#${M}"`, []],
-  // …and a hash inside the EXPRESSION is not this repository's comment either.
   ["pwsh", `Write-Output "\${{ format('a # ${M}') }}"`, []],
-  // A comment beside one is read, and what it reports is the file's own text.
-  ["pwsh", `Write-Output \${{ github.ref }} # ${M}`, [` ${M}`]],
-  ["pwsh", `Write-Output \${{ format('}}') }} # ${M}`, [` ${M}`]],
-  ["bash", `echo \${{ github.ref }} # ${M}`, [` ${M}`]],
   ["pwsh", `Write-Output x # ${M} \${{ github.ref }}`, [` ${M} \${{ github.ref }}`]],
   ["bash", `echo ok # ${M} \${{ github.ref }}`, [` ${M} \${{ github.ref }}`]],
   ["python", `print('ok')#${M} \${{ github.ref }}`, [`${M} \${{ github.ref }}`]],
   ["cmd", `rem ${M} \${{ github.ref }}`, [` ${M} \${{ github.ref }}`]],
-  // Where the expansion is what DECIDES: an empty one puts a comment where a word leaves
-  // none, and either way round the answer belongs to the expansion and not to the file.
-  ["bash", `echo \${{ '' }}# ${M}`, REFUSED],
+
+  // …and where something did, the answer belongs to the expansion and not to the file.
+  ["pwsh", `Write-Output \${{ github.ref }} # ${M}`, REFUSED],
   ["pwsh", `Write-Output \${{ github.ref }}# ${M}`, REFUSED],
   ["pwsh", `Write-Output \${{ github.ref }}<# ${M} #>`, REFUSED],
+  ["pwsh", `Write-Output \${{ format('}}') }} # ${M}`, REFUSED],
+  ["bash", `echo \${{ github.ref }} # ${M}`, REFUSED],
+  ["bash", `echo "\${{ github.ref }} # ${M}"`, REFUSED],
+  ["python", `print("\${{ inputs.x }}")#${M}`, REFUSED],
+  ["cmd", `echo \${{ github.ref }} rem ${M}`, REFUSED],
   // …and an expression that never closes is no template at all.
   ["pwsh", `Write-Output \${{ github.ref`, REFUSED],
 ];
-
-if (realpathSync(process.argv[1] ?? "") === realpathSync(fileURLToPath(import.meta.url))) {
-  for (const c of PWSH_CASES) console.log(JSON.stringify(c));
-}

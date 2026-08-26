@@ -803,58 +803,99 @@ export function expressions(src) {
 const FILL = "0";
 
 /**
- * The value with every `${{ … }}` replaced by what `stand` returns for the expression's own
- * length, and a map from an offset in the result back to the offset it came from.
+ * The value of a `${{ … }}` whose body is a single-quoted STRING LITERAL, or null where it is
+ * anything else. GitHub escapes the quote by doubling it.
  *
- * GitHub evaluates an expression BEFORE the shell runs, so the template is not what the shell
- * is given — handed it, PowerShell refused `Write-Output "${{ github.ref }}"` and every other
- * ordinary step. What an expression expands to cannot be known here, so it is stood in for,
- * and a value that holds one is read TWICE: once where every expression is a WORD, which is
- * the answer, and once where every one of them is NOTHING, which is the probe.
- *
- * THROWS where an expression never closes, which is no template at all.
+ * Only this one form. What a number, a boolean or a null turns into on its way into the script
+ * is GitHub's own rendering, and asserting it from here would be the kind of invention this
+ * check exists to refuse; they stay dynamic and are answered by the rule below.
  */
-export function standIn(src, stand) {
-  const spans = expressions(src);
-  if (!spans.length) return { text: src, origin: (o) => o };
-  let text = "";
-  let at = 0;
-  // Where each stand-in begins in the RESULT, and how many characters it stands in for beyond
-  // its own length, which is what an offset at or past it has to be carried forward by.
-  const cuts = [];
-  for (const [start, end] of spans) {
-    if (end === -1) throw new TemplateAmbiguous(`this expression never closes: ${JSON.stringify(src.slice(start))}`);
-    const put = stand(end - start);
-    text += src.slice(at, start);
-    cuts.push([text.length, end - start - put.length]);
-    text += put;
-    at = end;
-  }
-  text += src.slice(at);
-  const origin = (o) => {
-    let back = 0;
-    for (const [begins, drop] of cuts) {
-      if (o < begins) break;
-      back += drop;
+export function expansion(body) {
+  const src = body.trim();
+  if (src.length < 2 || src[0] !== "'" || src[src.length - 1] !== "'") return null;
+  let out = "";
+  for (let i = 1; i < src.length - 1;) {
+    if (src[i] !== "'") {
+      out += src[i];
+      i++;
+      continue;
     }
-    return o + back;
-  };
-  return { text, origin };
+    // A lone quote ends the literal, so what follows is an operator or another operand and the
+    // body is not one string.
+    if (src[i + 1] !== "'") return null;
+    out += "'";
+    i += 2;
+  }
+  return out;
 }
 
 /**
- * The value where every expression expands to a WORD, standing in at its own length.
+ * What GitHub hands the shell, and where each character of it came from.
  *
- * Every later offset then stays where it was, so a span the reader reports still points at the
- * source characters — which is what lets a comment written AROUND an expression report what
- * the repository has in it rather than the stand-in.
+ * GitHub evaluates an expression BEFORE the shell runs, so the template is not what the shell
+ * is given — handed it, PowerShell refused `Write-Output "${{ github.ref }}"` and every other
+ * ordinary step. An expression whose body is a string literal has ONE value and that value is
+ * written in the file, so it is expanded exactly and the reading is what the shell really
+ * gets. Anything else is DYNAMIC: its value is not in the file, so it stands in at its own
+ * length, and `dynamic` records where each of those begins in the reading.
+ *
+ * `starts[i]` and `ends[i]` carry an offset in the reading back onto the value: for a copied
+ * character both are its own offset, and for one that came out of an expansion they are that
+ * expression's own start and end — so a span reaching into an expansion reports the expression
+ * that produced it, and a comment written around one still reports what the file has in it.
+ *
+ * THROWS where an expression never closes, which is no template at all.
  */
-export const substituted = (src) => standIn(src, (n) => FILL.repeat(n)).text;
+export function expand(src) {
+  const spans = expressions(src);
+  const out = [];
+  const starts = [];
+  const ends = [];
+  const dynamic = [];
+  let at = 0;
+  const copy = (from, to) => {
+    for (let i = from; i < to; i++) {
+      out.push(src[i]);
+      starts.push(i);
+      ends.push(i);
+    }
+  };
+  for (const [start, end] of spans) {
+    if (end === -1) throw new TemplateAmbiguous(`this expression never closes: ${JSON.stringify(src.slice(start))}`);
+    copy(at, start);
+    const value = expansion(src.slice(start + 3, end - 2));
+    if (value === null) dynamic.push(out.length);
+    const put = value === null ? FILL.repeat(end - start) : value;
+    for (let k = 0; k < put.length; k++) {
+      out.push(put[k]);
+      starts.push(start);
+      // Everything before the FIRST character of an expansion is what stood in front of the
+      // expression; everything before any later one reaches into it.
+      ends.push(k === 0 ? start : end);
+    }
+    at = end;
+  }
+  copy(at, src.length);
+  starts.push(src.length);
+  ends.push(src.length);
+  return { text: out.join(""), starts, ends, dynamic };
+}
 
-/** …and the value where every one of them expands to NOTHING, with the map that carries a
- *  span found there back onto the characters it came from. An expansion that is empty is the
- *  one a word cannot stand in for: it can put a comment where the other reading has none. */
-export const elided = (src) => standIn(src, () => "");
+/**
+ * Where a comment can BEGIN in each shell, as what a value would have to carry for an
+ * expansion to be able to reveal one.
+ *
+ * A dynamic expansion is arbitrary text: it can close a quote, end a here-document, open or
+ * close a comment, or add a line. So anything the FILE writes after one can change what it
+ * is — `echo "${{ x }}# measured by device"` is a string until the expansion ends the quote,
+ * and `${{ x }}rem measured by device` is an argument until it adds a line. Where such a
+ * candidate sits at or after a dynamic expansion the value is refused rather than read; where
+ * it does not, nothing the FILE wrote can become a comment that was not one already, and a
+ * comment made of the expansion's own characters is not this repository's.
+ *
+ * cmd has no `#` at all: its comment is a word.
+ */
+export const OPENS_COMMENT = { bash: /#/, sh: /#/, python: /#/, cmd: /rem|::/i, pwsh: /#/ };
 
 /**
  * The comments in POWERSHELL scripts, as PowerShell's own parser reports them.
@@ -871,13 +912,8 @@ export const elided = (src) => standIn(src, () => "");
  * THROWS where the parser cannot be reached, or where a script does not parse. A value whose
  * comments are unknown is not a value with none, and answering "none" is how a comment this
  * check exists to refuse walks past a green run.
- *
- * `tolerant[n]` marks a script asked as a PROBE rather than for an answer — the reading of a
- * templated value where every expression stands for nothing. What that reading is wanted for
- * is its comment tokens, which the parser reports either way, and `if () { … }` is a value
- * GitHub would never have run: its errors belong to the expansion and not to the repository.
  */
-export function pwshSpans(scripts, exe = "pwsh", tolerant = []) {
+export function pwshSpans(scripts, exe = "pwsh") {
   if (!scripts.length) return [];
   const walk = `
     $ErrorActionPreference = 'Stop'
@@ -912,16 +948,18 @@ export function pwshSpans(scripts, exe = "pwsh", tolerant = []) {
       `${exe} could not be asked what a comment is: ${run.error?.code ?? run.stderr?.trim() ?? "no output"}`,
     );
   return JSON.parse(run.stdout).map((r, n) => {
-    if (r.errors > 0 && !tolerant[n])
-      throw new ParseFailed(`${exe} does not parse this value: ${JSON.stringify(scripts[n])}`);
+    if (r.errors > 0) throw new ParseFailed(`${exe} does not parse this value: ${JSON.stringify(scripts[n])}`);
     return (r.comments ?? []).map((c) => [c[0], c[1]]).sort((a, b) => a[0] - b[0]);
   });
 }
 
-/** The TEXT of a comment span, which is what the rules read: the comment without its
- *  delimiters — `<#` and `#>` around a block one, the `#` in front of a line one. */
-export const pwshText = (src, start, end) =>
-  src.startsWith("<#", start) ? src.slice(start + 2, end - 2) : src.slice(start + 1, end);
+/** WHERE the text of a comment span is, which is what the rules read: the comment without
+ *  its delimiters — `<#` and `#>` around a block one, the `#` in front of a line one. */
+export const pwshTextSpan = (src, start, end) =>
+  src.startsWith("<#", start) ? [start + 2, end - 2] : [start + 1, end];
+
+/** …and that text, for a caller holding the value the spans were found in. */
+export const pwshText = (src, start, end) => src.slice(...pwshTextSpan(src, start, end));
 
 /** The comment spans of ONE script, as `{ line, text, start, end }` like the other readers. */
 export function pwshComments(src, exe = "pwsh") {
@@ -949,7 +987,7 @@ export function pwshComments(src, exe = "pwsh") {
  * behind it. What this does NOT claim is a `rem` behind a `&`: no machine this runs on
  * carries a cmd to measure that against, so it is left unread rather than guessed.
  */
-export function cmdComments(src, quoted = src) {
+export function cmdComments(src) {
   const out = [];
   const lines = src.split("\n");
   for (let n = 0, at = 0; n < lines.length; n++) {
@@ -958,9 +996,11 @@ export function cmdComments(src, quoted = src) {
     if (m)
       out.push({
         line: n + 1,
-        text: quoted.slice(at + m[0].length, at + line.length),
+        text: line.slice(m[0].length),
         start: at + m[1].length,
         end: at + line.length,
+        textStart: at + m[0].length,
+        textEnd: at + line.length,
       });
     at += line.length + 1;
   }
@@ -1052,37 +1092,30 @@ export function yamlComments(src, actions = false) {
         );
     }
     // What GitHub hands the shell is not the template: a `${{ … }}` is evaluated before the
-    // shell runs. So a value holding one is read TWICE — the ANSWER, where every expression
-    // stands for a word at its own length, and the PROBE, where every one of them stands for
-    // nothing — and the two are compared where a comment BEGINS. Done for the PowerShell
-    // parser alone, this refused `Write-Output "${{ 'main' }}#release"`, whose hash is inside
-    // a string whatever it expands to, and reported nothing for `echo ${{ '' }}# …`, whose
-    // hash begins a comment as soon as the expansion is empty.
+    // shell runs. So the value is read as EXPANDED — exactly, where an expression's body is a
+    // string literal, and with a stand-in of its own length where it is anything else — and a
+    // stand-in is not an expansion, so a dynamic one followed by anything that could open a
+    // comment is refused rather than read.
     const forms = queued.map(({ text }, k) => {
       const shell = shells[k];
       if (shell == null || (!(shell in SHELL_READERS) && !(shell in PARSED_SHELLS))) return null;
-      return { answer: standIn(text, (n) => FILL.repeat(n)), probe: expressions(text).length ? elided(text) : null };
+      const form = expand(text);
+      const from = form.dynamic[0];
+      if (from != null && OPENS_COMMENT[shell].test(form.text.slice(from)))
+        throw new TemplateAmbiguous(
+          `what this expands to decides whether what follows it is a comment: ${JSON.stringify(text)}`,
+        );
+      return form;
     });
     // One parser call per program for the whole file, rather than one per value.
     const parsed = new Map();
     for (const exe of new Set(Object.values(PARSED_SHELLS))) {
-      const asked = [];
-      const scripts = [];
-      const tolerant = [];
-      shells.forEach((shell, k) => {
-        if (PARSED_SHELLS[shell] !== exe) return;
-        parsed.set(k, {});
-        asked.push([k, "answer"]);
-        scripts.push(forms[k].answer.text);
-        tolerant.push(false);
-        if (forms[k].probe) {
-          asked.push([k, "probe"]);
-          scripts.push(forms[k].probe.text);
-          tolerant.push(true);
-        }
-      });
-      const spans = pwshSpans(scripts, exe, tolerant);
-      asked.forEach(([k, which], n) => (parsed.get(k)[which] = spans[n]));
+      const at = shells.map((s, k) => (PARSED_SHELLS[s] === exe ? k : -1)).filter((k) => k >= 0);
+      const spans = pwshSpans(
+        at.map((k) => forms[k].text),
+        exe,
+      );
+      at.forEach((k, n) => parsed.set(k, spans[n]));
     }
     const place = (map, start, end, text) =>
       out.push({
@@ -1094,24 +1127,22 @@ export function yamlComments(src, actions = false) {
     queued.forEach(({ text, map }, k) => {
       const form = forms[k];
       if (form === null) return;
-      const read = SHELL_READERS[shells[k]];
-      // The span comes from the reading of the substituted value and the TEXT from the
-      // original: the stand-in is the same length, so the offsets are the same offsets, and a
-      // comment written around an expression still reports what the repository has in it.
-      const answer = parsed.has(k)
-        ? parsed.get(k).answer.map(([start, end]) => ({ start, end, text: pwshText(text, start, end) }))
-        : read(form.answer.text, text);
-      if (form.probe) {
-        const seen = parsed.has(k)
-          ? parsed.get(k).probe.map(([start]) => start)
-          : read(form.probe.text).map((c) => c.start);
-        const begins = seen.map(form.probe.origin);
-        // WHERE a comment begins is the whole of it: what it runs to follows from that, and an
-        // expansion that could move an opener is one this cannot answer for either reading.
-        if (begins.length !== answer.length || answer.some((c, n) => form.answer.origin(c.start) !== begins[n]))
-          throw new TemplateAmbiguous(`what this expands to decides where a comment begins: ${JSON.stringify(text)}`);
-      }
-      for (const span of answer) place(map, span.start, span.end, span.text);
+      // The span is found in the EXPANDED value and reported against the file: an offset in the
+      // reading is carried back onto the characters it came from, so a comment written around
+      // an expression still reports what the repository has in it.
+      const spans = parsed.has(k)
+        ? parsed.get(k).map(([start, end]) => {
+            const [ts, te] = pwshTextSpan(form.text, start, end);
+            return { start, end, textStart: ts, textEnd: te };
+          })
+        : SHELL_READERS[shells[k]](form.text);
+      for (const span of spans)
+        place(
+          map,
+          form.starts[span.start],
+          form.ends[span.end],
+          text.slice(form.starts[span.textStart], form.ends[span.textEnd]),
+        );
     });
   };
   const takeValues = (head, n, under, carried, carriedAnchor, entering) => {
@@ -1693,7 +1724,7 @@ const isStepsPath = (path) => STEPS_PATHS.some((want) => samePath(want, path));
  * (`perl {0}`), and its value is left unread rather than lexed against a grammar it was not
  * written in.
  */
-const SHELL_READERS = {
+export const SHELL_READERS = {
   bash: shellComments,
   sh: shellComments,
   python: pyComments,
@@ -1702,7 +1733,7 @@ const SHELL_READERS = {
 /** The shell whose comments are decided by a PARSER rather than by a reader written here,
  *  and the program that owns it. Where the program is absent the value is UNDECIDABLE, not
  *  comment-free. */
-const PARSED_SHELLS = { pwsh: "pwsh" };
+export const PARSED_SHELLS = { pwsh: "pwsh" };
 /** `powershell` is Windows PowerShell, and GitHub runs it on Windows alone. Its parser is
  *  its own — asked of `pwsh` the answer would be an approximation, and an approximation is
  *  what this check stopped making — and the platform that owns it is not the one the merge
@@ -2005,7 +2036,7 @@ export function tomlComments(src) {
  * draws — what the language stores as a value is data. A backslash escapes the quote in a
  * RAW string too (`r"\""` is one string), so the escape is read the same way in both.
  */
-export function pyComments(src, quoted = src) {
+export function pyComments(src) {
   const out = [];
   let line = 1;
   let i = 0;
@@ -2013,7 +2044,7 @@ export function pyComments(src, quoted = src) {
   const comment = () => {
     const nl = src.indexOf("\n", i);
     const stop = nl === -1 ? src.length : nl;
-    out.push({ line, text: quoted.slice(i + 1, stop), start: i, end: stop });
+    out.push({ line, text: src.slice(i + 1, stop), start: i, end: stop, textStart: i + 1, textEnd: stop });
     i = stop;
   };
 
@@ -2183,12 +2214,7 @@ const COMMAND_OPENERS = new Set(["then", "do", "else", "elif", "if", "while", "u
  * WORD rather than an identifier: read as `[A-Za-z_]\w*`, `<<END-DATA` looked for a line
  * saying `END`, never found one, and swallowed the file from there to the end.
  */
-/**
- * @param src   the value as the shell will be given it
- * @param quoted  the value as the FILE has it, which is where the text of a comment comes
- *   from — the two differ only where a workflow expression was stood in for
- */
-export function shellComments(src, quoted = src) {
+export function shellComments(src) {
   const out = [];
   let line = 1;
   let i = 0;
@@ -2377,7 +2403,7 @@ export function shellComments(src, quoted = src) {
     if (c === "#" && !inDoubleQuote() && /[\s\n(;&|]|^$/.test(prev)) {
       const nl = src.indexOf("\n", i);
       const stop = nl === -1 ? src.length : nl;
-      out.push({ line, text: quoted.slice(i + 1, stop), start: i, end: stop });
+      out.push({ line, text: src.slice(i + 1, stop), start: i, end: stop, textStart: i + 1, textEnd: stop });
       i = stop;
       continue;
     }
@@ -2722,7 +2748,7 @@ if (invokedDirectly) {
       console.error("PowerShell does not accept this value, so what a comment is in it is not settled. Fix the step.");
     else if (err instanceof TemplateAmbiguous)
       console.error(
-        "GitHub expands this before the shell sees it, and read as a word and as nothing the value's comments do not begin in the same places. Write it so what it expands to cannot decide that.",
+        "GitHub expands this before the shell sees it, and what it expands to decides whether what follows it is a comment. Move the comment in front of the expression, or write the expression as a string literal, whose value the file does have.",
       );
     else if (err instanceof ShellUnsupported)
       console.error("The shell this step asks for is not one this project reads. Use the one named above.");

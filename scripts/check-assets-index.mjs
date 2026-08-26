@@ -160,12 +160,11 @@ const PROSE_TOKENS = new Map([
   // above. None is an entity in any tree.
   ["${{ \u2026 }}", "a GitHub expression, named as what is expanded before the shell runs"],
   ["}}", "the pair that closes one, named as what a quoted string inside it does not close"],
-  // …and the three values the two readings are shaped against: one a word cannot decide
-  // wrongly, one only an empty expansion turns into a comment, and one the empty reading
-  // produces that GitHub would never have run. None is an entity in any tree.
-  ["Write-Output \"${{ 'main' }}#release\"", "a workflow value the two readings are shaped against"],
-  ["echo ${{ '' }}# \u2026", "a workflow value the two readings are shaped against"],
-  ["if () { \u2026 }", "what the empty reading makes of a step, named as a value GitHub never runs"],
+  // …and the two values the expansion rule is shaped against: one whose hash is inside a
+  // string whatever it expands to, and one whose expansion ENDS that string. Neither is an
+  // entity in any tree.
+  ["Write-Output \"${{ 'main' }}#release\"", "a workflow value the expansion rule is shaped against"],
+  ['echo "${{ \'\\" \' }}# \u2026"', "a workflow value the expansion rule is shaped against"],
   ["pwsh", "the GitHub shell keyword for PowerShell 7, named as the one that runs everywhere"],
   // Four fragments of YAML, named as the words a plain scalar's continuation is made of.
   // None is an entity in any tree: three only LOOK like an indicator or a key, and the
