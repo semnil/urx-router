@@ -69,6 +69,6 @@ src-tauri/icons/ios
 # with nothing to catch it. A symlink in its place would not survive a checkout on
 # a Windows machine without symlink support. AGENTS.md is a per-machine rendering
 # of CLAUDE.md for another tool, so tracking it would make one rule two texts.
-/.agents/
-/.codex/
+/.agents
+/.codex
 /AGENTS.md

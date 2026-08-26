@@ -75,6 +75,7 @@ const PROSE_TOKENS = new Map([
   ["dist", "the build output directory, named as the thing ci.yml greps"],
   ["ci.yml", "named as the workflow that greps; the grep itself is asserted per handle"],
   ["ls scripts/", "an instruction to the reader, not a path"],
+  [".gitignore", "the file the ignore rules live in, named as itself"],
   ["ruby", "the interpreter, named as the thing that has to be present for a differential to run"],
   ["File.fnmatch", "Ruby's method, named as the authority a matcher is measured against"],
   // Playwright's own declarations, named as the two shapes a skip ledger cannot read off a
