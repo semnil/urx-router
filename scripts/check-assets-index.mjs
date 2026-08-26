@@ -165,6 +165,8 @@ const PROSE_TOKENS = new Map([
   // entity in any tree.
   ["Write-Output \"${{ 'main' }}#release\"", "a workflow value the expansion rule is shaped against"],
   ['echo "${{ \'\\" \' }}# \u2026"', "a workflow value the expansion rule is shaped against"],
+  ["${{ inputs.prefix }}measured by device", "a workflow value whose comment OPENER is the expansion"],
+  ["${{ x }} premium result", "a workflow value the opener question refused for the rem inside a word"],
   ["pwsh", "the GitHub shell keyword for PowerShell 7, named as the one that runs everywhere"],
   // Four fragments of YAML, named as the words a plain scalar's continuation is made of.
   // None is an entity in any tree: three only LOOK like an indicator or a key, and the

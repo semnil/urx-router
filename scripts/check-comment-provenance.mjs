@@ -841,8 +841,12 @@ export function expansion(body) {
  *
  * `starts[i]` and `ends[i]` carry an offset in the reading back onto the value: for a copied
  * character both are its own offset, and for one that came out of an expansion they are that
- * expression's own start and end — so a span reaching into an expansion reports the expression
- * that produced it, and a comment written around one still reports what the file has in it.
+ * expression's own start and end — so a span found in the reading is reported against the file.
+ *
+ * `show[i]` is what a character should be READ AS. A literal's value is what the shell gets
+ * and what the rules are asked about, so it shows as itself; a stand-in shows as the
+ * expression it stands for, in the file's own words, and its remaining characters show as
+ * nothing. `unknown[i]` marks those characters, and `dynamic` is where each of them began.
  *
  * THROWS where an expression never closes, which is no template at all.
  */
@@ -851,6 +855,8 @@ export function expand(src) {
   const out = [];
   const starts = [];
   const ends = [];
+  const show = [];
+  const unknown = [];
   const dynamic = [];
   let at = 0;
   const copy = (from, to) => {
@@ -858,6 +864,8 @@ export function expand(src) {
       out.push(src[i]);
       starts.push(i);
       ends.push(i);
+      show.push(src[i]);
+      unknown.push(false);
     }
   };
   for (const [start, end] of spans) {
@@ -872,30 +880,60 @@ export function expand(src) {
       // Everything before the FIRST character of an expansion is what stood in front of the
       // expression; everything before any later one reaches into it.
       ends.push(k === 0 ? start : end);
+      show.push(value === null ? (k === 0 ? src.slice(start, end) : "") : put[k]);
+      unknown.push(value === null);
     }
     at = end;
   }
   copy(at, src.length);
   starts.push(src.length);
   ends.push(src.length);
-  return { text: out.join(""), starts, ends, dynamic };
+  return { text: out.join(""), starts, ends, show, unknown, dynamic };
 }
 
 /**
- * Where a comment can BEGIN in each shell, as what a value would have to carry for an
- * expansion to be able to reveal one.
+ * What the rules would say about a piece of text, and where.
  *
- * A dynamic expansion is arbitrary text: it can close a quote, end a here-document, open or
- * close a comment, or add a line. So anything the FILE writes after one can change what it
- * is — `echo "${{ x }}# measured by device"` is a string until the expansion ends the quote,
- * and `${{ x }}rem measured by device` is an argument until it adds a line. Where such a
- * candidate sits at or after a dynamic expansion the value is refused rather than read; where
- * it does not, nothing the FILE wrote can become a comment that was not one already, and a
- * comment made of the expansion's own characters is not this repository's.
- *
- * cmd has no `#` at all: its comment is a word.
+ * `findingsIn` asks it of a comment. The template rule below asks the same question of a value
+ * that is not a comment yet, because what a dynamic expansion decides is whether it becomes
+ * one.
  */
-export const OPENS_COMMENT = { bash: /#/, sh: /#/, python: /#/, cmd: /rem|::/i, pwsh: /#/ };
+export function hedges(text) {
+  const out = [];
+  for (const rule of RULES) {
+    rule.re.lastIndex = 0;
+    for (const m of text.matchAll(rule.re))
+      out.push({ start: m.index, end: m.index + m[0].length, rule: rule.id, say: rule.say, hit: m[0].trim() });
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * Whether what a dynamic expansion expands to decides what the value SAYS.
+ *
+ * An expansion is arbitrary text: it can open a comment, close one, close a quote, end a
+ * here-document or add a line. So a phrase the FILE wrote after one is a phrase whose fate
+ * belongs to the expansion — `${{ x }}measured by device` is an argument until the expansion
+ * is a `#`, and `# ${{ x }} measured by device` is a comment until it is a line break. The
+ * expansion's own characters are taken OUT rather than stood in for, which also rejoins a
+ * phrase written across one, and a rule that fires at or after where the first of them sat is
+ * one the reading cannot answer for.
+ *
+ * Asked of the OPENERS instead — a `#`, a `rem`, a `::` after a dynamic expansion — this
+ * missed every one of those, since the opener was the expansion, and refused `${{ x }} premium
+ * result` for the `rem` inside a word.
+ */
+function decidedByExpansion(form) {
+  if (!form.dynamic.length) return false;
+  let text = "";
+  const at = [];
+  for (let i = 0; i < form.text.length; i++) {
+    if (form.unknown[i]) continue;
+    text += form.text[i];
+    at.push(i);
+  }
+  return hedges(text).some((h) => at[h.end - 1] + 1 > form.dynamic[0]);
+}
 
 /**
  * The comments in POWERSHELL scripts, as PowerShell's own parser reports them.
@@ -1100,11 +1138,8 @@ export function yamlComments(src, actions = false) {
       const shell = shells[k];
       if (shell == null || (!(shell in SHELL_READERS) && !(shell in PARSED_SHELLS))) return null;
       const form = expand(text);
-      const from = form.dynamic[0];
-      if (from != null && OPENS_COMMENT[shell].test(form.text.slice(from)))
-        throw new TemplateAmbiguous(
-          `what this expands to decides whether what follows it is a comment: ${JSON.stringify(text)}`,
-        );
+      if (decidedByExpansion(form))
+        throw new TemplateAmbiguous(`what this expands to decides what this value says: ${JSON.stringify(text)}`);
       return form;
     });
     // One parser call per program for the whole file, rather than one per value.
@@ -1141,7 +1176,7 @@ export function yamlComments(src, actions = false) {
           map,
           form.starts[span.start],
           form.ends[span.end],
-          text.slice(form.starts[span.textStart], form.ends[span.textEnd]),
+          form.show.slice(span.textStart, span.textEnd).join(""),
         );
     });
   };
@@ -1724,7 +1759,7 @@ const isStepsPath = (path) => STEPS_PATHS.some((want) => samePath(want, path));
  * (`perl {0}`), and its value is left unread rather than lexed against a grammar it was not
  * written in.
  */
-export const SHELL_READERS = {
+const SHELL_READERS = {
   bash: shellComments,
   sh: shellComments,
   python: pyComments,
@@ -1733,7 +1768,7 @@ export const SHELL_READERS = {
 /** The shell whose comments are decided by a PARSER rather than by a reader written here,
  *  and the program that owns it. Where the program is absent the value is UNDECIDABLE, not
  *  comment-free. */
-export const PARSED_SHELLS = { pwsh: "pwsh" };
+const PARSED_SHELLS = { pwsh: "pwsh" };
 /** `powershell` is Windows PowerShell, and GitHub runs it on Windows alone. Its parser is
  *  its own — asked of `pwsh` the answer would be an approximation, and an approximation is
  *  what this check stopped making — and the platform that owns it is not the one the merge
@@ -2448,13 +2483,8 @@ export function htmlComments(src) {
 /** Findings in one file's comments. */
 export function findingsIn(src, path) {
   const found = [];
-  for (const { line, text } of comments(src, dialect(path))) {
-    for (const rule of RULES) {
-      rule.re.lastIndex = 0;
-      for (const m of text.matchAll(rule.re))
-        found.push({ path, line, rule: rule.id, say: rule.say, hit: m[0].trim() });
-    }
-  }
+  for (const { line, text } of comments(src, dialect(path)))
+    for (const { rule, say, hit } of hedges(text)) found.push({ path, line, rule, say, hit });
   return found;
 }
 
@@ -2748,7 +2778,7 @@ if (invokedDirectly) {
       console.error("PowerShell does not accept this value, so what a comment is in it is not settled. Fix the step.");
     else if (err instanceof TemplateAmbiguous)
       console.error(
-        "GitHub expands this before the shell sees it, and what it expands to decides whether what follows it is a comment. Move the comment in front of the expression, or write the expression as a string literal, whose value the file does have.",
+        "GitHub expands this before the shell sees it, and what it expands to decides what this value says. Move the words in front of the expression, or write the expression as a string literal, whose value the file does have.",
       );
     else if (err instanceof ShellUnsupported)
       console.error("The shell this step asks for is not one this project reads. Use the one named above.");

@@ -23,7 +23,6 @@ import {
   nextLedger,
   pyComments,
   repoPath,
-  SHELL_READERS,
   shellComments,
   tomlComments,
   blockStrip,
@@ -42,8 +41,7 @@ import {
   expand,
   expansion,
   expressions,
-  OPENS_COMMENT,
-  PARSED_SHELLS,
+  hedges,
   ShellUnsupported,
   TemplateAmbiguous,
   Undecidable,
@@ -1293,12 +1291,16 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       expect(() => expand("echo ${{ github.ref")).toThrow(TemplateAmbiguous);
     });
 
-    // Every shell that has a reader has an opener written down. Without one, a dynamic
-    // expansion in a step for it would be read as harmless, which is the whole of what the
-    // rule refuses — so a reader added without one is red here rather than at a run.
-    it("knows where a comment can begin in every shell it reads", () => {
-      const reads = [...Object.keys(SHELL_READERS), ...Object.keys(PARSED_SHELLS)].sort();
-      expect(Object.keys(OPENS_COMMENT).sort()).toEqual(reads);
+    // What a dynamic expansion decides is asked of the RULES, and it is asked about WHERE
+    // they fire: a phrase in front of an expression is one the file wrote, and the same phrase
+    // behind it is one the expansion could have made or unmade. So the positions are the
+    // contract, not just the count.
+    it("says where a rule fires, which is what the expansion rule reads", () => {
+      const text = " measured by device";
+      expect(hedges(text).map((h) => [h.start, h.end, h.hit])).toEqual([
+        [text.indexOf("measured"), text.indexOf("measured") + "measured by".length, "measured by"],
+      ]);
+      expect(hedges(" nothing to say here")).toEqual([]);
     });
 
     it("decides a templated value in the shells that need no parser", () => {
