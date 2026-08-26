@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { colorControl, planToCommands } from "../core/control/translate";
+import { colorControl, insertFxControl, planToCommands } from "../core/control/translate";
 import { PORT_REF_NONE } from "../core/control/vd";
 import { deserialize, serialize } from "../core/plan";
 import { validatePlan } from "../core/routing";
@@ -33,24 +33,33 @@ describe("defaultPlan", () => {
   // A No Effect route reads bypassed on the unit, so both models seed the pair rather
   // than leaving the switch unset on one of them. Asserted together: the URX22 file is
   // inferred from the URX44V capture, and a value that reaches one and not the other is
-  // the drift this case exists to catch.
-  it("seeds every INS FX route with No Effect and the bypass switch off, on both models", () => {
-    for (const [model, routes] of [
-      ["URX22", ["ch1", "ch2", "bus.stereo", "bus.mix1", "bus.mix2"]],
-      ["URX44V", ["ch1", "ch2", "ch3", "ch4", "bus.stereo", "bus.mix1", "bus.mix2"]],
-    ] as const) {
-      const plan = defaultPlan(model);
-      for (const nodeId of routes) {
-        const where = `${model} ${nodeId}`;
-        expect(plan.nodeParams[nodeId].insertFx, where).toBe(-1);
-        expect(plan.nodeParams[nodeId].insertFxOn, where).toBe(false);
-        expect(plan.nodeParams[nodeId].insertFxParams, where).toBeUndefined();
+  // the drift this case exists to catch. Which nodes those are comes from the model
+  // rather than from a list here, so a model that grows a route is covered by the same
+  // case, and the nodes without one are checked as well. Every model, because
+  // `insertFxControl` is handed the model and could route them differently.
+  it.each(["URX22", "URX44", "URX44V"] as const)(
+    "%s seeds every INS FX route with No Effect and the bypass switch off",
+    (id) => {
+      const model = MODELS[id];
+      const plan = defaultPlan(id);
+      const carries = (nodeId: string): boolean => insertFxControl(model, nodeId) !== null;
+      const routes = model.nodes.filter((n) => carries(n.id));
+      // The loops below are both empty on a model carrying no nodes at all.
+      expect(routes.length, id).toBeGreaterThan(0);
+      for (const node of routes) {
+        const where = `${id} ${node.id}`;
+        expect(plan.nodeParams[node.id].insertFx, where).toBe(-1);
+        expect(plan.nodeParams[node.id].insertFxOn, where).toBe(false);
+        expect(plan.nodeParams[node.id].insertFxParams, where).toBeUndefined();
       }
-    }
-    for (const nodeId of ["ch_3_4", "ch_5_6", "ch_7_8", "ch_9_10"]) {
-      expect(defaultPlan("URX22").nodeParams[nodeId].insertFx, nodeId).toBeUndefined();
-    }
-  });
+      for (const node of model.nodes.filter((n) => !carries(n.id))) {
+        const where = `${id} ${node.id}`;
+        expect(plan.nodeParams[node.id]?.insertFx, where).toBeUndefined();
+        expect(plan.nodeParams[node.id]?.insertFxOn, where).toBeUndefined();
+        expect(plan.nodeParams[node.id]?.insertFxParams, where).toBeUndefined();
+      }
+    },
+  );
 
   // The URX22 seed is inferred, not captured: its header documents that stereo
   // defaults are copied by POSITION from the URX44V capture (CH3/4 <- CH5/6,
