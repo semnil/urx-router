@@ -44,10 +44,20 @@
 //   - git check-ignore is trailing-slash sensitive ("dist" does not match the
 //     "dist/" pattern while "dist/" does), so every miss is offered both ways.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, relative, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+
+/** Whether THIS module is the program, rather than something a test imported. */
+export function isEntry(url) {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return realpathSync(fileURLToPath(url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
 
 const DOC = "CLAUDE.md";
 const SECTION = "## Reusable assets";
@@ -61,6 +71,18 @@ const SELF = relative(process.cwd(), fileURLToPath(import.meta.url))
 // spells `--experimental`, `VITE_TRACE`, `UPDATE_SKILL` and `PWTEST_SHARD_WEIGHTS` as literals
 // while living under scripts/. Derived from SELF so a rename carries both.
 export const SELF_FILES = new Set([SELF, SELF.replace(/\.mjs$/, ".test.mjs")]);
+
+/**
+ * The probes `git check-ignore` can be asked about.
+ *
+ * An ABSOLUTE path is outside this repository by construction and can never be
+ * repo-ignored, and asking about one is not merely useless: git answers "outside
+ * repository" with 128 and the whole batch fails, taking every unrelated suppression with
+ * it. Which paths reach the batch differs by MACHINE — `/private/tmp` exists here and not
+ * on the runner, so it was a miss there and not here, and the check was green locally and
+ * red in CI over the same document.
+ */
+export const askableProbes = (probes) => probes.filter((p) => !p.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(p));
 
 // Exact-string allowlist: spans that are prose, not anchors. Every entry needs a
 // reason, because an unreasoned entry here is how a real anchor stops being checked.
@@ -89,6 +111,87 @@ const PROSE_TOKENS = new Map([
   ["forced-colors", "the CSS media feature, named as itself"],
   ["WebSocket", "the platform global the CDP route is driven with"],
   ["Runtime.evaluate", "a DevTools-protocol method"],
+  // The provenance checker's row quotes its own corpus: three comment fragments it must
+  // NOT refuse, and one expression a line grep would have reported as a comment. None of
+  // them is an entity in any tree — they are the readings the rule was shaped against.
+  ["the level meters are measured", "a comment fragment the provenance rule must not refuse"],
+  ["the measured EQ model", "a comment fragment the provenance rule must not refuse"],
+  ["measured against the cap's own top edge", "a comment fragment the provenance rule must not refuse"],
+  ["Object.entries(measured)", "an expression, named as the thing a line grep misreads as a comment"],
+  // Five more from that row, once it named the languages the checker reads and the two
+  // spellings of one path its entry guard compares. None is an entity in any tree: two are
+  // grammar being discussed (`run:` is YAML's key, `)` is the character a shell closes on),
+  // one is a command run as a positive control, and two are node's own globals.
+  ["run:", "a YAML key, named as the one block scalar that holds shell rather than text"],
+  // Four more from that row, once it named WHERE a `run:` is shell rather than only what it
+  // is. All four are YAML written as itself: two bare keys a workflow hands to something
+  // other than the shell, the path to one of them, and a flow mapping holding a nested one.
+  ["env:", "a YAML key, named as the variable map whose entries GitHub does not run"],
+  ["with:", "a YAML key, named as an action's inputs, which GitHub does not run either"],
+  ["env: run:", "two YAML keys, written as the path to a variable that carries the name"],
+  ["{ with: { run: \u2026 } }", "a YAML flow mapping, named as the nested shape of the same case"],
+  ["[{ run: *script }]", "a YAML flow sequence holding an alias, named as the shape a line-anchored name refused"],
+  // Two fragments of shell, named as the two places a hash sits: one where a comment begins
+  // and one where it does not. Neither is an entity in any tree.
+  [";#", "shell, named as the boundary a comment may begin at"],
+  ["a#b", "shell, named as a hash inside a word, which begins nothing"],
+  // Three fragments of cmd, named as what a comment is written with in a shell that has no
+  // `#` at all. None is an entity in any tree.
+  ["rem", "the cmd command, named as the one that opens a comment there"],
+  ["@", "cmd's per-command echo suppression, named as what a `rem` may sit behind"],
+  ["::", "a cmd label, named as the other thing written as a comment"],
+  // Four from the PowerShell row: three characters named as the boundaries whose answer
+  // depends on a mode a lexer cannot see, and the parser method that decides them. None is
+  // an entity in any tree.
+  ["]", "PowerShell, named as a boundary that closes a token in one mode and not the other"],
+  ["[", "PowerShell, named as the same boundary the other way round"],
+  ["..", "PowerShell's range operator, named as another of those boundaries"],
+  ["Parser::ParseInput", "PowerShell's own parser, named as the authority the corpus is derived from"],
+  // Five more from that row: two PowerShell fragments written as the pair whose answers
+  // differ, the token type whose nested tokens are walked, the subexpression they are in,
+  // and the shell keyword GitHub spells for Windows PowerShell. None is an entity in any tree.
+  ["$x# \u2026", "PowerShell, named as the half of the pair that IS a comment"],
+  ["Write-Output a#\u2026", "PowerShell, named as the half that is one token"],
+  ["StringExpandableToken.NestedTokens", "a PowerShell token type, named as what the walk descends into"],
+  ["$( \u2026 )", "a PowerShell subexpression, named as where a nested comment sits"],
+  ["powershell", "the GitHub shell keyword for Windows PowerShell, named as itself"],
+  // Three more from that row: a GitHub expression and its closing pair, named as what is
+  // substituted before PowerShell sees it, and the shell keyword that replaces the one
+  // above. None is an entity in any tree.
+  ["${{ \u2026 }}", "a GitHub expression, named as what is expanded before the shell runs"],
+  ["}}", "the pair that closes one, named as what a quoted string inside it does not close"],
+  // …and the two values the expansion rule is shaped against: one whose hash is inside a
+  // string whatever it expands to, and one whose expansion ENDS that string. Neither is an
+  // entity in any tree.
+  ["Write-Output \"${{ 'main' }}#release\"", "a workflow value the expansion rule is shaped against"],
+  ['echo "${{ \'\\" \' }}# \u2026"', "a workflow value the expansion rule is shaped against"],
+  ["${{ inputs.prefix }}measured by device", "a workflow value whose comment OPENER is the expansion"],
+  ["${{ x }} premium result", "a workflow value the opener question refused for the rem inside a word"],
+  ["pwsh", "the GitHub shell keyword for PowerShell 7, named as the one that runs everywhere"],
+  // Four fragments of YAML, named as the words a plain scalar's continuation is made of.
+  // None is an entity in any tree: three only LOOK like an indicator or a key, and the
+  // fourth is the one spelling that is.
+  ["-b", "YAML, named as a dash against a word, which indicates nothing"],
+  ["- b", "YAML, named as the dash that does indicate, written inside a scalar that has begun"],
+  ["?b", "YAML, named as a question mark against a word, which indicates nothing"],
+  ["x:y", "YAML, named as a colon with no separation after it, which is no mapping key"],
+  // Three more from that row, once it named what the block scalars are measured against.
+  // Two are YAML written as itself — a block header with its indentation indicator — and
+  // one is the CPython module the f-string reader is differentialled against.
+  ["- run: |2", "a YAML block header, named as the shape whose indicator counts from the key's column"],
+  ["- |2", "the same header without a key, where the indicator counts from the dash instead"],
+  ["tokenize", "CPython's module, named as the authority the f-string reader is measured against"],
+  ["#", "the character, named as itself — the comment marker three of the languages share"],
+  // macOS's two spellings of one directory, named as the reason a path is canonicalised.
+  // Neither is a path in this repository, and `/private/tmp` is not even a path on the
+  // runner — asked of `git check-ignore` it answered "outside repository" and took every
+  // other suppression down with it.
+  ["/tmp", "a directory on the machine, named as one half of a pair that is one directory"],
+  ["/private/tmp", "the other half of it"],
+  [")", "the character, named as what a shell closes the innermost thing on"],
+  ["bash -n", "the syntax check, named as the positive control a shell fixture is confirmed with"],
+  ["import.meta.url", "a node global, named as one side of the entry guard's comparison"],
+  ["process.argv[1]", "a node global, named as the other side of it"],
   ["Input.dispatchMouseEvent", "a DevTools-protocol method"],
   ["Page.captureScreenshot", "a DevTools-protocol method"],
   // Four more from the same row: the DOM method and the evaluate parameter that name
@@ -239,7 +342,13 @@ export function walk(dir, out = []) {
 //
 // Guarded so a test can import the two above without the walk, the git spawn and the
 // process.exit below running as a side effect of the import.
-if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+//
+// Compared as REAL paths on both sides. Node resolves the entry module's symlinks before it
+// stamps `import.meta.url` and leaves `process.argv[1]` exactly as it was typed, so on a
+// path through a link the two are different strings for one file — on macOS every path under
+// `/tmp` and `/var/folders` is one. Read as "not the program", this printed nothing and
+// exited 0. The same comparison was corrected in the two checkers beside it and not here.
+if (isEntry(import.meta.url)) {
   const HOOK = process.argv.includes("--hook");
 
   // Fail closed everywhere but the hook: an infrastructure failure (git unavailable, an
@@ -316,7 +425,14 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     // Offer each path both bare and with a trailing slash: "dist" does not match the
     // "dist/" pattern while "dist/" does.
     const probes = [...new Set(paths.flatMap((p) => [p, p.endsWith("/") ? p : p + "/"]))];
-    const res = spawnSync("git", ["check-ignore", "--stdin"], { input: probes.join("\n"), encoding: "utf8" });
+    // One path git refuses to answer for FAILS THE WHOLE BATCH, and the batch is every
+    // private path this document names: `/private/tmp` exists on macOS and not on the
+    // runner, so it reached this as a miss, git answered "outside repository" with 128, and
+    // seven suppressions that had nothing to do with it turned into findings. An absolute
+    // path is outside this repository by construction and cannot be repo-ignored, so it is
+    // not asked about at all.
+    const askable = askableProbes(probes);
+    const res = spawnSync("git", ["check-ignore", "--stdin"], { input: askable.join("\n"), encoding: "utf8" });
     if (res.error || (res.status !== 0 && res.status !== 1)) {
       finding(
         DOC,

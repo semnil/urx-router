@@ -84,7 +84,7 @@ export function pitchKeyPatch(scale: number, key: number): Record<number, number
  * with realtime off = Setting, both on = Real Time.
  *
  * There is no writer, deliberately. Switching the enable bit on erases a twelve-note mask
- * that is FULL and takes the Scale enum to Custom with it — measured — and the notes it
+ * that is FULL and takes the Scale enum to Custom with it, and the notes it
  * listens for arrive on a USB-MIDI port of the unit's own, which is not the port this app
  * reads external control from. The app shows the mode and leaves the setting to the unit.
  */
