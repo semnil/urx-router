@@ -93,7 +93,9 @@ describe("insert-FX: every option encodes and round-trips", () => {
 });
 
 describe("insert-FX ON/OFF (bypass) round-trips", () => {
-  it("input bypass (both states) — written after the selector", async () => {
+  // Where the bypass sits in the emitted sequence is pinned in translate.test.ts, which
+  // reads the order; this file reads the value domain.
+  it("input bypass round-trips in both states", async () => {
     const plan = base();
     plan.nodeParams["ch1"] = { insertFx: 1794, insertFxOn: false };
     expect(cmd(plan, "INSERT_FX_ON", 0)!.vdValue).toBe(0);
