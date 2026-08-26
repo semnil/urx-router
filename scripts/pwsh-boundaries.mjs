@@ -85,17 +85,51 @@ export const PWSH_CASES = [
   `Write-Output (4 *# ${M}\n0.5)`,
   `Write-Output (7 %# ${M}\n2)`,
   `$x = 1\n$x# ${M}`,
-  // GitHub evaluates a `${{ … }}` BEFORE the shell runs, so the template is not what
-  // PowerShell is given. Each of these is what the substitution has to leave parseable, and
-  // the last two are what it has to keep OUT of the answer and IN the reported text.
-  `Write-Output "\${{ github.ref }}"`,
-  `Write-Output \${{ github.ref }}`,
-  `$x = \${{ inputs.count }}`,
-  `if (\${{ inputs.enabled }}) { Write-Output ok }`,
-  `Write-Output \${{ github.ref }} # ${M}`,
-  `Write-Output "\${{ format('a # ${M}') }}"`,
-  `Write-Output x # ${M} \${{ github.ref }}`,
-  `Write-Output \${{ format('}}') }} # ${M}`,
+];
+
+/**
+ * The cases whose value is a workflow TEMPLATE rather than a script.
+ *
+ * GitHub evaluates a `${{ … }}` BEFORE the shell runs, so what the shell is handed is not
+ * what the file says — and what it IS cannot be known here. Each of these is therefore read
+ * twice, once where every expression stands for a word and once where every one of them
+ * stands for nothing, and the two readings are compared where a comment BEGINS. A row is the
+ * shell the step chose, the value as the file has it, and the words the check finds in it —
+ * or `REFUSED`, where the two readings disagree and there is no answer to give.
+ *
+ * They live here rather than in the corpus above because the corpus is asked of
+ * `Parser::ParseInput` directly, and a template is a value PowerShell does not parse.
+ */
+export const REFUSED = "refused";
+export const TEMPLATE_CASES = [
+  // Expressions in the ordinary places, none of which is a comment.
+  ["pwsh", `Write-Output "\${{ github.ref }}"`, []],
+  ["pwsh", `Write-Output \${{ github.ref }}`, []],
+  ["pwsh", `$x = \${{ inputs.count }}`, []],
+  ["pwsh", `if (\${{ inputs.enabled }}) { Write-Output ok }`, []],
+  // A hash INSIDE a string is not a comment however the expression expands, which asked of a
+  // hash's neighbours alone was a valid workflow this refused.
+  ["pwsh", `Write-Output "\${{ 'main' }}#release"`, []],
+  ["pwsh", `Write-Output "\${{ 'main' }}# ${M}"`, []],
+  ["bash", `echo "\${{ github.ref }} # ${M}"`, []],
+  ["bash", `echo "\${{ github.ref }}#${M}"`, []],
+  // …and a hash inside the EXPRESSION is not this repository's comment either.
+  ["pwsh", `Write-Output "\${{ format('a # ${M}') }}"`, []],
+  // A comment beside one is read, and what it reports is the file's own text.
+  ["pwsh", `Write-Output \${{ github.ref }} # ${M}`, [` ${M}`]],
+  ["pwsh", `Write-Output \${{ format('}}') }} # ${M}`, [` ${M}`]],
+  ["bash", `echo \${{ github.ref }} # ${M}`, [` ${M}`]],
+  ["pwsh", `Write-Output x # ${M} \${{ github.ref }}`, [` ${M} \${{ github.ref }}`]],
+  ["bash", `echo ok # ${M} \${{ github.ref }}`, [` ${M} \${{ github.ref }}`]],
+  ["python", `print('ok')#${M} \${{ github.ref }}`, [`${M} \${{ github.ref }}`]],
+  ["cmd", `rem ${M} \${{ github.ref }}`, [` ${M} \${{ github.ref }}`]],
+  // Where the expansion is what DECIDES: an empty one puts a comment where a word leaves
+  // none, and either way round the answer belongs to the expansion and not to the file.
+  ["bash", `echo \${{ '' }}# ${M}`, REFUSED],
+  ["pwsh", `Write-Output \${{ github.ref }}# ${M}`, REFUSED],
+  ["pwsh", `Write-Output \${{ github.ref }}<# ${M} #>`, REFUSED],
+  // …and an expression that never closes is no template at all.
+  ["pwsh", `Write-Output \${{ github.ref`, REFUSED],
 ];
 
 if (realpathSync(process.argv[1] ?? "") === realpathSync(fileURLToPath(import.meta.url))) {

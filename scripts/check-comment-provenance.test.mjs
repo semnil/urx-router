@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { dirname, extname, join, relative, sep } from "node:path";
+import { delimiter, dirname, extname, join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -38,6 +38,7 @@ import {
   plainScalar,
   pwshComments,
   pwshSpans,
+  elided,
   expressions,
   ShellUnsupported,
   substituted,
@@ -48,7 +49,7 @@ import {
   verdict,
 } from "./check-comment-provenance.mjs";
 import { formatTargets, JS_FAMILY } from "./format.mjs";
-import { PWSH_CASES } from "./pwsh-boundaries.mjs";
+import { PWSH_CASES, REFUSED, TEMPLATE_CASES } from "./pwsh-boundaries.mjs";
 
 // A `shell: pwsh` value is decided by PowerShell's own parser, so a pin that drives one is
 // skipped where no PowerShell is on the PATH — the GitHub runner carries one — and the skip
@@ -1026,7 +1027,6 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     ["sh", "echo ok # measured by device", "cat <<EOF\n# measured by device\nEOF"],
     ["pwsh", "echo ok # measured by device", "Write-Output '# measured by device'"],
     ["pwsh", "<# measured by device #>", "Write-Output '<# measured by device #>'"],
-    ["powershell", "<# measured by device #>", "Write-Output '<# measured by device #>'"],
     ["cmd", "rem measured by device", "echo # measured by device"],
     ["cmd", "@rem measured by device", "echo # measured by device"],
     // Python's own row is written with NO space in front of the hash: it is a comment there
@@ -1039,15 +1039,15 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     const step = (shell, value) =>
       `jobs:\n  a:\n    steps:\n      - shell: ${shell}\n        run: ${JSON.stringify(value)}\n`;
 
-    // Two of these are decided by a PARSER rather than by a reader written here, and where
-    // that program is absent the value is UNDECIDABLE — `powershell` is Windows PowerShell,
-    // whose parser is its own, so asking `pwsh` for it would be the approximation this round
-    // removed. A refusal is the answer there, not a clean pass.
+    // One of these is decided by a PARSER rather than by a reader written here, and where
+    // that program is absent the value is UNDECIDABLE rather than comment-free. `powershell`
+    // is not in the table at all: this project reads no such step, whether or not a program by
+    // that name is on the PATH, which is pinned on its own below.
     const reachable = (exe) => {
       const r = spawnSync(exe, ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
       return !r.error && r.status === 0;
     };
-    const PARSED = { pwsh: reachable("pwsh"), powershell: reachable("powershell") };
+    const PARSED = { pwsh: reachable("pwsh") };
 
     it("reads each shell with its own comment syntax, and no other", () => {
       for (const [shell, hit, miss] of SHELLS) {
@@ -1190,6 +1190,23 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     ["pwsh", ["pwsh", "-NoProfile", "-Command"]],
   ];
 
+  // …and the two readings are what decide a templated value, in EVERY shell rather than in
+  // PowerShell alone. Asked of the hash's neighbours instead, a valid `Write-Output ".."`
+  // whose hash is inside a string was refused, and `echo ${{ '' }}# …` — a hedge as soon as
+  // the expansion is empty — was reported as a value with no comment in it at all.
+  const templateRow = ([shell, value, want]) => {
+    const wf = ".github/workflows/x.yml";
+    const src = `jobs:\n  a:\n    steps:\n      - shell: ${shell}\n        run: ${JSON.stringify(value)}\n`;
+    if (want === REFUSED) {
+      expect(() => comments(src, "yaml-actions"), value).toThrow(TemplateAmbiguous);
+      return;
+    }
+    expect(
+      comments(src, "yaml-actions").map((c) => c.text),
+      value,
+    ).toEqual(want);
+  };
+
   // PowerShell decides where a comment begins from a token STATE, and a lexer written here
   // cannot recover it: the same `]`, digit, `..`, `--` or `[` opens a comment in expression
   // position and continues a bareword in argument position, and only the parser knows which of
@@ -1223,17 +1240,28 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       expect(substituted("a ${{ x }} b")).toBe("a 00000000 b");
     });
 
-    // …and where the expansion would DECIDE the answer rather than sit inside it, there is no
-    // answer to give: what it expands to is what says whether the hash begins a comment.
-    it("refuses an expression written against a hash", () => {
-      expect(() => substituted("Write-Output ${{ github.ref }}# measured")).toThrow(TemplateAmbiguous);
-      expect(() => substituted("Write-Output ${{ github.ref }}<# measured #>")).toThrow(TemplateAmbiguous);
+    // The OTHER reading: an expansion that is empty is the one a word cannot stand in for, so
+    // the value is read a second time with every expression removed, and an offset found
+    // there is carried back onto the characters it came from — which is what lets the two be
+    // compared at all.
+    it("reads the value a second time with the expressions gone, and maps back", () => {
+      expect(elided("echo ${{ x }}# c").text).toBe("echo # c");
+      // …the hash sits where the expression began, and it came from the file's own hash.
+      expect(elided("echo ${{ x }}# c").origin(5)).toBe("echo ${{ x }}# c".indexOf("#"));
+      // …while everything in front of one is where it always was.
+      expect(elided("echo # c ${{ x }}").origin(5)).toBe(5);
+      // …and a value with no expression in it is its own reading.
+      expect(elided("echo # c").text).toBe("echo # c");
+      expect(elided("echo # c").origin(5)).toBe(5);
+      // …an expression that never closes is no template at all, in either reading.
+      expect(() => elided("Write-Output ${{ github.ref")).toThrow(TemplateAmbiguous);
       expect(() => substituted("Write-Output ${{ github.ref")).toThrow(TemplateAmbiguous);
-      // …a space between them is all it takes, and then the comment is read.
-      const spaced = "Write-Output ${{ github.ref }} # measured";
-      expect(substituted(spaced)).toHaveLength(spaced.length);
-      expect(substituted(spaced).indexOf("#")).toBe(spaced.indexOf("#"));
-      expect(substituted(spaced)).toContain(" # measured");
+    });
+
+    it("decides a templated value in the shells that need no parser", () => {
+      const rows = TEMPLATE_CASES.filter(([shell]) => shell !== "pwsh");
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) templateRow(row);
     });
 
     // `powershell` is Windows PowerShell, and GitHub runs it on Windows alone — which is not
@@ -1241,7 +1269,8 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     // name rather than by failing to find a program.
     it("refuses a shell it carries no parser for, by name", () => {
       const wf = ".github/workflows/x.yml";
-      const step = (sh) => `jobs:\n  a:\n    steps:\n      - shell: ${sh}\n        run: "Write-Output ok"\n`;
+      const step = (sh, v = "Write-Output ok") =>
+        `jobs:\n  a:\n    steps:\n      - shell: ${sh}\n        run: ${JSON.stringify(v)}\n`;
       expect(() => findingsIn(step("powershell"), wf)).toThrow(ShellUnsupported);
       let message = "";
       try {
@@ -1254,27 +1283,71 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       expect(findingsIn(step("perl {0}"), wf)).toEqual([]);
     });
 
+    // The refusal is by NAME, and does not depend on whether a program called `powershell`
+    // can be reached: on Windows one can, and routed to `pwsh` on the strength of that the
+    // value below would be read as a comment on a platform the merge gates never run on. The
+    // PATH here holds one that answers like a PowerShell, and the answer is still a refusal.
+    it("refuses it whether or not a powershell is on the PATH", () => {
+      const wf = ".github/workflows/x.yml";
+      const value = "<# measured by device #>";
+      const step = `jobs:\n  a:\n    steps:\n      - shell: powershell\n        run: ${JSON.stringify(value)}\n`;
+      const tmp = mkdtempSync(join(tmpdir(), "powershell-present-"));
+      writeFileSync(join(tmp, "powershell"), '#!/bin/sh\nexec pwsh "$@"\n', { mode: 0o755 });
+      const had = process.env.PATH;
+      process.env.PATH = `${tmp}${delimiter}${had}`;
+      try {
+        expect(() => findingsIn(step, wf)).toThrow(ShellUnsupported);
+      } finally {
+        process.env.PATH = had;
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
     // …and the same refusal reaches the command line, which is what a green scan would
     // otherwise be hiding. The checker is run with a PATH that holds no pwsh.
-    it("stops the run rather than reporting a clean scan", () => {
-      const tmp = mkdtempSync(join(tmpdir(), "pwsh-undecidable-"));
-      mkdirSync(join(tmp, ".github", "workflows"), { recursive: true });
-      const file = join(tmp, ".github", "workflows", "x.yml");
-      writeFileSync(file, 'jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: "$x# measured by device"\n');
-      let status = 0;
-      let stderr = "";
-      try {
-        execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), file], {
-          encoding: "utf8",
-          env: { ...process.env, PATH: join(tmp, "empty") },
-        });
-      } catch (err) {
-        status = err.status;
-        stderr = err.stderr;
+    // …and the run says WHICH of them it hit. Four problems with four answers, so one line
+    // each: collapsed into one message, the reader is left to guess whether to install a
+    // program, fix a value, rewrite a template or change a shell. The line is what a reader
+    // acts on, and nothing else checks it.
+    const KINDS = [
+      ["a parser it cannot reach", "pwsh", '"$x# measured by device"', "Install pwsh", true],
+      ["a value that does not parse", "pwsh", '"Write-Output ("', "does not accept this value", false],
+      [
+        "two readings that disagree",
+        "bash",
+        `"echo \${{ '' }}# measured by device"`,
+        "GitHub expands this before the shell sees it",
+        false,
+      ],
+      ["a shell it carries no parser for", "powershell", '"Write-Output ok"', "not one this project reads", false],
+    ];
+    it("stops the run rather than reporting a clean scan, and says which problem it is", () => {
+      const marks = KINDS.map(([, , , mark]) => mark);
+      for (const [what, shell, value, mark, hideParser] of KINDS) {
+        // The one row that needs the parser present is the one about a value it rejects.
+        if (noPwsh && !hideParser && shell === "pwsh") continue;
+        const tmp = mkdtempSync(join(tmpdir(), "undecidable-"));
+        mkdirSync(join(tmp, ".github", "workflows"), { recursive: true });
+        const file = join(tmp, ".github", "workflows", "x.yml");
+        writeFileSync(file, `jobs:\n  a:\n    steps:\n      - shell: ${shell}\n        run: ${value}\n`);
+        let status = 0;
+        let stderr = "";
+        try {
+          execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), file], {
+            encoding: "utf8",
+            env: { ...process.env, PATH: hideParser ? join(tmp, "empty") : process.env.PATH },
+          });
+        } catch (err) {
+          status = err.status;
+          stderr = err.stderr;
+        }
+        rmSync(tmp, { recursive: true, force: true });
+        expect(status, what).toBe(1);
+        expect(stderr, what).toContain("Cannot decide what a comment is here");
+        expect(stderr, what).toContain(mark);
+        // …and NOT any of the other three, or the four kinds are one message in four copies.
+        for (const other of marks) if (other !== mark) expect(stderr, `${what}: ${other}`).not.toContain(other);
       }
-      rmSync(tmp, { recursive: true, force: true });
-      expect(status).toBe(1);
-      expect(stderr).toContain("Cannot decide what a comment is here");
     });
   });
 
@@ -1296,23 +1369,23 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     it("reports the boundaries a character test missed, through the workflow", () => {
       const wf = ".github/workflows/x.yml";
       const step = (v) => `jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: ${JSON.stringify(v)}\n`;
-      // …and a `${{ … }}` in the step, which GitHub expands before PowerShell sees it: the
-      // comment beside one is read, the hash inside one is not a comment in this repository,
-      // and a comment holding one reports what the file actually says.
-      expect(findingsIn(step("Write-Output ${{ github.ref }} # measured by device"), wf).map((f) => f.line)).toEqual([
-        5,
-      ]);
-      expect(findingsIn(step("Write-Output \"${{ format('a # measured by device') }}\""), wf)).toEqual([]);
-      expect(pwshComments("Write-Output x # measured by device ${{ github.ref }}").map((c) => c.text)).toEqual([
-        " measured by device ${{ github.ref }}",
-      ]);
-      // …and the position it reports is the position in the FILE, past the expression.
+      // What a `${{ … }}` in the step does to the answer is TEMPLATE_CASES, one row per
+      // shape; here is the one it cannot carry, since its rows are one-liners — a value
+      // written across several lines, where a stand-in shorter than what it replaces would
+      // move every line after it and the finding would name the wrong one.
       expect(
         findingsIn(
           "jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: |\n          Write-Output ${{ github.ref }}\n          Write-Output y  # measured by device\n",
           wf,
         ).map((f) => f.line),
       ).toEqual([7]);
+      // …and with the expression on a line of its OWN, and a second one before the comment.
+      expect(
+        findingsIn(
+          "jobs:\n  a:\n    steps:\n      - shell: pwsh\n        run: |\n          ${{ inputs.setup }}\n          Write-Output ${{ github.ref }}\n          Write-Output y  # measured by device\n",
+          wf,
+        ).map((f) => f.line),
+      ).toEqual([8]);
       for (const value of [
         "$x = 1\n$x# measured by device",
         "Write-Output (3 -# measured by device\n2)",
@@ -1333,6 +1406,14 @@ describe("what counts as a comment in the # languages and in HTML", () => {
         "Write-Output @'\n# measured by device\n'@",
       ])
         expect(findingsIn(step(value), wf), value).toEqual([]);
+    });
+
+    // The rows of that table whose shell is decided by the parser. Its other rows run above,
+    // where they need nothing to be installed.
+    it("decides a templated value in PowerShell", () => {
+      const rows = TEMPLATE_CASES.filter(([shell]) => shell === "pwsh");
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) templateRow(row);
     });
 
     // What the RULES read is the comment without its delimiters, the same as every other
