@@ -16,6 +16,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter, type Span } from "./analyze";
 import { graphNode } from "./ui";
+import { chooseOption } from "../choose-option";
 
 // T2d shape-change — the two catalog cases whose shape change is a RE-TYPING rather
 // than a growth: the address stays, its meaning does not
@@ -202,7 +203,7 @@ test.describe("T2d shape-change", () => {
     // is followed by a whole-scope read-and-resend; its read pass is what enumerates
     // the new slot family.
     await mark(page, "to-delay");
-    await typeSel.selectOption("1024"); // Mono Delay
+    await chooseOption(typeSel, "1024"); // Mono Delay
     await expect(fxRow(page, "Delay")).toHaveCount(1);
     await settleAfter(page, "to-delay", 1500);
 
@@ -428,7 +429,7 @@ test.describe("T2d shape-change", () => {
     // The PAN/BAL control exists only on a STEREO-linked pair, and linking leaves the
     // pair in BAL with every pan centred (t2b pins the link itself; here it is setup).
     await mark(page, "stereo-link");
-    await param(page, "Signal Type").locator("select").selectOption("1");
+    await chooseOption(param(page, "Signal Type").locator("select"), "1");
     await expect(param(page, "PAN / BAL")).toHaveCount(1);
     await settleAfter(page, "stereo-link", 1500);
     await expect(param(page, "PAN / BAL").locator("select")).toHaveValue("1"); // BAL
@@ -443,7 +444,7 @@ test.describe("T2d shape-change", () => {
     const depthBefore = await depthOf(page);
 
     await mark(page, "to-pan");
-    await param(page, "PAN / BAL").locator("select").selectOption("0"); // PAN
+    await chooseOption(param(page, "PAN / BAL").locator("select"), "0"); // PAN
     await settleAfter(page, "to-pan", 1500);
 
     let trace = await traceOf(page);

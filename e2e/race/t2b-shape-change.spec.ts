@@ -25,6 +25,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
 import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode, openSsmcsScreen, screenRow } from "./ui";
+import { chooseOption } from "../choose-option";
 
 // T2b shape-change — the twelve T2 cases t2-shape-change.spec.ts did not reach
 // (docs/{en,ja}/live-race-harness.md). Same observables as T2: the `addrs` argument of
@@ -152,7 +153,7 @@ test.describe("T2b shape-change", () => {
     const depthBefore = await depthOf(page);
 
     await mark(page, "stereo-link");
-    await signalSel.selectOption("1"); // STEREO
+    await chooseOption(signalSel, "1"); // STEREO
     await expect(param(page, "PAN / BAL")).toHaveCount(1);
     await settleAfter(page, "stereo-link", 1500);
 
@@ -425,7 +426,7 @@ test.describe("T2b shape-change", () => {
     // Phase 3 — Sweet Spot Data. SSMCS mode first (COMP_EQ_TYPE is a converge param and
     // is the control case here: it DOES classify), then the preset, which does not.
     await mark(page, "to-ssmcs");
-    await param(page, "COMP/EQ Type").locator("select").selectOption("1");
+    await chooseOption(param(page, "COMP/EQ Type").locator("select"), "1");
     await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(1);
     await settleAfter(page, "to-ssmcs", 1800);
 
@@ -444,7 +445,7 @@ test.describe("T2b shape-change", () => {
     const modeAt = markTime(modeTrace, "to-ssmcs")!;
     const regBeforePreset = regKeys(await paramAddrsOf(page));
     await mark(page, "sweet-spot");
-    await screenRow(page, "Sweet Spot Data").locator("select").selectOption("9");
+    await chooseOption(screenRow(page, "Sweet Spot Data").locator("select"), "9");
     await settleAfter(page, "sweet-spot", 1500);
 
     trace = await traceOf(page);

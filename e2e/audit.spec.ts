@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { selectWire } from "./graph-helpers";
+import { chooseOption } from "./choose-option";
 
 // UI-layer audit regressions: gaps the interaction probes surfaced that the rest
 // of the suite did not already pin. Each test locks in a verified-correct behaviour
@@ -14,7 +15,7 @@ const strip = (page: Page, name: string) => page.locator(".con-strip", { has: pa
 // Language now switches from the Preferences modal (the toolbar button is gone).
 async function switchToJapanese(page: Page): Promise<void> {
   await page.click("#btn-prefs");
-  await page.selectOption("#prefs-lang", "ja");
+  await chooseOption(page.locator("#prefs-lang"), "ja");
   await page.click("#prefs-modal .consent-btn-secondary");
 }
 
@@ -37,7 +38,7 @@ test.describe("model switch clears the selection", () => {
 
     // URX22 has fewer channels; the URX44V selection cannot carry over. The plan is
     // clean (a bare selection is not a dirty edit), so the swap needs no discard.
-    await page.locator("#model-picker").selectOption("URX22");
+    await chooseOption(page.locator("#model-picker"), "URX22");
     await expect(page.locator("#model-picker")).toHaveValue("URX22");
 
     // Nothing stays selected, the mobile bottom-sheet flag clears, and the inspector
@@ -54,7 +55,7 @@ test.describe("model switch clears the selection", () => {
     await expect(page.locator("#inspector")).toContainText("Connection");
     expect(await page.locator("#inspector .param").count()).toBeGreaterThan(0);
 
-    await page.locator("#model-picker").selectOption("URX22");
+    await chooseOption(page.locator("#model-picker"), "URX22");
     await expect(page.locator("#model-picker")).toHaveValue("URX22");
 
     // The wire's endpoints belong to the old plan; the inspector must not keep a

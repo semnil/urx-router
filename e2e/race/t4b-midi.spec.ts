@@ -22,6 +22,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, type LedgerEntry } from "./analyze";
 import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode, settleValue, strip } from "./ui";
+import { chooseOption } from "../choose-option";
 
 // T4b midi — the six T4 cases t4-midi.spec.ts did not reach
 // (docs/{en,ja}/live-race-harness.md, catalog ids in the section headers below).
@@ -191,7 +192,7 @@ test.describe("T4b midi", () => {
     // Switch MIX 1 to FIXED: the send LEVEL is device-locked from here on.
     await page.click("#btn-view-graph");
     await graphNode(page, "bus.mix1").click();
-    await param(page, "BUS Type").locator("select").selectOption("1");
+    await chooseOption(param(page, "BUS Type").locator("select"), "1");
     await page.click("#btn-view-console");
     await expect(faderReadout(page, "CH 1")).toBeVisible();
     await page.waitForTimeout(600); // let any feedback the edit scheduled run + settle
@@ -270,7 +271,7 @@ test.describe("T4b midi", () => {
   /** STEREO-link ch1/ch2 (which lands in BAL) and let the converge round settle. */
   async function linkBalPair(page: Page): Promise<void> {
     await graphNode(page, "ch1").click();
-    await param(page, "Signal Type").locator("select").selectOption("1");
+    await chooseOption(param(page, "Signal Type").locator("select"), "1");
     await expect(param(page, "PAN / BAL").locator("select")).toHaveValue("1"); // BAL
     await waitQuiet(page);
   }
@@ -475,9 +476,9 @@ test.describe("T4b midi", () => {
     // Close and reopen the input port from the MIDI window — the operator unplugging
     // and replugging a controller.
     const win = await openMidiWindow(page);
-    await win.locator(".mw-in").selectOption("");
+    await chooseOption(win.locator(".mw-in"), "");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.inPort)).toBeNull();
-    await win.locator(".mw-in").selectOption("Fake In");
+    await chooseOption(win.locator(".mw-in"), "Fake In");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.inPort)).toBe("Fake In");
     await win.close();
 
@@ -860,7 +861,7 @@ test.describe("T4b midi", () => {
       await mark(page, "port-open");
       const win = await openMidiWindow(page);
       const loop = loopbackAfter(page, d, 127, (await midiSentOf(page)).length);
-      await win.locator(".mw-out").selectOption("Fake Out");
+      await chooseOption(win.locator(".mw-out"), "Fake Out");
       const [phaseLow, phaseHigh] = await loop;
       // A fixed wait, not settleAfter: the rung inside the window claims the link stays
       // silent, and settleAfter waits for it to wake. Long enough to cover the 120 ms
@@ -931,7 +932,7 @@ test.describe("T4b midi", () => {
     const ch2Before = (await faderReadout(page, "CH 2").textContent())!;
 
     const win = await openMidiWindow(page);
-    await win.locator(".mw-in").selectOption("Fake In");
+    await chooseOption(win.locator(".mw-in"), "Fake In");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.inPort)).toBe("Fake In");
 
     // Entering learn mode re-renders the whole console: the element that was on

@@ -21,6 +21,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf, getsOf } from "./analyze";
 import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, graphNode, openEqScreen } from "./ui";
+import { chooseOption } from "../choose-option";
 
 // T3 undo — the boundary, refusal, rebase and native-menu tier of the race harness
 // (docs/{en,ja}/live-race-harness.md). e2e/undo.spec.ts already pins the simple
@@ -842,11 +843,11 @@ test.describe("T3 undo", () => {
     // Language switch: the menu lives outside the document, so nothing re-renders it.
     await mark(page, "lang");
     await page.click("#btn-prefs");
-    await page.selectOption("#prefs-lang", "ja");
+    await chooseOption(page.locator("#prefs-lang"), "ja");
     await page.click("#prefs-modal .consent-btn-secondary");
     await expect(page.locator("#prefs-modal")).toBeHidden();
     await page.click("#btn-prefs");
-    await page.selectOption("#prefs-lang", "en");
+    await chooseOption(page.locator("#prefs-lang"), "en");
     await page.click("#prefs-modal .consent-btn-secondary");
     await expect(page.locator("#prefs-modal")).toBeHidden();
     await mark(page, "lang-done");
@@ -1007,7 +1008,7 @@ test.describe("T3 undo", () => {
     // (i) a sampleRate-touching entry while live. Recorded offline first, because the
     // rate picker locks the moment a session is up.
     const rateBefore = await page.locator("#rate-picker").inputValue();
-    await page.selectOption("#rate-picker", "96000");
+    await chooseOption(page.locator("#rate-picker"), "96000");
     // The rate change really did record an entry — without this probe, (i) below
     // reading "nothing to undo" would have the same value if the picker's funnel had
     // recorded nothing at all, and the "unreachable refusal" reading would not follow.

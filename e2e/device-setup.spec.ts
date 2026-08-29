@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { dialogsOf, stubTauriDevice, strWritesOf, writesOf } from "./tauri-stub";
+import { chooseOption } from "./choose-option";
 
 // The device setup screen: the unit's SETUP > GENERAL settings, which no node on
 // the graph and no strip on the console stands for. It is a batch screen — the
@@ -104,7 +105,7 @@ test("a knob assignment writes its three columns together", async ({ page }) => 
   // Knob A of bank 1. Picking a function re-seeds both parameter columns from the
   // catalog, and all three are written — the device reconciles nothing, so a
   // partial write would leave the unit showing a triple no menu could produce.
-  await page.locator(".udk-row").first().locator("select").first().selectOption("Monitor");
+  await chooseOption(page.locator(".udk-row").first().locator("select").first(), "Monitor");
   await expect(page.locator("#device-setup-pending")).toHaveText("1 unapplied change");
   await page.click("#device-setup-apply");
 
@@ -123,7 +124,7 @@ test("switching banks addresses the knob slots behind it", async ({ page }) => {
 
   // Bank 3, knob B = slot 9. Banks are contiguous, four knobs each.
   await page.locator("#device-setup-banks button").nth(2).click();
-  await page.locator(".udk-row").nth(1).locator("select").first().selectOption("Oscillator");
+  await chooseOption(page.locator(".udk-row").nth(1).locator("select").first(), "Oscillator");
   await page.click("#device-setup-apply");
 
   expect(await strWritesOf(page)).toEqual([
@@ -138,7 +139,7 @@ test("closing with unapplied edits asks before discarding them", async ({ page }
   await page.goto("/");
   await openSetup(page);
 
-  await page.locator("#device-setup-timezone").selectOption("0");
+  await chooseOption(page.locator("#device-setup-timezone"), "0");
   await page.click("#device-setup-modal .consent-btn-secondary");
 
   // The stub declines every confirm, so the screen stays open with the edit intact.

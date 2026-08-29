@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { invokesOf, stubTauriBoot } from "./tauri-stub";
+import { chooseOption } from "./choose-option";
 
 // Recent entries whose file no longer loads: the stubbed shell answers no
 // read_text_file command, so opening one fails exactly like a moved / deleted
@@ -34,7 +35,7 @@ test("declining the discard confirm keeps the recent entry", async ({ page }) =>
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   // Dirty the plan so the discard confirm gates the open.
-  await page.selectOption("#rate-picker", "96000");
+  await chooseOption(page.locator("#rate-picker"), "96000");
   await page.locator(".recent-row").click();
   // Wait for the confirm to have been RAISED, not for a clock. The open is decided at
   // that dialog, so once it has been asked and declined the outcome is settled — where

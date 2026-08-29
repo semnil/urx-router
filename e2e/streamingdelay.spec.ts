@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { chooseOption } from "./choose-option";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
@@ -37,7 +38,7 @@ test("streaming bus shows the DELAY section with frame rate, toggle and time", a
 
 test("DELAY settings persist after reselecting the streaming bus", async ({ page }) => {
   await node(page, "bus.stream").click();
-  await frameRateSelect(page).selectOption("7"); // 120 fps
+  await chooseOption(frameRateSelect(page), "7"); // 120 fps
   await delayToggle(page).locator("button", { hasText: "ON" }).click();
 
   await node(page, "bus.stereo").click();

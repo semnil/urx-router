@@ -18,6 +18,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf } from "./analyze";
 import { CH1_FADER, CH2_FADER, faderOf, faderReadout, openEqScreen } from "./ui";
+import { chooseOption } from "../choose-option";
 
 // T4 midi — the second operator with no gate (docs/{en,ja}/live-race-harness.md).
 //
@@ -507,7 +508,7 @@ test.describe("T4 midi", () => {
     // a live readback establishes the plan — but the pass still RUNS, and deleting the
     // pickup engagement is what it owes the receive side either way.
     const win = await openMidiWindow(page);
-    await win.locator(".mw-out").selectOption("Fake Out");
+    await chooseOption(win.locator(".mw-out"), "Fake Out");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.outPort)).toBe("Fake Out");
     await win.close();
     // The address received input moments ago, so the pass defers behind RECENT_MS and

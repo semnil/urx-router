@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "./fixtures";
 import { LIVE_COMMANDS, stubTauriDevice } from "./tauri-stub";
 import { selectWire } from "./graph-helpers";
+import { chooseOption } from "./choose-option";
 
 // microSD Rec track-pair slots hang in a chain under the SD Rec header; Track Count
 // (read-only on the device) gates how many are shown. Uses the default factory
@@ -26,11 +27,11 @@ test("Track Count gates how many SD Rec track-pair slots are shown", async ({ pa
   await expect(trackCount(page)).toHaveValue("16");
   await expect(trackCount(page).locator("option")).toHaveText(["2", "4", "6", "8", "10", "12", "14", "16"]);
 
-  await trackCount(page).selectOption("8");
+  await chooseOption(trackCount(page), "8");
   await expect(node(page, "out.sdrec.t4")).toBeVisible();
   await expect(node(page, "out.sdrec.t5")).toHaveCount(0);
 
-  await trackCount(page).selectOption("4");
+  await chooseOption(trackCount(page), "4");
   await expect(node(page, "out.sdrec.t2")).toBeVisible();
   await expect(node(page, "out.sdrec.t3")).toHaveCount(0);
 });

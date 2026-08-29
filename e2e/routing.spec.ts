@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { drag, port, selectWire, tapJack } from "./graph-helpers";
+import { chooseOption } from "./choose-option";
 
 // Each committed connection renders one transparent .wire-hit band (plus a
 // sibling painted path); counting the band gives one element per connection and
@@ -125,13 +126,13 @@ test("confirms before discarding unsaved changes on model switch", async ({ page
     expect(d.message()).toContain("unsaved changes");
     void d.dismiss();
   });
-  await page.locator("#model-picker").selectOption("URX22");
+  await chooseOption(page.locator("#model-picker"), "URX22");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await expect(wires(page)).toHaveCount(FIXED + 1);
 
   // Accept: switch to URX22 and reset to that model's fixed wires.
   page.once("dialog", (d) => void d.accept());
-  await page.locator("#model-picker").selectOption("URX22");
+  await chooseOption(page.locator("#model-picker"), "URX22");
   await expect(page.locator("#model-picker")).toHaveValue("URX22");
   await expect(wires(page)).toHaveCount(FIXED_URX22);
 });

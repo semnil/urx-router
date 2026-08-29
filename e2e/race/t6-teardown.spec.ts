@@ -19,6 +19,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, getsOf } from "./analyze";
 import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, strip } from "./ui";
+import { chooseOption } from "../choose-option";
 
 // T6 teardown — session and plan lifetime (docs/{en,ja}/live-race-harness.md).
 //
@@ -245,7 +246,7 @@ test.describe("T6 teardown", () => {
     const dialogsBefore = (await dialogsOf(page)).length;
     await fileMenu(page, "btn-new");
     await fileMenu(page, "btn-open");
-    await page.locator("#model-picker").selectOption("URX22");
+    await chooseOption(page.locator("#model-picker"), "URX22");
     const duringStatus = await statusText(page);
     const duringDialogs = (await dialogsOf(page)).length;
     const pickerDuring = await page.locator("#model-picker").inputValue();
@@ -255,7 +256,7 @@ test.describe("T6 teardown", () => {
     await mark(page, "fetch-done");
 
     // The same three attempts, unchanged, once the latch is down.
-    await page.locator("#model-picker").selectOption("URX22");
+    await chooseOption(page.locator("#model-picker"), "URX22");
     await expect(page.locator("#statusbar")).toContainText("Switched to URX22");
     await fileMenu(page, "btn-open");
     await fileMenu(page, "btn-new");

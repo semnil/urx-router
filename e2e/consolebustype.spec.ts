@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { chooseOption } from "./choose-option";
 
 // The console runs against the factory plan (sends present), so we do NOT seed
 // "empty" here — the CH → MIX sends the FIXED / Pan-Link locks act on exist.
@@ -21,7 +22,7 @@ test.beforeEach(async ({ page }) => {
 test("FIXED BUS Type locks the MIX send column fader read-only", async ({ page }) => {
   // Set MIX 1 to FIXED in the graph inspector, then view the console.
   await page.locator('g.node[data-id="bus.mix1"]').click();
-  await param(page, "BUS Type").locator("select").selectOption("1"); // FIXED
+  await chooseOption(param(page, "BUS Type").locator("select"), "1"); // FIXED
   await page.click("#btn-view-console");
 
   const fader = mix1Col(page).locator(".con-vfad");
@@ -48,7 +49,7 @@ test("Pan Link locks the SEND PAN knob read-only", async ({ page }) => {
 
 test("a FIXED MIX bus leaves the head (STEREO main path) fader editable", async ({ page }) => {
   await page.locator('g.node[data-id="bus.mix1"]').click();
-  await param(page, "BUS Type").locator("select").selectOption("1"); // FIXED
+  await chooseOption(param(page, "BUS Type").locator("select"), "1"); // FIXED
   await page.click("#btn-view-console");
   // FIXED gates the MIX send level, not the channel's → STEREO main fader.
   await expect(strip(page, "CH 1").locator(".con-fader")).not.toHaveClass(/readonly/);

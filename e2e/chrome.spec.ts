@@ -1,6 +1,7 @@
 import { test, expect, colorToken, type Page } from "./fixtures";
 import { stubTauriBoot } from "./tauri-stub";
 import { drag, port } from "./graph-helpers";
+import { chooseOption } from "./choose-option";
 
 // App-chrome behaviour: the theme and language rows in the Preferences modal
 // (moved off the toolbar), the toolbar brand and Device-menu grouping, and the
@@ -13,7 +14,7 @@ const wires = (page: Page) => page.locator("#graph-host .wire-hit");
 // that assert intermediate modal state keep the steps inline instead).
 async function pickPref(page: Page, selector: string, value: string): Promise<void> {
   await page.click("#btn-prefs");
-  await page.selectOption(selector, value);
+  await chooseOption(page.locator(selector), value);
   await page.click("#prefs-modal .consent-btn-secondary");
 }
 
@@ -45,20 +46,20 @@ test.describe("theme", () => {
     await expect(html).toHaveAttribute("data-theme", "dark");
 
     // Each pick applies immediately behind the open modal.
-    await sel.selectOption("light");
+    await chooseOption(sel, "light");
     await expect(html).toHaveAttribute("data-theme", "light");
     await expect(page.locator("#statusbar")).toHaveText("Switched to light mode");
 
-    await sel.selectOption("dark");
+    await chooseOption(sel, "dark");
     await expect(html).toHaveAttribute("data-theme", "dark");
 
     // Back to auto (follows the OS again = dark here).
-    await sel.selectOption("auto");
+    await chooseOption(sel, "auto");
     await expect(html).toHaveAttribute("data-theme", "dark");
     await expect(page.locator("#statusbar")).toHaveText("Following the system theme");
 
     // The chosen mode survives a reload: pick light, reload, expect light again.
-    await sel.selectOption("light");
+    await chooseOption(sel, "light");
     await page.reload();
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
     await expect(html).toHaveAttribute("data-theme", "light");
@@ -124,7 +125,7 @@ test.describe("language", () => {
     // open modal itself, the toolbar (static i18n), and the rendered console.
     await page.click("#btn-prefs");
     await expect(page.locator("#prefs-lang")).toHaveValue("en");
-    await page.selectOption("#prefs-lang", "ja");
+    await chooseOption(page.locator("#prefs-lang"), "ja");
     await expect(page.locator("#prefs-title")).toHaveText("環境設定");
     await expect(page.locator("#prefs-lang")).toHaveValue("ja");
     await page.click("#prefs-modal .consent-btn-secondary");
