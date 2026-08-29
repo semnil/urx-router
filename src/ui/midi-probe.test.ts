@@ -211,11 +211,13 @@ describe("the trace file", () => {
     if (!rx || !entry) throw new Error("the rx record was not written");
     expect(rx.d).toBe("CH 16 CC 80 = 95");
     expect(rx.t).toBeCloseTo(entry.t, 3);
-    // The epoch stamp is the page's origin plus the entry's offset, which is what makes
-    // two page loads comparable. Bracketed rather than compared to one reading, since
-    // Date.now() moves between the record and this line.
-    expect(rx.ms).toBeGreaterThanOrEqual(Math.round(performance.timeOrigin));
-    expect(rx.ms).toBeLessThanOrEqual(Date.now() + 1);
+    // The epoch stamp is the page's origin plus the entry's offset, which is what makes two
+    // page loads comparable. Asked of those two numbers rather than of Date.now(): the
+    // stamp rides the monotonic clock, the wall clock is a different one, and a bracket
+    // across the two fails on the millisecond the two roundings fall either side of.
+    expect(rx.ms).toBe(Math.round(performance.timeOrigin + entry.t));
+    // …and it really is an epoch rather than an offset that happens to add up.
+    expect(rx.ms).toBeGreaterThan(Date.UTC(2020, 0, 1));
   });
 
   it("escapes a detail's own newline instead of letting it split the record", async () => {

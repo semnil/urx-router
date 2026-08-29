@@ -158,6 +158,10 @@ test("a guitar amp's values are knobs, on one face with no bar", async ({ page }
 // So this measures rectangles, in the built bundle, which is the only place that answers:
 // jsdom lays nothing out, and the unit guard beside it can only ask which container an
 // element is IN.
+/** The card height `.gt-knob` sets in `src/style.css`. Written here because a rendered
+ *  rectangle is what this case reads, and the stylesheet is what it is reading back. */
+const CARD_MIN_H = 116;
+
 test("every control on a guitar face is a card in the one panel", async ({ page }) => {
   const geometry = () =>
     screenBox(page).evaluate((box) => {
@@ -219,10 +223,15 @@ test("every control on a guitar face is a card in the one panel", async ({ page 
         expect(c.w, `${at} card width`).toBeLessThan(g.gridWidth / 4);
         expect(c.inside, `${at} card inside the panel`).toBe(true);
       }
-      // …and they are one row of cards rather than a mixture of heights: a card that keeps
-      // a control's own shape is shorter than a knob's, which steps the row it sits in.
-      const heights = new Set(g.cards.map((c) => Math.round(c.h)));
-      expect([...heights], `${at} card heights`).toHaveLength(1);
+      // …and every card clears the floor `.gt-knob` sets, so a card holding a shorter
+      // control keeps a knob card's shape instead of its own. A FLOOR and not one height
+      // for all of them: the grid stretches the cards in a row to the tallest of them, so
+      // what a card can differ from is another ROW, and a runner whose font metrics round a
+      // row a pixel or two off another's is not a difference anyone can see. Take the floor
+      // away and every card lands under it.
+      for (const c of g.cards) {
+        expect(c.h, `${at} card height`).toBeGreaterThanOrEqual(CARD_MIN_H);
+      }
       // Exactly one break, and it SPANS: filtered out of the cards above, a break that had
       // stopped spanning would leave every assertion here green while the two groups it
       // separates ran together.
