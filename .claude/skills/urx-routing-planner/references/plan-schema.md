@@ -184,6 +184,12 @@ the device default. The full set:
   on the unit. In both cases the skipped slots are dropped from the write silently
   and the app's tuning screen locks the same rows.
 
+  Either switch also makes the app READ the node back after writing it, because the
+  unit recomputes the skipped slots when the switch moves. So a plan carrying one of
+  them does not keep whatever it said about those slots: after it is applied, they
+  hold what the unit derived. Authoring band values beside a 1-Knob On is doubly
+  pointless — they are not written, and the plan's copy of them is replaced.
+
 These three are the device's own internal units — what URX Router captures when it
 reads a unit, not a scale you can author a value on. A hand-written number lands
 wherever that raw value happens to sit on the device's curve, so prefer to omit
