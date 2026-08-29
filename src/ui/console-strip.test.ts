@@ -805,6 +805,32 @@ describe("where the focus goes after the INS FX popover closes", () => {
     });
   }
 
+  // The INS FX popover's own half of the whole-rack rule, and the case the other two do not
+  // have: `refreshStrip` RE-OPENS this one against the fresh strip, so the row is still
+  // there and the focus goes back to it rather than out to the trigger. One rule decides
+  // both by asking what the rebuild actually did.
+  it("returns it to the trigger when a whole-rack repaint closes the list", () => {
+    h = consoleHost();
+    openerOf("ch1")!.click();
+    const row = document.querySelector<HTMLElement>(".con-ifxpop .irow");
+    row?.focus();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.contains(document.activeElement)).toBe(true);
+    h.view.refresh();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden, "the repaint closed it").toBe(true);
+    expect(document.activeElement).toBe(openerOf("ch1"));
+  });
+
+  it("keeps it on the same row when a one-strip repaint re-opens the list", () => {
+    h = consoleHost();
+    openerOf("ch1")!.click();
+    const rows = () => [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];
+    const idx = 1;
+    rows()[idx].focus();
+    h.view.refreshStrip("ch1");
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden, "still open").toBe(false);
+    expect(document.activeElement, "the same row of the rebuilt list").toBe(rows()[idx]);
+  });
+
   // The floor under both, keyed the same way: a strip carrying neither control still keeps
   // the operator's place rather than sending them to the top of the document.
   it("keeps the operator on the strip root across a repaint", () => {

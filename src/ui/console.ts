@@ -789,7 +789,9 @@ export class Console {
   private setTap(id: string, key: string): void {
     this.meterTap.set(id, key);
     this.saveTaps();
-    this.closeTapPop();
+    // The close is left to `render`, which takes the focus decision before it destroys
+    // anything: choosing a tap from the KEYBOARD leaves the focus on the row this would
+    // otherwise remove first, and a capture taken after that has nothing to record.
     this.render();
   }
 
@@ -1951,6 +1953,10 @@ export class Console {
       this.loadTaps();
       this.tapModel = model.id;
     }
+    // BEFORE the popovers go: closing one destroys the row that may hold the focus, and a
+    // capture taken afterwards has nothing left to record. The restore runs once the new
+    // strips are in place, and lands on the trigger, since these three do not come back.
+    const restorePopFocus = this.captureFocus();
     this.closeTapPop();
     this.closeSendPan();
     this.closeInsFxPop();
@@ -1967,6 +1973,8 @@ export class Console {
     // the whole rack — ~25 ms per render on WKWebView against ~6 ms without, on the path
     // Live sync takes for every device read-back reflect.
     const prev = this.refs;
+    // The rack's own carry-over. Both restores run below; the popover one was taken first
+    // and answers null unless the focus was inside a popover, so they cannot fight.
     const restoreFocus = this.captureFocus();
     this.ifxCensus = insertFxCensus(model, this.hooks.getPlan());
     this.refs = new Map();
@@ -1991,6 +1999,9 @@ export class Console {
     // of the window height (the SENDS rack between them has its own fixed height).
     this.host.style.setProperty("--head-h", this.mainHeadHeight() + "px");
     for (const [id, r] of this.refs) this.carryMeterState(prev.get(id), r);
+    // The popover one first: it answers null unless the focus WAS inside a popover, and in
+    // that case the rack capture — taken after the close — has nothing of its own to say.
+    restorePopFocus();
     restoreFocus();
     this.startMeters(); // rescope the meter subscription to the rebuilt strips
     this.redrawMeters();
@@ -2035,10 +2046,72 @@ export class Console {
    * next thing the unit says. They are keyed by NAME instead, which is also what makes the
    * restore meaningful: the face is the face whatever else the rebuild moved.
    */
+  /**
+   * The three popovers, each with the element it hangs off and the node it belongs to.
+   * One table so the focus rules below cannot know about two of them and miss the third.
+   */
+  private get popovers(): ReadonlyArray<{
+    kind: "tap" | "pan" | "ifx";
+    box: HTMLElement;
+    openFor: string | null;
+    sel: readonly string[];
+  }> {
+    return [
+      { kind: "tap", box: this.tapPop, openFor: this.tapOpenFor, sel: [".con-tap"] },
+      { kind: "pan", box: this.sendPanPop, openFor: this.sendPanOpenFor, sel: [".con-panbtn"] },
+      { kind: "ifx", box: this.ifxPop, openFor: this.ifxOpenFor, sel: [".con-ifxopen", ".con-ifxface"] },
+    ];
+  }
+
+  /** Focus standing inside an open popover, recorded as the row it is on AND the strip the
+   *  popover belongs to — the two answers a rebuild can need, since a path may re-open the
+   *  popover (the row is still there) or close it (only the trigger is). */
+  private popoverMark(
+    active: HTMLElement,
+  ): { pop: "tap" | "pan" | "ifx"; id: string; idx: number; sel: readonly string[] } | null {
+    for (const p of this.popovers) {
+      if (p.openFor === null || !p.box.contains(active)) continue;
+      return { pop: p.kind, id: p.openFor, idx: focusables(p.box).indexOf(active), sel: p.sel };
+    }
+    return null;
+  }
+
+  /** …and where it goes afterwards, decided by what the rebuild actually did rather than by
+   *  which path called: the same row where the popover is open again, the trigger on the
+   *  rebuilt strip where it is not. */
+  private restorePopoverFocus(mark: {
+    pop: "tap" | "pan" | "ifx";
+    id: string;
+    idx: number;
+    sel: readonly string[];
+  }): HTMLElement | null {
+    const p = this.popovers.find((x) => x.kind === mark.pop);
+    if (p && p.openFor !== null && mark.idx >= 0) {
+      const row = focusables(p.box)[mark.idx];
+      if (row) return row;
+    }
+    const root = this.refs.get(mark.id)?.root;
+    // Each selector in TURN, not as one list: `querySelector` answers in document order, so
+    // a list would hand back the INS FX face — which comes first — where the disclosure
+    // beside it is the trigger that was pressed.
+    for (const sel of mark.sel) {
+      const hit = root?.querySelector<HTMLElement>(sel);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
   private captureFocus(): () => void {
     return preserveFocus(
-      this.stripsHost,
+      // The whole console, not the strip rack: the popovers float outside the rack, and a
+      // rebuild destroys what is inside them just as surely — `render` by closing all
+      // three, `refreshStrip` by re-opening two of them against the fresh strip. Keyed
+      // against the rack alone, focus inside a popover was not recorded at all, and the
+      // rebuild dropped it to <body>.
+      this.host,
       (active) => {
+        const pop = this.popoverMark(active);
+        if (pop) return pop;
         for (const [id, r] of this.refs) {
           if (!r.root.contains(active)) continue;
           if (active === r.root) return { id, anchor: "strip-root" as const };
@@ -2049,6 +2122,7 @@ export class Console {
         return null;
       },
       (mark) => {
+        if ("pop" in mark) return this.restorePopoverFocus(mark);
         const root = this.refs.get(mark.id)?.root;
         if (!root) return null;
         if ("anchor" in mark) {

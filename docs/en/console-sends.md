@@ -158,6 +158,16 @@ still claims is given back — and that is the state an operator most needs to r
 - Open/close mirrors the meter-point popover (outside click / Escape close, viewport clamping,
   anchor caret). An external edit that rebuilds the strip re-opens the popover in place instead of
   closing it (see "Live sync / follow").
+- **The focus decision is taken BEFORE anything is destroyed, in one place.** A rebuild that
+  closes a popover removes the row the operator may be standing on, so a capture taken after
+  the close has nothing left to record — which is how a whole-rack repaint, the one Live sync
+  runs on every device-side edit that needs a read-back, put an operator on `<body>` without
+  their doing anything. `captureFocus` runs first and covers the whole console rather than the
+  strip rack alone, and it records a focus inside a popover as the ROW plus the strip the
+  popover belongs to. Where it lands is decided by what the rebuild actually did: the same row
+  where the popover is open again (a one-strip repaint re-opens two of them), the trigger on
+  the rebuilt strip where it is not. Choosing a meter point from the keyboard goes through the
+  same door — the path leaves the closing to the repaint rather than doing it first.
 - **Escape gives the focus back to what opened the popover, an outside press does not.** Closing
   destroys the row that had the focus, so a KEYBOARD dismissal that left it there would put the
   operator on `<body>`, a whole strip rack away from where they were. A PRESS is the other case:
