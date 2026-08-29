@@ -733,3 +733,54 @@ describe("the meter stream", () => {
     expect(h.strip("ch1").readMtr.textContent).toBe("—");
   });
 });
+
+// The INS FX popover's own half of the focus rule, plus the case the other two do not
+// have: choosing an effect REBUILDS the strip, so the element the focus should return to
+// is not the one that was pressed — and at a rate that empties the menu, the disclosure is
+// dropped altogether, which is where the focus fell to <body>.
+describe("where the focus goes after the INS FX popover closes", () => {
+  const chipOf = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-ifxface")!;
+  const openerOf = (id: string): HTMLElement | null => h.strip(id).root.querySelector<HTMLElement>(".con-ifxopen");
+  const popRow = (label: string): HTMLElement =>
+    [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")].find(
+      (r) => r.querySelector(".nm")?.textContent === label,
+    )!;
+
+  it("returns it to the disclosure on Escape", () => {
+    h = consoleHost();
+    openerOf("ch1")!.click();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden).toBe(false);
+    key(document.body, "Escape");
+    expect(document.activeElement).toBe(openerOf("ch1"));
+  });
+
+  // Releasing rather than choosing: picking an effect opens its tuning screen, which is
+  // where the focus goes and is the app's own hook rather than this view's business. No
+  // Effect opens nothing, so the strip it rebuilt is what the operator is left on.
+  it("lands on the rebuilt strip's own disclosure after releasing an effect", () => {
+    h = consoleHost();
+    openerOf("ch1")!.click();
+    popRow("Clean").click();
+    const before = openerOf("ch1");
+    openerOf("ch1")!.click();
+    popRow("No Effect").click();
+    // A different element: the selection re-rendered the strip.
+    expect(openerOf("ch1")).not.toBe(before);
+    expect(document.activeElement).toBe(openerOf("ch1"));
+  });
+
+  // At 192 kHz nothing in the menu runs, so the disclosure is dropped — there is nothing
+  // behind it to open. The FACE stays, read-only with its reason, and it is the anchor.
+  it("falls back to the face where the rate has dropped the disclosure", () => {
+    h = consoleHost();
+    // Hold something first, then release it at a rate whose ceiling every effect is over.
+    openerOf("ch1")!.click();
+    popRow("Clean").click();
+    h.plan.sampleRate = 192000;
+    h.view.refresh();
+    openerOf("ch1")?.click();
+    if (!document.querySelector<HTMLElement>(".con-ifxpop")!.hidden) popRow("No Effect").click();
+    expect(openerOf("ch1"), "the ceiling empties the menu, so the disclosure goes").toBeNull();
+    expect(document.activeElement, "and the face is what the operator is left on").toBe(chipOf("ch1"));
+  });
+});

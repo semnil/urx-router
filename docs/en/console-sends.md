@@ -158,6 +158,17 @@ still claims is given back — and that is the state an operator most needs to r
 - Open/close mirrors the meter-point popover (outside click / Escape close, viewport clamping,
   anchor caret). An external edit that rebuilds the strip re-opens the popover in place instead of
   closing it (see "Live sync / follow").
+- **Escape gives the focus back to what opened the popover, an outside press does not.** Closing
+  destroys the row that had the focus, so a KEYBOARD dismissal that left it there would put the
+  operator on `<body>`, a whole strip rack away from where they were. A PRESS is the other case:
+  the focus belongs to whatever was pressed, and taking it back would move the caret out of the
+  control the operator just aimed at. The same rule covers all three popovers.
+- **A selection that rebuilds the strip lands on the same strip, not on the element that is gone.**
+  The INS FX disclosure first, since it is what was pressed; the FACE where a sample rate has
+  emptied the menu and dropped the disclosure, which is the case that fell to `<body>`; and the
+  strip's own root under both, so a strip carrying neither still keeps the operator's place. A
+  chip the rate turned read-only is out of the tab order and can still RECEIVE focus, which is
+  what makes it usable as that anchor.
 
 The popover deliberately holds **only** pan: level editing lives on the column fader, on/off on
 the chip, tap on the PRE button, and value reading in the header readout, so every control has

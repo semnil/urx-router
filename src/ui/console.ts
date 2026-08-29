@@ -469,6 +469,7 @@ export class Console {
   private sendsOpen = loadJson<boolean>(this.SENDS_STORE, true);
   private sendPanPop!: HTMLElement;
   private sendPanOpenFor: string | null = null;
+  private tapBtn: HTMLElement | null = null; // the meter-point badge the open popover anchors to
   private sendPanBtn: HTMLElement | null = null; // the PAN ▾ button the open popover anchors to
   private tapPop!: HTMLElement;
   // The INS FX type popover and the strip it is open for, plus the chip it is anchored
@@ -624,11 +625,16 @@ export class Console {
       if (this.ifxOpenFor && !this.ifxPop.contains(tgt) && !tgt.closest(".con-ifxface, .con-ifxopen"))
         this.closeInsFxPop();
     });
+    // Escape is a KEYBOARD dismissal, so the focus goes back to what opened the popover:
+    // the row that had it is about to be destroyed, and without this the operator lands on
+    // <body> and has to tab in from the top of the document. An outside PRESS asks for no
+    // restore — the focus belongs to whatever was pressed, and taking it back would move
+    // the caret out of the control the operator just aimed at.
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
-      if (this.sendPanOpenFor) this.closeSendPan();
-      if (this.tapOpenFor) this.closeTapPop();
-      if (this.ifxOpenFor) this.closeInsFxPop();
+      if (this.sendPanOpenFor) this.closeSendPan(true);
+      if (this.tapOpenFor) this.closeTapPop(true);
+      if (this.ifxOpenFor) this.closeInsFxPop(true);
     });
   }
 
@@ -827,6 +833,20 @@ export class Console {
    *  PAN from the KEYBOARD — where no `pointerdown` fires the document handler that would
    *  otherwise have covered it — left two popovers on screen. Closing all three includes the
    *  one about to open, which every opener rebuilds anyway. */
+  /**
+   * Hand the focus back to what opened a popover, on a KEYBOARD dismissal only.
+   *
+   * The row that had the focus is destroyed by the close, so without this the operator is
+   * left on <body> and tabs in from the top of the document. It is deliberately not done
+   * on an outside press: the focus belongs to whatever was pressed, and taking it back
+   * would move the caret out of the control the operator aimed at. A trigger that is no
+   * longer in the document — a re-render replaced it — is left alone here; the caller that
+   * caused the re-render is the one that knows where the strip went (`focusInsFxAnchor`).
+   */
+  private releaseFocus(trigger: HTMLElement | null, restore: boolean): void {
+    if (restore && trigger?.isConnected) trigger.focus();
+  }
+
   private closePopovers(): void {
     this.closeTapPop();
     this.closeSendPan();
@@ -864,15 +884,18 @@ export class Console {
     this.tapPop.append(ph, chain, foot);
     this.tapPop.hidden = false;
     this.tapOpenFor = id;
+    this.tapBtn = anchor;
     // Position fixed near the badge, clamped to the viewport (top-right aligned).
     this.placePopover(this.tapPop, anchor, "right", 2);
   }
 
-  private closeTapPop(): void {
+  private closeTapPop(restore = false): void {
     if (!this.tapOpenFor) return;
     this.tapOpenFor = null;
     this.tapPop.hidden = true;
     this.tapPop.replaceChildren();
+    this.releaseFocus(this.tapBtn, restore);
+    this.tapBtn = null;
   }
 
   // ---- SENDS rack ----
@@ -1387,7 +1410,7 @@ export class Console {
     this.placePopover(this.ifxPop, anchor, "center", 8);
   }
 
-  private closeInsFxPop(): void {
+  private closeInsFxPop(restore = false): void {
     if (!this.ifxOpenFor) return;
     this.ifxOpenFor = null;
     this.ifxPop.hidden = true;
@@ -1395,11 +1418,12 @@ export class Console {
     if (this.ifxBtn) {
       this.ifxBtn.classList.remove("open");
       this.ifxBtn.setAttribute("aria-expanded", "false");
+      this.releaseFocus(this.ifxBtn, restore);
       this.ifxBtn = null;
     }
   }
 
-  private closeSendPan(): void {
+  private closeSendPan(restore = false): void {
     if (!this.sendPanOpenFor) return;
     this.sendPanOpenFor = null;
     this.sendPanPop.hidden = true;
@@ -1407,6 +1431,7 @@ export class Console {
     if (this.sendPanBtn) {
       this.sendPanBtn.classList.remove("open");
       this.sendPanBtn.setAttribute("aria-expanded", "false");
+      this.releaseFocus(this.sendPanBtn, restore);
       this.sendPanBtn = null;
     }
   }
@@ -1665,6 +1690,9 @@ export class Console {
     if (whyNone) chip.title = whyNone;
     if (locked) {
       chip.setAttribute("aria-disabled", "true");
+      // As `buildChip`'s read-only face: out of the tab order, still able to receive focus,
+      // so a popover that closes onto this strip has somewhere to land.
+      chip.tabIndex = -1;
       return chip;
     }
     this.wireActivate(chip, undefined, () => this.toggleInsFxPop(id, chip));
@@ -1725,6 +1753,10 @@ export class Console {
     if (readonlyTitle) {
       chip.setAttribute("aria-disabled", "true");
       chip.title = readonlyTitle;
+      // Out of the tab order — there is nothing to operate — but still able to RECEIVE
+      // focus, so it can be the place a closing popover leaves the operator. Without this
+      // a chip the rate turned read-only is unfocusable, and the focus falls to <body>.
+      chip.tabIndex = -1;
       return chip;
     }
     this.wireActivate(chip, midiId, () => {
@@ -2075,6 +2107,9 @@ export class Console {
     // otherwise route audio into a bus the unit is not running.
     const rateOff = nodeRateDisabled(m.id, this.hooks.getPlan().sampleRate);
     const strip = el("div", "con-strip" + (m.inactive || rateOff ? " inactive" : ""));
+    // Programmatically focusable and out of the tab order: it is the floor a popover close
+    // lands on when the control that opened it did not survive the rebuild.
+    strip.tabIndex = -1;
     if (rateOff) strip.title = t().inspector.fx2RateLocked;
     strip.style.setProperty("--rail", m.rail);
 
@@ -2990,7 +3025,30 @@ export class Console {
       this.hooks.onOpenDynScreen?.("insfx", id);
       return;
     }
-    this.refs.get(id)?.root.querySelector<HTMLElement>(".con-ifxopen")?.focus();
+    this.focusInsFxAnchor(id);
+  }
+
+  /**
+   * Where the focus lands on the strip after a selection has rebuilt it.
+   *
+   * The disclosure first — it is what was pressed and it is where another selection starts
+   * from. It is not always there: a sample rate that empties the menu drops it, so choosing
+   * No Effect at 192 kHz rebuilds a strip with no opener at all, and the focus would fall to
+   * <body>. The FACE is the anchor then: it survives the ceiling (read-only, with its
+   * reason) and it is the same control the disclosure sat beside. The strip's own root is
+   * the floor under both, so a strip that carries neither still keeps the operator's place
+   * rather than sending them back to the top of the document.
+   */
+  private focusInsFxAnchor(id: string): void {
+    const root = this.refs.get(id)?.root;
+    if (!root) return;
+    const anchor =
+      root.querySelector<HTMLElement>(".con-ifxopen") ?? root.querySelector<HTMLElement>(".con-ifxface") ?? root;
+    anchor.focus();
+    // Asked rather than assumed: whether an element takes focus is a property of how it was
+    // built, and a chip that is read-only for one reason today may be built another way
+    // tomorrow. If it did not take it, the strip root did.
+    if (document.activeElement !== anchor) root.focus();
   }
 
   // Build a labelled rotary knob (label / value / knob) in the strip head and

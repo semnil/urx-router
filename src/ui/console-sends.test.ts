@@ -699,3 +699,43 @@ describe("a drag that does not end in a pointerup", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
   });
 });
+
+// A popover destroys the row that had the focus when it closes, so a KEYBOARD dismissal has
+// to hand the focus back to what opened it. Without that the operator lands on <body> and
+// tabs in from the top of the document — which is the whole strip rack away from where they
+// were. An outside PRESS is the other half and must NOT take the focus back: it belongs to
+// whatever was pressed.
+describe("where the focus goes when a popover closes", () => {
+  const panBtn = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-panbtn")!;
+  const tapBadge = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-tap")!;
+
+  it("returns it to the SEND PAN button on Escape", () => {
+    h = consoleHost();
+    panBtn("ch1").click();
+    expect(h.host.querySelector<HTMLElement>(".con-spop")!.hidden).toBe(false);
+    // The focus is somewhere inside the popover, as it would be after tabbing into it.
+    h.host.querySelector<HTMLElement>(".con-spop [tabindex], .con-spop button")?.focus();
+    key(document.body, "Escape");
+    expect(document.activeElement).toBe(panBtn("ch1"));
+  });
+
+  it("returns it to the meter-point badge on Escape", () => {
+    h = consoleHost();
+    tapBadge("ch1").click();
+    expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden).toBe(false);
+    key(document.body, "Escape");
+    expect(document.activeElement).toBe(tapBadge("ch1"));
+  });
+
+  it("leaves the focus where a press outside put it", () => {
+    h = consoleHost();
+    tapBadge("ch1").click();
+    const elsewhere = panBtn("ch2");
+    elsewhere.focus();
+    // Dispatched ON the control that was pressed, which is what the handler reads: a press
+    // is the operator aiming somewhere, and the popover's own exclusion is by ancestor.
+    elsewhere.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden).toBe(true);
+    expect(document.activeElement, "the press owns the focus, not the popover that closed").toBe(elsewhere);
+  });
+});
