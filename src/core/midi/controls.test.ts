@@ -597,6 +597,19 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(slotVal("ch1", "guitar-clean", GUITAR_MOD.speed)).not.toBe(50);
   });
 
+  // A TOGGLE reaches the plan too, and by a branch of its own: the slot descriptors split
+  // into a switch and a slider before either is bound, so a lock proved on the sliders says
+  // nothing about the other half. The guitar amp's gate is the switch a mapping can hold.
+  it("writes an insert-FX switch through a mapping, where nothing locks it", () => {
+    const gate = 24;
+    const cid = controlId("ch1", "insfx", `insfx.guitar-clean.${gate}`);
+    holding("ch1", 256, { [gate]: 0 }, "guitar-clean");
+    expect(push(cid, 1)).toBe(true);
+    expect(slotVal("ch1", "guitar-clean", gate)).toBe(1);
+    expect(push(cid, 0)).toBe(true);
+    expect(slotVal("ch1", "guitar-clean", gate)).toBe(0);
+  });
+
   // Pitch Fix's own driven set has no MIDI half to lock, and that is worth asserting
   // rather than assuming: the Scale is an enum row, which offers no control at all (a
   // select has no normalized domain), and the twelve notes are a keyboard the screen
