@@ -622,9 +622,9 @@ async function readPass(
       if (fam) {
         const engine = insertFxEngine(fam, ifx.isOutput);
         insertFxParams = {};
-        // Readable, not writable: MIDI Control is shown and never written, and the row that
-        // shows it would print a default instead of the unit's value if the read followed
-        // the emit path's own list.
+        // Every slot the app can write is one it has to be able to read, the slots the unit
+        // is currently DRIVING included: the emit path skips those, and a refetch after a
+        // write that set the unit computing is the only thing that brings its result back.
         for (const s of insertFxReadableSlots(fam)) {
           insertFxParams[String(s.slot)] = await vdGet(engine, 0, s.slot);
         }
