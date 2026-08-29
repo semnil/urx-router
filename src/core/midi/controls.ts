@@ -684,7 +684,12 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   const insFxSel = effectiveInsertFx(model, plan, id);
   const insFxFamily = insFxSel === undefined ? null : insertFxFamilyOf(insFxSel);
   if (insFxFamily) {
-    for (const d of insertFxParams(insFxFamily)) {
+    // With the SELECTOR, not the family alone: the two companders are one family whose
+    // defaults are all that separate them, so the family alone answers with Compander-H's
+    // for both. A node holding Compander-S with nothing stored yet — offline, a demo, or
+    // any plan before its first device read — would then have every pickup crossing point
+    // and every feedback value taken from the other one.
+    for (const d of insertFxParams(insFxFamily, insFxSel)) {
       if (d.control === "select") continue;
       const scope = `${INSFX_SCOPE}.${insFxFamily}.${d.slot}`;
       // Through the shared reader, or a plan filled from a device read answers with the

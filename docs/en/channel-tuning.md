@@ -793,8 +793,15 @@ a slot rather than what is in it.
 - **The compander's rows are grouped by what shapes the response** — Threshold, Ratio, Width, then the
   makeup, then Attack and Release — rather than in the device's read order, which is what the catalogue
   carries for the emit path.
-- **No MIDI ids.** The control catalog carries none for these values, so the screen marks nothing —
-  the same position DUCKER is in, and for the same reason.
+- **Every continuous row and every switch carries a MIDI id, scoped by FAMILY and SLOT.** A mapping
+  names the value it was made on rather than "whatever this node's insert effect calls its sixth
+  slot", so one made on a guitar amp does not bind while the node holds Pitch Fix. An ENUM row
+  answers none — a select has no normalized domain — which is the treatment COMP's knee already
+  gets, and it is why Pitch Fix's Scale and its twelve notes have no MIDI half at all (the notes
+  are a keyboard this file builds rather than catalogue rows). A mapping is refused at the moment
+  of the write wherever the screen draws the row locked, and both ask `insertFxLockedSlots`. The
+  unsaved value a control reports comes from the SELECTOR, not the family: the two companders are
+  one family and their defaults are the only thing that separates them.
 - **On an output bus the two sides share one detector, and the app leaves that alone.** The engine
   carries a stereo-link flag the unit sets for itself — on by default where the compander binds a
   stereo bus, off where it binds a mono channel — and it is in neither the effect guide's parameter

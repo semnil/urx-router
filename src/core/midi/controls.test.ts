@@ -8,6 +8,8 @@ import { COMP_EQ_SSMCS, EQ_TYPE_PASS } from "../control/params";
 import { planToCommands } from "../control/translate";
 import { bindControl, controlId, listControls, parseControlId } from "./controls";
 import {
+  COMPANDER_H,
+  COMPANDER_S,
   GUITAR_MOD,
   MBC_BANDS,
   MBC_ONE_KNOB,
@@ -15,6 +17,7 @@ import {
   PITCH_SCALE_SLOT,
   pitchDeviceDriven,
   insertFxParamKey,
+  insertFxParams,
   type InsertFxFamily,
 } from "../control/insert-fx-effect";
 import { wireRaw, wireSteps } from "./mapping";
@@ -595,6 +598,33 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     holding("ch1", 256, { [GUITAR_MOD.slot]: GUITAR_MOD.vib, [GUITAR_MOD.speed]: 50 }, "guitar-clean");
     expect(push(cid, 0.9), "with the vibrato on").toBe(true);
     expect(slotVal("ch1", "guitar-clean", GUITAR_MOD.speed)).not.toBe(50);
+  });
+
+  // The two companders are ONE family, and the only thing separating them is what their
+  // five values come up at. So a control's default has to be asked of the SELECTOR: asked
+  // of the family alone it answers with Compander-H's for both, and a node holding
+  // Compander-S with nothing stored yet — offline, a demo, any plan before its first
+  // device read — has every pickup crossing point and every feedback value taken from the
+  // other effect.
+  it("takes an unsaved compander value from the selector rather than the family", () => {
+    const slot = 6;
+    const cid = controlId("bus.stereo", "insfx", `insfx.compander.${slot}`);
+    const defOf = (sel: number): number => insertFxParams("compander", sel).find((d) => d.slot === slot)!.def;
+    expect(defOf(COMPANDER_S), "the two must differ, or this proves nothing").not.toBe(defOf(COMPANDER_H));
+
+    const readBack = (sel: number): number => {
+      // Nothing stored: the catalogue's default is the whole answer.
+      plan.nodeParams["bus.stereo"] = { insertFx: sel, insertFxParams: {} };
+      const c = bindControl(model, plan, cid);
+      if (!c) throw new Error(`no control ${cid}`);
+      // Through the control's own codec rather than a second copy of it: what a pickup
+      // crosses and what feedback sends is this number, and writing it back is what says
+      // which raw it stood for.
+      c.set(c.get());
+      return plan.nodeParams["bus.stereo"].insertFxParams![insertFxParamKey("compander", slot)];
+    };
+    expect(readBack(COMPANDER_S)).toBe(defOf(COMPANDER_S));
+    expect(readBack(COMPANDER_H)).toBe(defOf(COMPANDER_H));
   });
 
   // A TOGGLE reaches the plan too, and by a branch of its own: the slot descriptors split
