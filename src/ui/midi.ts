@@ -127,9 +127,7 @@ export class MidiControl {
   private portGen = { in: 0, out: 0 };
   /** The tail of each direction's intent chain (see `queuePort`). */
   private portQueue = { in: Promise.resolve(), out: Promise.resolve() };
-  private bound = new Map<string, BoundControl>();
   // The plan object every entry in `bound` was bound against.
-  private boundPlan: Plan | null = null;
   private feedbackTimer = 0;
   /** Consecutive feedback passes that ended in a failed send, cleared by any send that
    *  lands. What keeps the re-send from being unbounded. */
@@ -273,33 +271,26 @@ export class MidiControl {
     this.pushState();
   }
 
-  /** Resolve a control id, memoized: an incoming sweep resolves per message and
-   *  every fresh bind rebuilds the node's whole catalog. A bound control closes
-   *  over the plan object it was bound against and reads it lazily, so in-place
-   *  edits stay live — but a REPLACEMENT of that object leaves the whole cache
-   *  reading and writing a plan nothing else references. Identity, not the model,
-   *  is what makes it stale.
+  /**
+   * Resolve a control id against the plan as it is NOW.
    *
-   *  It was written for a cancelled Fetch, which used to restore a pre-read clone
-   *  outside loadPlan so onModelChanged never ran for it. That path is gone — the
-   *  read now runs against a private copy and the module plan object is never
-   *  replaced (main.ts) — and the one replacement left, loadPlan, does announce.
-   *  So this is a backstop with no producer today, kept because it is one
-   *  comparison and the failure it catches is silent: every binding keeps reading a
-   *  document nothing shows. Every other view resolves through getPlan() per use;
-   *  this memo is the one holder. Only hits are cached, so a send wired up later
-   *  still binds on demand. */
+   * Not memoized. A bound control closes over the family, the processor and the send it
+   * was built for, and a plan is edited IN PLACE — so a cache keyed on the plan object
+   * hands back a control for an insert effect the node no longer holds, or a COMP row on a
+   * strip that has switched to SSMCS. `set()` then writes a slot nothing sends, which
+   * reappears the moment the operator switches back, and `get()` feeds the same stale value
+   * to feedback. The catalogue is the only thing that knows what exists, so asking it is the
+   * check: an id that has stopped existing resolves to null, which is what every caller
+   * already handles.
+   *
+   * The memo it replaces was written for a plan REPLACEMENT that no longer happens (the
+   * read runs against a private copy, and loadPlan announces), so it was guarding the one
+   * case that cannot occur while missing every case that can. What a resolve costs is one
+   * node's catalogue, which is small enough that a MIDI sweep resolving per message spends
+   * a negligible share of a core on it.
+   */
   private resolve(id: string): BoundControl | null {
-    const plan = this.hooks.getPlan();
-    if (plan !== this.boundPlan) {
-      this.bound.clear();
-      this.boundPlan = plan;
-    }
-    const hit = this.bound.get(id);
-    if (hit) return hit;
-    const control = bindControl(this.hooks.getModel(), plan, id);
-    if (control) this.bound.set(id, control);
-    return control;
+    return bindControl(this.hooks.getModel(), this.hooks.getPlan(), id);
   }
 
   // ---- console hooks ----
@@ -351,10 +342,6 @@ export class MidiControl {
     // An in-flight learn was armed against the old model; committing it now
     // would persist a mapping under the new model that may never bind.
     this.setLearn(false);
-    // Eager: resolve() also drops the cache on a plan-identity change, but a model
-    // switch changes what the ids themselves mean.
-    this.bound.clear();
-    this.boundPlan = null;
     this.engine.setMappings(this.loadMappings());
     this.pushState();
     this.runFeedback("model");
