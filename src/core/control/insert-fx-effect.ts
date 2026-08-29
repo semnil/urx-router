@@ -1075,6 +1075,42 @@ function isBareInsertFxSlot(key: string): boolean {
  *  selected read values another one wrote. routing.ts does the same with the whole
  *  map where a Signal Type transition clears the selector. Entries already under a
  *  family's own key are kept either way. */
+/**
+ * What a node's stored engine values become after a READ of the effect it currently holds.
+ *
+ * The map is one namespace per family on purpose — a node that has held three effects
+ * carries all three, so switching back finds the values the operator left. A read answers
+ * for ONE of them, and replacing the whole map with its answer is what deletes the other
+ * two: with live sync up, a 1-Knob write is enough to trigger it, and the loss shows only
+ * when the operator selects the old effect again and finds it at the factory.
+ *
+ * Three things have to happen at once, which is why this is one function rather than a
+ * step in the reader:
+ *
+ * - the bare slots already in the plan are parked under the family that WROTE them
+ *   (`prev`), or a read of another family would adopt them;
+ * - the current family's own stored values are dropped, because a qualified key beats a
+ *   bare one when the value is read (`insertFxSlotVal`) and the unit's answer would sit
+ *   underneath the plan's older copy of it;
+ * - every other family's qualified values are kept untouched.
+ *
+ * With no family — No Effect, or a selector this build does not know — there is nothing to
+ * read and nothing to attribute, so the qualified values stay and the bare ones go.
+ */
+export function mergeReadInsertFxParams(
+  prev: Record<string, number> | undefined,
+  prevFamily: InsertFxFamily | null,
+  family: InsertFxFamily | null,
+  read: Record<number, number>,
+): Record<string, number> {
+  const parked = qualifyInsertFxParams(prev ?? {}, prevFamily);
+  const out: Record<string, number> = {};
+  const mine = family === null ? null : `${family}:`;
+  for (const [key, raw] of Object.entries(parked)) if (mine === null || !key.startsWith(mine)) out[key] = raw;
+  if (family !== null) for (const [slot, raw] of Object.entries(read)) out[String(slot)] = raw;
+  return out;
+}
+
 export function qualifyInsertFxParams(
   params: Record<string, number>,
   family: InsertFxFamily | null,

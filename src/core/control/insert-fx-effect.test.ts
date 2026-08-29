@@ -30,6 +30,7 @@ import {
   insertFxFamilyOf,
   insertFxParamKey,
   insertFxParams,
+  mergeReadInsertFxParams,
   PITCH_SCALE_SLOT,
   PITCH_NOTE_SLOTS,
   PITCH_MIDI_ENABLE_SLOT,
@@ -510,5 +511,44 @@ describe("insert-fx effect round-trip (emit∘readback fixed point)", () => {
     const eng = engineWrites(planToCommands(model, plan), ENGINE_OUTPUT);
     expect(eng.get(9)).toBe(100);
     expect(eng.get(23)).toBe(50);
+  });
+});
+
+// The stored map is one namespace per family, so a node that has held three effects keeps
+// all three and selecting an old one finds what the operator left. A READ answers for one
+// family, and replacing the map with its answer is what deletes the other two — with live
+// sync up a 1-Knob write is enough to trigger one, and the loss shows only when the old
+// effect is selected again.
+describe("what a device read leaves in the stored map", () => {
+  const guitar = insertFxParamKey("guitar-clean", 7);
+  const mbcThr = insertFxParamKey("mbc", 14);
+
+  it("keeps another family's values and takes the unit's for this one", () => {
+    const out = mergeReadInsertFxParams({ [guitar]: 42, [mbcThr]: 100 }, "mbc", "mbc", { 14: 97, 15: 3 });
+    // The guitar amp's, untouched.
+    expect(out[guitar]).toBe(42);
+    // …and the unit's answer for the family that was read, not the plan's older copy of it:
+    // a qualified key beats a bare one when the value is read, so leaving it hides the read.
+    expect(out[mbcThr]).toBeUndefined();
+    expect(out["14"]).toBe(97);
+    expect(out["15"]).toBe(3);
+  });
+
+  it("parks the bare slots under the family that wrote them before reading another", () => {
+    // The bare namespace is what a read writes, so it belongs to whatever was selected
+    // then — adopting it into the family being read now is how one effect's values end up
+    // under another's name.
+    const out = mergeReadInsertFxParams({ "7": 42 }, "guitar-clean", "mbc", { 14: 97 });
+    expect(out[guitar]).toBe(42);
+    expect(out["7"]).toBeUndefined();
+    expect(out["14"]).toBe(97);
+  });
+
+  it("keeps the qualified values under No Effect and drops what nothing can claim", () => {
+    const out = mergeReadInsertFxParams({ [guitar]: 42, "14": 97 }, null, null, {});
+    expect(out[guitar]).toBe(42);
+    // A bare slot whose family is No Effect belongs to nothing: no layout can address it,
+    // and the next effect selected would read it as its own.
+    expect(out["14"]).toBeUndefined();
   });
 });

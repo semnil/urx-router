@@ -1189,6 +1189,30 @@ instead of being pushed, which is what `COMP_ONE_KNOB` already does for the same
 `insertFxDriverSlots` names them, so the writer and the catalogue cannot disagree about which they
 are.
 
+**A control is bound to what the node holds, and resolved against the plan as it is now.** A
+MIDI mapping names a slot of a FAMILY, and a bound control closes over that family; a plan is
+edited in place, so a resolve that answered once must not keep answering after the node has
+stopped holding that effect. The write would land on a slot nothing sends and reappear the
+moment the operator selected it again, and feedback would keep reporting the same stale value.
+The MIDI surface therefore memoizes nothing: what exists is the catalogue's answer, and an id
+that has stopped existing resolves to null, which every caller already handles. The memo it
+replaces keyed on the plan OBJECT, which is the one thing an in-place edit never changes — so
+it guarded a replacement that no longer happens while missing every case that does. The same
+staleness reaches COMP versus SSMCS and any processor a node stops carrying, and one resolve
+covers all of them rather than a check per kind.
+
+**A device read MERGES into the stored map rather than replacing it.** The map is one
+namespace per family, so a node that has held several effects keeps each one's values and
+selecting an old one finds what the operator left. A read answers for one family:
+`mergeReadInsertFxParams` parks the bare slots under the family that wrote them, drops the
+read family's own stored copies — a qualified key beats a bare one when a value is read, so
+leaving them would hide the unit's answer underneath the plan's older one — and keeps every
+other family's untouched. Under No Effect the qualified values stay and the bare ones go,
+since nothing can address a bare slot with no family to give it a layout. Replacing the map
+was survivable while a read was a whole-plan Fetch; with the refetch above it happens on a
+1-Knob write, and the loss shows only when the operator selects the old effect and finds it
+at the factory.
+
 **One predicate decides every lock on this screen, and the MIDI surface asks it too.**
 `insertFxLockedSlots` answers, for a family holding a set of values, which slots no surface may
 write: the fifteen while the 1-Knob is on, the Level while it is off, the scale and the mask while
