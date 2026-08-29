@@ -684,15 +684,25 @@ the inspector, and the open modal itself.
 > and CH SETTING carry no kana at all. The Japanese user guide names the same controls in English too
 > (`[Attack]`, `[Hold]`, `[Decay]`, `[Release]`, `[Knee]`, `[Threshold]`, `[Gain]`, `[Frequency]`,
 > `[HPF Freq.]`, `[Level]`, `[Width]`, `[Interval]`, `[Pan]`, `[Name]`, `[Color]`, and the `Assign`
-> sub-menu). **The INS FX screens were read the same way on 2026-08-28**, and four of their
-> rows are the reason the Effect Reference Guide is not the arbiter: the guide is a document and
-> `dev()` names what the SCREEN prints, and on these four they differ. The unit prints `1-Knob` and
+> sub-menu). **The INS FX screens were read the same way on 2026-08-28, and again on 2026-08-30**, and
+> their rows are the reason the Effect Reference Guide is not the arbiter: the guide is a document and
+> `dev()` names what the SCREEN prints, and on several of them they differ. The unit prints `1-Knob` and
 > `1-Knob Level` where the guide writes `1-knob`; `Gate` on the guitar cabinet where the guide writes
-> `Off/Gate`; and `M.B.Comp` where the guide writes `M.B.COMP`. The fourth is the one no reading of a
+> `Off/Gate`; `M.B.Comp` where the guide writes `M.B.COMP`; `L-M Xover` and `M-H Xover` where the guide
+> writes `L-M XOVER`; and `Low` / `Mid` / `High` for the bands where the guide writes `LOW` / `MID` /
+> `HIGH`. On Crunch and Lead the guide names the voicing switch nothing at all — it lists the two values
+> and no label — while the unit prints `Type`. And one is the case no reading of a
 > document could have settled — **Clean's modulation selector has no label on the unit at all**, which
 > is why the app supplies its own (`Modulation`) and marks it `fixed()` rather than `dev()`: there is
 > no device string for a `dev()` to reproduce. Every insert-FX row the unit does name is
-> initial-capital, not shouted, which is what the guitar panel's card labels follow. So the whole of those seven screens is untranslated: the GATE / COMP / DUCKER rows including
+> initial-capital, not shouted, which is what the guitar panel's card labels follow — and what the
+> shouted ones above were violating.
+>
+> **A face bar's own segment names are the app's, not the unit's**, and they are `fixed()` for that
+> reason: the multi-band compressor's `Main` / `Low` / `Mid` / `High` and the SSMCS bank's `Main` /
+> `Comp` / `Side Chain` / `EQ`. Three of those were declared `dev()` until 2026-08-30, which is what
+> the marker cannot catch on its own — it stops a translation at compile time and says nothing about
+> whether the claim it makes is true. So the whole of those seven screens is untranslated: the GATE / COMP / DUCKER rows including
 > `Range` and `Ratio`, the EQ band, filter type, frequency and gain, the input HPF frequency, the level
 > and pan / balance rows, the oscillator block with its bus assigns, the monitor block, the CH SETTING
 > name and colour, and the matching MIDI control names. It does **not** extend to the app's own vocabulary

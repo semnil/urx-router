@@ -466,8 +466,8 @@ show, so it takes **three faces of one screen** rather than three screens:
 
 | Segment | Display | Rows | Lanes |
 | --- | --- | --- | --- |
-| MAIN | the compressor's transfer curve and the EQ's response, side by side on one canvas | Sweet Spot Data / Comp Drive / Morphing / Out Gain | none (the taps are still read, as tiles) |
-| COMP | the transfer curve, the rack beside it | Attack / Release / Ratio / Knee | PRE COMP / PRE EQ |
+| Main | the compressor's transfer curve and the EQ's response, side by side on one canvas | Sweet Spot Data / Comp Drive / Morphing / Out Gain | none (the taps are still read, as tiles) |
+| Comp | the transfer curve, the rack beside it | Attack / Release / Ratio / Knee | PRE COMP / PRE EQ |
 | Side Chain | the filter's response, the rack beside it | Side Chain / Q / Freq / Gain | PRE COMP / SIDE CHAIN / PRE EQ |
 | EQ | the response, the rack beside it | Band / Q / Freq / Gain | PRE EQ / PRE INS FX |
 
@@ -511,7 +511,7 @@ which is more than this reserve can absorb.
 **The reserve yields, and the grid scrolls under it.** `.consent-box` clamps itself to the viewport
 and hides its overflow, and the action row carrying Close is its last child, so a floor the box cannot
 honour pushes Close out of sight — measured at the 960x640 minimum window (`tauri.conf.json`), 68 px
-past the box's own edge on each of the six readings (MAIN, COMP and EQ, in both languages). So the
+past the box's own edge on each of the six readings (Main, Comp and EQ, in both languages). So the
 floor is `min(520px, calc(100vh - 211px))`, where 211 px is the modal's chrome around the grid plus
 the 48 px the box keeps clear of the viewport, and the grid scrolls below it rather than clipping rows
 that then have nowhere to go. The equal height survives the yield: at 640 px every face is the clamped
@@ -878,12 +878,16 @@ there are are two different questions.
 
 | Rows, in order |
 | --- |
-| Volume (Clean) / Gain, then this type's own values, then Master, then Output, then **Treble, Middle, Bass, Presence** — **row break** — then the modulation group, then **Gate, Gate Level, SP Type, Mic Position** |
+| The type switch — **Type** on Crunch and Lead, **Amp Type** on Drive, and none at all on Clean — then Volume (Clean) / Gain, then this type's own remaining values, then Master, then Output, then **Treble, Middle, Bass, Presence** — **row break** — then the modulation group, then **Gate, Gate Level, SP Type, Mic Position** |
 
-**Two groups with a row break between them.** Above it is the amp: the level it is driven at, what
-makes it this type, the master and Output, and then the tone stack as one run — Treble/Middle/Bass
-and Presence, which is the order the effect guide's own common table lists them in. Below it is
-everything the signal meets after the amp, the modulation group and the cabinet.
+**Two groups with a row break between them.** Above it is the amp, in the order the unit lists it:
+what makes it this type, the level it is driven at, the master and Output, and then the tone stack
+as one run — Treble/Middle/Bass and Presence, which is the order the effect guide's own common table
+lists them in. Below it is everything the signal meets after the amp, the modulation group and the
+cabinet.
+
+**Clean opens on Volume** because it is the one type with no type switch: its own two values,
+Distortion and Blend, follow the level instead of leading it.
 
 **Output is above the break** because it is a level of the amp rather than something the cabinet
 does, and the tone stack is last in that group so its four controls read as one run instead of
@@ -897,9 +901,16 @@ separation it draws is the grid's own gap above and below it.
 **Only the Clean amp has Modulation at all**, so on the other three the break falls in front of the
 cabinet's own switch instead. The two groups are then the same on all four faces, which is what
 makes it a rule rather than one screen's arrangement. **Speed and Depth stay where they are when the modulation switch is not on vibrato** —
-dimmed and tagged, never dropped, because a panel that loses two rows moves everything under them
-out from under the pointer. The effect guide's CLEAN Only table is what says they apply only there:
-"Sets vibrato speed/depth when 'Vib' is On. Not available when 'Cho' is On."
+tagged and still editable, never dropped, because a panel that loses two rows moves everything under
+them out from under the pointer. The effect guide's CLEAN Only table is what says the values apply
+only there: "Sets vibrato speed/depth when 'Vib' is On. Not available when 'Cho' is On."
+
+**The tag is not a lock.** The unit stores both whatever the modulation reads and takes a write to
+either, so refusing the gesture would be the app forbidding what the unit allows; the row says when
+its value applies instead. `insertFxInactiveSlots` answers that, and it is deliberately a different
+question from `insertFxLockedSlots` below — a value nobody may write and a value that is simply not
+in the signal looked the same while one function answered both, and the second was drawn as the
+first.
 
 **Every control on the face is a card in the one panel**, a selector and a switch as much as a
 knob. Not a stylistic preference: the panel is a seven-column grid, and a control laid out as an
@@ -953,13 +964,21 @@ select, the same Scale select, the same MIDI Control row and the same twelve but
 beside it — two grids of twelve on one face, one lit and one not — and no lane rack at all. What that
 column is for on every other screen is a live reading, and this one had none to give.
 
+| Rows, in order |
+| --- |
+| Correction, Coarse, Fine, Formant, **MIDI Control**, Key, Scale, Mix, Limit Low, Limit High, Speed, Tolerance — then the twelve notes, spanning the panel |
+
 **Correction leads.** It is the switch the whole effect hangs off: everything under it describes a
 correction that is not happening while it is off. That is a departure from the unit's own read order,
 which puts it fourth, and it is the only row here that departs from it.
 
+**MIDI Control is in front of the Key**, which is where the unit puts it: it decides where the notes
+the correction aims at come from, and from Setting on the Key's own Scale is the unit's rather than
+the plan's.
+
 **The twelve notes go last, spanning the panel.** They are one control twelve buttons wide, so a card
-is not a shape they fit; placed between the Scale and Speed they ended the row they landed in and
-left the rest of it empty.
+is not a shape they fit; placed mid-panel they ended the row they landed in and left the rest of it
+empty.
 
 **The twelve note slots are ABSOLUTE semitones.** Slot 22 is C whatever the Key is, measured by
 setting Key = G with Scale = Major and reading them back as C D E F# G A B. So the buttons are named
@@ -1089,30 +1108,40 @@ it, merged into the output column the way every other reduction on every other s
 
 ### The multi-band compressor is four faces
 
-Sixteen values the app writes, two the unit keeps to itself, and three reductions the unit meters
-separately. **MAIN, LOW, MID, HIGH.**
+Nineteen values the app writes, two the unit keeps to itself, and three reductions the unit meters
+separately. **Main, Low, Mid, High.**
 
 | Face | Cards |
 | --- | --- |
-| MAIN | L-M XOVER, M-H XOVER, then LOW / MID / HIGH Gain, then Out Gain |
-| LOW / MID / HIGH | Threshold, Ratio, Attack, Release |
+| Main | Low / Mid / High Gain, then Out Gain, then L-M Xover, M-H Xover |
+| Low / Mid / High | that band's Bypass, then Threshold, Ratio, Attack, Release, then that band's own Gain |
 
 The split is what the effect IS: three compressors, and the two frequencies that decide what each of
-them hears. MAIN carries the crossovers and the levels the three bands are mixed back at; a band face
-carries that band's own dynamics. **Sixteen values on one panel fits, and is still sixteen values with
-nothing saying which four belong together** — that was the first arrangement and it is why this one
-replaced it.
+them hears. MAIN carries the levels the three bands are mixed back at and the crossovers that decide
+what each hears; a band face carries that band's own Bypass and its own dynamics. **Nineteen values on
+one panel fits, and is still nineteen values with nothing saying which five belong together** — that
+was the first arrangement and it is why this one replaced it.
+
+**A band's Bypass leads its face** because it decides whether anything under it reaches the signal at
+all. It is one control per band — engine slots 12 / 17 / 22, the fifth of each band's block of five —
+so MAIN carries none of them.
+
+**A band's Gain is on two faces and is ONE value.** The two faces ask different questions of it: MAIN
+weighs the three bands against each other, and the band's own face weighs the level it comes back at
+against the compression the cards above it set.
 
 **Release is on all three band faces and is ONE value**: the unit shares it, and it is ordered with the
 dynamics rather than with the levels because that is what it belongs to.
 
-**A row is named by its band only on MAIN.** Three cards there say Gain and are three different
-parameters, so each carries its band; on a band's own face the face is what says which band it is, and
-repeating it on every card is a word that carries nothing. The catalogue's descriptors carry a `band`
-for the same reason a label alone cannot name three slots.
+**A row is named by its band where the three of them share a face, and for the make-up everywhere.**
+Three cards on MAIN say Gain and are three different parameters, so each carries its band; on a band's
+own face the face is what says which band it is, and repeating it on every card is a word that carries
+nothing. The make-up is the exception, because it is the one row MAIN carries as well — named there
+and bare here, one value would read as two. The catalogue's descriptors carry a `band` for the same
+reason a label alone cannot name three slots.
 
 **Three columns, not the guitar amp's seven.** Three is what makes the four faces the same height: MAIN
-is six cards and a band face four, so both are two rows, and the segment that moves between them does
+is six cards and a band face six, so both are two rows, and the segment that moves between them does
 not resize the modal under the pointer.
 
 #### What each face's figure is
@@ -1162,9 +1191,9 @@ property — the COMP knob's ON resets its level to 0 and its detail to uncompre
 ordinary switches on their screens. Refusing this one was the app second-guessing a gesture, and it
 made this the odd one out among three controls of one kind.
 
-**What the app does not write is the fifteen slots a LEVEL CHANGE reasserts**: Threshold, Ratio and
-Gain in each of the three bands, which the Level recomputes, and the three Attacks, the Release and
-both crossovers, which the same change pins straight back to fixed values. `mbcDeviceDriven` is that
+**What the app does not write is the eighteen slots a LEVEL CHANGE reasserts**: Threshold, Ratio and
+Gain in each of the three bands, which the Level recomputes, and the three Attacks, the three
+Bypasses, the Release and both crossovers, which the same change pins straight back to fixed values. `mbcDeviceDriven` is that
 set, and `translate` stops emitting it while the knob is on, for the reason `COMP_ONE_KNOB_DRIVEN`
 exists — re-sending the plan's copy of a value the unit is recomputing puts the pre-knob number back
 on it.
@@ -1187,7 +1216,7 @@ switch.
 
 **The write comes back as a read.** Every slot of an engine array goes out under one parameter name,
 and a NAME is what carries `ParamSpec.sideEffect` — so under the ordinary one this write announced
-nothing, the plan kept its own copy of the fifteen values the unit had just recomputed, and the
+nothing, the plan kept its own copy of the eighteen values the unit had just recomputed, and the
 screen, the curve, the saved document and MIDI feedback all read that stale copy. Worse, the copy is
 what the next flush sends the moment the knob is switched off and the driven set is released. The two
 slots that DRIVE the array — the 1-Knob's switch and its Level, and Pitch Fix's MIDI Control bits —
@@ -1222,9 +1251,9 @@ at the factory.
 
 **One predicate decides every lock on this screen, and the MIDI surface asks it too.**
 `insertFxLockedSlots` answers, for a family holding a set of values, which slots no surface may
-write: the fifteen while the 1-Knob is on, the Level while it is off, the scale and the mask while
-Pitch Fix's MIDI Control is on, and Speed and Depth while a guitar amp's modulation is not the
-vibrato. A MIDI mapping outlives the state that locked the control it names — nothing re-reads the
+write: the eighteen while the 1-Knob is on, the Level while it is off, and the scale and the mask
+while Pitch Fix's MIDI Control is on. A guitar amp locks nothing — its Speed and Depth carry a tag
+and stay writable, for the reason above. A MIDI mapping outlives the state that locked the control it names — nothing re-reads the
 screen when the state moves — so a mapping made before the lock applied would otherwise write the
 plan while the writer is suppressing the slot, which parts the plan from the unit silently and sends
 the plan's copy the moment the lock lifts. Pitch Fix is the one family with no MIDI half to lock: its
@@ -1236,7 +1265,7 @@ COMP knee had already sprung: those values were sitting at the numbers the prese
 previous 1-Knob ON had put them there, and a parameter driven to the value it already holds looks
 exactly like one nothing touched.
 
-**`mbcDeviceDriven` is one list for two consumers** — `translate` stops emitting those fifteen slots,
+**`mbcDeviceDriven` is one list for two consumers** — `translate` stops emitting those eighteen slots,
 and the screen locks exactly the rows the writer stopped sending — so the writer and the panel cannot
 disagree about who owns a row. Emitting them would not be merely redundant: anything re-sending the
 plan's copy after the knob has computed puts the operator's pre-knob values back on the unit, which

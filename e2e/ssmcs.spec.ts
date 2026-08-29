@@ -348,7 +348,7 @@ test.describe("the tuning screen's three faces", () => {
   // sliders beside it still reach the plan.
   test("COMP offers a Side Chain segment, and the filter's sliders move its curve", async ({ page }) => {
     await openFace(page, "ssmcsComp", /^COMP$/);
-    await expect(screenBox(page).locator(".gt-modes button")).toHaveText(["MAIN", "COMP", "Side Chain", "EQ"]);
+    await expect(screenBox(page).locator(".gt-modes button")).toHaveText(["Main", "Comp", "Side Chain", "EQ"]);
 
     // Each segment is one height, so pressing one does not move the button that was just
     // pressed. The curve's own height is the reference the other is measured against.

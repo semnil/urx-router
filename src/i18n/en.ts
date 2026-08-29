@@ -452,9 +452,9 @@ export const en = {
     },
     insertFxEffect: {
       title: dev("Insert Effect"),
-      bandLow: dev("LOW"),
-      bandMid: dev("MID"),
-      bandHigh: dev("HIGH"),
+      bandLow: dev("Low"),
+      bandMid: dev("Mid"),
+      bandHigh: dev("High"),
       oneKnob: dev("1-Knob"),
       scale: dev("Scale"),
       // The twelve semitone buttons. Absolute, named from C — the unit stores them that
@@ -472,6 +472,7 @@ export const en = {
         "From Setting on, the notes the correction aims at arrive on the unit's own USB-MIDI port — so switching it on clears the note mask and sets the Scale to Custom, and the two stay the unit's until it is switched back off.",
       ),
       params: {
+        bypass: dev("Bypass"),
         threshold: dev("Threshold"),
         ratio: dev("Ratio"),
         attack: dev("Attack"),
@@ -494,7 +495,7 @@ export const en = {
         mod: fixed("Modulation"),
         modSpeed: dev("Speed"),
         modDepth: dev("Depth"),
-        character: dev("Character"),
+        type: dev("Type"),
         ampType: dev("Amp Type"),
         master: dev("Master"),
         coarse: dev("Coarse"),
@@ -505,13 +506,13 @@ export const en = {
         key: dev("Key"),
         speed: dev("Speed"),
         tolerance: dev("Tolerance"),
-        noteLow: dev("Note Low Limit"),
-        noteHigh: dev("Note High Limit"),
+        limitLow: dev("Limit Low"),
+        limitHigh: dev("Limit High"),
         midiControl: dev("MIDI Control"),
         oneKnobOn: dev("1-Knob"),
         oneKnobLevel: dev("1-Knob Level"),
-        xoverLowMid: dev("L-M XOVER"),
-        xoverMidHigh: dev("M-H XOVER"),
+        xoverLowMid: dev("L-M Xover"),
+        xoverMidHigh: dev("M-H Xover"),
       },
     },
     duckerOn: dev("Ducker"),
@@ -665,9 +666,9 @@ export const en = {
     // band-bar heading — the same device points, said once.
     ssmcs: {
       open: tr("SSMCS screen"),
-      faceMain: dev("MAIN"),
-      faceComp: dev("COMP"),
-      faceEq: dev("EQ"),
+      faceMain: fixed("Main"),
+      faceComp: fixed("Comp"),
+      faceEq: fixed("EQ"),
       tapOut: dev("Pre Ins FX"),
       mainHint: tr(
         "Comp Drive moves the compressor's curve. Sweet Spot Data and Morphing move both, only while Live sync is up.",
@@ -696,15 +697,11 @@ export const en = {
       tapOut: dev("Pre Fader"),
       tapOutBus: dev("Post"),
       tapGr: dev("Ins FX GR"),
-      // The heading over the two-face segment. It names which face is being ADJUSTED
-      // rather than a way of displaying one, which is why it is not the "Display" the
-      // other screens' bars sit under.
-      faceBar: tr("View"),
       // The multi-band compressor's first face: what the three bands share, against the
-      // three that are one band each. `fixed()` for the same reason as the pair above —
-      // it sits in Latin caps on a bar whose other three segments are the unit's own band
-      // names, and one translated segment among four would read as a different control.
-      faceMain: fixed("MAIN"),
+      // three that are one band each. `fixed()` because it is this app's own word for that
+      // face rather than a row read off the unit, and one translated segment among four
+      // would read as a different control.
+      faceMain: fixed("Main"),
       // Speed and Depth on the Clean amp: the selector beside them decides whether they
       // reach anything.
       vibOnly: tr("Vib only"),

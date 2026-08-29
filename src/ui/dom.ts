@@ -484,7 +484,9 @@ export function settingsPill(text: string): HTMLElement {
 }
 
 export interface SettingsRowOptions {
-  /** Dashed tag beside the label (why the row does not apply here). */
+  /** Dashed tag beside the label: when or where this row's value applies. Independent of
+   *  `locked` — a row can be live and still carry one, which is a value the unit stores and
+   *  takes a write to while something else decides whether it is heard. */
   tag?: string;
   /** Not applicable in this build / on this model: dim the row and refuse input. */
   locked?: boolean;

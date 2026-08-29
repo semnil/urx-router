@@ -16,7 +16,7 @@ import type { ConsoleMidiHooks } from "./console";
 import { sendConnection } from "../core/plan";
 import { PAN_BAL_BAL } from "../core/control/params";
 import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, insertFxSelected } from "../core/control/params";
-import { planToCommands } from "../core/control/translate";
+import { insertFxControl, planToCommands } from "../core/control/translate";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { t } from "../i18n";
@@ -581,7 +581,12 @@ describe("the INS FX chip", () => {
         .click();
       const now = h.plan.nodeParams[id]!;
       expect(now.insertFx).not.toBe(stale);
-      expect(options.some((o) => o.value === now.insertFx)).toBe(false); // …from THIS node's list
+      // …from THIS node's own control, asked of the mapping the app itself goes through
+      // rather than of the foreign list the stale value came from: the two overlap on the
+      // companders, so "not in theirs" passes for a value that is in both and says nothing
+      // about where it came from.
+      const own = insertFxControl(getModel("URX44V"), id)!.options;
+      expect(own.some((o) => o.value === now.insertFx)).toBe(true);
       expect(insertFxSelected(now)).toBe(true);
       expect(now.insertFxOn).toBe(true);
       // The half that says the press was not merely cosmetic: the selector the unit is

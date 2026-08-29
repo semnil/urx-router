@@ -16,7 +16,7 @@
 // the bound engine array with that type's defaults, and selecting the ORIGINAL type
 // back only fills it with the original type's defaults — the values that were there
 // are gone. Confirmed on a URX44V by round-tripping CH1 Compander-S -> H -> S, which
-// left five slots (threshold / ratio / attack / outGain / width) at the defaults.
+// left five slots (threshold / ratio / attack / gain / width) at the defaults.
 // The same holds for the FX-channel effect type in fx-effect.ts.
 //
 // The engine array is a shared WORKING AREA, not storage: it is addressed by slot
@@ -211,11 +211,13 @@ const GUITAR_CLEAN_MOD = [
   { value: 1, label: "Off" },
   { value: 2, label: "Vib" },
 ];
-const GUITAR_CRUNCH_CHAR = [
+/** Guitar Amp Crunch "Type" (slot 6, Crunch only). */
+const GUITAR_CRUNCH_TYPES = [
   { value: 0, label: "Normal" },
   { value: 1, label: "Bright" },
 ];
-const GUITAR_LEAD_CHAR = [
+/** Guitar Amp Lead "Type" (slot 6, Lead only). */
+const GUITAR_LEAD_TYPES = [
   { value: 0, label: "High" },
   { value: 1, label: "Low" },
 ];
@@ -345,7 +347,7 @@ const COMPANDER_PARAMS: InsertFxParamDesc[] = [
   },
   {
     slot: 10,
-    label: "outGain",
+    label: "gain",
     control: "slider",
     rawMin: -1800,
     rawMax: 0,
@@ -369,33 +371,20 @@ const COMPANDER_PARAMS: InsertFxParamDesc[] = [
 ];
 
 // Multi-Band Compressor (engine 693, output only). Per-band Attack/Threshold/
-// Ratio/Gain at stride 5 (LOW 8-11, MID 13-16, HIGH 18-21); Bypass/Release/Out
+// Ratio/Gain/Bypass at stride 5 (LOW 8-12, MID 13-17, HIGH 18-22); Release/Out
 // Gain/XOVER/1-knob are global single slots. Attack/Ratio/Release are index
 // tables; Threshold/Gain/Out Gain are linear dB offsets.
 export type MbcBandKey = "attack" | "threshold" | "ratio" | "gain";
-export const MBC_BANDS: Array<{ band: "low" | "mid" | "high" } & Record<MbcBandKey, number>> = [
-  { band: "low", attack: 8, threshold: 9, ratio: 10, gain: 11 },
-  { band: "mid", attack: 13, threshold: 14, ratio: 15, gain: 16 },
-  { band: "high", attack: 18, threshold: 19, ratio: 20, gain: 21 },
+export const MBC_BANDS: Array<{ band: "low" | "mid" | "high"; bypass: number } & Record<MbcBandKey, number>> = [
+  { band: "low", attack: 8, threshold: 9, ratio: 10, gain: 11, bypass: 12 },
+  { band: "mid", attack: 13, threshold: 14, ratio: 15, gain: 16, bypass: 17 },
+  { band: "high", attack: 18, threshold: 19, ratio: 20, gain: 21, bypass: 22 },
 ];
 /** Attack is the one band value the unit does NOT give all three bands alike. Threshold,
  *  Ratio and Gain come up at 107 / 2 / 39 in every band; Attack comes up faster the higher
  *  the band goes. Carried here rather than in `MBC_BAND_PARAM`, which is per PARAMETER and
  *  has no band to vary by — one number there showed 17 ms on all three. */
 const MBC_BAND_ATTACK_DEF: Record<"low" | "mid" | "high", number> = { low: 17, mid: 19, high: 9 };
-/**
- * Band Bypass. Deliberately NOT in `MBC_GLOBAL`, which is what the writable-slot
- * enumeration walks — a slot listed there is emitted from the plan on every flush.
- *
- * It bypasses the band the UNIT has selected, not all three and not one this app can
- * name. Which band that is comes from the panel, and the panel's selection is on no
- * address — nor is it the last band this app wrote.
- *
- * So the app can neither predict nor choose what a write here would do, and it writes
- * nothing. Keeping the number is what stops it being rediscovered as an unused slot.
- */
-export const MBC_BYPASS_SLOT = 17;
-
 export const MBC_GLOBAL = {
   oneKnobOn: 6, // bool
   oneKnobLevel: 7, // raw 0..48
@@ -457,11 +446,11 @@ const MBC_GLOBAL_PARAM: Record<
  * The 1-knob pair — an operator control, like the COMP and EQ knobs it is the third of.
  *
  * Switching it on refills every other writable slot of this effect with the type's own
- * values: the three bands' Threshold, Ratio, Gain and Attack, the Release, both crossovers
- * and the Out Gain. Every Level change afterwards reasserts all but the last of those —
- * nine recomputed from the Level, six pinned back to fixed values — so Out Gain is the one
- * the operator keeps. The app therefore writes the knob and stops emitting the fifteen
- * (`mbcDeviceDriven`).
+ * values: the three bands' Threshold, Ratio, Gain, Attack and Bypass, the Release, both
+ * crossovers and the Out Gain. Every Level change afterwards reasserts all but the last of
+ * those — nine recomputed from the Level, nine pinned back to fixed values — so Out Gain is
+ * the one the operator keeps. The app therefore writes the knob and stops emitting the
+ * eighteen (`mbcDeviceDriven`).
  *
  * The readings behind this are in docs/{en,ja}/channel-tuning.md.
  */
@@ -500,8 +489,8 @@ export const MBC_BAND_KEYS = Object.keys(MBC_BAND_PARAM) as MbcBandKey[];
  * face that has to name one of them has nothing else to name it by.
  */
 const MBC_PARAMS: InsertFxParamDesc[] = [
-  ...MBC_BANDS.flatMap((b) =>
-    MBC_BAND_KEYS.map((key) => ({
+  ...MBC_BANDS.flatMap((b) => [
+    ...MBC_BAND_KEYS.map((key) => ({
       slot: b[key],
       band: b.band,
       label: key,
@@ -509,7 +498,10 @@ const MBC_PARAMS: InsertFxParamDesc[] = [
       ...MBC_BAND_PARAM[key],
       ...(key === "attack" ? { def: MBC_BAND_ATTACK_DEF[b.band] } : {}),
     })),
-  ),
+    // The band's own Bypass, last in its block of five. A toggle, so it is outside
+    // `MBC_BAND_PARAM`, which is the four sliders' bounds and formatters.
+    { slot: b.bypass, band: b.band, label: "bypass", control: "toggle" as const, def: 0 },
+  ]),
   ...(Object.keys(MBC_GLOBAL_PARAM) as (keyof typeof MBC_GLOBAL_PARAM)[]).map((key) => ({
     slot: MBC_GLOBAL[key],
     label: key,
@@ -590,10 +582,10 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
     def: 50,
     format: (r) => String(r),
   },
-  { slot: 20, label: "noteLow", control: "slider", rawMin: 0, rawMax: 127, rawStep: 1, def: 0, format: midiNoteName },
+  { slot: 20, label: "limitLow", control: "slider", rawMin: 0, rawMax: 127, rawStep: 1, def: 0, format: midiNoteName },
   {
     slot: 21,
-    label: "noteHigh",
+    label: "limitHigh",
     control: "slider",
     rawMin: 0,
     rawMax: 127,
@@ -690,10 +682,10 @@ function guitarTypeParams(family: InsertFxFamily): InsertFxParamDesc[] {
         },
       ];
     case "guitar-crunch":
-      return [{ slot: 6, label: "character", control: "select", def: 1, options: GUITAR_CRUNCH_CHAR }];
+      return [{ slot: 6, label: "type", control: "select", def: 1, options: GUITAR_CRUNCH_TYPES }];
     case "guitar-lead":
       return [
-        { slot: 6, label: "character", control: "select", def: 0, options: GUITAR_LEAD_CHAR },
+        { slot: 6, label: "type", control: "select", def: 0, options: GUITAR_LEAD_TYPES },
         {
           slot: 13,
           label: "master",
@@ -969,7 +961,9 @@ export function mbcDeviceDriven(params: Record<string, number> | undefined): Rea
   return on ? MBC_LEVEL_DRIVEN : EMPTY_SLOTS;
 }
 const MBC_LEVEL_DRIVEN: ReadonlySet<number> = new Set([
-  ...MBC_BANDS.flatMap((b) => [b.threshold, b.ratio, b.gain, b.attack]),
+  // EVERY per-band slot, read off the descriptors rather than named here: that is the rule
+  // the run measured, and a band parameter added later is in it without anyone remembering.
+  ...MBC_PARAMS.filter((d) => d.band !== undefined).map((d) => d.slot),
   MBC_GLOBAL.release,
   MBC_GLOBAL.xoverLowMid,
   MBC_GLOBAL.xoverMidHigh,
@@ -997,9 +991,27 @@ export function insertFxDriverSlots(family: InsertFxFamily): ReadonlySet<number>
 const MBC_DRIVER_SLOTS: ReadonlySet<number> = new Set([MBC_ONE_KNOB.on.slot, MBC_ONE_KNOB.level.slot]);
 const PITCH_DRIVER_SLOTS: ReadonlySet<number> = new Set([PITCH_MIDI_ENABLE_SLOT, PITCH_MIDI_REALTIME_SLOT]);
 
-/** Clean's modulation trio: the setting, the value that makes the other two live, and the
- *  two they gate. The unit runs Speed and Depth on the vibrato alone. */
+/** Clean's modulation trio: the setting, the value that makes the other two heard, and the
+ *  two it decides for. The unit runs Speed and Depth on the vibrato alone and takes a write
+ *  to either of them whatever the setting reads. */
 export const GUITAR_MOD = { slot: 19, vib: 2, speed: 20, depth: 21 } as const;
+
+/** The slots whose value is not in the signal right now, though the unit stores them and
+ *  takes a write to them: Clean's Speed and Depth while its modulation is not the vibrato.
+ *
+ *  Separate from `insertFxLockedSlots` because the two answer different questions — this
+ *  one earns a row a TAG saying when its value applies, and that one refuses the write.
+ *  Answered together, a row nobody may write and a row whose value is simply not heard
+ *  looked the same, and the second was drawn as the first. */
+export function insertFxInactiveSlots(
+  family: InsertFxFamily,
+  params: Record<string, number> | undefined,
+): ReadonlySet<number> {
+  if (family !== "guitar-clean") return EMPTY_SLOTS;
+  const mod = insertFxParams(family).find((d) => d.slot === GUITAR_MOD.slot);
+  if (!mod) return EMPTY_SLOTS;
+  return insertFxSlotVal(params, family, GUITAR_MOD.slot, mod.def) === GUITAR_MOD.vib ? EMPTY_SLOTS : MOD_GATED;
+}
 
 /**
  * Every slot a surface must refuse to write, for this family holding these values.
@@ -1011,10 +1023,14 @@ export const GUITAR_MOD = { slot: 19, vib: 2, speed: 20, depth: 21 } as const;
  * plan and the unit part company silently and the plan's copy is sent the moment the unit
  * gives the slots back.
  *
- * Three rules, and each is a rule about what the UNIT is doing rather than about the panel:
- * the multi-band compressor's 1-Knob owns the values it recomputes, its Level owns nothing
- * while the knob is off, Pitch Fix's MIDI Control owns the scale and the mask, and Clean's
- * modulation runs Speed and Depth on the vibrato alone.
+ * Two rules, and each is a rule about what the UNIT is doing rather than about the panel:
+ * the multi-band compressor's 1-Knob owns the values it recomputes and its Level owns
+ * nothing while the knob is off, and Pitch Fix's MIDI Control owns the scale and the mask.
+ *
+ * Clean's modulation is NOT one of them. Speed and Depth are heard on the vibrato alone,
+ * but the unit stores them and takes a write to either whatever the setting reads, so
+ * refusing it here would be the app forbidding a gesture the unit allows — the row carries
+ * the tag `insertFxInactiveSlots` earns it instead.
  */
 export function insertFxLockedSlots(
   family: InsertFxFamily,
@@ -1024,9 +1040,7 @@ export function insertFxLockedSlots(
     return insertFxSlotVal(params, family, MBC_ONE_KNOB.on.slot, 0) ? mbcDeviceDriven(params) : ONE_KNOB_LEVEL_ONLY;
   }
   if (family === "pitch") return pitchDeviceDriven(params);
-  const mod = insertFxParams(family).find((d) => d.slot === GUITAR_MOD.slot);
-  if (!mod) return EMPTY_SLOTS;
-  return insertFxSlotVal(params, family, GUITAR_MOD.slot, mod.def) === GUITAR_MOD.vib ? EMPTY_SLOTS : MOD_GATED;
+  return EMPTY_SLOTS;
 }
 const ONE_KNOB_LEVEL_ONLY: ReadonlySet<number> = new Set([MBC_ONE_KNOB.level.slot]);
 const MOD_GATED: ReadonlySet<number> = new Set([GUITAR_MOD.speed, GUITAR_MOD.depth]);

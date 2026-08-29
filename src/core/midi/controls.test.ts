@@ -590,14 +590,16 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(slotVal("bus.stereo", "mbc", MBC_ONE_KNOB.level.slot)).not.toBe(4);
   });
 
-  it("refuses a guitar amp's Speed while the modulation is not the vibrato", () => {
+  it("takes a guitar amp's Speed whatever the modulation reads", () => {
+    // The screen TAGS this row while the modulation is not the vibrato — its value is not
+    // in the signal there — but it does not refuse the write, because the unit stores it
+    // and takes one. A mapping is refused only where the screen refuses the gesture.
     const cid = controlId("ch1", "insfx", `insfx.guitar-clean.${GUITAR_MOD.speed}`);
-    holding("ch1", 256, { [GUITAR_MOD.slot]: 1, [GUITAR_MOD.speed]: 50 }, "guitar-clean");
-    expect(push(cid, 0.9), "with modulation off").toBe(false);
-    expect(slotVal("ch1", "guitar-clean", GUITAR_MOD.speed)).toBe(50);
-    holding("ch1", 256, { [GUITAR_MOD.slot]: GUITAR_MOD.vib, [GUITAR_MOD.speed]: 50 }, "guitar-clean");
-    expect(push(cid, 0.9), "with the vibrato on").toBe(true);
-    expect(slotVal("ch1", "guitar-clean", GUITAR_MOD.speed)).not.toBe(50);
+    for (const mod of [1, GUITAR_MOD.vib] as const) {
+      holding("ch1", 256, { [GUITAR_MOD.slot]: mod, [GUITAR_MOD.speed]: 50 }, "guitar-clean");
+      expect(push(cid, 0.9), `modulation ${mod}`).toBe(true);
+      expect(slotVal("ch1", "guitar-clean", GUITAR_MOD.speed), `modulation ${mod}`).not.toBe(50);
+    }
   });
 
   // The two companders are ONE family, and the only thing separating them is what their
