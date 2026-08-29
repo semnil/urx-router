@@ -54,6 +54,16 @@ function insertFxRateLocked(model: DeviceModel, sampleRate: number): boolean {
   return any;
 }
 
+/** True where the rate takes this node away entirely — FX2 above 96 kHz, which is the
+ *  only node a rate has ever removed. One rule for three consumers: the node badge the
+ *  graph dims, the CONSOLE strip that would otherwise offer a live fader into a bus the
+ *  unit is not running, and every send column aimed at it. Split across them, the CONSOLE
+ *  kept its FX2 sends switchable at 192 kHz while the graph was already dimming the node
+ *  they point at. */
+export function nodeRateDisabled(nodeId: string, sampleRate: number): boolean {
+  return nodeId === FX2_NODE && sampleRate > HI_RATE_HZ;
+}
+
 export function rateConstraints(model: DeviceModel, sampleRate: number): RateConstraints {
   const warnings: RateWarning[] = [];
   const disabledNodes: string[] = [];
@@ -69,7 +79,7 @@ export function rateConstraints(model: DeviceModel, sampleRate: number): RateCon
     // The stereo channels' EQ goes inert (see channelEqUnavailable). The strip still
     // passes audio — only its EQ dies — so this is a text warning, not a dimmed node.
     if (model.nodes.some((n) => n.kind === "channel" && isStereoChannel(n.id))) warnings.push("stereoEq");
-    if (has(FX2_NODE)) {
+    if (has(FX2_NODE) && nodeRateDisabled(FX2_NODE, sampleRate)) {
       warnings.push("fx2");
       disabledNodes.push(FX2_NODE);
     }

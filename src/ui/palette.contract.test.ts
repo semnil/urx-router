@@ -21,6 +21,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CSS, THEME_SELECTOR, tokensIn } from "./style-css.test-util";
 import { PALETTES, WIRE_GROUP, type WireGroup } from "./graph";
+import { PLOT_TOKENS } from "./dyn-screen";
 import type { ConnectionKind } from "../models/types";
 
 const GROUPS: WireGroup[] = ["select", "send", "out"];
@@ -93,6 +94,32 @@ describe("the wire palette's two layers", () => {
       record: "out",
     });
     expect(new Set(Object.values(WIRE_GROUP))).toEqual(new Set(GROUPS));
+  });
+
+  it("draws on a canvas with tokens the canvas is actually handed", () => {
+    // The other half of the dangling-token defect, on the canvas instead of the
+    // stylesheet. A plot is handed PLOT_TOKENS and nothing else, so `tok["--text-dim"]`
+    // reads undefined — and assigning undefined to `fillStyle` is IGNORED by canvas
+    // rather than refused, leaving whatever colour the previous draw set. The measured
+    // case: the compander's window and threshold marks came out in `--gr`, the ink that
+    // means gain reduction, because the annotation before them had set it.
+    // `__dirname`, not `import.meta.url`: this file is transformed and its module URL is
+    // the served path, which is not a directory on disk — the same `resolve(__dirname, …)`
+    // the source scan above uses.
+    const dir = resolve(__dirname);
+    const sources = readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.includes(".test"));
+    const dangling: string[] = [];
+    let reads = 0;
+    for (const f of sources) {
+      for (const m of readFileSync(resolve(dir, f), "utf8").matchAll(/tok\["(--[a-z0-9-]+)"\]/g)) {
+        reads++;
+        if (!(PLOT_TOKENS as readonly string[]).includes(m[1])) dangling.push(`${f}: ${m[1]}`);
+      }
+    }
+    expect(dangling).toEqual([]);
+    // The positive control: the scan found token reads at all. Zero of them would satisfy
+    // the assertion above for the reason it exists to catch.
+    expect(reads).toBeGreaterThan(20);
   });
 
   it("keeps the borrowed gang rail on the send colour", () => {

@@ -6,6 +6,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
 import { deserialize, emptyPlan, serialize } from "../plan";
+import type { Plan } from "../plan";
 
 vi.mock("../platform", () => ({ vdGet: vi.fn() }));
 import { vdGet } from "../platform";
@@ -18,6 +19,7 @@ import {
   ENGINE_GUITAR,
   ENGINE_OUTPUT,
   ENGINE_PITCH,
+  MBC_BANDS,
   MBC_BAND_PARAM,
   MBC_BYPASS_SLOT,
   MBC_GLOBAL,
@@ -28,12 +30,13 @@ import {
   insertFxFamilyOf,
   insertFxParamKey,
   insertFxParams,
+  mergeReadInsertFxParams,
   PITCH_SCALE_SLOT,
   PITCH_NOTE_SLOTS,
   PITCH_MIDI_ENABLE_SLOT,
   PITCH_MIDI_REALTIME_SLOT,
-  insertFxReadableSlots,
   insertFxWritableSlots,
+  pitchDeviceDriven,
   mbcOutGainLabel,
   mbcXoverHz,
   mbcXoverLabel,
@@ -133,22 +136,37 @@ describe("insert-fx family / engine / slot mapping", () => {
     expect(insertFxEngine("pitch", false)).toBe(ENGINE_PITCH);
     expect(insertFxEngine("mbc", true)).toBe(ENGINE_OUTPUT);
   });
-  it("pitch writable slots carry the scale and the 12 notes, and NOT the MIDI bits", () => {
+  it("writes the MIDI bits BEFORE the mask its transition clears", () => {
     const w = insertFxWritableSlots("pitch");
     const slots = w.map((s) => s.slot);
+    expect(slots).toContain(PITCH_MIDI_ENABLE_SLOT);
+    expect(slots).toContain(PITCH_MIDI_REALTIME_SLOT);
     expect(slots).toContain(PITCH_SCALE_SLOT);
     for (const n of PITCH_NOTE_SLOTS) expect(slots).toContain(n);
-    // Setting the enable bit erases a twelve-note mask that is FULL and takes the Scale
-    // enum to Custom with it, and a device read puts a 1 in the plan with nobody touching
-    // the app — so the slot must not be in the list the emit path walks.
-    expect(slots).not.toContain(PITCH_MIDI_ENABLE_SLOT);
-    expect(slots).not.toContain(PITCH_MIDI_REALTIME_SLOT);
-    // …but it is still READ, or the row that shows the mode would print a default.
-    const r = insertFxReadableSlots("pitch").map((s) => s.slot);
-    expect(r).toContain(PITCH_MIDI_ENABLE_SLOT);
-    expect(r).toContain(PITCH_MIDI_REALTIME_SLOT);
+    // Turning the mode on clears the mask and takes the Scale to Custom, so a flush that
+    // turns it on has to do that BEFORE it would write either — the other order writes the
+    // mask and then erases it in the same flush.
+    const at = (slot: number): number => slots.indexOf(slot);
+    expect(at(PITCH_MIDI_ENABLE_SLOT)).toBeLessThan(at(PITCH_SCALE_SLOT));
+    expect(at(PITCH_MIDI_REALTIME_SLOT)).toBeLessThan(at(PITCH_SCALE_SLOT));
+    for (const n of PITCH_NOTE_SLOTS) expect(at(PITCH_MIDI_ENABLE_SLOT)).toBeLessThan(at(n));
     // The three mirrored values keep their twin.
     expect(w.filter((s) => s.mirror !== undefined).length).toBe(3);
+  });
+
+  it("stops writing the mask and the Scale while MIDI Control is on", () => {
+    // Its transition clears both, which is what the operator asked for by switching it, and
+    // in Setting and Real Time the notes come from a port of the unit's own. Re-sending the
+    // plan's copy would put the pre-change mask straight back.
+    const on = pitchDeviceDriven({ [insertFxParamKey("pitch", PITCH_MIDI_ENABLE_SLOT)]: 1 });
+    expect(on.has(PITCH_SCALE_SLOT)).toBe(true);
+    for (const n of PITCH_NOTE_SLOTS) expect(on.has(n)).toBe(true);
+    // …and nothing else: Coarse and the rest stay the operator's in every mode.
+    expect(on.size).toBe(1 + PITCH_NOTE_SLOTS.length);
+    // The positive control: with the mode off the same call claims nothing.
+    expect(pitchDeviceDriven({}).size).toBe(0);
+    // …and it reads the bare slot a readback writes, as well as the qualified key.
+    expect(pitchDeviceDriven({ [String(PITCH_MIDI_ENABLE_SLOT)]: 1 }).size).toBeGreaterThan(0);
   });
 });
 
@@ -304,6 +322,14 @@ describe("insert-fx plan storage is qualified by family", () => {
   });
 });
 
+/** A plan whose STEREO bus holds the multi-band compressor and the given slot values. */
+const mbcPlan = (params: Record<string, number>): Plan => {
+  const plan = emptyPlan("URX44V");
+  const stereo = model.nodes.find((n) => n.id === "bus.stereo")?.id ?? model.nodes.find((n) => n.kind === "bus")!.id;
+  plan.nodeParams[stereo] = { insertFx: 1792, insertFxParams: params };
+  return plan;
+};
+
 // boundRaw is documented as the last line before an out-of-range raw reaches the
 // hardware, and it is a no-op for a slot that states no bounds — an opt-out no
 // catalog reader can see. MBC slot 6 is the case that showed it: a bool taking a
@@ -328,14 +354,87 @@ describe("insert-fx writable slots are all bounded", () => {
     });
   }
 
-  it("bounds an out-of-range raw on a device-managed bool slot", () => {
-    const plan = emptyPlan("URX44V");
-    const stereo = model.nodes.find((n) => n.id === "bus.stereo")?.id ?? model.nodes.find((n) => n.kind === "bus")!.id;
-    plan.nodeParams[stereo] = {
-      insertFx: 1792,
-      insertFxParams: { [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: -3000 },
-    };
-    expect(engineWrites(planToCommands(model, plan), ENGINE_OUTPUT).get(MBC_GLOBAL.oneKnobOn)).toBe(0);
+  it("bounds an out-of-range raw the plan carries", () => {
+    const low = MBC_BANDS[0].threshold;
+    const writes = engineWrites(
+      planToCommands(model, mbcPlan({ [insertFxParamKey("mbc", low)]: -3000 })),
+      ENGINE_OUTPUT,
+    );
+    expect(writes.get(low)).toBe(MBC_BAND_PARAM.threshold.rawMin);
+  });
+});
+
+// The knob is an operator control, like the COMP and EQ knobs it is the third of. What the
+// app does not write is the set its LEVEL recomputes — re-sending the plan's copy of one of
+// those would put the pre-knob number back over what the knob computed — while everything
+// the ON transition merely clobbered is emitted as usual, which restores it.
+describe("the multi-band compressor's 1-Knob", () => {
+  const oneKnobSlots = [MBC_GLOBAL.oneKnobOn, MBC_GLOBAL.oneKnobLevel];
+
+  it("is written like every other 1-knob on this device", () => {
+    for (const slot of oneKnobSlots) {
+      expect.soft(insertFxWritableSlots("mbc").some((s) => s.slot === slot)).toBe(true);
+    }
+    const writes = engineWrites(
+      planToCommands(
+        model,
+        mbcPlan({
+          [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: 1,
+          [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobLevel)]: 24,
+        }),
+      ),
+      ENGINE_OUTPUT,
+    );
+    expect(writes.get(MBC_GLOBAL.oneKnobOn)).toBe(1);
+    expect(writes.get(MBC_GLOBAL.oneKnobLevel)).toBe(24);
+  });
+
+  it("keeps emitting Out Gain, the one value the knob leaves alone", () => {
+    // A Level change pins Attack, Release and both crossovers straight back to fixed
+    // values whatever was written over them, so those are the unit's while the knob is on
+    // — but it never touches Out Gain, and the plan's copy of that one is authoritative.
+    const attack = MBC_BANDS[0].attack;
+    const writes = engineWrites(
+      planToCommands(
+        model,
+        mbcPlan({
+          [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: 1,
+          [insertFxParamKey("mbc", attack)]: 5,
+          [insertFxParamKey("mbc", MBC_GLOBAL.release)]: 3,
+          [insertFxParamKey("mbc", MBC_GLOBAL.outGain)]: 59,
+        }),
+      ),
+      ENGINE_OUTPUT,
+    );
+    expect(writes.get(MBC_GLOBAL.outGain)).toBe(59);
+    expect(writes.has(attack)).toBe(false);
+    expect(writes.has(MBC_GLOBAL.release)).toBe(false);
+    expect(writes.has(MBC_GLOBAL.xoverLowMid)).toBe(false);
+  });
+
+  it("stops emitting the values the Level recomputes while it reads on", () => {
+    const band = MBC_BANDS[0].threshold;
+    const off = engineWrites(planToCommands(model, mbcPlan({ [insertFxParamKey("mbc", band)]: 100 })), ENGINE_OUTPUT);
+    // The positive control: with the knob off the same plan does emit it, so the assertion
+    // below is about the knob and not about a plan that carries nothing.
+    expect(off.get(band)).toBe(100);
+    const on = engineWrites(
+      planToCommands(
+        model,
+        mbcPlan({ [insertFxParamKey("mbc", band)]: 100, [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: 1 }),
+      ),
+      ENGINE_OUTPUT,
+    );
+    expect(on.has(band)).toBe(false);
+  });
+
+  it("reads the knob under the bare slot a readback writes, as well as the qualified key", () => {
+    const band = MBC_BANDS[0].threshold;
+    const on = engineWrites(
+      planToCommands(model, mbcPlan({ [insertFxParamKey("mbc", band)]: 100, [String(MBC_GLOBAL.oneKnobOn)]: 1 })),
+      ENGINE_OUTPUT,
+    );
+    expect(on.has(band)).toBe(false);
   });
 });
 
@@ -412,5 +511,44 @@ describe("insert-fx effect round-trip (emit∘readback fixed point)", () => {
     const eng = engineWrites(planToCommands(model, plan), ENGINE_OUTPUT);
     expect(eng.get(9)).toBe(100);
     expect(eng.get(23)).toBe(50);
+  });
+});
+
+// The stored map is one namespace per family, so a node that has held three effects keeps
+// all three and selecting an old one finds what the operator left. A READ answers for one
+// family, and replacing the map with its answer is what deletes the other two — with live
+// sync up a 1-Knob write is enough to trigger one, and the loss shows only when the old
+// effect is selected again.
+describe("what a device read leaves in the stored map", () => {
+  const guitar = insertFxParamKey("guitar-clean", 7);
+  const mbcThr = insertFxParamKey("mbc", 14);
+
+  it("keeps another family's values and takes the unit's for this one", () => {
+    const out = mergeReadInsertFxParams({ [guitar]: 42, [mbcThr]: 100 }, "mbc", "mbc", { 14: 97, 15: 3 });
+    // The guitar amp's, untouched.
+    expect(out[guitar]).toBe(42);
+    // …and the unit's answer for the family that was read, not the plan's older copy of it:
+    // a qualified key beats a bare one when the value is read, so leaving it hides the read.
+    expect(out[mbcThr]).toBeUndefined();
+    expect(out["14"]).toBe(97);
+    expect(out["15"]).toBe(3);
+  });
+
+  it("parks the bare slots under the family that wrote them before reading another", () => {
+    // The bare namespace is what a read writes, so it belongs to whatever was selected
+    // then — adopting it into the family being read now is how one effect's values end up
+    // under another's name.
+    const out = mergeReadInsertFxParams({ "7": 42 }, "guitar-clean", "mbc", { 14: 97 });
+    expect(out[guitar]).toBe(42);
+    expect(out["7"]).toBeUndefined();
+    expect(out["14"]).toBe(97);
+  });
+
+  it("keeps the qualified values under No Effect and drops what nothing can claim", () => {
+    const out = mergeReadInsertFxParams({ [guitar]: 42, "14": 97 }, null, null, {});
+    expect(out[guitar]).toBe(42);
+    // A bare slot whose family is No Effect belongs to nothing: no layout can address it,
+    // and the next effect selected would read it as its own.
+    expect(out["14"]).toBeUndefined();
   });
 });

@@ -67,6 +67,36 @@ visually fuse into one 0 dB reference line, so a strip's send distribution reads
 - Chip labels are the destination short forms `F1` / `F2` / `M1` / `M2`; the full name appears in
   the header readout and the SEND PAN popover.
 
+### What a rate ceiling does to a control
+
+Two treatments, and which one a control gets is decided by what it IS:
+
+- A **face** — a switch, a level, a chip naming a value — stays and goes read-only, carrying
+  the reason as its tooltip. What a strip is set to, and why it is off, has to stay readable.
+- A **disclosure** (`▸` / `+`) the ceiling has emptied is **dropped**. There is nothing behind
+  it to open, so there is nothing to draw disabled; a way IN to an empty list is not a state.
+- **Its slot stays, and the face beside it keeps the width it has at every other rate.** Two
+  things hold that. The face declares its own width (`.con-chip.paired`, `flex: 0 0`) rather
+  than reading whether a disclosure follows it, which is what a `:has(+ .con-chip-open)` rule
+  used to do — dropping one resized the button beside it from 58px to 39px. And the empty half
+  is filled by a hidden placeholder (`appendOpener`), because the chips are a wrapping
+  two-per-row flow: without it the parity filler lands elsewhere, every strip gains a row and
+  the head — clamped to the tallest — grows 292px to 304px.
+
+The one disclosure a ceiling does NOT empty stays, live: a strip HOLDING an insert effect the
+rate forced off keeps its `▸`, because choosing No Effect there is how the device-wide slot it
+still claims is given back — and that is the state an operator most needs to reach it from.
+
+### A column whose bus the rate has taken away
+
+- **Above 96 kHz the FX2 bus is gone**, so an `F2` column sets three values on a bus the unit is
+  not running. All three go read-only together — the enable chip, the PRE button and the fader —
+  each carrying `inspector.fx2RateLocked`, and the FX2 strip itself is dimmed the way the graph
+  dims its node. The predicate is `nodeRateDisabled` in `core/constraints.ts`, which is also what
+  builds the graph's `disabledNodes`, so the two cannot disagree about which rates remove it.
+- This is the narrower FIXED-bus lock's wider sibling: FIXED takes the level and leaves the switch
+  and the tap, because the bus is still there.
+
 ### PRE button
 
 - Toggles the send connection's `tap` (`pre` / `post`); lit = PRE. This is the only tap indicator
@@ -128,6 +158,36 @@ visually fuse into one 0 dB reference line, so a strip's send distribution reads
 - Open/close mirrors the meter-point popover (outside click / Escape close, viewport clamping,
   anchor caret). An external edit that rebuilds the strip re-opens the popover in place instead of
   closing it (see "Live sync / follow").
+- **The focus decision is taken BEFORE anything is destroyed, in one place.** A rebuild that
+  closes a popover removes the row the operator may be standing on, so a capture taken after
+  the close has nothing left to record — which is how a whole-rack repaint, the one Live sync
+  runs on every device-side edit that needs a read-back, put an operator on `<body>` without
+  their doing anything. `captureFocus` runs first and covers the whole console rather than the
+  strip rack alone, and it records a focus inside a popover as the ROW plus the strip the
+  popover belongs to. Where it lands is decided by what the rebuild actually did: the same row
+  where the popover is open again (a one-strip repaint re-opens two of them), the trigger on
+  the rebuilt strip where it is not. Choosing a meter point from the keyboard goes through the
+  same door — the path leaves the closing to the repaint rather than doing it first.
+- **Escape gives the focus back to what opened the popover, an outside press does not.** Closing
+  destroys the row that had the focus, so a KEYBOARD dismissal that left it there would put the
+  operator on `<body>`, a whole strip rack away from where they were. A PRESS is the other case:
+  the focus belongs to whatever was pressed, and taking it back would move the caret out of the
+  control the operator just aimed at. The same rule covers all three popovers.
+- **A focus this view placed itself outlives the next rebuild.** The two anchors below are
+  `tabindex="-1"` — present, not tabbable — so the strip rebuild's focus carry-over, which keys
+  an ordinary control by its position in the tab order, comes back empty for them and drops to
+  `<body>`. A device-follow repaint of the same channel is enough to trigger it, so the place the
+  view hands the operator would not survive the next thing the unit says. They are keyed by NAME
+  in the console's own capture instead of widening what counts as focusable, which the Inspector
+  also keys against. The popovers are the other half: they live outside the strip rack and are
+  not rebuilt with it, so the focus INSIDE one survives a repaint while the trigger it would be
+  handed back to does not — the close re-resolves that trigger from the strip that is there now.
+- **A selection that rebuilds the strip lands on the same strip, not on the element that is gone.**
+  The INS FX disclosure first, since it is what was pressed; the FACE where a sample rate has
+  emptied the menu and dropped the disclosure, which is the case that fell to `<body>`; and the
+  strip's own root under both, so a strip carrying neither still keeps the operator's place. A
+  chip the rate turned read-only is out of the tab order and can still RECEIVE focus, which is
+  what makes it usable as that anchor.
 
 The popover deliberately holds **only** pan: level editing lives on the column fader, on/off on
 the chip, tap on the PRE button, and value reading in the header readout, so every control has

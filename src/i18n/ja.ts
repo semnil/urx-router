@@ -81,6 +81,12 @@ export const ja: Messages = {
     groupInputs: "INPUTS",
     groupBus: "BUS / FX",
     groupMon: "MONITOR",
+    // INS FX チップのポップオーバー。見出しと切替は実機の語なので訳さない。
+    insFxType: "EFFECT TYPE",
+    insFxInUse: "使用中",
+    insFxMax: (maxRate: string): string => `上限 ${maxRate}`,
+    insFxRemove: "解除",
+    insFxPickFirst: "先に上のリストからエフェクトを選んでください。",
   },
   // 本体の SETUP > GENERAL。節名・コントロール名は日本語版ユーザーガイドでも英語のままなので
   // 訳さず、説明文だけを日本語にする。本体の表記と一致していることが、画面の行を
@@ -271,6 +277,7 @@ export const ja: Messages = {
     insFxRateLocked: "96 kHz 超では Insert FX は使用不可 — 強制的に OFF。",
     insFxRateLockedAt: (effect: string, maxRate: string): string =>
       `${maxRate} 超では ${effect} は使用不可 — 強制的に OFF。`,
+    fx2RateLocked: "FX2 バスは 96 kHz を超えると使用できません。",
     insFxSlotLocked: "Insert FX はすべて使用中 — 各エフェクトは本体全体で 1 スロットを占有。",
     channelOn: "チャンネル",
     sendOn: "Send",
@@ -282,6 +289,7 @@ export const ja: Messages = {
     clipSafe: "Clip Safe",
     hiZ: "Hi-Z",
     insertFx: "Insert FX",
+    insertFxType: "EFFECT TYPE",
     insertFxOn: "Insert FX ON",
     compEqType: "COMP/EQ Type",
     eqOn: "EQ",
@@ -325,7 +333,7 @@ export const ja: Messages = {
     },
     fxEffect: {
       title: "FX Effect",
-      effectType: "Effect Type",
+      effectType: "EFFECT TYPE",
       effectOn: "Effect",
       level: "Mix",
       params: {
@@ -365,9 +373,8 @@ export const ja: Messages = {
       scaleHarmonicMinor: "Harmonic Minor",
       scaleMelodicMinor: "Melodic Minor",
       scalePentatonic: "Pentatonic",
-      midiControlTag: "本体で設定",
       midiControlDeviceOnly:
-        "MIDI Control は本体側で設定します。本体自身の USB-MIDI ポートで受信し、ON にすると全 on の 12 音マスクが消えます。",
+        "Setting 以降は補正が狙う音が本体自身の USB-MIDI ポートから届きます。そのため ON にすると 12 音マスクが消去され Scale は Custom になり、OFF に戻すまでその 2 つは本体のものになります。",
       params: {
         threshold: "Threshold",
         ratio: "Ratio",
@@ -388,7 +395,7 @@ export const ja: Messages = {
         gateLevel: "Gate Level",
         blend: "Blend",
         distortion: "Distortion",
-        mod: "Cho/Off/Vib",
+        mod: "Modulation",
         modSpeed: "Speed",
         modDepth: "Depth",
         character: "Character",
@@ -555,12 +562,18 @@ export const ja: Messages = {
       tapOutBus: "Post",
       tapGr: "Ins FX GR",
       faceBar: "面",
-      faceAmp: "AMP",
-      faceCab: "CAB",
-      facePitch: "PITCH",
-      faceScale: "SCALE",
+      faceMain: "MAIN",
       vibOnly: "Vib のみ",
       bypassed: "バイパス中 — 値はここで保持・編集できますが、設定した内容は信号に届きません。",
+      curveHint:
+        "ウィンドウより下ではさらに押し下げ、スレッショルドより上では抑え、0 dB を超えると頭打ちになります。ドットは実測レベルです。",
+      mbcMainHint:
+        "クロスオーバーがスペクトルをどこで分割し、各バンドがどのレベルで戻されるかです。段差は 2 つの設定値であり、本体のフィルタースロープではありません。",
+      mbcBandHint:
+        "このバンドだけを示します。自身のスレッショルドより上を抑え、メイクアップを加えます。リダクションはこのバンドについて本体が報告する値です。",
+      mbcOneKnob:
+        "1-Knob が ON です。ここの値はすべて本体が自身のレベルから設定しており、ここでの編集は本体へ送られません。",
+      deviceOnlyTag: "本体で設定",
     },
   },
   shelf: {

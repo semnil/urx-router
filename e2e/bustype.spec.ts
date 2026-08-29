@@ -1,5 +1,6 @@
 import { test, expect, heldThroughBlur, type Page } from "./fixtures";
 import { selectWire } from "./graph-helpers";
+import { chooseOption } from "./choose-option";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
@@ -21,7 +22,7 @@ test("MIX bus shows BUS Type + Pan Link; FIXED hides Pan Link", async ({ page })
   await expect(busTypeSelect(page)).toHaveValue("0"); // VARI
   await expect(param(page, "Pan Link")).toHaveCount(1);
 
-  await busTypeSelect(page).selectOption("1"); // FIXED
+  await chooseOption(busTypeSelect(page), "1"); // FIXED
   await expect(param(page, "Pan Link")).toHaveCount(0);
 });
 
@@ -30,7 +31,7 @@ test("MIX bus shows BUS Type + Pan Link; FIXED hides Pan Link", async ({ page })
 
 test("FIXED bus drops the send LEVEL and shows a hint", async ({ page }) => {
   await node(page, "bus.mix1").click();
-  await busTypeSelect(page).selectOption("1"); // FIXED
+  await chooseOption(busTypeSelect(page), "1"); // FIXED
 
   await selectWire(page, "ch1:out", "bus.mix1:in");
   await expect(param(page, "Level")).toHaveCount(0);

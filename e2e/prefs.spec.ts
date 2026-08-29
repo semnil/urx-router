@@ -1,6 +1,7 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "./fixtures";
 import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import { chooseOption } from "./choose-option";
 
 // Preferences modal (toolbar gear). The gear is an independent entry available
 // in every build; rows that need the desktop shell render disabled with a
@@ -79,7 +80,7 @@ test.describe("plain browser", () => {
   test("the language dropdown switches the UI language and persists it", async ({ page }) => {
     await page.click("#btn-prefs");
     await expect(page.locator("#prefs-lang")).toHaveValue("en");
-    await page.selectOption("#prefs-lang", "ja");
+    await chooseOption(page.locator("#prefs-lang"), "ja");
     // The open modal re-renders itself in the new language.
     await expect(page.locator("#prefs-title")).toHaveText("環境設定");
     expect(await page.evaluate(() => localStorage.getItem("urx-lang"))).toBe("ja");
@@ -87,7 +88,7 @@ test.describe("plain browser", () => {
 
   test("the theme dropdown applies the palette immediately and persists the mode", async ({ page }) => {
     await page.click("#btn-prefs");
-    await page.selectOption("#prefs-theme", "light");
+    await chooseOption(page.locator("#prefs-theme"), "light");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     expect(await page.evaluate(() => localStorage.getItem("urx-theme"))).toBe("light");
   });

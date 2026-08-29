@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "./fixtures";
 import { faceplate, selectWire } from "./graph-helpers";
+import { chooseOption } from "./choose-option";
 
 // Positions below are compared with node(), pointer grabs measured with
 // faceplate() — the two boxes differ by the tap jack's overhang, so never mix them
@@ -46,7 +47,7 @@ test("mono pair gets a Signal Type select; STEREO reveals PAN/BAL and a heart li
   await expect(param(page, "PAN / BAL")).toHaveCount(0);
   await expect(link(page)).toHaveCount(0);
 
-  await sigSelect(page).selectOption("1"); // STEREO
+  await chooseOption(sigSelect(page), "1"); // STEREO
   await expect(param(page, "PAN / BAL")).toHaveCount(1);
   // Linking lands in BAL, as it does on the unit.
   await expect(panBalSelect(page)).toHaveValue("1");
@@ -59,8 +60,8 @@ test("mono pair gets a Signal Type select; STEREO reveals PAN/BAL and a heart li
 
 test("BAL mode labels a send from the linked channel as BALANCE", async ({ page }) => {
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1"); // STEREO
-  await param(page, "PAN / BAL").locator("select").selectOption("1"); // BAL
+  await chooseOption(sigSelect(page), "1"); // STEREO
+  await chooseOption(param(page, "PAN / BAL").locator("select"), "1"); // BAL
 
   // The ch1 -> MIX 1 send is a fixed (always-wired) send; select it by endpoint.
   await selectWire(page, "ch1:out", "bus.mix1:in");
@@ -70,7 +71,7 @@ test("BAL mode labels a send from the linked channel as BALANCE", async ({ page 
 
 test("signal type round-trips through save and open", async ({ page }, testInfo) => {
   await node(page, "ch3").click();
-  await sigSelect(page).selectOption("1");
+  await chooseOption(sigSelect(page), "1");
   await page.click("#btn-file");
   const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
   const saved = testInfo.outputPath("plan.json");
@@ -86,7 +87,7 @@ test("signal type round-trips through save and open", async ({ page }, testInfo)
 
 test("a STEREO pair drags as one unit; the heart tie follows", async ({ page }) => {
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1"); // STEREO
+  await chooseOption(sigSelect(page), "1"); // STEREO
 
   const before1 = await faceplate(page, "ch1").boundingBox();
   const before2 = await faceplate(page, "ch2").boundingBox();
@@ -128,7 +129,7 @@ test("STEREO-linking snaps a partner moved away back beside the kept primary", a
   // STEREO-link from CH1 (the kept node): CH2 snaps back into CH1's column,
   // directly below it, so the heart tie is short rather than stretched.
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1");
+  await chooseOption(sigSelect(page), "1");
   const after1 = await node(page, "ch1").boundingBox();
   const after2 = await node(page, "ch2").boundingBox();
   if (!after1 || !after2) throw new Error("nodes gone");
@@ -156,7 +157,7 @@ test("STEREO-linking from the partner keeps the partner and realigns the primary
 
   // Link from CH2: CH2 is the kept node, so CH1 snaps back above it.
   await node(page, "ch2").click();
-  await sigSelect(page).selectOption("1");
+  await chooseOption(sigSelect(page), "1");
   const after1 = await node(page, "ch1").boundingBox();
   const after2 = await node(page, "ch2").boundingBox();
   if (!after1 || !after2) throw new Error("nodes gone");
@@ -188,7 +189,7 @@ test("PAN/BAL re-inits the pan of the STEREO and MIX sends for both pair members
   // Entering STEREO lands in BAL: both centre (0), on the fixed CH->STEREO send
   // and the fixed MIX 1 sends alike.
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1");
+  await chooseOption(sigSelect(page), "1");
   let plan = await savedPlan(page, testInfo);
   expect(panOf(plan, "ch1:out", "bus.stereo:in")).toBe(0);
   expect(panOf(plan, "ch2:out", "bus.stereo:in")).toBe(0);
@@ -198,7 +199,7 @@ test("PAN/BAL re-inits the pan of the STEREO and MIX sends for both pair members
   // PAN mode: odd hard-left (-63), even hard-right (+63) (toggle from the partner
   // member — the flag lives on the primary).
   await node(page, "ch2").click();
-  await panBalSelect(page).selectOption("0");
+  await chooseOption(panBalSelect(page), "0");
   plan = await savedPlan(page, testInfo);
   expect(panOf(plan, "ch1:out", "bus.stereo:in")).toBe(-63);
   expect(panOf(plan, "ch1:out", "bus.mix1:in")).toBe(-63);
@@ -206,7 +207,7 @@ test("PAN/BAL re-inits the pan of the STEREO and MIX sends for both pair members
 
   // Back to BAL: centres again.
   await node(page, "ch1").click();
-  await panBalSelect(page).selectOption("1");
+  await chooseOption(panBalSelect(page), "1");
   plan = await savedPlan(page, testInfo);
   expect(panOf(plan, "ch1:out", "bus.mix1:in")).toBe(0);
   expect(panOf(plan, "ch2:out", "bus.mix1:in")).toBe(0);
@@ -216,11 +217,11 @@ test("leaving STEREO centres the pair's pans, as the unit does", async ({ page }
   // Link, hard-pan the pair through PAN mode, then unlink: the unit centres CH_PAN
   // (the STEREO send's pan) and every other bus send's pan, so the plan does too.
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1");
-  await panBalSelect(page).selectOption("0"); // PAN: -63 / +63
+  await chooseOption(sigSelect(page), "1");
+  await chooseOption(panBalSelect(page), "0"); // PAN: -63 / +63
   expect(panOf(await savedPlan(page, testInfo), "ch1:out", "bus.mix1:in")).toBe(-63);
 
-  await sigSelect(page).selectOption("0"); // MONO x 2
+  await chooseOption(sigSelect(page), "0"); // MONO x 2
   const plan = await savedPlan(page, testInfo);
   expect(panOf(plan, "ch1:out", "bus.stereo:in")).toBe(0);
   expect(panOf(plan, "ch2:out", "bus.stereo:in")).toBe(0);
@@ -243,8 +244,8 @@ test("CONSOLE reads a BAL-linked mono channel's pan as BAL, matching the inspect
 
   await page.click("#btn-view-graph");
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1"); // STEREO
-  await panBalSelect(page).selectOption("1"); // BAL
+  await chooseOption(sigSelect(page), "1"); // STEREO
+  await chooseOption(panBalSelect(page), "1"); // BAL
 
   await page.click("#btn-view-console");
   await expect(cstrip(page, "CH 1").locator(".con-knob[aria-label='BAL']")).toBeVisible();
@@ -254,8 +255,8 @@ test("CONSOLE reads a BAL-linked mono channel's pan as BAL, matching the inspect
 
 test("BAL mode links a fader edit across both channels in the CONSOLE", async ({ page }) => {
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1"); // STEREO
-  await panBalSelect(page).selectOption("1"); // BAL
+  await chooseOption(sigSelect(page), "1"); // STEREO
+  await chooseOption(panBalSelect(page), "1"); // BAL
 
   await page.click("#btn-view-console");
   const ch1 = cstrip(page, "CH 1").locator(".con-readout .rd:not(.mtr) .rv");
@@ -271,8 +272,8 @@ test("BAL mode links a fader edit across both channels in the CONSOLE", async ({
 
 test("BAL mode links a MUTE toggle across both channels in the CONSOLE", async ({ page }) => {
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1"); // STEREO
-  await panBalSelect(page).selectOption("1"); // BAL
+  await chooseOption(sigSelect(page), "1"); // STEREO
+  await chooseOption(panBalSelect(page), "1"); // BAL
 
   await page.click("#btn-view-console");
   const m1 = cstrip(page, "CH 1").getByRole("button", { name: "MUTE" });
@@ -286,8 +287,8 @@ test("BAL mode links a MUTE toggle across both channels in the CONSOLE", async (
 
 test("BAL mode links a gain edit across both channels in the CONSOLE", async ({ page }) => {
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1"); // STEREO
-  await panBalSelect(page).selectOption("1"); // BAL
+  await chooseOption(sigSelect(page), "1"); // STEREO
+  await chooseOption(panBalSelect(page), "1"); // BAL
 
   await page.click("#btn-view-console");
   const g1 = cstrip(page, "CH 1")
@@ -306,8 +307,8 @@ test("BAL mode links a gain edit across both channels in the CONSOLE", async ({ 
 
 test("BAL mode shares one balance across both channels in the CONSOLE", async ({ page }) => {
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1"); // STEREO
-  await panBalSelect(page).selectOption("1"); // BAL — both centre (C)
+  await chooseOption(sigSelect(page), "1"); // STEREO
+  await chooseOption(panBalSelect(page), "1"); // BAL — both centre (C)
 
   await page.click("#btn-view-console");
   const bal = (name: string) =>
@@ -330,8 +331,8 @@ test("BAL mode edits a MIX send pan without closing the SEND PAN popover", async
   // now skips that sync (the plan mirror via commit is enough; no partner send-pan
   // control is on screen), so the popover survives.
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1"); // STEREO
-  await panBalSelect(page).selectOption("1"); // BAL
+  await chooseOption(sigSelect(page), "1"); // STEREO
+  await chooseOption(panBalSelect(page), "1"); // BAL
 
   await page.click("#btn-view-console");
   await cstrip(page, "CH 1").locator(".con-panbtn").click();
@@ -346,8 +347,8 @@ test("BAL mode edits a MIX send pan without closing the SEND PAN popover", async
 
 test("PAN mode keeps the two channels' faders independent in the CONSOLE", async ({ page }) => {
   await node(page, "ch1").click();
-  await sigSelect(page).selectOption("1"); // STEREO (lands in BAL)
-  await panBalSelect(page).selectOption("0"); // PAN
+  await chooseOption(sigSelect(page), "1"); // STEREO (lands in BAL)
+  await chooseOption(panBalSelect(page), "0"); // PAN
 
   await page.click("#btn-view-console");
   const ch1 = cstrip(page, "CH 1").locator(".con-readout .rd:not(.mtr) .rv");

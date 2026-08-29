@@ -428,42 +428,110 @@ describe("a device-locked knob", () => {
 });
 
 describe("the INS FX chip", () => {
-  const chipOf = (id: string): HTMLElement =>
-    [...h.strip(id).root.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === "INS FX")!;
+  const chipOf = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-ifxface")!;
+  const openerOf = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-ifxopen")!;
+  /** The popover's rows, by the name each one carries. */
+  const popRows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];
+  const popRow = (label: string): HTMLElement => popRows().find((r) => r.querySelector(".nm")?.textContent === label)!;
+  /** Open the type popover from a strip's disclosure and pick one effect by name. */
+  const pick = (id: string, label: string): void => {
+    openerOf(id).click();
+    popRow(label).click();
+  };
 
-  // With No Effect selected, turning the chip on has to pick something — the device
-  // auto-engages, so a chip that reported "on" with nothing selected would lie.
-  it("selects an effect when switched on from No Effect", () => {
+  // The face is a bypass and only a bypass. Holding nothing there is nothing to bypass,
+  // so pressing it opens the type list instead of choosing an effect on the operator's
+  // behalf — a selector write refills the unit's engine array with that type's defaults
+  // and cannot be undone, which is not a thing a press should do by itself.
+  it("opens the type popover instead of selecting, on a strip holding nothing", () => {
     h = consoleHost();
     const np = (h.plan.nodeParams["ch1"] ??= {});
     expect(insertFxSelected(np)).toBe(false);
     chipOf("ch1").click();
-    expect(insertFxSelected(h.plan.nodeParams["ch1"]!)).toBe(true);
-    expect(h.plan.nodeParams["ch1"]!.insertFxOn).toBe(true);
+    expect(insertFxSelected(h.plan.nodeParams["ch1"]!)).toBe(false);
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden).toBe(false);
+    // …and the disclosure beside it opens the same one.
+    expect(openerOf("ch1").getAttribute("aria-haspopup")).toBe("menu");
   });
 
-  // Switching off keeps the selection (it is a bypass, not a clear) and switching back
-  // on restores the effect the operator had chosen rather than the list's first.
-  it("keeps the selection across an off/on and restores the remembered effect", () => {
+  // Both halves of the pair say which of the three states the strip is in, and they say
+  // it without colour: a dashed face and a `+` for nothing held, a solid face and a `▸`
+  // once something is.
+  it("marks a vacant strip apart from one holding a bypassed effect", () => {
     h = consoleHost();
-    const chip = chipOf("ch1");
-    chip.click();
-    const chosen = h.plan.nodeParams["ch1"]!.insertFx;
+    expect(chipOf("ch1").classList.contains("vacant")).toBe(true);
+    expect(openerOf("ch1").textContent).toBe("+");
 
-    chip.click();
+    pick("ch1", "Clean");
+    expect(chipOf("ch1").classList.contains("vacant")).toBe(false);
+    expect(openerOf("ch1").textContent).toBe("▸");
+    expect(chipOf("ch1").getAttribute("aria-pressed")).toBe("true");
+
+    chipOf("ch1").click(); // bypass: still held, still solid, still ▸
+    expect(chipOf("ch1").getAttribute("aria-pressed")).toBe("false");
+    expect(chipOf("ch1").classList.contains("vacant")).toBe(false);
+    expect(openerOf("ch1").textContent).toBe("▸");
+  });
+
+  // Selecting engages, the way the unit does on a selector write; the face then bypasses
+  // and restores without touching the selection.
+  it("keeps the selection across an off/on", () => {
+    h = consoleHost();
+    pick("ch1", "Clean");
+    const chosen = h.plan.nodeParams["ch1"]!.insertFx;
+    expect(insertFxSelected(h.plan.nodeParams["ch1"]!)).toBe(true);
+    expect(h.plan.nodeParams["ch1"]!.insertFxOn).toBe(true);
+
+    chipOf("ch1").click();
     expect(h.plan.nodeParams["ch1"]!.insertFxOn).toBe(false);
     expect(h.plan.nodeParams["ch1"]!.insertFx).toBe(chosen); // still selected, bypassed
 
-    chip.click();
+    chipOf("ch1").click();
     expect(h.plan.nodeParams["ch1"]!.insertFxOn).toBe(true);
     expect(h.plan.nodeParams["ch1"]!.insertFx).toBe(chosen);
   });
 
-  it("reflects the state on the chip itself", () => {
+  // No Effect is an entry like any other and is never disabled: it is how a strip gives
+  // a slot back, and it has to work from the states where nothing else can be picked.
+  it("releases the effect and the slot through No Effect", () => {
     h = consoleHost();
-    expect(chipOf("ch1").getAttribute("aria-pressed")).toBe("false");
-    chipOf("ch1").click();
-    expect(chipOf("ch1").getAttribute("aria-pressed")).toBe("true");
+    pick("ch1", "Clean");
+    expect(insertFxSelected(h.plan.nodeParams["ch1"]!)).toBe(true);
+
+    pick("ch1", "No Effect");
+    expect(insertFxSelected(h.plan.nodeParams["ch1"]!)).toBe(false);
+    expect(h.plan.nodeParams["ch1"]!.insertFxOn).toBe(false);
+    expect(chipOf("ch1").classList.contains("vacant")).toBe(true);
+    expect(openerOf("ch1").textContent).toBe("+");
+  });
+
+  // The slot is device-wide, so what one strip takes another cannot — said on the entry
+  // itself rather than by leaving it absent.
+  it("greys an effect another strip is holding, and names why", () => {
+    h = consoleHost();
+    pick("ch1", "Clean");
+    openerOf("ch2").click();
+    const taken = popRow("Clean");
+    expect(taken.classList.contains("off")).toBe(true);
+    expect(taken.getAttribute("aria-disabled")).toBe("true");
+    expect(taken.title).toBe(t().inspector.insFxSlotLocked);
+    // …and No Effect beside it is still live.
+    expect(popRow("No Effect").classList.contains("off")).toBe(false);
+  });
+
+  // The screen shows what is selected, so there is nothing for it to show until something
+  // is — and a bypassed or rate-stopped effect is still an effect to tune.
+  it("offers the tuning screen only once an effect is held", () => {
+    h = consoleHost();
+    openerOf("ch1").click();
+    const launcher = (): HTMLElement => document.querySelector<HTMLElement>(".con-ifxpop .iopen")!;
+    expect(launcher().classList.contains("off")).toBe(true);
+    expect(launcher().getAttribute("aria-disabled")).toBe("true");
+
+    popRow("Clean").click();
+    openerOf("ch1").click();
+    expect(launcher().classList.contains("off")).toBe(false);
+    expect(launcher().getAttribute("aria-disabled")).toBeNull();
   });
 
   // A plan can hold an insert-FX value the node's own control does not carry: a file, a
@@ -472,7 +540,7 @@ describe("the INS FX chip", () => {
   // so a chip driven from the raw plan value reports a strip as bypassing an effect that
   // never reaches the unit — and pressing it writes a bypass nothing will ever send.
   describe.each([
-    ["a channel holding an OUTPUT-only effect", "ch1", "M.Band Comp", OUTPUT_INSERT_FX_OPTIONS],
+    ["a channel holding an OUTPUT-only effect", "ch1", "M.B.Comp", OUTPUT_INSERT_FX_OPTIONS],
     ["a bus holding a CHANNEL-only effect", "bus.mix1", "Pitch Fix", INSERT_FX_OPTIONS],
   ])("%s", (_name, id, label, options) => {
     const load = (): void => {
@@ -486,15 +554,31 @@ describe("the INS FX chip", () => {
       h = consoleHost({ plan });
     };
 
-    it("reads OFF, the way No Effect does", () => {
+    it("reads VACANT, the way No Effect does", () => {
       load();
-      expect(chipOf(id).getAttribute("aria-pressed")).toBe("false");
+      // Not merely unlit: the face says the strip holds nothing, which is what the emit
+      // path will act on, and the disclosure offers a choice rather than a way in. It is
+      // announced as a menu button and NOT as an unpressed switch — there is no insert
+      // here to be in or out, and saying "not pressed" would describe one that is out.
+      expect(chipOf(id).classList.contains("vacant")).toBe(true);
+      expect(chipOf(id).getAttribute("aria-pressed")).toBeNull();
+      expect(chipOf(id).getAttribute("aria-haspopup")).toBe("menu");
+      expect(openerOf(id).textContent).toBe("+");
     });
 
-    it("takes a real effect when pressed, instead of writing a bypass", () => {
+    it("takes a real effect through the popover, instead of writing a bypass", () => {
       load();
       const stale = h.plan.nodeParams[id]!.insertFx;
-      chipOf(id).click();
+      // Nothing is marked as held, because the value the emit path sees is No Effect.
+      openerOf(id).click();
+      expect(
+        popRows()
+          .filter((r) => r.classList.contains("active"))
+          .map((r) => r.querySelector(".nm")!.textContent),
+      ).toEqual(["No Effect"]);
+      popRows()
+        .find((r) => !r.classList.contains("off") && r.querySelector(".nm")!.textContent !== "No Effect")!
+        .click();
       const now = h.plan.nodeParams[id]!;
       expect(now.insertFx).not.toBe(stale);
       expect(options.some((o) => o.value === now.insertFx)).toBe(false); // …from THIS node's list
@@ -520,7 +604,7 @@ describe("the INS FX chip", () => {
     plan.sampleRate = 48000;
     plan.nodeParams["bus.mix1"] = {
       ...plan.nodeParams["bus.mix1"],
-      insertFx: OUTPUT_INSERT_FX_OPTIONS.find((o) => o.label === "M.Band Comp")!.value,
+      insertFx: OUTPUT_INSERT_FX_OPTIONS.find((o) => o.label === "M.B.Comp")!.value,
       insertFxOn: true,
     };
     h = consoleHost({ plan });
@@ -539,8 +623,32 @@ describe("the INS FX chip", () => {
     const plan = defaultPlan("URX44V");
     plan.sampleRate = 192000;
     h = consoleHost({ plan });
-    expect(chipOf("ch1").getAttribute("aria-disabled")).toBe("true");
     expect(chipOf("ch1").title).toBe(t().inspector.insFxRateLocked);
+    // …on a face that is INERT, with no disclosure beside it at all. The list behind them
+    // is how a strip gives its slot back, but a strip holding nothing has none to give and
+    // its one selectable row is the No Effect it already is. The face keeps the reason and
+    // stays; the way IN to a list with nothing in it is dropped rather than drawn disabled.
+    expect(chipOf("ch1").classList.contains("readonly")).toBe(true);
+    expect(chipOf("ch1").getAttribute("aria-disabled")).toBe("true");
+    expect(h.strip("ch1").root.querySelector(".con-ifxopen")).toBeNull();
+    chipOf("ch1").click();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden).toBe(true);
+  });
+
+  it("keeps the disclosure live on a strip HOLDING an effect the rate forced off", () => {
+    // The other half, and the reason the lock above is asked of the vacant case alone:
+    // choosing No Effect here is how the device-wide slot this strip still claims is given
+    // back, so an operator who cannot reach the list cannot free it without changing rate.
+    const plan = defaultPlan("URX44V");
+    plan.sampleRate = 192000;
+    plan.nodeParams["ch1"] = { insertFx: INSERT_FX_OPTIONS.find((o) => o.label === "Clean")!.value };
+    h = consoleHost({ plan });
+    const open = h.strip("ch1").root.querySelector<HTMLElement>(".con-ifxopen")!;
+    expect(open).not.toBeNull();
+    expect(open.classList.contains("readonly")).toBe(false);
+    open.click();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden).toBe(false);
+    expect(popRow("No Effect").classList.contains("off")).toBe(false);
   });
 
   // The ceilings are per effect, so the rate that switches a strip off depends on what
@@ -623,5 +731,114 @@ describe("the meter stream", () => {
     h.frame();
     h.view.setLive(false);
     expect(h.strip("ch1").readMtr.textContent).toBe("—");
+  });
+});
+
+// The INS FX popover's own half of the focus rule, plus the case the other two do not
+// have: choosing an effect REBUILDS the strip, so the element the focus should return to
+// is not the one that was pressed — and at a rate that empties the menu, the disclosure is
+// dropped altogether, which is where the focus fell to <body>.
+describe("where the focus goes after the INS FX popover closes", () => {
+  const chipOf = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-ifxface")!;
+  const openerOf = (id: string): HTMLElement | null => h.strip(id).root.querySelector<HTMLElement>(".con-ifxopen");
+  const popRow = (label: string): HTMLElement =>
+    [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")].find(
+      (r) => r.querySelector(".nm")?.textContent === label,
+    )!;
+
+  it("returns it to the disclosure on Escape", () => {
+    h = consoleHost();
+    openerOf("ch1")!.click();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden).toBe(false);
+    key(document.body, "Escape");
+    expect(document.activeElement).toBe(openerOf("ch1"));
+  });
+
+  // Releasing rather than choosing: picking an effect opens its tuning screen, which is
+  // where the focus goes and is the app's own hook rather than this view's business. No
+  // Effect opens nothing, so the strip it rebuilt is what the operator is left on.
+  it("lands on the rebuilt strip's own disclosure after releasing an effect", () => {
+    h = consoleHost();
+    openerOf("ch1")!.click();
+    popRow("Clean").click();
+    const before = openerOf("ch1");
+    openerOf("ch1")!.click();
+    popRow("No Effect").click();
+    // A different element: the selection re-rendered the strip.
+    expect(openerOf("ch1")).not.toBe(before);
+    expect(document.activeElement).toBe(openerOf("ch1"));
+  });
+
+  // At 192 kHz nothing in the menu runs, so the disclosure is dropped — there is nothing
+  // behind it to open. The FACE stays, read-only with its reason, and it is the anchor.
+  const releaseAt192 = (): void => {
+    openerOf("ch1")!.click();
+    popRow("Clean").click();
+    h.plan.sampleRate = 192000;
+    h.view.refresh();
+    openerOf("ch1")?.click();
+    if (!document.querySelector<HTMLElement>(".con-ifxpop")!.hidden) popRow("No Effect").click();
+  };
+
+  it("falls back to the face where the rate has dropped the disclosure", () => {
+    h = consoleHost();
+    releaseAt192();
+    expect(openerOf("ch1"), "the ceiling empties the menu, so the disclosure goes").toBeNull();
+    expect(document.activeElement, "and the face is what the operator is left on").toBe(chipOf("ch1"));
+  });
+
+  // …and it survives the NEXT rebuild. The face is `tabindex="-1"` — present, not tabbable
+  // — so the index the rebuild's focus carry-over keys by comes back empty and the focus
+  // goes to <body>. A device-follow repaint of the same channel is enough to trigger it, so
+  // without this the place the view just handed the operator does not outlive the next
+  // thing the unit says. Both repaint paths, because they are different entry points.
+  for (const [what, repaint] of [
+    ["one strip", (): void => h.view.refreshStrip("ch1")],
+    ["the whole rack", (): void => h.view.refresh()],
+  ] as const) {
+    it(`keeps the operator on that face across a repaint of ${what}`, () => {
+      h = consoleHost();
+      releaseAt192();
+      expect(document.activeElement).toBe(chipOf("ch1"));
+      repaint();
+      expect(document.activeElement, "the face in the REBUILT strip").toBe(chipOf("ch1"));
+    });
+  }
+
+  // The INS FX popover's own half of the whole-rack rule, and the case the other two do not
+  // have: `refreshStrip` RE-OPENS this one against the fresh strip, so the row is still
+  // there and the focus goes back to it rather than out to the trigger. One rule decides
+  // both by asking what the rebuild actually did.
+  it("returns it to the trigger when a whole-rack repaint closes the list", () => {
+    h = consoleHost();
+    openerOf("ch1")!.click();
+    const row = document.querySelector<HTMLElement>(".con-ifxpop .irow");
+    row?.focus();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.contains(document.activeElement)).toBe(true);
+    h.view.refresh();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden, "the repaint closed it").toBe(true);
+    expect(document.activeElement).toBe(openerOf("ch1"));
+  });
+
+  it("keeps it on the same row when a one-strip repaint re-opens the list", () => {
+    h = consoleHost();
+    openerOf("ch1")!.click();
+    const rows = () => [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];
+    const idx = 1;
+    rows()[idx].focus();
+    h.view.refreshStrip("ch1");
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden, "still open").toBe(false);
+    expect(document.activeElement, "the same row of the rebuilt list").toBe(rows()[idx]);
+  });
+
+  // The floor under both, keyed the same way: a strip carrying neither control still keeps
+  // the operator's place rather than sending them to the top of the document.
+  it("keeps the operator on the strip root across a repaint", () => {
+    h = consoleHost();
+    const root = h.strip("ch1").root;
+    root.focus();
+    expect(document.activeElement).toBe(root);
+    h.view.refreshStrip("ch1");
+    expect(document.activeElement).toBe(h.strip("ch1").root);
   });
 });

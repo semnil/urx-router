@@ -203,7 +203,7 @@ describe("planToCommands", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
     plan.nodeParams["bus.stereo"] = { insertFx: 1793 }; // Compander-H
-    plan.nodeParams["bus.mix1"] = { insertFx: 1792 }; // M.Band Comp
+    plan.nodeParams["bus.mix1"] = { insertFx: 1792 }; // M.B.Comp
     const cmds = planToCommands(model, plan).filter((c) => c.name === "INSERT_FX");
     const stereo = cmds.filter((c) => c.paramId === 578);
     const mix = cmds.filter((c) => c.paramId === 671);
@@ -1252,9 +1252,19 @@ describe("shared device addresses (last wins)", () => {
   };
   // Compander slot 6 (Threshold): the one slot the input companders and the
   // output MBC both carry, so it is where three owners can meet on engine 693.
-  const withCompander = (nodeId: string, selector: number, slot6: number) => (plan: Plan) => {
-    plan.nodeParams[nodeId] = { ...plan.nodeParams[nodeId], insertFx: selector, insertFxParams: { "6": slot6 } };
-  };
+  // The slot is a parameter because 6 means different things per family: a compander's
+  // Threshold, and the multi-band compressor's 1-Knob — which the emit path reads as "the
+  // unit owns every value here" and then emits none of them, so an owner given one would
+  // drop out of a collision it is supposed to be in.
+  const withCompander =
+    (nodeId: string, selector: number, raw: number, slot = 6) =>
+    (plan: Plan) => {
+      plan.nodeParams[nodeId] = {
+        ...plan.nodeParams[nodeId],
+        insertFx: selector,
+        insertFxParams: { [String(slot)]: raw },
+      };
+    };
   const planWith = (id: ModelId, ...edits: Array<(plan: Plan) => void>): Plan => {
     const plan = defaultPlan(id);
     for (const edit of edits) edit(plan);
@@ -1318,12 +1328,17 @@ describe("shared device addresses (last wins)", () => {
       model,
       planWith(
         "URX44V",
-        withCompander("bus.stereo", 1792, 5),
-        withCompander("bus.mix1", 1793, -1000),
-        withCompander("bus.mix2", 1794, -1500),
+        // Slot 9 rather than 6, because 6 is the multi-band compressor's 1-Knob and the
+        // writer reads that as the unit owning every value of the effect — an owner given
+        // one emits nothing and drops out of the collision it is supposed to be in. Nine
+        // is a value under all three: that one's LOW Threshold, and the companders'
+        // Release, which is why the raws differ so widely.
+        withCompander("bus.stereo", 1792, 100, 9),
+        withCompander("bus.mix1", 1793, 1000, 9),
+        withCompander("bus.mix2", 1794, 1500, 9),
       ),
     );
-    const engine = cmds.filter((c) => c.paramId === 693 && c.y === 6);
+    const engine = cmds.filter((c) => c.paramId === 693 && c.y === 9);
     expect(engine).toHaveLength(1);
     expect(engine[0].node).toBe("bus.mix2");
     expect(engine[0].shadowed).toEqual(["bus.stereo", "bus.mix1"]);

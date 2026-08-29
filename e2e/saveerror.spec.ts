@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "./fixtures";
+import { chooseOption } from "./choose-option";
 
 // A native save / image export that fails after the dialog returned a path must
 // surface as an error dialog, keep the plan dirty and show no success status — a
@@ -51,7 +52,7 @@ test.beforeEach(async ({ page }) => {
 
 test("a failed native save shows an error and keeps the plan dirty (Tauri)", async ({ page }) => {
   // Dirty the plan (the rate change funnels through markChanged), then save.
-  await page.selectOption("#rate-picker", "96000");
+  await chooseOption(page.locator("#rate-picker"), "96000");
   await page.click("#btn-file");
   await page.click("#btn-save");
 

@@ -270,7 +270,7 @@ describe("MidiControl", () => {
   const levelOf = (p: { connections: Array<{ from: string; to: string; params?: { level?: number } }> }): number =>
     p.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!.params!.level!;
 
-  it("re-points the bound cache when the document is replaced under it", async () => {
+  it("writes the document that is loaded now, not the one a control was bound against", async () => {
     seedMappings();
     const { hooks, plan, model, swapPlan } = install();
     await attached();
@@ -282,7 +282,9 @@ describe("MidiControl", () => {
     expect(levelOf(plan)).toBe(10);
 
     // The shape of a cancelled Fetch: a different Plan object, same model, restored
-    // outside every path that would announce it.
+    // outside every path that would announce it. Nothing here is about a cache — that is
+    // the point: whatever resolve() does internally, the write has to land on the document
+    // the app is showing, and this fails against any memo that outlives it.
     const restored = defaultPlan("URX44V");
     ensureFixedConnections(model, restored);
     const restoredBefore = levelOf(restored);
@@ -526,5 +528,58 @@ describe("MidiControl learn and feedback", () => {
     // the suspension free: nothing is lost, only deferred.
     dispatch({ type: "learn", on: false });
     await vi.waitFor(() => expect(mocks.midiSend).toHaveBeenCalled());
+  });
+});
+
+describe("MidiControl against a control the plan has stopped carrying", () => {
+  // A bound control closes over the insert-FX family, the processor and the send it was
+  // built for, and a plan is edited IN PLACE. So a resolve that answered once must not keep
+  // answering after the node has stopped holding that effect: the write would land on a
+  // slot nothing sends and reappear the moment the operator selected it again, and feedback
+  // would keep reporting the same stale value to the controller.
+  const INSFX = {
+    control: "ch1/insfx@insfx.guitar-clean.7",
+    addr: { type: "cc", channel: 0, controller: 21 },
+    mode: "absolute",
+  } as const;
+
+  it("stops applying and stops reporting once the node holds another effect, and resumes", async () => {
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V: [INSFX] } }));
+    const { control, plan } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["Controller Out"]));
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    dispatch({ type: "port", dir: "out", name: "Controller Out" });
+    await vi.waitFor(() => expect(lastState().output).toBe("Controller Out"));
+    control.liveReadSettled();
+    const send = (v: number): void => {
+      if (!mocks.inputReceiver) throw new Error("no MIDI input");
+      mocks.inputReceiver([0xb0, 21, v]);
+    };
+    const slot = (): number | undefined => plan.nodeParams.ch1?.insertFxParams?.["guitar-clean:7"];
+
+    // The node holds the amp: the mapping applies, and that is what warms the resolve.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 256 };
+    send(100);
+    await vi.waitFor(() => expect(slot()).toBeDefined());
+    const applied = slot();
+
+    // The same plan OBJECT, now holding a different effect. Nothing announces this to the
+    // MIDI surface — it is an ordinary in-place edit.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 512 };
+    mocks.midiSend.mockClear();
+    send(20);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(slot(), "the amp's slot is not written while the node holds Pitch Fix").toBe(applied);
+    control.scheduleFeedback();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mocks.midiSend, "and nothing is reported for it either").not.toHaveBeenCalled();
+
+    // …and the mapping is not lost: selecting the amp again brings it back, which is what
+    // separates this from a control that stopped working.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 256 };
+    send(20);
+    await vi.waitFor(() => expect(slot()).not.toBe(applied));
   });
 });

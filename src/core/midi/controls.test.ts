@@ -7,6 +7,19 @@ import { ref } from "../../models/types";
 import { COMP_EQ_SSMCS, EQ_TYPE_PASS } from "../control/params";
 import { planToCommands } from "../control/translate";
 import { bindControl, controlId, listControls, parseControlId } from "./controls";
+import {
+  COMPANDER_H,
+  COMPANDER_S,
+  GUITAR_MOD,
+  MBC_BANDS,
+  MBC_ONE_KNOB,
+  PITCH_MIDI_ENABLE_SLOT,
+  PITCH_SCALE_SLOT,
+  pitchDeviceDriven,
+  insertFxParamKey,
+  insertFxParams,
+  type InsertFxFamily,
+} from "../control/insert-fx-effect";
 import { wireRaw, wireSteps } from "./mapping";
 
 const model = getModel("URX44V");
@@ -534,5 +547,130 @@ describe("feedback round trip", () => {
       }
     }
     expect([...offenders]).toEqual([]);
+  });
+});
+
+// A mapping outlives the state that locked the control it names, and nothing on the MIDI
+// side re-reads the screen. So each lock is asked here in BOTH directions from one mapping:
+// the control is bound once, and the plan is moved under it.
+describe("a mapping cannot reach past a lock the screen draws", () => {
+  const holding = (node: string, sel: number, params: Record<number, number>, fam: InsertFxFamily): void => {
+    const keyed: Record<string, number> = {};
+    for (const [slot, v] of Object.entries(params)) keyed[insertFxParamKey(fam, Number(slot))] = v;
+    plan.nodeParams[node] = { ...plan.nodeParams[node], insertFx: sel, insertFxParams: keyed };
+  };
+  const slotVal = (node: string, fam: InsertFxFamily, slot: number): number | undefined =>
+    plan.nodeParams[node]?.insertFxParams?.[insertFxParamKey(fam, slot)];
+  /** Drive a bound control and say whether it took, without asking the control twice. */
+  const push = (cid: string, v: number): boolean => {
+    const c = bindControl(model, plan, cid);
+    if (!c) throw new Error(`no control ${cid}`);
+    return c.set(v);
+  };
+
+  it("refuses the slots the multi-band compressor's 1-Knob is driving, and takes them back", () => {
+    const th = MBC_BANDS[0].threshold;
+    const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${th}`);
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 1, [th]: 100 }, "mbc");
+    expect(push(cid, 0.75), "while the knob is on").toBe(false);
+    expect(slotVal("bus.stereo", "mbc", th)).toBe(100);
+    // The positive control: the same mapping, the same value, with the knob off.
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [th]: 100 }, "mbc");
+    expect(push(cid, 0.75), "with the knob off").toBe(true);
+    expect(slotVal("bus.stereo", "mbc", th)).not.toBe(100);
+  });
+
+  it("refuses the 1-Knob's own Level while the knob is off", () => {
+    const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${MBC_ONE_KNOB.level.slot}`);
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [MBC_ONE_KNOB.level.slot]: 4 }, "mbc");
+    expect(push(cid, 0.5), "while the knob is off").toBe(false);
+    expect(slotVal("bus.stereo", "mbc", MBC_ONE_KNOB.level.slot)).toBe(4);
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 1, [MBC_ONE_KNOB.level.slot]: 4 }, "mbc");
+    expect(push(cid, 0.5), "with the knob on").toBe(true);
+    expect(slotVal("bus.stereo", "mbc", MBC_ONE_KNOB.level.slot)).not.toBe(4);
+  });
+
+  it("refuses a guitar amp's Speed while the modulation is not the vibrato", () => {
+    const cid = controlId("ch1", "insfx", `insfx.guitar-clean.${GUITAR_MOD.speed}`);
+    holding("ch1", 256, { [GUITAR_MOD.slot]: 1, [GUITAR_MOD.speed]: 50 }, "guitar-clean");
+    expect(push(cid, 0.9), "with modulation off").toBe(false);
+    expect(slotVal("ch1", "guitar-clean", GUITAR_MOD.speed)).toBe(50);
+    holding("ch1", 256, { [GUITAR_MOD.slot]: GUITAR_MOD.vib, [GUITAR_MOD.speed]: 50 }, "guitar-clean");
+    expect(push(cid, 0.9), "with the vibrato on").toBe(true);
+    expect(slotVal("ch1", "guitar-clean", GUITAR_MOD.speed)).not.toBe(50);
+  });
+
+  // The two companders are ONE family, and the only thing separating them is what their
+  // five values come up at. So a control's default has to be asked of the SELECTOR: asked
+  // of the family alone it answers with Compander-H's for both, and a node holding
+  // Compander-S with nothing stored yet — offline, a demo, any plan before its first
+  // device read — has every pickup crossing point and every feedback value taken from the
+  // other effect.
+  it("takes an unsaved compander value from the selector rather than the family", () => {
+    const slot = 6;
+    const cid = controlId("bus.stereo", "insfx", `insfx.compander.${slot}`);
+    const defOf = (sel: number): number => insertFxParams("compander", sel).find((d) => d.slot === slot)!.def;
+    expect(defOf(COMPANDER_S), "the two must differ, or this proves nothing").not.toBe(defOf(COMPANDER_H));
+
+    const readBack = (sel: number): number => {
+      // Nothing stored: the catalogue's default is the whole answer.
+      plan.nodeParams["bus.stereo"] = { insertFx: sel, insertFxParams: {} };
+      const c = bindControl(model, plan, cid);
+      if (!c) throw new Error(`no control ${cid}`);
+      // Through the control's own codec rather than a second copy of it: what a pickup
+      // crosses and what feedback sends is this number, and writing it back is what says
+      // which raw it stood for.
+      c.set(c.get());
+      return plan.nodeParams["bus.stereo"].insertFxParams![insertFxParamKey("compander", slot)];
+    };
+    expect(readBack(COMPANDER_S)).toBe(defOf(COMPANDER_S));
+    expect(readBack(COMPANDER_H)).toBe(defOf(COMPANDER_H));
+  });
+
+  // A TOGGLE reaches the plan too, and by a branch of its own: the slot descriptors split
+  // into a switch and a slider before either is bound, so a lock proved on the sliders says
+  // nothing about the other half. The guitar amp's gate is the switch a mapping can hold.
+  it("writes an insert-FX switch through a mapping, where nothing locks it", () => {
+    const gate = 24;
+    const cid = controlId("ch1", "insfx", `insfx.guitar-clean.${gate}`);
+    holding("ch1", 256, { [gate]: 0 }, "guitar-clean");
+    expect(push(cid, 1)).toBe(true);
+    expect(slotVal("ch1", "guitar-clean", gate)).toBe(1);
+    expect(push(cid, 0)).toBe(true);
+    expect(slotVal("ch1", "guitar-clean", gate)).toBe(0);
+  });
+
+  // Pitch Fix's own driven set has no MIDI half to lock, and that is worth asserting
+  // rather than assuming: the Scale is an enum row, which offers no control at all (a
+  // select has no normalized domain), and the twelve notes are a keyboard the screen
+  // builds by hand rather than descriptors the catalogue walks. Give either one a
+  // descriptor and this fails, which is where the lock would then be needed.
+  it("offers no mapping at all for the slots Pitch Fix's MIDI Control owns", () => {
+    holding("ch1", 512, { [PITCH_MIDI_ENABLE_SLOT]: 1, [PITCH_SCALE_SLOT]: 0 }, "pitch");
+    const driven = pitchDeviceDriven(plan.nodeParams["ch1"]?.insertFxParams);
+    expect(driven.size, "the unit is driving something to begin with").toBeGreaterThan(0);
+    const ids = new Set(listControls(model, plan).map((c) => c.id));
+    for (const slot of driven) {
+      expect(ids, `pitch slot ${slot}`).not.toContain(controlId("ch1", "insfx", `insfx.pitch.${slot}`));
+    }
+  });
+
+  // Not an insert effect: the same shape one rate above, where the bus itself is gone.
+  it("refuses a send into a bus the sample rate has removed — level AND mute", () => {
+    const level = controlId("ch1", "level", "bus.fx2");
+    const mute = controlId("ch1", "mute", "bus.fx2");
+    const send = () => conn("ch1", "bus.fx2");
+    send().params = { ...send().params, level: -10, on: true };
+    plan.sampleRate = 192000;
+    expect(push(level, 0.8), "level at 192 kHz").toBe(false);
+    expect(push(mute, 1), "mute at 192 kHz").toBe(false);
+    expect(send().params?.level).toBe(-10);
+    expect(send().params?.on).toBe(true);
+    // …and both take at a rate the bus survives, so this is not a send nothing can write.
+    plan.sampleRate = 48000;
+    expect(push(level, 0.8), "level at 48 kHz").toBe(true);
+    expect(push(mute, 1), "mute at 48 kHz").toBe(true);
+    expect(send().params?.level).not.toBe(-10);
+    expect(send().params?.on).toBe(false);
   });
 });

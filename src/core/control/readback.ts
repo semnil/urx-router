@@ -47,7 +47,7 @@ import type { ParamName } from "./params";
 import { writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_LEVEL, FX_SLOT_ON, fxParams } from "./fx-effect";
-import { insertFxEngine, insertFxFamilyOf, insertFxReadableSlots } from "./insert-fx-effect";
+import { insertFxEngine, insertFxFamilyOf, insertFxReadableSlots, mergeReadInsertFxParams } from "./insert-fx-effect";
 import { pairPrimary } from "../routing";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
@@ -618,18 +618,26 @@ async function readPass(
       const insertFx = normalizeInsertFx(await vdGet(ifx.param, 0, ifx.instances[0]));
       const insertFxOn = vdToBool(await vdGet(ifx.onParam, 0, ifx.instances[0]));
       const fam = insertFxFamilyOf(insertFx);
-      let insertFxParams: Record<string, number> | undefined;
+      const read: Record<number, number> = {};
       if (fam) {
         const engine = insertFxEngine(fam, ifx.isOutput);
-        insertFxParams = {};
-        // Readable, not writable: MIDI Control is shown and never written, and the row that
-        // shows it would print a default instead of the unit's value if the read followed
-        // the emit path's own list.
+        // Every slot the app can write is one it has to be able to read, the slots the unit
+        // is currently DRIVING included: the emit path skips those, and a refetch after a
+        // write that set the unit computing is the only thing that brings its result back.
         for (const s of insertFxReadableSlots(fam)) {
-          insertFxParams[String(s.slot)] = await vdGet(engine, 0, s.slot);
+          read[s.slot] = await vdGet(engine, 0, s.slot);
         }
       }
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], insertFx, insertFxOn, insertFxParams };
+      const was = plan.nodeParams[node.id];
+      // MERGED, not replaced: the map carries one namespace per family so a node that has
+      // held several effects keeps each one's values, and a read answers for one of them.
+      const insertFxParams = mergeReadInsertFxParams(
+        was?.insertFxParams,
+        was?.insertFx === undefined ? null : insertFxFamilyOf(was.insertFx),
+        fam,
+        read,
+      );
+      plan.nodeParams[node.id] = { ...was, insertFx, insertFxOn, insertFxParams };
       applied++;
     } catch (e) {
       failed.add(node.id);

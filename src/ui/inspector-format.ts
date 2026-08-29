@@ -6,7 +6,6 @@
 import { LEVEL_MIN_DB } from "../core/plan";
 import { formatHz } from "../core/control/fx-effect";
 import { formatDyn } from "../core/control/translate";
-import { MBC_RELEASE_MS } from "../core/control/insert-fx-effect";
 import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ, ssmcsFreqHz, ssmcsGainDb, ssmcsQ } from "../core/control/vd";
 
 // The lowest real value shown is LEVEL_MIN_DB (-96.0); formatDb prints -∞ below it.
@@ -37,13 +36,6 @@ export function fmtSsmcsRatio(r: number): string {
 export const fmtSsmcsHz = (raw: number): string => formatHz(ssmcsFreqHz(raw));
 export const fmtSsmcsGain = (raw: number): string => formatDyn(ssmcsGainDb(raw), "db");
 export const fmtSsmcsQ = (raw: number): string => ssmcsQ(raw).toFixed(2);
-
-// MBC release: a detent index into the calibrated ms table, shown in seconds from
-// 1000 ms up so the long end reads as the device prints it.
-export function mbcReleaseLabel(index: number): string {
-  const ms = MBC_RELEASE_MS[index] ?? 0;
-  return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`;
-}
 
 // EQ band frequency on a log scale (20 Hz … 20 kHz) over EQ_FREQ_POS_MAX slider
 // positions, so each octave gets equal width and every stop is a whole Hz.

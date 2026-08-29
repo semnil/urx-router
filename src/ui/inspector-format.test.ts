@@ -13,10 +13,8 @@ import {
   formatDb,
   formatGainDb,
   formatPan,
-  mbcReleaseLabel,
 } from "./inspector-format";
 import { LEVEL_MIN_DB } from "../core/plan";
-import { MBC_RELEASE_MS } from "../core/control/insert-fx-effect";
 import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ } from "../core/control/vd";
 
 describe("formatDb", () => {
@@ -76,23 +74,6 @@ describe("fmtSsmcsRatio", () => {
 describe("fmtSsmcsQ", () => {
   it("prints two decimals", () => {
     expect(fmtSsmcsQ(0)).toMatch(/^\d+\.\d{2}$/);
-  });
-});
-
-describe("mbcReleaseLabel", () => {
-  // A detent index into the calibrated table, shown in seconds from 1000 ms up so
-  // the long end reads as the device prints it.
-  it("crosses from ms to s at one second", () => {
-    const below = MBC_RELEASE_MS.findIndex((ms) => ms >= 1000);
-    expect(below).toBeGreaterThan(0);
-    expect(mbcReleaseLabel(below - 1)).toMatch(/ ms$/);
-    expect(mbcReleaseLabel(below)).toMatch(/ s$/);
-    expect(mbcReleaseLabel(below)).toBe(`${(MBC_RELEASE_MS[below] / 1000).toFixed(2)} s`);
-  });
-
-  it("reads an index the table does not have as zero rather than NaN", () => {
-    expect(mbcReleaseLabel(MBC_RELEASE_MS.length)).toBe("0 ms");
-    expect(mbcReleaseLabel(-1)).toBe("0 ms");
   });
 });
 

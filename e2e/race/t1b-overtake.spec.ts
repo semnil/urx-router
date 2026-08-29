@@ -16,7 +16,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf, getsOf, type Span } from "./analyze";
 import { stepLevel } from "../../src/core/levels";
-import { CH1_FADER, CH1_PAN, CH1_PAN_ADDR, CH2_FADER, readoutOf } from "./ui";
+import { CH1_FADER, CH1_PAN, CH1_PAN_ADDR, CH2_FADER, pickInsertFx, readoutOf } from "./ui";
 
 // T1b overtake — the T1 cases the first pass did not reach
 // (docs/{en,ja}/live-race-harness.md, "T1 overtake"). Four of the nine are here:
@@ -43,7 +43,19 @@ import { CH1_FADER, CH1_PAN, CH1_PAN_ADDR, CH2_FADER, readoutOf } from "./ui";
 const strip = (page: Page, label: string) =>
   page.locator(".con-strip", { has: page.locator(`.con-fader[aria-label="${label}"]`) });
 const faderReadout = (page: Page, label: string) => readoutOf(strip(page, label));
-const insFxChip = (page: Page, label: string) => strip(page, label).getByText("INS FX", { exact: true });
+// A converge param written from the CONSOLE. The strip's INS FX face is a bypass and
+// writes one ordinary key; what writes INSERT_FX (135 / 578) is picking a type, which
+// lives in the popover the disclosure beside it opens. So this is two steps, and the
+// second one is a row — which is also the element the latched run has to click in-page.
+const insFxOpen = (page: Page, label: string) => strip(page, label).locator(".con-ifxopen");
+const insFxFirstFree = (page: Page) =>
+  page
+    .locator(".con-ifxpop .irow:not(.off)")
+    .filter({ hasNot: page.getByText("No Effect", { exact: true }) })
+    .first();
+/** Open a strip's type list and take the first effect it offers. Choosing one opens its
+ *  screen, and everything this file does afterwards is behind it. */
+const pickFirstInsFx = (page: Page, label: string): Promise<void> => pickInsertFx(page, label, insFxFirstFree(page));
 
 /** Pre-load the device's memory before the session's readback. Used to put the insert-FX
  *  selectors at the broker's "no effect" sentinel: the fake answers an unwritten address
@@ -149,11 +161,11 @@ test.describe("T1b overtake", () => {
       await expect(faderReadout(page, "CH 1")).toBeVisible();
       await setLatency(page, { get: 2, set: 2 });
 
-      // First converge. The INS FX chip on a strip with nothing selected picks the
-      // first legal effect, i.e. writes INSERT_FX (135) — a converge param. Its flush
-      // leaves lastFlushConverged set, which is the precondition BOTH runs share.
+      // First converge. Taking a type on a strip that holds nothing writes INSERT_FX
+      // (135) — a converge param. Its flush leaves lastFlushConverged set, which is the
+      // precondition BOTH runs share.
       await mark(page, "converge-1");
-      await insFxChip(page, "CH 1").click();
+      await pickFirstInsFx(page, "CH 1");
       await settleAfter(page, "converge-1", 900, 15_000);
 
       // The second converge param. In the control run it is allowed to converge here,
@@ -162,10 +174,16 @@ test.describe("T1b overtake", () => {
       // arms is already being re-armed before it can fire.
       if (!latched) {
         await mark(page, "converge-2");
-        await insFxChip(page, "STEREO").click();
+        await pickFirstInsFx(page, "STEREO");
         await settleAfter(page, "converge-2", 900, 15_000);
       } else {
-        await insFxChip(page, "STEREO").evaluate((el) => el.setAttribute("data-race-chip", "1"));
+        // The list is opened here and left open — opening writes nothing, so it costs the
+        // stream nothing — and the ROW is what gets marked, since that is the press that
+        // writes the selector. Marking the disclosure would arm a press that only opens a
+        // popover, and the second converge would never be pending at all.
+        await insFxOpen(page, "STEREO").click();
+        await expect(page.locator(".con-ifxpop")).toBeVisible();
+        await insFxFirstFree(page).evaluate((el) => el.setAttribute("data-race-chip", "1"));
       }
 
       const before = (await faderReadout(page, "CH 1").textContent())!;

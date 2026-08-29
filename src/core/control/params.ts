@@ -481,6 +481,24 @@ export const PARAMS = {
    *  Addressed by SLOT on the y axis; raw broker integers (see
    *  control/insert-fx-effect.ts). Calibrated on a factory URX44V. */
   INSERT_FX_EFFECT: { id: 697, encoding: "raw" },
+  /**
+   * The two engine slots that are CONTROLS over the rest of the array rather than values
+   * in it — the multi-band compressor's 1-Knob (its switch and its level) and Pitch Fix's
+   * MIDI Control. Same array and same encoding as INSERT_FX_EFFECT; a separate name
+   * because a name is what carries the side effect.
+   *
+   * `refetch` rather than `converge`: writing either makes the UNIT recompute slots the
+   * plan only mirrors — fifteen of them for the 1-Knob, the scale and the twelve-note mask
+   * for MIDI Control — so the owner node is read back instead of being pushed. Pushing
+   * would put the pre-change values over what the unit just derived, and the writer
+   * suppresses those slots for exactly that reason; without the read, the plan keeps its
+   * stale copy, shows it on the screen and sends it the moment the control is switched off.
+   * This is the treatment COMP_ONE_KNOB already has, for the same shape of control.
+   *
+   * The id is the guitar engine, as the anchor above: the engine a command carries is
+   * resolved per family and passed explicitly.
+   */
+  INSERT_FX_DRIVER: { id: 697, encoding: "raw", sideEffect: "refetch" },
   /** Input source select for MONO CH1-4 (y = physical input slot 0..3). Raw input
    *  port ref. Param 22 only covers the mono slots; the device returns NONE for
    *  slots 4..11, so stereo channels use the separate 209/210 pair below. */
@@ -745,7 +763,7 @@ export const INSERT_FX_OPTIONS: InsertFxOption[] = [
 // user guide p.180), so only one MIX/STEREO output can hold one at a time.
 export const OUTPUT_INSERT_FX_OPTIONS: InsertFxOption[] = [
   { value: INSERT_FX_NONE, label: "No Effect" },
-  { value: 1792, label: "M.Band Comp", maxRate: 96000, slot: "out-dyn" },
+  { value: 1792, label: "M.B.Comp", maxRate: 96000, slot: "out-dyn" },
   { value: 1793, label: "Compander-H", maxRate: 96000, slot: "out-dyn" },
   { value: 1794, label: "Compander-S", maxRate: 96000, slot: "out-dyn" },
 ];

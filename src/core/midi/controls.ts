@@ -36,6 +36,7 @@ import {
   SSMCS_EQ_BAND_NAMES,
   ssmcsCompFields,
   ssmcsMainFields,
+  effectiveInsertFx,
 } from "../control/translate";
 import type { DynField, SsmcsEqBandName } from "../control/translate";
 import {
@@ -46,7 +47,14 @@ import {
   EQ_TYPE_SHELVING,
 } from "../control/params";
 import { mixSendLocks } from "../routing";
-import { channelEqUnavailable } from "../constraints";
+import {
+  insertFxFamilyOf,
+  insertFxLockedSlots,
+  insertFxParams,
+  insertFxSlotVal,
+  reKeyInsertFxParams,
+} from "../control/insert-fx-effect";
+import { channelEqUnavailable, nodeRateDisabled } from "../constraints";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../control/vd";
 
 /** The STEREO master — every channel's / FX channel's fixed main send target. */
@@ -72,6 +80,9 @@ export const eqBandScope = (index: number): string => `${EQ_SCOPE}.${EQ_BAND_NAM
 /** The SSMCS strip's scopes, one per stage of the morphing bank. They mirror the plan's
  *  own nesting (`ssmcs`, `ssmcs.comp`, `ssmcs.sc`, `ssmcs.eq.<band>`), so a control id
  *  reads as the path to the value it edits. */
+/** The insert effect's scope root. Its full scope carries the family and the slot after
+ *  it, since the node can change what family it holds. */
+export const INSFX_SCOPE = "insfx";
 export const SSMCS_SCOPE = "ssmcs";
 export const SSMCS_COMP_SCOPE = `${SSMCS_SCOPE}.comp`;
 export const SSMCS_SC_SCOPE = `${SSMCS_SCOPE}.sc`;
@@ -125,7 +136,13 @@ export type ControlParam =
   | "compDrive"
   | "morphing"
   | "outGain"
-  | "sideChain";
+  | "sideChain"
+  // The insert effect's own values. ONE token rather than a name per row: an insert-FX
+  // value is a raw engine SLOT under a family the node can change, so the family and the
+  // slot go in the SCOPE (`insfx.compander.6`) and the union stays closed. A mapping made
+  // under one family simply does not bind while the node holds another — the same answer
+  // `bindControl` already gives a mapping for a node that lost the processor it named.
+  | "insfx";
 
 export type ControlKind = "continuous" | "toggle";
 
@@ -264,7 +281,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   // The MUTE semantics mirror the console chip: on a connection it drives the
   // send's ON (1 = muted = on false); channels'/FX sends ship ON, the MIX → STEREO
   // "TO ST" ships off. On a node it drives the master ON (STEREO / MONITOR).
-  const connMute = (send: string | undefined, defaultOn: boolean): BoundControl => {
+  const connMute = (send: string | undefined, defaultOn: boolean, locked?: () => boolean): BoundControl => {
     const to = send ?? MAIN_BUS;
     return {
       id: controlId(id, "mute", send),
@@ -275,7 +292,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       get: () => ((conn(to)?.params?.on ?? defaultOn) ? 0 : 1),
       set: (v) => {
         const c = conn(to);
-        if (!c) return false;
+        if (!c || locked?.()) return false;
         c.params = { ...c.params, on: v < 0.5 };
         return true;
       },
@@ -657,6 +674,77 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     return out;
   }
 
+  // ---- the insert effect the node holds -----------------------------------
+  // Scoped by FAMILY and SLOT, so a mapping names the value it was made on rather than
+  // "whatever this node's insert effect calls its sixth slot". Enum rows answer nothing:
+  // a select has no normalized domain, which is the treatment COMP's knee already gets.
+  // Resolved from the CORE catalogue rather than from the screen that also asks this:
+  // this module has to load without a DOM (the node smoke test), and `src/ui` reaches
+  // the i18n module, which touches `document` at import time.
+  const insFxSel = effectiveInsertFx(model, plan, id);
+  const insFxFamily = insFxSel === undefined ? null : insertFxFamilyOf(insFxSel);
+  if (insFxFamily) {
+    // With the SELECTOR, not the family alone: the two companders are one family whose
+    // defaults are all that separate them, so the family alone answers with Compander-H's
+    // for both. A node holding Compander-S with nothing stored yet — offline, a demo, or
+    // any plan before its first device read — would then have every pickup crossing point
+    // and every feedback value taken from the other one.
+    for (const d of insertFxParams(insFxFamily, insFxSel)) {
+      if (d.control === "select") continue;
+      const scope = `${INSFX_SCOPE}.${insFxFamily}.${d.slot}`;
+      // Through the shared reader, or a plan filled from a device read answers with the
+      // catalogue default: a readback stores the BARE slot number and only an edit re-keys it.
+      const cur = (): number => insertFxSlotVal(plan.nodeParams[id]?.insertFxParams, insFxFamily, d.slot, d.def);
+      // The same refusal the tuning screen draws, asked of the same predicate and asked
+      // NOW rather than when the mapping was made: a mapping outlives the state that
+      // locked its slot, and one made before the unit took the slot over would otherwise
+      // write the plan while the writer is suppressing it.
+      const lockedNow = (): boolean =>
+        insertFxLockedSlots(insFxFamily, plan.nodeParams[id]?.insertFxParams).has(d.slot);
+      const write = (raw: number): void => {
+        // The mirrored slots Pitch Fix keeps: the device reads both, so a write that moved
+        // one would be half applied. `reKeyInsertFxParams` also drops the bare slot the
+        // value came from, so the two namespaces cannot both answer for one slot.
+        const patch: Record<number, number> = { [d.slot]: raw };
+        if (d.mirror !== undefined) patch[d.mirror] = raw;
+        np().insertFxParams = reKeyInsertFxParams(np().insertFxParams ?? {}, insFxFamily, patch);
+      };
+      if (d.control === "toggle") {
+        out.push({
+          id: controlId(id, "insfx", scope),
+          node: id,
+          param: "insfx",
+          scope,
+          kind: "toggle",
+          get: () => (cur() ? 1 : 0),
+          set: (v) => {
+            if (lockedNow()) return false;
+            write(v >= 0.5 ? 1 : 0);
+            return true;
+          },
+        });
+        continue;
+      }
+      const lo = d.rawMin ?? 0;
+      const hi = d.rawMax ?? 1;
+      const step = d.rawStep ?? 1;
+      const codec = linearCodec(lo, hi, step);
+      out.push({
+        id: controlId(id, "insfx", scope),
+        node: id,
+        param: "insfx",
+        scope,
+        kind: "continuous",
+        get: () => codec.get(cur()),
+        set: (v) => {
+          if (lockedNow()) return false;
+          write(codec.set(v));
+          return true;
+        },
+      });
+    }
+  }
+
   if (id === "bus.stream") return out; // meter-only strip: nothing to control
 
   if (isChannel || isFx) {
@@ -669,8 +757,12 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     for (const target of SEND_TARGETS) {
       if (target === id || !conn(target)) continue;
       const locks = (): { busFixed: boolean; panLinked: boolean } => mixSendLocks(plan, target);
-      out.push(connControl("level", target, levelCodec, LEVEL_OFF_DB, () => locks().busFixed));
-      out.push(connMute(target, true));
+      // …and a send into a bus the sample rate has removed sets three values on DSP the
+      // unit is not running. The CONSOLE locks the whole column on this predicate, so a
+      // mapping that reached past it would be the one surface still writing there.
+      const rateGone = (): boolean => nodeRateDisabled(target, plan.sampleRate);
+      out.push(connControl("level", target, levelCodec, LEVEL_OFF_DB, () => locks().busFixed || rateGone()));
+      out.push(connMute(target, true, rateGone));
       if (target === "bus.mix1" || target === "bus.mix2") {
         out.push(connControl("pan", target, panCodec, 0, () => locks().panLinked));
         // Send tap (PRE/POST) as a toggle: MIX taps are freely writable (a CH → FX

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { chooseOption } from "./choose-option";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
 // "CH 11/12"). The console runs against the factory plan, so we do NOT seed
@@ -67,7 +68,7 @@ test("the stereo-channel EQ chip locks read-only and off at 192 kHz", async ({ p
   await expect(eqChip).toHaveClass(/\bon\b/);
   await expect(eqChip).not.toHaveClass(/readonly/);
 
-  await page.locator("#rate-picker").selectOption("192000");
+  await chooseOption(page.locator("#rate-picker"), "192000");
   const locked = strip(page, "CH 5/6").locator(".con-chip", { hasText: "EQ" }).first();
   await expect(locked).toHaveClass(/readonly/);
   await expect(locked).not.toHaveClass(/\bon\b/); // forced off
@@ -400,7 +401,7 @@ test("a re-render with nothing focused keeps the strip scroll offset", async ({ 
   const scrolled = await scrollStripsToEnd(page);
   // A rate change re-renders every strip (applyRateConstraints), with focus on the
   // picker — outside the rack, so nothing is restored into it.
-  await page.locator("#rate-picker").selectOption("192000");
+  await chooseOption(page.locator("#rate-picker"), "192000");
   await expect(strip(page, "CH 5/6").locator(".con-chip", { hasText: "EQ" }).first()).toHaveClass(/readonly/);
   expect(await stripsScroll(page)).toBe(scrolled);
 });
@@ -622,7 +623,7 @@ test("switching the model rebuilds the console strip set in place", async ({ pag
   await expect(strip(page, "CH 4")).toBeVisible();
   await expect(strip(page, "CH 3/4")).toHaveCount(0);
 
-  await page.locator("#model-picker").selectOption("URX22");
+  await chooseOption(page.locator("#model-picker"), "URX22");
   await expect(page.locator("#model-picker")).toHaveValue("URX22");
 
   await expect(page.locator("#console-host")).toBeVisible(); // still on the console

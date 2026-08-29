@@ -8,23 +8,7 @@ import type { ConnParams, FxEffectParams, NodeParams, Plan, PlanConnection, Ssmc
 import { clipNodeName, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
 import { formatHz, fxEffectTypes, fxParams, resolveFxEffectType } from "../core/control/fx-effect";
-import {
-  insertFxFamilyOf,
-  insertFxParamKey,
-  MBC_BANDS,
-  MBC_BAND_PARAM,
-  MBC_GLOBAL,
-  mbcXoverLabel,
-  mbcOutGainLabel,
-  MBC_XOVER_LM_RANGE,
-  MBC_XOVER_MH_RANGE,
-  MBC_RELEASE_MS,
-  MBC_ONE_KNOB_LEVEL_MAX,
-  MBC_OUT_GAIN_RAW_MIN,
-  MBC_OUT_GAIN_RAW_MAX,
-  type InsertFxFamily,
-  type MbcBandKey,
-} from "../core/control/insert-fx-effect";
+
 import { isFixedConnection, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import {
   effectiveInsertFx,
@@ -100,19 +84,11 @@ import { fineTag, optInFine } from "./fine";
 import { dynOpenLabel } from "./dyn-registry";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import type { DynKind } from "./dyn-registry";
-import {
-  EQ_FREQ_POS_MAX,
-  eqFreqToPos,
-  eqPosToHz,
-  formatDb,
-  formatGainDb,
-  formatPan,
-  mbcReleaseLabel,
-} from "./inspector-format";
+import { EQ_FREQ_POS_MAX, eqFreqToPos, eqPosToHz, formatDb, formatGainDb, formatPan } from "./inspector-format";
 import { clearSectionOverride, recordSectionOpen, resolveSectionOpen } from "./inspector-sections";
 import { isBalanceChannel, sendFields, sendlessNote } from "./send-fields";
 import type { ParamField } from "./send-fields";
-import { insertFxVal, parkOutgoingInsertFxParams, reKeyInsertFxParams } from "./insert-fx-model";
+import { parkOutgoingInsertFxParams } from "./insert-fx-model";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -189,21 +165,32 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
  *  that unreachable is that `renderInspector` has exactly ONE call site and it is behind
  *  this gate. A second one would latch `composing` for the rest of the session and the
  *  panel would silently stop updating. */
-export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean } {
+export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean; reset: () => void } {
   let composing = false;
   let pending = false;
   // Runs the held rebuild once the gate is no longer busy — asked on the event that
   // ENDS the busy state, by which point it has already ended. A composition clears its
-  // own flag here; a picker's "open" is read off focus and has cleared itself before
-  // the blur reaches us, so testing the flag alone would have dropped the rebuild.
-  const flush = (): void => {
-    if (!pending || busy()) return;
+  // own flag here.
+  //
+  // A PICKER does not clear itself, and `pickerClosed` is what says so. Its "open" is
+  // read off focus, and a select KEEPS focus after a choice is made in it, so a flush
+  // that re-asks `openPicker()` on `change` is asking about the picker that just closed
+  // and answering yes — deferring the rebuild to whatever the operator happened to do
+  // next. The event is the dismissal, so the flush it triggers takes that as read.
+  //
+  // Every select that changes WHICH controls the panel shows depends on this — Insert
+  // FX, COMP/EQ Type and Signal Type. Without it each one writes the plan and leaves the
+  // old set on screen: an insert effect is chosen and neither the bypass switch nor the
+  // launcher appears, which between them are the whole route to the tuning screen.
+  const flush = (pickerClosed = false): void => {
+    if (!pending) return;
+    if (composing || isHoldingInert() || (!pickerClosed && openPicker())) return;
     pending = false;
     rebuild();
   };
-  const end = (): void => {
+  const end = (pickerClosed = false): void => {
     composing = false;
-    flush();
+    flush(pickerClosed);
   };
   // An open `<select>` picker is the second kind of in-flight input a rebuild destroys,
   // and `replaceChildren` closes it instantly — so while any followed parameter on the
@@ -227,18 +214,36 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // would wait for whatever the operator happened to do next. `flush` rather than `end`,
   // which also clears `composing` — a backstop the two input kinds need and this one must
   // not take, since a hold can end while a composition is genuinely still in flight.
-  onInertHoldsEnd(flush);
+  // Each of these is wrapped rather than passed straight in: `flush` and `end` now take
+  // a flag, and a listener is handed the EVENT as its first argument — which is an
+  // object, so every one of them would read as "the picker closed" and the check the
+  // other two paths depend on would be gone.
+  onInertHoldsEnd(() => flush());
   host.addEventListener("compositionstart", () => {
     composing = true;
   });
-  host.addEventListener("compositionend", end);
-  host.addEventListener("change", end);
-  host.addEventListener("focusout", end);
+  host.addEventListener("compositionend", () => end());
+  host.addEventListener("change", () => end(true));
+  host.addEventListener("focusout", () => end());
   return {
     held: () => {
       if (!busy()) return false;
       pending = true;
       return true;
+    },
+    // The panel is about to show a DIFFERENT node. Everything this gate protects belongs
+    // to the one being left — an open picker, a composition, a row held under a pointer —
+    // so there is nothing left to outrank the change, and holding it leaves the panel
+    // describing a node the operator has moved away from.
+    //
+    // The flags are dropped rather than left standing, and that is the load-bearing half:
+    // the caller rebuilds without asking, which removes the composing field, and the end
+    // event for a composition whose field is gone may never arrive. Left set, `composing`
+    // would latch for the rest of the session and the panel would stop updating at all —
+    // the failure this file's header names.
+    reset: () => {
+      composing = false;
+      pending = false;
     },
   };
 }
@@ -442,10 +447,6 @@ export function renderInspector(
       host.append(el);
     }
 
-    // Insert FX and the trailing channel/bus controls group into this body when a
-    // node provides one (the bus Parameters section); otherwise they stay loose.
-    let tailBody: HTMLElement | null = null;
-
     // Channel node device parameters: ON (mute) and HPF. Stored per node id, so
     // they edit plan.nodeParams rather than a wire. Defaults match the device
     // (channel on, HPF off) until a fetch or edit sets them explicitly.
@@ -610,8 +611,6 @@ export function renderInspector(
         );
       }
       host.append(ps.el);
-      // Insert FX (STEREO / MIX outputs) groups into the Parameters section.
-      tailBody = ps.body;
       // Output bus 4-band PEQ (STEREO 498-block single / MIX 591-block L/R-linked)
       // as a collapsible EQ module — its ON led (STEREO 498 / MIX 591, default on)
       // drives the fold, matching the channel EQ section.
@@ -777,8 +776,15 @@ export function renderInspector(
     // (output effects). An option is disabled when it exceeds the current sample
     // rate's ceiling, or when its device-wide 1-of slot is taken by another node —
     // both asked of the one menu in core/constraints.ts the CONSOLE chip asks, so
-    // the two screens cannot disagree about what is available. Buses group it into
-    // their Parameters section (tailBody); channels show it loose below the EQ module.
+    // the two screens cannot disagree about what is available.
+    //
+    // A collapsible section, and its ON state folds it, exactly as GATE / COMP / EQ and
+    // the Ducker do. It was the one processor of the five laid out LOOSE — a bus grouped
+    // it into Parameters and a channel had it hanging under the EQ module — which made it
+    // the only one whose height could not be put away: 72px on a channel holding nothing
+    // and 177px holding something, against the 35px a folded section costs, on every
+    // channel, always. Being outside the fold index also meant every row added above it
+    // pushed it further down with no way to bring it back.
     const ifx = insertFxControl(model, node.id);
     if (ifx) {
       const ifxMenu = insertFxMenu(model, plan, node.id);
@@ -791,9 +797,14 @@ export function renderInspector(
       // handed one lands at selectedIndex -1 and draws an EMPTY field. The plan keeps the
       // raw value until the operator picks something, and picking writes a real one.
       const ifxEff = effectiveInsertFx(model, plan, node.id);
-      (tailBody ?? host).append(
+      // The section's lamp and its fold follow the same state the switch inside it writes:
+      // engaged means something is in the path. Selecting engages, so choosing a type
+      // opens the section it was chosen in rather than leaving the rest folded away.
+      const ifxOn = insertFxEngaged(plan.nodeParams[node.id]);
+      const ifxSec = section(m.inspector.insertFx, { open: ifxOn, on: ifxOn, key: "insertFxOn" });
+      ifxSec.body.append(
         selectControl(
-          m.inspector.insertFx,
+          m.inspector.insertFxType,
           ifxMenu.map((e) => ({
             value: String(e.option.value),
             label: e.option.label,
@@ -823,11 +834,15 @@ export function renderInspector(
         // app's own table does not carry (read back from a unit) has no ceiling to name
         // and falls back to the menu-wide answer.
         const { locked: ifxRateLocked, entry: ifxEntry } = insertFxRateLock(ifxMenu, ifxEff);
-        (tailBody ?? host).append(
-          boolToggle(
-            m.inspector.insertFxOn,
-            !ifxRateLocked && insertFxEngaged(plan.nodeParams[node.id]),
-            (v) => actions.onUpdateNodeParams(node.id, { insertFxOn: v }),
+        // Through the shared helper the other on-state sections use, so switching it also
+        // drops a manual fold and hands the section back to following its own state — and
+        // so the row carries no label of its own, the section header being its name.
+        ifxSec.body.append(
+          sectionToggle(
+            node.id,
+            "insertFxOn",
+            !ifxRateLocked && ifxOn,
+            actions,
             !ifxRateLocked
               ? undefined
               : ifxEntry?.option.maxRate !== undefined
@@ -836,20 +851,16 @@ export function renderInspector(
           ),
         );
       }
-      // The selected effect's own parameters. Where the tuning screen can show the
-      // family, this is its launcher and the sliders live there, beside the meters that
-      // say what they are doing — the move GATE / COMP / EQ / SSMCS have already made,
-      // and for the same reason: a slider built here reads the snapshot taken at render
-      // time and writes a stale value back on its next drag. The families the screen
-      // does not yet show keep the section below.
-      if (ifxEff !== undefined) {
-        if (insertFxScreenFamily(model, plan, node.id)) {
-          (tailBody ?? host).append(dynLauncher("insfx", node.id, actions, m));
-        } else {
-          const fxSec = insertFxEffectSection(node.id, ifxEff, plan, actions, m);
-          if (fxSec) (tailBody ?? host).append(fxSec);
-        }
+      // The selected effect's own parameters. This is their launcher and they live on the
+      // tuning screen, beside the meters that say what they are doing — the move GATE /
+      // COMP / EQ / SSMCS have already made, and for the same reason: a slider built here
+      // reads the snapshot taken at render time and writes a stale value back on its next
+      // drag. Every family the app edits at all is shown there, so there is no second
+      // editor here for one of them to be split across.
+      if (ifxEff !== undefined && insertFxScreenFamily(model, plan, node.id)) {
+        ifxSec.body.append(dynLauncher("insfx", node.id, actions, m));
       }
+      host.append(ifxSec.el);
     }
 
     // Any node may be shelved; its wires are hidden along with it (see graph.ts).
@@ -1231,133 +1242,6 @@ function fxEffectSection(
     }
   }
   return el;
-}
-
-// ---- Insert-FX effect editor (guitar amp / pitch fix / compander / MBC) ----
-
-// The engine-slot map is keyed by family + slot, so a value stored by one effect is
-// never read by the next one the selector names (insert-fx-effect.ts). A bare slot
-// number is the device-shaped namespace a readback writes, read as the selected
-// family's and replaced by the qualified key on the first edit.
-function mergeInsertFxParams(
-  actions: InspectorActions,
-  plan: Plan,
-  nodeId: string,
-  fam: InsertFxFamily,
-  patch: Record<number, number>,
-): void {
-  const params = plan.nodeParams[nodeId]?.insertFxParams ?? {};
-  // Two slots per patched value, because the re-key writes one and REMOVES the other:
-  // the family-qualified key it stores under, and the bare slot a readback wrote, whose
-  // absence afterwards is as much this edit's assertion as the value it put in.
-  const written = Object.keys(patch).flatMap((slot) => [insertFxParamKey(fam, Number(slot)), slot]);
-  actions.onUpdateNodeParams(
-    nodeId,
-    { insertFxParams: reKeyInsertFxParams(params, fam, patch) },
-    written.map((slot) => `insertFxParams.${slot}`),
-  );
-}
-
-// INSERT-FX effect section, shown below the insert-FX selector when the chosen
-// effect has editable parameters. Layout per family: compander/guitar = flat
-// descriptors; MBC = 1-knob + three bands + global; pitch = scalars + scale
-// keyboard + MIDI control.
-function insertFxEffectSection(
-  nodeId: string,
-  selectorValue: number,
-  plan: Plan,
-  actions: InspectorActions,
-  m: Messages,
-): HTMLElement | null {
-  const fam = insertFxFamilyOf(selectorValue);
-  // Only the multi-band compressor is edited here. Every other family opens the tuning
-  // screen, which shows the same values beside the taps either side of the effect — and
-  // which is where a slider belongs: one built here reads the params snapshot taken at
-  // render time and writes a stale value back on its next drag.
-  if (fam !== "mbc") return null;
-  const t = m.inspector.insertFxEffect;
-  const { el, body } = section(t.title, { key: "insertFxEffect" });
-  renderMbc(body, nodeId, plan, actions, t);
-  return el;
-}
-
-function renderMbc(
-  body: HTMLElement,
-  nodeId: string,
-  plan: Plan,
-  actions: InspectorActions,
-  t: Messages["inspector"]["insertFxEffect"],
-): void {
-  const set = (slot: number, raw: number) => mergeInsertFxParams(actions, plan, nodeId, "mbc", { [slot]: raw });
-  const val = (slot: number, def: number) => insertFxVal(plan, nodeId, "mbc", slot, def);
-  // 1-knob
-  body.append(
-    boolToggle(t.params.oneKnobOn, val(MBC_GLOBAL.oneKnobOn, 0) !== 0, (v) => set(MBC_GLOBAL.oneKnobOn, v ? 1 : 0)),
-  );
-  body.append(
-    rangeSlider(
-      t.params.oneKnobLevel,
-      0,
-      MBC_ONE_KNOB_LEVEL_MAX,
-      1,
-      val(MBC_GLOBAL.oneKnobLevel, 0),
-      (r) => String(r),
-      (v) => set(MBC_GLOBAL.oneKnobLevel, v),
-    ),
-  );
-  // Per-band: Threshold / Ratio / Attack / Gain, each from MBC_BAND_PARAM.
-  const bandLabel = { low: t.bandLow, mid: t.bandMid, high: t.bandHigh };
-  // Display order, deliberately not the catalog's MBC_BAND_KEYS order.
-  const bandKeys: MbcBandKey[] = ["threshold", "ratio", "attack", "gain"];
-  for (const b of MBC_BANDS) {
-    for (const k of bandKeys) {
-      const p = MBC_BAND_PARAM[k];
-      body.append(
-        rangeSlider(`${bandLabel[b.band]} ${t.params[k]}`, p.rawMin, p.rawMax, 1, val(b[k], p.def), p.format, (v) =>
-          set(b[k], v),
-        ),
-      );
-    }
-  }
-  // Global
-  body.append(
-    rangeSlider(
-      t.params.xoverLowMid,
-      MBC_XOVER_LM_RANGE.min,
-      MBC_XOVER_LM_RANGE.max,
-      1,
-      val(MBC_GLOBAL.xoverLowMid, 37),
-      mbcXoverLabel,
-      (v) => set(MBC_GLOBAL.xoverLowMid, v),
-    ),
-  );
-  body.append(
-    rangeSlider(
-      t.params.xoverMidHigh,
-      MBC_XOVER_MH_RANGE.min,
-      MBC_XOVER_MH_RANGE.max,
-      1,
-      val(MBC_GLOBAL.xoverMidHigh, 94),
-      mbcXoverLabel,
-      (v) => set(MBC_GLOBAL.xoverMidHigh, v),
-    ),
-  );
-  body.append(
-    rangeSlider(t.params.release, 0, MBC_RELEASE_MS.length - 1, 1, val(MBC_GLOBAL.release, 7), mbcReleaseLabel, (v) =>
-      set(MBC_GLOBAL.release, v),
-    ),
-  );
-  body.append(
-    rangeSlider(
-      t.params.outGain,
-      MBC_OUT_GAIN_RAW_MIN,
-      MBC_OUT_GAIN_RAW_MAX,
-      1,
-      val(MBC_GLOBAL.outGain, 68),
-      mbcOutGainLabel,
-      (v) => set(MBC_GLOBAL.outGain, v),
-    ),
-  );
 }
 
 // Ducker node section: the on/off and the control that opens its tuning screen. The

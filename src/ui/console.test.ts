@@ -113,37 +113,55 @@ describe("Console UI", () => {
     document.body.removeChild(host);
   });
 
-  // Above 96 kHz no insert effect can run, so the chip must not offer a toggle that
-  // silently selects one the device would refuse. It gets the stereo EQ's treatment:
-  // shown, forced off, inert.
-  it("locks the INS FX chip off above 96 kHz and restores it below", () => {
+  // Above 96 kHz no insert effect can run. The face must not hand over a toggle that
+  // silently selects one the device would refuse — and it does not, because a press on a
+  // strip holding nothing opens the type list instead of writing anything at all. What
+  // the rate changes is which entries that list offers, and the reason it names on the
+  // face: at 192 kHz it is the rate rather than the slots.
+  it("offers no effect above 96 kHz, and takes none by being pressed", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
     const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
     const consoleInstance = new Console(host, { getModel: () => model, getPlan: () => plan, onChange: () => {} });
 
-    const insFxChip = (): HTMLElement | undefined =>
-      [...host.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === "INS FX");
+    const face = (): HTMLElement | null => host.querySelector<HTMLElement>(".con-ifxface");
+    const rows = (): HTMLElement[] => [...host.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];
 
     plan.sampleRate = 192000;
     consoleInstance.show();
-    const locked = insFxChip();
-    expect(locked).toBeDefined();
-    expect(locked!.getAttribute("aria-disabled")).toBe("true");
-    expect(locked!.getAttribute("aria-pressed")).toBe("false");
-    // A click on an inert chip must not select an effect the rate cannot run
-    // (the plan ships with No Effect selected, so it has to stay there).
+    expect(face()).not.toBeNull();
+    expect(face()!.title).toBe(t().inspector.insFxRateLocked);
+    // Pressing it selects nothing and opens nothing: this strip holds none and every
+    // effect is above the ceiling, so the list behind it would be one already-selected
+    // row and a column of refusals. The face carries the reason instead.
     const before = plan.nodeParams["ch1"]?.insertFx;
     const beforeOn = plan.nodeParams["ch1"]?.insertFxOn;
-    locked!.click();
+    face()!.click();
     expect(plan.nodeParams["ch1"]?.insertFx).toBe(before);
     expect(plan.nodeParams["ch1"]?.insertFxOn).toBe(beforeOn);
+    expect(rows().length).toBe(0);
 
+    // Below the menu-wide ceiling the face names nothing, because something CAN be taken —
+    // and it opens again, which is what says the lock above is the rate and not the face.
+    // Not everything is offered: 96 kHz is still above Pitch Fix's own 48, and that
+    // per-effect reading is the one a menu-wide answer cannot give.
     plan.sampleRate = 96000;
     consoleInstance.refresh();
-    const live = insFxChip();
-    expect(live!.getAttribute("aria-disabled")).toBeNull();
+    expect(face()!.title).toBe("");
+    face()!.click();
+    expect(rows().length).toBeGreaterThan(1);
+    expect(
+      rows()
+        .filter((r) => !r.classList.contains("off"))
+        .map((r) => r.querySelector(".nm")!.textContent)
+        .includes("No Effect"),
+    ).toBe(true);
+    expect(
+      rows()
+        .filter((r) => r.classList.contains("off"))
+        .map((r) => r.querySelector(".nm")!.textContent),
+    ).toEqual(["Pitch Fix"]);
 
     consoleInstance.hide();
     document.body.removeChild(host);
@@ -197,13 +215,16 @@ describe("the head-height cache", () => {
   const chipText = (h: ConsoleHost): string =>
     [...h.host.querySelectorAll<HTMLElement>(".con-head .con-chip")].map((c) => c.textContent).join(",");
 
-  // The type change swaps what a mono strip's chips ARE without changing how many it
-  // carries: the morphing strip's own master and its one opener stand exactly where COMP's
-  // and EQ's two openers stand. So what the type change has to produce is the re-measure —
-  // the height it lands on is the same one, the way a rate change's is. The swap itself is
-  // asserted too: with the counts balancing, every height assertion here would also pass
-  // on a head that never changed at all.
-  it("re-measures when the COMP/EQ type changes, at the same height", () => {
+  // The type change swaps what a mono strip's chips ARE — the morphing strip's own master
+  // and its one opener stand where COMP's and EQ's two openers stand — and in SSMCS mode it
+  // also costs one processing ROW, because SSMCS spends its spare slot on the SC chip and
+  // the INS FX pair can then no longer share a row with EQ. So a spacer goes in beside EQ,
+  // which is two chips in this stand-in's arithmetic: a row, not a rounding.
+  //
+  // What the cache has to do is therefore RE-MEASURE and land on the taller number, not
+  // keep the one it had. Both are asserted, and so is the swap itself — without it a head
+  // that never changed would satisfy the re-measure count on its own.
+  it("re-measures when the COMP/EQ type changes, and follows the row it costs", () => {
     const plan = defaultPlan("URX44V");
     setCompEq(plan, COMP_EQ_SSMCS);
     h = mount(plan);
@@ -220,8 +241,10 @@ describe("the head-height cache", () => {
     expect(measures).toBeGreaterThan(measuredOnce);
     expect(chipText(h)).not.toBe(chipsInSsmcs);
     expect(chipText(h)).not.toContain("SSMCS");
-    expect(headH(h)).toBe(inSsmcs);
     expect(headH(h)).toBe(`${tallest(h)}px`);
+    // One row exactly, and in the direction that says which of the two modes is taller.
+    // A row is two chips wide, and the stand-in prices a chip at 12 (`px`, above).
+    expect(parseInt(inSsmcs) - parseInt(headH(h))).toBe(2 * 12);
   });
 
   // The rate is the other key term, and it is in the key for a different reason: it
@@ -309,15 +332,32 @@ describe("the SSMCS chip", () => {
   // The morphing bank carries ONE opener, beside its own chip: its COMP and EQ faces are
   // reached from inside the screen, and the strip's COMP and EQ chips read exactly as they
   // do on a channel that has no strip at all. Asserted by what each opener opens — the
-  // chips are identical glyphs, and the two banks carry the same NUMBER of chips either
-  // way (the parity spacer takes the slot an opener frees), so a count is satisfied by
-  // both arrangements and a position follows whatever was inserted above it.
+  // chips are identical glyphs, so a count answers nothing about which screen a press
+  // reaches, and a position follows whatever was inserted above it.
+  //
+  // INS FX wears the same glyph and is deliberately not in either list: it is the one
+  // disclosure in this row that opens a POPOVER rather than a screen, because the effect
+  // type has to be settled before a screen has anything to show. Named here so that its
+  // absence is a statement rather than an omission — and asserted as present, so a row
+  // that stopped carrying it cannot pass as this rule holding.
+  const insFxOpen = (h: ConsoleHost): string[] =>
+    [...h.strip("ch1").root.querySelectorAll<HTMLElement>(".con-ifxopen")].map(
+      (c) => c.getAttribute("aria-label") ?? "",
+    );
+
   it("carries one opener in the morphing bank and three in the other", () => {
     h = mount();
-    expect(openers(h)).toEqual([t().dynTuning.gate.open, t().dynTuning.ssmcs.open]);
+    expect(openers(h)).toEqual([t().dynTuning.gate.open, t().dynTuning.ssmcs.open, t().inspector.insertFx]);
+    expect(insFxOpen(h)).toEqual([t().inspector.insertFx]);
 
     h.restore();
     h = consoleHost({ modelId: "URX44V" });
-    expect(openers(h)).toEqual([t().dynTuning.gate.open, t().dynTuning.comp.open, t().dynTuning.eq.open]);
+    expect(openers(h)).toEqual([
+      t().dynTuning.gate.open,
+      t().dynTuning.comp.open,
+      t().dynTuning.eq.open,
+      t().inspector.insertFx,
+    ]);
+    expect(insFxOpen(h)).toEqual([t().inspector.insertFx]);
   });
 });

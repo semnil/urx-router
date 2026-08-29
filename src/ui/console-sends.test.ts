@@ -699,3 +699,103 @@ describe("a drag that does not end in a pointerup", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
   });
 });
+
+// A popover destroys the row that had the focus when it closes, so a KEYBOARD dismissal has
+// to hand the focus back to what opened it. Without that the operator lands on <body> and
+// tabs in from the top of the document — which is the whole strip rack away from where they
+// were. An outside PRESS is the other half and must NOT take the focus back: it belongs to
+// whatever was pressed.
+describe("where the focus goes when a popover closes", () => {
+  const panBtn = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-panbtn")!;
+  const tapBadge = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-tap")!;
+
+  it("returns it to the SEND PAN button on Escape", () => {
+    h = consoleHost();
+    panBtn("ch1").click();
+    expect(h.host.querySelector<HTMLElement>(".con-spop")!.hidden).toBe(false);
+    // The focus is somewhere inside the popover, as it would be after tabbing into it.
+    h.host.querySelector<HTMLElement>(".con-spop [tabindex], .con-spop button")?.focus();
+    key(document.body, "Escape");
+    expect(document.activeElement).toBe(panBtn("ch1"));
+  });
+
+  it("returns it to the meter-point badge on Escape", () => {
+    h = consoleHost();
+    tapBadge("ch1").click();
+    expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden).toBe(false);
+    key(document.body, "Escape");
+    expect(document.activeElement).toBe(tapBadge("ch1"));
+  });
+
+  // One transition further out, and the one the popovers' own placement hides: they live
+  // outside the strip rack and are not rebuilt with it, so the focus INSIDE one survives a
+  // repaint — while the trigger it would be handed back to does not. A device-follow does
+  // this on its own, so without re-resolving, Escape after a repaint drops to <body>
+  // exactly as it did before any of this.
+  it("returns it to the REBUILT strip's badge when a repaint replaced the one it opened", () => {
+    h = consoleHost();
+    tapBadge("ch1").click();
+    const opened = tapBadge("ch1");
+    h.view.refreshStrip("ch1");
+    expect(tapBadge("ch1"), "the repaint replaced the badge").not.toBe(opened);
+    expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden, "and left the popover open").toBe(false);
+    key(document.body, "Escape");
+    expect(document.activeElement).toBe(tapBadge("ch1"));
+  });
+
+  // A whole-rack repaint CLOSES all three, so the row that had the focus goes and the
+  // trigger on the rebuilt strip is what is left. Live sync runs this on every device-side
+  // edit that needs a read-back, so an operator standing in a popover was put on <body> by
+  // the unit rather than by anything they did.
+  for (const [name, open, trigger] of [
+    ["the meter point", () => tapBadge("ch1").click(), () => tapBadge("ch1")],
+    ["SEND PAN", () => panBtn("ch1").click(), () => panBtn("ch1")],
+  ] as const) {
+    it(`returns it to ${name}'s trigger when a whole-rack repaint closes the popover`, () => {
+      h = consoleHost();
+      open();
+      const row = h.host.querySelector<HTMLElement>(".con-tappop .crow, .con-spop [tabindex], .con-spop button");
+      row?.focus();
+      expect(h.host.contains(document.activeElement), "standing inside the popover").toBe(true);
+      h.view.refresh();
+      expect(document.activeElement).toBe(trigger());
+    });
+  }
+
+  // Choosing a tap from the KEYBOARD is the same transition arriving by another door: the
+  // row the operator is standing on is what the selection removes, and the path used to
+  // close the popover itself — before the repaint that decides where the focus goes.
+  it("returns it to the badge when a tap is chosen from the keyboard", () => {
+    h = consoleHost();
+    tapBadge("ch1").click();
+    const rows = [...h.host.querySelectorAll<HTMLElement>(".con-tappop .crow")];
+    const other = rows.find((r) => !r.classList.contains("active"))!;
+    other.focus();
+    other.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden, "the choice closed it").toBe(true);
+    expect(document.activeElement).toBe(tapBadge("ch1"));
+  });
+
+  // The control: an open popover the operator has already left. The focus is on a strip
+  // control, so the rack's own carry-over owns it and the popover rule must not reach in.
+  it("leaves a focus that is already on a strip control alone", () => {
+    h = consoleHost();
+    tapBadge("ch1").click();
+    const elsewhere = panBtn("ch2");
+    elsewhere.focus();
+    h.view.refresh();
+    expect(document.activeElement, "the strip control, in the rebuilt strip").toBe(panBtn("ch2"));
+  });
+
+  it("leaves the focus where a press outside put it", () => {
+    h = consoleHost();
+    tapBadge("ch1").click();
+    const elsewhere = panBtn("ch2");
+    elsewhere.focus();
+    // Dispatched ON the control that was pressed, which is what the handler reads: a press
+    // is the operator aiming somewhere, and the popover's own exclusion is by ancestor.
+    elsewhere.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden).toBe(true);
+    expect(document.activeElement, "the press owns the focus, not the popover that closed").toBe(elsewhere);
+  });
+});

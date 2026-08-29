@@ -27,6 +27,13 @@ import { CSS, RULES, THEME_SELECTOR, decl, faceDecl, tokensIn } from "./style-cs
 import { NAMED_TOKENS, recorder, vals } from "./dyn-plot.test-util";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import { defaultPlan } from "../models/initial-state";
+import { getModel } from "../models";
+import { INSERT_FX_OPTIONS } from "../core/control/params";
+import { effectiveInsertFx } from "../core/control/translate";
+import { t } from "../i18n";
+
+/** The compander, by name off the shared table rather than as a literal. */
+const COMPANDER_H = INSERT_FX_OPTIONS.find((o) => o.label === "Compander-H")!.value;
 
 /** The tokens that are lamps and gradients, never faces to print on. */
 const NOT_A_FACE = ["--led", "--seg"];
@@ -72,6 +79,11 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
       t.x >= f.x0 && t.x <= f.x1 && t.y >= f.y0 && t.y <= f.y1;
 
     const plan = defaultPlan("URX44V");
+    // The INS FX screen resolves what to draw from the PLAN, so a node holding nothing
+    // draws nothing and the pass over it would be vacuous — covered by this test in name
+    // and by nothing in fact. CH 1 takes a compander, the one family whose response is
+    // defined by its parameters, so `insfx` has a curve to be checked.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: COMPANDER_H, insertFxOn: true };
     const offenders: string[] = [];
     // A processor that draws no plot has nothing for this to read, so it is skipped — but
     // the skip is DECLARED rather than taken silently. The plot hooks became optional when
@@ -85,8 +97,10 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
         continue;
       }
       // Band 0 selected, so the EQ's lit marker is among the faces drawn. A processor
-      // that ignores `sel` is unaffected by it.
-      const ctx = { nodeId: "ch1", sel: 0, plan } as never;
+      // that ignores `sel` is unaffected by it. The model and the messages are real
+      // because a descriptor may READ them to decide what it draws — the INS FX screen
+      // asks the model which effect the node can hold before it draws anything.
+      const ctx = { nodeId: "ch1", sel: 0, plan, model: getModel("URX44V"), m: t() } as never;
       const r = recorder();
       proc.drawCurve(r.ctx, proc.plotGeo(600, 320, ctx), vals(), NAMED_TOKENS, ctx);
       for (const text of r.texts) {
@@ -95,6 +109,11 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
       }
     }
     expect(offenders, "fill the face with --led-face and write --on-accent-ink on it").toEqual([]);
-    expect(skipped, "a processor that draws no plot has to be named here").toEqual(["insfx"]);
+    expect(skipped, "a processor that draws no plot has to be named here").toEqual([]);
+    // …and the seeding that gave the INS FX pass something to draw is itself asserted:
+    // dropped, that pass runs against a node holding nothing, draws nothing, and covers
+    // the screen not at all — while staying green. (A curve that only strokes paints no
+    // face and writes no text, so the recorder cannot tell those two apart.)
+    expect(effectiveInsertFx(getModel("URX44V"), plan, "ch1"), "CH 1 must hold a compander").toBe(COMPANDER_H);
   });
 });

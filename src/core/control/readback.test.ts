@@ -406,6 +406,43 @@ describe("applyDeviceState round-trip", () => {
 // Live sync's sideEffect refetch reads a node it has just written, so it hands the
 // read what it wrote — and the read answers those addresses with WHAT THE UNIT
 // ANNOUNCED about them, never with what was sent.
+describe("applyDeviceState and the other effects a node has held", () => {
+  // The stored map is one namespace per family, so a node that has held several effects
+  // keeps each one's values. A read answers for ONE of them, and the reader used to build a
+  // fresh map from that answer alone — which deleted the rest. With live sync up, a 1-Knob
+  // write is enough to trigger a scoped read, and the loss shows only much later, when the
+  // operator selects the old effect and finds it at the factory.
+  it("keeps a family the read is not about, and takes the unit's values for the one it is", async () => {
+    const source = emptyPlan("URX44V");
+    ensureFixedConnections(model, source);
+    source.nodeParams["bus.stereo"] = {
+      insertFx: 1792,
+      insertFxOn: true,
+      insertFxParams: { "mbc:14": 97, "mbc:15": 3 },
+    };
+    mockVdGetFrom(deviceTableFor(source));
+
+    const target = emptyPlan("URX44V");
+    ensureFixedConnections(model, target);
+    // What the node holds now, plus what an earlier guitar amp left behind.
+    target.nodeParams["bus.stereo"] = {
+      insertFx: 1792,
+      insertFxOn: true,
+      insertFxParams: { "guitar-clean:7": 42, "mbc:14": 120 },
+    };
+    const result = await applyDeviceState(model, target);
+    expect(result.errors).toEqual([]);
+
+    const params = target.nodeParams["bus.stereo"].insertFxParams!;
+    expect(params["guitar-clean:7"], "the amp the node is not holding").toBe(42);
+    // The unit's answer for the family that WAS read, and not underneath the plan's older
+    // copy of it: a qualified key wins over a bare one when the value is read.
+    expect(params["mbc:14"]).toBeUndefined();
+    expect(params["14"]).toBe(97);
+    expect(params["15"]).toBe(3);
+  });
+});
+
 describe("applyDeviceState write overlay", () => {
   // A plan whose ch1 EQ 1-knob is on — the measured case: writing it makes the unit
   // recompute the four band gains, which is what the refetch is for.

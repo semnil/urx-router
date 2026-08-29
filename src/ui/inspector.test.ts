@@ -130,11 +130,103 @@ describe("compositionGate", () => {
     expect(gate.held()).toBe(true);
     expect(rebuilds).toBe(0);
 
-    // A picker dismissal is a change, a blur, or both.
+    // A picker dismissal is a change, a blur, or both. This one is both, in the order a
+    // dismissal WITHOUT a choice produces; the case below is the other one.
     sel.blur();
     sel.dispatchEvent(new Event("change", { bubbles: true }));
     expect(rebuilds).toBe(1);
     expect(gate.held()).toBe(false);
+  });
+
+  // …and choosing something is the order that matters, because the select KEEPS focus.
+  // The gate reads a picker's "open" off focus, so a flush that re-asks the question on
+  // `change` is asking about the picker that just closed: it answers yes and the rebuild
+  // waits for whatever the operator does next. Every select that changes which controls
+  // the panel shows goes through here — Insert FX, COMP/EQ Type, Signal Type — so the
+  // panel kept its old control set after each of them. For Insert FX that is the bypass
+  // switch and the tuning-screen launcher, which between them are the whole way in: the
+  // effect was chosen, the plan was written, and the panel showed neither.
+  //
+  // The case above cannot see it. It blurs BEFORE the change, which clears the picker
+  // the check would have tripped on, so it passes either way.
+  it("runs the held rebuild on a change that leaves the select focused", () => {
+    let rebuilds = 0;
+    const el = document.createElement("div");
+    const sel = document.createElement("select");
+    sel.append(document.createElement("option"));
+    el.append(sel);
+    document.body.replaceChildren(el);
+    const gate = compositionGate(el, () => rebuilds++);
+
+    sel.focus();
+    expect(gate.held()).toBe(true); // the choice's own write asks for a rebuild
+    expect(rebuilds).toBe(0);
+
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(document.activeElement).toBe(sel); // …still focused, as a real dismissal leaves it
+    expect(rebuilds).toBe(1);
+  });
+
+  // A selection change is the refresh nothing in the panel may outrank: what the gate
+  // would hold it for belongs to the node being LEFT. Held, the panel goes on describing
+  // that node — which is what a press on another node did while a select in the panel
+  // still had focus, since choosing in one leaves focus there.
+  //
+  // `reset` is what the caller uses to say so, and it clears the flags rather than leaving
+  // them: the rebuild removes the composing field, an end event for a field that is gone
+  // may never arrive, and a latched `composing` stops the panel updating for the rest of
+  // the session (this file's header names that failure).
+  it("drops what it was holding when the panel is told to show something else", () => {
+    let rebuilds = 0;
+    const el = document.createElement("div");
+    const sel = document.createElement("select");
+    sel.append(document.createElement("option"));
+    const text = document.createElement("input");
+    el.append(sel, text);
+    document.body.replaceChildren(el);
+    const gate = compositionGate(el, () => rebuilds++);
+
+    // Both of the flag-held kinds are in flight, and the picker is open on top of them.
+    text.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+    sel.focus();
+    expect(gate.held()).toBe(true);
+
+    gate.reset();
+    // Nothing is pending any more, so a later end event cannot fire a stale rebuild…
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(rebuilds).toBe(0);
+    // …and the composition flag is gone, so the next refresh is not held by a composition
+    // whose field the caller's own rebuild removed.
+    expect(gate.held()).toBe(true); // the select still has focus — that much is still true
+    sel.blur();
+    expect(gate.held()).toBe(false);
+  });
+
+  // The other half of that trade. `change` says THIS PICKER closed and nothing else, so
+  // it may not speak for the third thing the gate holds for: a row held inert under a
+  // still-pressed pointer, where a rebuild hands that pointer a live control. Taking the
+  // change as a general release would do exactly that.
+  it("still holds on a change while a row is held inert", () => {
+    let rebuilds = 0;
+    const el = document.createElement("div");
+    const sel = document.createElement("select");
+    sel.append(document.createElement("option"));
+    const slider = document.createElement("input");
+    slider.type = "range";
+    el.append(sel, slider);
+    document.body.replaceChildren(el);
+    holdInertOnBlur(slider);
+    const gate = compositionGate(el, () => rebuilds++);
+
+    slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    window.dispatchEvent(new FocusEvent("blur"));
+    expect(slider.disabled).toBe(true);
+    expect(gate.held()).toBe(true);
+
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(rebuilds).toBe(0); // the pointer is still down on the slider
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    expect(rebuilds).toBe(1);
   });
 
   // …and a select somewhere ELSE on the page is not this panel's business.
@@ -253,6 +345,12 @@ let act: InspectorActions;
  *  every device screen's order is a claim the source comments make in prose. */
 const rowLabels = (host: HTMLElement = panel): string[] =>
   [...host.querySelectorAll<HTMLElement>(".param")].map((r) => r.dataset.paramLabel ?? "");
+
+/** The Insert FX section body's bypass toggle, if the panel offered one. It is the
+ *  section's own on-state toggle now, so it carries no label to look it up by — the
+ *  header is its name, as on GATE / COMP / EQ. */
+const insertFxBypass = (): HTMLElement | null =>
+  sectionByTitle(t().inspector.insertFx)?.querySelector<HTMLElement>(".sec-body .toggle") ?? null;
 
 const sectionByTitle = (title: string): HTMLDetailsElement | undefined =>
   [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find(
@@ -530,7 +628,7 @@ describe("insert FX", () => {
   // emit path turns it into No Effect and writes no engine parameter, so a bypass switch
   // and an editor over it would change nothing that leaves the app.
   describe.each([
-    ["a channel holding an OUTPUT-only effect", "ch1", "M.Band Comp", OUTPUT_INSERT_FX_OPTIONS],
+    ["a channel holding an OUTPUT-only effect", "ch1", "M.B.Comp", OUTPUT_INSERT_FX_OPTIONS],
     ["a bus holding a CHANNEL-only effect", "bus.mix1", "Pitch Fix", INSERT_FX_OPTIONS],
   ])("%s", (_name, id, label, options) => {
     const held = (): { model: DeviceModel; plan: Plan } => {
@@ -544,9 +642,11 @@ describe("insert FX", () => {
       const { model, plan } = held();
       renderInspector(panel, model, plan, nodeSel(id), act);
       const labels = rowLabels();
-      // The selector itself stays: it is the control that gets the operator out of this.
-      expect(labels).toContain(t().inspector.insertFx);
-      expect(labels).not.toContain(t().inspector.insertFxOn);
+      // The section and its selector stay: that select is the control that gets the
+      // operator out of this state.
+      expect(sectionByTitle(t().inspector.insertFx)).toBeDefined();
+      expect(labels).toContain(t().inspector.insertFxType);
+      expect(insertFxBypass()).toBeNull();
       expect(labels).not.toContain(t().inspector.insertFxEffect.params.threshold);
       expect(sectionByTitle(t().inspector.insertFxEffect.title)).toBeUndefined();
       expect(panel.querySelector("#btn-insfx-screen")).toBeNull();
@@ -559,7 +659,7 @@ describe("insert FX", () => {
       const { model, plan } = held();
       renderInspector(panel, model, plan, nodeSel(id), act);
       const sel = [...panel.querySelectorAll<HTMLElement>(".param")]
-        .find((r) => r.dataset.paramLabel === t().inspector.insertFx)!
+        .find((r) => r.dataset.paramLabel === t().inspector.insertFxType)!
         .querySelector("select")!;
       expect(sel.selectedIndex).toBeGreaterThanOrEqual(0);
       expect(sel.value).toBe(String(INSERT_FX_NONE));
@@ -585,12 +685,14 @@ describe("insert FX", () => {
     const model = getModel("URX44V");
     const plan = emptyPlan("URX44V");
     plan.nodeParams["bus.mix1"] = {
-      insertFx: OUTPUT_INSERT_FX_OPTIONS.find((o) => o.label === "M.Band Comp")!.value,
+      insertFx: OUTPUT_INSERT_FX_OPTIONS.find((o) => o.label === "M.B.Comp")!.value,
       insertFxOn: true,
     };
     renderInspector(panel, model, plan, nodeSel("bus.mix1"), act);
-    expect(rowLabels()).toContain(t().inspector.insertFxOn);
-    expect(sectionByTitle(t().inspector.insertFxEffect.title)).toBeDefined();
+    expect(insertFxBypass()).not.toBeNull();
+    // The launcher, not an editor: every family the app edits at all is edited on the
+    // tuning screen, so this panel has no second set of sliders for one of them.
+    expect(panel.querySelector("#btn-insfx-screen")).not.toBeNull();
   });
 
   // A bare slot number left behind after a selector change would be read as the NEW

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "./fixtures";
 import { LIVE_COMMANDS } from "./tauri-stub";
 import { pickBand } from "./dyn-helpers";
+import { chooseOption } from "./choose-option";
 
 // External MIDI control is desktop-only (isTauri gate), so these tests stub the
 // Tauri IPC bridge before the app boots: invoke() answers the boot-time queries,
@@ -79,12 +80,12 @@ const openMidiWindow = async (page: Page): Promise<Page> => {
 
 const pickInputPort = async (page: Page, win: Page) => {
   await expect(win.locator(".mw-in option")).toHaveCount(3); // None + Stub In + Broken In
-  await win.locator(".mw-in").selectOption("Stub In");
+  await chooseOption(win.locator(".mw-in"), "Stub In");
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
 };
 
 const pickOutputPort = async (page: Page, win: Page) => {
-  await win.locator(".mw-out").selectOption("Stub Out");
+  await chooseOption(win.locator(".mw-out"), "Stub Out");
   await expect.poll(() => page.evaluate(() => window.__midiTest.outputPort)).toBe("Stub Out");
 };
 
@@ -778,7 +779,7 @@ test("a follow-value toggle responds to every press of an alternating button", a
   // Stream Deck side): edge = "Momentary", state = "Toggle".
   await expect(row.locator('.mw-btn option[value="edge"]')).toHaveText("Momentary");
   await expect(row.locator('.mw-btn option[value="state"]')).toHaveText("Toggle");
-  await row.locator(".mw-btn").selectOption("state");
+  await chooseOption(row.locator(".mw-btn"), "state");
   await sendMidi(page, [0xb0, 20, 127]);
   await expect(muteChip()).toHaveClass(/\bon\b/); // 127 = muted
   await sendMidi(page, [0xb0, 20, 0]);
@@ -1009,7 +1010,7 @@ test("switching the model cancels an armed learn instead of persisting a dead ma
   await fader.click(); // armed
   await expect(fader).toHaveClass(/midi-armed/);
 
-  await page.locator("#model-picker").selectOption("URX22");
+  await chooseOption(page.locator("#model-picker"), "URX22");
   await expect(page.locator("#model-picker")).toHaveValue("URX22");
   // The switch dropped learn mode and the armed control with it.
   await expect(page.locator("#console-host")).not.toHaveClass(/midi-learn/);
@@ -1026,11 +1027,11 @@ test("a port that fails to open reverts its select to none and reports the error
   // another app); the select must fall back to "none" instead of keeping a
   // choice that is not actually open.
   const win = await openMidiWindow(page);
-  await win.locator(".mw-in").selectOption("Broken In");
+  await chooseOption(win.locator(".mw-in"), "Broken In");
   await expect(page.locator("#statusbar")).toContainText("MIDI input error");
   await expect(win.locator(".mw-in")).toHaveValue("");
   expect(await page.evaluate(() => window.__midiTest.inputPort)).toBe(null);
-  await win.locator(".mw-out").selectOption("Broken Out");
+  await chooseOption(win.locator(".mw-out"), "Broken Out");
   await expect(page.locator("#statusbar")).toContainText("MIDI output error");
   await expect(win.locator(".mw-out")).toHaveValue("");
   // A working port still opens normally afterwards.
@@ -1061,7 +1062,7 @@ test("a port closed from the shell stops being offered as the chosen one", async
   await expect(again.locator(".mw-in")).toHaveValue("");
 
   // And the choice is live again: picking the port reopens it for real.
-  await again.locator(".mw-in").selectOption("Stub In");
+  await chooseOption(again.locator(".mw-in"), "Stub In");
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
   await sendMidi(page, [0xb0, 7, 100]);
 });
@@ -1085,7 +1086,7 @@ test("a port opened while the shell is being asked survives the answer", async (
 
   // …and open a port while it is held. The pick completes long before the answer,
   // which still says "nothing is open".
-  await again.locator(".mw-in").selectOption("Stub In");
+  await chooseOption(again.locator(".mw-in"), "Stub In");
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
   // The 600 ms hold really did still contain the pick. The window's whole boot plus
   // three or four round trips sit inside it, and on a slow enough machine the answer

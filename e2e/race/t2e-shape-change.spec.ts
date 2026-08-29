@@ -19,7 +19,12 @@ import {
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
-import { graphNode, param, paramExact, strip } from "./ui";
+import { closeDynScreen, graphNode, insertFxBypass, insertFxSelect, param, paramExact, strip } from "./ui";
+// The message catalog, for the one place this file asserts a sentence rather than a
+// value. `en.ts` is a plain data module with no DOM and no `src/ui` behind it, so it
+// costs the harness nothing (the note in t4-midi.spec.ts is about importing a VIEW).
+import { en } from "../../src/i18n/en";
+import { chooseOption } from "../choose-option";
 
 // T2e shape-change — the two catalog cases whose subject is a constraint that lives in
 // DATA rather than in the emit path (docs/{en,ja}/live-race-harness.md).
@@ -138,13 +143,13 @@ const writeSetOf = async (page: Page): Promise<Set<string>> => new Set(Object.ke
 const clearLedger = (page: Page): Promise<void> =>
   page.evaluate(() => (window as unknown as { __urxTrace?: { clear: () => void } }).__urxTrace?.clear());
 
-/** The label of every option in an inspector select, with whether it is disabled. */
-const optionsOf = (page: Page, label: string): Promise<Array<{ text: string; disabled: boolean }>> =>
-  paramExact(page, label)
-    .locator("select")
-    .evaluate((el) =>
-      [...(el as HTMLSelectElement).options].map((o) => ({ text: o.textContent ?? "", disabled: o.disabled })),
-    );
+/** The label of every option in the EFFECT TYPE select, with whether it is disabled. It
+ *  goes through `insertFxSelect` so the section is opened first: folded, the select is not
+ *  in the tree at all and an option sweep reports an empty menu rather than a closed one. */
+const insertFxOptions = async (page: Page): Promise<Array<{ text: string; disabled: boolean }>> =>
+  (await insertFxSelect(page)).evaluate((el) =>
+    [...(el as HTMLSelectElement).options].map((o) => ({ text: o.textContent ?? "", disabled: o.disabled })),
+  );
 
 test.describe("T2e shape-change", () => {
   // ---------------------------------------------------------------------------
@@ -198,7 +203,7 @@ test.describe("T2e shape-change", () => {
     await expect(busTypeSel).toHaveValue("0"); // VARI
     await clearLedger(page);
     await mark(page, "bus-fixed");
-    await busTypeSel.selectOption("1"); // FIXED
+    await chooseOption(busTypeSel, "1"); // FIXED
     await expect(param(page, "Pan Link")).toHaveCount(0); // Pan Link is VARI-only
     await settleAfter(page, "bus-fixed", 1200);
 
@@ -308,7 +313,7 @@ test.describe("T2e shape-change", () => {
     await page.click("#btn-view-graph");
     await graphNode(page, "bus.mix1").click();
     await mark(page, "bus-vari");
-    await param(page, "BUS Type").locator("select").selectOption("0"); // VARI
+    await chooseOption(param(page, "BUS Type").locator("select"), "0"); // VARI
     await expect(param(page, "Pan Link")).toHaveCount(1);
     await settleAfter(page, "bus-vari", 1200);
     await mark(page, "midi-after-unlock");
@@ -551,8 +556,8 @@ test.describe("T2e shape-change", () => {
     // forbids; the console replaces the whole chip with a read-only one.
     await graphNode(page, "ch1").click();
     await graphNode(lo, "ch1").click();
-    const hiOpts = await optionsOf(page, "Insert FX");
-    const loOpts = await optionsOf(lo, "Insert FX");
+    const hiOpts = await insertFxOptions(page);
+    const loOpts = await insertFxOptions(lo);
     console.log(
       `192 kHz inspector options disabled: ${hiOpts
         .filter((o) => o.disabled)
@@ -588,8 +593,9 @@ test.describe("T2e shape-change", () => {
     // the display/plan split the stereo CH EQ toggle has. What is NOT gated is the write:
     // phase 1 measured both addresses still in the set, still carrying the plan's values,
     // because the device does accept them at this rate.
-    const onBtn = paramExact(page, "Insert FX ON").locator("button", { hasText: /^ON$/ });
-    const offBtn = paramExact(page, "Insert FX ON").locator("button", { hasText: /^OFF$/ });
+    const bypass = await insertFxBypass(page);
+    const onBtn = bypass.locator("button", { hasText: /^ON$/ });
+    const offBtn = bypass.locator("button", { hasText: /^OFF$/ });
     await expect(onBtn).toBeDisabled();
     await expect(offBtn).toBeDisabled();
     await expect(offBtn).toHaveClass(/on/); // displayed OFF whatever the plan holds
@@ -617,7 +623,7 @@ test.describe("T2e shape-change", () => {
     // slot, which is device-wide: ch2's menu loses both companders and keeps the four
     // guitar amps, so the disabling is the SLOT's and not a blanket one.
     await graphNode(lo, "ch2").click();
-    const ch2Opts = await optionsOf(lo, "Insert FX");
+    const ch2Opts = await insertFxOptions(lo);
     const ch2Disabled = ch2Opts.filter((o) => o.disabled).map((o) => o.text);
     console.log(`ch2 options disabled while ch1 holds Compander-H: ${ch2Disabled.join(", ")}`);
     expect(ch2Disabled.sort()).toEqual(["Compander-H", "Compander-S"]);
@@ -628,7 +634,7 @@ test.describe("T2e shape-change", () => {
     const before = await writeSetOf(lo);
     await clearLedger(lo);
     await mark(lo, "ch2-takes-amp");
-    await paramExact(lo, "Insert FX").locator("select").selectOption({ label: "Clean" });
+    await chooseOption(await insertFxSelect(lo), { label: "Clean" });
     await settleAfter(lo, "ch2-takes-amp", 1500);
 
     trace = await traceOf(lo);
@@ -672,48 +678,70 @@ test.describe("T2e shape-change", () => {
     // ch3 now sees both slots gone — two different nodes' selections, expressed purely
     // as data on ch3's own menu, and neither of them a write ch3 was party to.
     await graphNode(lo, "ch3").click();
-    const ch3Disabled = (await optionsOf(lo, "Insert FX")).filter((o) => o.disabled).map((o) => o.text);
+    const ch3Disabled = (await insertFxOptions(lo)).filter((o) => o.disabled).map((o) => o.text);
     console.log(`ch3 options disabled (ch1 = compander, ch2 = amp): ${ch3Disabled.join(", ")}`);
     expect(ch3Disabled.sort()).toEqual(["Clean", "Compander-H", "Compander-S", "Crunch", "Drive", "Lead"]);
 
-    // Phase 5 — the same constraint asked of the other screen. The console's INS FX chip
-    // takes its candidate list off the SAME menu the inspector renders (core/constraints.ts
-    // insertFxMenu → insertFxFree), so the effect it hands ch3 can only be one the greying
-    // above left open. Two slots are held by two other channels, so exactly one option is:
-    // Pitch Fix, whose own ceiling this 48 kHz page is at.
-    const ch3Free = (await optionsOf(lo, "Insert FX")).filter((o) => !o.disabled && o.text !== "No Effect");
+    // Phase 5 — the same constraint asked of the other screen. The console's type list is
+    // built from the SAME menu the inspector renders (core/constraints.ts insertFxMenu),
+    // so what it offers ch3 can only be what the greying above left open. Two slots are
+    // held by two other channels, so exactly one option is: Pitch Fix, whose own ceiling
+    // this 48 kHz page is at.
+    const ch3Free = (await insertFxOptions(lo)).filter((o) => !o.disabled && o.text !== "No Effect");
     expect(ch3Free.map((o) => o.text)).toEqual(["Pitch Fix"]);
     await lo.click("#btn-view-console");
     await expect(strip(lo, "CH 3")).toBeVisible();
+    // The two screens are compared directly here rather than inferred from what the
+    // gesture wrote: the popover's own live rows against the select's live options.
+    await strip(lo, "CH 3").locator(".con-ifxopen").click();
+    await expect(lo.locator(".con-ifxpop")).toBeVisible();
+    const popFree = await lo
+      .locator(".con-ifxpop .irow:not(.off) .nm")
+      .evaluateAll((els) => els.map((e) => e.textContent));
+    expect(popFree).toEqual(["No Effect", "Pitch Fix"]);
     await mark(lo, "console-ins-fx-ch3");
-    await strip(lo, "CH 3").getByRole("button", { name: "INS FX", exact: true }).click();
+    await lo.locator(".con-ifxpop .irow", { hasText: "Pitch Fix" }).first().click();
     await settleAfter(lo, "console-ins-fx-ch3", 1500);
+    // Choosing opens that effect's screen; the rest of this case is on the CONSOLE behind
+    // it. Dismissed AFTER the settle, so the screen's own open is inside the window the
+    // flush is measured over rather than racing it.
+    await closeDynScreen(lo);
 
     trace = await traceOf(lo);
     const chipAt = markTime(trace, "console-ins-fx-ch3")!;
     const chipWrites = flushWrites(trace, chipAt);
     const byAddr = new Map(chipWrites.map((s) => [s.addr!, s.value]));
     console.log(`console INS FX on CH 3 flush emitted: ${chipWrites.map((s) => `${s.addr}=${s.value}`).join(", ")}`);
-    // PINNED — the finding, rewritten to the fixed behaviour. This chip used to assign
+    // PINNED — the finding, rewritten to the fixed behaviour. The CONSOLE used to assign
     // ch3 the very effect ch2 had taken one gesture earlier and that ch3's own menu
     // listed as unavailable, putting two channels on one device-wide 1-of slot (whose
     // engine array is a single shared parameter block, 697) with both selections on the
-    // wire. It now takes the one free effect, and never what ch2 holds.
+    // wire. The strip no longer assigns anything by itself: what ch3 got is the row the
+    // list offered, and the list is the menu that greyed ch2's effect out.
     const ch2Effect = ampWrites.find((s) => s.addr === insertFxAddr(1))!.value;
     expect(byAddr.get(insertFxAddr(2))).toBe(PITCH_FIX);
     expect(byAddr.get(insertFxAddr(2))).not.toBe(ch2Effect);
     expect(byAddr.get(insertFxOnAddr(2))).toBe(1);
 
     // …and the take reaches the strips it did not write: with all three input slots now
-    // held, CH 4's chip has nothing left to take and renders read-only. That is the other
-    // half of the chip's composed lock (a strip HOLDING an effect keeps a live bypass),
-    // and it is on screen because taking a slot re-renders the whole view.
-    const ch4Chip = strip(lo, "CH 4").getByRole("button", { name: "INS FX", exact: true });
-    await expect(ch4Chip).toHaveAttribute("aria-disabled", "true");
-    await expect(strip(lo, "CH 3").getByRole("button", { name: "INS FX", exact: true })).not.toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    // held, CH 4 has nothing left to take. Its face says so — the slot reason, not the
+    // rate one — while staying operable, because releasing has to be reachable from
+    // exactly this state; what is empty is the list behind it. On screen at all because
+    // taking a slot re-renders the whole view.
+    const ch4Face = strip(lo, "CH 4").locator(".con-ifxface");
+    await expect(ch4Face).toHaveClass(/\bvacant\b/);
+    await expect(ch4Face).toHaveAttribute("title", en.inspector.insFxSlotLocked);
+    await strip(lo, "CH 4").locator(".con-ifxopen").click();
+    await expect(lo.locator(".con-ifxpop")).toBeVisible();
+    expect(
+      await lo.locator(".con-ifxpop .irow:not(.off) .nm").evaluateAll((els) => els.map((e) => e.textContent)),
+    ).toEqual(["No Effect"]);
+    await lo.keyboard.press("Escape");
+    // CH 3, which just took one, is the positive control: it holds an effect, so its face
+    // is a live bypass rather than a vacancy.
+    const ch3Face = strip(lo, "CH 3").locator(".con-ifxface");
+    await expect(ch3Face).not.toHaveClass(/\bvacant\b/);
+    await expect(ch3Face).toHaveAttribute("aria-pressed", "true");
 
     // Back in the inspector the two screens now say the same thing: ch3's selector shows
     // the effect the chip took as its current value, and lists it ENABLED — a node's own
@@ -721,8 +749,8 @@ test.describe("T2e shape-change", () => {
     // stay greyed out.
     await lo.click("#btn-view-graph");
     await graphNode(lo, "ch3").click();
-    const ch3After = await optionsOf(lo, "Insert FX");
-    const ch3Value = await paramExact(lo, "Insert FX").locator("select").inputValue();
+    const ch3After = await insertFxOptions(lo);
+    const ch3Value = await (await insertFxSelect(lo)).inputValue();
     const chosen = ch3After.find((o) => o.text === "Pitch Fix")!;
     const stillDisabled = ch3After.filter((o) => o.disabled).map((o) => o.text);
     console.log(`ch3 selector value ${ch3Value}; "Pitch Fix" disabled = ${chosen.disabled}`);

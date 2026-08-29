@@ -7,9 +7,11 @@
 import type { NodeParams, Plan } from "../core/plan";
 import {
   insertFxFamilyOf,
-  insertFxParamKey,
+  insertFxSlotVal,
   qualifyInsertFxParams,
   PITCH_KEY_SLOT,
+  PITCH_MIDI_ENABLE_SLOT,
+  PITCH_MIDI_REALTIME_SLOT,
   PITCH_NOTE_SLOTS,
   PITCH_SCALE_OFFSETS,
   PITCH_SCALE_SLOT,
@@ -21,25 +23,13 @@ import {
 // number is the device-shaped namespace a readback writes, read as the selected
 // family's and replaced by the qualified key on the first edit.
 export function insertFxVal(plan: Plan, nodeId: string, fam: InsertFxFamily, slot: number, def: number): number {
-  const params = plan.nodeParams[nodeId]?.insertFxParams;
-  return params?.[insertFxParamKey(fam, slot)] ?? params?.[String(slot)] ?? def;
+  return insertFxSlotVal(plan.nodeParams[nodeId]?.insertFxParams, fam, slot, def);
 }
 
-/** Apply `patch` (slot → raw) to a node's stored engine values under `fam`'s own
- *  keys, dropping the bare slot each patched value came from so the two namespaces
- *  cannot both answer for one slot. Returns a new map. */
-export function reKeyInsertFxParams(
-  params: Record<string, number>,
-  fam: InsertFxFamily,
-  patch: Record<number, number>,
-): Record<string, number> {
-  const next = { ...params };
-  for (const [slot, raw] of Object.entries(patch)) {
-    next[insertFxParamKey(fam, Number(slot))] = raw;
-    delete next[slot];
-  }
-  return next;
-}
+// The re-key rule belongs with the catalogue that defines the namespace: a slot is keyed by
+// family, and the bare number a readback writes is the device's own shape. It is re-exported
+// here so the editor's modules take the whole value model from one import.
+export { reKeyInsertFxParams } from "../core/control/insert-fx-effect";
 
 /** Park the outgoing effect's engine values under its own family before the
  *  selector names another one: a bare slot number left behind would be read as the
@@ -90,4 +80,13 @@ export function pitchKeyPatch(scale: number, key: number): Record<number, number
  */
 export function pitchMidiMode(enable: number, realtime: number): 0 | 1 | 2 {
   return enable === 0 ? 0 : realtime === 0 ? 1 : 2;
+}
+
+/**
+ * …and the inverse, as the slot patch a write speaks. Two bits for three modes, so a write
+ * names BOTH: setting the enable bit alone would leave whichever real-time bit was there
+ * and land on a mode nobody chose.
+ */
+export function pitchMidiPatch(mode: number): Record<number, number> {
+  return { [PITCH_MIDI_ENABLE_SLOT]: mode === 0 ? 0 : 1, [PITCH_MIDI_REALTIME_SLOT]: mode === 2 ? 1 : 0 };
 }

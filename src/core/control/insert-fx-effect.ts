@@ -279,6 +279,11 @@ export interface InsertFxParamDesc {
   mirror?: number;
   /** i18n label key, resolved by the inspector. */
   label: string;
+  /** Which band of a multi-band effect this row belongs to. The multi-band compressor
+   *  repeats one set of four parameters three times, so `label` alone names three
+   *  different slots and a surface that has to tell them apart reads this. Absent on
+   *  every effect whose parameters occur once. */
+  band?: "low" | "mid" | "high";
   control: "slider" | "toggle" | "select";
   rawMin?: number;
   rawMax?: number;
@@ -330,6 +335,10 @@ const COMPANDER_PARAMS: InsertFxParamDesc[] = [
     control: "slider",
     rawMin: 50,
     rawMax: 423000,
+    // 1 ms. The unit quantises this value at no step of its own — a written raw comes back
+    // unchanged anywhere in the range — so the increment is this app's choice about how
+    // fine a slider is worth being, and the range is a bound this app keeps rather than one
+    // the device enforces.
     rawStep: 10,
     def: 2290,
     format: (r) => (r >= 10000 ? `${(r / 10000).toFixed(2)} s` : `${Math.round(r / 10)} ms`),
@@ -350,7 +359,10 @@ const COMPANDER_PARAMS: InsertFxParamDesc[] = [
     control: "slider",
     rawMin: 100,
     rawMax: 9000,
-    rawStep: 10,
+    // Whole dB, which is what the effect guide's range states (1-90 dB) and what the
+    // readout below prints. At a tenth of one, ten steps of the slider moved the value and
+    // printed no change.
+    rawStep: 100,
     def: 600,
     format: (r) => `${Math.round(r / 100)} dB`,
   },
@@ -366,6 +378,11 @@ export const MBC_BANDS: Array<{ band: "low" | "mid" | "high" } & Record<MbcBandK
   { band: "mid", attack: 13, threshold: 14, ratio: 15, gain: 16 },
   { band: "high", attack: 18, threshold: 19, ratio: 20, gain: 21 },
 ];
+/** Attack is the one band value the unit does NOT give all three bands alike. Threshold,
+ *  Ratio and Gain come up at 107 / 2 / 39 in every band; Attack comes up faster the higher
+ *  the band goes. Carried here rather than in `MBC_BAND_PARAM`, which is per PARAMETER and
+ *  has no band to vary by — one number there showed 17 ms on all three. */
+const MBC_BAND_ATTACK_DEF: Record<"low" | "mid" | "high", number> = { low: 17, mid: 19, high: 9 };
 /**
  * Band Bypass. Deliberately NOT in `MBC_GLOBAL`, which is what the writable-slot
  * enumeration walks — a slot listed there is emitted from the plan on every flush.
@@ -392,18 +409,66 @@ export const MBC_ONE_KNOB_LEVEL_MAX = 48;
 /** MBC Out Gain raw range (raw = dB + 64; ±12 dB → 52..76). */
 export const MBC_OUT_GAIN_RAW_MIN = 52;
 export const MBC_OUT_GAIN_RAW_MAX = 76;
-/** Calibrated raw bounds for the writable MBC global slots — the single source the
- *  emit-path firewall (insertFxWritableSlots) and the inspector share. The one
- *  device-managed bool flag (oneKnobOn) carries the bool range: a slot reaching the emit
- *  path without bounds opts out of that firewall silently. */
-export const MBC_GLOBAL_BOUNDS: Record<keyof typeof MBC_GLOBAL, { rawMin: number; rawMax: number }> = {
-  oneKnobOn: { rawMin: 0, rawMax: 1 },
-  oneKnobLevel: { rawMin: 0, rawMax: MBC_ONE_KNOB_LEVEL_MAX },
-  xoverLowMid: { rawMin: MBC_XOVER_LM_RANGE.min, rawMax: MBC_XOVER_LM_RANGE.max },
-  xoverMidHigh: { rawMin: MBC_XOVER_MH_RANGE.min, rawMax: MBC_XOVER_MH_RANGE.max },
-  release: { rawMin: 0, rawMax: MBC_RELEASE_MS.length - 1 },
-  outGain: { rawMin: MBC_OUT_GAIN_RAW_MIN, rawMax: MBC_OUT_GAIN_RAW_MAX },
+
+/** MBC Release raw → display. An index outside the table prints the floor rather than
+ *  "undefined ms": the raw is bounded on the way to the device, and a plan loaded from
+ *  elsewhere can still carry one this list does not have. */
+export const mbcReleaseLabel = (index: number): string => {
+  const ms = MBC_RELEASE_MS[index] ?? 0;
+  return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`;
 };
+/** MBC Out Gain raw → display ("+4 dB"). raw = dB + 64. */
+export const mbcOutGainLabel = (raw: number): string => `${raw - 64} dB`;
+
+/**
+ * One band's compressor in the plot's own units, from the three raws that shape it.
+ *
+ * The encodings stay in this file — a screen that decoded them itself would be a second
+ * copy of three device laws — and what crosses the boundary is the dB and the ratio the
+ * curve is drawn from. Out Gain is not in it: that one is applied to the SUM of the three
+ * bands, so a curve carrying it would say each band is trimmed on its own.
+ */
+export function mbcBandCurve(o: { threshold: number; ratio: number; gain: number }): {
+  thresholdDb: number;
+  ratio: number;
+  gainDb: number;
+} {
+  return {
+    thresholdDb: mbcThresholdDb(o.threshold),
+    ratio: Math.max(1, MBC_RATIO_STEPS[o.ratio] ?? 1),
+    gainDb: mbcGainDb(o.gain),
+  };
+}
+
+/** The MBC values that are one per effect rather than one per band, with the bounds,
+ *  defaults and formatters the descriptors below are built from. The two 1-knob slots are
+ *  NOT here: they are the control rather than a value it sets (see `MBC_ONE_KNOB`). */
+const MBC_GLOBAL_PARAM: Record<
+  "xoverLowMid" | "xoverMidHigh" | "release" | "outGain",
+  { rawMin: number; rawMax: number; def: number; format: (r: number) => string }
+> = {
+  xoverLowMid: { rawMin: MBC_XOVER_LM_RANGE.min, rawMax: MBC_XOVER_LM_RANGE.max, def: 37, format: mbcXoverLabel },
+  xoverMidHigh: { rawMin: MBC_XOVER_MH_RANGE.min, rawMax: MBC_XOVER_MH_RANGE.max, def: 94, format: mbcXoverLabel },
+  release: { rawMin: 0, rawMax: MBC_RELEASE_MS.length - 1, def: 7, format: mbcReleaseLabel },
+  outGain: { rawMin: MBC_OUT_GAIN_RAW_MIN, rawMax: MBC_OUT_GAIN_RAW_MAX, def: 68, format: mbcOutGainLabel },
+};
+
+/**
+ * The 1-knob pair — an operator control, like the COMP and EQ knobs it is the third of.
+ *
+ * Switching it on refills every other writable slot of this effect with the type's own
+ * values: the three bands' Threshold, Ratio, Gain and Attack, the Release, both crossovers
+ * and the Out Gain. Every Level change afterwards reasserts all but the last of those —
+ * nine recomputed from the Level, six pinned back to fixed values — so Out Gain is the one
+ * the operator keeps. The app therefore writes the knob and stops emitting the fifteen
+ * (`mbcDeviceDriven`).
+ *
+ * The readings behind this are in docs/{en,ja}/channel-tuning.md.
+ */
+export const MBC_ONE_KNOB = {
+  on: { slot: MBC_GLOBAL.oneKnobOn, rawMin: 0, rawMax: 1 },
+  level: { slot: MBC_GLOBAL.oneKnobLevel, rawMin: 0, rawMax: MBC_ONE_KNOB_LEVEL_MAX },
+} as const;
 /** Per-band raw bounds + formatters (shared by all three bands). Iterate the
  *  bands' parameters via MBC_BAND_KEYS so every consumer sees the same set. */
 export const MBC_BAND_PARAM: Record<
@@ -421,12 +486,49 @@ export const MBC_BAND_PARAM: Record<
   gain: { rawMin: 0, rawMax: 55, def: 39, format: mbcGainLabel },
 };
 /** The band parameters, derived from the catalog so a new one cannot be missed by
- *  a hand-written list. Declaration order — the inspector orders them for display
- *  instead, so it keeps its own list. */
+ *  a hand-written list. Declaration order — a surface that wants them in another order
+ *  states that order itself. */
 export const MBC_BAND_KEYS = Object.keys(MBC_BAND_PARAM) as MbcBandKey[];
 
-/** MBC Out Gain raw → display ("+4 dB"). raw = dB + 64. */
-export const mbcOutGainLabel = (raw: number): string => `${raw - 64} dB`;
+/**
+ * The multi-band compressor's descriptors: four parameters in each of three bands, then
+ * the four that are one per effect.
+ *
+ * Built from the tables above rather than written out, so a slot number stays in one
+ * place and a band gained or a parameter added reaches every consumer at once. The band
+ * rows carry `band` because their labels repeat — three slots called Threshold — and a
+ * face that has to name one of them has nothing else to name it by.
+ */
+const MBC_PARAMS: InsertFxParamDesc[] = [
+  ...MBC_BANDS.flatMap((b) =>
+    MBC_BAND_KEYS.map((key) => ({
+      slot: b[key],
+      band: b.band,
+      label: key,
+      control: "slider" as const,
+      ...MBC_BAND_PARAM[key],
+      ...(key === "attack" ? { def: MBC_BAND_ATTACK_DEF[b.band] } : {}),
+    })),
+  ),
+  ...(Object.keys(MBC_GLOBAL_PARAM) as (keyof typeof MBC_GLOBAL_PARAM)[]).map((key) => ({
+    slot: MBC_GLOBAL[key],
+    label: key,
+    control: "slider" as const,
+    ...MBC_GLOBAL_PARAM[key],
+  })),
+  // The knob itself. Last in the catalogue and first on the screen: it decides whose the
+  // rows above it are, which is where the EQ's own 1-knob section sits for the same reason.
+  { slot: MBC_GLOBAL.oneKnobOn, label: "oneKnobOn", control: "toggle", def: 0 },
+  {
+    slot: MBC_GLOBAL.oneKnobLevel,
+    label: "oneKnobLevel",
+    control: "slider",
+    rawMin: 0,
+    rawMax: MBC_ONE_KNOB_LEVEL_MAX,
+    def: 0,
+    format: String,
+  },
+];
 
 // Pitch Fix (engine 701).
 const PITCH_PARAMS: InsertFxParamDesc[] = [
@@ -439,7 +541,9 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
     rawMax: 12,
     rawStep: 1,
     def: 0,
-    format: (r) => `${r > 0 ? "+" : ""}${r}`,
+    // Semitones. Coarse and Fine sit side by side and the guide names their units in prose
+    // alone, so without the suffix the two readouts are the same bare signed number.
+    format: (r) => `${r > 0 ? "+" : ""}${r} st`,
   },
   {
     slot: 7,
@@ -450,7 +554,7 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
     rawMax: 50,
     rawStep: 1,
     def: 0,
-    format: (r) => `${r > 0 ? "+" : ""}${r}`,
+    format: (r) => `${r > 0 ? "+" : ""}${r} ct`,
   },
   {
     slot: 8,
@@ -536,7 +640,9 @@ const GUITAR_COMMON_PARAMS: InsertFxParamDesc[] = [
     format: tenthDisplay,
   },
 ];
-/** Type-specific descriptors. slot 6 differs per type; Clean/Lead/Drive add more. */
+/** Type-specific descriptors. slot 6 differs per type; Clean/Lead/Drive add more. The
+ *  measured defaults for these reach them through `guitarTyped` below, so a value appears
+ *  once whichever half of the pair its slot lives in. */
 function guitarTypeParams(family: InsertFxFamily): InsertFxParamDesc[] {
   switch (family) {
     case "guitar-clean":
@@ -618,34 +724,97 @@ function guitarTypeParams(family: InsertFxFamily): InsertFxParamDesc[] {
   }
 }
 
-/** The shared guitar rows for one amp type: slot 7 reads Volume on Clean. */
+/**
+ * What each amp type's slots come up at on a factory-initialised unit.
+ *
+ * The four amps share the slot layout and NOT the values — each is a voicing, and the
+ * shared table above can only carry one number per slot. It carried mid-scale ones (every
+ * tone control 50, Output 64, SP Type 1), which is a shape no measurement produces: those
+ * were placeholders, and the screen printed them wherever a device read had not filled the
+ * plan yet. These are the unit's own; how they were read is in docs/{en,ja}/channel-tuning.md.
+ *
+ * Only the slots that differ from the shared descriptor are listed. A slot absent here
+ * keeps the table's value, which is then the measurement for all four (Gate 0, Gate Level
+ * 20, Mic Position 0, and Clean's modulation trio 1 / 50 / 50).
+ */
+const GUITAR_TYPE_DEFS: Record<string, Readonly<Record<number, number>>> = {
+  "guitar-clean": { 6: 50, 7: 19, 9: 61, 10: 50, 11: 40, 12: 30, 14: 64, 16: 8 },
+  "guitar-crunch": { 6: 1, 7: 46, 9: 47, 10: 70, 11: 53, 12: 28, 14: 47, 16: 4 },
+  "guitar-lead": { 6: 0, 7: 100, 9: 66, 10: 80, 11: 30, 12: 29, 13: 49, 14: 42, 16: 1 },
+  "guitar-drive": { 6: 3, 7: 75, 9: 40, 10: 50, 11: 80, 12: 90, 13: 40, 14: 43, 16: 6 },
+};
+
+/** Overlay a slot→default table onto a descriptor list, sharing the rows it does not name.
+ *  One place applies a measured default, so a rule about which one wins cannot be stated
+ *  twice and disagree with itself. */
+function withDefs(descs: InsertFxParamDesc[], defs: Readonly<Record<number, number>>): InsertFxParamDesc[] {
+  return descs.map((d) => (defs[d.slot] === undefined || d.def === defs[d.slot] ? d : { ...d, def: defs[d.slot] }));
+}
+
+/** One amp type's whole descriptor list, with the measured defaults applied to both halves
+ *  — the shared rows and the type's own — from the one table. */
+function guitarTyped(family: InsertFxFamily): InsertFxParamDesc[] {
+  return withDefs([...guitarCommon(family), ...guitarTypeParams(family)], GUITAR_TYPE_DEFS[family] ?? {});
+}
+
+/** The shared guitar rows for one amp type: slot 7 reads Volume on Clean. The defaults are
+ *  NOT applied here — `guitarTyped` covers both halves in one pass. */
 function guitarCommon(family: InsertFxFamily): InsertFxParamDesc[] {
   if (family !== "guitar-clean") return GUITAR_COMMON_PARAMS;
   return GUITAR_COMMON_PARAMS.map((d) => (d.slot === 7 ? { ...d, label: "volume" } : d));
 }
 
+/**
+ * The two companders' own defaults. They are ONE family — same slots, same ranges, same
+ * screen — and the only thing that separates them is what they come up at, which is all
+ * five of their values. The catalogue carried H's, so choosing Compander-S showed H's
+ * numbers until a device read replaced them.
+ *
+ * A family of their own would have duplicated the engine map, the menu and the screen to
+ * vary one field, so the family stays one and the DEFAULT is asked of the selector.
+ */
+export const COMPANDER_H = 1793;
+export const COMPANDER_S = 1794;
+const COMPANDER_TYPE_DEFS: Record<number, Readonly<Record<number, number>>> = {
+  [COMPANDER_H]: { 6: -1000, 7: 350, 8: 1000, 9: 2290, 11: 600 },
+  [COMPANDER_S]: { 6: -800, 7: 400, 8: 25000, 9: 1650, 11: 2400 },
+};
+
 // The descriptor / writable-slot lists are static per family, so memoize them: the
 // per-node loop in planToCommands (every live-sync tick) and readback both ask for
-// them repeatedly.
-const PARAMS_CACHE = new Map<InsertFxFamily, InsertFxParamDesc[]>();
+// them repeatedly. Keyed by family AND selector, since the compander's defaults are the
+// selector's — every other family is one type and answers the same list either way.
+const PARAMS_CACHE = new Map<string, InsertFxParamDesc[]>();
 const SLOTS_CACHE = new Map<InsertFxFamily, InsertFxSlotSpec[]>();
 
-/** Flat descriptor list for a family (guitar / compander / pitch). MBC uses the
- *  structured MBC_BANDS + MBC_GLOBAL layout instead. */
-export function insertFxParams(family: InsertFxFamily): InsertFxParamDesc[] {
-  let cached = PARAMS_CACHE.get(family);
+/**
+ * Flat descriptor list for a family.
+ *
+ * `selector` is the value the node holds. It changes nothing but the compander's `def`,
+ * and omitting it there answers with Compander-H — which is what every caller that does
+ * not display a default wants, and what a caller that does must not take.
+ */
+export function insertFxParams(family: InsertFxFamily, selector?: number): InsertFxParamDesc[] {
+  const key = family === "compander" ? `compander:${selector ?? ""}` : family;
+  let cached = PARAMS_CACHE.get(key);
   if (!cached) {
     cached =
       family === "compander"
-        ? COMPANDER_PARAMS
+        ? companderTyped(selector)
         : family === "pitch"
           ? PITCH_PARAMS
           : family === "mbc"
-            ? []
-            : [...guitarCommon(family), ...guitarTypeParams(family)];
-    PARAMS_CACHE.set(family, cached);
+            ? MBC_PARAMS
+            : guitarTyped(family);
+    PARAMS_CACHE.set(key, cached);
   }
   return cached;
+}
+
+/** The compander rows with the selected type's defaults, or Compander-H's where the caller
+ *  named no type. */
+function companderTyped(selector: number | undefined): InsertFxParamDesc[] {
+  return withDefs(COMPANDER_PARAMS, COMPANDER_TYPE_DEFS[selector ?? COMPANDER_H] ?? COMPANDER_TYPE_DEFS[COMPANDER_H]);
 }
 
 // ---- writable-slot enumeration (translate / readback) ----
@@ -683,70 +852,191 @@ function descBounds(d: InsertFxParamDesc): { rawMin: number; rawMax: number } {
 /**
  * Slots the app READS from the unit but never writes.
  *
- * The writable list decides both halves — `translate` emits from it and `readback` fills
- * the plan from it — so a slot dropped from it to stop a write also stops being read, and a
- * row that displays the value then shows a default instead of what the unit holds. These
- * are the ones where the app has to know and must not write:
+ * There are none. Both rows that used to be here — Pitch Fix's MIDI Control and the
+ * multi-band compressor's 1-Knob — are settings the operator changes on purpose, and what
+ * each does to its neighbours is what the unit does when they change it on the front panel
+ * too. Refusing the write there was the app second-guessing a gesture, and it made these
+ * two the odd ones out among 1-knob-shaped controls: the COMP and EQ knobs are written and
+ * have exactly the same property.
  *
- *   Pitch Fix MIDI Control (34 / 35) — setting the enable bit erases a twelve-note mask
- *     that is FULL and takes the Scale enum to Custom with it, and the notes it
- *     listens for arrive on a USB-MIDI port of the unit's own. The screen shows the mode.
+ * What replaced the refusal is a DRIVEN set per family (`pitchDeviceDriven`,
+ * `mbcDeviceDriven`): the app writes the control and stops emitting the values the unit
+ * then takes over, which is the treatment `COMP_ONE_KNOB_DRIVEN` already had.
+ *
+ * The list stays because the distinction is real — the writable list decides both halves,
+ * `translate` emitting from it and `readback` filling the plan from it, so a slot dropped
+ * from it to stop a write also stops being read and its row then shows a default instead of
+ * what the unit holds.
  */
-function insertFxReadOnlySlotsOf(family: InsertFxFamily): InsertFxSlotSpec[] {
-  if (family !== "pitch") return [];
-  return [
-    { slot: PITCH_MIDI_ENABLE_SLOT, rawMin: 0, rawMax: 1 },
-    { slot: PITCH_MIDI_REALTIME_SLOT, rawMin: 0, rawMax: 1 },
-  ];
-}
-
-const READ_ONLY_CACHE = new Map<InsertFxFamily, InsertFxSlotSpec[]>();
-
-/** Every slot a device read fills the plan from: the writable ones plus the read-only ones. */
+/** Every slot a device read fills the plan from. No family holds a read-only one today —
+ *  the two that did are written now, with a driven set deciding what the writer skips — so
+ *  this is the writable list. It keeps its own name because the two questions are not the
+ *  same one: dropping a slot from the WRITABLE list to stop a write would stop the read as
+ *  well, and the row would then show a default instead of what the unit holds. */
 export function insertFxReadableSlots(family: InsertFxFamily): InsertFxSlotSpec[] {
-  let cached = READ_ONLY_CACHE.get(family);
-  if (!cached) {
-    cached = [...insertFxWritableSlots(family), ...insertFxReadOnlySlotsOf(family)];
-    READ_ONLY_CACHE.set(family, cached);
-  }
-  return cached;
+  return insertFxWritableSlots(family);
 }
 
 export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[] {
   let cached = SLOTS_CACHE.get(family);
   if (cached) return cached;
-  if (family === "mbc") {
-    const out: InsertFxSlotSpec[] = [];
-    for (const b of MBC_BANDS) {
-      for (const key of MBC_BAND_KEYS) {
-        out.push({ slot: b[key], rawMin: MBC_BAND_PARAM[key].rawMin, rawMax: MBC_BAND_PARAM[key].rawMax });
-      }
-    }
-    for (const [key, slot] of Object.entries(MBC_GLOBAL)) {
-      const b = MBC_GLOBAL_BOUNDS[key as keyof typeof MBC_GLOBAL];
-      out.push({ slot, rawMin: b.rawMin, rawMax: b.rawMax });
-    }
-    cached = out;
-  } else {
-    const out: InsertFxSlotSpec[] = insertFxParams(family).map((d) => ({
-      slot: d.slot,
-      mirror: d.mirror,
-      ...descBounds(d),
-    }));
-    if (family === "pitch") {
-      out.push({ slot: PITCH_SCALE_SLOT, rawMin: PITCH_SCALE_CUSTOM, rawMax: PITCH_SCALE_CHROMATIC });
-      // The note keyboard is bools. MIDI Control (34 / 35) is deliberately NOT here: this
-      // is the list the emit path walks, and setting the enable bit erases a twelve-note
-      // mask that is FULL, taking the Scale enum to Custom with it. A device
-      // readback puts a 1 in the plan without anyone touching the app, so leaving the slot
-      // in the writable set is what would carry that erase to the unit on the next flush.
-      for (const slot of PITCH_NOTE_SLOTS) out.push({ slot, rawMin: 0, rawMax: 1 });
-    }
-    cached = out;
+  const out: InsertFxSlotSpec[] = insertFxParams(family).map((d) => ({
+    slot: d.slot,
+    mirror: d.mirror,
+    ...descBounds(d),
+  }));
+  if (family === "pitch") {
+    // MIDI Control's two bits come FIRST, so a flush that turns the mode on does its erase
+    // before the mask and the Scale would be written — and while it is on those two are the
+    // unit's (`pitchDeviceDriven`) and are not written at all.
+    out.push({ slot: PITCH_MIDI_ENABLE_SLOT, rawMin: 0, rawMax: 1 });
+    out.push({ slot: PITCH_MIDI_REALTIME_SLOT, rawMin: 0, rawMax: 1 });
+    out.push({ slot: PITCH_SCALE_SLOT, rawMin: PITCH_SCALE_CUSTOM, rawMax: PITCH_SCALE_CHROMATIC });
+    // The note keyboard is bools.
+    for (const slot of PITCH_NOTE_SLOTS) out.push({ slot, rawMin: 0, rawMax: 1 });
   }
+  cached = out;
   SLOTS_CACHE.set(family, cached);
   return cached;
 }
+
+/**
+ * The MBC slots the unit itself drives while 1-knob is on: the three bands' Threshold,
+ * Ratio and Gain, which a Level change recomputes, plus the three Attacks, the Release and
+ * the two crossovers, which the same change pins back to fixed values whatever was written
+ * over them. Out Gain is the only writable slot the knob leaves alone.
+ *
+ * One list for two consumers, so the writer and the screen cannot disagree about who owns
+ * a row: `translate` stops emitting these — re-sending the plan's copy of a value the unit
+ * is recomputing would put the pre-knob number back on it — and the screen locks and tags
+ * exactly the rows the writer stopped sending.
+ */
+/**
+ * The slots the unit itself drives for a family, given what the plan holds.
+ *
+ * Two consumers ask it and they must not answer differently: `translate` stops emitting
+ * these, and the screen locks exactly the rows the writer stopped sending. A family with no
+ * such control answers the empty set, so neither caller carries a list of which families to
+ * ask — that list was written out twice and would have had to grow twice.
+ */
+/**
+ * One stored engine value, read the way the plan actually stores them.
+ *
+ * TWO namespaces answer for a slot: the family-qualified key an edit writes, and the bare
+ * slot number a device readback writes (`readback.ts`). A reader that knows only the first
+ * falls through to the catalogue default on a plan filled from the unit — which is a
+ * factory number standing where the unit's own value is.
+ *
+ * It lives here, beside `insertFxParamKey`, because both consumers can reach it: the
+ * screens through `insert-fx-model`, and the MIDI catalogue in `core/midi`, which cannot
+ * import from `src/ui` at all.
+ */
+export function insertFxSlotVal(
+  params: Record<string, number> | undefined,
+  fam: InsertFxFamily,
+  slot: number,
+  def: number,
+): number {
+  return params?.[insertFxParamKey(fam, slot)] ?? params?.[String(slot)] ?? def;
+}
+
+/** Apply `patch` (slot → raw) to a stored engine map under `fam`'s own keys, dropping the
+ *  bare slot each patched value came from so the two namespaces cannot both answer for one
+ *  slot. Returns a new map. Beside the reader above, and for the same reason: the screens
+ *  and the MIDI catalogue both write here and only one of them can reach `src/ui`. */
+export function reKeyInsertFxParams(
+  params: Record<string, number>,
+  fam: InsertFxFamily,
+  patch: Record<number, number>,
+): Record<string, number> {
+  const next = { ...params };
+  for (const [slot, raw] of Object.entries(patch)) {
+    next[insertFxParamKey(fam, Number(slot))] = raw;
+    delete next[slot];
+  }
+  return next;
+}
+
+export function insertFxDeviceDriven(
+  family: InsertFxFamily,
+  params: Record<string, number> | undefined,
+): ReadonlySet<number> {
+  return family === "mbc" ? mbcDeviceDriven(params) : family === "pitch" ? pitchDeviceDriven(params) : EMPTY_SLOTS;
+}
+
+export function mbcDeviceDriven(params: Record<string, number> | undefined): ReadonlySet<number> {
+  const on = insertFxSlotVal(params, "mbc", MBC_ONE_KNOB.on.slot, 0);
+  return on ? MBC_LEVEL_DRIVEN : EMPTY_SLOTS;
+}
+const MBC_LEVEL_DRIVEN: ReadonlySet<number> = new Set([
+  ...MBC_BANDS.flatMap((b) => [b.threshold, b.ratio, b.gain, b.attack]),
+  MBC_GLOBAL.release,
+  MBC_GLOBAL.xoverLowMid,
+  MBC_GLOBAL.xoverMidHigh,
+]);
+
+/**
+ * The Pitch Fix slots the unit itself drives while MIDI Control is not Off: the Scale enum
+ * and the twelve-note mask.
+ *
+ * Switching the mode on clears the mask and takes the Scale to Custom — the unit does that
+ * itself, and it is what the operator asked for by switching it — and the notes it corrects
+ * to then come from a USB-MIDI port of the unit's own. Re-sending the plan's copy of either
+ * would put the pre-change mask back over what the unit did, which is the defect the COMP
+ * knob's own driven set exists for.
+ */
+/**
+ * The engine slots that DRIVE the rest of the array rather than sitting in it: whichever
+ * of them this family has. Writing one makes the unit recompute the slots
+ * `insertFxDeviceDriven` names, so a command carrying one is the one that has to be
+ * followed by a read (`INSERT_FX_DRIVER` in params.ts).
+ */
+export function insertFxDriverSlots(family: InsertFxFamily): ReadonlySet<number> {
+  return family === "mbc" ? MBC_DRIVER_SLOTS : family === "pitch" ? PITCH_DRIVER_SLOTS : EMPTY_SLOTS;
+}
+const MBC_DRIVER_SLOTS: ReadonlySet<number> = new Set([MBC_ONE_KNOB.on.slot, MBC_ONE_KNOB.level.slot]);
+const PITCH_DRIVER_SLOTS: ReadonlySet<number> = new Set([PITCH_MIDI_ENABLE_SLOT, PITCH_MIDI_REALTIME_SLOT]);
+
+/** Clean's modulation trio: the setting, the value that makes the other two live, and the
+ *  two they gate. The unit runs Speed and Depth on the vibrato alone. */
+export const GUITAR_MOD = { slot: 19, vib: 2, speed: 20, depth: 21 } as const;
+
+/**
+ * Every slot a surface must refuse to write, for this family holding these values.
+ *
+ * ONE seat for two consumers. The tuning screen draws these rows locked; a MIDI mapping
+ * made before the lock applied reaches the same slots and has to refuse them there too.
+ * Split across the two, a mapping writes what the screen will not — and for the slots the
+ * unit is driving, the write lands in the plan while the writer is suppressing it, so the
+ * plan and the unit part company silently and the plan's copy is sent the moment the unit
+ * gives the slots back.
+ *
+ * Three rules, and each is a rule about what the UNIT is doing rather than about the panel:
+ * the multi-band compressor's 1-Knob owns the values it recomputes, its Level owns nothing
+ * while the knob is off, Pitch Fix's MIDI Control owns the scale and the mask, and Clean's
+ * modulation runs Speed and Depth on the vibrato alone.
+ */
+export function insertFxLockedSlots(
+  family: InsertFxFamily,
+  params: Record<string, number> | undefined,
+): ReadonlySet<number> {
+  if (family === "mbc") {
+    return insertFxSlotVal(params, family, MBC_ONE_KNOB.on.slot, 0) ? mbcDeviceDriven(params) : ONE_KNOB_LEVEL_ONLY;
+  }
+  if (family === "pitch") return pitchDeviceDriven(params);
+  const mod = insertFxParams(family).find((d) => d.slot === GUITAR_MOD.slot);
+  if (!mod) return EMPTY_SLOTS;
+  return insertFxSlotVal(params, family, GUITAR_MOD.slot, mod.def) === GUITAR_MOD.vib ? EMPTY_SLOTS : MOD_GATED;
+}
+const ONE_KNOB_LEVEL_ONLY: ReadonlySet<number> = new Set([MBC_ONE_KNOB.level.slot]);
+const MOD_GATED: ReadonlySet<number> = new Set([GUITAR_MOD.speed, GUITAR_MOD.depth]);
+
+export function pitchDeviceDriven(params: Record<string, number> | undefined): ReadonlySet<number> {
+  const on = insertFxSlotVal(params, "pitch", PITCH_MIDI_ENABLE_SLOT, 0);
+  return on ? PITCH_MIDI_DRIVEN : EMPTY_SLOTS;
+}
+const PITCH_MIDI_DRIVEN: ReadonlySet<number> = new Set([PITCH_SCALE_SLOT, ...PITCH_NOTE_SLOTS]);
+const EMPTY_SLOTS: ReadonlySet<number> = new Set();
 
 // ---- plan storage keys ----
 //
@@ -785,6 +1075,42 @@ function isBareInsertFxSlot(key: string): boolean {
  *  selected read values another one wrote. routing.ts does the same with the whole
  *  map where a Signal Type transition clears the selector. Entries already under a
  *  family's own key are kept either way. */
+/**
+ * What a node's stored engine values become after a READ of the effect it currently holds.
+ *
+ * The map is one namespace per family on purpose — a node that has held three effects
+ * carries all three, so switching back finds the values the operator left. A read answers
+ * for ONE of them, and replacing the whole map with its answer is what deletes the other
+ * two: with live sync up, a 1-Knob write is enough to trigger it, and the loss shows only
+ * when the operator selects the old effect again and finds it at the factory.
+ *
+ * Three things have to happen at once, which is why this is one function rather than a
+ * step in the reader:
+ *
+ * - the bare slots already in the plan are parked under the family that WROTE them
+ *   (`prev`), or a read of another family would adopt them;
+ * - the current family's own stored values are dropped, because a qualified key beats a
+ *   bare one when the value is read (`insertFxSlotVal`) and the unit's answer would sit
+ *   underneath the plan's older copy of it;
+ * - every other family's qualified values are kept untouched.
+ *
+ * With no family — No Effect, or a selector this build does not know — there is nothing to
+ * read and nothing to attribute, so the qualified values stay and the bare ones go.
+ */
+export function mergeReadInsertFxParams(
+  prev: Record<string, number> | undefined,
+  prevFamily: InsertFxFamily | null,
+  family: InsertFxFamily | null,
+  read: Record<number, number>,
+): Record<string, number> {
+  const parked = qualifyInsertFxParams(prev ?? {}, prevFamily);
+  const out: Record<string, number> = {};
+  const mine = family === null ? null : `${family}:`;
+  for (const [key, raw] of Object.entries(parked)) if (mine === null || !key.startsWith(mine)) out[key] = raw;
+  if (family !== null) for (const [slot, raw] of Object.entries(read)) out[String(slot)] = raw;
+  return out;
+}
+
 export function qualifyInsertFxParams(
   params: Record<string, number>,
   family: InsertFxFamily | null,

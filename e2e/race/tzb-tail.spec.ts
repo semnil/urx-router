@@ -25,6 +25,7 @@ import {
 import { analyze, report, timeline, markTime, spans, getsOf, type Span } from "./analyze";
 import { MAX_ENTRIES } from "../../src/core/plan-history";
 import { CH1_FADER, CH2_FADER, deviceLevelText, faderOf, faderReadout, strip } from "./ui";
+import { chooseOption } from "../choose-option";
 
 // The tail of four tiers in one file (docs/{en,ja}/live-race-harness.md): the two
 // drop cases nothing else in T5 reaches, the two teardown cases whose window is a
@@ -635,7 +636,7 @@ test.describe("Tzb tail", () => {
     // be satisfied by a teardown that had thrown the history away, which is a different
     // mechanism with the same reading.
     const depthAfterLiveOff = await depthOf(page);
-    await page.locator("#model-picker").selectOption("URX22");
+    await chooseOption(page.locator("#model-picker"), "URX22");
     await expect(page.locator("#statusbar")).toContainText("Switched to URX22", { timeout: 30_000 });
     // The teardown (param unsubscribe, meter release, disconnect) is issued in the same
     // task as the toggle, and only vd_disconnect is exempt from invariant 16 — so
