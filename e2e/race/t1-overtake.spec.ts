@@ -25,9 +25,10 @@ import {
   faderReadout,
   graphNode,
   openEqScreen,
+  insertFxSelect,
   openInsertFxScreen,
-  paramExact,
 } from "./ui";
+import { chooseOption } from "../choose-option";
 
 // T1 overtake — the core stale-read / lost-edit ladders of the race harness
 // (docs/{en,ja}/live-race-harness.md). Each test drives one operator gesture into a
@@ -208,11 +209,11 @@ test.describe("T1 overtake", () => {
     // INSERT_FX (135) is a converge param: its write makes the device rebind the
     // engine, and the app answers with a converge round over the whole write scope —
     // a read sweep long enough to hold an edit inside, which is the point.
-    const insertSel = page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select");
+    const insertSel = page.locator("#inspector .param", { hasText: "Effect Type" }).locator("select");
     await expect(insertSel).toHaveCount(1);
     await mark(page, "converge-trigger");
     await blockAt(page, "vd_get", 20);
-    await insertSel.selectOption({ label: "Compander-H" });
+    await chooseOption(insertSel, { label: "Compander-H" });
     await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 15_000 });
 
     await page.click("#btn-view-console");
@@ -265,7 +266,7 @@ test.describe("T1 overtake", () => {
     await setLatency(page, { get: 2, set: 10 });
 
     await mark(page, "select-compander");
-    await paramExact(page, "Insert FX").locator("select").selectOption({ label: "Compander-H" });
+    await chooseOption(await insertFxSelect(page), { label: "Compander-H" });
     await settleAfter(page, "select-compander", 1800);
     // One authored engine value. translate writes only the slots the plan carries, so
     // without this the engine array is not in the write set and the re-apply below has
@@ -334,7 +335,7 @@ test.describe("T1 overtake", () => {
     await setMemAt(page, { [RATE_ADDR]: 48000 });
     await pushNotify(page, [[766, 0, 0, 48000]]);
     await settleAfter(page, "rate-back", 2500);
-    await expect(paramExact(page, "Insert FX").locator("select")).toHaveValue(String(COMPANDER_H));
+    await expect(await insertFxSelect(page)).toHaveValue(String(COMPANDER_H));
   });
 
   // The read that decided from an announcement CONSUMES it, and the next clearing —
@@ -363,7 +364,7 @@ test.describe("T1 overtake", () => {
     await setLatency(page, { get: 2, set: 2 });
 
     await mark(page, "select-compander");
-    await paramExact(page, "Insert FX").locator("select").selectOption({ label: "Compander-H" });
+    await chooseOption(await insertFxSelect(page), { label: "Compander-H" });
     await settleAfter(page, "select-compander", 1800);
     // Open before the excursion: the screen is modal, and reaching it afterwards would
     // put a click in the middle of the window this case is placing.
@@ -428,6 +429,6 @@ test.describe("T1 overtake", () => {
     );
     // The plan adopted it: nothing was sent back, and the row reads No Effect.
     expect(resent).toEqual([]);
-    await expect(paramExact(page, "Insert FX").locator("select")).toHaveValue("-1");
+    await expect(await insertFxSelect(page)).toHaveValue("-1");
   });
 });

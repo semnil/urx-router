@@ -556,6 +556,23 @@ export function onOff(on: boolean, apply: (on: boolean) => void): HTMLElement {
   return settingsChoice([t().inspector.on, t().inspector.off], on ? 0 : 1, (i) => apply(i === 0), true);
 }
 
+/**
+ * The same switch as ONE button carrying its own state, for a surface that gives every
+ * control a card of its own. A pair costs two card-widths of the panel's row and prints
+ * the word that is NOT in effect beside the one that is; a single button prints the state.
+ *
+ * It follows the CONSOLE chip rather than the settings pair — `aria-pressed` on the control
+ * itself, lit when on — because that is what this app's other one-button switches are.
+ */
+export function onOffButton(on: boolean, apply: (on: boolean) => void): HTMLElement {
+  const b = el("button", on ? "prefs-switch on" : "prefs-switch") as HTMLButtonElement;
+  b.type = "button";
+  b.textContent = on ? t().inspector.on : t().inspector.off;
+  b.setAttribute("aria-pressed", String(on));
+  b.addEventListener("click", () => apply(!on));
+  return b;
+}
+
 /** A labelled range slider row with a readout, the shape every parameter row on the
  *  dynamics screens takes. Carries the wheel-step contract `onWheelStep` documents,
  *  which a hand-built row silently drops. */

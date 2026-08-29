@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { panelHeight, pickBand, screenBox } from "./dyn-helpers";
+import { chooseOption } from "./choose-option";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
@@ -15,7 +16,7 @@ const screenRow = (page: Page, label: string) =>
 /** Switch a mono channel into the morphing bank and open the face named. */
 const openFace = async (page: Page, kind: "ssmcs" | "ssmcsComp" | "ssmcsEq", section: RegExp) => {
   await node(page, "ch1").click();
-  if ((await typeSelect(page).inputValue()) !== "1") await typeSelect(page).selectOption("1");
+  if ((await typeSelect(page).inputValue()) !== "1") await chooseOption(typeSelect(page), "1");
   const sec = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: section }) });
   if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
   await sec.locator(`#btn-${kind}-screen`).click();
@@ -41,7 +42,7 @@ test("switching a mono channel to SSMCS swaps the inspector's sections and their
   await expect(page.locator("#btn-comp-screen")).toHaveCount(1);
   await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(0);
 
-  await sel.selectOption("1"); // SSMCS
+  await chooseOption(sel, "1"); // SSMCS
   // Each of the three sections offers its own face, and the two shipped screens' own
   // launchers are gone — a channel carries one bank, never both.
   await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(1);
@@ -72,7 +73,7 @@ test("switching a mono channel to SSMCS swaps the inspector's sections and their
   expect(ssmcs).toBeLessThan(comp);
 
   // Back to COMP->EQ takes the SSMCS section away and resets to COMP off / EQ on.
-  await sel.selectOption("0");
+  await chooseOption(sel, "0");
   await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(0);
   await expect(compSec).not.toHaveAttribute("open", ""); // COMP off → folded
   await expect(eqSec).toHaveAttribute("open", ""); // EQ on → open
@@ -84,19 +85,19 @@ test("re-entering an SSMCS/COMP->EQ mode resets that bank to factory", async ({ 
   await openFace(page, "ssmcs", /^SSMCS$/);
   const ssd = screenRow(page, "Sweet Spot Data").locator("select");
   await expect(ssd).toHaveValue("1"); // factory "01 Basic"
-  await ssd.selectOption("14"); // 08 MR Vocal
+  await chooseOption(ssd, "14"); // 08 MR Vocal
   await expect(ssd).toHaveValue("14");
   await screenBox(page).locator(".consent-btn-secondary").click();
 
   // Leave SSMCS and come back: the morphing strip reloads factory, not "08 MR Vocal".
-  await typeSelect(page).selectOption("0"); // COMP->EQ
+  await chooseOption(typeSelect(page), "0"); // COMP->EQ
   await openFace(page, "ssmcs", /^SSMCS$/);
   await expect(screenRow(page, "Sweet Spot Data").locator("select")).toHaveValue("1");
 });
 
 test("toggling the SSMCS value reverts its fold to follow the on-state", async ({ page }) => {
   await node(page, "ch1").click();
-  await typeSelect(page).selectOption("1"); // SSMCS
+  await chooseOption(typeSelect(page), "1"); // SSMCS
   const ssmcs = page.locator("#inspector details").filter({ has: page.locator("summary", { hasText: "SSMCS" }) });
   const onOff = ssmcs.locator(".sec-body > .param").first();
   await expect(ssmcs).toHaveJSProperty("open", true); // on by default → open
@@ -404,8 +405,13 @@ test.describe("the tuning screen's three faces", () => {
 });
 
 test("the CONSOLE strip offers one opener for the whole morphing bank", async ({ page }) => {
+  // Screen openers only. The INS FX disclosure wears the same class and the same glyph
+  // and opens the type popover instead, so it is on the strip in both banks and belongs
+  // to neither list below.
   const openers = (strip: ReturnType<Page["locator"]>) =>
-    strip.locator(".con-chip-open").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
+    strip
+      .locator(".con-chip-open:not(.con-ifxopen)")
+      .evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
 
   await page.click("#btn-view-console");
   const strip = page.locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) });
@@ -414,13 +420,12 @@ test("the CONSOLE strip offers one opener for the whole morphing bank", async ({
 
   await page.click("#btn-view-graph");
   await node(page, "ch1").click();
-  await typeSelect(page).selectOption("1");
+  await chooseOption(typeSelect(page), "1");
   await page.click("#btn-view-console");
   // In the morphing bank the SSMCS chip carries the only one: its COMP and EQ faces are
   // reached from the segment inside the screen, and the strip's own COMP and EQ chips read
   // as they do on a channel with no strip at all. By label rather than by count — every
-  // opener is the same glyph, and the two banks carry the same NUMBER of chips either way,
-  // since the parity spacer takes whatever slot an opener frees.
+  // opener is the same glyph, so a count says nothing about which screen a press reaches.
   await expect(strip.locator(".con-chip", { hasText: /^SSMCS$/ })).toHaveCount(1);
   expect(await openers(strip)).toEqual(["Gate screen", "SSMCS screen"]);
 

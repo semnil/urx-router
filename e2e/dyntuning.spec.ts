@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "./fixtures";
 import { selectWire } from "./graph-helpers";
 import { panelHeight, pickBand, pickPlot, screenBox } from "./dyn-helpers";
+import { chooseOption } from "./choose-option";
 
 // Channel tuning screens (GATE / COMP / EQ). The meter half needs a live session,
 // which is desktop-only, so this spec stubs the Tauri IPC bridge before boot — and
@@ -238,12 +239,26 @@ test("opens from the CONSOLE strip, one opener per processor the strip actually 
   // nor compressor, so its EQ and the ducker hung under it; a MONITOR bus has no
   // processor at all. The ducker's opener sits on the parent strip because a hung
   // node has no strip of its own — but it opens the DUCKER node's screen.
-  await expect(strips.nth(0).locator(".con-chip-open")).toHaveCount(3);
-  await expect(strips.nth(4).locator(".con-chip-open")).toHaveCount(2);
+  //
+  // Counted apart from the INS FX disclosure, which wears the same glyph and the same
+  // class and is the one in the row that does not open a screen: it opens the type
+  // popover, because which effect a strip holds decides what a screen would show.
+  const screenOpeners = (strip: ReturnType<typeof page.locator>) => strip.locator(".con-chip-open:not(.con-ifxopen)");
+  await expect(screenOpeners(strips.nth(0))).toHaveCount(3);
+  await expect(screenOpeners(strips.nth(4))).toHaveCount(2);
   await expect(
-    page.locator(".con-strip", { has: page.getByText("MONITOR 1", { exact: true }) }).locator(".con-chip-open"),
+    page
+      .locator(".con-strip", { has: page.getByText("MONITOR 1", { exact: true }) })
+      .locator(".con-chip-open:not(.con-ifxopen)"),
   ).toHaveCount(0);
-  await strips.nth(0).locator(".con-chip-open").first().click();
+  // The distinction itself, on a strip that has both kinds: the INS FX one opens a
+  // popover and no screen.
+  await strips.nth(0).locator(".con-ifxopen").click();
+  await expect(page.locator(".con-ifxpop")).toBeVisible();
+  await expect(screenBox(page)).toBeHidden();
+  await page.keyboard.press("Escape");
+
+  await screenOpeners(strips.nth(0)).first().click();
   await expect(screenBox(page)).toBeVisible();
   await expect(screenBox(page).locator(".gt-ch")).toHaveText("CH 1");
 });
@@ -518,7 +533,7 @@ test.describe("comp", () => {
     // has a compressor of its own — what changes is which screen the launcher opens.
     await node(page, "ch1").click();
     const type = page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select");
-    await type.selectOption({ label: "SSMCS" });
+    await chooseOption(type, { label: "SSMCS" });
     await expect(page.locator("#btn-comp-screen")).toHaveCount(0);
     await expect(page.locator("#btn-ssmcsComp-screen")).toHaveCount(1);
     await page.click("#btn-view-console");
@@ -528,7 +543,10 @@ test.describe("comp", () => {
     // every opener is the same glyph, so a count alone does not say which screen went.
     const strip = page.locator(".con-strip").nth(0);
     await expect(strip.locator('.con-chip-open[aria-label="Comp screen"]')).toHaveCount(0);
-    await expect(strip.locator(".con-chip-open")).toHaveCount(2);
+    // The INS FX disclosure is out of the count: it opens the type popover rather than a
+    // screen, so it is present in both banks and says nothing about this rule.
+    await expect(strip.locator(".con-chip-open:not(.con-ifxopen)")).toHaveCount(2);
+    await expect(strip.locator(".con-ifxopen")).toHaveCount(1);
   });
 
   test("carries the compressor's own ladder domain", async ({ page }) => {
@@ -729,13 +747,13 @@ test.describe("eq", () => {
 
     // A pass filter reads neither Q nor gain (measured: Q 0.71 and Q 4.00 draw an
     // identical high-pass), so both lock — and both rows stay.
-    await bandRow(page, "Type").locator("select").selectOption("2");
+    await chooseOption(bandRow(page, "Type").locator("select"), "2");
     for (const r of rows) await expect(bandRow(page, r)).toHaveCount(1);
     await expect(bandRow(page, "Gain")).toHaveClass(/locked/);
     await expect(bandRow(page, "Freq").locator("input[type=range]")).toBeEnabled();
 
     // Peaking reads all three.
-    await bandRow(page, "Type").locator("select").selectOption("0");
+    await chooseOption(bandRow(page, "Type").locator("select"), "0");
     await expect(bandRow(page, "Q").locator("input[type=range]")).toBeEnabled();
     await expect(bandRow(page, "Gain").locator("input[type=range]")).toBeEnabled();
 
@@ -758,7 +776,7 @@ test.describe("eq", () => {
     }
     await pickBand(page, 0);
     for (const type of ["0", "1", "2"]) {
-      await bandRow(page, "Type").locator("select").selectOption(type);
+      await chooseOption(bandRow(page, "Type").locator("select"), type);
       expect(await height(), `LOW type ${type}`).toBe(first);
     }
     // Including the state where the whole band block is reserved out of sight.
@@ -979,10 +997,9 @@ test.describe("ducker", () => {
     // lane's caption names the source channel, not the stage.
     test("registers the key tap the source's Rec Point names", async ({ page }) => {
       await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
-      await page
-        .locator("#inspector .param", { hasText: "Rec Point" })
-        .locator("select")
-        .selectOption({ label: "PRE GATE" });
+      await chooseOption(page.locator("#inspector .param", { hasText: "Rec Point" }).locator("select"), {
+        label: "PRE GATE",
+      });
       await openDucker(page);
       // 106 = CH 1 PRE GATE, in place of 113 PRE FADER. The rest is unchanged.
       await expect.poll(() => page.evaluate(() => window.__dynTest.meterAddrs[0])).toEqual([106, 0]);

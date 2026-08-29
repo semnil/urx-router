@@ -47,6 +47,7 @@ import type { MidiLearnHooks } from "./midi-learn";
 import {
   channelEqUnavailable,
   formatRate,
+  nodeRateDisabled,
   insertFxRateLock,
   insertFxCensus,
   insertFxFree,
@@ -73,7 +74,9 @@ import {
   partnerChannel,
   sendTapWritable,
 } from "../core/routing";
-import { insertFxEngaged, insertFxSelected, type InsertFxOption } from "../core/control/params";
+import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected } from "../core/control/params";
+import { parkOutgoingInsertFxParams } from "./insert-fx-model";
+import { insertFxScreenFamily } from "./insert-fx-screen";
 import {
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
@@ -105,6 +108,17 @@ const SEND_SHORT: Record<SendTarget, string> = {
   "bus.fx1": "F1",
   "bus.fx2": "F2",
 };
+
+// The INS FX face on a strip, and the same switch repeated in the popover. Named
+// because the two are one control in two places and each has to follow the other
+// without a render — a render closes the popover, so the switch would answer a press
+// by vanishing. `.con-chip` first so the pair rule (`.paired`) and every chip state
+// still reach it.
+const IFX_FACE_CLS = "con-chip con-ifxface";
+// The face with nothing in it. A dashed rim, so a strip holding no effect is told
+// apart from one holding a bypassed effect without asking the reader to compare two
+// unlit faces — and told apart by the rim rather than by colour alone.
+const IFX_VACANT_CLS = "con-chip con-ifxface vacant";
 
 // A fader scale: how a dB maps to/from travel (toFrac/fromFrac), how the keyboard
 // steps it (step), and its ruler ticks. NORMAL_RANGE is the only instance (the
@@ -419,7 +433,6 @@ const READOUT_EVERY = 5;
 export class Console {
   private paintN = 0; // frame counter gating the throttled numeric readout
   private refs = new Map<string, StripRef>();
-  private lastInsFx = new Map<string, number>(); // last non-none INS FX per node
   private factory: { id: string; plan: Plan } | null = null; // cached factory plan
   private headH = { key: "", px: 0 }; // cached MAIN-tab head height (key: model + hidden)
   // The insert-FX slot census of the build pass in progress. It is a whole-model
@@ -458,6 +471,11 @@ export class Console {
   private sendPanOpenFor: string | null = null;
   private sendPanBtn: HTMLElement | null = null; // the PAN ▾ button the open popover anchors to
   private tapPop!: HTMLElement;
+  // The INS FX type popover and the strip it is open for, plus the chip it is anchored
+  // to (either half of the pair opens it, so the anchor is not derivable from the id).
+  private ifxPop!: HTMLElement;
+  private ifxOpenFor: string | null = null;
+  private ifxBtn: HTMLElement | null = null;
   private stripsHost!: HTMLElement;
 
   constructor(
@@ -560,6 +578,14 @@ export class Console {
       if (btn) this.openSendPan(stripId, btn);
       else this.closeSendPan();
     }
+    // Same for the INS FX popover, and for a second reason: its list is drawn from the
+    // plan the strip was just rebuilt from, so a device-side selection would otherwise
+    // leave the open list naming what the strip no longer holds. Re-opening re-reads it.
+    if (this.ifxOpenFor === stripId) {
+      const chip = fresh.querySelector<HTMLElement>(".con-ifxopen");
+      if (chip) this.openInsFxPop(stripId, chip);
+      else this.closeInsFxPop();
+    }
     restoreFocus();
   }
 
@@ -584,17 +610,25 @@ export class Console {
     this.sendPanPop = el("div", "con-spop");
     this.sendPanPop.hidden = true;
     this.host.append(this.sendPanPop);
-    // Close either popover on any outside interaction (each trigger manages its own
-    // toggle, so a click on the trigger is excluded).
+    // INS FX type popover: same arrangement, anchored to whichever half of the strip's
+    // INS FX pair was pressed.
+    this.ifxPop = el("div", "con-ifxpop");
+    this.ifxPop.hidden = true;
+    this.host.append(this.ifxPop);
+    // Close any popover on an outside interaction (each trigger manages its own toggle,
+    // so a press on the trigger is excluded).
     document.addEventListener("pointerdown", (e) => {
       const tgt = e.target as HTMLElement;
       if (this.tapOpenFor && !this.tapPop.contains(tgt) && !tgt.closest(".con-tap")) this.closeTapPop();
       if (this.sendPanOpenFor && !this.sendPanPop.contains(tgt) && !tgt.closest(".con-panbtn")) this.closeSendPan();
+      if (this.ifxOpenFor && !this.ifxPop.contains(tgt) && !tgt.closest(".con-ifxface, .con-ifxopen"))
+        this.closeInsFxPop();
     });
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
       if (this.sendPanOpenFor) this.closeSendPan();
       if (this.tapOpenFor) this.closeTapPop();
+      if (this.ifxOpenFor) this.closeInsFxPop();
     });
   }
 
@@ -787,8 +821,20 @@ export class Console {
 
   // Open the floating meter-point popover for a node, anchored to its badge. The
   // chain lists the node's taps in signal order with the active one highlighted.
+  /** The single-popover invariant, in ONE place. Each opener used to close the others by
+   *  hand, and the list went out of date the day a third popover arrived: INS FX was added
+   *  to its own opener and to neither of the other two, so reaching the meter point or SEND
+   *  PAN from the KEYBOARD — where no `pointerdown` fires the document handler that would
+   *  otherwise have covered it — left two popovers on screen. Closing all three includes the
+   *  one about to open, which every opener rebuilds anyway. */
+  private closePopovers(): void {
+    this.closeTapPop();
+    this.closeSendPan();
+    this.closeInsFxPop();
+  }
+
   private openTapPop(id: string, anchor: HTMLElement): void {
-    this.closeSendPan(); // single-popover invariant (symmetric with openSendPan)
+    this.closePopovers();
     const cur = this.tapKeyOf(id);
     this.tapPop.replaceChildren();
     const ph = el("div", "ph");
@@ -924,18 +970,22 @@ export class Console {
     // are read off `c.params` live (reassigned in place).
     const c = sendConnection(this.hooks.getPlan(), m.id, target);
     const isMix = this.isMixBus(target);
+    // The bus this column aims at is gone at this rate, so the whole column is: its
+    // switch, its tap and its level all set something on a bus the unit is not running.
+    // FIXED is the narrower lock below — that one takes the level and leaves the rest.
+    const rateOff = nodeRateDisabled(target, this.hooks.getPlan().sampleRate);
     // FIXED BUS Type locks the MIX send level read-only (matching the graph inspector);
     // the PRE tap and enable chip stay editable.
-    const busFixed = isMix && mixSendLocks(this.hooks.getPlan(), target).busFixed;
+    const busFixed = rateOff || (isMix && mixSendLocks(this.hooks.getPlan(), target).busFixed);
 
-    const col = el("div", "con-scol" + (c?.params?.on !== false ? "" : " off"));
+    const col = el("div", "con-scol" + (c?.params?.on !== false ? "" : " off") + (rateOff ? " rate-off" : ""));
     // vertical mini-fader (built first so the PRE button can refresh its aria-valuetext)
     const fader = el("div", "con-vfad" + (busFixed ? " readonly" : ""));
     fader.setAttribute("role", "slider");
     fader.setAttribute("aria-label", SEND_LABEL[target]);
     if (busFixed) {
       fader.setAttribute("aria-disabled", "true");
-      fader.title = t().inspector.busFixedLevel;
+      fader.title = rateOff ? t().inspector.fx2RateLocked : t().inspector.busFixedLevel;
     } else {
       fader.tabIndex = 0;
     }
@@ -959,7 +1009,13 @@ export class Console {
         if (c) c.params = { ...c.params, on: next };
         return next;
       },
-      { cls: "con-sl", midiId: controlId(m.id, "mute", target), after: (next) => col.classList.toggle("off", !next) },
+      rateOff
+        ? { cls: "con-sl", readonlyTitle: t().inspector.fx2RateLocked }
+        : {
+            cls: "con-sl",
+            midiId: controlId(m.id, "mute", target),
+            after: (next) => col.classList.toggle("off", !next),
+          },
     );
 
     // PRE button
@@ -979,9 +1035,11 @@ export class Console {
         this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, next); // refresh PRE prefix
         return next;
       },
-      tapReadonly
-        ? { cls: "con-slp", readonlyTitle: t().inspector.prePostLcdOnly }
-        : { cls: "con-slp", midiId: isMix ? controlId(m.id, "tap", target) : undefined, title: t().console.preHint },
+      rateOff
+        ? { cls: "con-slp", readonlyTitle: t().inspector.fx2RateLocked }
+        : tapReadonly
+          ? { cls: "con-slp", readonlyTitle: t().inspector.prePostLcdOnly }
+          : { cls: "con-slp", midiId: isMix ? controlId(m.id, "tap", target) : undefined, title: t().console.preHint },
     );
 
     // A FIXED-bus send fader is display-only: paint its value but skip the wiring.
@@ -1142,8 +1200,7 @@ export class Console {
   // pan as rotary knobs laid out in horizontal columns (destination label above,
   // value below), echoing the rack columns. FX sends are mono and carry no pan.
   private openSendPan(stripId: string, anchor: HTMLElement): void {
-    this.closeTapPop();
-    this.closeSendPan(); // clears any previously-open PAN trigger before opening the new one
+    this.closePopovers();
     const plan = this.hooks.getPlan();
     this.sendPanPop.replaceChildren();
     // The popover floats free of its strip once open, so name the owning strip in
@@ -1196,6 +1253,150 @@ export class Console {
     anchor.setAttribute("aria-expanded", "true");
     // Anchor below the PAN ▾ button, centred on it (upward caret), clamped to the viewport.
     this.placePopover(this.sendPanPop, anchor, "center", 8);
+  }
+
+  // ---- INS FX popover ----
+
+  /** Open the type popover for a strip, or close it when it is already this strip's.
+   *  Both the face and the disclosure call this, so pressing either one twice closes it
+   *  — the toggle the meter badge and the PAN button already have. */
+  private toggleInsFxPop(id: string, anchor: HTMLElement): void {
+    if (this.ifxOpenFor === id) this.closeInsFxPop();
+    else this.openInsFxPop(id, anchor);
+  }
+
+  /**
+   * The INS FX popover: the effect list, then the bypass switch and the way into the
+   * tuning screen.
+   *
+   * Selection lives here and not on the strip because it is not a switch. Writing the
+   * selector makes the unit refill the bound engine array with that type's defaults and
+   * that is not reversible, so it is offered as a list of named things with their reasons
+   * beside them rather than as something a press cycles through. No Effect leads the list
+   * and is never disabled: a strip has to be able to give a slot back from every state,
+   * including the two — rate ceiling, slot taken — that make everything else unpickable.
+   */
+  private openInsFxPop(id: string, anchor: HTMLElement): void {
+    this.closePopovers();
+    const model = this.hooks.getModel();
+    const plan = this.hooks.getPlan();
+    const menu = insertFxMenu(model, plan, id, this.ifxCensus ?? undefined);
+    const eff = effectiveInsertFx(model, plan, id);
+    const holds = insertFxSelected({ insertFx: eff });
+    this.ifxPop.replaceChildren();
+
+    const ph = el("div", "ph");
+    const cat = el("span", "cat");
+    cat.textContent = t().console.insFxType;
+    const who = el("span", "who");
+    who.textContent = this.toStripModel(id).label;
+    ph.append(cat, who);
+
+    const list = el("div", "ilist");
+    list.setAttribute("role", "menu");
+    for (const entry of menu) {
+      const isNone = entry.option.value === INSERT_FX_NONE;
+      const current = entry.option.value === eff;
+      // A lock stops an entry being PICKED, never being left: releasing is what a locked
+      // strip needs most. The one it already holds stays pickable-looking for the same
+      // reason it stays legible — it is the answer to "what is in this strip", not an
+      // offer, and it is marked as checked rather than as available.
+      const disabled = entry.lock !== null && !isNone && !current;
+      const row = el("div", "irow" + (current ? " active" : "") + (disabled ? " off" : ""));
+      row.setAttribute("role", "menuitemradio");
+      row.setAttribute("aria-checked", String(current));
+      const nm = el("span", "nm");
+      nm.textContent = entry.option.label;
+      row.append(nm);
+      // Why it cannot be picked, in the width of a row — or, for No Effect, what picking
+      // it does. The full sentence goes on the row's tooltip, which is where the same two
+      // facts are already said at the width of a panel in the Inspector.
+      if (disabled) {
+        const why = el("span", "why");
+        if (entry.lock === "rate") {
+          why.textContent =
+            entry.option.maxRate !== undefined ? t().console.insFxMax(formatRate(entry.option.maxRate)) : "";
+          row.title =
+            entry.option.maxRate !== undefined
+              ? t().inspector.insFxRateLockedAt(entry.option.label, formatRate(entry.option.maxRate))
+              : t().inspector.insFxRateLocked;
+        } else {
+          why.textContent = t().console.insFxInUse;
+          row.title = t().inspector.insFxSlotLocked;
+        }
+        row.append(why);
+        row.setAttribute("aria-disabled", "true");
+      } else if (isNone && holds) {
+        const why = el("span", "why");
+        why.textContent = t().console.insFxRemove;
+        row.append(why);
+      }
+      if (!disabled) {
+        row.tabIndex = 0;
+        const pick = (): void => this.setInsFx(id, entry.option.value);
+        row.addEventListener("click", pick);
+        row.addEventListener("keydown", (e) => {
+          if (e.key === " " || e.key === "Enter") {
+            e.preventDefault();
+            pick();
+          }
+        });
+      }
+      list.append(row);
+    }
+
+    // The launcher, under the list it depends on: inert while the strip holds nothing,
+    // because there is no effect for a screen to show and the way out of that state is the
+    // list above it.
+    //
+    // The BYPASS is deliberately not here. It used to sit beside the launcher, and it is
+    // the same switch as the strip's own INS FX face — one control shown twice, kept in
+    // step by hand because a render would tear the popover down. Two faces for one value
+    // is a question the operator has to answer ("are these the same?") before they can use
+    // either, and the answer was yes.
+    const foot = el("div", "ifoot");
+    // Gated on the screen being openable, not on the strip holding SOMETHING. The two
+    // agree today — every family the app edits has a screen — and they did not when the
+    // multi-band compressor had none: on that strip the row was live, said "open me" and
+    // did nothing at all when pressed, because the screen's own bind returned null and the
+    // host returned silently. The Inspector's launcher asks this question; this one asked
+    // an easier one, and the easier one is what stops being true first.
+    const openable = insertFxScreenFamily(model, plan, id) !== null;
+    const open = el("div", "iopen" + (openable ? "" : " off"));
+    open.textContent = dynOpenLabel("insfx", t());
+    if (openable) {
+      open.setAttribute("role", "button");
+      // A bypassed or rate-stopped effect is still an effect to tune, and the screen says
+      // so under its own display. Only a strip holding nothing has nothing to open.
+      this.wireActivate(open, undefined, () => {
+        this.closeInsFxPop();
+        this.hooks.onOpenDynScreen?.("insfx", id);
+      });
+    } else {
+      open.setAttribute("aria-disabled", "true");
+      open.title = t().console.insFxPickFirst;
+    }
+    foot.append(open);
+
+    this.ifxPop.append(ph, list, foot);
+    this.ifxPop.hidden = false;
+    this.ifxOpenFor = id;
+    this.ifxBtn = anchor;
+    anchor.classList.add("open");
+    anchor.setAttribute("aria-expanded", "true");
+    this.placePopover(this.ifxPop, anchor, "center", 8);
+  }
+
+  private closeInsFxPop(): void {
+    if (!this.ifxOpenFor) return;
+    this.ifxOpenFor = null;
+    this.ifxPop.hidden = true;
+    this.ifxPop.replaceChildren();
+    if (this.ifxBtn) {
+      this.ifxBtn.classList.remove("open");
+      this.ifxBtn.setAttribute("aria-expanded", "false");
+      this.ifxBtn = null;
+    }
   }
 
   private closeSendPan(): void {
@@ -1406,6 +1607,29 @@ export class Console {
    *  its toggle, and this button changes nothing to commit. `wireActivate` still
    *  gives it the keyboard activation and the MIDI-learn guard the chips have —
    *  with no `midiId`, since a screen is not a device parameter to map. */
+  /**
+   * Append the narrow half of a face + disclosure pair, and mark the face as PAIRED.
+   *
+   * `chip` is null where the pair EXISTS but the disclosure is withheld — a rate ceiling
+   * that leaves nothing behind it to open. The slot is then filled by a hidden placeholder
+   * of the same width, so the row's geometry is the same either way, and the face carries
+   * its own width rather than one read off whichever neighbour happens to be there.
+   *
+   * A processor with no screen AT ALL does not come through here: its face is one of the
+   * two-per-row chips and takes that width, which is the shape it has always had.
+   */
+  private appendOpener(proc: HTMLElement, chip: HTMLElement | null): void {
+    // A pair spans a whole row, so it has to START one. Landing in the second column, it
+    // wraps and the chip before it is left alone on its row — where `.con-chip`'s grow
+    // stretches it to full width, silently, because nothing here is an error. The filler
+    // goes in FRONT of the face, so every pair is covered the day it is written rather
+    // than at whichever call site remembered.
+    const face = proc.lastElementChild;
+    if (face && proc.childElementCount % 2 === 0) face.before(el("div", "con-chip spacer"));
+    face?.classList.add("paired");
+    proc.append(chip ?? el("div", "con-chip con-chip-open spacer"));
+  }
+
   private dynOpenChip(kind: DynKind, id: string): HTMLElement {
     const chip = el("div", "con-chip con-chip-open");
     chip.textContent = "▸";
@@ -1414,6 +1638,54 @@ export class Console {
     chip.title = label;
     chip.setAttribute("aria-label", label);
     this.wireActivate(chip, undefined, () => this.hooks.onOpenDynScreen?.(kind, id));
+    return chip;
+  }
+
+  /** The INS FX face on a strip holding nothing. It looks like a chip and is not one:
+   *  there is no insert to switch in or out, so pressing it opens the same type popover
+   *  the disclosure beside it opens. Deliberately NOT a switch that picks the first free
+   *  effect — that wrote a selection the operator never chose, and a selector write is
+   *  what makes the unit refill the engine array with that type's defaults.
+   *
+   *  `whyNone` is why nothing can be taken right now, where that is the case. It goes on
+   *  a face that stays OPERABLE: releasing has to be reachable from every state, and the
+   *  list behind it is where the reason is said per effect. Saying it here as well is
+   *  what keeps "why is this strip empty" answerable without opening anything. */
+  /** `locked` is what the RATE forbids, and it is not the same as `whyNone`: a strip whose
+   *  menu is empty because every slot is taken still opens a popover worth reading (it
+   *  names what holds them), while a rate above every ceiling leaves nothing to choose at
+   *  all. Only the second goes inert — an opener that opens an empty menu is the shape this
+   *  was: it said why in a tooltip and then opened anyway. */
+  private insFxVacantChip(id: string, whyNone?: string, locked?: boolean): HTMLElement {
+    const chip = el("div", IFX_VACANT_CLS + (locked ? " readonly" : ""));
+    chip.textContent = "INS FX";
+    chip.setAttribute("role", "button");
+    chip.setAttribute("aria-haspopup", "menu");
+    chip.setAttribute("aria-expanded", "false");
+    if (whyNone) chip.title = whyNone;
+    if (locked) {
+      chip.setAttribute("aria-disabled", "true");
+      return chip;
+    }
+    this.wireActivate(chip, undefined, () => this.toggleInsFxPop(id, chip));
+    return chip;
+  }
+
+  /** The disclosure beside the INS FX face. `▸` is the processing row's own glyph and
+   *  this keeps it, but it is the one in that row that does not open a screen: the type
+   *  has to be settled before a screen has anything to show, so it opens the popover and
+   *  the screen is a second press inside it. `+` in place of `▸` where the strip holds
+   *  nothing, since what it offers there is a choice rather than a way in. */
+  private insFxOpenChip(id: string, holds: boolean): HTMLElement {
+    const chip = el("div", "con-chip con-chip-open con-ifxopen");
+    chip.textContent = holds ? "▸" : "+";
+    chip.setAttribute("role", "button");
+    chip.setAttribute("aria-haspopup", "menu");
+    chip.setAttribute("aria-expanded", "false");
+    const label = t().inspector.insertFx;
+    chip.title = label;
+    chip.setAttribute("aria-label", label);
+    this.wireActivate(chip, undefined, () => this.toggleInsFxPop(id, chip));
     return chip;
   }
 
@@ -1632,6 +1904,7 @@ export class Console {
     }
     this.closeTapPop();
     this.closeSendPan();
+    this.closeInsFxPop();
     this.host.classList.toggle("midi-learn", this.hooks.midi?.learnActive() ?? false);
     // A render replaces every strip element, so the transient state those elements
     // carried goes with them: the live meters' ballistics and keyboard focus. During
@@ -1795,7 +2068,14 @@ export class Console {
     // np.on) is silenced whole — dim the strip like the graph does (shared predicate),
     // with the scribble power LED, not a badge, marking why. The MUTE chip below is a
     // separate control: the → STEREO send's ON/OFF, unaffected by the master.
-    const strip = el("div", "con-strip" + (m.inactive ? " inactive" : ""));
+    // …and a node the RATE removes is dimmed the same way, which is what the graph
+    // already does with the same predicate. Its own controls stay reachable — this is a
+    // statement about the bus, not a second lock on every value it holds — while every
+    // send AIMED at it is locked in `buildSendCol`, since those are the ones that would
+    // otherwise route audio into a bus the unit is not running.
+    const rateOff = nodeRateDisabled(m.id, this.hooks.getPlan().sampleRate);
+    const strip = el("div", "con-strip" + (m.inactive || rateOff ? " inactive" : ""));
+    if (rateOff) strip.title = t().inspector.fx2RateLocked;
     strip.style.setProperty("--rail", m.rail);
 
     // head: scribble (with the power LED) + chips + gain (always the MAIN control set —
@@ -1893,7 +2173,7 @@ export class Console {
       // here. It costs a slot in the two-per-row grid, so the processing chips
       // take a third row.
       boolChip(proc, "GATE", "gateOn", false);
-      proc.append(this.dynOpenChip("gate", m.id));
+      this.appendOpener(proc, this.dynOpenChip("gate", m.id));
       // Which COMP/EQ bank the channel runs decides which screen the COMP and EQ chips
       // open, and whether the SSMCS chip is there at all. Asked of channelDynamics
       // rather than re-derived here, so an opener cannot appear for a screen that
@@ -1938,14 +2218,14 @@ export class Console {
           "on",
           { midiId: controlId(m.id, "ssmcsOn") },
         );
-        proc.append(this.dynOpenChip("ssmcs", m.id));
+        this.appendOpener(proc, this.dynOpenChip("ssmcs", m.id));
       }
       boolChip(proc, "COMP", "compOn", false);
       // The shipped COMP screen only. A morphing strip's COMP face is reached from the
       // SSMCS opener above and the face segment inside the screen, so the bank carries one
       // opener rather than one per face — and the COMP and EQ chips read here exactly as
       // they do on a channel with no strip at all.
-      if (dyn?.comp) proc.append(this.dynOpenChip("comp", m.id));
+      if (dyn?.comp) this.appendOpener(proc, this.dynOpenChip("comp", m.id));
       // The side-chain filter's own switch, between the two processors it sits between.
       // Every other on/off in this bank is reachable from the strip — SSMCS's master, the
       // compressor's, the EQ's — and this one was only inside the COMP screen. It writes
@@ -1965,31 +2245,34 @@ export class Console {
     if (m.hasEq) {
       // Stereo-channel EQ is inert at 176.4 / 192 kHz: show the chip forced off and
       // read-only (matches the inspector's locked EQ toggle), else a live toggle.
-      if (channelEqUnavailable(m.id, rate))
+      const eqType = this.hooks.getPlan().nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST;
+      if (channelEqUnavailable(m.id, rate)) {
         this.makeChip(m.id, proc, t().console.eq, false, false, () => false, {
           readonlyTitle: t().inspector.eqRateLocked,
         });
-      else {
+        // No opener. A disclosure the rate has emptied is DROPPED rather than drawn inert:
+        // a face carries the reason and stays, while a way IN to something that is not
+        // there is nothing to show disabled. Same rule for the INS FX pair below.
+        //
+        // Its SLOT is kept, so the face beside it is the width it is at every other rate.
+        if (hasEq(model, m.id, eqType)) this.appendOpener(proc, null);
+      } else {
         boolChip(proc, t().console.eq, "eqOn", true);
-        // The tuning screen's opener, as GATE and COMP have. Not offered where the
-        // rate has the EQ forced off (the toggle beside it is read-only there), nor in
-        // SSMCS mode, where the EQ chip toggles the morphing strip's band section and the
-        // face segment inside the SSMCS screen is what reaches its EQ face.
-        const eqType = this.hooks.getPlan().nodeParams[m.id]?.compEqType ?? COMP_EQ_COMP_FIRST;
-        if (hasEq(model, m.id, eqType)) proc.append(this.dynOpenChip("eq", m.id));
+        // The tuning screen's opener, as GATE and COMP have. Not offered in SSMCS mode,
+        // where the EQ chip toggles the morphing strip's band section and the face segment
+        // inside the SSMCS screen is what reaches its EQ face.
+        if (hasEq(model, m.id, eqType)) this.appendOpener(proc, this.dynOpenChip("eq", m.id));
       }
     }
     if (insertFxControl(model, m.id)) {
-      // The chip has two duties, and its lock composes them off the one menu
-      // core/constraints.ts computes — the menu the inspector's selector renders,
-      // so the chip cannot hand a strip what that selector greys out. Holding an
-      // effect makes it a bypass, locked where the rate rules THAT effect out: forced
-      // off and read-only, the treatment the stereo EQ gets. Holding none makes it take
-      // a slot, locked when nothing is free — the tooltip naming which of the two
-      // reasons applies, which is why the rate question is asked of a strip holding
-      // nothing too: above every ceiling it is the rate and not the slots.
+      // The pair GATE / COMP / EQ use: a face and a disclosure sharing one row. The face
+      // switches the insert in and out, the disclosure opens the type popover — and which
+      // of the two the face IS depends on whether the strip holds an effect. Holding none,
+      // there is no insert to switch, so the face opens the popover too rather than
+      // choosing an effect on the operator's behalf. The type is an axis the other four
+      // processors do not have, and it has to be settled before anything else means
+      // anything: what a bypass switches out, and what a tuning screen would show.
       const menu = insertFxMenu(model, this.hooks.getPlan(), m.id, this.ifxCensus ?? undefined);
-      const free = insertFxFree(menu);
       // Every question below is asked of the value the DEVICE path will act on, not of the
       // raw plan value — the same answer the Inspector reads. A node's own control may not
       // carry what the plan holds, and translate turns such a value into No Effect and
@@ -2001,34 +2284,52 @@ export class Console {
       // the amps and companders reach 96, so a strip holding it at 88.2 kHz is off while
       // the menu it came from still offers effects that run.
       const { locked: rateLocked, entry: selected } = insertFxRateLock(menu, eff);
-      const locked = holds ? rateLocked : !free.length;
-      if (locked)
-        this.makeChip(m.id, proc, "INS FX", false, false, () => false, {
-          readonlyTitle: !rateLocked
-            ? t().inspector.insFxSlotLocked
-            : selected?.option.maxRate !== undefined
-              ? t().inspector.insFxRateLockedAt(selected.option.label, formatRate(selected.option.maxRate))
-              : t().inspector.insFxRateLocked,
-        });
-      // Taking a slot removes it from every other strip's chip and menu, so that
-      // branch rebuilds the whole view; a bypass changes this strip alone and keeps
-      // the in-place chip update.
-      else
-        this.makeChip(
-          m.id,
-          proc,
-          "INS FX",
-          false,
-          insertFxEngaged({ insertFx: eff, insertFxOn: planOf().insertFxOn }),
-          () => this.toggleInsFx(m.id, free),
-          {
-            rerender: !holds,
-            // Both, because taking a slot writes the bypass ON over a bypass a No Effect
-            // route can already be holding — the plan reads the same before and after,
-            // and a read in flight then landed the new effect BYPASSED.
-            keys: ["insertFx", "insertFxOn"],
-          },
+      // Nothing to choose and nothing to release: this strip holds none, and every option
+      // it could take is above the rate's ceiling. Not the same as a full slot table, which
+      // still has a menu worth opening — and not the same as a strip HOLDING an effect the
+      // rate forced off, whose menu is how its device-wide slot is given back.
+      const free = insertFxFree(menu);
+      const noneAtThisRate = !holds && !free.length && rateLocked;
+      if (!holds)
+        proc.append(
+          this.insFxVacantChip(
+            m.id,
+            // Only where nothing at all can be taken, and the two reasons are not
+            // interchangeable: above every ceiling it is the rate and not the slots, and
+            // the rate question has to be asked of a strip holding nothing too.
+            free.length ? undefined : rateLocked ? t().inspector.insFxRateLocked : t().inspector.insFxSlotLocked,
+            noneAtThisRate,
+          ),
         );
+      else if (rateLocked)
+        proc.append(
+          this.buildChip(m.id, "INS FX", false, () => false, {
+            cls: IFX_FACE_CLS,
+            readonlyTitle:
+              selected?.option.maxRate !== undefined
+                ? t().inspector.insFxRateLockedAt(selected.option.label, formatRate(selected.option.maxRate))
+                : t().inspector.insFxRateLocked,
+          }),
+        );
+      else
+        proc.append(
+          this.buildChip(
+            m.id,
+            "INS FX",
+            insertFxEngaged({ insertFx: eff, insertFxOn: planOf().insertFxOn }),
+            () => this.toggleInsFxBypass(m.id),
+            // Selection belongs to the popover and the bypass to this face, so the face
+            // writes the bypass alone and the strip it sits on is the only thing that
+            // changes. Nothing else shows the value, so there is nothing to keep in step.
+            { cls: IFX_FACE_CLS, keys: ["insertFxOn"] },
+          ),
+        );
+      // Dropped where the popover behind it can do NOTHING: a strip holding nothing at a
+      // rate above every ceiling, where the one row is the No Effect it already is. A strip
+      // HOLDING an effect the rate forced off keeps it — choosing No Effect there is how the
+      // device-wide slot it still claims is given back, and that is the state an operator
+      // most needs to reach it from.
+      this.appendOpener(proc, noneAtThisRate ? null : this.insFxOpenChip(m.id, holds));
     }
     // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
     // A shelved ducker drops its chip even while the parent strip stays.
@@ -2052,7 +2353,7 @@ export class Console {
       // The tuning screen's opener, as GATE / COMP / EQ have. It carries the DUCKER
       // NODE's id, not the strip's: the chip lives here because a hung node has no
       // strip of its own, but the screen opens on the ducker.
-      proc.append(this.dynOpenChip("ducker", duckerId));
+      this.appendOpener(proc, this.dynOpenChip("ducker", duckerId));
     }
 
     for (const group of [top, proc]) {
@@ -2641,29 +2942,55 @@ export class Console {
     return sendConnection(plan, id, target)?.params?.level ?? LEVEL_OFF_DB;
   }
 
-  // The INS FX chip drives the device's insert ON/OFF (bypass) switch. With an
-  // effect selected, toggling flips insertFxOn and keeps the selection (absent =
-  // on, matching the device's auto-engage). With No Effect, toggling on restores
-  // the last chosen effect (else the first real option) and engages it. Returns
-  // the new on state. `options` is the non-empty free list off the shared menu (No
-  // Effect dropped, and everything the rate or another node's 1-of slot rules out;
-  // the caller locks the chip when nothing is left), so neither the first option nor
-  // a remembered one can be an effect this node may not take.
-  private toggleInsFx(id: string, options: InsertFxOption[]): boolean {
+  // The INS FX face drives the device's insert ON/OFF (bypass) and does not touch the
+  // selection: absent reads as on, matching the device's auto-engage on a selector write.
+  // Returns the new on state. Reached only where the strip holds an effect the device path
+  // will act on — the callers put the vacant face and the rate-stopped one in front of it.
+  private toggleInsFxBypass(id: string): boolean {
     const np = this.nodeParamsOf(id);
-    // The effective value, not the raw one: a held effect this node's own control does not
-    // carry reaches the unit as No Effect, so pressing the chip has to SELECT rather than
-    // bypass — which is also what clears the stale value out of the plan.
-    const eff = effectiveInsertFx(this.hooks.getModel(), this.hooks.getPlan(), id);
-    if (insertFxSelected({ insertFx: eff })) {
-      this.lastInsFx.set(id, np.insertFx!);
-      np.insertFxOn = np.insertFxOn === false;
-      return np.insertFxOn;
+    np.insertFxOn = np.insertFxOn === false;
+    return np.insertFxOn;
+  }
+
+  /**
+   * Select an insert effect on a strip, or release the one it holds.
+   *
+   * The outgoing family's engine values are parked under their own family first: a bare
+   * slot number left behind reads as the NEW family's, where the same slot is a different
+   * parameter under a different law. Selecting engages the insert, which is what the unit
+   * does on a selector write; releasing writes the intent off rather than leaving a
+   * dormant switch to be picked up by whatever is selected next.
+   *
+   * A selection reaches every other strip — each effect is one device-wide slot — so this
+   * rebuilds the view rather than the chip, and puts focus back on the disclosure the
+   * press came from. The popover is gone by then; without this the focus is on the body
+   * and the keyboard has lost its place in the rack.
+   *
+   * Choosing an effect then OPENS its screen. Picking a type is not the end of anything —
+   * what the operator came for is the effect's own values, and every one of them is on the
+   * screen — so the second press this used to need was a press that had one destination.
+   * Releasing is the opposite and opens nothing: No Effect is the way out, and a screen
+   * over a strip that now holds nothing has nothing to show.
+   */
+  private setInsFx(id: string, value: number): void {
+    const np = this.nodeParamsOf(id);
+    const parked = parkOutgoingInsertFxParams(np);
+    if (parked) np.insertFxParams = parked;
+    np.insertFx = value;
+    np.insertFxOn = value !== INSERT_FX_NONE;
+    this.closeInsFxPop();
+    // Only what this edit wrote. The engine values are named when there were some to
+    // park and not otherwise — naming that group on a selection that moved nothing in it
+    // would take the device's answer for every slot the re-key merely copied.
+    this.commit(id, parked ? INSERT_FX_PAIR_KEYS : ["insertFx", "insertFxOn"]);
+    this.render();
+    // Asked of the same function the launcher beside the list asks, so the press that
+    // chooses and the press that opens cannot disagree about whether there is a screen.
+    if (value !== INSERT_FX_NONE && insertFxScreenFamily(this.hooks.getModel(), this.hooks.getPlan(), id) !== null) {
+      this.hooks.onOpenDynScreen?.("insfx", id);
+      return;
     }
-    const last = this.lastInsFx.get(id);
-    np.insertFx = options.some((o) => o.value === last) ? last : options[0].value;
-    np.insertFxOn = true;
-    return true;
+    this.refs.get(id)?.root.querySelector<HTMLElement>(".con-ifxopen")?.focus();
   }
 
   // Build a labelled rotary knob (label / value / knob) in the strip head and

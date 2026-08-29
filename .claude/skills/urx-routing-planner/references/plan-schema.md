@@ -171,7 +171,18 @@ the device default. The full set:
 - `fxEffect` — the FX bus effect. Its `type` (the EFFECT TYPE selector), `on` and
   `level` (0–100) are plain values, but the `params` map holds raw per-effect
   values keyed by the device's array slot.
-- `insertFxParams` — insert-FX engine values are raw slot integers.
+- `insertFxParams` — insert-FX engine values are raw slot integers. Two switches in
+  here decide whether OTHER slots are written at all, so a plan carrying one of them
+  is asking for more than the switch. The Multi-Band Compressor's 1-Knob On (slot 6):
+  while it is on, the app stops writing every slot of the effect except Out Gain —
+  Threshold, Ratio, Gain and Attack in all three bands (8-11, 13-16, 18-21), the
+  Release (25) and both crossovers (23, 24) — because a change to 1-Knob Level
+  (slot 7) recomputes the first nine and pins the other six back to fixed values.
+  Pitch Fix's MIDI Control (slots 34 and 35, two bits for three
+  modes): while it is anything but Off, the app stops writing the Scale (slot 16) and
+  the twelve note-mask slots (22–33), because switching the mode on clears that mask
+  on the unit. In both cases the skipped slots are dropped from the write silently
+  and the app's tuning screen locks the same rows.
 
 These three are the device's own internal units — what URX Router captures when it
 reads a unit, not a scale you can author a value on. A hand-written number lands

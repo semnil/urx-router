@@ -177,6 +177,21 @@ export interface DynBinding {
    *  display is a level rack and nothing else, and keeps the ordinary order for the
    *  companders, whose display is the point. */
   paramsFirst?: true;
+  /** Lay the continuous values out as ROTARY KNOBS in a grid rather than as a column of
+   *  horizontal sliders. A guitar amp is the case: a dozen continuous values, all of them
+   *  the same kind of thing, against a display that is a level rack with nothing else in
+   *  it — a column of sliders that long reads as a list rather than as an amp, and it is
+   *  the one panel here whose real-world control IS a row of knobs. The rows that are NOT
+   *  continuous (a type selector, an on/off) keep their own shape and span the grid, so
+   *  the order the signal meets them survives. */
+  knobGrid?: true;
+  /** How many cards a `knobGrid` row holds, where the stylesheet's own number is not the
+   *  right one. Declared rather than derived from the count, because what decides it is what
+   *  the cards MEAN: a guitar amp is one run of values and its rows fall wherever they fall,
+   *  while the multi-band compressor is three bands of four parameters and a row of four
+   *  puts one band on each. Absent = whatever `.gt-knobs` declares (`src/style.css`), which
+   *  is not restated here — the two drifted apart the day that number moved. */
+  knobCols?: number;
 }
 
 /** Everything a descriptor is asked its questions against. `sel` is whatever the
@@ -352,8 +367,12 @@ export interface DynProcessor {
    *  whether it is shown — `settingsSection` keeps a hidden pill so the heading's height
    *  does not change, the same reservation the rows themselves get. */
   paramsTag?: (ctx: DynCtx) => { text: string; shown: boolean } | undefined;
-  /** Arrange the parts into the display column. */
-  display: (parts: DynParts) => HTMLElement;
+  /** Arrange the parts into the display column. The context comes with it because one
+   *  descriptor can stand for several processors: the INS FX screen resolves the effect
+   *  family per call, and only some families have a response a curve can be drawn from —
+   *  so whether this column carries a plot at all is a question about the plan, not about
+   *  the descriptor. A composer that does not need it takes one argument and ignores it. */
+  display: (parts: DynParts, ctx: DynCtx) => HTMLElement;
   /** The three below belong to the plot, and a display that does not call `parts.plot()`
    *  omits all three — the INS FX screen does: a guitar amp's frequency response and a
    *  pitch tracker are not derivable from the parameters, so a curve there would be an
@@ -601,6 +620,9 @@ export class DynScreen {
   /** What the binding declared about the readouts. Only the column count so far. */
   private readoutCols = READOUT_COLS_DEFAULT;
   private paramsFirst = false;
+  private knobGrid = false;
+  /** The knob grid's column count, as the binding asked for it. 0 = the stylesheet's own. */
+  private knobCols = 0;
   private faceReserve: number | null = null;
   /** The descriptor `open` was called with, and what its bank was a bank of at the time.
    *  A bank whose identity moves goes back to both. */
@@ -714,6 +736,20 @@ export class DynScreen {
     };
   }
 
+  /** Take a fresh binding's shape. Both `open` and `rebind` land here, so a field added
+   *  to `DynBinding` cannot be picked up on open and then go stale on a device-follow
+   *  re-bind — which is silent, and asymmetric in the direction that is hard to notice. */
+  private applyBinding(bound: DynBinding): void {
+    this.fields = bound.fields;
+    this.lanes = bound.lanes;
+    this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
+    this.paramsFirst = bound.paramsFirst === true;
+    this.knobGrid = bound.knobGrid === true;
+    this.knobCols = bound.knobCols ?? 0;
+    this.faceReserve = bound.faceReserve ?? null;
+    this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
+  }
+
   /** Open one processor for one node. The NODE is what the screen is scoped to and stays
    *  on: there is no in-screen channel switch, because a channel's controls are what a
    *  screen is opened from. The processor can move between the faces of one bank
@@ -729,12 +765,7 @@ export class DynScreen {
     this.sel = sel;
     this.entryProc = proc;
     this.bankId = proc.bankIdentity?.({ ...this.ctx(), nodeId, sel }) ?? "";
-    this.fields = bound.fields;
-    this.lanes = bound.lanes;
-    this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
-    this.paramsFirst = bound.paramsFirst === true;
-    this.faceReserve = bound.faceReserve ?? null;
-    this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
+    this.applyBinding(bound);
     this.peaks.clear();
     this.render();
     this.releaseInert ??= holdAppInert(this.scrim);
@@ -826,12 +857,7 @@ export class DynScreen {
       this.close();
       return false;
     }
-    this.fields = bound.fields;
-    this.lanes = bound.lanes;
-    this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
-    this.paramsFirst = bound.paramsFirst === true;
-    this.faceReserve = bound.faceReserve ?? null;
-    this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
+    this.applyBinding(bound);
     return true;
   }
 
@@ -839,11 +865,18 @@ export class DynScreen {
    *  device-side change arriving mid-gesture; anything structural (which rows exist,
    *  which are read-only) waits for the rebuild. */
   private syncValues(): void {
+    // One read for the pass. This runs on the follow clock WHILE a control is held, and
+    // `val` per input rebuilt the whole record per row — sixteen times on a band face.
+    const vals = this.vals();
+    const valOf = (f: DynField): number => {
+      const v = vals[f.key];
+      return typeof v === "number" ? v : f.def;
+    };
     for (const input of this.box.querySelectorAll<HTMLInputElement>("input[data-dyn]")) {
       const key = input.dataset.dyn;
       const f = key && this.fields.find((x) => x.key === key);
       if (!f) continue;
-      const v = this.val(f.key);
+      const v = valOf(f);
       if (dynFromPos(f, Number(input.value)) !== v) input.value = String(dynToPos(f, v));
       const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
       if (out) setLevelText(out, this.valueText(f, v));
@@ -1149,8 +1182,20 @@ export class DynScreen {
     return typeof v === "number" ? v : (this.fields.find((f) => f.key === key)?.def ?? 0);
   }
 
+  /** The values a curve reads, snapshotted ONCE for the draw.
+   *
+   *  `read` rebuilds a record of every row from the plan, and a curve asks for a dozen
+   *  values — the multi-band compressor's figure asks for thirteen. Resolved per `get`,
+   *  one redraw rebuilt that record thirteen times for data that cannot change inside a
+   *  frame, on a path the plot's dirty flag runs at frame rate. */
   private values(): DynValues {
-    return { get: (k) => this.val(k) };
+    const vals = this.vals();
+    return {
+      get: (k) => {
+        const v = vals[k];
+        return typeof v === "number" ? v : (this.fields.find((f) => f.key === k)?.def ?? 0);
+      },
+    };
   }
 
   /** How each non-editable row renders, resolved once per render: it can only change
@@ -1293,8 +1338,11 @@ export class DynScreen {
     // operator moves between GATE, COMP, DUCKER and the bank. Reserved through the same
     // builder rather than with a margin, so the space is whatever a bar that does get
     // drawn actually occupies — a constant would be measured once and then track nothing.
+    // The reserve either way when the bar has moved to the controls column: the space is
+    // what keeps every display starting at the same height, and the bar itself is what
+    // moved — not the room it takes.
     col.append(bar ? this.displayBar(bar) : this.reservedBar(proc, ctx));
-    col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }));
+    col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
     col.append(this.hintLine(proc, ctx));
     return col;
   }
@@ -1746,7 +1794,16 @@ export class DynScreen {
       setValue: (patch) => this.setVals(patch),
     };
     const extra = proc.rows?.(rowCtx);
-    if (extra?.lead) params.append(...extra.lead);
+    // One container either way, so the ORDER the signal meets the controls in is the same
+    // list in both layouts. In the grid every control is a card in the one panel — a
+    // discrete one included — so `lead` and `tail` go INSIDE it rather than above and
+    // below: appended to the column instead, a face's trailing selectors sat outside the
+    // panel entirely, which is where the cabinet's SP Type and Mic Position were.
+    const into = this.knobGrid ? el("div", "gt-knobs") : params;
+    // The count reaches the stylesheet as a VALUE, the way the readout tiles' does, so a
+    // descriptor can ask for any number and nothing silently answers with six.
+    if (this.knobCols) into.style.setProperty("--gt-knob-cols", String(this.knobCols));
+    if (extra?.lead) into.append(...extra.lead);
     // A `before` entry names the field it goes in front of, and a binding does not always
     // carry that field — reordering or renaming one is enough. Dropping the rows silently
     // would take a processor's only knee selector off the panel with nothing to see, so
@@ -1756,12 +1813,17 @@ export class DynScreen {
       const before = extra?.before?.[f.key];
       if (before) {
         unclaimed.delete(f.key);
-        params.append(...before);
+        into.append(...before);
       }
-      params.append(this.paramRow(f, label(f), value(f.key), this.states.get(f.key)));
+      into.append(
+        this.knobGrid
+          ? this.knobCard(f, label(f), value(f.key), this.states.get(f.key))
+          : this.paramRow(f, label(f), value(f.key), this.states.get(f.key)),
+      );
     }
-    for (const key of unclaimed) params.append(...(extra?.before?.[key] ?? []));
-    if (extra?.tail) params.append(...extra.tail);
+    for (const key of unclaimed) into.append(...(extra?.before?.[key] ?? []));
+    if (extra?.tail) into.append(...extra.tail);
+    if (into !== params) params.append(into);
 
     const ro = settingsSection(g.readouts);
     const cells = el("div", "gt-readouts");
@@ -1789,7 +1851,12 @@ export class DynScreen {
    */
   private armable(row: HTMLElement, key: string, ctx: DynCtx): HTMLElement {
     const midi = this.hooks.midi;
-    const control = row.querySelector<HTMLElement>(".ctl, .prefs-toggle");
+    // Every shape a control takes on these screens, the grid layout's two included. The
+    // list carried only the row layout's, so a descriptor that named a control id would
+    // arm its rows and silently not arm the same fields laid out as knob cards — the
+    // asymmetry costs nothing today, because no insert-FX descriptor names one, and would
+    // be invisible the moment one did.
+    const control = row.querySelector<HTMLElement>(".ctl, .prefs-toggle, .con-knob, .prefs-switch");
     if (!control || !midi) return row;
     // A locked row's control is disabled; arming it would bind a mapping whose
     // writes the catalog refuses anyway.
@@ -1821,6 +1888,78 @@ export class DynScreen {
     this.measure();
     // render() replaced the canvas, so the size watch has to be re-attached to it.
     this.watchPlotSize();
+  }
+
+  /**
+   * One continuous value as a rotary knob: its name, its reading, and the knob under
+   * them, boxed.
+   *
+   * The control INSIDE it is the same `<input type="range">` every other row carries, laid
+   * over the knob face and painted away. That is the whole point rather than an
+   * implementation detail: the value, the step, the keyboard, the wheel gate, the
+   * blur-inert hold and the MIDI arming are the range's own contract, and a bespoke rotary
+   * would have to reimplement each of them — which is where the console's knob and this
+   * one would drift. The knob is the picture; the range is the control.
+   *
+   * The indicator's angle is the same 270° sweep the console's knobs use, written to the
+   * same custom property, so the two read as one instrument.
+   */
+  private knobCard(f: DynField, label: string, value: number, opts: SettingsRowOptions | undefined): HTMLElement {
+    const card = el("div", "gt-knob" + (opts?.locked ? " locked" : ""));
+    // The label and its reason share a line, the way the row layout puts them together —
+    // the tag qualifies the NAME, and under the knob it reads as a second value.
+    const lblc = el("span", "lblc");
+    const name = el("span", "lbl");
+    name.textContent = label;
+    lblc.append(name);
+    const val = el("span", "param-val gt-val");
+    val.dataset.dynVal = f.key;
+    const knob = el("div", "con-knob");
+    const ind = el("i", "ind");
+    const input = document.createElement("input");
+    input.type = "range";
+    // Positions for a logarithmic field, the value itself otherwise — the same mapping
+    // `paramRow` uses, so a field behaves identically in either layout.
+    input.min = String(f.logSteps === undefined ? f.min : 0);
+    input.max = String(f.logSteps ?? f.max);
+    input.step = String(f.logSteps === undefined ? f.step : 1);
+    input.value = String(dynToPos(f, value));
+    input.dataset.dyn = f.key;
+    input.setAttribute("aria-label", label);
+    const lo = Number(input.min);
+    const hi = Number(input.max);
+    const turn = (pos: number): void => {
+      const frac = hi > lo ? (pos - lo) / (hi - lo) : 0;
+      ind.style.setProperty("--rot", `${-135 + frac * 270}deg`);
+    };
+    const show = (v: number): void => {
+      const text = this.valueText(f, v);
+      setLevelText(val, text);
+      input.setAttribute("aria-valuetext", text);
+    };
+    show(value);
+    turn(Number(input.value));
+    input.addEventListener("input", () => {
+      const pos = Number(input.value);
+      turn(pos);
+      const v = dynFromPos(f, pos);
+      show(v);
+      this.setVals({ [f.key]: v });
+      this.markPlotDirty();
+    });
+    wheelStep(input, () => this.hooks.midi?.learnActive());
+    holdInertOnBlur(input, { live: () => this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`) });
+    if (opts?.locked) input.disabled = true;
+    knob.append(ind, input);
+    // A locked row's tag ("Device-driven", "Vib only") is what says WHY it cannot be
+    // touched, so it travels with the card rather than being dropped in this layout.
+    if (opts?.tag) {
+      const tag = el("span", "gt-knobtag");
+      tag.textContent = opts.tag;
+      lblc.append(tag);
+    }
+    card.append(lblc, val, knob);
+    return this.armable(card, f.key, this.ctx());
   }
 
   private paramRow(f: DynField, label: string, value: number, opts: SettingsRowOptions | undefined): HTMLElement {
@@ -1989,7 +2128,9 @@ export class DynScreen {
  *  are "what a plot draws with", and the canvas owner resolves both. */
 export const PLOT_FONT = '9.5px "SF Mono", Menlo, Consolas, monospace';
 
-const PLOT_TOKENS = [
+/** The token names a plot canvas is handed. A draw naming anything else reads undefined,
+ *  which canvas IGNORES rather than refuses — pinned by `palette.contract`. */
+export const PLOT_TOKENS = [
   "--plot-line",
   "--plot-faint",
   "--plot-dim",

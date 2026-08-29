@@ -171,22 +171,41 @@ describe("arming surfaces against the control catalog", () => {
       // first for the rest, whose faces do not vary by node.
       const nodeIds = kind === "insfx" ? binding : binding.slice(0, 1);
 
-      for (const nodeId of nodeIds) {
+      /** One face's own verdict. Per face rather than per screen: the counts have to
+       *  match on each, and totals let a face that marks nothing hide behind one that
+       *  marks twice. */
+      const host = dh;
+      const checkFace = (where: string): void => {
         armed.length = 0;
-        const screen = new DynScreen(dh.hooks);
-        screen.open(proc, nodeId);
-        expect(screen.isOpen()).toBe(true);
-        const { marked, ids } = armEverything(dh.box, armed);
+        const { marked, ids } = armEverything(host.box, armed);
         if (proc.controlId) {
-          expect(marked, nodeId).toBeGreaterThan(0);
-          expect(ids.length, nodeId).toBeGreaterThan(0);
+          expect(marked, where).toBeGreaterThan(0);
+          expect(ids.length, where).toBeGreaterThan(0);
           // Same equality as the CONSOLE case: a screen that marks five rows and arms one
           // is the defect, and only the counts show it.
-          expect(ids.length, nodeId).toBe(marked);
-          expect(ids.filter((id) => !bindControl(model, plan, id))).toEqual([]);
+          expect(ids.length, where).toBe(marked);
+          expect(
+            ids.filter((id) => !bindControl(model, plan, id)),
+            where,
+          ).toEqual([]);
         } else {
-          expect(marked, nodeId).toBe(0);
-          expect(ids, nodeId).toEqual([]);
+          expect(marked, where).toBe(0);
+          expect(ids, where).toEqual([]);
+        }
+      };
+
+      for (const nodeId of nodeIds) {
+        const screen = new DynScreen(host.hooks);
+        screen.open(proc, nodeId);
+        expect(screen.isOpen()).toBe(true);
+        checkFace(nodeId);
+        // …and every OTHER face its bar offers. A face is a different set of slots — the
+        // multi-band compressor's three band faces carry twelve the first one does not —
+        // and opening at the default `sel` alone leaves those unchecked, which is the same
+        // silence this file exists to break.
+        for (const item of proc.bar?.(ctxAt(nodeId))?.items ?? []) {
+          host.box.querySelector<HTMLElement>(`#${item.id}`)?.click();
+          checkFace(`${nodeId} / ${item.label}`);
         }
         screen.close();
       }

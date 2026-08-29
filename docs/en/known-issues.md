@@ -49,7 +49,42 @@ meters reading -10, -4 and 0 dB), setting the value stopped MID alone while LOW 
 reducing. It is not the last band the app wrote either — the write before it was LOW's.
 
 Everything else on that effect is offered: the three bands' Threshold, Ratio, Attack and
-Gain, the shared Release, both crossover frequencies, the output gain, and the 1-knob.
+Gain, the shared Release, both crossover frequencies, and the output gain, and the 1-Knob.
+
+## While the Multi-Band Compressor's 1-Knob is on, only Out Gain stays yours
+
+The unit's multi-band compressor has a **1-Knob** — an On switch and a Level — that sets
+the whole effect from one number. Both are offered and both are written, like the 1-knobs
+on the COMP and EQ screens.
+
+Switching it on is not an edit but a preset: the unit refills every other value of the
+effect with the type's own, and switching it off leaves them there rather than putting back
+what was set. Measured on a URX44V with every other value armed away from where it had been
+and away from its neighbours, the ON transition moved all of them — the three bands'
+Threshold, Ratio, Gain and Attack, the shared Release, both crossovers and the output gain.
+
+Every Level change afterwards reasserts all but one of them: nine are recomputed from the
+Level (**Threshold, Ratio and Gain in each band**) and six are pinned straight back to fixed
+values whatever was written over them (**the three Attacks, the shared Release and both
+crossovers**). The planner stops writing those fifteen while the knob is on, and the tuning
+screen locks the same rows.
+
+**The output gain is the exception** — the knob never touches it, so the planner keeps
+writing it and its row stays live. Measured on a URX44V by writing all seven of the
+non-recomputed values away from the preset AFTER switching the knob on: every one took the
+value and held it through 3.2 s of polling, and then a Level change put six of them back
+while the output gain kept what was written.
+
+## While Pitch Fix's MIDI Control is on, the Scale and the notes are the unit's
+
+Pitch Fix's **MIDI Control** picks where the correction takes its target notes from. From
+**Setting** on they arrive on a USB-MIDI port of the unit's own, and switching the mode on
+clears the twelve-note mask and takes the Scale enum to Custom (measured on a URX44V).
+
+The selector itself is offered and written. The Scale and the twelve notes are not, while
+the mode is anything but Off: writing them would put the operator's pre-change mask straight
+back over the erase the unit had just performed. The tuning screen locks the same two rows,
+and both are released as soon as the mode goes back to Off.
 
 ## CUE (solo/monitor interrupt) assignment cannot be controlled
 

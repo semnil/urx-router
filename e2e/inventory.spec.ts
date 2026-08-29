@@ -3,12 +3,14 @@ import { allItems, Inventory, itemsFor, itemsUnder, type Item } from "./inventor
 import { pickBand } from "./dyn-helpers";
 import { en } from "../src/i18n/en";
 import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
-import { planParam } from "./plan-param";
+import { planParam, planParamZ } from "./plan-param";
 import { listControls } from "../src/core/midi/controls";
 import { getModel } from "../src/models";
 import { defaultPlan } from "../src/models/initial-state";
 import { selectWire } from "./graph-helpers";
 import { COMP_EQ_SSMCS } from "../src/core/control/params";
+import { chooseOption } from "./choose-option";
+import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
 
 // Display-item coverage for every dialog, window, menu and popover: each one is
 // driven through the states it has, and everything the message catalog holds for
@@ -104,6 +106,11 @@ const SURFACES: Record<SurfaceName, Surface> = {
     // screen shows whichever effect the node holds, so the effect's own name is part of
     // the title rather than something else on the panel.
     composed: ["dynTuning.peakPrefix", "dynTuning.insfx.title"],
+    // What the panel says on screen is the pill beside the switch ("Device"); this is the
+    // sentence behind it, and it is three lines — printed on the panel it would be the
+    // largest thing on a section whose whole content is one dead row. The same arrangement
+    // Pitch Fix's read-only MIDI Control row has.
+    viaAttribute: ["dynTuning.insfx.mbcOneKnobDeviceOnly"],
   },
   prefs: {
     roots: ["prefs"],
@@ -163,7 +170,21 @@ const SURFACES: Record<SurfaceName, Surface> = {
     },
   },
   consolePopovers: {
-    keys: ["console.meterPoint", "console.meterPointHint", "console.sendPan"],
+    keys: [
+      "console.meterPoint",
+      "console.meterPointHint",
+      "console.sendPan",
+      // The INS FX type popover. `insFxInUse` and `insFxRemove` need a state to be true
+      // in — one strip has to be holding an effect before another can be told the slot
+      // is taken, and before releasing is a thing to offer — so the run below takes one.
+      "console.insFxType",
+      "console.insFxInUse",
+      "console.insFxRemove",
+    ],
+    // Said on whichever of the two inert controls under the list is hovered, and only
+    // there: it is the reason they are inert, and a strip that has chosen something has
+    // no reason to be given.
+    viaAttribute: ["console.insFxPickFirst"],
   },
 };
 
@@ -387,7 +408,7 @@ test("the device setup screen shows every page, on the model that has it and the
   // the catalog probe does not yield.
   await page.locator("#device-setup-brightness").fill("3");
   await page.locator("#device-setup-brightness").dispatchEvent("change");
-  await page.selectOption("#device-setup-apo-time", { index: 1 });
+  await chooseOption(page.locator("#device-setup-apo-time"), { index: 1 });
   await expect(page.locator("#device-setup-pending")).toContainText("unapplied changes");
   await inv.take(page, "#device-setup-modal");
 
@@ -484,7 +505,7 @@ test("the channel tuning screens show every processor, both displays and their n
   // by switching the channel's bank first. Once open they move between each other from
   // the title row, which is where the face labels are.
   await page.locator('#graph-host g.node[data-id="ch1"]').click();
-  await page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select").selectOption("1");
+  await chooseOption(page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select"), "1");
   await openFromInspector("ssmcs");
   await inv.take(page, "#dyn-screen-modal");
   await page.click("#dyn-face-ssmcs-comp");
@@ -507,17 +528,28 @@ test("the channel tuning screens show every processor, both displays and their n
   // selected, and the launcher's own wording is only on screen from that moment.
   const openInsFx = async (id: string, effect: string, faces: string[] = [], bypass = false): Promise<void> => {
     await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
-    await page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select").selectOption({ label: effect });
+    await chooseOption(page.locator("#inspector .param", { hasText: "Effect Type" }).locator("select"), {
+      label: effect,
+    });
     // Bypassing is a state of the screen, not of the Inspector: the note under the
     // display is the only place the app says the values are still editable while nothing
     // they are set to reaches the signal.
+    // Insert FX is an on-state section like GATE / COMP / EQ, so its bypass row is the
+    // section's own toggle — no label of its own, the header being its name.
+    const ifxSection = insertFxSection(page);
     if (bypass) {
-      await page
-        .locator("#inspector .param", { hasText: "Insert FX ON" })
-        .getByRole("button", { name: "OFF", exact: true })
-        .click();
+      await ifxSection.locator(".sec-body .toggle").getByRole("button", { name: "OFF", exact: true }).click();
+      // …and switching it off folds the section, as switching GATE off folds its own. The
+      // launcher inside is still offered — a held effect that is not running is still an
+      // effect to tune — so the header is pressed to get back to it.
+      await ifxSection.locator("summary").click();
     }
     await inv.take(page, "#inspector");
+    // The launcher is inside the section, which is folded whenever the effect is not
+    // engaged — a readback or a bypass both leave it that way.
+    if (!(await ifxSection.evaluate((d) => (d as HTMLDetailsElement).open))) {
+      await ifxSection.locator("summary").click();
+    }
     await page.locator("#btn-insfx-screen").click();
     await expect(box).toBeVisible();
     await inv.take(page, "#dyn-screen-modal");
@@ -532,15 +564,54 @@ test("the channel tuning screens show every processor, both displays and their n
   // at a time.
   await openInsFx("ch2", "Compander-H");
   await openInsFx("bus.mix1", "Compander-S");
-  // A guitar amp is the one family with two faces, and the only one whose face bar and
-  // the tag on its locked modulation rows are on screen at all.
-  await openInsFx("ch1", "Clean", ["#dyn-face-insfx-cab", "#dyn-face-insfx-amp"]);
-  // Pitch Fix is the other two-face family, and its scale face is the only place the note
-  // strip and the read-only MIDI Control row appear.
-  await openInsFx("ch3", "Pitch Fix", ["#dyn-face-insfx-cab", "#dyn-face-insfx-amp"]);
+  // A guitar amp is one face — the cabinet sits on it between the amp and Output — and it
+  // is the only place the tag on its locked modulation rows is on screen at all.
+  await openInsFx("ch1", "Clean");
+  // Pitch Fix is one face, and the only place the note strip and the MIDI Control row
+  // appear. Driven through BOTH of its states: from Setting on, the notes the correction
+  // aims at come from a port of the unit's own, and the Scale and the mask are the unit's —
+  // which is the only place the pill that says so is on screen.
+  await openInsFx("ch3", "Pitch Fix");
+  await page.locator('#graph-host g.node[data-id="ch3"]').click();
+  await openInsertFxSection(page);
+  await page.locator("#btn-insfx-screen").click();
+  await expect(box).toBeVisible();
+  await chooseOption(
+    box.locator(".prefs-row", { has: page.getByText("MIDI Control", { exact: true }) }).locator("select"),
+    { label: "Real Time" },
+  );
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
   // Back to the strip that already holds it: the compander takes a device-wide 1-of slot,
   // so a third channel cannot select one while CH 2 has it.
   await openInsFx("ch2", "Compander-H", [], true);
+  // The multi-band compressor: four faces, and the band ones are the only place its three
+  // reduction lanes appear. On the bus that already holds a compander, since the two share
+  // that same 1-of slot.
+  await openInsFx("bus.mix1", "M.B.Comp", [
+    "#dyn-face-insfx-low",
+    "#dyn-face-insfx-mid",
+    "#dyn-face-insfx-high",
+    "#dyn-face-insfx-main",
+  ]);
+
+  // …and with the unit's own 1-Knob on, which is the state that replaces the line under the
+  // display. There is no control for it — the app never writes it — so the plan is what puts
+  // it there.
+  const oneKnob = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { "bus.mix1": { insertFx: 1792, insertFxOn: true, insertFxParams: { "6": 1, "7": 24 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(oneKnob)}`);
+  await page.locator('#graph-host g.node[data-id="bus.mix1"]').click();
+  await openInsertFxSection(page);
+  await page.locator("#btn-insfx-screen").click();
+  await expect(box).toBeVisible();
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
   expectComplete("dynScreen", inv);
 });
@@ -728,6 +799,30 @@ test("the console popovers name what they set", async ({ page }) => {
   await ch1.locator(".con-panbtn").click();
   await expect(page.locator(".con-spop")).toBeVisible();
   await inv.take(page, ".con-spop");
+  await page.keyboard.press("Escape");
+
+  // The INS FX type popover, driven through both states it has. Empty first — the list
+  // and its heading — then again with CH 1 holding an effect, which is what puts
+  // "release" beside No Effect. The slot is device-wide, so CH 2 is where "in use" is
+  // true: one strip taking an amp is what refuses the whole family on the next.
+  const ifx = page.locator(".con-ifxpop");
+  await ch1.locator(".con-ifxopen").click();
+  await expect(ifx).toBeVisible();
+  await inv.take(page, ".con-ifxpop");
+
+  // Choosing opens the effect's screen, which is the point of choosing one; this case is
+  // about the list, so it closes the screen and comes back to it.
+  await ifx.locator(".irow", { hasText: "Clean" }).first().click();
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+  await ch1.locator(".con-ifxopen").click();
+  await expect(ifx).toBeVisible();
+  await inv.take(page, ".con-ifxpop");
+  await page.keyboard.press("Escape");
+
+  const ch2 = page.locator(".con-strip", { has: page.getByText("CH 2", { exact: true }) });
+  await ch2.locator(".con-ifxopen").click();
+  await expect(ifx).toBeVisible();
+  await inv.take(page, ".con-ifxpop");
 
   expectComplete("consolePopovers", inv);
 });
@@ -851,7 +946,7 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
 
   // Learn on with nothing armed, then armed at a control: three hints in all,
   // and only one of them is on screen at a time.
-  await win.locator(".mw-in").selectOption("Stub In");
+  await chooseOption(win.locator(".mw-in"), "Stub In");
   await win.locator(".mw-learnbtn").click();
   await expect(win.locator(".mw-learnbtn")).toHaveAttribute("aria-pressed", "true");
   await inv.take(win, "#midi-window");

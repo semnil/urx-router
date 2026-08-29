@@ -8,11 +8,14 @@ import {
   insertFxVal,
   parkOutgoingInsertFxParams,
   pitchMidiMode,
+  pitchMidiPatch,
   pitchKeyPatch,
   pitchScalePatch,
   reKeyInsertFxParams,
 } from "./insert-fx-model";
 import {
+  PITCH_MIDI_ENABLE_SLOT,
+  PITCH_MIDI_REALTIME_SLOT,
   PITCH_NOTE_SLOTS,
   PITCH_SCALE_CHROMATIC,
   PITCH_KEY_SLOT,
@@ -215,11 +218,17 @@ describe("pitch MIDI control tri-state", () => {
     expect(pitchMidiMode(1, 1)).toBe(2);
   });
 
-  // There is no writer. Switching the enable bit on erases a full note mask, and the notes
-  // it listens for arrive on a port of the unit's own — so this module decodes the mode and
-  // has nothing that encodes one.
-  it("carries no encoder", async () => {
-    const mod = (await import("./insert-fx-model")) as Record<string, unknown>;
-    expect(Object.keys(mod).filter((k) => /midi/i.test(k))).toEqual(["pitchMidiMode"]);
+  // Two bits for three modes, so a write names BOTH — setting the enable bit alone would
+  // leave whichever real-time bit was there and land on a mode nobody chose.
+  it("encodes a mode back into both bits", () => {
+    expect(pitchMidiPatch(0)).toEqual({ [PITCH_MIDI_ENABLE_SLOT]: 0, [PITCH_MIDI_REALTIME_SLOT]: 0 });
+    expect(pitchMidiPatch(1)).toEqual({ [PITCH_MIDI_ENABLE_SLOT]: 1, [PITCH_MIDI_REALTIME_SLOT]: 0 });
+    expect(pitchMidiPatch(2)).toEqual({ [PITCH_MIDI_ENABLE_SLOT]: 1, [PITCH_MIDI_REALTIME_SLOT]: 1 });
+    // …and it is the inverse of the decoder over every mode, which is what says the two
+    // cannot drift into disagreeing about which pair of bits a mode is.
+    for (const mode of [0, 1, 2]) {
+      const p = pitchMidiPatch(mode);
+      expect(pitchMidiMode(p[PITCH_MIDI_ENABLE_SLOT], p[PITCH_MIDI_REALTIME_SLOT]), String(mode)).toBe(mode);
+    }
   });
 });

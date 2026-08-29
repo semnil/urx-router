@@ -33,6 +33,9 @@ export interface Recorder {
   ctx: CanvasRenderingContext2D;
   /** The y of every path point, in order. */
   ys: number[];
+  /** …and the x, for a figure whose horizontal extent is the thing it says — the
+   *  multi-band compressor's band step, where the width of a segment IS the band. */
+  xs: number[];
   /** Every `fillStyle` written, in order. */
   fills: string[];
   /** Every filled path, with the box its points covered. */
@@ -49,6 +52,7 @@ export interface Recorder {
  *  geometry rather than by trusting a call order. */
 export function recorder(): Recorder {
   const ys: number[] = [];
+  const xs: number[] = [];
   const fills: string[] = [];
   const faces: PaintedFace[] = [];
   const texts: PaintedText[] = [];
@@ -81,6 +85,7 @@ export function recorder(): Recorder {
           case "lineTo":
             return (x: number, y: number) => {
               ys.push(y);
+              xs.push(x);
               cover(x, y);
             };
           case "rect":
@@ -127,7 +132,7 @@ export function recorder(): Recorder {
     },
   ) as CanvasRenderingContext2D;
 
-  return { ctx, ys, fills, faces, texts };
+  return { ctx, ys, xs, fills, faces, texts };
 }
 
 /** Values a descriptor reads, defaulting to 0 for anything unnamed. */

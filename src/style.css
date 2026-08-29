@@ -1946,7 +1946,13 @@ input[type="range"]:focus-visible,
 
 /* Joined segmented bar, shared with the Device setup screen's knob-bank switch. */
 .view-tabs,
-.udk-banks,
+.udk-banks {
+  display: flex;
+  border: 1px solid var(--ctl-border);
+  border-radius: 7px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
 /* The twelve semitone buttons on the Pitch Fix scale face. Twelve independent toggles
    rather than one selection, so they share the segment bar's look and not its behaviour —
    and they are named from C in a straight row on purpose: the slots are absolute semitones,
@@ -2238,10 +2244,15 @@ input[type="range"]:focus-visible,
 }
 /* GATE splits its slot: the chip keeps toggling the gate, the narrow neighbour
    opens the tuning screen. Together they fill one row of the two-per-row grid, so
-   the processing chips run to a third row. Expressed here rather than threaded
-   through the chip builder — which slot a chip occupies is this strip's layout,
-   not something the shared chip API should carry. */
-.con-chip:has(+ .con-chip-open) {
+   the processing chips run to a third row.
+
+   A CLASS on the face rather than a `:has(+ .con-chip-open)` reading of its neighbour.
+   Read from the neighbour, the face's width was a function of whether the disclosure
+   was rendered — so a rate ceiling that drops one resized the button beside it, 58px
+   to 39px, and INS FX changed shape as the rate moved. The narrow slot stays filled
+   either way (`appendOpener` puts a hidden placeholder there), so the row's geometry
+   does not move; this class is what makes the face's own width independent of it. */
+.con-chip.paired {
   flex: 0 0 calc(75% - 3px);
 }
 .con-chip-open {
@@ -2257,8 +2268,14 @@ input[type="range"]:focus-visible,
   pointer-events: none;
 }
 /* Read-only chip (e.g. CH → FX send Pre/Post while live): value shown, edits off.
-   Matches the inspector toggle's disabled look (#inspector .toggle button:disabled). */
+   Matches the inspector toggle's disabled look (#inspector .toggle button:disabled).
+
+   `.con-sl` is in the list because it is the third thing `buildChip` builds and the one
+   that had been left out: a send whose bus the rate has taken away carried the class and
+   the aria-disabled and was painted exactly like a live one, which is a control that says
+   it is off to a screen reader and nothing at all to the eye. */
 .con-chip.readonly,
+.con-sl.readonly,
 .con-slp.readonly {
   cursor: not-allowed;
   opacity: 0.45;
@@ -3080,6 +3097,421 @@ input[type="range"]:focus-visible,
 }
 .con-spop .pcol .rv {
   font: 700 11px var(--mono);
+}
+
+/* A state the unit owns and this app only shows: the reading and the switch that decides
+   whether it means anything, on the row they belong to together. */
+.gt-devstate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.gt-devval {
+  font: 700 12px var(--mono);
+  color: var(--led-ink);
+  white-space: nowrap;
+}
+
+/* The guitar amp's knob grid. Its continuous values are the one panel here whose real
+   control is a row of knobs, and a dozen horizontal sliders in a column read as a list
+   rather than as an amp.
+
+   A fixed number of columns at most, per the design: the grid takes as many as fit at a
+   comfortable knob size and no more, so the count follows the width instead of being set
+   per breakpoint. `auto-fit` collapses the empty tracks, which is what keeps four values
+   from being spread across the whole row. */
+/* Seven columns, then three, then two — the ladder the design gives, as counts rather than
+   as an `auto-fit` that derives one. Derived, the count has no ceiling: `auto-fit` over a
+   minimum track fits another column as soon as the panel is wide enough for one, so the
+   row the design draws as seven became eight or nine on a wide window and the knobs
+   stopped growing at the size that was supposed to be their floor. */
+.gt-knobs {
+  display: grid;
+  /* Seven unless the descriptor names another number (`knobCols`): a guitar amp is one run
+     of values and its rows fall wherever seven of them do, while the multi-band compressor
+     is three bands of four and a row of four puts one band on each.
+
+     Seven rather than six because of what the guitar amp's row break made of six: the
+     modulation group and the cabinet come to seven cards, which took two rows there and
+     made the panel a row taller than the modal had — the level rack fell below the fold
+     and the face needed scrolling to read. On seven they are one row.
+
+     The track minimum is what the column can actually give: four tracks and their gaps fit
+     the 400px control column at 88px and overflowed it at 96, and an overflowing grid takes
+     a HORIZONTAL scrollbar here, because the face's own vertical one forces one. It is a
+     floor under the card and not the card's size — the knob inside is 56px at most, so 88
+     is still room around it. */
+  /* Declared, not repeated as a fallback in each rule below: written three times, the
+     number moved in one of them and the media queries kept the old one. A descriptor's
+     `knobCols` sets the same property on the element and wins. */
+  --gt-knob-cols: 7;
+  grid-template-columns: repeat(var(--gt-knob-cols), minmax(88px, 1fr));
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+@media (max-width: 1100px) {
+  .gt-knobs {
+    grid-template-columns: repeat(min(var(--gt-knob-cols), 3), minmax(104px, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .gt-knobs {
+    grid-template-columns: repeat(min(var(--gt-knob-cols), 2), minmax(104px, 1fr));
+  }
+}
+/* The one thing in a knob grid that is not a card: a guitar amp's row break. It spans
+   every column, so the group after it starts a row of its own however many cards the
+   group before it came to — which varies by amp type and again at each breakpoint, so a
+   break that is a count of cards would be wrong on most of them. Zero height, so the
+   separation it draws is the grid's own gap above it and below it. */
+.gt-knobs > .gt-break {
+  grid-column: 1 / -1;
+  height: 0;
+}
+/* A row that is NOT a continuous value — a type selector, an on/off — takes the SAME card
+   as a knob rather than a shape of its own. It is one panel of controls, and a full-width
+   row between two knobs cuts the panel into pieces and puts its control at the far edge,
+   an amp's width away from the label naming it. */
+.gt-knob,
+.gt-knobs > .prefs-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 9px;
+  /* A card's own frame, on the control border rather than on `--line`: `--line` is what a
+     plain list row rules itself off with, and a card drawn on it reads flatter than the
+     controls it holds. The gradient and the hairline highlight are what make it a face. */
+  border: 1px solid var(--ctl-border);
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--ctl-bg2), var(--ctl-bg));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+  min-width: 0;
+  /* One height for every card, so a tag under one knob or a shorter control in one card
+     cannot step the row it is in. The design's own card height. */
+  /* Cleared from the tallest card the faces produce, and no more: a guitar amp is one face
+     of up to fifteen cards now, so three rows of them have to fit a modal that used to hold
+     two. The knob keeps its own size — shrinking the face is what makes it a worse control,
+     and the height above it is the part that was slack. */
+  min-height: 116px;
+  /* The knob sits on the card's floor and the slack falls between the value and it, which
+     is what puts every knob in a row on one line whatever its label wrapped to. */
+  justify-content: flex-start;
+}
+/* The row builders lay a label beside its control; in a card it goes above one. */
+/* The twelve-note keyboard is one control twelve buttons wide, so it takes the whole row
+   rather than a card: at a card's width its buttons are under the desktop minimum target. */
+.gt-knobs > .prefs-row:has(.gt-notes) {
+  grid-column: 1 / -1;
+}
+.gt-knobs > .prefs-row {
+  justify-content: flex-start;
+  margin-left: 0;
+  padding: 7px 4px 8px;
+  border-bottom: 1px solid var(--line);
+}
+/* The label and its pill WRAP: a card is a knob wide, and a two-word name beside a pill
+   on one line squeezes the name to one character per line. Pitch Fix's read-only MIDI
+   Control card is where that showed. */
+.gt-knobs > .prefs-row > .lblc {
+  width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
+  text-align: center;
+}
+.gt-knobs > .prefs-row > .lblc .lbl {
+  font: 600 9.5px var(--mono);
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+  line-height: 1.15;
+  min-height: 22px;
+  overflow-wrap: anywhere;
+}
+/* The control sits where the knob face would, centred in what the label leaves — so a
+   select and a knob in neighbouring cards are on the same line. It keeps its own height:
+   stretched to fill the card it reads as a panel rather than as a control. */
+.gt-knobs > .prefs-row > :not(.lblc) {
+  flex: 0 0 auto;
+  margin: auto 0;
+  width: 100%;
+  min-width: 0;
+}
+.gt-knobs > .prefs-row select {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+}
+/* A segmented pair in a card splits the card rather than sitting at its natural width, so
+   the two faces stay the same size as each other whatever words they carry. No guitar face
+   has one today — the cabinet's switch is the one-button form — and a pair that appeared
+   without this would draw two differently sized faces in a column of equal cards. */
+.gt-knobs > .prefs-row .prefs-toggle {
+  width: 100%;
+}
+.gt-knobs > .prefs-row .prefs-toggle button {
+  width: 50%;
+  min-width: 0;
+}
+/* The one-button switch (`onOffButton`). Sized like the knob face beside it rather than
+   like a settings row's control, so a card holding a switch and a card holding a knob
+   read as the same kind of thing. */
+.prefs-switch {
+  min-width: 72px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--ctl-border);
+  border-radius: 7px;
+  background: var(--ctl-bg);
+  color: var(--text-dim);
+  font: 700 10px var(--mono);
+  letter-spacing: 0.4px;
+  cursor: pointer;
+}
+.prefs-switch.on {
+  /* The lit face's own rim token, not the lamp: `--led-face` and `--led` resolve to the
+     same colour in dark and to different ones in light, where the rim has to carry the
+     contrast the brighter face gives up. */
+  border-color: var(--led-ink);
+  background: var(--led-face);
+  color: var(--on-accent-ink);
+}
+.prefs-switch:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: 2px;
+}
+/* The house `.lbl` recipe, not the INS FX document's 8px uppercase: the design system owns
+   the type and the unit prints these names initial-capital (architecture.md "Localization").
+   It WRAPS rather than clipping: a multi-band row's name carries its band as well as its
+   parameter (LOW Threshold), and clipped to one line three cards read "LOW Thresho…". What
+   the one-line rule was for — a one-word and a two-word name keeping their knobs on the
+   same line — the card does on its own now, by anchoring the knob to its floor. */
+.gt-knob .lbl,
+.gt-knobs > .prefs-row > .lblc .lbl {
+  font: 600 9.5px var(--mono);
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.15;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.gt-knob .gt-val {
+  font: 700 14px var(--mono);
+  /* Centred under the name, the way the name itself is. The recipe this class comes from
+     is a settings ROW's, where the value sits in a fixed-width cell at the end of a line;
+     in a card that width is wider than most values and left-aligned text inside it reads
+     as a value hung off the card's left edge rather than one under its label. */
+  text-align: center;
+}
+/* The knob face is the CONSOLE's, scaled up for a panel that is about these values rather
+   than about a strip. It grows with the window between the two sizes the design names and
+   stops there; the indicator's origin follows the size, so the pointer stays on the rim. */
+.gt-knob .con-knob {
+  width: clamp(48px, 5vw, 56px);
+  height: clamp(48px, 5vw, 56px);
+  cursor: default;
+  position: relative;
+  /* Seated on the card floor: the slack a taller card leaves goes above the knob, so a
+     one-line label and a two-line one put their knobs on the same line. */
+  margin-top: auto;
+}
+/* The pointer as a PROPORTION of the face, so it keeps its length and its inset as the knob
+   grows between its two sizes. In pixels it was 6px in from a face that is 48 to 56 across,
+   which is a different-looking pointer at each end of that range. */
+.gt-knob .con-knob .ind {
+  top: 12.5%;
+  height: 34.375%;
+  transform-origin: 50% 109%;
+}
+/* The control itself: the same range input every other row carries, laid over the face and
+   painted away. It keeps the value, the step, the keyboard, the wheel gate and the arming;
+   the knob is only the picture of it. Opacity rather than `visibility` or a clip, because
+   it still has to take the pointer. */
+.gt-knob .con-knob input[type="range"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: ns-resize;
+}
+/* Keyboard focus only. `:focus-within` matched a mouse press too, so clicking a knob rang
+   it — and the app's focus rule is that the ring answers the keyboard. */
+.gt-knob .con-knob:has(input:focus-visible) {
+  outline: 2px solid var(--led);
+  outline-offset: 2px;
+}
+.gt-knob.locked {
+  opacity: 0.45;
+}
+.gt-knob.locked .con-knob input[type="range"] {
+  cursor: not-allowed;
+}
+/* The reason a card cannot be touched, beside the name it qualifies rather than under the
+   knob: below it, the tag reads as a second value. Outlined in the lamp's ink rather than
+   filled with it — a filled chip would be a second lit face on a card that already has the
+   pointer, which the design system allows only one of. */
+.gt-knob .lblc {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+.gt-knobtag {
+  font: 600 8px var(--mono);
+  letter-spacing: 0.4px;
+  color: var(--led-ink);
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  padding: 0 4px;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* INS FX type popover. The container recipe and the anchor caret are the SEND PAN
+   popover's, reused by selector rather than restated — same box, same z-index, same
+   flip. What differs is what it holds: a list of named effects, then the bypass switch
+   and the launcher under it. */
+.con-ifxpop {
+  position: fixed;
+  z-index: 60;
+  /* Sized by the FOOTER, not by the list: the two buttons sit side by side and the
+     longer label is what decides, so a narrower box wraps both of them onto two lines
+     and leaves a footer taller than the switch it holds. The names above it are short
+     enough that nothing here is set by them. */
+  width: 220px;
+  background: var(--panel);
+  border: 1px solid var(--ctl-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
+  color: var(--text);
+  overflow: visible;
+}
+.con-ifxpop .ph {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font: 700 9.5px var(--mono);
+  letter-spacing: 1px;
+  padding: 7px 10px 5px;
+  border-bottom: 1px solid var(--line);
+}
+.con-ifxpop .ph .cat {
+  color: var(--text-dim);
+}
+.con-ifxpop .ph .who {
+  margin-left: auto;
+  color: var(--led-ink);
+  letter-spacing: 0.5px;
+}
+.con-ifxpop.below::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-bottom-color: var(--ctl-border);
+}
+.con-ifxpop.above::before {
+  content: "";
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--ctl-border);
+}
+.con-ifxpop .ilist {
+  padding: 4px 0;
+}
+.con-ifxpop .irow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.con-ifxpop .irow .nm {
+  font: 600 10px var(--mono);
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+/* The reason an entry cannot be taken, or what the first one does. Set apart from the
+   name by size and position rather than by colour: it is the same statement the row's
+   dimming makes, and a reader who cannot see the dimming still gets the words. */
+.con-ifxpop .irow .why {
+  margin-left: auto;
+  font: 600 8px var(--mono);
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  opacity: 0.75;
+}
+.con-ifxpop .irow:hover {
+  background: color-mix(in srgb, var(--led) 8%, transparent);
+}
+.con-ifxpop .irow:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
+}
+/* The one it holds. A lit face rather than a tick, the same vocabulary a lit chip uses,
+   so "what is in this strip" is read the same way in the popover and on the strip. */
+.con-ifxpop .irow.active {
+  background: var(--led-face);
+  color: var(--on-accent-ink);
+}
+/* The two spans carry their own colour, so the face's ink has to be repeated onto them
+   rather than inherited. */
+.con-ifxpop .irow.active .nm,
+.con-ifxpop .irow.active .why {
+  color: var(--on-accent-ink);
+}
+.con-ifxpop .irow.off {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.con-ifxpop .irow.off:hover {
+  background: none;
+}
+.con-ifxpop .ifoot {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--line);
+}
+.con-ifxpop .iopen {
+  flex: 1 1 0;
+  font: 600 8.5px var(--mono);
+  letter-spacing: 0.5px;
+  text-align: center;
+  padding: 5px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--ctl-border);
+  background: var(--ctl-bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.con-ifxpop .iopen:hover {
+  border-color: var(--led-ink);
+}
+.con-ifxpop .iopen:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
+}
+.con-ifxpop .iopen.off {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+/* A strip holding no effect. The dashed rim is what separates "nothing here" from a
+   selected effect switched out — two states that are otherwise both unlit faces, and
+   the difference between them decides whether the row's + or its ▸ is the way on. */
+.con-chip.vacant {
+  border-style: dashed;
 }
 
 /* Drag & drop target: the shared full-window scrim below, plus two overrides — its

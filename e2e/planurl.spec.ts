@@ -104,9 +104,9 @@ test("an insert-FX slot conflict warns and loads on the operator's word", async 
   await expect(report(page)).toBeHidden();
   await expect(page.locator("#statusbar")).toContainText("Plan loaded");
   await page.locator('#graph-host g.node[data-id="ch1"]').click();
-  await expect(page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select")).toHaveValue("256");
+  await expect(page.locator("#inspector .param", { hasText: "Effect Type" }).locator("select")).toHaveValue("256");
   await page.locator('#graph-host g.node[data-id="ch2"]').click();
-  await expect(page.locator("#inspector .param", { hasText: "Insert FX" }).locator("select")).toHaveValue("257");
+  await expect(page.locator("#inspector .param", { hasText: "Effect Type" }).locator("select")).toHaveValue("257");
 });
 
 test("closing an insert-FX slot conflict report loads nothing", async ({ page }) => {

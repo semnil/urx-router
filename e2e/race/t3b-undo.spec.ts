@@ -17,7 +17,8 @@ import {
   hasProbe,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf } from "./analyze";
-import { CH1_FADER, faderOf, faderReadout, graphNode, strip } from "./ui";
+import { CH1_FADER, faderOf, faderReadout, graphNode, insertFxSelect, strip } from "./ui";
+import { chooseOption } from "../choose-option";
 
 // T3b undo — the eleven T3 cells t3-undo.spec.ts did not reach
 // (docs/{en,ja}/live-race-harness.md). Where t3-undo goes at the device-facing half
@@ -607,13 +608,13 @@ test.describe("T3b undo", () => {
     // --- (a) resetCompEqBank: switching COMP/EQ type rewrites recPoint afterwards ---
     // PRE EQ has no meaning in SSMCS (no discrete EQ stage), so entering SSMCS moves
     // the tap to PRE COMP — a write the funnel makes after its own change report.
-    await insp(page, "Rec Point").selectOption({ label: "PRE EQ" });
+    await chooseOption(insp(page, "Rec Point"), { label: "PRE EQ" });
     await settleHistory(page);
     const recBefore = await insp(page, "Rec Point").inputValue();
     const depthBefore = await undoDepth(page);
 
     await mark(page, "comp-eq-type");
-    await insp(page, "COMP/EQ Type").selectOption({ label: "SSMCS" });
+    await chooseOption(insp(page, "COMP/EQ Type"), { label: "SSMCS" });
     await settleHistory(page);
     const recAfterSwitch = await insp(page, "Rec Point").inputValue();
     const depthAfterSwitch = await undoDepth(page);
@@ -636,7 +637,7 @@ test.describe("T3b undo", () => {
     await settleHistory(page);
     const depthBeforeLink = await undoDepth(page);
     await mark(page, "stereo-link");
-    await insp(page, "Signal Type").selectOption({ label: "STEREO" });
+    await chooseOption(insp(page, "Signal Type"), { label: "STEREO" });
     await settleHistory(page);
     const posAfterLink = (await graphNode(page, "ch2").getAttribute("transform"))!;
     const depthAfterLink = await undoDepth(page);
@@ -1185,14 +1186,14 @@ test.describe("T3b undo", () => {
   test("undo fired inside an insert-FX converge await", async ({ page }) => {
     await goLive(page);
     await graphNode(page, "ch1").click();
-    const insertSel = insp(page, "Insert FX");
+    const insertSel = await insertFxSelect(page);
     await expect(insertSel).toHaveCount(1);
     const before = await insertSel.inputValue();
     await setLatency(page, { get: 8, set: 60 });
 
     await blockAt(page, "vd_get", 20);
     await mark(page, "converge-trigger");
-    await insertSel.selectOption({ label: "Compander-H" });
+    await chooseOption(insertSel, { label: "Compander-H" });
     await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 20_000 });
     const armed = await insertSel.inputValue();
     // The select change has no boundary of its own, so its entry closes on the idle
@@ -1202,13 +1203,13 @@ test.describe("T3b undo", () => {
 
     await mark(page, "undo-in-converge");
     const status = await undoOnce(page);
-    const justAfter = await insp(page, "Insert FX").inputValue();
+    const justAfter = await (await insertFxSelect(page)).inputValue();
     await mark(page, "release");
     await releaseBarrier(page);
     // The verdict is partly an ABSENCE (did a write carrying the undone value leave),
     // so the link has to be seen waking up before its silence means anything.
     await settleAfter(page, "release", 1200);
-    const after = await insp(page, "Insert FX").inputValue();
+    const after = await (await insertFxSelect(page)).inputValue();
 
     const trace = await traceOf(page);
     const undoAt = markTime(trace, "undo-in-converge")!;
@@ -1279,12 +1280,12 @@ test.describe("T3b undo", () => {
     // (e) A model switch.
     await threeEdits();
     await mark(page, "model-switch");
-    await page.selectOption("#model-picker", "URX22");
+    await chooseOption(page.locator("#model-picker"), "URX22");
     await expect(page.locator("#model-picker")).toHaveValue("URX22");
     await settleHistory(page);
     const afterSwitch = await depthOf(page);
     verdicts.push(await undoOnce(page));
-    await page.selectOption("#model-picker", "URX44V");
+    await chooseOption(page.locator("#model-picker"), "URX44V");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 
     // (b)/(c) A Fetch, cancelled at its first read. It used to restore a pre-read clone

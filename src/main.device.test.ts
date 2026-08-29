@@ -219,9 +219,17 @@ const diffReadsFail = (a: Record<string, unknown>): number => {
 const paramRow = (label: string): HTMLElement =>
   $("inspector").querySelector<HTMLElement>(`.param[data-param-label="${label}"]`)!;
 
+/** The Insert FX section. It is a collapsible on-state section like GATE / COMP / EQ, so
+ *  its controls are reached THROUGH it rather than by a row label: the bypass row carries
+ *  no label of its own, the header being its name, and the selector's row is the type. */
+const insertFxSection = (): HTMLDetailsElement | undefined =>
+  [...$("inspector").querySelectorAll<HTMLDetailsElement>("details.insp-section")].find(
+    (d) => d.querySelector(".sec-title")?.textContent === "Insert FX",
+  );
+
 /** Pick an insert effect the way the inspector's own select does. */
 const pickInsertFx = (value: number): void => {
-  const sel = paramRow("Insert FX").querySelector("select")!;
+  const sel = insertFxSection()!.querySelector("select")!;
   sel.value = String(value);
   sel.dispatchEvent(new Event("change", { bubbles: true }));
 };
@@ -240,9 +248,10 @@ const pickPanBal = (value: number): void => {
   sel.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
-/** Which half of the bypass toggle is lit. */
+/** Which half of the bypass toggle is lit. The section holds one toggle group; the
+ *  launcher beside it is a plain button and carries no `on`. */
 const insertFxOnFace = (): string | undefined =>
-  paramRow("Insert FX ON")?.querySelector("button.on")?.textContent ?? undefined;
+  insertFxSection()?.querySelector<HTMLElement>(".toggle button.on")?.textContent ?? undefined;
 
 /** An insert effect whose sample-rate ceiling (96 kHz) a 192 kHz clock is above,
  *  which is what makes the unit drop it. */
@@ -299,7 +308,7 @@ describe("Fetch from device", () => {
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch2");
-    expect(paramRow("Insert FX").querySelector("select")!.value).toBe(String(COMPANDER_H));
+    expect(insertFxSection()!.querySelector("select")!.value).toBe(String(COMPANDER_H));
     expect(insertFxOnFace()).toBe("ON");
   });
 
@@ -359,9 +368,9 @@ describe("Fetch from device", () => {
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch1");
-    expect(paramRow("Insert FX").querySelector("select")!.value).toBe("-1");
+    expect(insertFxSection()!.querySelector("select")!.value).toBe("-1");
     selectNode("ch2");
-    expect(paramRow("Insert FX").querySelector("select")!.value).toBe("-1");
+    expect(insertFxSection()!.querySelector("select")!.value).toBe("-1");
   });
 
   // The same transition's other half, and the one that moves nothing by construction:
@@ -423,7 +432,7 @@ describe("Fetch from device", () => {
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch1");
-    expect(paramRow("Insert FX").querySelector("select")!.value).toBe(String(COMPANDER_H));
+    expect(insertFxSection()!.querySelector("select")!.value).toBe(String(COMPANDER_H));
     expect(insertFxOnFace()).toBe("ON");
   });
 
@@ -2894,11 +2903,15 @@ describe("an edit funnel against a device read", () => {
   const face = (label: string): string | undefined =>
     paramRow(label)?.querySelector("button.on")?.textContent ?? undefined;
 
-  // The CONSOLE's INS FX chip is the one console write that is not a flip: taking a slot
-  // writes the bypass ON, which a No Effect route can already be holding (the inspector
-  // leaves it engaged when the operator picks No Effect). The plan then reads the same
-  // before and after, so the read's own diff cannot tell that key from one nobody
-  // touched — and the operator's new effect landed selected and BYPASSED.
+  // The CONSOLE's INS FX selection is the one console write that is not a flip: taking a
+  // slot writes the bypass ON, which a No Effect route can already be holding (the
+  // inspector leaves it engaged when the operator picks No Effect). The plan then reads
+  // the same before and after, so the read's own diff cannot tell that key from one
+  // nobody touched — and the operator's new effect landed selected and BYPASSED.
+  //
+  // The gesture is the strip's disclosure and then a row of the type popover it opens.
+  // The face beside it cannot stand in: it is a bypass and writes one key, so driven
+  // through it this case would assert nothing about the pair.
   it("keeps a bypass the CONSOLE asserted while a read was in flight", SLOW, async () => {
     const shell = await bootDevice();
     selectNode("ch1");
@@ -2917,12 +2930,15 @@ describe("an edit funnel against a device read", () => {
 
     $("btn-view-console").click();
     const strip = $("console-host").querySelectorAll<HTMLElement>(".con-strip")[0];
-    [...strip.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === "INS FX")!.click();
+    strip.querySelector<HTMLElement>(".con-ifxopen")!.click();
+    [...$("console-host").querySelectorAll<HTMLElement>(".con-ifxpop .irow")]
+      .find((r) => !r.classList.contains("off") && r.querySelector(".nm")!.textContent !== "No Effect")!
+      .click();
     await invoked(shell, "vd_disconnect");
 
     $("btn-view-graph").click();
     selectNode("ch1");
-    expect(paramRow("Insert FX").querySelector("select")!.value).not.toBe(String(INSERT_FX_NONE));
+    expect(insertFxSection()!.querySelector("select")!.value).not.toBe(String(INSERT_FX_NONE));
     expect(insertFxOnFace()).toBe("ON");
   });
 

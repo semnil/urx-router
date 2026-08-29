@@ -204,7 +204,7 @@ describe("insert-FX normalization", () => {
 
   it("leaves a real effect value unchanged", () => {
     expect(normalizeInsertFx(257)).toBe(257); // Crunch
-    expect(normalizeInsertFx(1792)).toBe(1792); // M.Band Comp
+    expect(normalizeInsertFx(1792)).toBe(1792); // M.B.Comp
   });
 });
 

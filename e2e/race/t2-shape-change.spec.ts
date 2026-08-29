@@ -16,7 +16,17 @@ import {
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
-import { closeDynScreen, graphNode, openEqScreen, openInsertFxScreen, param, paramExact, strip } from "./ui";
+import {
+  closeDynScreen,
+  graphNode,
+  insertFxBypass,
+  insertFxSelect,
+  openEqScreen,
+  openInsertFxScreen,
+  param,
+  strip,
+} from "./ui";
+import { chooseOption } from "../choose-option";
 
 // T2 shape-change — the parameters that reshape the WRITABLE ADDRESS SET rather
 // than a value inside it (docs/{en,ja}/live-race-harness.md).
@@ -378,7 +388,7 @@ test.describe("T2 shape-change", () => {
     expect(regBefore.has(CH1_SSMCS_COMP_ON)).toBe(false);
 
     await mark(page, "to-ssmcs");
-    await typeSel.selectOption("1"); // SSMCS
+    await chooseOption(typeSel, "1"); // SSMCS
     // The bank swap has reached the panel: the morphing strip has a launcher of its own
     // there, and the values themselves live on the screen it opens.
     await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(1);
@@ -452,7 +462,7 @@ test.describe("T2 shape-change", () => {
 
     // Back to SSMCS for the notify half of the case.
     await mark(page, "to-ssmcs-again");
-    await typeSel.selectOption("1");
+    await chooseOption(typeSel, "1");
     await expect(page.locator("#btn-ssmcs-screen")).toHaveCount(1);
     await settleAfter(page, "to-ssmcs-again", 1800);
 
@@ -522,11 +532,11 @@ test.describe("T2 shape-change", () => {
     await graphNode(page, "ch1").click();
     await setLatency(page, { get: 2, set: 40 });
 
-    const sel = paramExact(page, "Insert FX").locator("select");
+    const sel = await insertFxSelect(page);
     await expect(sel).toHaveCount(1);
 
     await mark(page, "select-compander");
-    await sel.selectOption({ label: "Compander-H" });
+    await chooseOption(sel, { label: "Compander-H" });
     await settleAfter(page, "select-compander", 1800);
 
     let trace = await traceOf(page);
@@ -547,7 +557,7 @@ test.describe("T2 shape-change", () => {
 
     // Bypass OFF alone: the selector is unchanged, so the diff carries one command.
     await mark(page, "bypass-off");
-    await paramExact(page, "Insert FX ON").locator("button", { hasText: /^OFF$/ }).click();
+    await (await insertFxBypass(page)).locator("button", { hasText: /^OFF$/ }).click();
     await settleAfter(page, "bypass-off", 1200);
     trace = await traceOf(page);
     const offAt = markTime(trace, "bypass-off")!;
@@ -581,7 +591,7 @@ test.describe("T2 shape-change", () => {
     // INSERT_FX_ON only while an effect is selected), so nothing is written to it and
     // it drops out of the registration at the next reconcile.
     await mark(page, "select-none");
-    await sel.selectOption({ label: "No Effect" });
+    await chooseOption(sel, { label: "No Effect" });
     await settleAfter(page, "select-none", 1800);
     trace = await traceOf(page);
     const noneAt = markTime(trace, "select-none")!;
@@ -593,7 +603,7 @@ test.describe("T2 shape-change", () => {
     // Re-selecting the same effect brings the pair back in one flush, with the engine
     // slot writes between the selector and the bypass.
     await mark(page, "reselect");
-    await sel.selectOption({ label: "Compander-H" });
+    await chooseOption(sel, { label: "Compander-H" });
     await settleAfter(page, "reselect", 1800);
     trace = await traceOf(page);
     const reAt = markTime(trace, "reselect")!;

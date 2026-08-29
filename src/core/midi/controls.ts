@@ -36,6 +36,7 @@ import {
   SSMCS_EQ_BAND_NAMES,
   ssmcsCompFields,
   ssmcsMainFields,
+  effectiveInsertFx,
 } from "../control/translate";
 import type { DynField, SsmcsEqBandName } from "../control/translate";
 import {
@@ -46,6 +47,7 @@ import {
   EQ_TYPE_SHELVING,
 } from "../control/params";
 import { mixSendLocks } from "../routing";
+import { insertFxFamilyOf, insertFxParams, insertFxSlotVal, reKeyInsertFxParams } from "../control/insert-fx-effect";
 import { channelEqUnavailable } from "../constraints";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../control/vd";
 
@@ -72,6 +74,9 @@ export const eqBandScope = (index: number): string => `${EQ_SCOPE}.${EQ_BAND_NAM
 /** The SSMCS strip's scopes, one per stage of the morphing bank. They mirror the plan's
  *  own nesting (`ssmcs`, `ssmcs.comp`, `ssmcs.sc`, `ssmcs.eq.<band>`), so a control id
  *  reads as the path to the value it edits. */
+/** The insert effect's scope root. Its full scope carries the family and the slot after
+ *  it, since the node can change what family it holds. */
+export const INSFX_SCOPE = "insfx";
 export const SSMCS_SCOPE = "ssmcs";
 export const SSMCS_COMP_SCOPE = `${SSMCS_SCOPE}.comp`;
 export const SSMCS_SC_SCOPE = `${SSMCS_SCOPE}.sc`;
@@ -125,7 +130,13 @@ export type ControlParam =
   | "compDrive"
   | "morphing"
   | "outGain"
-  | "sideChain";
+  | "sideChain"
+  // The insert effect's own values. ONE token rather than a name per row: an insert-FX
+  // value is a raw engine SLOT under a family the node can change, so the family and the
+  // slot go in the SCOPE (`insfx.compander.6`) and the union stays closed. A mapping made
+  // under one family simply does not bind while the node holds another — the same answer
+  // `bindControl` already gives a mapping for a node that lost the processor it named.
+  | "insfx";
 
 export type ControlKind = "continuous" | "toggle";
 
@@ -655,6 +666,64 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       },
     });
     return out;
+  }
+
+  // ---- the insert effect the node holds -----------------------------------
+  // Scoped by FAMILY and SLOT, so a mapping names the value it was made on rather than
+  // "whatever this node's insert effect calls its sixth slot". Enum rows answer nothing:
+  // a select has no normalized domain, which is the treatment COMP's knee already gets.
+  // Resolved from the CORE catalogue rather than from the screen that also asks this:
+  // this module has to load without a DOM (the node smoke test), and `src/ui` reaches
+  // the i18n module, which touches `document` at import time.
+  const insFxSel = effectiveInsertFx(model, plan, id);
+  const insFxFamily = insFxSel === undefined ? null : insertFxFamilyOf(insFxSel);
+  if (insFxFamily) {
+    for (const d of insertFxParams(insFxFamily)) {
+      if (d.control === "select") continue;
+      const scope = `${INSFX_SCOPE}.${insFxFamily}.${d.slot}`;
+      // Through the shared reader, or a plan filled from a device read answers with the
+      // catalogue default: a readback stores the BARE slot number and only an edit re-keys it.
+      const cur = (): number => insertFxSlotVal(plan.nodeParams[id]?.insertFxParams, insFxFamily, d.slot, d.def);
+      const write = (raw: number): void => {
+        // The mirrored slots Pitch Fix keeps: the device reads both, so a write that moved
+        // one would be half applied. `reKeyInsertFxParams` also drops the bare slot the
+        // value came from, so the two namespaces cannot both answer for one slot.
+        const patch: Record<number, number> = { [d.slot]: raw };
+        if (d.mirror !== undefined) patch[d.mirror] = raw;
+        np().insertFxParams = reKeyInsertFxParams(np().insertFxParams ?? {}, insFxFamily, patch);
+      };
+      if (d.control === "toggle") {
+        out.push({
+          id: controlId(id, "insfx", scope),
+          node: id,
+          param: "insfx",
+          scope,
+          kind: "toggle",
+          get: () => (cur() ? 1 : 0),
+          set: (v) => {
+            write(v >= 0.5 ? 1 : 0);
+            return true;
+          },
+        });
+        continue;
+      }
+      const lo = d.rawMin ?? 0;
+      const hi = d.rawMax ?? 1;
+      const step = d.rawStep ?? 1;
+      const codec = linearCodec(lo, hi, step);
+      out.push({
+        id: controlId(id, "insfx", scope),
+        node: id,
+        param: "insfx",
+        scope,
+        kind: "continuous",
+        get: () => codec.get(cur()),
+        set: (v) => {
+          write(codec.set(v));
+          return true;
+        },
+      });
+    }
   }
 
   if (id === "bus.stream") return out; // meter-only strip: nothing to control

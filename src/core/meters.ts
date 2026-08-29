@@ -172,13 +172,11 @@ const GR_TAPS: Record<GrKind, Record<string, readonly [number, number]>> = {
   // have to vary by model, and getting that wrong returns the neighbouring pair's
   // reduction — a value, so nothing on screen would look wrong.
   ducker: { "out.ducker1": [119, 0], "out.ducker2": [119, 1], "out.ducker3": [119, 2], "out.ducker4": [119, 3] },
-  // The INPUT insert effect, on the mono channel it sits on. Only the input half is a node
-  // table — the output half is `insertFxOutGrAddr`, whose x axis is not a node at all.
-  insfx: { ch1: [132, 0], ch2: [132, 1], ch3: [132, 2], ch4: [132, 3] },
+  // The input insert effect is NOT here: its x is not the channel. `insertFxInGrAddr`.
 };
 
 /** Which processor's reduction to meter. */
-export type GrKind = "gate" | "comp" | "ducker" | "insfx";
+export type GrKind = "gate" | "comp" | "ducker";
 
 /**
  * The OUTPUT insert effect's reduction, by the effect's own BAND.
@@ -190,6 +188,25 @@ export type GrKind = "gate" | "comp" | "ducker" | "insfx";
  */
 export function insertFxOutGrAddr(band: number): readonly [number, number] {
   return [133, band];
+}
+
+/**
+ * The INPUT insert effect's reduction.
+ *
+ * It takes no node, for the same reason the output one does not: `132`'s x is not the
+ * mono channel, though the meter catalogue's shape (`x_type: "mono"`, `x0..x3`) says it
+ * is. An input insert effect reports its reduction on x0 whichever channel holds it, and
+ * x1, x2 and x3 stay at 0 — the value the broker uses for "this block is not engaged" —
+ * in every configuration, so a per-channel table addresses three meters that can never
+ * move and one that shows CH 1 whatever another channel is doing.
+ *
+ * With more than one engaged, x0 carries the reduction of the channel whose selector was
+ * written LAST, and ignores the other entirely — it is one channel's value, never the
+ * deeper of the two and never a sum. Nothing on the wire says which channel that is, so
+ * only the one-holder case is attributable, and that is the case the lane is drawn for.
+ */
+export function insertFxInGrAddr(): readonly [number, number] {
+  return [132, 0];
 }
 
 /** The gain-reduction meter address for one processor on a node, or undefined when

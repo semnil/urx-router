@@ -185,12 +185,22 @@ export function kneeResponse(o: {
   };
 }
 
-export function drawTransferCurve(
+/**
+ * One response as a line across the frame, and nothing else.
+ *
+ * Split out of `drawTransferCurve` for a plot that carries SEVERAL — the multi-band
+ * compressor's three bands — where the reduction annotation that function adds belongs to
+ * the plot rather than to any one line, and three of them would be drawn on top of each
+ * other. A dash pattern is what separates lines sharing a canvas: they are one effect's
+ * three bands, so they take one colour and are told apart by shape.
+ */
+function drawCurveLine(
   c: CanvasRenderingContext2D,
   g: DynPlotGeo,
   tok: Record<string, string>,
-  o: { out: (inDb: number) => number; gainDb: number; loDb: number },
+  o: { out: (inDb: number) => number; loDb: number },
 ): void {
+  c.save();
   c.strokeStyle = tok["--led"];
   c.lineWidth = 2;
   c.beginPath();
@@ -202,6 +212,16 @@ export function drawTransferCurve(
     else c.moveTo(g.px(x), g.py(o.out(x)));
   }
   c.stroke();
+  c.restore();
+}
+
+export function drawTransferCurve(
+  c: CanvasRenderingContext2D,
+  g: DynPlotGeo,
+  tok: Record<string, string>,
+  o: { out: (inDb: number) => number; gainDb: number; loDb: number },
+): void {
+  drawCurveLine(c, g, tok, o);
 
   const top = o.out(HI_DB) - o.gainDb;
   if (top >= -0.05) return;
@@ -218,6 +238,45 @@ export function drawTransferCurve(
   c.textAlign = "right";
   // Inset from the axis so the label does not sit on the frame.
   c.fillText(`${top.toFixed(1)} dB`, g.px(HI_DB) - 22, g.py((from + to) / 2) + 3);
+}
+
+/**
+ * Vertical marks on the INPUT axis, each with a one-letter tag at the foot of the frame.
+ *
+ * For a coordinate the curve's SHAPE is built from rather than a value it passes through:
+ * a threshold and a window edge are kinks in the line and nothing else, so reading either
+ * one off the plot means finding where the slope changes and estimating it. Drawn dashed
+ * in the dim ink, so the response stays the only solid line on the canvas.
+ */
+export function curveMarks(
+  c: CanvasRenderingContext2D,
+  g: DynPlotGeo,
+  tok: Record<string, string>,
+  marks: ReadonlyArray<{ at: number; tag: string }>,
+): void {
+  c.save();
+  // `--plot-dim`, not `--text-dim`: the canvas is handed the PLOT_TOKENS set alone, and a
+  // name outside it reads undefined — which canvas ignores, leaving whatever colour the
+  // previous draw left behind. Here that was the reduction's rose, so the marks came out
+  // in the ink that means gain reduction.
+  c.strokeStyle = tok["--plot-dim"];
+  c.fillStyle = tok["--plot-dim"];
+  c.lineWidth = 1;
+  c.setLineDash([2, 3]);
+  c.font = "600 9px var(--mono), monospace";
+  c.textAlign = "center";
+  for (const m of marks) {
+    const x = Math.round(g.px(m.at)) + 0.5;
+    // Off the frame is not drawn rather than clamped onto the edge: a mark sitting on the
+    // axis floor reads as a threshold set there, which is a different setting.
+    if (x < g.pad.l || x > g.w - g.pad.r) continue;
+    c.beginPath();
+    c.moveTo(x, g.pad.t);
+    c.lineTo(x, g.h - g.pad.b);
+    c.stroke();
+    c.fillText(m.tag, x, g.h - g.pad.b - 4);
+  }
+  c.restore();
 }
 
 /**
@@ -259,6 +318,17 @@ export function transferPlot(o: {
    * bar selects nothing else.
    */
   on?: (ctx: DynCtx) => boolean;
+  /** Drawn on the same canvas after the dot, for a processor with a live number to put
+   *  beside its curve. Separate from `drawCurve`, which is the STATIC layer and is not
+   *  redrawn per frame — a live value drawn there would freeze at whatever it read when a
+   *  parameter last moved. */
+  liveExtra?: (
+    c: CanvasRenderingContext2D,
+    g: DynPlotGeo,
+    read: (laneKey: string) => number | null,
+    tok: Record<string, string>,
+    ctx: DynCtx,
+  ) => void;
 }): Pick<DynPlotProcessor, "hint" | "display" | "plotGeo" | "drawAxes" | "drawLive" | "liveOn"> {
   const onCurve = (ctx: DynCtx): boolean => o.on?.(ctx) ?? true;
   return {
@@ -279,7 +349,8 @@ export function transferPlot(o: {
     drawLive: (c, g, read, tok, ctx) => {
       const out = read("out");
       const offset = o.outOffsetDb?.(ctx) ?? 0;
-      return drawLiveDot(c, g, read("in"), out === null ? null : out + offset, tok, { in: o.loDb, out: o.outLoDb });
+      drawLiveDot(c, g, read("in"), out === null ? null : out + offset, tok, { in: o.loDb, out: o.outLoDb });
+      o.liveExtra?.(c, g, read, tok, ctx);
     },
   };
 }

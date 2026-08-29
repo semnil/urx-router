@@ -428,7 +428,12 @@ const live = DEMO
 const graph = new Graph(graphHost, getModel(modelId), plan, {
   onSelect: (sel) => {
     selection = sel;
-    refreshInspector();
+    // Ungated, and it clears the gate first. A selection change is the one refresh the
+    // panel's in-flight input cannot outrank: the picker or composition it would be held
+    // for belongs to the node being left. Held, the panel goes on describing that node —
+    // which is what a press on another node did while a `<select>` in the panel still had
+    // focus, since choosing in one leaves focus there.
+    rebuildInspectorNow();
   },
   onStatus: (msg) => setStatus(msg),
   onChange: () => {
@@ -1557,6 +1562,23 @@ function refreshInspector(): void {
   rebuildInspector();
 }
 
+/**
+ * The same rebuild, past whatever the gate was holding, for a change the OPERATOR made.
+ *
+ * The gate exists for the refresh nobody asked for: a device follow or a MIDI sweep
+ * arriving at up to 20 Hz while a name is being typed or a dropdown is open. A selection
+ * change and an undo are the other kind. Held, the panel goes on showing the node the
+ * operator has left, or the value the undo has just replaced — and the control it is held
+ * FOR is the one displaying that stale value, because choosing in a select leaves focus
+ * on it. The gate is reset rather than merely bypassed: the rebuild removes the composing
+ * field, an end event for a field that is gone may never arrive, and a latched flag stops
+ * the panel updating for the rest of the session.
+ */
+function rebuildInspectorNow(): void {
+  inspectorComposition.reset();
+  rebuildInspector();
+}
+
 // The rebuild itself, with no gate in front of it. Split out for the gate's own deferred
 // run above, and for the dev keyboard harness, which drives the gated and ungated arms of
 // the IME measurement side by side (ui/keyprobe.ts).
@@ -1651,10 +1673,14 @@ function reflectHistory(touch: PatchTouch): void {
   dynScreen.refresh();
   // syncRateUi already repaints both through applyRateConstraints, so the two are
   // exclusive — stacking them cost a second full strip rebuild (~9 ms on WebKit).
+  // Past the gate: an undo re-authors the plan, and what it replaced is exactly what the
+  // control holding the gate is displaying — a select keeps focus after a choice is made
+  // in it, so the panel would go on showing the value that was just undone.
+  inspectorComposition.reset();
   if (touch.fields.has("sampleRate")) {
     syncRateUi();
   } else {
-    refreshInspector();
+    rebuildInspector();
     consoleView.refresh();
   }
   // Last, so the live diff measures the settled plan. This is also what carries the

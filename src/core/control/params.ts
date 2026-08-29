@@ -745,7 +745,7 @@ export const INSERT_FX_OPTIONS: InsertFxOption[] = [
 // user guide p.180), so only one MIX/STEREO output can hold one at a time.
 export const OUTPUT_INSERT_FX_OPTIONS: InsertFxOption[] = [
   { value: INSERT_FX_NONE, label: "No Effect" },
-  { value: 1792, label: "M.Band Comp", maxRate: 96000, slot: "out-dyn" },
+  { value: 1792, label: "M.B.Comp", maxRate: 96000, slot: "out-dyn" },
   { value: 1793, label: "Compander-H", maxRate: 96000, slot: "out-dyn" },
   { value: 1794, label: "Compander-S", maxRate: 96000, slot: "out-dyn" },
 ];

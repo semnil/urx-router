@@ -1,4 +1,7 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { insertFxSection, openInsertFxSection } from "../insert-fx-section";
+
+export { insertFxSection, openInsertFxSection };
 
 // The locators, addresses and DOM-reading waits every race case reaches the app through. They encode how
 // src/ui/graph.ts and src/ui/console.ts build their markup, and which broker address a
@@ -16,10 +19,33 @@ export const strip = (page: Page, name: string): Locator =>
 /** An inspector row whose label CONTAINS `label`. */
 export const param = (page: Page, label: string): Locator => page.locator("#inspector .param", { hasText: label });
 
-/** An inspector row whose label is EXACTLY `label` — "Insert FX" must not match
+/** An inspector row whose label is EXACTLY `label` — "Effect Type" must not match
  *  "Insert FX ON", which is a different row with a different address. */
 export const paramExact = (page: Page, label: string): Locator =>
   page.locator("#inspector .param", { has: page.getByText(label, { exact: true }) });
+
+/** The inspector's Insert FX section. It is a disclosure like every other section and it
+ *  follows its own ON state, so a node holding nothing — or holding a BYPASSED effect —
+ *  ships with it CLOSED and the controls inside are then not focusable at all. */
+
+/** Open that section if it is folded, which is what the operator does before reaching the
+ *  selector inside it. Every case that reads or writes the effect type goes through here:
+ *  a closed disclosure answers "no such control" rather than "the control is not visible",
+ *  which reads in a failure as the feature being gone. */
+
+/** The Effect Type selector, with its section opened first. */
+export async function insertFxSelect(page: Page): Promise<Locator> {
+  await openInsertFxSection(page);
+  return paramExact(page, "Effect Type").locator("select");
+}
+
+/** The bypass ON/OFF pair, with its section opened first. It is the SECTION's own toggle
+ *  and carries no row label, so it is reached by position inside the body rather than by a
+ *  name — there is none to spell. It is absent entirely under No Effect. */
+export async function insertFxBypass(page: Page): Promise<Locator> {
+  await openInsertFxSection(page);
+  return insertFxSection(page).locator(".sec-body .toggle");
+}
 
 /** A strip's level readout — the numeric one, not the meter's. */
 export const readoutOf = (stripLoc: Locator): Locator => stripLoc.locator(".con-readout .rd:not(.mtr) .rv");
@@ -49,10 +75,9 @@ export const openSsmcsScreen = (page: Page, id: string): Promise<void> =>
   openDynScreen(page, id, /^SSMCS$/, "btn-ssmcs-screen");
 
 /** Select a node and open its insert-FX tuning screen. It does not go through
- *  `openDynScreen` because on a channel the launcher is not in a section at all — the
- *  Insert FX control sits loose in the inspector there, and only a bus groups it into a
- *  Parameters section — so the ancestor is opened when there is one and skipped when
- *  there is not. */
+ *  `openDynScreen`, which finds a section by the heading it prints: the launcher sits in
+ *  the Insert FX section on a channel and in the Parameters section on a bus, so it is
+ *  reached from the button instead and whatever disclosure holds it is opened. */
 export async function openInsertFxScreen(page: Page, id: string): Promise<void> {
   await graphNode(page, id).click();
   const btn = page.locator("#inspector #btn-insfx-screen");
@@ -66,6 +91,21 @@ export async function openInsertFxScreen(page: Page, id: string): Promise<void> 
 export async function closeDynScreen(page: Page): Promise<void> {
   await page.locator("#dyn-screen-box .consent-btn-secondary").click();
   await expect(page.locator("#dyn-screen-box")).toBeHidden();
+}
+
+/**
+ * Take an effect from a strip's INS FX list, and come back to the CONSOLE.
+ *
+ * Choosing a type OPENS that effect's tuning screen — what the operator came for is its
+ * values, so the press that chooses is the press that arrives — and the screen is modal, so
+ * a case that goes on to touch the rack behind it has to dismiss it first. Shared because
+ * four cases learned that separately and each of them is about something else.
+ */
+export async function pickInsertFx(page: Page, stripName: string, row: Locator): Promise<void> {
+  await strip(page, stripName).locator(".con-ifxopen").click();
+  await expect(page.locator(".con-ifxpop")).toBeVisible();
+  await row.click();
+  await closeDynScreen(page);
 }
 
 /** A tuning screen's row, by the exact label it prints. */

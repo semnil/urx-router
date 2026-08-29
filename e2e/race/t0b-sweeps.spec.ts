@@ -15,7 +15,17 @@ import {
 import { analyze, report, timeline, markTime, setsOf } from "./analyze";
 import { drag, port, tapJack, faceplate } from "../graph-helpers";
 import { pickBand, pickPlot } from "../dyn-helpers";
-import { CH1_FADER, deviceLevelText, faderOf, faderReadout, graphNode, openEqScreen, strip } from "./ui";
+import {
+  CH1_FADER,
+  closeDynScreen,
+  deviceLevelText,
+  faderOf,
+  faderReadout,
+  graphNode,
+  openEqScreen,
+  strip,
+} from "./ui";
+import { chooseOption } from "../choose-option";
 
 // T0b baseline sweeps — the reachability half of the T0 floor
 // (docs/{en,ja}/live-race-harness.md). The latency ladder in t0-baseline.spec.ts pins
@@ -492,7 +502,27 @@ test.describe("T0b baseline sweeps", () => {
       { label: "GATE chip", run: () => chip(ch1, "GATE").click() },
       { label: "COMP chip", run: () => chip(ch1, "COMP").click() },
       { label: "EQ chip", run: () => chip(ch1, "EQ").click() },
-      { label: "INS FX chip", run: () => chip(ch1, "INS FX").click() },
+      // The INS FX pair is three gestures, not one: the disclosure opens the type list
+      // and writes nothing, picking an effect writes the pair, and only then is there an
+      // insert for the face to switch out. Pressing the face first is deliberately silent
+      // — a strip holding nothing has nothing to bypass, and it opens the list instead.
+      {
+        label: "open the INS FX type popover",
+        run: async () => {
+          await ch1.locator(".con-ifxopen").click();
+          await expect(page.locator(".con-ifxpop")).toBeVisible();
+        },
+        silent: true,
+      },
+      {
+        // …and choosing one opens its screen, which every step after this is behind.
+        label: "choose an insert effect",
+        run: async () => {
+          await page.locator(".con-ifxpop .irow", { hasText: "Clean" }).first().click();
+          await closeDynScreen(page);
+        },
+      },
+      { label: "INS FX face (bypass)", run: () => ch1.locator(".con-ifxface").click() },
       { label: "DUCKER chip (stereo strip)", run: () => chip(st, "DUCKER").click() },
       { label: "C.INT chip (monitor)", run: () => chip(strip(page, "MONITOR 1"), "C.INT").click() },
       { label: "MONO chip (monitor)", run: () => chip(strip(page, "MONITOR 1"), "MONO").click() },
@@ -665,7 +695,7 @@ test.describe("T0b baseline sweeps", () => {
           return alt?.value ?? null;
         });
         if (next === null) throw new Error("select offers no alternative option");
-        await sel.selectOption(next);
+        await chooseOption(sel, next);
         return;
       }
       if (c.kind === "toggle") {
@@ -772,7 +802,7 @@ test.describe("T0b baseline sweeps", () => {
     // three gestures earlier. It is a constraint expressed as data (a disabled option)
     // rather than as a refusal, and it is contention between two plan owners over one
     // device resource, which is why it shows up in a sweep with no device attached.
-    expect(unavailable).toEqual(["STEREO master · Insert FX (select) — select offers no alternative option"]);
+    expect(unavailable).toEqual(["STEREO master · Effect Type (select) — select offers no alternative option"]);
 
     // Turned over from a pinned defect the ledger alone could see: two inspector
     // controls mutate the plan AFTER calling the change funnel — both selectors whose
@@ -842,7 +872,7 @@ test.describe("T0b baseline sweeps", () => {
           return alt?.value ?? null;
         });
         if (next === null) throw new Error("select offers no alternative option");
-        await sel.selectOption(next);
+        await chooseOption(sel, next);
         return;
       }
       await row.locator(".prefs-toggle button:not(.on):not([disabled])").first().click();
@@ -1162,9 +1192,9 @@ test.describe("T0b baseline sweeps", () => {
           matrix.push(await probeRefusals("Preferences modal"));
         },
       },
-      { label: "Preferences: language", run: () => page.selectOption("#prefs-lang", "ja"), silent: true },
-      { label: "Preferences: language back", run: () => page.selectOption("#prefs-lang", "en"), silent: true },
-      { label: "Preferences: theme", run: () => page.selectOption("#prefs-theme", "light"), silent: true },
+      { label: "Preferences: language", run: () => chooseOption(page.locator("#prefs-lang"), "ja"), silent: true },
+      { label: "Preferences: language back", run: () => chooseOption(page.locator("#prefs-lang"), "en"), silent: true },
+      { label: "Preferences: theme", run: () => chooseOption(page.locator("#prefs-theme"), "light"), silent: true },
       {
         label: "Preferences: device scope",
         run: () => page.click("#prefs-device-scope button:not(.on)"),
@@ -1180,7 +1210,11 @@ test.describe("T0b baseline sweeps", () => {
         run: () => narrowToggle("first").locator("button:not(.on)").click(),
         silent: true,
       },
-      { label: "Preferences: wheel step", run: () => page.selectOption("#prefs-wheel", { index: 1 }), silent: true },
+      {
+        label: "Preferences: wheel step",
+        run: () => chooseOption(page.locator("#prefs-wheel"), { index: 1 }),
+        silent: true,
+      },
       { label: "Preferences: fine style", run: () => page.click("#prefs-fine button:not(.on)"), silent: true },
       { label: "Preferences: sleep hold", run: () => page.click("#prefs-prevent-sleep button:not(.on)"), silent: true },
       {
@@ -1226,12 +1260,12 @@ test.describe("T0b baseline sweeps", () => {
           matrix.push(await probeRefusals("no modal"));
         },
       },
-      { label: "the rate picker", run: () => page.selectOption("#rate-picker", "96000") },
+      { label: "the rate picker", run: () => chooseOption(page.locator("#rate-picker"), "96000") },
       {
         // Also gated by the discard confirm, and also declined: the model, and with it
         // the whole address vocabulary, stays put.
         label: "the model picker (declined)",
-        run: () => page.selectOption("#model-picker", "URX44"),
+        run: () => chooseOption(page.locator("#model-picker"), "URX44"),
         silent: true,
       },
     ];
@@ -1299,12 +1333,12 @@ test.describe("T0b baseline sweeps", () => {
 
     await mark(page, "lang-switch");
     await page.locator("#btn-prefs").dispatchEvent("click");
-    await page.selectOption("#prefs-lang", "ja");
+    await chooseOption(page.locator("#prefs-lang"), "ja");
     await page.locator("#prefs-modal .consent-btn-secondary").dispatchEvent("click");
 
     await mark(page, "theme-switch");
     await page.locator("#btn-prefs").dispatchEvent("click");
-    await page.selectOption("#prefs-theme", "light");
+    await chooseOption(page.locator("#prefs-theme"), "light");
     await page.locator("#prefs-modal .consent-btn-secondary").dispatchEvent("click");
 
     // Keep dragging after the rebuild — this is the window listener writing through a
@@ -1360,7 +1394,7 @@ test.describe("T0b baseline sweeps", () => {
     const midDrag = await slider.inputValue();
     await mark(page, "dyn-theme-switch");
     await page.locator("#btn-prefs").dispatchEvent("click");
-    await page.selectOption("#prefs-theme", "dark");
+    await chooseOption(page.locator("#prefs-theme"), "dark");
     await page.locator("#prefs-modal .consent-btn-secondary").dispatchEvent("click");
     await page.mouse.move(sBox.x + sBox.width * 0.72, sBox.y + sBox.height / 2);
     await page.waitForTimeout(60);

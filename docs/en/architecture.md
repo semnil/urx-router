@@ -89,7 +89,9 @@ carries a one-line map of the same directories and points here.
   drops those by authorship rather than by value — an edit that went A→B→A is indistinguishable from an
   untouched key otherwise, and the read's transient B would be enshrined) / `routing.ts` connection
   constraint engine / `constraints.ts` sample-rate-dependent feature limits (warnings + 176.4/192 kHz forces
-  stereo CH EQ OFF, `channelEqUnavailable`). These are **UI-only**: the device accepts and holds writes to
+  stereo CH EQ OFF, `channelEqUnavailable`, and takes the FX2 bus away entirely, `nodeRateDisabled` — one
+  predicate for the graph's dimmed node, the CONSOLE strip that would otherwise offer a live fader into a
+  bus the unit is not running, and every send column aimed at it). These are **UI-only**: the device accepts and holds writes to
   the "unavailable" params at 192 kHz (measured), so the write set is never gated by rate — see "Sample rate
   and Follow USB". It also owns the insert-FX menu (`insertFxMenu` returns every option with its lock
   reason, `"rate" | "slot" | null`, so the inspector and the console are both defined over the one table and
@@ -419,18 +421,22 @@ carries a one-line map of the same directories and points here.
   closing one screen and opening another. It carries no Effect Type row deliberately — a selector write refills
   the bound engine array with that type's defaults and is not reversible (`core/control/insert-fx-effect.ts`) —
   and its fields name an engine SLOT rather than a parameter, since those values live in `insertFxParams` keyed
-  by family and slot. The families it does not show whole stay in the inspector's own editor, which is the same
-  answer `bind` gives: Pitch Fix keeps its Key, Scale and note mask outside the flat catalogue, and the
-  multi-band compressor is not in it at all. `dyn-chan.ts` the binding the
+  by family and slot. It shows every family the app edits at all — nothing is edited in the inspector any more,
+  so a value cannot be authored on two surfaces — and a family whose state the flat catalogue does not carry
+  supplies its own rows beside the catalogue's: Pitch Fix its Key, Scale and note mask, and the multi-band
+  compressor the 1-Knob pair the app reads and never writes. `dyn-chan.ts` the binding the
   MONO IN channel-strip processors share, `dyn-plot.ts` the dB×dB transfer plot they draw, `dyn-freq-plot.ts`
   the frequency×gain plot the two EQs draw, and
   `dyn-registry.ts` the one place that knows which processors exist.
   Every screen that draws a response shows it and its lane rack at once — the threshold is dragged as a fader
   cap on the input meter, the two sharing one coordinate — and a band is selected by pressing its marker on the
-  response rather than from a bar. INS FX draws none: a guitar amp's frequency response and a pitch tracker are
-  not derivable from the parameters and the unit meters neither, so its display is the lane rack alone and it
-  omits `plotGeo` / `drawAxes` / `drawCurve` together (`DynPlotProcessor` is the type that keeps the three
-  required wherever one of them is supplied). The EQ's filter model is `core/eq-response.ts` (measured: the unit's Q is twice the biquad Q,
+  response rather than from a bar. INS FX draws one only where the response IS defined by the parameters — the
+  companders' transfer, and the multi-band compressor's per-band curves — whose MAIN face swaps those axes for
+  frequency against band make-up, the way the SSMCS strip's side-chain segment does. A guitar amp's frequency response
+  and a pitch tracker are not derivable from the parameters and the unit meters neither, so those faces are a
+  lane rack alone; `DynPlotProcessor` keeps `plotGeo` / `drawAxes` / `drawCurve` required together wherever one
+  of them is supplied, and the descriptor's own `display` decides per family whether the column carries a plot
+  at all. The EQ's filter model is `core/eq-response.ts` (measured: the unit's Q is twice the biquad Q,
   pass filters ignore Q, a shelf's nominal frequency is its −3 dB-from-plateau point). **Every plot draws
   its curve at the true value and the host clips it to the plot area** — the `drawAxes` / `drawCurve` split
   exists to enforce that: clamping a value onto the axis draws a horizontal bar along the edge, i.e. a
@@ -678,7 +684,15 @@ the inspector, and the open modal itself.
 > and CH SETTING carry no kana at all. The Japanese user guide names the same controls in English too
 > (`[Attack]`, `[Hold]`, `[Decay]`, `[Release]`, `[Knee]`, `[Threshold]`, `[Gain]`, `[Frequency]`,
 > `[HPF Freq.]`, `[Level]`, `[Width]`, `[Interval]`, `[Pan]`, `[Name]`, `[Color]`, and the `Assign`
-> sub-menu). So the whole of those seven screens is untranslated: the GATE / COMP / DUCKER rows including
+> sub-menu). **The INS FX screens were read the same way on 2026-08-28**, and four of their
+> rows are the reason the Effect Reference Guide is not the arbiter: the guide is a document and
+> `dev()` names what the SCREEN prints, and on these four they differ. The unit prints `1-Knob` and
+> `1-Knob Level` where the guide writes `1-knob`; `Gate` on the guitar cabinet where the guide writes
+> `Off/Gate`; and `M.B.Comp` where the guide writes `M.B.COMP`. The fourth is the one no reading of a
+> document could have settled — **Clean's modulation selector has no label on the unit at all**, which
+> is why the app supplies its own (`Modulation`) and marks it `fixed()` rather than `dev()`: there is
+> no device string for a `dev()` to reproduce. Every insert-FX row the unit does name is
+> initial-capital, not shouted, which is what the guitar panel's card labels follow. So the whole of those seven screens is untranslated: the GATE / COMP / DUCKER rows including
 > `Range` and `Ratio`, the EQ band, filter type, frequency and gain, the input HPF frequency, the level
 > and pan / balance rows, the oscillator block with its bus assigns, the monitor block, the CH SETTING
 > name and colour, and the matching MIDI control names. It does **not** extend to the app's own vocabulary

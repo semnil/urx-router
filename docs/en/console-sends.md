@@ -67,6 +67,36 @@ visually fuse into one 0 dB reference line, so a strip's send distribution reads
 - Chip labels are the destination short forms `F1` / `F2` / `M1` / `M2`; the full name appears in
   the header readout and the SEND PAN popover.
 
+### What a rate ceiling does to a control
+
+Two treatments, and which one a control gets is decided by what it IS:
+
+- A **face** — a switch, a level, a chip naming a value — stays and goes read-only, carrying
+  the reason as its tooltip. What a strip is set to, and why it is off, has to stay readable.
+- A **disclosure** (`▸` / `+`) the ceiling has emptied is **dropped**. There is nothing behind
+  it to open, so there is nothing to draw disabled; a way IN to an empty list is not a state.
+- **Its slot stays, and the face beside it keeps the width it has at every other rate.** Two
+  things hold that. The face declares its own width (`.con-chip.paired`, `flex: 0 0`) rather
+  than reading whether a disclosure follows it, which is what a `:has(+ .con-chip-open)` rule
+  used to do — dropping one resized the button beside it from 58px to 39px. And the empty half
+  is filled by a hidden placeholder (`appendOpener`), because the chips are a wrapping
+  two-per-row flow: without it the parity filler lands elsewhere, every strip gains a row and
+  the head — clamped to the tallest — grows 292px to 304px.
+
+The one disclosure a ceiling does NOT empty stays, live: a strip HOLDING an insert effect the
+rate forced off keeps its `▸`, because choosing No Effect there is how the device-wide slot it
+still claims is given back — and that is the state an operator most needs to reach it from.
+
+### A column whose bus the rate has taken away
+
+- **Above 96 kHz the FX2 bus is gone**, so an `F2` column sets three values on a bus the unit is
+  not running. All three go read-only together — the enable chip, the PRE button and the fader —
+  each carrying `inspector.fx2RateLocked`, and the FX2 strip itself is dimmed the way the graph
+  dims its node. The predicate is `nodeRateDisabled` in `core/constraints.ts`, which is also what
+  builds the graph's `disabledNodes`, so the two cannot disagree about which rates remove it.
+- This is the narrower FIXED-bus lock's wider sibling: FIXED takes the level and leaves the switch
+  and the tap, because the bus is still there.
+
 ### PRE button
 
 - Toggles the send connection's `tap` (`pre` / `post`); lit = PRE. This is the only tap indicator

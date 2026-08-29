@@ -31,13 +31,7 @@ import {
   openMidiWindow,
 } from "../core/platform";
 import { MidiEngine } from "../core/midi/engine";
-import {
-  bindControl,
-  parseControlId,
-  type BoundControl,
-  type ControlKind,
-  type ControlParam,
-} from "../core/midi/controls";
+import { bindControl, parseControlId, type BoundControl, type ControlKind } from "../core/midi/controls";
 import {
   addrKey,
   addrLabel,
@@ -50,6 +44,7 @@ import {
 } from "../core/midi/mapping";
 import { midiProbe, startMidiTrace } from "./midi-probe";
 import { mirrorBalPair } from "../core/routing";
+import { insertFxControlLabel } from "./insert-fx-screen";
 import { parseRelay } from "./midi-protocol";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
 import { errorCode, errorText, getLang, t } from "../i18n";
@@ -778,13 +773,25 @@ export class MidiControl {
     // (attachTo) instead, so the assignment reads e.g. "CH 5/6 · DUCKER".
     const owner = self?.attachTo ? byId(self.attachTo) : self;
     const node = owner?.label ?? parsed.node;
+    // The insert effect names itself from its own scope: the family and the slot are in
+    // there because the node can change what it holds, and the catalogue is what turns
+    // that pair back into words. Printed raw it read "CH 1 · insfx.compander.6 · insfx".
+    if (parsed.param === "insfx") {
+      const insfx = insertFxControlLabel(parsed.scope, t());
+      if (insfx) return `${node} · ${insfx}`;
+    }
     const target = parsed.scope ? byId(parsed.scope) : undefined;
     const processor = parsed.scope !== undefined && target === undefined;
     const scope = !parsed.scope ? "" : target ? ` → ${target.label}` : ` · ${m.scope[parsed.scope] ?? parsed.scope}`;
     // Inside a processor scope a param is read on a tuning screen, which prints
     // sentence-case labels; the console's own captions stay as they are.
     const param =
-      (processor ? m.scopedParam[parsed.param] : undefined) ?? m.param[parsed.param as ControlParam] ?? parsed.param;
+      (processor ? m.scopedParam[parsed.param] : undefined) ??
+      // The insert effect is the one param with no caption of its own: it names itself
+      // above, and reaches here only when its scope points at a family or slot this build
+      // no longer carries, where its own token is all there is to print.
+      m.param[parsed.param as keyof typeof m.param] ??
+      parsed.param;
     return `${node}${scope} · ${param}`;
   }
 

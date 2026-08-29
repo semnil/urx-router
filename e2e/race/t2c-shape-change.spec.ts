@@ -19,8 +19,9 @@ import {
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf } from "./analyze";
-import { faderOf, graphNode, openEqScreen, openInsertFxScreen, closeDynScreen } from "./ui";
+import { faderOf, graphNode, insertFxSelect, openEqScreen, openInsertFxScreen, closeDynScreen } from "./ui";
 import { pickBand } from "../dyn-helpers";
+import { chooseOption } from "../choose-option";
 
 // T2c shape-change — the two T2 cases whose subject is the ENGINE side of the write
 // set rather than the selector side (docs/{en,ja}/live-race-harness.md):
@@ -82,10 +83,6 @@ const startsBetween = (trace: TraceEvent[], addr: string, from: number, to = Num
 
 const readsBetween = (trace: TraceEvent[], addr: string, from: number, to = Number.POSITIVE_INFINITY): number =>
   getsOf(trace).filter((g) => g.addr === addr && g.start > from && g.start < to).length;
-
-/** A .param whose label is EXACTLY `label` — "Insert FX" must not match "Insert FX ON". */
-const paramExact = (page: Page, label: string) =>
-  page.locator("#inspector .param", { has: page.getByText(label, { exact: true }) });
 
 /** The EQ tuning screen's 1-Knob ON/OFF pair, located from the level slider's id (the
  *  only stable anchor in that section) rather than by its localized label. */
@@ -483,12 +480,12 @@ test.describe("T2c shape-change", () => {
 
     // ---- the gate, offline: the collision is not reachable from the inspector ----
     await graphNode(page, "ch1").click();
-    const sel = paramExact(page, "Insert FX").locator("select");
+    const sel = await insertFxSelect(page);
     await expect(sel).toHaveCount(1);
-    await sel.selectOption({ label: "Compander-H" });
+    await chooseOption(sel, { label: "Compander-H" });
 
     await graphNode(page, "ch2").click();
-    const sel2 = paramExact(page, "Insert FX").locator("select");
+    const sel2 = await insertFxSelect(page);
     // Both companders are disabled on the second channel — the "compander" slot is
     // taken — while the other families, which bind DIFFERENT engines, stay selectable.
     // That contrast is what makes this a statement about the slot rule rather than

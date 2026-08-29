@@ -31,7 +31,13 @@ import {
   fxParams,
   formatHz,
 } from "./fx-effect";
-import { insertFxEngine, insertFxFamilyOf, insertFxParamKey, insertFxWritableSlots } from "./insert-fx-effect";
+import {
+  insertFxEngine,
+  insertFxFamilyOf,
+  insertFxParamKey,
+  insertFxWritableSlots,
+  insertFxDeviceDriven,
+} from "./insert-fx-effect";
 import { isFixedConnection, sendTapWritable } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
@@ -1134,14 +1140,28 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
 // the family the selector named at the time. Anything the plan stored for ANOTHER
 // family stays behind its own key and is never emitted here: those raws mean a
 // different parameter under a different law.
+/** No slot is the device's — every family but the two that have a control handing values
+ *  over, and those two with that control off. Shared rather than built per call: this runs
+ *  per node on every live-sync flush. */
+const NOTHING_DRIVEN: ReadonlySet<number> = new Set();
+
 function pushInsertFxEffectCommands(
   out: VdCommand[],
   engine: number,
   family: import("./insert-fx-effect").InsertFxFamily,
   params: Record<string, number> | undefined,
+  includeDeviceDriven: boolean,
 ): void {
   if (!params) return;
+  // The values a control on this effect has handed to the unit, skipped for the same reason
+  // the COMP 1-knob's set is below: the multi-band compressor's Level recomputes three
+  // values per band while it is on, and Pitch Fix's MIDI Control clears the note mask and
+  // the Scale when it is switched on. Emitting either is not merely redundant — anything
+  // re-sending the plan's copy after the unit has acted puts the pre-change values back on
+  // it, which is what a converge sharing the flush does.
+  const driven = includeDeviceDriven ? NOTHING_DRIVEN : insertFxDeviceDriven(family, params);
   for (const s of insertFxWritableSlots(family)) {
+    if (driven.has(s.slot)) continue;
     const v = params[insertFxParamKey(family, s.slot)] ?? params[String(s.slot)];
     // No catalog default to fall back on here (an absent slot is left to the
     // device's per-type default), so a non-finite raw is dropped, not substituted.
@@ -1960,7 +1980,14 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     const v = effectiveInsertFx(model, plan, node.id) ?? INSERT_FX_NONE;
     for (const inst of ifx.instances) out.push(rawCommand("INSERT_FX", ifx.param, "insertFx", inst, v));
     const fam = insertFxFamilyOf(v);
-    if (fam) pushInsertFxEffectCommands(out, insertFxEngine(fam, ifx.isOutput), fam, np.insertFxParams);
+    if (fam)
+      pushInsertFxEffectCommands(
+        out,
+        insertFxEngine(fam, ifx.isOutput),
+        fam,
+        np.insertFxParams,
+        emit.includeDeviceDriven === true,
+      );
     if (np.insertFxOn !== undefined && v !== INSERT_FX_NONE) {
       for (const inst of ifx.instances) {
         out.push(rawCommand("INSERT_FX_ON", ifx.onParam, "bool", inst, np.insertFxOn ? 1 : 0));

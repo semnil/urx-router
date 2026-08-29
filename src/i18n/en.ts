@@ -10,11 +10,13 @@
 //           on those screens whichever of its three display languages is selected (read off
 //           the hardware with its Language set to Japanese), so every catalogue repeats the
 //           same characters — the literal type below is what forces that.
-//   fixed() identical in every language for a reason that is not the device. All of them are on
-//           the CONSOLE strip: the group separators, which are set in vertical writing mode where
+//   fixed() identical in every language for a reason that is not the device. Most are on the
+//           CONSOLE strip: the group separators, which are set in vertical writing mode where
 //           a full-width glyph widens the column and so moves the rack's geometry, and the two
 //           readout captions beside them, which follow the separators so that the strip does not
-//           carry one translated word among English ones.
+//           carry one translated word among English ones. The guitar amp's Modulation is the
+//           same reason away from the strip: it names a group rather than reproducing a screen,
+//           and it sits in a row of controls the unit itself names in English.
 //   tr()    this app's own copy. Each language supplies its own wording.
 //
 // Which of the three a new key takes is a judgement the author has to make and a reviewer has
@@ -122,6 +124,23 @@ export const en = {
     groupInputs: fixed("INPUTS"),
     groupBus: fixed("BUS / FX"),
     groupMon: fixed("MONITOR"),
+    // The INS FX chip's own popover: the type list, then the bypass switch and the
+    // launcher under it. The heading and the switch are the device's words, taken from
+    // the Inspector row that names the same two things.
+    insFxType: dev("Effect Type"),
+    // Why an entry cannot be picked, said in the width of a list row. The Inspector's
+    // sentences (`insFxRateLockedAt` / `insFxSlotLocked`) are the same two facts said
+    // at the width of a panel; these are what fits beside a name, and the row's title
+    // carries the sentence for anyone who hovers it.
+    insFxInUse: tr("in use"),
+    insFxMax: (maxRate: string): string => `max ${maxRate}`,
+    // What the popover's first entry does, beside a name that reads like a value.
+    // Without it "No Effect" is one more type to pick rather than the way out.
+    insFxRemove: tr("release"),
+    // Why the switch and the launcher under the list are inert while the strip holds
+    // nothing. Both are about an effect, and the list above them is where one comes
+    // from — said once, on whichever of the two is hovered.
+    insFxPickFirst: tr("Choose an effect above first."),
   },
   // SETUP > GENERAL on the unit. Section and control names stay in English in the
   // Japanese user guide too, so they are not translated in either language — only
@@ -347,6 +366,10 @@ export const en = {
     insFxRateLockedAt: (effect: string, maxRate: string): string =>
       `${effect} is unavailable above ${maxRate} — forced off.`,
     insFxSlotLocked: tr("Every insert effect is in use — each occupies one device-wide slot."),
+    // The FX2 bus itself, which the rate removes rather than merely disabling something on
+    // it: its own strip and every send aimed at it. The graph dims the node; this is what
+    // the CONSOLE says in its place.
+    fx2RateLocked: tr("The FX2 bus is unavailable above 96 kHz."),
     channelOn: tr("Channel"),
     sendOn: tr("Send"),
     toSt: dev("TO ST"),
@@ -357,6 +380,10 @@ export const en = {
     clipSafe: dev("Clip Safe"),
     hiZ: dev("Hi-Z"),
     insertFx: dev("Insert FX"),
+    // The selector's own row, inside a section already headed "Insert FX". Naming the row
+    // the same thing as the section over it says nothing twice; what the row picks is the
+    // TYPE. The device's word, so it is not translated.
+    insertFxType: dev("Effect Type"),
     insertFxOn: dev("Insert FX ON"),
     compEqType: dev("COMP/EQ Type"),
     eqOn: dev("EQ"),
@@ -441,11 +468,8 @@ export const en = {
       scaleHarmonicMinor: dev("Harmonic Minor"),
       scaleMelodicMinor: dev("Melodic Minor"),
       scalePentatonic: dev("Pentatonic"),
-      // The pill on the MIDI Control row. The reason belongs on the panel and not only in
-      // the tooltip below, which is a hover away.
-      midiControlTag: tr("Set on the device"),
       midiControlDeviceOnly: tr(
-        "MIDI Control is set on the device. It receives on the unit's own USB-MIDI port, and switching it on clears a full note mask.",
+        "From Setting on, the notes the correction aims at arrive on the unit's own USB-MIDI port — so switching it on clears the note mask and sets the Scale to Custom, and the two stay the unit's until it is switched back off.",
       ),
       params: {
         threshold: dev("Threshold"),
@@ -467,7 +491,7 @@ export const en = {
         gateLevel: dev("Gate Level"),
         blend: dev("Blend"),
         distortion: dev("Distortion"),
-        mod: dev("Cho/Off/Vib"),
+        mod: fixed("Modulation"),
         modSpeed: dev("Speed"),
         modDepth: dev("Depth"),
         character: dev("Character"),
@@ -676,23 +700,48 @@ export const en = {
       // rather than a way of displaying one, which is why it is not the "Display" the
       // other screens' bars sit under.
       faceBar: tr("View"),
-      // The guitar amp's two faces. `fixed()` rather than `dev()`: the unit's own INS FX
-      // screen is one page — the user guide shows an effect menu and a meter and nothing
-      // else, and the effect guide groups these parameters without pages — so the split is
-      // this app's, and the two abbreviations read the same in every language.
-      faceAmp: fixed("AMP"),
-      faceCab: fixed("CAB"),
-      // Pitch Fix's two faces: what the correction does to a note, and what decides which
-      // notes there are. `fixed()` for a different reason from AMP / CAB, which are
-      // abbreviations: these are ordinary words, and what keeps them out of translation is
-      // that they are set beside AMP / CAB on the same bar, in the same Latin caps, and one
-      // translated face label among four would read as a different kind of control.
-      facePitch: fixed("PITCH"),
-      faceScale: fixed("SCALE"),
+      // The multi-band compressor's first face: what the three bands share, against the
+      // three that are one band each. `fixed()` for the same reason as the pair above —
+      // it sits in Latin caps on a bar whose other three segments are the unit's own band
+      // names, and one translated segment among four would read as a different control.
+      faceMain: fixed("MAIN"),
       // Speed and Depth on the Clean amp: the selector beside them decides whether they
       // reach anything.
       vibOnly: tr("Vib only"),
       bypassed: tr("Bypassed — the values are kept and edited here, but nothing they are set to reaches the signal."),
+      // The companders' plot, and theirs alone: the amps and Pitch Fix carry no curve.
+      // Named for what the shape IS, because this block does three things at once and a
+      // reader who only sees the compressor half misreads the fall at the bottom as a
+      // fault. The reduction is not mentioned: it is drawn the same way, in the same
+      // place, as on every other screen that has one.
+      curveHint: tr(
+        "Below the window the level is pushed further down, above the threshold it is held back, and past 0 dB it stops. The dot is the live level.",
+      ),
+      // The multi-band compressor's two figures. MAIN's is a STEP and not a filter — the
+      // unit's slopes are derivable from nothing the app holds — which is the one thing a
+      // reader cannot tell from looking at it, so it is what the line says.
+      mbcMainHint: tr(
+        "Where the crossovers split the spectrum and what each band is mixed back at. The step is the two settings, not the unit's filter slopes.",
+      ),
+      mbcBandHint: tr(
+        "This band alone: held back above its own threshold, then its make-up added. The reduction is the unit's reading for this band.",
+      ),
+      // Shown in place of the line above while the unit is driving the panel. It says who
+      // owns the values rather than what they do, because that is what changed.
+      mbcOneKnob: tr(
+        "1-Knob is on: the unit is setting every value here from its own level, and nothing edited here is sent to it.",
+      ),
+      // The pill on a row the unit has taken over — Pitch Fix's Scale and its twelve notes
+      // while MIDI Control is not Off, which is when the notes the correction aims at come
+      // from a port of the unit's own. It says WHO owns the row, on the panel, rather than
+      // only in the tooltip beside it, which is a hover away.
+      deviceOnlyTag: tr("Set on the device"),
+      // The three reduction lanes. The unit meters each band separately, and these are its
+      // own words for them — spelled out rather than composed from a band name, so each is a
+      // string a translator and the inventory sweep can both see whole.
+      grLow: dev("LOW GR"),
+      grMid: dev("MID GR"),
+      grHigh: dev("HIGH GR"),
     },
   },
   shelf: {
