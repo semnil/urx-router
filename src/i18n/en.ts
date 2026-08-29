@@ -723,6 +723,13 @@ export const en = {
       mbcBandHint: tr(
         "This band alone: held back above its own threshold, then its make-up added. The reduction is the unit's reading for this band.",
       ),
+      // Shown in place of the line above while this band's own Bypass is on. What it says
+      // is what the run measured — the band's compressor is out — and it stops short of the
+      // make-up, which the same run did not reach: the figure is named as a description of
+      // the values rather than as a reading of the band.
+      mbcBandBypassed: tr(
+        "This band's compressor is bypassed. The figure is what its values describe, not what the unit is doing to the band.",
+      ),
       // Shown in place of the line above while the unit is driving the panel. It says who
       // owns the values rather than what they do, because that is what changed.
       mbcOneKnob: tr(

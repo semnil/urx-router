@@ -440,6 +440,19 @@ describe("the guitar amp's two faces", () => {
     expect(off.get("ifx:guitar-clean:21")?.locked).toBeUndefined();
     // …and nothing on this family is locked, which is what the MIDI surface asks too.
     expect(insertFxLockedSlots("guitar-clean", h.plan.nodeParams.ch1?.insertFxParams).size).toBe(0);
+    // …and the rendered rows agree, which is the half a state map cannot show: the host
+    // applies these states, so a row that stopped being live would still read `locked:
+    // undefined` here.
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    for (const slot of [20, 21]) {
+      const card = h.box.querySelector<HTMLElement>(`.gt-knob:has(input[data-dyn="ifx:guitar-clean:${slot}"])`)!;
+      expect(card.classList.contains("locked"), String(slot)).toBe(false);
+      expect(card.querySelector<HTMLInputElement>("input")!.disabled, String(slot)).toBe(false);
+      expect(card.querySelector(".gt-knobtag")?.textContent, String(slot)).toBe(t().dynTuning.insfx.vibOnly);
+    }
+    screen.close();
+
     // The positive control: on the vibrato the tag goes, so the tag is about the setting
     // rather than about every Clean panel.
     h.plan.nodeParams.ch1!.insertFxParams = { "19": 2 };
@@ -512,6 +525,40 @@ describe("moving between the faces", () => {
     face("dyn-face-insfx-main").click();
     expect(rowLabels()).not.toContain(m.params.bypass);
     screen.close();
+  });
+
+  it("draws a band's Bypass locked while the 1-Knob owns it, not only in the state map", () => {
+    // The host applies `rowStates` to the FIELDS it lays out; a row the descriptor builds
+    // has to ask for the same answer itself. The Bypass is the first locked row on this
+    // screen that is not a slider, and drawn live it writes a plan value the writer is
+    // refusing to send — the drift the lock exists to stop. Asserted on the RENDERED row,
+    // because the map said `locked: true` throughout the version that had the defect.
+    const bypassCard = (): HTMLElement =>
+      [...h.box.querySelectorAll<HTMLElement>(".prefs-row .lbl, .gt-knob .lbl")]
+        .find((lbl) => lbl.textContent === t().inspector.insertFxEffect.params.bypass)!
+        .closest<HTMLElement>(".prefs-row, .gt-knob")!;
+
+    // The positive control first: with the knob off the row is live, so what the assertion
+    // below reads is the knob rather than a row this screen always disables.
+    holding("bus.mix1", "M.B.Comp");
+    h.plan.nodeParams["bus.mix1"]!.insertFxOn = true;
+    const off = new DynScreen(h.hooks);
+    off.open(INSFX_DYN, "bus.mix1");
+    face("dyn-face-insfx-low").click();
+    expect(bypassCard().classList.contains("locked")).toBe(false);
+    expect(bypassCard().querySelector("button")!.disabled).toBe(false);
+    off.close();
+
+    h.plan.nodeParams["bus.mix1"]!.insertFxParams = {
+      [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: 1,
+      [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobLevel)]: 24,
+    };
+    const on = new DynScreen(h.hooks);
+    on.open(INSFX_DYN, "bus.mix1");
+    face("dyn-face-insfx-low").click();
+    expect(bypassCard().classList.contains("locked")).toBe(true);
+    expect(bypassCard().querySelector("button")!.disabled).toBe(true);
+    on.close();
   });
 
   it("goes back to the first face, and the ordinary columns, when a follow replaces the effect", () => {
@@ -963,7 +1010,7 @@ describe("the bank identity", () => {
   });
 });
 
-// The multi-band compressor: four faces over sixteen values the app writes, two the unit
+// The multi-band compressor: four faces over nineteen values the app writes, two the unit
 // does not let it, and three reductions the unit meters separately. Everything below is
 // about keeping those apart — a value on the wrong face is a control whose neighbours say
 // nothing about it, and a value in the wrong group is either a control that does nothing or
@@ -998,7 +1045,7 @@ describe("the multi-band compressor", () => {
     // MAIN: the levels the three bands are mixed back at, then Out Gain, then the two
     // crossovers that decide what each band hears. A band face: that band's dynamics, the
     // Release the three of them share, and last the level that band comes back at. Sixteen
-    // on one panel fits and is still sixteen with nothing saying which four belong together.
+    // on one panel fits and is still nineteen with nothing saying which five belong together.
     //
     // The three Bypasses are not here: `fields` is the CONTINUOUS half, and a toggle is a
     // row. Where each of them renders is pinned by the band face's own card order.
@@ -1097,6 +1144,27 @@ describe("the multi-band compressor", () => {
     expect(INSFX_DYN.hint!(mbc(MAIN))).toBe(g.mbcMainHint);
     expect(INSFX_DYN.hint!(mbc(LOW))).toBe(g.mbcBandHint);
     expect(INSFX_DYN.hint!(mbc(MAIN, oneKnobOn()))).toBe(g.mbcOneKnob);
+  });
+
+  it("names a bypassed band's figure as its values rather than as the band", () => {
+    // The curve is drawn from Threshold / Ratio / Gain and does not read the Bypass, which
+    // is the right shape — a bypassed EFFECT keeps its curve too — so the line under the
+    // display is what carries the state. Only that band's face changes: the Bypass is one
+    // control per band.
+    const g = t().dynTuning.insfx;
+    const bypassed = (band: number): DynCtx => mbc(band, { [insertFxParamKey("mbc", MBC_BANDS[band - 1].bypass)]: 1 });
+    for (const band of [1, 2, 3]) {
+      expect(INSFX_DYN.hint!(bypassed(band)), `band ${band}`).toBe(g.mbcBandBypassed);
+      // …and the OTHER two faces are unaffected by it.
+      for (const other of [1, 2, 3].filter((b) => b !== band)) {
+        expect(INSFX_DYN.hint!({ ...bypassed(band), sel: other }), `${band} seen from ${other}`).toBe(g.mbcBandHint);
+      }
+      expect(INSFX_DYN.hint!({ ...bypassed(band), sel: MAIN }), `${band} seen from MAIN`).toBe(g.mbcMainHint);
+    }
+    // The 1-Knob owns the Bypass, so its own line still outranks this one.
+    expect(INSFX_DYN.hint!(mbc(LOW, { ...oneKnobOn(), [insertFxParamKey("mbc", MBC_BANDS[0].bypass)]: 1 }))).toBe(
+      g.mbcOneKnob,
+    );
   });
 
   it("offers the 1-Knob on every face, and writes it", () => {

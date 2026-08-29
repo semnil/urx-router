@@ -488,7 +488,7 @@ export const PARAMS = {
    * because a name is what carries the side effect.
    *
    * `refetch` rather than `converge`: writing either makes the UNIT recompute slots the
-   * plan only mirrors — fifteen of them for the 1-Knob, the scale and the twelve-note mask
+   * plan only mirrors — eighteen of them for the 1-Knob, the scale and the twelve-note mask
    * for MIDI Control — so the owner node is read back instead of being pushed. Pushing
    * would put the pre-change values over what the unit just derived, and the writer
    * suppresses those slots for exactly that reason; without the read, the plan keeps its

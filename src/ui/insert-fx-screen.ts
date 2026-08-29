@@ -449,9 +449,10 @@ function rankIn(order: readonly string[], descs: InsertFxParamDesc[], d: InsertF
  * One face of the multi-band compressor.
  *
  * The split is what the effect IS: three compressors and the two frequencies that decide
- * what each of them hears. MAIN carries the crossovers and the levels the three bands are
- * mixed back at; a band face carries that band's own dynamics. Sixteen values on one panel
- * fits, and is still sixteen values with nothing saying which four belong together.
+ * what each of them hears. MAIN carries the levels the three bands are mixed back at and
+ * the crossovers that decide what each hears; a band face carries that band's own Bypass
+ * and its own dynamics. Nineteen values on one panel
+ * fits, and is still nineteen values with nothing saying which five belong together.
  *
  * Release is on every band face and is ONE value — the unit shares it across the three —
  * which is why it is ordered with the dynamics rather than with the levels.
@@ -803,7 +804,7 @@ function insFxFace(): DynProcessor {
       // Locked and NOT tagged, which is the one place this screen departs from COMP's
       // treatment. A tag says why THIS row cannot be touched, and it earns its space where
       // some rows carry it and others do not; here it is every row for one reason, so
-      // sixteen copies of one word carry nothing a reader did not have from the first. The
+      // eighteen copies of one word carry nothing a reader did not have from the first. The
       // reason is on the panel's own line instead — and the cost of the other way was
       // measured: the word wraps inside a card and the panel grew 414px, which is the
       // resize under the pointer that "no row is ever removed" exists to stop.
@@ -882,6 +883,13 @@ function insFxFace(): DynProcessor {
           );
           continue;
         }
+        // What `rowStates` said about this slot. The HOST applies that answer to the
+        // FIELDS it lays out and to nothing else, so a row built here has to ask for it —
+        // and a row that does not is drawn live while the writer refuses to emit it, which
+        // parts the plan from the unit with nothing on screen to say so. The multi-band
+        // compressor's band Bypass is the case: the 1-Knob owns it, `translate` stops
+        // sending it, and the MIDI surface refuses the same slot.
+        const state = ctx.states.get(key) ?? {};
         pending.push(
           d.control === "toggle"
             ? ctx.midi(
@@ -893,10 +901,11 @@ function insFxFace(): DynProcessor {
                   isKnobGrid(fam)
                     ? onOffButton(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 }))
                     : onOff(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 })),
+                  state,
                 ),
                 key,
               )
-            : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v })),
+            : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v }), state),
         );
       }
       tail.push(...pending);
@@ -940,8 +949,14 @@ function insFxFace(): DynProcessor {
       if (fam === "mbc") {
         // Who owns the panel outranks what the figure is doing, the same way the bypass
         // note outranks both.
-        if (insertFxDeviceDriven("mbc", ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams).size) return g.mbcOneKnob;
-        return isMbcMain(ctx) ? g.mbcMainHint : g.mbcBandHint;
+        const params = ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams;
+        if (insertFxDeviceDriven("mbc", params).size) return g.mbcOneKnob;
+        if (isMbcMain(ctx)) return g.mbcMainHint;
+        // …and a band whose own compressor is out. The figure is drawn from the values
+        // either way — the screen keeps a bypassed effect's controls live and its curve on
+        // the axes for the same reason — so what changes is the line that names it.
+        const band = MBC_BANDS.find((b) => b.band === MBC_FACES[ctx.sel - 1]);
+        return band && insertFxVal(ctx.plan, ctx.nodeId, "mbc", band.bypass, 0) ? g.mbcBandBypassed : g.mbcBandHint;
       }
       // …and nothing where the column is the level taps alone: a guitar amp's face and
       // Pitch Fix's both are, and a line under a lane rack has nothing to explain.

@@ -332,7 +332,7 @@ test("multi-band comp splits into what the bands share and what each band is", a
   await openScreen(page);
   // MAIN: the levels the three bands are mixed back at, then Out Gain, then the two
   // crossovers that decide what each band hears. Sixteen values on one panel fits and is
-  // still sixteen values with nothing saying which four belong together.
+  // still nineteen values with nothing saying which five belong together.
   for (const label of ["Low Gain", "Mid Gain", "High Gain", "Out Gain", "L-M Xover", "M-H Xover"]) {
     await expect(screenRow(page, label), label).toBeVisible();
   }
@@ -414,12 +414,16 @@ test("MBC 1-Knob is operable, and locks what its Level recomputes", async ({ pag
   await expect(screenRow(page, "L-M Xover").locator("input")).toBeDisabled();
   await expect(screenBox(page).getByText("1-Knob is on", { exact: false })).toBeVisible();
   await page.click("#dyn-face-insfx-low");
-  // …and the band face is the unit's entirely: the three the Level recomputes and the two
-  // it pins back.
-  await expect(screenRow(page, "Threshold").locator("input")).toBeDisabled();
-  await expect(screenRow(page, "Ratio").locator("input")).toBeDisabled();
-  await expect(screenRow(page, "Attack").locator("input")).toBeDisabled();
-  await expect(screenRow(page, "Release").locator("input")).toBeDisabled();
+  // …and the band face is the unit's entirely — every row of it, which is what "entirely"
+  // has to be measured as. The Bypass is the one that is not a slider: the host applies the
+  // row states to the FIELDS it lays out, so a row the descriptor builds is drawn live
+  // unless it asks for the same answer, and a live one writes a plan value the writer is
+  // refusing to send.
+  for (const label of ["Threshold", "Ratio", "Attack", "Release", "Low Gain"]) {
+    await expect(screenRow(page, label).locator("input"), label).toBeDisabled();
+  }
+  await expect(screenRow(page, "Bypass")).toHaveClass(/\blocked\b/);
+  await expect(screenRow(page, "Bypass").locator("button")).toBeDisabled();
   await closeScreen(page);
 });
 

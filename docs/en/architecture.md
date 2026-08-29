@@ -698,11 +698,15 @@ the inspector, and the open modal itself.
 > initial-capital, not shouted, which is what the guitar panel's card labels follow — and what the
 > shouted ones above were violating.
 >
-> **A face bar's own segment names are the app's, not the unit's**, and they are `fixed()` for that
-> reason: the multi-band compressor's `Main` / `Low` / `Mid` / `High` and the SSMCS bank's `Main` /
-> `Comp` / `Side Chain` / `EQ`. Three of those were declared `dev()` until 2026-08-30, which is what
-> the marker cannot catch on its own — it stops a translation at compile time and says nothing about
-> whether the claim it makes is true. So the whole of those seven screens is untranslated: the GATE / COMP / DUCKER rows including
+> **A face bar segment the app named itself is `fixed()`, not `dev()`** — the multi-band compressor's
+> `Main` and the SSMCS bank's `Main` / `Comp` / `EQ`. The rest of what those two bars print is not the
+> app's: `Low` / `Mid` / `High` are the unit's band names, which the same catalogue entry also spells
+> on a row (`Low Gain`), and `Side Chain` is a row of the unit's own SSMCS screen — so `Low`, `Mid`,
+> `High` and `Side Chain` stay `dev()`. The app's own three were declared `dev()` until 2026-08-30,
+> which is what the marker cannot catch on its own: it stops a translation at compile time and says
+> nothing about whether the claim it makes is true.
+>
+> So the whole of those seven screens is untranslated: the GATE / COMP / DUCKER rows including
 > `Range` and `Ratio`, the EQ band, filter type, frequency and gain, the input HPF frequency, the level
 > and pan / balance rows, the oscillator block with its bus assigns, the monitor block, the CH SETTING
 > name and colour, and the matching MIDI control names. It does **not** extend to the app's own vocabulary

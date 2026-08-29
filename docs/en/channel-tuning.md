@@ -1162,7 +1162,7 @@ nothing at all (`-∞` on the unit) and is drawn off the frame rather than along
 merely quiet band would also be.
 
 **MAIN's figure is on the CANVAS, and that is what makes it follow a knob.** It was a strip of elements
-in the display column first, and the display column is built once per panel: moving L-M XOVER from
+in the display column first, and the display column is built once per panel: moving L-M Xover from
 125 Hz to 1.50 kHz moved the card and left the strip reading 125 Hz, at the width it had been given.
 The only thing that refreshed it was a device readback, which rebuilds the panel — so the one figure
 that showed the operator's own setting updated from the unit and not from the operator. The canvas
@@ -1179,12 +1179,16 @@ the three band Thresholds as the positive control:
 | --- | --- | --- |
 | Threshold / Ratio / Gain, per band | 121 / 0 / 37 | recomputed, to one value the three bands share |
 | Attack, per band | 17 / 19 / 9 | unchanged |
+| Bypass, per band | 0 — all three cleared | cleared again, over anything written in between |
 | Release | 7 | unchanged |
-| L-M / M-H XOVER | 37 / 94 | unchanged |
+| L-M / M-H Xover | 37 / 94 | unchanged |
 | Out Gain | 68 | unchanged |
 
 Every armed value moved at the transition, and switching 1-Knob off again left them where the preset
-had put them rather than restoring what they had been.
+had put them rather than restoring what they had been. The Bypass row is a later reading, taken on
+2026-08-30 once the three slots were writable at all: the same rig, LOW's Threshold as the positive
+control (121 → 81 across the Level change), and a write between the two samples to separate "cleared
+again" from "never moved".
 
 **The knob is written, like the COMP and EQ knobs it is the third of.** Both of those have the same
 property — the COMP knob's ON resets its level to 0 and its detail to uncompressed — and both are

@@ -565,7 +565,7 @@ test("the channel tuning screens show every processor, both displays and their n
   await openInsFx("ch2", "Compander-H");
   await openInsFx("bus.mix1", "Compander-S");
   // A guitar amp is one face — the cabinet sits on it between the amp and Output — and it
-  // is the only place the tag on its locked modulation rows is on screen at all.
+  // is the only place the tag on its modulation rows is on screen at all.
   await openInsFx("ch1", "Clean");
   // Pitch Fix is one face, and the only place the note strip and the MIDI Control row
   // appear. Driven through BOTH of its states: from Setting on, the notes the correction
@@ -594,6 +594,26 @@ test("the channel tuning screens show every processor, both displays and their n
     "#dyn-face-insfx-high",
     "#dyn-face-insfx-main",
   ]);
+
+  // …and with one band's own Bypass on, which is the other state that replaces the line
+  // under the display. Seeded through the plan rather than by pressing the control, so the
+  // face opens already in it: the note is what this pass is here to see, and a press would
+  // put the assertion behind a rebuild.
+  const bandBypass = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { "bus.mix1": { insertFx: 1792, insertFxOn: true, insertFxParams: { "12": 1 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(bandBypass)}`);
+  await page.locator('#graph-host g.node[data-id="bus.mix1"]').click();
+  await openInsertFxSection(page);
+  await page.locator("#btn-insfx-screen").click();
+  await expect(box).toBeVisible();
+  await page.click("#dyn-face-insfx-low");
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
   // …and with the unit's own 1-Knob on, which is the state that replaces the line under the
   // display. There is no control for it — the app never writes it — so the plan is what puts

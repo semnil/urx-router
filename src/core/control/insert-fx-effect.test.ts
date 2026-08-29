@@ -521,15 +521,22 @@ describe("insert-fx effect round-trip (emit∘readback fixed point)", () => {
     table.set(`${ctrl.param}:0:${ctrl.instances[0]}`, 1792); // MBC selector on the STEREO bus
     table.set(`${ENGINE_OUTPUT}:0:9`, 100); // LOW threshold
     table.set(`${ENGINE_OUTPUT}:0:23`, 50); // L-M crossover
+    table.set(`${ENGINE_OUTPUT}:0:17`, 1); // MID Bypass — a toggle, which carries no raw
+    // bounds of its own and is the shape a "sliders only" narrowing of either loop drops
     vi.mocked(vdGet).mockImplementation((id, x, y) => Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0));
     const plan = emptyPlan("URX44V");
     await applyDeviceState(model, plan);
     expect(plan.nodeParams[stereo]?.insertFx).toBe(1792);
     expect(plan.nodeParams[stereo]?.insertFxParams?.["9"]).toBe(100);
     expect(plan.nodeParams[stereo]?.insertFxParams?.["23"]).toBe(50);
+    expect(plan.nodeParams[stereo]?.insertFxParams?.["17"]).toBe(1);
     const eng = engineWrites(planToCommands(model, plan), ENGINE_OUTPUT);
     expect(eng.get(9)).toBe(100);
     expect(eng.get(23)).toBe(50);
+    // The Bypass goes out on the same flush. Both loops walk `insertFxWritableSlots`, so a
+    // narrowing that drops a toggle drops it from the READ as well and the two would agree
+    // about a value neither carries.
+    expect(eng.get(17)).toBe(1);
   });
 });
 
