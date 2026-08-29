@@ -21,8 +21,8 @@ import {
   ENGINE_PITCH,
   MBC_BANDS,
   MBC_BAND_PARAM,
-  MBC_BYPASS_SLOT,
   MBC_GLOBAL,
+  MBC_ONE_KNOB,
   MBC_RELEASE_MS,
   MBC_XOVER_LM_RANGE,
   MBC_XOVER_MH_RANGE,
@@ -30,6 +30,7 @@ import {
   insertFxFamilyOf,
   insertFxParamKey,
   insertFxParams,
+  mbcDeviceDriven,
   mergeReadInsertFxParams,
   PITCH_SCALE_SLOT,
   PITCH_NOTE_SLOTS,
@@ -171,17 +172,35 @@ describe("insert-fx family / engine / slot mapping", () => {
 });
 
 describe("the multi-band compressor's Band Bypass", () => {
-  it("is not in the writable set, so nothing emits it", () => {
-    // It bypasses the band the UNIT has selected, and that selection is on no address:
-    // driving the three bands to different depths and setting the slot stopped MID alone
-    // while LOW kept reducing. A plan value here would land on a band the app cannot name.
-    expect(insertFxWritableSlots("mbc").some((s) => s.slot === MBC_BYPASS_SLOT)).toBe(false);
+  it("is one per band, the fifth slot of each band's own block", () => {
+    // The blocks run at a stride of five, so a bypass sits behind its band's four sliders
+    // rather than beside the effect's global values.
+    expect(MBC_BANDS.map((b) => b.bypass)).toEqual([12, 17, 22]);
+    for (const b of MBC_BANDS) expect(b.bypass, b.band).toBe(b.gain + 1);
+    // …and none of them is one of the effect's globals, which is a different emit path.
+    for (const b of MBC_BANDS) expect(Object.values(MBC_GLOBAL), b.band).not.toContain(b.bypass);
   });
 
-  it("still names the slot, so it is not rediscovered as a free one", () => {
-    expect(MBC_BYPASS_SLOT).toBe(17);
-    // …and it is not reachable through the globals, which is what the emit path walks.
-    expect(Object.values(MBC_GLOBAL)).not.toContain(MBC_BYPASS_SLOT);
+  it("is a writable toggle carried on its band", () => {
+    for (const b of MBC_BANDS) {
+      const d = insertFxParams("mbc").find((p) => p.slot === b.bypass)!;
+      expect(d, b.band).toMatchObject({ label: "bypass", control: "toggle", band: b.band, def: 0 });
+      expect(
+        insertFxWritableSlots("mbc").some((s) => s.slot === b.bypass),
+        b.band,
+      ).toBe(true);
+    }
+  });
+
+  it("belongs to the 1-Knob while it is on", () => {
+    // Switching the knob on clears all three, and a Level change clears them again over
+    // anything written in between — the treatment the other fifteen driven slots get, and
+    // not Out Gain's, which the knob leaves alone.
+    const on = mbcDeviceDriven({ [insertFxParamKey("mbc", MBC_ONE_KNOB.on.slot)]: 1 });
+    for (const b of MBC_BANDS) expect(on.has(b.bypass), b.band).toBe(true);
+    expect(on.has(MBC_GLOBAL.outGain)).toBe(false);
+    // The positive control: with the knob off the same call claims nothing.
+    expect(mbcDeviceDriven({}).size).toBe(0);
   });
 });
 
@@ -502,15 +521,22 @@ describe("insert-fx effect round-trip (emit∘readback fixed point)", () => {
     table.set(`${ctrl.param}:0:${ctrl.instances[0]}`, 1792); // MBC selector on the STEREO bus
     table.set(`${ENGINE_OUTPUT}:0:9`, 100); // LOW threshold
     table.set(`${ENGINE_OUTPUT}:0:23`, 50); // L-M crossover
+    table.set(`${ENGINE_OUTPUT}:0:17`, 1); // MID Bypass — a toggle, which carries no raw
+    // bounds of its own and is the shape a "sliders only" narrowing of either loop drops
     vi.mocked(vdGet).mockImplementation((id, x, y) => Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0));
     const plan = emptyPlan("URX44V");
     await applyDeviceState(model, plan);
     expect(plan.nodeParams[stereo]?.insertFx).toBe(1792);
     expect(plan.nodeParams[stereo]?.insertFxParams?.["9"]).toBe(100);
     expect(plan.nodeParams[stereo]?.insertFxParams?.["23"]).toBe(50);
+    expect(plan.nodeParams[stereo]?.insertFxParams?.["17"]).toBe(1);
     const eng = engineWrites(planToCommands(model, plan), ENGINE_OUTPUT);
     expect(eng.get(9)).toBe(100);
     expect(eng.get(23)).toBe(50);
+    // The Bypass goes out on the same flush. Both loops walk `insertFxWritableSlots`, so a
+    // narrowing that drops a toggle drops it from the READ as well and the two would agree
+    // about a value neither carries.
+    expect(eng.get(17)).toBe(1);
   });
 });
 

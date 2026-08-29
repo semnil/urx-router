@@ -37,20 +37,6 @@ no hint of which picture it selects, so supporting it means calibrating the whol
 glyph set against the unit's screen first. The name and the color are supported because their values are
 self-describing.
 
-## The Multi-Band Compressor's Band Bypass is not offered
-
-The unit's multi-band compressor has a **Bypass** for one band, and the planner does not
-offer it or write it. The setting is a single value on the effect's engine, but it acts on
-the band the **unit** currently has selected, and that selection reaches no address the app
-can read or set — so a write from here would land on a band it cannot name.
-
-Measured on a URX44V: with LOW, MID and HIGH driven to different reduction depths (their
-meters reading -10, -4 and 0 dB), setting the value stopped MID alone while LOW went on
-reducing. It is not the last band the app wrote either — the write before it was LOW's.
-
-Everything else on that effect is offered: the three bands' Threshold, Ratio, Attack and
-Gain, the shared Release, both crossover frequencies, and the output gain, and the 1-Knob.
-
 ## While the Multi-Band Compressor's 1-Knob is on, only Out Gain stays yours
 
 The unit's multi-band compressor has a **1-Knob** — an On switch and a Level — that sets
@@ -58,16 +44,18 @@ the whole effect from one number. Both are offered and both are written, like th
 on the COMP and EQ screens.
 
 Switching it on is not an edit but a preset: the unit refills every other value of the
-effect with the type's own, and switching it off leaves them there rather than putting back
-what was set. Measured on a URX44V with every other value armed away from where it had been
+effect with the type's own — the three bands' Bypasses among them, which it clears — and
+switching it off leaves them there rather than putting back what was set. Measured on a
+URX44V with every other value armed away from where it had been
 and away from its neighbours, the ON transition moved all of them — the three bands'
-Threshold, Ratio, Gain and Attack, the shared Release, both crossovers and the output gain.
+Threshold, Ratio, Gain, Attack and Bypass, the shared Release, both crossovers and the
+output gain.
 
 Every Level change afterwards reasserts all but one of them: nine are recomputed from the
-Level (**Threshold, Ratio and Gain in each band**) and six are pinned straight back to fixed
-values whatever was written over them (**the three Attacks, the shared Release and both
-crossovers**). The planner stops writing those fifteen while the knob is on, and the tuning
-screen locks the same rows.
+Level (**Threshold, Ratio and Gain in each band**) and nine are pinned straight back to fixed
+values whatever was written over them (**the three Attacks, the three Bypasses, the shared
+Release and both crossovers**). The planner stops writing those eighteen while the knob is
+on, and the tuning screen locks the same rows.
 
 **The output gain is the exception** — the knob never touches it, so the planner keeps
 writing it and its row stays live. Measured on a URX44V by writing all seven of the

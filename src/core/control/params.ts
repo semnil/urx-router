@@ -488,7 +488,7 @@ export const PARAMS = {
    * because a name is what carries the side effect.
    *
    * `refetch` rather than `converge`: writing either makes the UNIT recompute slots the
-   * plan only mirrors — fifteen of them for the 1-Knob, the scale and the twelve-note mask
+   * plan only mirrors — eighteen of them for the 1-Knob, the scale and the twelve-note mask
    * for MIDI Control — so the owner node is read back instead of being pushed. Pushing
    * would put the pre-change values over what the unit just derived, and the writer
    * suppresses those slots for exactly that reason; without the read, the plan keeps its
@@ -761,11 +761,13 @@ export const INSERT_FX_OPTIONS: InsertFxOption[] = [
 // the two companders, all up to 96 kHz. They share ONE device-wide "out-dyn"
 // slot across all output channels (MBC and the companders are mutually exclusive,
 // user guide p.180), so only one MIX/STEREO output can hold one at a time.
+// Listed in the order the unit offers them, which is the two companders and then the
+// multi-band compressor.
 export const OUTPUT_INSERT_FX_OPTIONS: InsertFxOption[] = [
   { value: INSERT_FX_NONE, label: "No Effect" },
-  { value: 1792, label: "M.B.Comp", maxRate: 96000, slot: "out-dyn" },
   { value: 1793, label: "Compander-H", maxRate: 96000, slot: "out-dyn" },
   { value: 1794, label: "Compander-S", maxRate: 96000, slot: "out-dyn" },
+  { value: 1792, label: "M.B.Comp", maxRate: 96000, slot: "out-dyn" },
 ];
 
 /** True when the insert-FX option is selectable at the given sample rate. */

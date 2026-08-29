@@ -19,6 +19,7 @@
 
 import {
   insertFxDeviceDriven,
+  insertFxInactiveSlots,
   insertFxLockedSlots,
   insertFxFamilyOf,
   insertFxParamKey,
@@ -99,9 +100,9 @@ const keyParts = (key: string): { fam: InsertFxFamily; slot: number } | null => 
 /**
  * A guitar amp on ONE face, in TWO groups with a row break between them.
  *
- * Above the break is the amp: the level it is driven at, what makes it this type, the
- * master and Output, then the tone stack. Below it is everything the signal meets after
- * the amp — the modulation group and the CABINET.
+ * Above the break is the amp, in the order the unit's own screen lists it: what makes it
+ * this type, the level it is driven at, the master and Output, then the tone stack. Below
+ * it is everything the signal meets after the amp — the modulation group and the CABINET.
  *
  * Output is in the first group because it is a level of the amp rather than something the
  * cabinet does, and the tone stack goes last within that group so the four controls that
@@ -111,14 +112,15 @@ const keyParts = (key: string): { fam: InsertFxFamily; slot: number } | null => 
  * still appears, after the ones it does, rather than disappearing from the face silently.
  */
 const GUITAR_ORDER: readonly string[] = [
-  // Slot 7 leads under whichever of its two names this type prints.
+  // The type switch, which Clean does not have — its face opens on Volume instead.
+  "type",
+  "ampType",
+  // Slot 7 under whichever of its two names this type prints.
   "volume",
   "gain",
   // What the type brings of its own.
-  "blend",
   "distortion",
-  "character",
-  "ampType",
+  "blend",
   "master",
   "output",
   // The tone stack, high to low and then Presence, which is how the effect guide's own
@@ -155,43 +157,49 @@ const GUITAR_AFTER_BREAK: ReadonlySet<string> = new Set(GUITAR_ORDER.slice(GUITA
  * from the unit's own read order, which puts it fourth, and it is the only row here that
  * departs from it.
  *
- * Then what the correction DOES to a note, then what it is aimed at. The Scale and the
- * twelve notes are not in the flat catalogue at all and are built beside the Key, which is
- * the value they are rooted at.
+ * Then what the correction DOES to a note, then what it is aimed at. MIDI Control, the
+ * Scale and the twelve notes are not in the flat catalogue at all and are built beside the
+ * Key: the mode decides where the notes come from, and the Scale is rooted at the Key.
  */
 const PITCH_ORDER: readonly string[] = [
   "correction",
   "coarse",
   "fine",
   "formant",
-  "mix",
   "key",
+  "mix",
+  "limitLow",
+  "limitHigh",
   "speed",
   "tolerance",
-  "noteLow",
-  "noteHigh",
 ];
 
 /**
  * The multi-band compressor's panel: one band per row of four, then the four values that
  * belong to the effect rather than to a band.
  *
- * Two orders, because the rows repeat. WITHIN a band it is what the compressor does in the
- * order it does it — where it starts working, how hard, how fast it gets there, and what
- * it puts back. ACROSS the panel it is the bands in the order the crossovers split them,
- * so a row of cards is one band and the fourth row is what the three of them share.
+ * Two orders, because the rows repeat. WITHIN a band it is the band's own Bypass — which
+ * decides whether anything below it reaches the signal — then what the compressor does in
+ * the order it does it: where it starts working, how hard, how fast it gets there, and what
+ * it puts back, which is the band's own make-up. ACROSS the panel it is the three make-up
+ * levels in the order the crossovers split the bands, then Out Gain, then the crossovers
+ * themselves.
+ *
+ * A band's make-up is on BOTH its own face and MAIN: it is one value, and the two faces
+ * ask different questions of it — how the band comes back against the other two, and how
+ * it comes back against the compression this face sets.
  *
  * A label the first list does not name keeps its catalogue position after the ones it
  * does, the way `rankIn` treats every other family.
  */
-const MBC_BAND_ORDER: readonly string[] = ["threshold", "ratio", "attack", "release"];
-const MBC_MAIN_ORDER: readonly string[] = ["xoverLowMid", "xoverMidHigh", "gain", "outGain"];
+const MBC_BAND_ORDER: readonly string[] = ["bypass", "threshold", "ratio", "attack", "release", "gain"];
+const MBC_MAIN_ORDER: readonly string[] = ["gain", "outGain", "xoverLowMid", "xoverMidHigh"];
 /** The four faces, in the order the bar offers them: what the three bands SHARE, then each
  *  of them. `sel` is the index, so the band a face is about is `MBC_FACES[sel - 1]`. */
 const MBC_FACES = ["low", "mid", "high"] as const;
 const MBC_BAND_RANK: Record<string, number> = { low: 0, mid: 1, high: 2 };
 
-/** The unit's own word for a band, which is what a repeated label is qualified by. */
+/** The unit's own word for a band, which is what a qualified label is qualified by. */
 const bandName = (band: "low" | "mid" | "high", m: Messages): string => {
   const t = m.inspector.insertFxEffect;
   return band === "low" ? t.bandLow : band === "mid" ? t.bandMid : t.bandHigh;
@@ -206,7 +214,7 @@ const bandName = (band: "low" | "mid" | "high", m: Messages): string => {
  * fast the signal reaches it.
  */
 const ROW_ORDER: Partial<Record<InsertFxFamily, readonly string[]>> = {
-  compander: ["threshold", "ratio", "width", "outGain", "attack", "release"],
+  compander: ["threshold", "ratio", "width", "gain", "attack", "release"],
   pitch: PITCH_ORDER,
   "guitar-clean": GUITAR_ORDER,
   "guitar-crunch": GUITAR_ORDER,
@@ -301,6 +309,17 @@ const mbcRaw = (v: DynValues, slot: number): number => {
 
 /** The multi-band compressor's first face, which is the one that is not a band. */
 const isMbcMain = (ctx: DynCtx): boolean => familyOf(ctx) === "mbc" && MBC_FACES[ctx.sel - 1] === undefined;
+/** Whether this face is ONE band's rather than the set's. */
+const isMbcBandFace = (ctx: DynCtx): boolean => familyOf(ctx) === "mbc" && MBC_FACES[ctx.sel - 1] !== undefined;
+/** Whether a row's band belongs in its name here. On a band's own face the face is what
+ *  says which band it is, so only the rows MAIN carries as well keep the name: named there
+ *  and bare here, one value would read as two. Read off MAIN's own order rather than a
+ *  label spelled here, so the two cannot disagree about which rows those are.
+ *
+ *  `bandFace` is passed in because it cannot change between the rows of one panel, and the
+ *  field labels and the row builders both ask through here — a toggle and a slider on the
+ *  same face must not end up named by different rules. */
+const qualifyBand = (bandFace: boolean, d: InsertFxParamDesc): boolean => !bandFace || MBC_MAIN_ORDER.includes(d.label);
 
 /**
  * The three bands' input→output transfers, in dBFS.
@@ -319,6 +338,10 @@ function mbcResponses(v: DynValues): {
   out: (inDb: number) => number;
 }[] {
   return MBC_BANDS.map((b) => {
+    // A bypassed band is a straight line: the unit passes it through with neither the
+    // compression nor the make-up. Measured — with the other two silenced so the post meter
+    // read this band alone, a bypassed band sat ON its unity level and 92 dB above silence.
+    if (mbcRaw(v, b.bypass)) return { band: b.band, gainDb: 0, out: (inDb: number): number => inDb };
     const c = mbcBandCurve({ threshold: mbcRaw(v, b.threshold), ratio: mbcRaw(v, b.ratio), gain: mbcRaw(v, b.gain) });
     const silent = c.gainDb === -Infinity;
     return {
@@ -360,7 +383,7 @@ export function companderResponse(
   const thr = raw(companderSlot("threshold"), -10);
   const ratio = Math.max(1, raw(companderSlot("ratio"), 3.5));
   const width = Math.max(0, raw(companderSlot("width"), 6));
-  const gain = raw(companderSlot("outGain"), 0);
+  const gain = raw(companderSlot("gain"), 0);
   const expand = selector === COMPANDER_H ? EXPANDER_RATIO.h : EXPANDER_RATIO.s;
   const windowLo = thr - width;
   // What the compressor puts out at 0 dBFS. Above that the limiter holds it there, so the
@@ -430,9 +453,10 @@ function rankIn(order: readonly string[], descs: InsertFxParamDesc[], d: InsertF
  * One face of the multi-band compressor.
  *
  * The split is what the effect IS: three compressors and the two frequencies that decide
- * what each of them hears. MAIN carries the crossovers and the levels the three bands are
- * mixed back at; a band face carries that band's own dynamics. Sixteen values on one panel
- * fits, and is still sixteen values with nothing saying which four belong together.
+ * what each of them hears. MAIN carries the levels the three bands are mixed back at and
+ * the crossovers that decide what each hears; a band face carries that band's own Bypass
+ * and its own dynamics. Nineteen values on one panel
+ * fits, and is still nineteen values with nothing saying which five belong together.
  *
  * Release is on every band face and is ONE value — the unit shares it across the three —
  * which is why it is ordered with the dynamics rather than with the levels.
@@ -440,19 +464,21 @@ function rankIn(order: readonly string[], descs: InsertFxParamDesc[], d: InsertF
 function mbcRows(descs: InsertFxParamDesc[], sel: number): InsertFxParamDesc[] {
   const band = MBC_FACES[sel - 1];
   if (band === undefined) {
-    // MAIN: the three make-up gains in band order, then Out Gain, behind the two
-    // crossovers that decide the bands they belong to.
-    const on = descs.filter((d) => d.label === "gain" || MBC_MAIN_ORDER.includes(d.label));
+    // MAIN: the three make-up gains in band order, then Out Gain, and ahead of the two
+    // crossovers that decide the bands they belong to. The Bypasses are not here — each
+    // belongs to one band and is on that band's own face.
+    const on = descs.filter((d) => MBC_MAIN_ORDER.includes(d.label));
     return on.sort((a, b) => mainRank(descs, a) - mainRank(descs, b));
   }
-  // Its make-up is NOT here: that one is the level the band is mixed back at, which is
-  // what MAIN sets against the other two and Out Gain. What is left is the band's dynamics.
-  const on = descs.filter((d) => (d.band === band && d.label !== "gain") || d.label === "release");
+  // Its make-up is here as well as on MAIN — last, after the dynamics it is the make-up
+  // for — because it is the level this band comes back at and MAIN is where it is weighed
+  // against the other two.
+  const on = descs.filter((d) => d.band === band || d.label === "release");
   return on.sort((a, b) => rankIn(MBC_BAND_ORDER, descs, a) - rankIn(MBC_BAND_ORDER, descs, b));
 }
 
-/** A MAIN row's position: the two crossovers, then the three band gains in band order,
- *  then Out Gain — which is one value and sorts after the three that repeat. */
+/** A MAIN row's position: the three band gains in band order, then Out Gain — which is one
+ *  value and sorts after the three that repeat — then the two crossovers. */
 function mainRank(descs: InsertFxParamDesc[], d: InsertFxParamDesc): number {
   const within = d.band === undefined ? 0 : MBC_BAND_RANK[d.band];
   return rankIn(MBC_MAIN_ORDER, descs, d) * 10 + within;
@@ -470,11 +496,10 @@ function descOf(_ctx: DynCtx, key: string): InsertFxParamDesc | undefined {
 const labelOf = (d: InsertFxParamDesc, m: Messages, qualify = true): string => {
   const t = m.inspector.insertFxEffect.params as Record<string, string | undefined>;
   const name = t[d.label] ?? d.label;
-  // A row is named by its band only where the three of them share a face: MAIN carries all
-  // three make-up gains, and three cards saying Gain are three different parameters. On a
-  // band's own face the face is what says which band it is, and repeating it on every card
-  // is a word that carries nothing.
-  return d.band === undefined || !qualify ? name : `${bandName(d.band, m)} ${name}`;
+  // Named by its band where the three of them share a face: MAIN carries all three make-up
+  // gains, and three cards saying Gain are three different parameters. `qualifyBand` is
+  // what decides, and it is asked with the descriptor.
+  return d.band !== undefined && qualify ? `${bandName(d.band, m)} ${name}` : name;
 };
 
 /**
@@ -683,7 +708,7 @@ function insFxFace(): DynProcessor {
       const g = ctx.m.dynTuning.insfx;
       const t = ctx.m.inspector.insertFxEffect;
       return {
-        label: g.faceBar,
+        label: ctx.m.dynTuning.display,
         items: [
           { label: g.faceMain, id: "dyn-face-insfx-main", face: INSFX_DYN, sel: 0 },
           { label: t.bandLow, id: "dyn-face-insfx-low", face: INSFX_DYN, sel: 1 },
@@ -747,7 +772,7 @@ function insFxFace(): DynProcessor {
     // every family, so both of these read the catalogue row out of the key itself.
     fieldLabel: (f, m, ctx) => {
       const d = descOf(ctx, f.key);
-      return d && labelOf(d, m, isMbcMain(ctx) || familyOf(ctx) !== "mbc");
+      return d && labelOf(d, m, qualifyBand(isMbcBandFace(ctx), d));
     },
     fieldText: (f, v, ctx) => descOf(ctx, f.key)?.format?.(v),
 
@@ -763,12 +788,19 @@ function insFxFace(): DynProcessor {
     },
 
     // Speed and Depth drive a vibrato the selector beside them can switch off. The rows
-    // stay where they are, dimmed and tagged, rather than being dropped: a panel that
-    // loses two rows moves everything under them out from under the pointer.
+    // stay where they are, tagged and still editable, rather than being dropped: a panel
+    // that loses two rows moves everything under them out from under the pointer.
     rowStates: (ctx, vals) => {
       const fam = familyOf(ctx);
       if (!fam) return null;
-      const locked = insertFxLockedSlots(fam, ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams);
+      const params = ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams;
+      /** One state for each slot in `slots`, or null for none — the shape all three
+       *  branches below answer in, so the key convention is written once. */
+      const statesFor = (slots: Iterable<number>, opts: SettingsRowOptions): Map<string, SettingsRowOptions> | null => {
+        const out = new Map<string, SettingsRowOptions>();
+        for (const slot of slots) out.set(slotKey(fam, slot), opts);
+        return out.size ? out : null;
+      };
       // While the multi-band compressor's 1-knob is on, the unit is setting these from its
       // own level. The set comes from the WRITER's own list rather than being spelled
       // again: a row locked while the plan still sends it is the drift.
@@ -776,32 +808,31 @@ function insFxFace(): DynProcessor {
       // Locked and NOT tagged, which is the one place this screen departs from COMP's
       // treatment. A tag says why THIS row cannot be touched, and it earns its space where
       // some rows carry it and others do not; here it is every row for one reason, so
-      // sixteen copies of one word carry nothing a reader did not have from the first. The
+      // eighteen copies of one word carry nothing a reader did not have from the first. The
       // reason is on the panel's own line instead — and the cost of the other way was
       // measured: the word wraps inside a card and the panel grew 414px, which is the
       // resize under the pointer that "no row is ever removed" exists to stop.
       if (fam === "mbc") {
         // The 1-Knob's own Level is locked too while the knob is off, and it is not a row
         // of this panel — `mbcOneKnobSection` draws it, and asks the same predicate.
-        const driven = [...locked].filter((slot) => slot !== MBC_ONE_KNOB.level.slot);
-        if (!driven.length) return null;
-        const out = new Map<string, SettingsRowOptions>();
-        for (const slot of driven) out.set(slotKey(fam, slot), { locked: true });
-        return out;
+        const locked = insertFxLockedSlots(fam, params);
+        return statesFor(
+          [...locked].filter((slot) => slot !== MBC_ONE_KNOB.level.slot),
+          { locked: true },
+        );
       }
       // …and while Pitch Fix's MIDI Control is on, the unit is deriving the mask from its
       // own port. Same list as the writer's, for the same reason.
       if (fam === "pitch") {
-        if (!locked.size) return null;
-        const out = new Map<string, SettingsRowOptions>();
-        for (const slot of locked)
-          out.set(slotKey(fam, slot), { locked: true, tag: ctx.m.dynTuning.insfx.deviceOnlyTag });
-        return out;
+        return statesFor(insertFxLockedSlots(fam, params), {
+          locked: true,
+          tag: ctx.m.dynTuning.insfx.deviceOnlyTag,
+        });
       }
-      if (!locked.size) return null;
-      const out = new Map<string, SettingsRowOptions>();
-      for (const slot of locked) out.set(slotKey(fam, slot), { tag: ctx.m.dynTuning.insfx.vibOnly, locked: true });
-      return out;
+      // …and Clean's Speed and Depth are heard on the vibrato alone. TAGGED AND LIVE: the
+      // unit stores them and takes a write whatever the modulation reads, so the row says
+      // when its value applies rather than refusing the gesture.
+      return statesFor(insertFxInactiveSlots(fam, params), { tag: ctx.m.dynTuning.insfx.vibOnly });
     },
 
     // Everything that is not a slider — the guitar amp's cabinet selectors and its gate
@@ -811,6 +842,8 @@ function insFxFace(): DynProcessor {
       const fam = familyOf(ctx);
       if (!fam) return {};
       const descs = rowsOf(fam, ctx.sel, effectiveInsertFx(ctx.model, ctx.plan, ctx.nodeId));
+      // One question about the panel rather than about a row, so it is asked once.
+      const bandFace = isMbcBandFace(ctx);
       const before: Record<string, HTMLElement[]> = {};
       const tail: HTMLElement[] = [];
       let pending: HTMLElement[] = [];
@@ -833,36 +866,54 @@ function insFxFace(): DynProcessor {
         }
         const key = slotKey(fam, d.slot);
         const cur = rawOf(ctx, fam, d);
-        const label = labelOf(d, ctx.m);
-        // The Key is a plain enum in the catalogue, but writing it alone would leave the
-        // mask spelling the old root: the unit re-derives on a Key write and an offline
-        // plan has to agree with what it would have derived.
+        const label = labelOf(d, ctx.m, qualifyBand(bandFace, d));
+        // Pitch Fix's Key comes with a neighbour on each side, so the three are pushed
+        // together here rather than as three guards on one predicate spread down the body.
+        //
+        // MIDI Control goes in FRONT: it decides where the notes the correction aims at
+        // come from, and from Setting on, the Key's own Scale is the unit's. The Key
+        // itself is a plain enum in the catalogue, but writing it alone would leave the
+        // mask spelling the old root — the unit re-derives on a Key write and an offline
+        // plan has to agree with what it would have derived. The Scale is not in the flat
+        // catalogue at all and belongs behind the Key, which is the value it is rooted at;
+        // the twelve notes it derives go to the tail instead, because one control twelve
+        // buttons wide takes a whole row and mid-panel it would end the row it lands in
+        // and leave the rest of it empty.
+        if (fam === "pitch" && d.label === "key") {
+          pending.push(
+            pitchMidiRow(ctx),
+            enumRow(label, d.options ?? [], cur, (v) => ctx.set(slotPatch(pitchKeyPatch(scaleOf(ctx), v)))),
+            pitchScaleRow(ctx, deviceOwned(ctx)),
+          );
+          continue;
+        }
+        // What `rowStates` said about this slot. The HOST applies that answer to the
+        // FIELDS it lays out and to nothing else, so a row built here has to ask for it —
+        // and a row that does not is drawn live while the writer refuses to emit it, which
+        // parts the plan from the unit with nothing on screen to say so. The multi-band
+        // compressor's band Bypass is the case: the 1-Knob owns it, `translate` stops
+        // sending it, and the MIDI surface refuses the same slot.
+        const state = ctx.states.get(key) ?? {};
         pending.push(
-          fam === "pitch" && d.label === "key"
-            ? enumRow(label, d.options ?? [], cur, (v) => ctx.set(slotPatch(pitchKeyPatch(scaleOf(ctx), v))))
-            : d.control === "toggle"
-              ? ctx.midi(
-                  settingsRow(
-                    label,
-                    // A knob grid gives every control one card, so its switch is the
-                    // one-button form: the pair splits a card between two words where the
-                    // single button prints the state it is in.
-                    isKnobGrid(fam)
-                      ? onOffButton(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 }))
-                      : onOff(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 })),
-                  ),
-                  key,
-                )
-              : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v })),
+          d.control === "toggle"
+            ? ctx.midi(
+                settingsRow(
+                  label,
+                  // A knob grid gives every control one card, so its switch is the
+                  // one-button form: the pair splits a card between two words where the
+                  // single button prints the state it is in.
+                  isKnobGrid(fam)
+                    ? onOffButton(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 }))
+                    : onOff(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 })),
+                  state,
+                ),
+                key,
+              )
+            : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v }), state),
         );
-        // The Scale is not in the flat catalogue at all; it belongs beside the Key, which
-        // is the value it is rooted at. The twelve notes it derives go to the tail — one
-        // control twelve buttons wide takes the whole row, and mid-panel it ends the row it
-        // lands in and leaves the rest of that row empty.
-        if (fam === "pitch" && d.label === "key") pending.push(pitchScaleRow(ctx, deviceOwned(ctx)));
       }
       tail.push(...pending);
-      if (fam === "pitch") tail.push(pitchMidiRow(ctx), pitchNotesRow(ctx, deviceOwned(ctx)));
+      if (fam === "pitch") tail.push(pitchNotesRow(ctx, deviceOwned(ctx)));
       return { before, tail };
     },
 
@@ -902,8 +953,14 @@ function insFxFace(): DynProcessor {
       if (fam === "mbc") {
         // Who owns the panel outranks what the figure is doing, the same way the bypass
         // note outranks both.
-        if (insertFxDeviceDriven("mbc", ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams).size) return g.mbcOneKnob;
-        return isMbcMain(ctx) ? g.mbcMainHint : g.mbcBandHint;
+        const params = ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams;
+        if (insertFxDeviceDriven("mbc", params).size) return g.mbcOneKnob;
+        if (isMbcMain(ctx)) return g.mbcMainHint;
+        // …and a band whose own compressor is out. The figure is drawn from the values
+        // either way — the screen keeps a bypassed effect's controls live and its curve on
+        // the axes for the same reason — so what changes is the line that names it.
+        const band = MBC_BANDS.find((b) => b.band === MBC_FACES[ctx.sel - 1]);
+        return band && insertFxVal(ctx.plan, ctx.nodeId, "mbc", band.bypass, 0) ? g.mbcBandBypassed : g.mbcBandHint;
       }
       // …and nothing where the column is the level taps alone: a guitar amp's face and
       // Pitch Fix's both are, and a line under a lane rack has nothing to explain.
@@ -992,11 +1049,15 @@ function drawMbcBands(
   c.lineWidth = 2;
   c.beginPath();
   for (const [i, b] of MBC_BANDS.entries()) {
-    const gainDb = mbcBandCurve({
-      threshold: mbcRaw(v, b.threshold),
-      ratio: mbcRaw(v, b.ratio),
-      gain: mbcRaw(v, b.gain),
-    }).gainDb;
+    // A bypassed band comes back at unity: its make-up is not applied either, so its step
+    // is drawn at 0 rather than at the level the panel beside it still holds.
+    const gainDb = mbcRaw(v, b.bypass)
+      ? 0
+      : mbcBandCurve({
+          threshold: mbcRaw(v, b.threshold),
+          ratio: mbcRaw(v, b.ratio),
+          gain: mbcRaw(v, b.gain),
+        }).gainDb;
     // A band with no make-up left puts out nothing; it leaves the frame rather than lying
     // along the floor, where a merely quiet band would be drawn too.
     const y = g.py(gainDb === -Infinity ? GAIN_TICKS[GAIN_TICKS.length - 1] - 12 : gainDb);

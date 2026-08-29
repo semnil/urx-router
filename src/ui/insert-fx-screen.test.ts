@@ -20,6 +20,7 @@ import {
   PITCH_NOTE_SLOTS,
   PITCH_SCALE_SLOT,
   PITCH_SCALE_MAJOR,
+  insertFxLockedSlots,
   insertFxParamKey,
   insertFxParams,
 } from "../core/control/insert-fx-effect";
@@ -266,7 +267,7 @@ describe("the rendered screen", () => {
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_DYN, "ch1");
     const m = t().inspector.insertFxEffect.params;
-    const order: string[] = [m.threshold, m.ratio, m.width, m.outGain, m.attack, m.release];
+    const order: string[] = [m.threshold, m.ratio, m.width, m.gain, m.attack, m.release];
     expect(rowLabels().filter((l) => order.includes(l))).toEqual(order);
     screen.close();
   });
@@ -311,8 +312,8 @@ describe("the rendered screen", () => {
 
   it("puts every control of a guitar amp in the one panel, in the order the design gives", () => {
     const m = t().inspector.insertFxEffect.params;
-    // Two groups with the break between them. Above it the amp — its level, what makes it
-    // this type, the master and Output, then the tone stack as one run. Below it the
+    // Two groups with the break between them. Above it the amp — what makes it this type,
+    // its level, the master and Output, then the tone stack as one run. Below it the
     // modulation group and the cabinet, in the order the effect guide's own common table
     // lists them.
     //
@@ -321,10 +322,10 @@ describe("the rendered screen", () => {
     const stack = [m.treble, m.middle, m.bass, m.presence];
     const cab = [m.gate, m.gateLevel, m.spType, m.micPosition];
     const cases: Array<[string, string[]]> = [
-      ["Clean", [m.volume, m.blend, m.distortion, m.output, ...stack, BREAK, m.mod, m.modSpeed, m.modDepth, ...cab]],
-      ["Crunch", [m.gain, m.character, m.output, ...stack, BREAK, ...cab]],
-      ["Lead", [m.gain, m.character, m.master, m.output, ...stack, BREAK, ...cab]],
-      ["Drive", [m.gain, m.ampType, m.master, m.output, ...stack, BREAK, ...cab]],
+      ["Clean", [m.volume, m.distortion, m.blend, m.output, ...stack, BREAK, m.mod, m.modSpeed, m.modDepth, ...cab]],
+      ["Crunch", [m.type, m.gain, m.output, ...stack, BREAK, ...cab]],
+      ["Lead", [m.type, m.gain, m.master, m.output, ...stack, BREAK, ...cab]],
+      ["Drive", [m.ampType, m.gain, m.master, m.output, ...stack, BREAK, ...cab]],
     ];
     for (const [type, order] of cases) {
       holding("ch1", type);
@@ -389,12 +390,12 @@ describe("the guitar amp's two faces", () => {
     expect(INSFX_DYN.bar!(holding("bus.mix1", "M.B.Comp"))!.items).toHaveLength(4);
   });
 
-  it("leads the amp face with the level it is driven at, then what makes it this amp", () => {
+  it("leads the amp face with what makes it this amp, then the level it is driven at", () => {
     const m = t().inspector.insertFxEffect.params;
     expect(labelsOn(INSFX_DYN, holding("ch1", "Clean"))).toEqual([
       m.volume,
-      m.blend,
       m.distortion,
+      m.blend,
       m.output,
       m.treble,
       m.middle,
@@ -426,12 +427,34 @@ describe("the guitar amp's two faces", () => {
     expect(INSFX_DYN.bind(holding("bus.mix1", "M.B.Comp"))!.paramsFirst).toBeUndefined();
   });
 
-  it("locks Speed and Depth in place while the modulation is not vibrato", () => {
+  it("tags Speed and Depth while the modulation is not vibrato, and leaves them writable", () => {
     const ctx = holding("ch1", "Clean");
     // The modulation selector is slot 19, its factory value Off.
     const off = INSFX_DYN.rowStates!(ctx, INSFX_DYN.read(ctx))!;
-    expect(off.get("ifx:guitar-clean:20")?.locked).toBe(true);
+    // The tag says WHEN the value applies. It is not a lock: the unit stores both whatever
+    // the modulation reads and takes a write to either, so refusing the gesture here would
+    // be the app forbidding what the unit allows.
+    expect(off.get("ifx:guitar-clean:20")?.tag).toBe(t().dynTuning.insfx.vibOnly);
     expect(off.get("ifx:guitar-clean:21")?.tag).toBe(t().dynTuning.insfx.vibOnly);
+    expect(off.get("ifx:guitar-clean:20")?.locked).toBeUndefined();
+    expect(off.get("ifx:guitar-clean:21")?.locked).toBeUndefined();
+    // …and nothing on this family is locked, which is what the MIDI surface asks too.
+    expect(insertFxLockedSlots("guitar-clean", h.plan.nodeParams.ch1?.insertFxParams).size).toBe(0);
+    // …and the rendered rows agree, which is the half a state map cannot show: the host
+    // applies these states, so a row that stopped being live would still read `locked:
+    // undefined` here.
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    for (const slot of [20, 21]) {
+      const card = h.box.querySelector<HTMLElement>(`.gt-knob:has(input[data-dyn="ifx:guitar-clean:${slot}"])`)!;
+      expect(card.classList.contains("locked"), String(slot)).toBe(false);
+      expect(card.querySelector<HTMLInputElement>("input")!.disabled, String(slot)).toBe(false);
+      expect(card.querySelector(".gt-knobtag")?.textContent, String(slot)).toBe(t().dynTuning.insfx.vibOnly);
+    }
+    screen.close();
+
+    // The positive control: on the vibrato the tag goes, so the tag is about the setting
+    // rather than about every Clean panel.
     h.plan.nodeParams.ch1!.insertFxParams = { "19": 2 };
     expect(INSFX_DYN.rowStates!(ctx, INSFX_DYN.read(ctx))).toBeNull();
   });
@@ -439,6 +462,7 @@ describe("the guitar amp's two faces", () => {
 
 describe("moving between the faces", () => {
   const face = (id: string): HTMLElement => h.box.querySelector<HTMLElement>(`#${id}`)!;
+  const face_ = face;
 
   it("gives a guitar amp reversed columns and no bar to swap", () => {
     // Its panel is up to fifteen controls and its display is a level rack with nothing else
@@ -473,6 +497,105 @@ describe("moving between the faces", () => {
     screen.close();
   });
 
+  it("opens each band face on that band's own Bypass, and closes it on that band's make-up", () => {
+    // The Bypass decides whether anything under it reaches the signal, so it leads; the
+    // make-up is last because it is what the compression above it is finally weighed at,
+    // and it carries its band name because MAIN carries the same value.
+    holding("bus.mix1", "M.B.Comp");
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "bus.mix1");
+    const m = t().inspector.insertFxEffect;
+    for (const [id, band] of [
+      ["low", m.bandLow],
+      ["mid", m.bandMid],
+      ["high", m.bandHigh],
+    ] as const) {
+      face(`dyn-face-insfx-${id}`).click();
+      expect(rowLabels(), id).toEqual([
+        t().inspector.on,
+        m.params.oneKnobLevel,
+        m.params.bypass,
+        m.params.threshold,
+        m.params.ratio,
+        m.params.attack,
+        m.params.release,
+        `${band} ${m.params.gain}`,
+      ]);
+    }
+    // …and MAIN carries none of them: each belongs to one band.
+    face("dyn-face-insfx-main").click();
+    expect(rowLabels()).not.toContain(m.params.bypass);
+    screen.close();
+  });
+
+  it("draws a band's Bypass locked while the 1-Knob owns it, not only in the state map", () => {
+    // The host applies `rowStates` to the FIELDS it lays out; a row the descriptor builds
+    // has to ask for the same answer itself. The Bypass is the first locked row on this
+    // screen that is not a slider, and drawn live it writes a plan value the writer is
+    // refusing to send — the drift the lock exists to stop. Asserted on the RENDERED row,
+    // because the map said `locked: true` throughout the version that had the defect.
+    const bypassCard = (): HTMLElement =>
+      [...h.box.querySelectorAll<HTMLElement>(".prefs-row .lbl, .gt-knob .lbl")]
+        .find((lbl) => lbl.textContent === t().inspector.insertFxEffect.params.bypass)!
+        .closest<HTMLElement>(".prefs-row, .gt-knob")!;
+
+    // The positive control first: with the knob off the row is live, so what the assertion
+    // below reads is the knob rather than a row this screen always disables.
+    holding("bus.mix1", "M.B.Comp");
+    h.plan.nodeParams["bus.mix1"]!.insertFxOn = true;
+    const off = new DynScreen(h.hooks);
+    off.open(INSFX_DYN, "bus.mix1");
+    face("dyn-face-insfx-low").click();
+    expect(bypassCard().classList.contains("locked")).toBe(false);
+    expect(bypassCard().querySelector("button")!.disabled).toBe(false);
+    off.close();
+
+    h.plan.nodeParams["bus.mix1"]!.insertFxParams = {
+      [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: 1,
+      [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobLevel)]: 24,
+    };
+    const on = new DynScreen(h.hooks);
+    on.open(INSFX_DYN, "bus.mix1");
+    face("dyn-face-insfx-low").click();
+    expect(bypassCard().classList.contains("locked")).toBe(true);
+    expect(bypassCard().querySelector("button")!.disabled).toBe(true);
+    on.close();
+  });
+
+  it("writes its own band's slot when a Bypass is pressed", () => {
+    // The three are one control per band and the plan keys them by slot, so a face wired to
+    // the wrong one is a value that lands on a band the operator did not touch — and the
+    // panel would look right either way. Pressed rather than set: the handler is what the
+    // wiring is, and nothing else in either tier presses this row.
+    holding("bus.mix1", "M.B.Comp");
+    h.plan.nodeParams["bus.mix1"]!.insertFxOn = true;
+    const bypassButton = (): HTMLButtonElement =>
+      [...h.box.querySelectorAll<HTMLElement>(".prefs-row .lbl, .gt-knob .lbl")]
+        .find((lbl) => lbl.textContent === t().inspector.insertFxEffect.params.bypass)!
+        .closest<HTMLElement>(".prefs-row, .gt-knob")!
+        .querySelector("button")!;
+
+    for (const [face, band] of [
+      ["low", MBC_BANDS[0]],
+      ["mid", MBC_BANDS[1]],
+      ["high", MBC_BANDS[2]],
+    ] as const) {
+      h.plan.nodeParams["bus.mix1"]!.insertFxParams = {};
+      const screen = new DynScreen(h.hooks);
+      screen.open(INSFX_DYN, "bus.mix1");
+      face_(`dyn-face-insfx-${face}`).click();
+      bypassButton().click();
+      const written = h.plan.nodeParams["bus.mix1"]!.insertFxParams!;
+      expect(written[insertFxParamKey("mbc", band.bypass)], face).toBe(1);
+      // …and only that band's. A face writing a neighbour's slot passes every assertion
+      // about the value and none about which band it reached.
+      for (const other of MBC_BANDS.filter((b) => b !== band)) {
+        expect(written[insertFxParamKey("mbc", other.bypass)], `${face} -> ${other.band}`).toBeUndefined();
+      }
+      screen.close();
+    }
+  });
+
   it("goes back to the first face, and the ordinary columns, when a follow replaces the effect", () => {
     holding("bus.mix1", "M.B.Comp");
     const screen = new DynScreen(h.hooks);
@@ -505,12 +628,25 @@ describe("moving between the faces", () => {
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_DYN, "ch1");
     const m = t().inspector.insertFxEffect;
-    const labels = rowLabels();
-    expect(labels[0]).toBe(m.params.correction);
-    // Everything both former faces carried, on this one.
-    for (const label of [m.params.coarse, m.params.key, m.scale, m.scaleNotes, m.params.midiControl]) {
-      expect(labels, label).toContain(label);
-    }
+    // Everything both former faces carried, on this one, in the order the unit lists it:
+    // the switch, what the correction does to a note, then what it is aimed at — MIDI
+    // Control in front of the Key, because it decides where those notes come from — and
+    // then the range it works over and how fast it gets there.
+    expect(rowLabels()).toEqual([
+      m.params.correction,
+      m.params.coarse,
+      m.params.fine,
+      m.params.formant,
+      m.params.midiControl,
+      m.params.key,
+      m.scale,
+      m.params.mix,
+      m.params.limitLow,
+      m.params.limitHigh,
+      m.params.speed,
+      m.params.tolerance,
+      m.scaleNotes,
+    ]);
     // The panel takes the flexible column and the meters the narrow one, and there is no
     // bar to a second face.
     expect(h.box.querySelector<HTMLElement>(".prefs-grid")!.classList.contains("gt-paramsleft")).toBe(true);
@@ -611,7 +747,7 @@ describe("the compander's transfer curve", () => {
   it("moves the whole curve down by Out Gain", () => {
     const raws = new Map<string, number>();
     for (const d of insertFxParams("compander")) raws.set(`ifx:compander:${d.slot}`, d.def);
-    const gainSlot = insertFxParams("compander").find((d) => d.label === "outGain")!.slot;
+    const gainSlot = insertFxParams("compander").find((d) => d.label === "gain")!.slot;
     raws.set(`ifx:compander:${gainSlot}`, -600); // -6 dB
     const v = { get: (k: string) => raws.get(k) ?? 0 } as DynValues;
     const out = companderResponse(v, "compander", valueOf("Compander-H"));
@@ -909,7 +1045,7 @@ describe("the bank identity", () => {
   });
 });
 
-// The multi-band compressor: four faces over sixteen values the app writes, two the unit
+// The multi-band compressor: four faces over nineteen values the app writes, two the unit
 // does not let it, and three reductions the unit meters separately. Everything below is
 // about keeping those apart — a value on the wrong face is a control whose neighbours say
 // nothing about it, and a value in the wrong group is either a control that does nothing or
@@ -940,22 +1076,32 @@ describe("the multi-band compressor", () => {
   });
   const slotsOf = (ctx: DynCtx): number[] => INSFX_DYN.bind(ctx)!.fields.map((f) => Number(/:(\d+)$/.exec(f.key)?.[1]));
 
-  it("splits the sixteen values into what the bands share and what each band is", () => {
-    // MAIN: the two crossovers that decide what each band hears, then the levels the three
-    // are mixed back at. A band face: that band's own dynamics, and the Release the three
-    // of them share. Sixteen on one panel fits and is still sixteen with nothing saying
-    // which four belong together.
-    expect(slotsOf(mbc(MAIN))).toEqual([23, 24, 11, 16, 21, 26]);
-    expect(slotsOf(mbc(1))).toEqual([9, 10, 8, 25]);
-    expect(slotsOf(mbc(2))).toEqual([14, 15, 13, 25]);
-    expect(slotsOf(mbc(3))).toEqual([19, 20, 18, 25]);
-    // Every writable slot is reachable, and the shared Release is the only one repeated.
+  it("splits the continuous values into what the bands share and what each band is", () => {
+    // MAIN: the levels the three bands are mixed back at, then Out Gain, then the two
+    // crossovers that decide what each band hears. A band face: that band's dynamics, the
+    // Release the three of them share, and last the level that band comes back at. Sixteen
+    // on one panel fits and is still nineteen with nothing saying which five belong together.
+    //
+    // The three Bypasses are not here: `fields` is the CONTINUOUS half, and a toggle is a
+    // row. Where each of them renders is pinned by the band face's own card order.
+    expect(slotsOf(mbc(MAIN))).toEqual([11, 16, 21, 26, 23, 24]);
+    expect(slotsOf(mbc(1))).toEqual([9, 10, 8, 25, 11]);
+    expect(slotsOf(mbc(2))).toEqual([14, 15, 13, 25, 16]);
+    expect(slotsOf(mbc(3))).toEqual([19, 20, 18, 25, 21]);
+    // Every continuous writable slot is reachable. Two kinds are on more than one face: the
+    // Release the three bands share, and each band's own make-up, which MAIN weighs against
+    // the other two and the band's own face weighs against the compression above it.
     const all = [MAIN, 1, 2, 3].flatMap((s) => slotsOf(mbc(s)));
     expect(new Set(all).size).toBe(16);
     expect(all.filter((x) => x === 25)).toHaveLength(3);
+    for (const gain of [11, 16, 21])
+      expect(
+        all.filter((x) => x === gain),
+        String(gain),
+      ).toHaveLength(2);
   });
 
-  it("names a row by its band only where the three of them share a face", () => {
+  it("names a row by its band where the three share a face, and for the make-up everywhere", () => {
     const m = t().inspector.insertFxEffect;
     const label = (ctx: DynCtx, slot: number): string | undefined =>
       INSFX_DYN.fieldLabel!(
@@ -971,6 +1117,10 @@ describe("the multi-band compressor", () => {
     // card is a word that carries nothing.
     expect(label(mbc(1), 9)).toBe(m.params.threshold);
     expect(label(mbc(1), 25)).toBe(m.params.release);
+    // The make-up is the exception, because it is the one row MAIN carries as well: named
+    // there and bare here, one value would read as two.
+    expect(label(mbc(1), 11)).toBe(`${m.bandLow} ${m.params.gain}`);
+    expect(label(mbc(3), 21)).toBe(`${m.bandHigh} ${m.params.gain}`);
   });
 
   it("offers the four faces on one descriptor, since they are one panel over other slots", () => {
@@ -1010,15 +1160,16 @@ describe("the multi-band compressor", () => {
     const states = INSFX_DYN.rowStates!(mbc(MAIN, oneKnobOn()), {})!;
     const slotOf = (key: string): number => Number(/:(\d+)$/.exec(key)?.[1]);
     const locked = [...states.keys()].map(slotOf).sort((a, b) => a - b);
-    // Nine the Level recomputes (Threshold, Ratio, Gain per band) and six it pins back to
-    // fixed values whatever was written over them (the three Attacks, Release, both
-    // crossovers). Out Gain is the one writable slot the knob leaves alone.
-    expect(locked).toEqual([8, 9, 10, 11, 13, 14, 15, 16, 18, 19, 20, 21, 23, 24, 25]);
+    // Nine the Level recomputes (Threshold, Ratio, Gain per band) and nine it pins back to
+    // fixed values whatever was written over them (the three Attacks, the three Bypasses,
+    // Release, both crossovers). Out Gain is the one writable slot the knob leaves alone.
+    expect(locked).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]);
     expect([...states.values()].every((o) => o.locked === true)).toBe(true);
     expect(locked).toContain(MBC_BANDS[0].attack);
+    expect(locked).toContain(MBC_BANDS[0].bypass);
     expect(locked).toContain(MBC_GLOBAL.release);
     expect(locked).not.toContain(MBC_GLOBAL.outGain);
-    // …and NOT tagged: fifteen copies of one word carry nothing, and the word wraps inside
+    // …and NOT tagged: eighteen copies of one word carry nothing, and the word wraps inside
     // a card and grows the panel, which is the resize the lock exists to avoid.
     expect([...states.values()].every((o) => o.tag === undefined)).toBe(true);
   });
@@ -1028,6 +1179,27 @@ describe("the multi-band compressor", () => {
     expect(INSFX_DYN.hint!(mbc(MAIN))).toBe(g.mbcMainHint);
     expect(INSFX_DYN.hint!(mbc(LOW))).toBe(g.mbcBandHint);
     expect(INSFX_DYN.hint!(mbc(MAIN, oneKnobOn()))).toBe(g.mbcOneKnob);
+  });
+
+  it("names a bypassed band's figure as its values rather than as the band", () => {
+    // The curve is drawn from Threshold / Ratio / Gain and does not read the Bypass, which
+    // is the right shape — a bypassed EFFECT keeps its curve too — so the line under the
+    // display is what carries the state. Only that band's face changes: the Bypass is one
+    // control per band.
+    const g = t().dynTuning.insfx;
+    const bypassed = (band: number): DynCtx => mbc(band, { [insertFxParamKey("mbc", MBC_BANDS[band - 1].bypass)]: 1 });
+    for (const band of [1, 2, 3]) {
+      expect(INSFX_DYN.hint!(bypassed(band)), `band ${band}`).toBe(g.mbcBandBypassed);
+      // …and the OTHER two faces are unaffected by it.
+      for (const other of [1, 2, 3].filter((b) => b !== band)) {
+        expect(INSFX_DYN.hint!({ ...bypassed(band), sel: other }), `${band} seen from ${other}`).toBe(g.mbcBandHint);
+      }
+      expect(INSFX_DYN.hint!({ ...bypassed(band), sel: MAIN }), `${band} seen from MAIN`).toBe(g.mbcMainHint);
+    }
+    // The 1-Knob owns the Bypass, so its own line still outranks this one.
+    expect(INSFX_DYN.hint!(mbc(LOW, { ...oneKnobOn(), [insertFxParamKey("mbc", MBC_BANDS[0].bypass)]: 1 }))).toBe(
+      g.mbcOneKnob,
+    );
   });
 
   it("offers the 1-Knob on every face, and writes it", () => {
@@ -1141,6 +1313,40 @@ describe("the multi-band compressor", () => {
     expect(floors[2].floor).toBeCloseTo(geo.py(-60 + 2), 6);
     // …and one curve, not three: a second band would put another 121 points on the canvas.
     expect(floors[0].ys.length).toBeLessThan(2 * 121);
+  });
+
+  it("draws a bypassed band at unity, and its MAIN step at 0", () => {
+    // Measured: with the other two bands silenced so the post meter read this one alone, a
+    // bypassed band sat ON its unity level and 92 dB above silence — neither its compression
+    // nor its make-up reaches the signal. Drawn from the values it still holds, the figure
+    // would show a knee the unit is not applying and a step at a level it is not coming
+    // back at.
+    const shaped = { "ifx:mbc:9": 81, "ifx:mbc:10": 6, "ifx:mbc:11": 55 };
+    const ysFor = (raws: Record<string, number>, sel = LOW): number[] => {
+      const ctx = mbc(sel);
+      const r = recorder();
+      INSFX_DYN.drawCurve!(r.ctx, INSFX_DYN.plotGeo!(W, H, ctx), vals(raws), TOK, ctx);
+      return r.ys;
+    };
+    const geo = INSFX_DYN.plotGeo!(W, H, mbc(LOW));
+
+    // The positive control: those values, NOT bypassed, put the band's floor at its make-up
+    // (raw 55 = +18 dB) and bend the line above the threshold.
+    const shapedYs = ysFor(shaped);
+    expect(shapedYs[0]).toBeCloseTo(geo.py(-60 + 18), 6);
+    // …and bypassed, the same values draw the unity diagonal: floor at the axis minimum,
+    // top at 0, and nothing lifted by the make-up.
+    const flatYs = ysFor({ ...shaped, "ifx:mbc:12": 1 });
+    expect(flatYs[0]).toBeCloseTo(geo.py(-60), 6);
+    expect(flatYs[flatYs.length - 1]).toBeCloseTo(geo.py(0), 6);
+
+    // MAIN's step takes the same rule: a bypassed band comes back at unity, so its segment
+    // sits at 0 rather than at the make-up the panel beside it still holds.
+    const main = mbc(MAIN);
+    const r = recorder();
+    INSFX_DYN.drawCurve!(r.ctx, INSFX_DYN.plotGeo!(W, H, main), vals({ ...shaped, "ifx:mbc:12": 1 }), TOK, main);
+    const mainGeo = INSFX_DYN.plotGeo!(W, H, main);
+    expect(r.ys[0]).toBeCloseTo(mainGeo.py(0), 6);
   });
 
   it("takes a band with no make-up left off the frame rather than along its floor", () => {

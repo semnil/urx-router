@@ -1951,7 +1951,8 @@ export class DynScreen {
     holdInertOnBlur(input, { live: () => this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`) });
     if (opts?.locked) input.disabled = true;
     knob.append(ind, input);
-    // A locked row's tag ("Device-driven", "Vib only") is what says WHY it cannot be
+    // A row's tag ("Device-driven", "Vib only") is what says when its value applies — on a
+    // LOCKED row that is also why it cannot be
     // touched, so it travels with the card rather than being dropped in this layout.
     if (opts?.tag) {
       const tag = el("span", "gt-knobtag");

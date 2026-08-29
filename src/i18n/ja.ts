@@ -359,9 +359,9 @@ export const ja: Messages = {
     },
     insertFxEffect: {
       title: "Insert Effect",
-      bandLow: "LOW",
-      bandMid: "MID",
-      bandHigh: "HIGH",
+      bandLow: "Low",
+      bandMid: "Mid",
+      bandHigh: "High",
       oneKnob: "1-Knob",
       scale: "Scale",
       scaleNotes: "音",
@@ -376,6 +376,7 @@ export const ja: Messages = {
       midiControlDeviceOnly:
         "Setting 以降は補正が狙う音が本体自身の USB-MIDI ポートから届きます。そのため ON にすると 12 音マスクが消去され Scale は Custom になり、OFF に戻すまでその 2 つは本体のものになります。",
       params: {
+        bypass: "Bypass",
         threshold: "Threshold",
         ratio: "Ratio",
         attack: "Attack",
@@ -398,7 +399,7 @@ export const ja: Messages = {
         mod: "Modulation",
         modSpeed: "Speed",
         modDepth: "Depth",
-        character: "Character",
+        type: "Type",
         ampType: "Amp Type",
         master: "Master",
         coarse: "Coarse",
@@ -409,13 +410,13 @@ export const ja: Messages = {
         key: "Key",
         speed: "Speed",
         tolerance: "Tolerance",
-        noteLow: "Note Low Limit",
-        noteHigh: "Note High Limit",
+        limitLow: "Limit Low",
+        limitHigh: "Limit High",
         midiControl: "MIDI Control",
         oneKnobOn: "1-Knob",
         oneKnobLevel: "1-Knob Level",
-        xoverLowMid: "L-M XOVER",
-        xoverMidHigh: "M-H XOVER",
+        xoverLowMid: "L-M Xover",
+        xoverMidHigh: "M-H Xover",
       },
     },
     duckerOn: "Ducker",
@@ -535,8 +536,8 @@ export const ja: Messages = {
     },
     ssmcs: {
       open: "SSMCS 画面",
-      faceMain: "MAIN",
-      faceComp: "COMP",
+      faceMain: "Main",
+      faceComp: "Comp",
       faceEq: "EQ",
       tapOut: "Pre Ins FX",
       mainHint:
@@ -561,8 +562,7 @@ export const ja: Messages = {
       tapOut: "Pre Fader",
       tapOutBus: "Post",
       tapGr: "Ins FX GR",
-      faceBar: "面",
-      faceMain: "MAIN",
+      faceMain: "Main",
       vibOnly: "Vib のみ",
       bypassed: "バイパス中 — 値はここで保持・編集できますが、設定した内容は信号に届きません。",
       curveHint:
@@ -571,6 +571,8 @@ export const ja: Messages = {
         "クロスオーバーがスペクトルをどこで分割し、各バンドがどのレベルで戻されるかです。段差は 2 つの設定値であり、本体のフィルタースロープではありません。",
       mbcBandHint:
         "このバンドだけを示します。自身のスレッショルドより上を抑え、メイクアップを加えます。リダクションはこのバンドについて本体が報告する値です。",
+      mbcBandBypassed:
+        "このバンドはバイパスされています。圧縮もメイクアップも掛からず unity で素通しします。下の値は保持され、ここで編集もできます。",
       mbcOneKnob:
         "1-Knob が ON です。ここの値はすべて本体が自身のレベルから設定しており、ここでの編集は本体へ送られません。",
       deviceOnlyTag: "本体で設定",

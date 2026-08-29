@@ -198,7 +198,7 @@ test("every control on a guitar face is a card in the one panel", async ({ page 
     });
 
   // Clean, Crunch, Lead and Drive, rather than Clean alone: the type-specific control is a
-  // different descriptor on each — Blend and Distortion, Character, Character, Amp Type —
+  // different descriptor on each — Distortion and Blend, Type, Type, Amp Type —
   // so measuring one amp leaves the other three unmeasured. Lead's screen was opened by no
   // browser case at all before this.
   for (const type of ["Clean", "Crunch", "Lead", "Drive"]) {
@@ -315,7 +315,7 @@ test("no family has an editor left in the inspector", async ({ page }) => {
     // hold ONE device-wide slot between them, so a second bus cannot take it while the
     // first has it, and the second selection here replaces the first.
     ["bus.stereo", "Compander-H", "Width"],
-    ["bus.stereo", "M.B.Comp", "L-M XOVER"],
+    ["bus.stereo", "M.B.Comp", "L-M Xover"],
   ] as const) {
     await node(page, id).click();
     await chooseOption(insertSelect(page), { label: effect });
@@ -330,10 +330,10 @@ test("multi-band comp splits into what the bands share and what each band is", a
   await node(page, "bus.mix1").click();
   await chooseOption(insertSelect(page), { label: "M.B.Comp" });
   await openScreen(page);
-  // MAIN: the two crossovers that decide what each band hears, then the levels the three
-  // are mixed back at. Sixteen values on one panel fits and is still sixteen values with
-  // nothing saying which four belong together.
-  for (const label of ["L-M XOVER", "M-H XOVER", "LOW Gain", "MID Gain", "HIGH Gain", "Out Gain"]) {
+  // MAIN: the levels the three bands are mixed back at, then Out Gain, then the two
+  // crossovers that decide what each band hears. Sixteen values on one panel fits and is
+  // still nineteen values with nothing saying which five belong together.
+  for (const label of ["Low Gain", "Mid Gain", "High Gain", "Out Gain", "L-M Xover", "M-H Xover"]) {
     await expect(screenRow(page, label), label).toBeVisible();
   }
   await expect(screenRow(page, "Threshold")).toHaveCount(0);
@@ -344,15 +344,23 @@ test("multi-band comp splits into what the bands share and what each band is", a
   // on any face and would pass here whatever the rack carried.
   await expect(screenBox(page).locator(".gt-ro.gr")).toHaveCount(0);
 
-  // …and a band face is that band's dynamics, with the Release the three of them share.
-  for (const id of ["low", "mid", "high"] as const) {
+  // …and a band face is that band's own Bypass, its dynamics, the Release the three of them
+  // share, and the level that band comes back at — which MAIN also carries, weighed against
+  // the other two, so this one is named by its band where the rest of the face is not.
+  for (const [id, band] of [
+    ["low", "Low"],
+    ["mid", "Mid"],
+    ["high", "High"],
+  ] as const) {
     await page.click(`#dyn-face-insfx-${id}`);
-    for (const label of ["Threshold", "Ratio", "Attack", "Release"]) {
+    for (const label of ["Bypass", "Threshold", "Ratio", "Attack", "Release", `${band} Gain`]) {
       await expect(screenRow(page, label), `${id} ${label}`).toBeVisible();
     }
-    // The band is named by the FACE, so its cards are not named by it again.
-    await expect(screenRow(page, "LOW Threshold"), id).toHaveCount(0);
-    await expect(screenRow(page, "L-M XOVER"), id).toHaveCount(0);
+    // The band is named by the FACE, so its other cards are not named by it again — which is
+    // what separates the make-up from them.
+    await expect(screenRow(page, `${band} Threshold`), id).toHaveCount(0);
+    await expect(screenRow(page, `${band} Bypass`), id).toHaveCount(0);
+    await expect(screenRow(page, "L-M Xover"), id).toHaveCount(0);
     // One reduction, carrying the lane label every insert effect's does. WHICH band it
     // addresses is not visible here — that is `insert-fx-screen.test.ts`, which reads the
     // meter the face asks for rather than the caption over it.
@@ -403,15 +411,19 @@ test("MBC 1-Knob is operable, and locks what its Level recomputes", async ({ pag
   await openScreen(page);
   await expect(screenRow(page, "1-Knob Level")).not.toHaveClass(/\blocked\b/);
   await expect(screenRow(page, "Out Gain").locator("input")).toBeEnabled();
-  await expect(screenRow(page, "L-M XOVER").locator("input")).toBeDisabled();
+  await expect(screenRow(page, "L-M Xover").locator("input")).toBeDisabled();
   await expect(screenBox(page).getByText("1-Knob is on", { exact: false })).toBeVisible();
   await page.click("#dyn-face-insfx-low");
-  // …and the band face is the unit's entirely: the three the Level recomputes and the two
-  // it pins back.
-  await expect(screenRow(page, "Threshold").locator("input")).toBeDisabled();
-  await expect(screenRow(page, "Ratio").locator("input")).toBeDisabled();
-  await expect(screenRow(page, "Attack").locator("input")).toBeDisabled();
-  await expect(screenRow(page, "Release").locator("input")).toBeDisabled();
+  // …and the band face is the unit's entirely — every row of it, which is what "entirely"
+  // has to be measured as. The Bypass is the one that is not a slider: the host applies the
+  // row states to the FIELDS it lays out, so a row the descriptor builds is drawn live
+  // unless it asks for the same answer, and a live one writes a plan value the writer is
+  // refusing to send.
+  for (const label of ["Threshold", "Ratio", "Attack", "Release", "Low Gain"]) {
+    await expect(screenRow(page, label).locator("input"), label).toBeDisabled();
+  }
+  await expect(screenRow(page, "Bypass")).toHaveClass(/\blocked\b/);
+  await expect(screenRow(page, "Bypass").locator("button")).toBeDisabled();
   await closeScreen(page);
 });
 
@@ -550,10 +562,10 @@ test("MBC crossover knobs expose the per-band valid ranges", async ({ page }) =>
   await openScreen(page);
   // L-M 21.2 Hz..4 kHz (raw 6..97), M-H 42.5 Hz..8 kHz (raw 18..109): the device
   // splits the crossover ranges so the bands cannot cross.
-  const lm = screenRow(page, "L-M XOVER").locator("input[type=range]");
+  const lm = screenRow(page, "L-M Xover").locator("input[type=range]");
   await expect(lm).toHaveAttribute("min", "6");
   await expect(lm).toHaveAttribute("max", "97");
-  const mh = screenRow(page, "M-H XOVER").locator("input[type=range]");
+  const mh = screenRow(page, "M-H Xover").locator("input[type=range]");
   await expect(mh).toHaveAttribute("min", "18");
   await expect(mh).toHaveAttribute("max", "109");
   // The figure beside them says where those two put the three bands, which two numbers in
@@ -581,9 +593,9 @@ test("insert FX option set depends on node kind (input vs output)", async ({ pag
   await node(page, "bus.stereo").click();
   await expect(insertSelect(page).locator("option")).toHaveText([
     "No Effect",
-    "M.B.Comp",
     "Compander-H",
     "Compander-S",
+    "M.B.Comp",
   ]);
 });
 
@@ -824,7 +836,7 @@ test("the console launcher is inert on a strip holding nothing, and opens on one
   await expect(open).not.toHaveClass(/\boff\b/);
   await open.click();
   await expect(screenBox(page)).toBeVisible();
-  await expect(screenRow(page, "L-M XOVER")).toBeVisible();
+  await expect(screenRow(page, "L-M Xover")).toBeVisible();
   await closeScreen(page);
 });
 

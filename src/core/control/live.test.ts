@@ -999,7 +999,7 @@ describe("LiveSync sideEffect refetch", () => {
   // The same shape one layer out: the multi-band compressor's 1-Knob is not a plan field
   // but an engine SLOT, and every slot of that array goes out under one parameter name. A
   // name is what carries the side effect, so under the ordinary one this write announced
-  // nothing, the plan kept its copy of the fifteen values the unit had just recomputed —
+  // nothing, the plan kept its copy of the eighteen values the unit had just recomputed —
   // and sent them back the moment the knob was switched off.
   it("reads the node back after the multi-band compressor's 1-Knob level write", async () => {
     const plan = basePlan();
