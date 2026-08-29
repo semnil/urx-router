@@ -47,8 +47,14 @@ import {
   EQ_TYPE_SHELVING,
 } from "../control/params";
 import { mixSendLocks } from "../routing";
-import { insertFxFamilyOf, insertFxParams, insertFxSlotVal, reKeyInsertFxParams } from "../control/insert-fx-effect";
-import { channelEqUnavailable } from "../constraints";
+import {
+  insertFxFamilyOf,
+  insertFxLockedSlots,
+  insertFxParams,
+  insertFxSlotVal,
+  reKeyInsertFxParams,
+} from "../control/insert-fx-effect";
+import { channelEqUnavailable, nodeRateDisabled } from "../constraints";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../control/vd";
 
 /** The STEREO master — every channel's / FX channel's fixed main send target. */
@@ -275,7 +281,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   // The MUTE semantics mirror the console chip: on a connection it drives the
   // send's ON (1 = muted = on false); channels'/FX sends ship ON, the MIX → STEREO
   // "TO ST" ships off. On a node it drives the master ON (STEREO / MONITOR).
-  const connMute = (send: string | undefined, defaultOn: boolean): BoundControl => {
+  const connMute = (send: string | undefined, defaultOn: boolean, locked?: () => boolean): BoundControl => {
     const to = send ?? MAIN_BUS;
     return {
       id: controlId(id, "mute", send),
@@ -286,7 +292,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       get: () => ((conn(to)?.params?.on ?? defaultOn) ? 0 : 1),
       set: (v) => {
         const c = conn(to);
-        if (!c) return false;
+        if (!c || locked?.()) return false;
         c.params = { ...c.params, on: v < 0.5 };
         return true;
       },
@@ -684,6 +690,12 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       // Through the shared reader, or a plan filled from a device read answers with the
       // catalogue default: a readback stores the BARE slot number and only an edit re-keys it.
       const cur = (): number => insertFxSlotVal(plan.nodeParams[id]?.insertFxParams, insFxFamily, d.slot, d.def);
+      // The same refusal the tuning screen draws, asked of the same predicate and asked
+      // NOW rather than when the mapping was made: a mapping outlives the state that
+      // locked its slot, and one made before the unit took the slot over would otherwise
+      // write the plan while the writer is suppressing it.
+      const lockedNow = (): boolean =>
+        insertFxLockedSlots(insFxFamily, plan.nodeParams[id]?.insertFxParams).has(d.slot);
       const write = (raw: number): void => {
         // The mirrored slots Pitch Fix keeps: the device reads both, so a write that moved
         // one would be half applied. `reKeyInsertFxParams` also drops the bare slot the
@@ -701,6 +713,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           kind: "toggle",
           get: () => (cur() ? 1 : 0),
           set: (v) => {
+            if (lockedNow()) return false;
             write(v >= 0.5 ? 1 : 0);
             return true;
           },
@@ -719,6 +732,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         kind: "continuous",
         get: () => codec.get(cur()),
         set: (v) => {
+          if (lockedNow()) return false;
           write(codec.set(v));
           return true;
         },
@@ -738,8 +752,12 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     for (const target of SEND_TARGETS) {
       if (target === id || !conn(target)) continue;
       const locks = (): { busFixed: boolean; panLinked: boolean } => mixSendLocks(plan, target);
-      out.push(connControl("level", target, levelCodec, LEVEL_OFF_DB, () => locks().busFixed));
-      out.push(connMute(target, true));
+      // …and a send into a bus the sample rate has removed sets three values on DSP the
+      // unit is not running. The CONSOLE locks the whole column on this predicate, so a
+      // mapping that reached past it would be the one surface still writing there.
+      const rateGone = (): boolean => nodeRateDisabled(target, plan.sampleRate);
+      out.push(connControl("level", target, levelCodec, LEVEL_OFF_DB, () => locks().busFixed || rateGone()));
+      out.push(connMute(target, true, rateGone));
       if (target === "bus.mix1" || target === "bus.mix2") {
         out.push(connControl("pan", target, panCodec, 0, () => locks().panLinked));
         // Send tap (PRE/POST) as a toggle: MIX taps are freely writable (a CH → FX

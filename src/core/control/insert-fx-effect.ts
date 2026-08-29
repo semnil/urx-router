@@ -985,6 +985,52 @@ const MBC_LEVEL_DRIVEN: ReadonlySet<number> = new Set([
  * would put the pre-change mask back over what the unit did, which is the defect the COMP
  * knob's own driven set exists for.
  */
+/**
+ * The engine slots that DRIVE the rest of the array rather than sitting in it: whichever
+ * of them this family has. Writing one makes the unit recompute the slots
+ * `insertFxDeviceDriven` names, so a command carrying one is the one that has to be
+ * followed by a read (`INSERT_FX_DRIVER` in params.ts).
+ */
+export function insertFxDriverSlots(family: InsertFxFamily): ReadonlySet<number> {
+  return family === "mbc" ? MBC_DRIVER_SLOTS : family === "pitch" ? PITCH_DRIVER_SLOTS : EMPTY_SLOTS;
+}
+const MBC_DRIVER_SLOTS: ReadonlySet<number> = new Set([MBC_ONE_KNOB.on.slot, MBC_ONE_KNOB.level.slot]);
+const PITCH_DRIVER_SLOTS: ReadonlySet<number> = new Set([PITCH_MIDI_ENABLE_SLOT, PITCH_MIDI_REALTIME_SLOT]);
+
+/** Clean's modulation trio: the setting, the value that makes the other two live, and the
+ *  two they gate. The unit runs Speed and Depth on the vibrato alone. */
+export const GUITAR_MOD = { slot: 19, vib: 2, speed: 20, depth: 21 } as const;
+
+/**
+ * Every slot a surface must refuse to write, for this family holding these values.
+ *
+ * ONE seat for two consumers. The tuning screen draws these rows locked; a MIDI mapping
+ * made before the lock applied reaches the same slots and has to refuse them there too.
+ * Split across the two, a mapping writes what the screen will not — and for the slots the
+ * unit is driving, the write lands in the plan while the writer is suppressing it, so the
+ * plan and the unit part company silently and the plan's copy is sent the moment the unit
+ * gives the slots back.
+ *
+ * Three rules, and each is a rule about what the UNIT is doing rather than about the panel:
+ * the multi-band compressor's 1-Knob owns the values it recomputes, its Level owns nothing
+ * while the knob is off, Pitch Fix's MIDI Control owns the scale and the mask, and Clean's
+ * modulation runs Speed and Depth on the vibrato alone.
+ */
+export function insertFxLockedSlots(
+  family: InsertFxFamily,
+  params: Record<string, number> | undefined,
+): ReadonlySet<number> {
+  if (family === "mbc") {
+    return insertFxSlotVal(params, family, MBC_ONE_KNOB.on.slot, 0) ? mbcDeviceDriven(params) : ONE_KNOB_LEVEL_ONLY;
+  }
+  if (family === "pitch") return pitchDeviceDriven(params);
+  const mod = insertFxParams(family).find((d) => d.slot === GUITAR_MOD.slot);
+  if (!mod) return EMPTY_SLOTS;
+  return insertFxSlotVal(params, family, GUITAR_MOD.slot, mod.def) === GUITAR_MOD.vib ? EMPTY_SLOTS : MOD_GATED;
+}
+const ONE_KNOB_LEVEL_ONLY: ReadonlySet<number> = new Set([MBC_ONE_KNOB.level.slot]);
+const MOD_GATED: ReadonlySet<number> = new Set([GUITAR_MOD.speed, GUITAR_MOD.depth]);
+
 export function pitchDeviceDriven(params: Record<string, number> | undefined): ReadonlySet<number> {
   const on = insertFxSlotVal(params, "pitch", PITCH_MIDI_ENABLE_SLOT, 0);
   return on ? PITCH_MIDI_DRIVEN : EMPTY_SLOTS;

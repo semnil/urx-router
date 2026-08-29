@@ -37,6 +37,7 @@ import {
   insertFxParamKey,
   insertFxWritableSlots,
   insertFxDeviceDriven,
+  insertFxDriverSlots,
 } from "./insert-fx-effect";
 import { isFixedConnection, sendTapWritable } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
@@ -1160,6 +1161,12 @@ function pushInsertFxEffectCommands(
   // re-sending the plan's copy after the unit has acted puts the pre-change values back on
   // it, which is what a converge sharing the flush does.
   const driven = includeDeviceDriven ? NOTHING_DRIVEN : insertFxDeviceDriven(family, params);
+  // …and the slots that DRIVE those go out under a name of their own, because writing one
+  // makes the unit recompute what the loop above is skipping. The name is what carries the
+  // read-back (params.ts, INSERT_FX_DRIVER); sent as INSERT_FX_EFFECT they are ordinary
+  // values, nothing reads the unit's own result, and the plan's stale copy of it is what
+  // the next flush sends once the control is switched off.
+  const drivers = insertFxDriverSlots(family);
   for (const s of insertFxWritableSlots(family)) {
     if (driven.has(s.slot)) continue;
     const v = params[insertFxParamKey(family, s.slot)] ?? params[String(s.slot)];
@@ -1167,8 +1174,9 @@ function pushInsertFxEffectCommands(
     // device's per-type default), so a non-finite raw is dropped, not substituted.
     if (!Number.isFinite(v)) continue;
     const raw = boundRaw(v, s.rawMin, s.rawMax);
-    out.push(rawCommand("INSERT_FX_EFFECT", engine, "raw", s.slot, raw));
-    if (s.mirror !== undefined) out.push(rawCommand("INSERT_FX_EFFECT", engine, "raw", s.mirror, raw));
+    const name = drivers.has(s.slot) ? "INSERT_FX_DRIVER" : "INSERT_FX_EFFECT";
+    out.push(rawCommand(name, engine, "raw", s.slot, raw));
+    if (s.mirror !== undefined) out.push(rawCommand(name, engine, "raw", s.mirror, raw));
   }
 }
 

@@ -18,13 +18,14 @@
 // a default or an enum.
 
 import {
+  insertFxDeviceDriven,
+  insertFxLockedSlots,
   insertFxFamilyOf,
   insertFxParamKey,
   insertFxParams,
   MBC_BANDS,
   MBC_ONE_KNOB,
   mbcBandCurve,
-  mbcDeviceDriven,
   mbcXoverHz,
   pitchDeviceDriven,
   mbcXoverLabel,
@@ -220,10 +221,6 @@ const PITCH_MIDI_MODES = ["Off", "Setting", "Real Time"] as const;
 
 /** Clean's modulation selector (slot 19) and the value that puts it on vibrato. The unit
  *  prints no name beside it, which is why the app supplies one. */
-const MOD_SLOT = 19;
-const MOD_VIB = 2;
-const MOD_SPEED_SLOT = 20;
-const MOD_DEPTH_SLOT = 21;
 
 const isGuitar = (fam: InsertFxFamily): boolean => fam.startsWith("guitar-");
 /** The families whose continuous values are laid out as knob cards. */
@@ -771,6 +768,7 @@ function insFxFace(): DynProcessor {
     rowStates: (ctx, vals) => {
       const fam = familyOf(ctx);
       if (!fam) return null;
+      const locked = insertFxLockedSlots(fam, ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams);
       // While the multi-band compressor's 1-knob is on, the unit is setting these from its
       // own level. The set comes from the WRITER's own list rather than being spelled
       // again: a row locked while the plan still sends it is the drift.
@@ -783,8 +781,10 @@ function insFxFace(): DynProcessor {
       // measured: the word wraps inside a card and the panel grew 414px, which is the
       // resize under the pointer that "no row is ever removed" exists to stop.
       if (fam === "mbc") {
-        const driven = mbcDeviceDriven(ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams);
-        if (!driven.size) return null;
+        // The 1-Knob's own Level is locked too while the knob is off, and it is not a row
+        // of this panel — `mbcOneKnobSection` draws it, and asks the same predicate.
+        const driven = [...locked].filter((slot) => slot !== MBC_ONE_KNOB.level.slot);
+        if (!driven.length) return null;
         const out = new Map<string, SettingsRowOptions>();
         for (const slot of driven) out.set(slotKey(fam, slot), { locked: true });
         return out;
@@ -792,20 +792,15 @@ function insFxFace(): DynProcessor {
       // …and while Pitch Fix's MIDI Control is on, the unit is deriving the mask from its
       // own port. Same list as the writer's, for the same reason.
       if (fam === "pitch") {
-        const driven = pitchDeviceDriven(ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams);
-        if (!driven.size) return null;
+        if (!locked.size) return null;
         const out = new Map<string, SettingsRowOptions>();
-        for (const slot of driven)
+        for (const slot of locked)
           out.set(slotKey(fam, slot), { locked: true, tag: ctx.m.dynTuning.insfx.deviceOnlyTag });
         return out;
       }
-      if (!isGuitar(fam)) return null;
-      const mod = vals[slotKey(fam, MOD_SLOT)];
-      if (mod === undefined || mod === MOD_VIB) return null;
+      if (!locked.size) return null;
       const out = new Map<string, SettingsRowOptions>();
-      for (const slot of [MOD_SPEED_SLOT, MOD_DEPTH_SLOT]) {
-        out.set(slotKey(fam, slot), { tag: ctx.m.dynTuning.insfx.vibOnly, locked: true });
-      }
+      for (const slot of locked) out.set(slotKey(fam, slot), { tag: ctx.m.dynTuning.insfx.vibOnly, locked: true });
       return out;
     },
 
@@ -907,7 +902,7 @@ function insFxFace(): DynProcessor {
       if (fam === "mbc") {
         // Who owns the panel outranks what the figure is doing, the same way the bypass
         // note outranks both.
-        if (mbcDeviceDriven(ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams).size) return g.mbcOneKnob;
+        if (insertFxDeviceDriven("mbc", ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams).size) return g.mbcOneKnob;
         return isMbcMain(ctx) ? g.mbcMainHint : g.mbcBandHint;
       }
       // …and nothing where the column is the level taps alone: a guitar amp's face and
@@ -1131,6 +1126,7 @@ function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
   const t = ctx.m.inspector.insertFxEffect;
   const raw = (slot: number): number => insertFxVal(ctx.plan, ctx.nodeId, "mbc", slot, 0);
   const on = raw(MBC_ONE_KNOB.on.slot) !== 0;
+  const locked = insertFxLockedSlots("mbc", ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams);
   const set = (slot: number, v: number): void => ctx.set({ [slotKey("mbc", slot)]: v });
   // A CONTINUOUS value writes without rebuilding. `set` re-renders the screen, which
   // replaces the element the pointer is holding, so a drag ends after its first step and
@@ -1160,7 +1156,7 @@ function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
         value: raw(MBC_ONE_KNOB.level.slot),
         format: String,
         onInput: (v: number) => setValue(MBC_ONE_KNOB.level.slot, v),
-        row: on ? undefined : { locked: true },
+        row: locked.has(MBC_ONE_KNOB.level.slot) ? { locked: true } : undefined,
       }),
       slotKey("mbc", MBC_ONE_KNOB.level.slot),
     ),

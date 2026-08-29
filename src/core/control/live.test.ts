@@ -15,6 +15,7 @@ import { COMP_EQ_SSMCS, PARAMS } from "./params";
 import { addrKey, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
+import { MBC_ONE_KNOB, insertFxParamKey } from "./insert-fx-effect";
 import { applyNodeState } from "./readback";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -993,6 +994,38 @@ describe("LiveSync sideEffect refetch", () => {
     expect(seen).toEqual([{ ratio: morphed, scOn: 0 }]);
     // And the converge still did its own job: the pan the selector slammed is back.
     expect(device.get(PAN)).toBe(planPan);
+  });
+
+  // The same shape one layer out: the multi-band compressor's 1-Knob is not a plan field
+  // but an engine SLOT, and every slot of that array goes out under one parameter name. A
+  // name is what carries the side effect, so under the ordinary one this write announced
+  // nothing, the plan kept its copy of the fifteen values the unit had just recomputed —
+  // and sent them back the moment the knob was switched off.
+  it("reads the node back after the multi-band compressor's 1-Knob level write", async () => {
+    const plan = basePlan();
+    const mbc = (level: number): void => {
+      plan.nodeParams["bus.stereo"] = {
+        ...plan.nodeParams["bus.stereo"],
+        insertFx: 1792,
+        insertFxParams: {
+          [insertFxParamKey("mbc", MBC_ONE_KNOB.on.slot)]: 1,
+          [insertFxParamKey("mbc", MBC_ONE_KNOB.level.slot)]: level,
+        },
+      };
+    };
+    mbc(10);
+    const refetched: string[][] = [];
+    const live = liveFor(plan, async (nodes) => {
+      refetched.push([...nodes]);
+      return null;
+    });
+    live.begin();
+    mbc(30);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(refetched).toEqual([["bus.stereo"]]);
   });
 
   it("reads the node back after a comp 1-knob level write", async () => {

@@ -7,6 +7,16 @@ import { ref } from "../../models/types";
 import { COMP_EQ_SSMCS, EQ_TYPE_PASS } from "../control/params";
 import { planToCommands } from "../control/translate";
 import { bindControl, controlId, listControls, parseControlId } from "./controls";
+import {
+  GUITAR_MOD,
+  MBC_BANDS,
+  MBC_ONE_KNOB,
+  PITCH_MIDI_ENABLE_SLOT,
+  PITCH_SCALE_SLOT,
+  pitchDeviceDriven,
+  insertFxParamKey,
+  type InsertFxFamily,
+} from "../control/insert-fx-effect";
 import { wireRaw, wireSteps } from "./mapping";
 
 const model = getModel("URX44V");
@@ -534,5 +544,90 @@ describe("feedback round trip", () => {
       }
     }
     expect([...offenders]).toEqual([]);
+  });
+});
+
+// A mapping outlives the state that locked the control it names, and nothing on the MIDI
+// side re-reads the screen. So each lock is asked here in BOTH directions from one mapping:
+// the control is bound once, and the plan is moved under it.
+describe("a mapping cannot reach past a lock the screen draws", () => {
+  const holding = (node: string, sel: number, params: Record<number, number>, fam: InsertFxFamily): void => {
+    const keyed: Record<string, number> = {};
+    for (const [slot, v] of Object.entries(params)) keyed[insertFxParamKey(fam, Number(slot))] = v;
+    plan.nodeParams[node] = { ...plan.nodeParams[node], insertFx: sel, insertFxParams: keyed };
+  };
+  const slotVal = (node: string, fam: InsertFxFamily, slot: number): number | undefined =>
+    plan.nodeParams[node]?.insertFxParams?.[insertFxParamKey(fam, slot)];
+  /** Drive a bound control and say whether it took, without asking the control twice. */
+  const push = (cid: string, v: number): boolean => {
+    const c = bindControl(model, plan, cid);
+    if (!c) throw new Error(`no control ${cid}`);
+    return c.set(v);
+  };
+
+  it("refuses the slots the multi-band compressor's 1-Knob is driving, and takes them back", () => {
+    const th = MBC_BANDS[0].threshold;
+    const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${th}`);
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 1, [th]: 100 }, "mbc");
+    expect(push(cid, 0.75), "while the knob is on").toBe(false);
+    expect(slotVal("bus.stereo", "mbc", th)).toBe(100);
+    // The positive control: the same mapping, the same value, with the knob off.
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [th]: 100 }, "mbc");
+    expect(push(cid, 0.75), "with the knob off").toBe(true);
+    expect(slotVal("bus.stereo", "mbc", th)).not.toBe(100);
+  });
+
+  it("refuses the 1-Knob's own Level while the knob is off", () => {
+    const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${MBC_ONE_KNOB.level.slot}`);
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [MBC_ONE_KNOB.level.slot]: 4 }, "mbc");
+    expect(push(cid, 0.5), "while the knob is off").toBe(false);
+    expect(slotVal("bus.stereo", "mbc", MBC_ONE_KNOB.level.slot)).toBe(4);
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 1, [MBC_ONE_KNOB.level.slot]: 4 }, "mbc");
+    expect(push(cid, 0.5), "with the knob on").toBe(true);
+    expect(slotVal("bus.stereo", "mbc", MBC_ONE_KNOB.level.slot)).not.toBe(4);
+  });
+
+  it("refuses a guitar amp's Speed while the modulation is not the vibrato", () => {
+    const cid = controlId("ch1", "insfx", `insfx.guitar-clean.${GUITAR_MOD.speed}`);
+    holding("ch1", 256, { [GUITAR_MOD.slot]: 1, [GUITAR_MOD.speed]: 50 }, "guitar-clean");
+    expect(push(cid, 0.9), "with modulation off").toBe(false);
+    expect(slotVal("ch1", "guitar-clean", GUITAR_MOD.speed)).toBe(50);
+    holding("ch1", 256, { [GUITAR_MOD.slot]: GUITAR_MOD.vib, [GUITAR_MOD.speed]: 50 }, "guitar-clean");
+    expect(push(cid, 0.9), "with the vibrato on").toBe(true);
+    expect(slotVal("ch1", "guitar-clean", GUITAR_MOD.speed)).not.toBe(50);
+  });
+
+  // Pitch Fix's own driven set has no MIDI half to lock, and that is worth asserting
+  // rather than assuming: the Scale is an enum row, which offers no control at all (a
+  // select has no normalized domain), and the twelve notes are a keyboard the screen
+  // builds by hand rather than descriptors the catalogue walks. Give either one a
+  // descriptor and this fails, which is where the lock would then be needed.
+  it("offers no mapping at all for the slots Pitch Fix's MIDI Control owns", () => {
+    holding("ch1", 512, { [PITCH_MIDI_ENABLE_SLOT]: 1, [PITCH_SCALE_SLOT]: 0 }, "pitch");
+    const driven = pitchDeviceDriven(plan.nodeParams["ch1"]?.insertFxParams);
+    expect(driven.size, "the unit is driving something to begin with").toBeGreaterThan(0);
+    const ids = new Set(listControls(model, plan).map((c) => c.id));
+    for (const slot of driven) {
+      expect(ids, `pitch slot ${slot}`).not.toContain(controlId("ch1", "insfx", `insfx.pitch.${slot}`));
+    }
+  });
+
+  // Not an insert effect: the same shape one rate above, where the bus itself is gone.
+  it("refuses a send into a bus the sample rate has removed — level AND mute", () => {
+    const level = controlId("ch1", "level", "bus.fx2");
+    const mute = controlId("ch1", "mute", "bus.fx2");
+    const send = () => conn("ch1", "bus.fx2");
+    send().params = { ...send().params, level: -10, on: true };
+    plan.sampleRate = 192000;
+    expect(push(level, 0.8), "level at 192 kHz").toBe(false);
+    expect(push(mute, 1), "mute at 192 kHz").toBe(false);
+    expect(send().params?.level).toBe(-10);
+    expect(send().params?.on).toBe(true);
+    // …and both take at a rate the bus survives, so this is not a send nothing can write.
+    plan.sampleRate = 48000;
+    expect(push(level, 0.8), "level at 48 kHz").toBe(true);
+    expect(push(mute, 1), "mute at 48 kHz").toBe(true);
+    expect(send().params?.level).not.toBe(-10);
+    expect(send().params?.on).toBe(false);
   });
 });

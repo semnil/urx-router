@@ -1178,6 +1178,28 @@ same run — the nine driven slots follow that Level change, so the knob was dem
 nothing there, and the row stays rather than being dropped so the section does not change height on a
 switch.
 
+**The write comes back as a read.** Every slot of an engine array goes out under one parameter name,
+and a NAME is what carries `ParamSpec.sideEffect` — so under the ordinary one this write announced
+nothing, the plan kept its own copy of the fifteen values the unit had just recomputed, and the
+screen, the curve, the saved document and MIDI feedback all read that stale copy. Worse, the copy is
+what the next flush sends the moment the knob is switched off and the driven set is released. The two
+slots that DRIVE the array — the 1-Knob's switch and its Level, and Pitch Fix's MIDI Control bits —
+therefore go out as `INSERT_FX_DRIVER`, whose `sideEffect` is `refetch`: the owner node is read back
+instead of being pushed, which is what `COMP_ONE_KNOB` already does for the same shape of control.
+`insertFxDriverSlots` names them, so the writer and the catalogue cannot disagree about which they
+are.
+
+**One predicate decides every lock on this screen, and the MIDI surface asks it too.**
+`insertFxLockedSlots` answers, for a family holding a set of values, which slots no surface may
+write: the fifteen while the 1-Knob is on, the Level while it is off, the scale and the mask while
+Pitch Fix's MIDI Control is on, and Speed and Depth while a guitar amp's modulation is not the
+vibrato. A MIDI mapping outlives the state that locked the control it names — nothing re-reads the
+screen when the state moves — so a mapping made before the lock applied would otherwise write the
+plan while the writer is suppressing the slot, which parts the plan from the unit silently and sends
+the plan's copy the moment the lock lifts. Pitch Fix is the one family with no MIDI half to lock: its
+scale is an enum row, which offers no control at all, and its twelve notes are a keyboard the screen
+builds by hand rather than descriptors the catalogue walks.
+
 An earlier run read Attack as unmoved and recorded the other four as untouched. Both were the trap the
 COMP knee had already sprung: those values were sitting at the numbers the preset writes, because a
 previous 1-Knob ON had put them there, and a parameter driven to the value it already holds looks
