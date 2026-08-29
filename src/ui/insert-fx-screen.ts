@@ -338,6 +338,10 @@ function mbcResponses(v: DynValues): {
   out: (inDb: number) => number;
 }[] {
   return MBC_BANDS.map((b) => {
+    // A bypassed band is a straight line: the unit passes it through with neither the
+    // compression nor the make-up. Measured — with the other two silenced so the post meter
+    // read this band alone, a bypassed band sat ON its unity level and 92 dB above silence.
+    if (mbcRaw(v, b.bypass)) return { band: b.band, gainDb: 0, out: (inDb: number): number => inDb };
     const c = mbcBandCurve({ threshold: mbcRaw(v, b.threshold), ratio: mbcRaw(v, b.ratio), gain: mbcRaw(v, b.gain) });
     const silent = c.gainDb === -Infinity;
     return {
@@ -1045,11 +1049,15 @@ function drawMbcBands(
   c.lineWidth = 2;
   c.beginPath();
   for (const [i, b] of MBC_BANDS.entries()) {
-    const gainDb = mbcBandCurve({
-      threshold: mbcRaw(v, b.threshold),
-      ratio: mbcRaw(v, b.ratio),
-      gain: mbcRaw(v, b.gain),
-    }).gainDb;
+    // A bypassed band comes back at unity: its make-up is not applied either, so its step
+    // is drawn at 0 rather than at the level the panel beside it still holds.
+    const gainDb = mbcRaw(v, b.bypass)
+      ? 0
+      : mbcBandCurve({
+          threshold: mbcRaw(v, b.threshold),
+          ratio: mbcRaw(v, b.ratio),
+          gain: mbcRaw(v, b.gain),
+        }).gainDb;
     // A band with no make-up left puts out nothing; it leaves the frame rather than lying
     // along the floor, where a merely quiet band would be drawn too.
     const y = g.py(gainDb === -Infinity ? GAIN_TICKS[GAIN_TICKS.length - 1] - 12 : gainDb);

@@ -1126,6 +1126,12 @@ was the first arrangement and it is why this one replaced it.
 all. It is one control per band — engine slots 12 / 17 / 22, the fifth of each band's block of five —
 so MAIN carries none of them.
 
+**A bypassed band passes through at unity**, with neither its compression nor its make-up, so its
+figure is a straight line and its step on MAIN sits at 0 — not at the level the panel beside it still
+holds. Measured on a URX44V by silencing the other two bands so the post meter read this one alone:
+bypassed, it sat on its unity level and 92 dB above silence. The values stay editable and the line
+under the display says why the figure is flat.
+
 **A band's Gain is on two faces and is ONE value.** The two faces ask different questions of it: MAIN
 weighs the three bands against each other, and the band's own face weighs the level it comes back at
 against the compression the cards above it set.

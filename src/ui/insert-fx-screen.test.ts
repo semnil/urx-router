@@ -1315,6 +1315,40 @@ describe("the multi-band compressor", () => {
     expect(floors[0].ys.length).toBeLessThan(2 * 121);
   });
 
+  it("draws a bypassed band at unity, and its MAIN step at 0", () => {
+    // Measured: with the other two bands silenced so the post meter read this one alone, a
+    // bypassed band sat ON its unity level and 92 dB above silence — neither its compression
+    // nor its make-up reaches the signal. Drawn from the values it still holds, the figure
+    // would show a knee the unit is not applying and a step at a level it is not coming
+    // back at.
+    const shaped = { "ifx:mbc:9": 81, "ifx:mbc:10": 6, "ifx:mbc:11": 55 };
+    const ysFor = (raws: Record<string, number>, sel = LOW): number[] => {
+      const ctx = mbc(sel);
+      const r = recorder();
+      INSFX_DYN.drawCurve!(r.ctx, INSFX_DYN.plotGeo!(W, H, ctx), vals(raws), TOK, ctx);
+      return r.ys;
+    };
+    const geo = INSFX_DYN.plotGeo!(W, H, mbc(LOW));
+
+    // The positive control: those values, NOT bypassed, put the band's floor at its make-up
+    // (raw 55 = +18 dB) and bend the line above the threshold.
+    const shapedYs = ysFor(shaped);
+    expect(shapedYs[0]).toBeCloseTo(geo.py(-60 + 18), 6);
+    // …and bypassed, the same values draw the unity diagonal: floor at the axis minimum,
+    // top at 0, and nothing lifted by the make-up.
+    const flatYs = ysFor({ ...shaped, "ifx:mbc:12": 1 });
+    expect(flatYs[0]).toBeCloseTo(geo.py(-60), 6);
+    expect(flatYs[flatYs.length - 1]).toBeCloseTo(geo.py(0), 6);
+
+    // MAIN's step takes the same rule: a bypassed band comes back at unity, so its segment
+    // sits at 0 rather than at the make-up the panel beside it still holds.
+    const main = mbc(MAIN);
+    const r = recorder();
+    INSFX_DYN.drawCurve!(r.ctx, INSFX_DYN.plotGeo!(W, H, main), vals({ ...shaped, "ifx:mbc:12": 1 }), TOK, main);
+    const mainGeo = INSFX_DYN.plotGeo!(W, H, main);
+    expect(r.ys[0]).toBeCloseTo(mainGeo.py(0), 6);
+  });
+
   it("takes a band with no make-up left off the frame rather than along its floor", () => {
     // Gain raw 0 is -∞ on the unit, which is a band putting out nothing — and a line lying
     // on the plot's bottom edge is where a very quiet band would be drawn too.
