@@ -771,16 +771,48 @@ describe("where the focus goes after the INS FX popover closes", () => {
 
   // At 192 kHz nothing in the menu runs, so the disclosure is dropped — there is nothing
   // behind it to open. The FACE stays, read-only with its reason, and it is the anchor.
-  it("falls back to the face where the rate has dropped the disclosure", () => {
-    h = consoleHost();
-    // Hold something first, then release it at a rate whose ceiling every effect is over.
+  const releaseAt192 = (): void => {
     openerOf("ch1")!.click();
     popRow("Clean").click();
     h.plan.sampleRate = 192000;
     h.view.refresh();
     openerOf("ch1")?.click();
     if (!document.querySelector<HTMLElement>(".con-ifxpop")!.hidden) popRow("No Effect").click();
+  };
+
+  it("falls back to the face where the rate has dropped the disclosure", () => {
+    h = consoleHost();
+    releaseAt192();
     expect(openerOf("ch1"), "the ceiling empties the menu, so the disclosure goes").toBeNull();
     expect(document.activeElement, "and the face is what the operator is left on").toBe(chipOf("ch1"));
+  });
+
+  // …and it survives the NEXT rebuild. The face is `tabindex="-1"` — present, not tabbable
+  // — so the index the rebuild's focus carry-over keys by comes back empty and the focus
+  // goes to <body>. A device-follow repaint of the same channel is enough to trigger it, so
+  // without this the place the view just handed the operator does not outlive the next
+  // thing the unit says. Both repaint paths, because they are different entry points.
+  for (const [what, repaint] of [
+    ["one strip", (): void => h.view.refreshStrip("ch1")],
+    ["the whole rack", (): void => h.view.refresh()],
+  ] as const) {
+    it(`keeps the operator on that face across a repaint of ${what}`, () => {
+      h = consoleHost();
+      releaseAt192();
+      expect(document.activeElement).toBe(chipOf("ch1"));
+      repaint();
+      expect(document.activeElement, "the face in the REBUILT strip").toBe(chipOf("ch1"));
+    });
+  }
+
+  // The floor under both, keyed the same way: a strip carrying neither control still keeps
+  // the operator's place rather than sending them to the top of the document.
+  it("keeps the operator on the strip root across a repaint", () => {
+    h = consoleHost();
+    const root = h.strip("ch1").root;
+    root.focus();
+    expect(document.activeElement).toBe(root);
+    h.view.refreshStrip("ch1");
+    expect(document.activeElement).toBe(h.strip("ch1").root);
   });
 });

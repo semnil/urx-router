@@ -843,8 +843,20 @@ export class Console {
    * longer in the document — a re-render replaced it — is left alone here; the caller that
    * caused the re-render is the one that knows where the strip went (`focusInsFxAnchor`).
    */
-  private releaseFocus(trigger: HTMLElement | null, restore: boolean): void {
-    if (restore && trigger?.isConnected) trigger.focus();
+  private releaseFocus(trigger: HTMLElement | null, restore: boolean, id: string | null, sel: string): void {
+    if (!restore) return;
+    if (trigger?.isConnected) {
+      trigger.focus();
+      return;
+    }
+    // The trigger this popover was opened from is DETACHED: a repaint replaced the strip
+    // while the popover stood open, which a device-follow does on its own. The popovers
+    // live outside the strip rack and are not rebuilt with it, so the focus inside one
+    // survives — but the element to hand it back to does not, and without this Escape
+    // after such a repaint drops to <body> exactly as it did before. Resolved from the
+    // strip that is there now, which is the same move the focus carry-over makes.
+    const root = id === null ? undefined : this.refs.get(id)?.root;
+    root?.querySelector<HTMLElement>(sel)?.focus();
   }
 
   private closePopovers(): void {
@@ -891,10 +903,11 @@ export class Console {
 
   private closeTapPop(restore = false): void {
     if (!this.tapOpenFor) return;
+    const openFor = this.tapOpenFor;
     this.tapOpenFor = null;
     this.tapPop.hidden = true;
     this.tapPop.replaceChildren();
-    this.releaseFocus(this.tapBtn, restore);
+    this.releaseFocus(this.tapBtn, restore, openFor, ".con-tap");
     this.tapBtn = null;
   }
 
@@ -1412,26 +1425,30 @@ export class Console {
 
   private closeInsFxPop(restore = false): void {
     if (!this.ifxOpenFor) return;
+    const openFor = this.ifxOpenFor;
     this.ifxOpenFor = null;
     this.ifxPop.hidden = true;
     this.ifxPop.replaceChildren();
     if (this.ifxBtn) {
       this.ifxBtn.classList.remove("open");
       this.ifxBtn.setAttribute("aria-expanded", "false");
-      this.releaseFocus(this.ifxBtn, restore);
+      // The disclosure if the rebuilt strip still has one, the face otherwise — the
+      // same order every other landing here uses.
+      this.releaseFocus(this.ifxBtn, restore, openFor, ".con-ifxopen, .con-ifxface");
       this.ifxBtn = null;
     }
   }
 
   private closeSendPan(restore = false): void {
     if (!this.sendPanOpenFor) return;
+    const openFor = this.sendPanOpenFor;
     this.sendPanOpenFor = null;
     this.sendPanPop.hidden = true;
     this.sendPanPop.replaceChildren();
     if (this.sendPanBtn) {
       this.sendPanBtn.classList.remove("open");
       this.sendPanBtn.setAttribute("aria-expanded", "false");
-      this.releaseFocus(this.sendPanBtn, restore);
+      this.releaseFocus(this.sendPanBtn, restore, openFor, ".con-panbtn");
       this.sendPanBtn = null;
     }
   }
@@ -2003,12 +2020,29 @@ export class Console {
   // strip is gone), focus is dropped rather than handed to some other control. The
   // scroll offset is deliberately left out: the rack's is not restored (see
   // preserveFocus), only focus is.
+  /**
+   * Carry the keyboard's place across a rebuild of the strips.
+   *
+   * An ordinary control is keyed by its POSITION in the strip's tab order plus its class,
+   * which is what makes a control that moved refuse to answer for one that took its slot.
+   *
+   * Two places the focus can be are not in that order at all, and both are ones this view
+   * puts it in itself: the INS FX face where a sample rate has dropped the disclosure, and
+   * the strip root under it. They are `tabindex="-1"` — present, not tabbable — so
+   * `focusables` does not list them and an index key comes back empty, which drops the
+   * focus to <body> on the next rebuild. A device-follow `refreshStrip` on the same channel
+   * is enough to do it, so the state this view hands the operator would not survive the
+   * next thing the unit says. They are keyed by NAME instead, which is also what makes the
+   * restore meaningful: the face is the face whatever else the rebuild moved.
+   */
   private captureFocus(): () => void {
     return preserveFocus(
       this.stripsHost,
       (active) => {
         for (const [id, r] of this.refs) {
           if (!r.root.contains(active)) continue;
+          if (active === r.root) return { id, anchor: "strip-root" as const };
+          if (active.classList.contains("con-ifxface")) return { id, anchor: "ifx-face" as const };
           const idx = focusables(r.root).indexOf(active);
           return idx < 0 ? null : { id, idx, cls: active.className };
         }
@@ -2016,7 +2050,14 @@ export class Console {
       },
       (mark) => {
         const root = this.refs.get(mark.id)?.root;
-        const target = root ? focusables(root)[mark.idx] : undefined;
+        if (!root) return null;
+        if ("anchor" in mark) {
+          // The face if it is still there, and the root under it — the same order the
+          // close path uses, so a rebuild that changed which of them exists lands where a
+          // fresh close would have.
+          return mark.anchor === "ifx-face" ? (root.querySelector<HTMLElement>(".con-ifxface") ?? root) : root;
+        }
+        const target = focusables(root)[mark.idx];
         return target?.className === mark.cls ? target : null;
       },
     );

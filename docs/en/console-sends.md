@@ -163,6 +163,15 @@ still claims is given back — and that is the state an operator most needs to r
   operator on `<body>`, a whole strip rack away from where they were. A PRESS is the other case:
   the focus belongs to whatever was pressed, and taking it back would move the caret out of the
   control the operator just aimed at. The same rule covers all three popovers.
+- **A focus this view placed itself outlives the next rebuild.** The two anchors below are
+  `tabindex="-1"` — present, not tabbable — so the strip rebuild's focus carry-over, which keys
+  an ordinary control by its position in the tab order, comes back empty for them and drops to
+  `<body>`. A device-follow repaint of the same channel is enough to trigger it, so the place the
+  view hands the operator would not survive the next thing the unit says. They are keyed by NAME
+  in the console's own capture instead of widening what counts as focusable, which the Inspector
+  also keys against. The popovers are the other half: they live outside the strip rack and are
+  not rebuilt with it, so the focus INSIDE one survives a repaint while the trigger it would be
+  handed back to does not — the close re-resolves that trigger from the strip that is there now.
 - **A selection that rebuilds the strip lands on the same strip, not on the element that is gone.**
   The INS FX disclosure first, since it is what was pressed; the FACE where a sample rate has
   emptied the menu and dropped the disclosure, which is the case that fell to `<body>`; and the

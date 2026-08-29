@@ -727,6 +727,22 @@ describe("where the focus goes when a popover closes", () => {
     expect(document.activeElement).toBe(tapBadge("ch1"));
   });
 
+  // One transition further out, and the one the popovers' own placement hides: they live
+  // outside the strip rack and are not rebuilt with it, so the focus INSIDE one survives a
+  // repaint — while the trigger it would be handed back to does not. A device-follow does
+  // this on its own, so without re-resolving, Escape after a repaint drops to <body>
+  // exactly as it did before any of this.
+  it("returns it to the REBUILT strip's badge when a repaint replaced the one it opened", () => {
+    h = consoleHost();
+    tapBadge("ch1").click();
+    const opened = tapBadge("ch1");
+    h.view.refreshStrip("ch1");
+    expect(tapBadge("ch1"), "the repaint replaced the badge").not.toBe(opened);
+    expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden, "and left the popover open").toBe(false);
+    key(document.body, "Escape");
+    expect(document.activeElement).toBe(tapBadge("ch1"));
+  });
+
   it("leaves the focus where a press outside put it", () => {
     h = consoleHost();
     tapBadge("ch1").click();
