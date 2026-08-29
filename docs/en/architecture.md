@@ -2959,12 +2959,15 @@ actually read fails too).
 ### Applying
 
 The plan object is replaced on exactly one path — `loadPlan` (New / Open / drop / model switch / deep
-link). Every view resolves through its `getPlan()` hook per use and so follows it; the MIDI binding
-cache is the one holder that memoizes bound controls, and it drops the memo when the plan object it
-was bound against is no longer the one `main.ts` holds. (A cancelled Fetch used to be a second such
-path — it restored a pre-read clone by replacing the object, leaving every MIDI binding attached to a
-plan nothing else referenced. The read now works on a private copy, so a cancel leaves the plan on
-screen untouched and there is nothing to restore.) An undo never replaces the object: it patches in
+link). Every view resolves through its `getPlan()` hook per use and so follows it, the MIDI surface
+included: it memoizes nothing, because a bound control closes over the insert-FX family, the
+processor and the send it was built for, and a plan is edited IN PLACE — so a memo keyed on the plan
+OBJECT, the one thing an in-place edit never changes, keeps answering for an effect the node no
+longer holds. (That memo existed, and it was written for a second replacement path — a cancelled
+Fetch, which restored a pre-read clone by replacing the object and left every MIDI binding attached
+to a plan nothing else referenced. The read works on a private copy now, so the cancel leaves the
+plan on screen untouched, and the memo was guarding the one case that cannot happen while missing
+every case that can.) An undo never replaces the object: it patches in
 place, then re-derives the
 view state held *outside* the plan and repaints: `graph.refresh()` (which re-derives the shelved and
 note-collapse sets — `commitHidden` writes them back, so a stale set would resurrect the undone state
