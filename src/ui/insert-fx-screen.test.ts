@@ -462,6 +462,7 @@ describe("the guitar amp's two faces", () => {
 
 describe("moving between the faces", () => {
   const face = (id: string): HTMLElement => h.box.querySelector<HTMLElement>(`#${id}`)!;
+  const face_ = face;
 
   it("gives a guitar amp reversed columns and no bar to swap", () => {
     // Its panel is up to fifteen controls and its display is a level rack with nothing else
@@ -559,6 +560,40 @@ describe("moving between the faces", () => {
     expect(bypassCard().classList.contains("locked")).toBe(true);
     expect(bypassCard().querySelector("button")!.disabled).toBe(true);
     on.close();
+  });
+
+  it("writes its own band's slot when a Bypass is pressed", () => {
+    // The three are one control per band and the plan keys them by slot, so a face wired to
+    // the wrong one is a value that lands on a band the operator did not touch — and the
+    // panel would look right either way. Pressed rather than set: the handler is what the
+    // wiring is, and nothing else in either tier presses this row.
+    holding("bus.mix1", "M.B.Comp");
+    h.plan.nodeParams["bus.mix1"]!.insertFxOn = true;
+    const bypassButton = (): HTMLButtonElement =>
+      [...h.box.querySelectorAll<HTMLElement>(".prefs-row .lbl, .gt-knob .lbl")]
+        .find((lbl) => lbl.textContent === t().inspector.insertFxEffect.params.bypass)!
+        .closest<HTMLElement>(".prefs-row, .gt-knob")!
+        .querySelector("button")!;
+
+    for (const [face, band] of [
+      ["low", MBC_BANDS[0]],
+      ["mid", MBC_BANDS[1]],
+      ["high", MBC_BANDS[2]],
+    ] as const) {
+      h.plan.nodeParams["bus.mix1"]!.insertFxParams = {};
+      const screen = new DynScreen(h.hooks);
+      screen.open(INSFX_DYN, "bus.mix1");
+      face_(`dyn-face-insfx-${face}`).click();
+      bypassButton().click();
+      const written = h.plan.nodeParams["bus.mix1"]!.insertFxParams!;
+      expect(written[insertFxParamKey("mbc", band.bypass)], face).toBe(1);
+      // …and only that band's. A face writing a neighbour's slot passes every assertion
+      // about the value and none about which band it reached.
+      for (const other of MBC_BANDS.filter((b) => b !== band)) {
+        expect(written[insertFxParamKey("mbc", other.bypass)], `${face} -> ${other.band}`).toBeUndefined();
+      }
+      screen.close();
+    }
   });
 
   it("goes back to the first face, and the ordinary columns, when a follow replaces the effect", () => {
