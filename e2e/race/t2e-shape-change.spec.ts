@@ -143,7 +143,7 @@ const writeSetOf = async (page: Page): Promise<Set<string>> => new Set(Object.ke
 const clearLedger = (page: Page): Promise<void> =>
   page.evaluate(() => (window as unknown as { __urxTrace?: { clear: () => void } }).__urxTrace?.clear());
 
-/** The label of every option in the Effect Type select, with whether it is disabled. It
+/** The label of every option in the EFFECT TYPE select, with whether it is disabled. It
  *  goes through `insertFxSelect` so the section is opened first: folded, the select is not
  *  in the tree at all and an option sweep reports an empty menu rather than a closed one. */
 const insertFxOptions = async (page: Page): Promise<Array<{ text: string; disabled: boolean }>> =>

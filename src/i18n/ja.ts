@@ -82,7 +82,7 @@ export const ja: Messages = {
     groupBus: "BUS / FX",
     groupMon: "MONITOR",
     // INS FX チップのポップオーバー。見出しと切替は実機の語なので訳さない。
-    insFxType: "Effect Type",
+    insFxType: "EFFECT TYPE",
     insFxInUse: "使用中",
     insFxMax: (maxRate: string): string => `上限 ${maxRate}`,
     insFxRemove: "解除",
@@ -289,7 +289,7 @@ export const ja: Messages = {
     clipSafe: "Clip Safe",
     hiZ: "Hi-Z",
     insertFx: "Insert FX",
-    insertFxType: "Effect Type",
+    insertFxType: "EFFECT TYPE",
     insertFxOn: "Insert FX ON",
     compEqType: "COMP/EQ Type",
     eqOn: "EQ",
@@ -333,7 +333,7 @@ export const ja: Messages = {
     },
     fxEffect: {
       title: "FX Effect",
-      effectType: "Effect Type",
+      effectType: "EFFECT TYPE",
       effectOn: "Effect",
       level: "Mix",
       params: {
@@ -574,9 +574,6 @@ export const ja: Messages = {
       mbcOneKnob:
         "1-Knob が ON です。ここの値はすべて本体が自身のレベルから設定しており、ここでの編集は本体へ送られません。",
       deviceOnlyTag: "本体で設定",
-      grLow: "LOW GR",
-      grMid: "MID GR",
-      grHigh: "HIGH GR",
     },
   },
   shelf: {

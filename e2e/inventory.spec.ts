@@ -528,7 +528,7 @@ test("the channel tuning screens show every processor, both displays and their n
   // selected, and the launcher's own wording is only on screen from that moment.
   const openInsFx = async (id: string, effect: string, faces: string[] = [], bypass = false): Promise<void> => {
     await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
-    await chooseOption(page.locator("#inspector .param", { hasText: "Effect Type" }).locator("select"), {
+    await chooseOption(page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select"), {
       label: effect,
     });
     // Bypassing is a state of the screen, not of the Inspector: the note under the

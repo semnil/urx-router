@@ -168,7 +168,7 @@ test.describe("T2d shape-change", () => {
     await expect(fxSection(page)).toHaveCount(1);
     await setLatency(page, { get: 1, set: 5 });
 
-    const typeSel = fxRow(page, "Effect Type").locator("select");
+    const typeSel = fxRow(page, "EFFECT TYPE").locator("select");
     await expect(typeSel).toHaveValue("0"); // Rev-X Hall, the FX1 factory type
 
     // Phase 1 — author three Rev-X values, so the state the undo must restore is on
@@ -325,7 +325,7 @@ test.describe("T2d shape-change", () => {
     // Phase 3 — one undo of the type change.
     await mark(page, "undo");
     await page.keyboard.press("Control+z");
-    await expect(fxRow(page, "Effect Type").locator("select")).toHaveValue("0");
+    await expect(fxRow(page, "EFFECT TYPE").locator("select")).toHaveValue("0");
     await expect(fxRow(page, "Decay")).toHaveCount(1);
     await settleAfter(page, "undo", 1500);
 

@@ -19,7 +19,7 @@ export const strip = (page: Page, name: string): Locator =>
 /** An inspector row whose label CONTAINS `label`. */
 export const param = (page: Page, label: string): Locator => page.locator("#inspector .param", { hasText: label });
 
-/** An inspector row whose label is EXACTLY `label` — "Effect Type" must not match
+/** An inspector row whose label is EXACTLY `label` — "EFFECT TYPE" must not match
  *  "Insert FX ON", which is a different row with a different address. */
 export const paramExact = (page: Page, label: string): Locator =>
   page.locator("#inspector .param", { has: page.getByText(label, { exact: true }) });
@@ -33,10 +33,10 @@ export const paramExact = (page: Page, label: string): Locator =>
  *  a closed disclosure answers "no such control" rather than "the control is not visible",
  *  which reads in a failure as the feature being gone. */
 
-/** The Effect Type selector, with its section opened first. */
+/** The EFFECT TYPE selector, with its section opened first. */
 export async function insertFxSelect(page: Page): Promise<Locator> {
   await openInsertFxSection(page);
-  return paramExact(page, "Effect Type").locator("select");
+  return paramExact(page, "EFFECT TYPE").locator("select");
 }
 
 /** The bypass ON/OFF pair, with its section opened first. It is the SECTION's own toggle

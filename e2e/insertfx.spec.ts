@@ -9,7 +9,7 @@ import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
 // round-trip through save/open. Slots/encodings: core/control/insert-fx-effect.ts.
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
-const insertSelect = (page: Page) => page.locator("#inspector .param", { hasText: "Effect Type" }).locator("select");
+const insertSelect = (page: Page) => page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select");
 // Insert FX is a collapsible on-state section like GATE / COMP / EQ, so its bypass row is
 // the section's own toggle and carries NO label — the header is its name. Reached through
 // the section rather than by a row label, the way the panel's other sections are.
@@ -296,7 +296,7 @@ test("compander on the STEREO master reveals dynamics params", async ({ page }) 
 // inspector reads the snapshot taken at render time and writes a stale value back on its
 // next drag — which is the reason the renderer was removed. Nothing else in this file would
 // go red for it, so the absence is asserted with the launcher as one control and the
-// Effect Type row as the other: without the second, a `param` locator that had stopped
+// EFFECT TYPE row as the other: without the second, a `param` locator that had stopped
 // matching anything at all would satisfy every line here.
 test("no family has an editor left in the inspector", async ({ page }) => {
   for (const [id, effect, row] of [
@@ -313,7 +313,7 @@ test("no family has an editor left in the inspector", async ({ page }) => {
     await expect(page.locator("#btn-insfx-screen"), effect).toBeVisible();
     await expect(param(page, row), effect).toHaveCount(0);
     // The row that is still there, on the same panel, read with the same locator.
-    await expect(param(page, "Effect Type"), effect).toBeVisible();
+    await expect(param(page, "EFFECT TYPE"), effect).toBeVisible();
   }
 });
 
@@ -336,11 +336,7 @@ test("multi-band comp splits into what the bands share and what each band is", a
   await expect(screenBox(page).locator(".gt-ro.gr")).toHaveCount(0);
 
   // …and a band face is that band's dynamics, with the Release the three of them share.
-  for (const [id, gr] of [
-    ["low", "LOW GR"],
-    ["mid", "MID GR"],
-    ["high", "HIGH GR"],
-  ] as const) {
+  for (const id of ["low", "mid", "high"] as const) {
     await page.click(`#dyn-face-insfx-${id}`);
     for (const label of ["Threshold", "Ratio", "Attack", "Release"]) {
       await expect(screenRow(page, label), `${id} ${label}`).toBeVisible();
@@ -348,10 +344,11 @@ test("multi-band comp splits into what the bands share and what each band is", a
     // The band is named by the FACE, so its cards are not named by it again.
     await expect(screenRow(page, "LOW Threshold"), id).toHaveCount(0);
     await expect(screenRow(page, "L-M XOVER"), id).toHaveCount(0);
-    // The unit meters each band separately, and a face carries the one that is its own.
+    // One reduction, carrying the lane label every insert effect's does. WHICH band it
+    // addresses is not visible here — that is `insert-fx-screen.test.ts`, which reads the
+    // meter the face asks for rather than the caption over it.
     const grTile = screenBox(page).locator(".gt-ro.gr");
     await expect(grTile, id).toHaveCount(1);
-    await expect(grTile, id).toContainText(gr);
   }
   await closeScreen(page);
 });

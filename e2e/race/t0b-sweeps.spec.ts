@@ -802,7 +802,7 @@ test.describe("T0b baseline sweeps", () => {
     // three gestures earlier. It is a constraint expressed as data (a disabled option)
     // rather than as a refusal, and it is contention between two plan owners over one
     // device resource, which is why it shows up in a sweep with no device attached.
-    expect(unavailable).toEqual(["STEREO master · Effect Type (select) — select offers no alternative option"]);
+    expect(unavailable).toEqual(["STEREO master · EFFECT TYPE (select) — select offers no alternative option"]);
 
     // Turned over from a pinned defect the ledger alone could see: two inspector
     // controls mutate the plan AFTER calling the change funnel — both selectors whose

@@ -209,7 +209,7 @@ test.describe("T1 overtake", () => {
     // INSERT_FX (135) is a converge param: its write makes the device rebind the
     // engine, and the app answers with a converge round over the whole write scope —
     // a read sweep long enough to hold an edit inside, which is the point.
-    const insertSel = page.locator("#inspector .param", { hasText: "Effect Type" }).locator("select");
+    const insertSel = page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select");
     await expect(insertSel).toHaveCount(1);
     await mark(page, "converge-trigger");
     await blockAt(page, "vd_get", 20);

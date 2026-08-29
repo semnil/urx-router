@@ -127,7 +127,7 @@ export const en = {
     // The INS FX chip's own popover: the type list, then the bypass switch and the
     // launcher under it. The heading and the switch are the device's words, taken from
     // the Inspector row that names the same two things.
-    insFxType: dev("Effect Type"),
+    insFxType: dev("EFFECT TYPE"),
     // Why an entry cannot be picked, said in the width of a list row. The Inspector's
     // sentences (`insFxRateLockedAt` / `insFxSlotLocked`) are the same two facts said
     // at the width of a panel; these are what fits beside a name, and the row's title
@@ -383,7 +383,7 @@ export const en = {
     // The selector's own row, inside a section already headed "Insert FX". Naming the row
     // the same thing as the section over it says nothing twice; what the row picks is the
     // TYPE. The device's word, so it is not translated.
-    insertFxType: dev("Effect Type"),
+    insertFxType: dev("EFFECT TYPE"),
     insertFxOn: dev("Insert FX ON"),
     compEqType: dev("COMP/EQ Type"),
     eqOn: dev("EQ"),
@@ -426,7 +426,7 @@ export const en = {
     },
     fxEffect: {
       title: dev("FX Effect"),
-      effectType: dev("Effect Type"),
+      effectType: dev("EFFECT TYPE"),
       effectOn: dev("Effect"),
       level: dev("Mix"),
       params: {
@@ -736,12 +736,6 @@ export const en = {
       // from a port of the unit's own. It says WHO owns the row, on the panel, rather than
       // only in the tooltip beside it, which is a hover away.
       deviceOnlyTag: tr("Set on the device"),
-      // The three reduction lanes. The unit meters each band separately, and these are its
-      // own words for them — spelled out rather than composed from a band name, so each is a
-      // string a translator and the inventory sweep can both see whole.
-      grLow: dev("LOW GR"),
-      grMid: dev("MID GR"),
-      grHigh: dev("HIGH GR"),
     },
   },
   shelf: {

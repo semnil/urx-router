@@ -142,6 +142,31 @@ describe("the meter lanes", () => {
     expect(lanes[0].label).toBe(t().dynTuning.insfx.tapIn);
   });
 
+  it("meters the band its own face is about, and none on MAIN", () => {
+    // The three faces carry the same lane LABEL — the bar above names the band — so the
+    // address is the only thing that says which reduction a face shows. Nothing else
+    // checks it: a face wired to the wrong band would draw a plausible number.
+    for (const [sel, x] of [
+      [1, 0],
+      [2, 1],
+      [3, 2],
+    ] as const) {
+      const lanes = INSFX_DYN.bind({ ...holding("bus.mix1", "M.B.Comp"), sel })!.lanes;
+      expect(
+        lanes.map((l) => l.key),
+        `sel ${sel}`,
+      ).toEqual(["in", "out", "gr"]);
+      expect(lanes[2].gr, `sel ${sel}`).toEqual([133, x]);
+      expect(lanes[2].label, `sel ${sel}`).toBe(t().dynTuning.insfx.tapGr);
+    }
+    // MAIN sets the crossovers and the levels the bands are mixed back at; three
+    // reductions beside those say which band is working and nothing about what is set.
+    expect(INSFX_DYN.bind({ ...holding("bus.mix1", "M.B.Comp"), sel: 0 })!.lanes.map((l) => l.key)).toEqual([
+      "in",
+      "out",
+    ]);
+  });
+
   it("gives the reduction lane to the compander alone, on the input side", () => {
     // The unit reports no reduction for a guitar amp or for Pitch Fix: with a Drive amp's
     // own noise gate taking the output to the floor, and with Pitch Fix running and shifted

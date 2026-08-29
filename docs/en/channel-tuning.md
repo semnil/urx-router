@@ -762,7 +762,7 @@ registry entry, one modal: a follow re-binds it instead of closing one screen an
 title carries the effect's own name (`INS FX — Compander-H`), because the heading would otherwise name
 a slot rather than what is in it.
 
-- **No Effect Type row, deliberately.** Writing the selector makes the unit refill the bound engine
+- **No EFFECT TYPE row, deliberately.** Writing the selector makes the unit refill the bound engine
   array with that type's defaults, and it is not reversible — re-selecting the original type fills it
   with that type's defaults, not with the values that were there. Putting that beside the sliders would
   give it the weight of a slider. Selecting stays on the Inspector's Insert FX row, and this screen

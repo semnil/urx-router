@@ -7,7 +7,7 @@
 // than baked into the registry — which is what lets a follow re-bind the same modal
 // instead of closing one screen and opening another.
 //
-// The screen deliberately does NOT carry an Effect Type selector. A selector write is not
+// The screen deliberately does NOT carry an EFFECT TYPE selector. A selector write is not
 // reversible — the device refills the bound engine array with that type's defaults
 // (insert-fx-effect.ts is canonical on this) — so it stays on the surfaces that already
 // treat it as a selection: the Inspector's Insert FX row.
@@ -537,10 +537,11 @@ function lanesOf(ctx: DynCtx, isOutput: boolean): DynLane[] {
   if (fam === "mbc" && isOutput) {
     const band = MBC_FACES[ctx.sel - 1];
     if (band !== undefined) {
-      const label = { low: g.insfx.grLow, mid: g.insfx.grMid, high: g.insfx.grHigh };
       lanes.push({
         key: "gr",
-        label: label[band],
+        // The same label every insert-FX reduction carries. WHICH band it is is the face's
+        // to say — the bar above names it, and only one reduction is on this face.
+        label: g.insfx.tapGr,
         kind: "gr",
         gr: insertFxOutGrAddr(MBC_BAND_RANK[band]),
         // Merged into the OUTPUT column, as every reduction on every screen is: one band's

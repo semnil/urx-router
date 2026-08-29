@@ -418,7 +418,7 @@ carries a one-line map of the same directories and points here.
   the bar over the display without closing. `insert-fx-screen.ts` is the one that stands for several effects
   rather than one: what it shows is the insert effect the node HOLDS, which is a plan value another surface
   changes, so it resolves the family on every call and a device follow re-binds the same modal instead of
-  closing one screen and opening another. It carries no Effect Type row deliberately — a selector write refills
+  closing one screen and opening another. It carries no EFFECT TYPE row deliberately — a selector write refills
   the bound engine array with that type's defaults and is not reversible (`core/control/insert-fx-effect.ts`) —
   and its fields name an engine SLOT rather than a parameter, since those values live in `insertFxParams` keyed
   by family and slot. It shows every family the app edits at all — nothing is edited in the inspector any more,
