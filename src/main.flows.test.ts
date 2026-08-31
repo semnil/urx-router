@@ -584,7 +584,14 @@ describe("the theme", () => {
 // Ducker-bypass row beside it.
 
 describe("the warning preferences reach the panel", () => {
-  it("takes the sample-rate card off the inspector with no other gesture", async () => {
+  /** A Preferences row's ON/OFF pair, re-read on every use. The panel rebuilds itself on
+   *  apply, so a button held across a press belongs to a row that is off screen. */
+  const prefsButton = (label: string, i: number): HTMLButtonElement =>
+    [...document.querySelectorAll<HTMLElement>("#prefs-modal .prefs-row")]
+      .find((r) => r.querySelector(".lbl")?.textContent === label)!
+      .querySelectorAll<HTMLButtonElement>("button")[i];
+
+  it("takes the sample-rate card off the inspector and puts it back", async () => {
     await boot();
     const picker = $<HTMLSelectElement>("rate-picker");
     const hi = [...picker.options].find((o) => Number(o.value) > 96_000)!;
@@ -594,14 +601,19 @@ describe("the warning preferences reach the panel", () => {
     await vi.waitFor(() => expect($("inspector").textContent).toContain(t().warning.title), APP_SETTLE);
 
     $("btn-prefs").click();
-    const off = [...document.querySelectorAll<HTMLElement>("#prefs-modal .prefs-row")]
-      .find((r) => r.querySelector(".lbl")?.textContent === t().prefs.warnRate)!
-      .querySelectorAll<HTMLButtonElement>("button")[1];
-    off.click();
+    prefsButton(t().prefs.warnRate, 1).click();
 
     // Read straight after the press. The panel repaints on the callback, so a wait here
     // would pass on a repaint the next gesture happened to cause.
     expect($("inspector").textContent).not.toContain(t().warning.title);
+
+    // The rebuilt row shows the stored value, and the way back depends on it: the widget
+    // drops a press on the button it already shows as selected, so a row rendered from a
+    // constant leaves the card off with no gesture that turns it on again.
+    expect(prefsButton(t().prefs.warnRate, 1).getAttribute("aria-pressed")).toBe("true");
+    expect(prefsButton(t().prefs.warnRate, 0).getAttribute("aria-pressed")).toBe("false");
+    prefsButton(t().prefs.warnRate, 0).click();
+    expect($("inspector").textContent).toContain(t().warning.title);
   });
 });
 
