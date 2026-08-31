@@ -1620,10 +1620,16 @@ function rebuildInspector(): void {
     focused.setSelectionRange(carried.caret[0], carried.caret[1]);
 }
 
-// Recompute the sample-rate constraints and reflect them in the graph badges, the
+// Recompute the sample-rate constraints and apply them to the graph badges, the
 // inspector warnings and the console (the stereo EQ chip locks at 176.4 / 192 kHz).
+// Each of the three decides for itself whether the new state needs drawing now: the
+// board is deferred while the console view is up, the panel while the graph view is.
 function applyRateConstraints(): void {
   const c = rateConstraints(getModel(modelId), plan.sampleRate);
+  // Asked before the store, so the answer is about the board on screen. A set that
+  // moved while the console view is up owes the graph a repaint it must not do here:
+  // graphDirty is the same deferral the follow reflect uses two lines from its own.
+  if (graphHost.hidden && !graph.hasDisabledNodes(c.disabledNodes)) graphDirty = true;
   graph.setDisabledNodes(c.disabledNodes);
   refreshInspector();
   consoleView.refresh();
