@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { resetSettingsCache, updateSettings } from "../core/settings";
+import { pinSettingsReset } from "../core/settings-reset.test-util";
 import {
   copyText,
   el,
@@ -63,6 +64,8 @@ beforeEach(() => {
   document.body.replaceChildren(host);
   Reflect.deleteProperty(navigator, "clipboard");
 });
+
+pinSettingsReset();
 
 describe("preserveFocus", () => {
   it("restores the control with the same LABEL, not the one in the same slot", () => {

@@ -38,6 +38,7 @@ import { LEVEL_MIN_DB } from "../core/plan";
 import { isFixedConnection } from "../core/routing";
 import { getModel } from "../models";
 import { getSettings, resetSettingsCache, updateSettings } from "../core/settings";
+import { pinSettingsReset } from "../core/settings-reset.test-util";
 import { setLang, t } from "../i18n";
 
 let fx: GraphFixture;
@@ -49,6 +50,8 @@ beforeEach(() => {
   resetSettingsCache();
   setLang("en");
 });
+
+pinSettingsReset();
 
 afterEach(() => {
   fx?.restore();
