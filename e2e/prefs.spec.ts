@@ -112,18 +112,24 @@ test.describe("plain browser", () => {
     await page.click("#btn-prefs");
     const box = page.locator("#prefs-box");
     await expect(box).toBeVisible();
-    // The box caps below the viewport; the grid inside it carries the overflow.
+    // The box caps below the viewport; the grid inside it carries the overflow. Content
+    // taller than its box is not the same fact as content the operator can REACH — a grid
+    // that overflows visibly reports the same two heights — so the grid is also scrolled
+    // and asked whether it moved.
     const metrics = await box.evaluate((el) => {
       const grid = el.querySelector(".prefs-grid")!;
+      grid.scrollTop = grid.scrollHeight;
       return {
         boxClient: el.clientHeight,
         viewport: window.innerHeight,
         gridClient: grid.clientHeight,
         gridScroll: grid.scrollHeight,
+        gridScrolled: grid.scrollTop,
       };
     });
     expect(metrics.boxClient).toBeLessThanOrEqual(metrics.viewport);
     expect(metrics.gridScroll).toBeGreaterThan(metrics.gridClient);
+    expect(metrics.gridScrolled).toBeGreaterThan(0);
     // Close is pinned below the grid — visible and clickable without scrolling.
     const close = page.locator("#prefs-modal .consent-btn-secondary");
     const closeBox = await close.boundingBox();
