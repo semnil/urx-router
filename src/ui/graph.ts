@@ -429,7 +429,8 @@ export class Graph {
   /** Whether the board is already drawn against this disabled set. The dim and the
    *  dashed outline are all the set contributes, so an equal one draws the same board. */
   hasDisabledNodes(ids: string[]): boolean {
-    return ids.length === this.disabledNodes.size && ids.every((id) => this.disabledNodes.has(id));
+    const next = new Set(ids);
+    return next.size === this.disabledNodes.size && [...next].every((id) => this.disabledNodes.has(id));
   }
 
   /** Mark nodes unavailable at the current sample rate (dimmed + dashed outline). The

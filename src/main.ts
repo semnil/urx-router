@@ -931,12 +931,9 @@ function setView(next: ViewName): void {
       graph.repaintWires();
     }
     // After the graph, not before: refresh() drops a selection whose node is now
-    // shelved, and that drop rebuilds the panel itself. Draining first would build it
-    // for a selection about to go away.
-    if (inspectorDeferred) {
-      inspectorDeferred = false;
-      rebuildInspector();
-    }
+    // shelved, and that drop rebuilds the panel itself — which clears the flag, so this
+    // is a no-op there and the gesture costs one rebuild rather than two.
+    if (inspectorDeferred) rebuildInspector();
   }
 }
 
@@ -1599,6 +1596,10 @@ function rebuildInspector(): void {
     inspectorDeferred = true;
     return;
   }
+  // Cleared here rather than only at the drain: the panel becomes visible before the
+  // drain runs, so anything that rebuilds it in between — a selection dropped by the
+  // graph's own refresh — has already paid what the flag was owed.
+  inspectorDeferred = false;
   // On mobile the inspector is a bottom sheet that slides up only while something
   // is selected; this flag drives that state (no effect on the desktop panel).
   document.body.classList.toggle("has-selection", selection !== null);

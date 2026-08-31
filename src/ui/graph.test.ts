@@ -209,6 +209,21 @@ describe("appearance", () => {
     expect(nodeEl(fx.host, "bus.fx2")!.getAttribute("opacity")).toBe("0.62");
   });
 
+  // The question is whether the board is drawn against this set, so the comparison is
+  // between sets: an array carrying a repeat is not a bigger set, and answering by its
+  // length would call {a} and ["a","a"] the same size as {a, b}.
+  it("answers about the set, not the array it was handed", () => {
+    fx = graphFixture();
+    fx.graph.setDisabledNodes(["bus.fx2", "bus.fx1"]);
+    expect(fx.graph.hasDisabledNodes(["bus.fx2", "bus.fx2"])).toBe(false);
+    expect(fx.graph.hasDisabledNodes(["bus.fx1", "bus.fx2"])).toBe(true);
+    // And the render follows the same answer: a repeat that is NOT the held set redraws.
+    const before = nodeEl(fx.host, "bus.fx1");
+    fx.graph.setDisabledNodes(["bus.fx2", "bus.fx2"]);
+    expect(nodeEl(fx.host, "bus.fx1")).not.toBe(before);
+    expect(nodeEl(fx.host, "bus.fx1")!.getAttribute("opacity")).not.toBe("0.62");
+  });
+
   it("re-labels its chrome on a language switch", () => {
     fx = graphFixture({ seed: (plan) => void (plan.hidden = ["bus.mix2"]) });
     const en = fx.host.querySelector(".shelf-label")!.textContent;
