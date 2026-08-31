@@ -8,7 +8,7 @@ import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
-import { resetSettingsCache } from "../core/settings";
+import { resetSettingsCache, updateSettings } from "../core/settings";
 import { holdInertOnBlur, resetPointerTracking } from "./dom";
 import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
@@ -16,6 +16,19 @@ import { COMP_EQ_SSMCS, INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTI
 import { planToCommands } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
 import { setLang, t } from "../i18n";
+
+const DUCKER = "out.ducker1";
+const HOST = "ch_5_6"; // the stereo pair out.ducker1 hangs off (models/build.ts)
+
+/** A plan whose CH 5/6 is tapped straight to a USB direct out — what makes its ducker one
+ *  the bypass warning card is about, and so one the panel reads for any selection. Two
+ *  describes build on it; the second is at the foot of the file. */
+const tapped = (): Plan => {
+  const plan = defaultPlan("URX44V");
+  plan.connections = plan.connections.filter((c) => c.to !== "out.usbmain_b:in");
+  plan.connections.push({ from: HOST + ":out", to: "out.usbmain_b:in", kind: "patch" });
+  return plan;
+};
 
 // The panel renders one selection, but what it DRAWS is derived from more nodes than that
 // selection names — a bus's Pan Link removes the send PAN on every wire into it, an analog
@@ -25,17 +38,6 @@ import { setLang, t } from "../i18n";
 
 describe("inspectorNodes", () => {
   const u44v = getModel("URX44V");
-  const DUCKER = "out.ducker1";
-  const HOST = "ch_5_6"; // the stereo pair out.ducker1 hangs off (models/build.ts)
-
-  /** A plan whose CH 5/6 is tapped straight to a USB direct out — what makes its ducker one
-   *  the bypass warning card is about, and so one the panel reads for any selection. */
-  const tapped = (): Plan => {
-    const plan = defaultPlan("URX44V");
-    plan.connections = plan.connections.filter((c) => c.to !== "out.usbmain_b:in");
-    plan.connections.push({ from: HOST + ":out", to: "out.usbmain_b:in", kind: "patch" });
-    return plan;
-  };
 
   const rendered = (plan: Plan, sel: Selection): string => {
     const el = document.createElement("div");
@@ -87,6 +89,31 @@ describe("inspectorNodes", () => {
     expect(warns()).toBe(false);
     plan.nodeParams[DUCKER] = { ...plan.nodeParams[DUCKER], duckerOn: true };
     expect(warns()).toBe(true);
+    expect(inspectorNodes(u44v, plan, elsewhere)).toContain(DUCKER);
+  });
+
+  // The card is preference-gated (Preferences > Warnings); the footprint is deliberately
+  // not, and the source comment states that as a decision. Both halves are pinned in one
+  // case because they are one decision, and because nothing else in the tree renders the
+  // panel with the preference off: a later change that consulted it in inspectorNodes
+  // would under-name — a panel left describing the state before the change — and no case
+  // would go red. Over-naming, what this pins, costs a rebuild that draws the same thing.
+  it("drops the card with the warning preference off, and names its ducker either way", () => {
+    // At 192 kHz, so the sample-rate card is up beside this one. The two cards have
+    // separate switches, and on a plan carrying only one of them a gate reading both
+    // preferences satisfies every assertion here.
+    const plan: Plan = { ...tapped(), sampleRate: 192_000 };
+    plan.nodeParams[DUCKER] = { ...plan.nodeParams[DUCKER], duckerOn: true };
+    const elsewhere = nodeSel("bus.mix1"); // names neither the ducker nor its host
+
+    // The preference on (the default) is the positive control: without it the assertions
+    // below also pass on a plan that raises no card at all.
+    expect(rendered(plan, elsewhere)).toContain(t().warning.duckerTitle);
+    expect(inspectorNodes(u44v, plan, elsewhere)).toContain(DUCKER);
+
+    updateSettings({ warnDucker: false });
+    expect(rendered(plan, elsewhere)).not.toContain(t().warning.duckerTitle);
+    expect(rendered(plan, elsewhere)).toContain(t().warning.title); // the other switch stands
     expect(inspectorNodes(u44v, plan, elsewhere)).toContain(DUCKER);
   });
 
@@ -1051,5 +1078,46 @@ describe("renderInspector — the analog outputs' MONO row", () => {
     } finally {
       setLang("en");
     }
+  });
+});
+
+// The other card at the top of the panel, and the only other row a preference can take
+// away. Two more claims ride on the same plan: the ducker card has a switch of its own and
+// stands through this one, and what the rate card describes is a behaviour lock rather
+// than a preference — the stereo channel's EQ section stays locked with the text off.
+//
+// The card the earlier describe switched off is asserted here in its ON state, which is
+// also what holds the file-level settings-cache reset: the cache carries across cases, and
+// without that reset this preference arrives here already false.
+
+describe("renderInspector — the sample-rate warning card's preference", () => {
+  const model = getModel("URX44V");
+
+  /** CH 5/6 tapped to a USB out with its Ducker on, at 192 kHz: both cards up, and the
+   *  selection is the stereo channel whose EQ the rate disables. */
+  const bothCards = (): Plan => {
+    const plan: Plan = { ...tapped(), sampleRate: 192_000 };
+    plan.nodeParams[DUCKER] = { ...plan.nodeParams[DUCKER], duckerOn: true };
+    return plan;
+  };
+  /** The EQ section's locked tooltip, which the disabled toggle's row carries. */
+  const eqLock = (): string | undefined =>
+    sectionByTitle(t().inspector.eqOn)?.querySelector<HTMLElement>(".sec-body .param")?.title;
+
+  it("drops the card with the warning preference off", () => {
+    // The positive control: a rate that has something to say, so the assertions below are
+    // the preference and not a plan whose card was never going to be drawn.
+    renderInspector(panel, model, bothCards(), nodeSel(HOST), act);
+    expect(panel.textContent).toContain(t().warning.title);
+    expect(panel.textContent).toContain(t().warning.stereoEq);
+    expect(panel.textContent).toContain(t().warning.duckerTitle);
+    expect(eqLock()).toBe(t().inspector.eqRateLocked);
+
+    updateSettings({ warnRate: false });
+    renderInspector(panel, model, bothCards(), nodeSel(HOST), act);
+    expect(panel.textContent).not.toContain(t().warning.title);
+    expect(panel.textContent).not.toContain(t().warning.stereoEq);
+    expect(panel.textContent).toContain(t().warning.duckerTitle); // the other switch stands
+    expect(eqLock()).toBe(t().inspector.eqRateLocked); // and so does the lock it named
   });
 });
