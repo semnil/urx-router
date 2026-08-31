@@ -9,6 +9,7 @@ import { defaultPlan } from "../models/initial-state";
 import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
 import { resetSettingsCache, updateSettings } from "../core/settings";
+import { pinSettingsReset } from "../core/settings-reset.test-util";
 import { holdInertOnBlur, resetPointerTracking } from "./dom";
 import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
@@ -29,6 +30,8 @@ const tapped = (): Plan => {
   plan.connections.push({ from: HOST + ":out", to: "out.usbmain_b:in", kind: "patch" });
   return plan;
 };
+
+pinSettingsReset();
 
 // The panel renders one selection, but what it DRAWS is derived from more nodes than that
 // selection names — a bus's Pan Link removes the send PAN on every wire into it, an analog
