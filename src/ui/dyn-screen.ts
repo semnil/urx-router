@@ -306,6 +306,11 @@ export interface DynProcessor {
   /** node→data. Everything that depends on which node this is opened for — the
    *  fields, the taps, whether the processor exists at all — is resolved here, so the
    *  host carries no channel-kind knowledge. */
+  /** The nodes whose plan values this face draws, when they are not just its own.
+   *  A device-follow reflect names the nodes it changed, and the host skips the rebuild
+   *  when none of them is in here — so a descriptor that reads another node's params
+   *  has to say so, and the reading and the declaration sit in the same file. */
+  ownNodes?: (ctx: DynCtx) => string[];
   bind: (ctx: DynCtx) => DynBinding | null;
   /** The segmented bar over the display, where there is something to pick. Absent
    *  where there is not: the DUCKER shows its envelope and its lanes at once, as the
@@ -792,10 +797,21 @@ export class DynScreen {
     this.hooks.onClosed();
   }
 
+  /** The nodes whose plan values the open face draws. Asked of the descriptor, which
+   *  is where the reading is: the host knows only that a face reads its own node. */
+  ownNodes(): string[] {
+    if (!this.isOpen()) return [];
+    return this.proc?.ownNodes?.(this.ctx()) ?? [this.nodeId];
+  }
+
   /** Re-render in place: a language switch, a theme switch (the plot's tokens are
    *  read here, not per frame), or the plan changing under the screen — a device
-   *  follow can move these very parameters while it is open. */
-  refresh(): void {
+   *  follow can move these very parameters while it is open.
+   *
+   *  `changed` names the nodes a device-follow reflect touched. Passing it skips the
+   *  rebuild when none of them is one this screen draws; omitting it rebuilds
+   *  unconditionally, which is what a read-back that re-authored the whole plan needs. */
+  refresh(changed?: readonly string[]): void {
     if (!this.isOpen()) return;
     // What the bank is a bank OF can change under an open screen — the INS FX screen's
     // faces belong to the effect the node holds. Decided before `rebind`, because the
@@ -815,6 +831,10 @@ export class DynScreen {
     // screen must never show for a signal that is present. Checked before the grabbed
     // early return, since the rebuild is what waits for a gesture, not the feed.
     this.resubscribeIfMoved();
+    // Placed below the three calls above, all of which have to run on every reflect:
+    // the bank verdict closes a screen whose processor the plan no longer emits, and
+    // the re-subscription follows a lane whose tap moved on another node.
+    if (changed && !this.ownNodes().some((id) => changed.includes(id))) return;
     // Device follow runs on its own clock, and under COMP 1-knob it runs on every
     // step of a drag — the unit recomputes threshold / ratio / gain and announces
     // them, which comes back here. Rebuilding then would replace the control being

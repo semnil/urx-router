@@ -654,6 +654,10 @@ function insFxFace(): DynProcessor {
     // CAB segment selected on a compander that has no cabinet.
     bankIdentity: (ctx) => familyOf(ctx) ?? "",
 
+    // The rate-lock hint and the GR lane are built from insertFxMenu / insertFxCensus,
+    // which sweep every node's insertFx — this face draws from the whole model, so a
+    // change on another node cannot be skipped for it.
+    ownNodes: (ctx) => ctx.model.nodes.map((n) => n.id),
     bind: (ctx): DynBinding | null => {
       const ifx = insertFxControl(ctx.model, ctx.nodeId);
       const fam = insertFxScreenFamily(ctx.model, ctx.plan, ctx.nodeId);

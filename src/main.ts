@@ -580,7 +580,7 @@ function reflectFollow(): void {
     if (ids.some((id) => shown.includes(id))) refreshInspector();
     // The dynamics screen shows a snapshot of the same node params, so a
     // device-side edit under it would otherwise leave stale sliders on screen.
-    dynScreen.refresh();
+    dynScreen.refresh(ids);
   }
 }
 // A reconcile read that fails loses the device-side change it was called for —
