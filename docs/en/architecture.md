@@ -1969,6 +1969,31 @@ describes a state it can return to.
 | A read's value for a key the app wrote while that read was in flight | `readIntoPlan`'s authorship filter, before the patch is applied | the operator authored it after the read sampled the address; comparing values instead would take an edit that returned to where it started for one that never happened |
 | A meter reading | never enters the plan at all | display only, and the stream stops with the session |
 
+#### When propagation may be left to the follow layer
+
+The wholesale repaint on the timers above is a repair for **device-originated** changes only, and an author
+deciding whether to write propagation code has to ask where the change comes from rather than how long it
+takes. Three bounds, not one:
+
+| Origin of the change | What repairs it | Bound |
+| --- | --- | --- |
+| A device notify for a param that is **not** `follow: "direct"` | the scoped reconcile → `followFull` → `syncRateUi` → `applyRateConstraints` → a full repaint of every view | `RECONCILE_DEBOUNCE_MS` after the burst settles |
+| A device notify for a param that **is** `follow: "direct"` | the idle net — a direct-only window reconciles nothing at the settle, it only re-bases the snapshot | `IDLE_FULL_MS` after the device goes quiet |
+| An app write the unit was obliged to announce and did not | the same idle net, armed from the write side by `writeSettle`'s announcement watch | `SETTLE_TIMEOUT_MS`, then the idle net |
+| An app edit, a MIDI apply, an undo, a file load, or anything at all while Live sync is **off** | nothing | never |
+
+The last row is the one that decides most cases. The unit's answer to our own write is an echo, and `onNotify`
+returns on it **before** arming either timer, so an app-originated change schedules no repair of its own: every
+view it touches has to be repainted at the site that made it. That is why the direct branch's per-view repaints
+in `reflectFollow` are load-bearing rather than a latency optimisation — external MIDI reaches all of them and
+arms nothing.
+
+Two things this rule is **not**. It is not a licence to leave a continuous control lagging: a swept fader or
+pan repaired only by the idle net is a defect whatever the origin, which is what `follow: "direct"` exists for.
+And redundancy against the app's own coalesced reflect (`requestReflect` → `reflectFollow`, `REFLECT_MIN_MS`)
+is a separate and far tighter argument than redundancy against either timer — that is what makes a second
+repaint beside a MIDI apply unnecessary, since `graph.repaintDirtyNodes` ends in `redrawWires`.
+
 ### One device address, more than one owner
 
 An insert effect's parameters live in **one engine array per effect family**, addressed `engine:0:slot` with no
