@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, scrollsByWheel, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
@@ -586,6 +586,9 @@ test("scrolling stays inside the strip grid (no window scroll) @webkit", async (
   });
   expect(m.bodyVOver).toBe(0); // the window never scrolls vertically
   expect(m.stripsHOver).toBeGreaterThan(0); // strips overflow horizontally inside .con-strips
+  // And the operator can get at the strips that overflow. The measurement above says only
+  // that the content is wider than its box, which an `overflow: hidden` rack reports too.
+  await scrollsByWheel(page, page.locator(".con-strips"), "x");
 });
 
 test("the longest meter-point badge fits within its strip", async ({ page }) => {
@@ -649,6 +652,9 @@ test("a very short window keeps a usable fader instead of crushing it @webkit", 
   });
   expect(m.bodyVOver).toBe(0);
   expect(m.stripsVOver).toBeGreaterThan(0);
+  // ...and the part of the strip below the fold is reachable, which the overflow figure
+  // alone does not say: a rack that clips instead of scrolling reports the same number.
+  await scrollsByWheel(page, page.locator(".con-strips"), "y");
 });
 
 test("every strip's head holds its own contents, so --head-h is not hand-measured", async ({ page }) => {

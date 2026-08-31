@@ -139,5 +139,34 @@ export async function heldThroughBlur(page: Page, slider: Locator): Promise<void
   expect(await slider.inputValue()).not.toBe(dragged);
 }
 
+/** Well past one platform notch in either engine, so a single wheel is enough to measure. */
+const WHEEL_NOTCH = 400;
+
+/** Put one wheel notch over a scroll container and wait for the offset to MOVE.
+ *
+ *  What it exists to separate: a container whose content exceeds it is not a container the
+ *  operator can reach into. `scrollHeight > clientHeight` holds on an `overflow: hidden`
+ *  box just as well, and so does writing `scrollTop` — the box is still a scroll container,
+ *  it is only the operator who has lost the way in. Both spellings were measured green in
+ *  both engines against `.prefs-grid { overflow-y: hidden }` and
+ *  `.con-strips { overflow: hidden }`, which is precisely the regression the cases using
+ *  this are placed against. A wheel is what the two answers differ on.
+ *
+ *  The wait is a poll for the offset rather than a fixed pause: a wheel is applied on the
+ *  engine's own schedule, and a pause long enough to be safe is also long enough to be a
+ *  sleep nobody can justify. */
+export async function scrollsByWheel(page: Page, target: Locator, axis: "x" | "y"): Promise<void> {
+  const box = await target.boundingBox();
+  if (!box) throw new Error("scroll target has no bounding box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(axis === "x" ? WHEEL_NOTCH : 0, axis === "x" ? 0 : WHEEL_NOTCH);
+  const offset = axis === "x" ? "scrollLeft" : "scrollTop";
+  await expect
+    .poll(() => target.evaluate((el, k) => el[k as "scrollLeft" | "scrollTop"], offset), {
+      message: `the wheel moved no ${offset}: the overflow is there, and nothing the operator does reaches it`,
+    })
+    .toBeGreaterThan(0);
+}
+
 export { expect };
 export type { Locator, Page } from "@playwright/test";
