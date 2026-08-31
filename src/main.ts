@@ -1183,8 +1183,15 @@ function planReadFromDevice(): void {
 // starts from factory). Mirror that offline so the plan never holds stale bank
 // values the device would have reset. Only the destination bank is reset; the
 // source bank's now-dormant values are harmless (re-entering it resets them too).
-// GATE is type-independent and untouched. Live sync converges the same reset via
-// follow's scoped read-back (COMP_EQ_TYPE is a sideEffect param).
+// GATE is type-independent and untouched.
+//
+// Under Live sync the same reset converges on the WRITE side: COMP_EQ_TYPE is
+// sideEffect: "converge", so the flush runs a converge round that re-reads the write
+// scope and pushes the plan back. Not follow's scoped read-back — this runs inside the
+// app's own edit funnel, so the unit's answer is an echo and follow returns on it before
+// arming anything. That is why this mirror is not optional: without it the plan keeps the
+// outgoing bank's values and the converge pushes them onto the unit the device just
+// reset, which is the reverse of what the first paragraph describes.
 function resetCompEqBank(id: string, newType: number): void {
   const np = plan.nodeParams[id];
   if (!np) return;
