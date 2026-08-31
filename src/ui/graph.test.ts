@@ -160,12 +160,68 @@ describe("appearance", () => {
     expect(wireHit(fx.host, target!.from, target!.to)).not.toBeNull();
   });
 
+  // The set is what rateConstraints hands over, so the id is the one it can actually
+  // produce. Asserting the dim and the dashed outline rather than the node's presence:
+  // a node that stopped being marked at all is still present, and that is the failure
+  // this pins.
   it("marks the nodes a rate constraint disabled", () => {
     fx = graphFixture();
-    fx.graph.setDisabledNodes(["ch_5_6"]);
-    expect(nodeEl(fx.host, "ch_5_6")).not.toBeNull();
+    fx.graph.setDisabledNodes(["bus.fx2"]);
+    const marked = nodeEl(fx.host, "bus.fx2")!;
+    expect(marked.getAttribute("opacity")).toBe("0.62");
+    expect(marked.querySelector("rect")?.getAttribute("stroke-dasharray")).toBe("4 3");
     fx.graph.setDisabledNodes([]);
-    expect(nodeEl(fx.host, "ch_5_6")).not.toBeNull();
+    const cleared = nodeEl(fx.host, "bus.fx2")!;
+    expect(cleared.getAttribute("opacity")).not.toBe("0.62");
+    expect(cleared.querySelector("rect")?.getAttribute("stroke-dasharray")).toBeNull();
+  });
+
+  // A full device reconcile re-applies the set on every pass, and the set holds at most
+  // one member — so the repeat is the common case, and rendering it repeats the render
+  // the caller just did. Element identity is what says no render ran: render() replaces
+  // every node group.
+  it("leaves the board alone when the same disabled set is applied again", () => {
+    fx = graphFixture();
+    fx.graph.setDisabledNodes(["bus.fx2"]);
+    const first = nodeEl(fx.host, "bus.fx2");
+    fx.graph.setDisabledNodes(["bus.fx2"]);
+    expect(nodeEl(fx.host, "bus.fx2")).toBe(first);
+    // A set that differs still renders, and the stored set is the new one.
+    fx.graph.setDisabledNodes([]);
+    expect(nodeEl(fx.host, "bus.fx2")).not.toBe(first);
+    expect(nodeEl(fx.host, "bus.fx2")!.getAttribute("opacity")).not.toBe("0.62");
+  });
+
+  // The console view hides the graph host, and a rate excursion past 96 kHz moves the
+  // set while it is hidden. The set is still stored — the deferred refresh draws from
+  // it — but the board is not rebuilt into display:none.
+  it("stores a moved disabled set without rebuilding a hidden board", () => {
+    fx = graphFixture();
+    const before = nodeEl(fx.host, "bus.fx2");
+    fx.host.hidden = true;
+    fx.graph.setDisabledNodes(["bus.fx2"]);
+    expect(nodeEl(fx.host, "bus.fx2")).toBe(before);
+
+    // What the deferred refresh draws: the stored set, not the one the board was built
+    // against. A store that had been skipped would leave the node undimmed here.
+    fx.host.hidden = false;
+    fx.graph.refresh();
+    expect(nodeEl(fx.host, "bus.fx2")!.getAttribute("opacity")).toBe("0.62");
+  });
+
+  // The question is whether the board is drawn against this set, so the comparison is
+  // between sets: an array carrying a repeat is not a bigger set, and answering by its
+  // length would call {a} and ["a","a"] the same size as {a, b}.
+  it("answers about the set, not the array it was handed", () => {
+    fx = graphFixture();
+    fx.graph.setDisabledNodes(["bus.fx2", "bus.fx1"]);
+    expect(fx.graph.hasDisabledNodes(["bus.fx2", "bus.fx2"])).toBe(false);
+    expect(fx.graph.hasDisabledNodes(["bus.fx1", "bus.fx2"])).toBe(true);
+    // And the render follows the same answer: a repeat that is NOT the held set redraws.
+    const before = nodeEl(fx.host, "bus.fx1");
+    fx.graph.setDisabledNodes(["bus.fx2", "bus.fx2"]);
+    expect(nodeEl(fx.host, "bus.fx1")).not.toBe(before);
+    expect(nodeEl(fx.host, "bus.fx1")!.getAttribute("opacity")).not.toBe("0.62");
   });
 
   it("re-labels its chrome on a language switch", () => {

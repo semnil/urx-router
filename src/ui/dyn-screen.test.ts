@@ -611,6 +611,76 @@ describe("refresh", () => {
     expect(host.box.childElementCount).toBe(0);
   });
 
+  // A device-follow reflect names the nodes it touched. The screen draws one node's
+  // params (plus, for a ducker, the key source's Rec Point), so a change elsewhere
+  // moves nothing on it — and the rebuild it would have run empties the modal, reads
+  // the theme tokens back off it and redraws the static plot.
+  it("rebuilds when the changed set names the bound node", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const before = rowsByKey(host.box).get("threshold")!;
+
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], gate: { threshold: -30 } };
+    screen.refresh(["ch1"]);
+    expect(rowsByKey(host.box).get("threshold")).not.toBe(before);
+  });
+
+  it("skips the rebuild when the changed set names no node it draws", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const before = rowsByKey(host.box).get("threshold")!;
+
+    screen.refresh(["ch2"]);
+    expect(rowsByKey(host.box).get("threshold")).toBe(before);
+  });
+
+  // The three nodes a screen can draw from. The host is the conservative one — the
+  // ducker reads it through the model (its label and its taps) and not through the
+  // plan — and it is here so a descriptor that starts reading the host's params finds
+  // the guard already on its side.
+  it("names the bound node, the channel it hangs under, and the key wire's source", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    expect(screen.ownNodes()).toEqual([]);
+    screen.open(DYN_PROCESSORS.ducker, "out.ducker1");
+    expect(screen.ownNodes()).toEqual(["out.ducker1", "ch_5_6", "ch1"]);
+    screen.close();
+
+    screen.open(GATE, "ch1");
+    expect(screen.ownNodes()).toEqual(["ch1"]);
+  });
+
+  // The KEY lane reads the tap its SOURCE channel's Rec Point names, so a change on
+  // that channel alone has to reach this screen.
+  it("rebuilds for a change to the channel the key wire comes from", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(DYN_PROCESSORS.ducker, "out.ducker1");
+    const before = host.box.querySelector(".gt-cap");
+
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], recPoint: 0 };
+    screen.refresh(["ch1"]);
+    expect(host.box.querySelector(".gt-cap")).not.toBe(before);
+  });
+
+  // The guard sits BELOW the bank verdict, the rebind and the re-subscription, all of
+  // which have to run on every reflect. This is the pin on that placement: a screen
+  // whose processor the plan no longer emits closes even when the changed set names
+  // nothing it draws.
+  it("closes on a vanished processor even when the changed set names nothing it draws", () => {
+    host = dynHost();
+    let present = true;
+    const vanishing = { ...GATE, bind: (ctx: Parameters<typeof GATE.bind>[0]) => (present ? GATE.bind(ctx) : null) };
+    const screen = new DynScreen(host.hooks);
+    screen.open(vanishing, "ch1");
+
+    present = false;
+    screen.refresh(["ch2"]);
+    expect(screen.isOpen()).toBe(false);
+  });
+
   it("re-renders in place when the plan changes underneath", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);

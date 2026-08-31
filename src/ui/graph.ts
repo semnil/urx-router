@@ -426,9 +426,21 @@ export class Graph {
     this.redrawWires();
   }
 
-  /** Mark nodes unavailable at the current sample rate (dimmed + dashed outline). */
+  /** Whether the board is already drawn against this disabled set. The dim and the
+   *  dashed outline are all the set contributes, so an equal one draws the same board. */
+  hasDisabledNodes(ids: string[]): boolean {
+    const next = new Set(ids);
+    return next.size === this.disabledNodes.size && [...next].every((id) => this.disabledNodes.has(id));
+  }
+
+  /** Mark nodes unavailable at the current sample rate (dimmed + dashed outline). The
+   *  set is stored either way. The board is redrawn only when the set moved AND the host
+   *  is on screen: an unchanged set draws the same board, and a hidden one is redrawn
+   *  from the plan when the view comes back (the caller carries that with graphDirty). */
   setDisabledNodes(ids: string[]): void {
+    const same = this.hasDisabledNodes(ids);
     this.disabledNodes = new Set(ids);
+    if (same || this.host.hidden) return;
     this.render();
   }
 

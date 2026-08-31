@@ -99,6 +99,10 @@ export const DUCKER_DYN: DynPlotProcessor = {
   // The screen opens on the ducker node, whose canvas label is "Ducker" — beside a
   // title reading DUCKER that names nothing. The host channel is what the operator
   // needs to see, and it is the thing being attenuated.
+  // The KEY lane reads the tap the SOURCE channel's Rec Point names, and the in / out
+  // lanes are the host channel's. Declared so the host can skip a rebuild for a change
+  // on neither without the rule leaving this file.
+  ownNodes: (ctx) => [ctx.nodeId, hostId(ctx), keySourceId(ctx)].filter((id): id is string => !!id),
   nodeLabel: (ctx) => {
     const host = hostId(ctx);
     return host ? channelLabel(ctx.model, host) : undefined;

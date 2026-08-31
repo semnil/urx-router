@@ -494,8 +494,10 @@ const consoleView = new Console(consoleHost, {
 // scoped / full read-back can change anything, so it re-derives both views and
 // re-bases the whole snapshot. Selection/viewport are untouched (refresh, not
 // rebuild). graphDirty defers the graph's work while it is the hidden view (console
-// active); setView does it once on the way back.
+// active); setView does it once on the way back, and inspectorDeferred is the same
+// shape for the inspector, which the console view hides for as long as it is up.
 let graphDirty = false;
+let inspectorDeferred = false;
 const followDirtyNodes = new Set<string>();
 /**
  * The one ritual for "the device authored this into the plan", shared by the two
@@ -580,7 +582,7 @@ function reflectFollow(): void {
     if (ids.some((id) => shown.includes(id))) refreshInspector();
     // The dynamics screen shows a snapshot of the same node params, so a
     // device-side edit under it would otherwise leave stale sliders on screen.
-    dynScreen.refresh();
+    dynScreen.refresh(ids);
   }
 }
 // A reconcile read that fails loses the device-side change it was called for —
@@ -928,6 +930,10 @@ function setView(next: ViewName): void {
       graph.repaintNodes();
       graph.repaintWires();
     }
+    // After the graph, not before: refresh() drops a selection whose node is now
+    // shelved, and that drop rebuilds the panel itself — which clears the flag, so this
+    // is a no-op there and the gesture costs one rebuild rather than two.
+    if (inspectorDeferred) rebuildInspector();
   }
 }
 
@@ -1583,6 +1589,17 @@ function rebuildInspectorNow(): void {
 // run above, and for the dev keyboard harness, which drives the gated and ungated arms of
 // the IME measurement side by side (ui/keyprobe.ts).
 function rebuildInspector(): void {
+  // The console view hides this panel for as long as it is up, and a device follow
+  // rebuilds it at up to 20 Hz regardless. Deferred rather than dropped: setView does
+  // the one rebuild on the way back, the same shape graphDirty gives the graph.
+  if (inspectorHost.hidden) {
+    inspectorDeferred = true;
+    return;
+  }
+  // Cleared here rather than only at the drain: the panel becomes visible before the
+  // drain runs, so anything that rebuilds it in between — a selection dropped by the
+  // graph's own refresh — has already paid what the flag was owed.
+  inspectorDeferred = false;
   // On mobile the inspector is a bottom sheet that slides up only while something
   // is selected; this flag drives that state (no effect on the desktop panel).
   document.body.classList.toggle("has-selection", selection !== null);
@@ -1620,10 +1637,16 @@ function rebuildInspector(): void {
     focused.setSelectionRange(carried.caret[0], carried.caret[1]);
 }
 
-// Recompute the sample-rate constraints and reflect them in the graph badges, the
+// Recompute the sample-rate constraints and apply them to the graph badges, the
 // inspector warnings and the console (the stereo EQ chip locks at 176.4 / 192 kHz).
+// Each of the three decides for itself whether the new state needs drawing now: the
+// board is deferred while the console view is up, the panel while the graph view is.
 function applyRateConstraints(): void {
   const c = rateConstraints(getModel(modelId), plan.sampleRate);
+  // Asked before the store, so the answer is about the board on screen. A set that
+  // moved while the console view is up owes the graph a repaint it must not do here:
+  // graphDirty is the same deferral the follow reflect uses two lines from its own.
+  if (graphHost.hidden && !graph.hasDisabledNodes(c.disabledNodes)) graphDirty = true;
   graph.setDisabledNodes(c.disabledNodes);
   refreshInspector();
   consoleView.refresh();

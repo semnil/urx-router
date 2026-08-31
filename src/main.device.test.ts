@@ -2899,6 +2899,49 @@ describe("MIDI feedback and the live session", () => {
 
 // Two funnels write the plan, and both have to name what they asserted. These drive the
 // CONSOLE half and the BAL mirror's half against a read in flight.
+describe("the inspector while the CONSOLE hides it", () => {
+  /** CH 1's A.GAIN knob on the CONSOLE, which IS on screen while the panel is not —
+   *  so it says the follow reflect ran, and a stale panel cannot be read as a notify
+   *  that never arrived. */
+  const consoleGain = (): string | null =>
+    $("console-host").querySelector<HTMLElement>('[aria-label="A.GAIN"]')?.getAttribute("aria-valuenow") ?? null;
+
+  // The panel is display:none for as long as the CONSOLE view is up, and a device
+  // follow that touches the selected node would otherwise rebuild it there at the
+  // reflect's own rate — focus and caret capture included, on a subtree nothing can
+  // focus. The rebuild is deferred, not dropped, so the value has to be on screen after
+  // the view switch WITHOUT the operator re-selecting the node: every other case in
+  // this file re-selects on the way back, which rebuilds a visible panel and would pass
+  // with the drain deleted.
+  it("holds the rebuild while the CONSOLE hides it, and pays it on the way back", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    selectNode("ch1");
+    const before = paramRow(t().inspector.gainAnalog);
+
+    $("btn-view-console").click();
+    // A direct follow on the selected node: applied into the plan with no read back.
+    // Whole dB, since the gain decode rounds and a smaller step would leave the plan
+    // where it was — the panel would then agree for the wrong reason.
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.HA_GAIN.id, x: 0, y: 0, value: 2000 }]);
+    // The reflect is coalesced onto a timer, so wait for it where it IS visible.
+    await vi.waitFor(() => expect(consoleGain()).toBe("20"), { timeout: 25_000 });
+
+    // It ran, and it rebuilt no panel: the row is the same element.
+    expect(paramRow(t().inspector.gainAnalog)).toBe(before);
+
+    $("btn-view-graph").click();
+    expect(paramRow(t().inspector.gainAnalog)).not.toBe(before);
+    expect(paramRow(t().inspector.gainAnalog).textContent).toContain("20");
+
+    // End the session rather than leaving it running: its idle net would fire into the
+    // next case, which boots its own shell.
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  });
+});
+
 describe("an edit funnel against a device read", () => {
   const face = (label: string): string | undefined =>
     paramRow(label)?.querySelector("button.on")?.textContent ?? undefined;

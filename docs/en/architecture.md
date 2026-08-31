@@ -1939,9 +1939,10 @@ sequenceDiagram
   else direct notifies only
     R->>G: repaint just the touched nodes
     R->>C: refresh just the touched strips
-    R->>I: inspector only when the selection reads a touched node, tuning screen always
+    R->>I: inspector and tuning screen only when the change names a node they read
   end
   Note over G: while the graph is the hidden view its work is deferred<br/>and done once on the way back
+  Note over I: the inspector defers the same way while the console view hides it
   M->>C: meter readings, about 10 per second per address
   C->>C: paint loop at 30 fps, bars driven by compositor transforms<br/>numeric readout on every 5th frame
   Note over M,C: a meter reading never enters the plan<br/>nothing about it is written back, undone or sent
