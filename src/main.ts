@@ -494,8 +494,10 @@ const consoleView = new Console(consoleHost, {
 // scoped / full read-back can change anything, so it re-derives both views and
 // re-bases the whole snapshot. Selection/viewport are untouched (refresh, not
 // rebuild). graphDirty defers the graph's work while it is the hidden view (console
-// active); setView does it once on the way back.
+// active); setView does it once on the way back, and inspectorDeferred is the same
+// shape for the inspector, which the console view hides for as long as it is up.
 let graphDirty = false;
+let inspectorDeferred = false;
 const followDirtyNodes = new Set<string>();
 /**
  * The one ritual for "the device authored this into the plan", shared by the two
@@ -927,6 +929,13 @@ function setView(next: ViewName): void {
     } else {
       graph.repaintNodes();
       graph.repaintWires();
+    }
+    // After the graph, not before: refresh() drops a selection whose node is now
+    // shelved, and that drop rebuilds the panel itself. Draining first would build it
+    // for a selection about to go away.
+    if (inspectorDeferred) {
+      inspectorDeferred = false;
+      rebuildInspector();
     }
   }
 }
@@ -1583,6 +1592,13 @@ function rebuildInspectorNow(): void {
 // run above, and for the dev keyboard harness, which drives the gated and ungated arms of
 // the IME measurement side by side (ui/keyprobe.ts).
 function rebuildInspector(): void {
+  // The console view hides this panel for as long as it is up, and a device follow
+  // rebuilds it at up to 20 Hz regardless. Deferred rather than dropped: setView does
+  // the one rebuild on the way back, the same shape graphDirty gives the graph.
+  if (inspectorHost.hidden) {
+    inspectorDeferred = true;
+    return;
+  }
   // On mobile the inspector is a bottom sheet that slides up only while something
   // is selected; this flag drives that state (no effect on the desktop panel).
   document.body.classList.toggle("has-selection", selection !== null);
