@@ -576,6 +576,35 @@ describe("the theme", () => {
   });
 });
 
+// A Warnings row takes a card off the inspector, and the panel is not the row's to
+// rebuild: prefs.ts calls back and main.ts repaints. Neither side's own suite can watch
+// that call arrive — the panel's suite renders the panel directly, and the Preferences
+// suite holds the callback as a mock — so the wiring between them is only visible from
+// the entry. Driven through the sample-rate row, which shares the one callback with the
+// Ducker-bypass row beside it.
+
+describe("the warning preferences reach the panel", () => {
+  it("takes the sample-rate card off the inspector with no other gesture", async () => {
+    await boot();
+    const picker = $<HTMLSelectElement>("rate-picker");
+    const hi = [...picker.options].find((o) => Number(o.value) > 96_000)!;
+    picker.value = hi.value;
+    picker.dispatchEvent(new Event("change"));
+    // The card is drawn for every selection, this one included: none.
+    await vi.waitFor(() => expect($("inspector").textContent).toContain(t().warning.title), APP_SETTLE);
+
+    $("btn-prefs").click();
+    const off = [...document.querySelectorAll<HTMLElement>("#prefs-modal .prefs-row")]
+      .find((r) => r.querySelector(".lbl")?.textContent === t().prefs.warnRate)!
+      .querySelectorAll<HTMLButtonElement>("button")[1];
+    off.click();
+
+    // Read straight after the press. The panel repaints on the callback, so a wait here
+    // would pass on a repaint the next gesture happened to cause.
+    expect($("inspector").textContent).not.toContain(t().warning.title);
+  });
+});
+
 describe("switching language at runtime", () => {
   // The language row lives inside Preferences, so the switch happens with that modal open
   // and it has to be rebuilt in the new language — along with the toolbar labels, the
