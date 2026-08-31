@@ -1117,11 +1117,14 @@ no ducker param carries `follow: "direct"`.
 Each is narrowed to the duckers whose state could change what is drawn — the card's to the duckers it
 is ABOUT (their host channel carries the USB tap), asked of `duckerBypassCandidates`, which is the
 warning's own predicate minus the on-state, since a card appears when one turns ON; the note's to the
-selected wire's own source. Naming every ducker instead is not the cheap answer it looks like:
-`duckerOn` is a toggle, an edge binding is the default, and `toggleTarget` flips on every CC value
-`>= 64` — one knob sweep bound to it applies 64 times (measured over a 0→127 ramp; 1 in `state`
-mode). A ducker the panel does not read would repaint it at the direct branch's ~20 Hz for the whole
-sweep, which is exactly the cost the monitor narrowing above exists to avoid.
+selected WIRE, which is narrower than its source. The note is drawn under a fixed wire that carries a
+tap, and only on PRE, so a POST send, the STEREO send (which carries no tap at all) and a microSD Rec
+tap out of the very same channel each name no ducker — asking only the source would put one in the
+footprint for a note that wire cannot draw. Naming every ducker instead is not the cheap answer it
+looks like: `duckerOn` is a toggle, an edge binding is the default, and `toggleTarget` flips on
+every CC value `>= 64` — one knob sweep bound to it applies 64 times (measured over a 0→127 ramp; 1
+in `state` mode). A ducker the panel does not read would repaint it at the direct branch's ~20 Hz
+for the whole sweep, which is exactly the cost the monitor narrowing above exists to avoid.
 
 The residual window — the slider under the operator's finger before the rebuild — is closed at the
 write path: `onUpdateParams` asks the same `mixSendLocks` the MIDI catalog asks. Measured: an `input`
