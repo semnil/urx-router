@@ -17,21 +17,102 @@ import { planToCommands } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
 import { setLang, t } from "../i18n";
 
-// The panel renders one selection, and which controls it renders is derived from that
-// selection's endpoint NODES — not only from the selected object. A device-side change
-// on a node the panel is not "showing" can still remove a control it is rendering (a
-// bus's Pan Link removes the send PAN on every wire into it), so the caller that
-// decides whether to repaint has to know the footprint. These pin it.
+// The panel renders one selection, but what it DRAWS is derived from more nodes than that
+// selection names — a bus's Pan Link removes the send PAN on every wire into it, an analog
+// output reports MONO from a monitor bus, and the ducker-bypass card is plan-wide. A device
+// or MIDI change on a node the panel is not "showing" can therefore move what is on screen,
+// so the caller that decides whether to repaint has to know the footprint. These pin it.
 
 describe("inspectorNodes", () => {
   const u44v = getModel("URX44V");
+  const DUCKER = "out.ducker1";
+  const HOST = "ch_5_6"; // the stereo pair out.ducker1 hangs off (models/build.ts)
 
-  it("reports nothing for an empty selection", () => {
+  /** A plan whose CH 5/6 is tapped straight to a USB direct out — what makes its ducker one
+   *  the bypass warning card is about, and so one the panel reads for any selection. */
+  const tapped = (): Plan => {
+    const plan = defaultPlan("URX44V");
+    plan.connections = plan.connections.filter((c) => c.to !== "out.usbmain_b:in");
+    plan.connections.push({ from: HOST + ":out", to: "out.usbmain_b:in", kind: "patch" });
+    return plan;
+  };
+
+  const rendered = (plan: Plan, sel: Selection): string => {
+    const el = document.createElement("div");
+    renderInspector(el, u44v, plan, sel, actions());
+    return el.textContent ?? "";
+  };
+
+  it("reports nothing for an empty selection while no ducker is on a direct out", () => {
     expect(inspectorNodes(u44v, emptyPlan("URX44V"), null)).toEqual([]);
+    // …and the card's own duckers once one is, because it is drawn with no selection too.
+    expect(inspectorNodes(u44v, tapped(), null)).toEqual([DUCKER]);
   });
 
   it("reports the node itself for a node selection", () => {
     expect(inspectorNodes(u44v, emptyPlan("URX44V"), { type: "node", id: "ch1" })).toEqual(["ch1"]);
+  });
+
+  // The footprint's ducker half is not defensive: the two surfaces below are each rendered
+  // from a ducker node's params while the selection names neither the ducker nor its host. A
+  // caller that filters dirty nodes through this function drops the repaint otherwise, which
+  // is what a MIDI-driven Ducker on/off does — it reaches the plan through the direct-follow
+  // branch, where nothing else refreshes the panel.
+  //
+  // They take DIFFERENT plans on purpose. On a tapped plan the wire's own source ducker is
+  // already a bypass candidate, so each half covers for the other and dropping either one
+  // from the footprint leaves both green.
+  it("names the ducker a send's PRE note is read from — with no direct out anywhere", () => {
+    const plan = defaultPlan("URX44V"); // no channel is tapped to a USB out, so no card
+    const wire = connSel(HOST + ":out", "bus.mix1:in");
+    const send = plan.connections.find((c) => c.from === HOST + ":out" && c.to === "bus.mix1:in")!;
+    send.params = { ...send.params, tap: "pre" };
+    const shows = (): boolean => rendered(plan, wire).includes(t().inspector.duckerPreSend);
+
+    expect(shows()).toBe(false);
+    expect(rendered(plan, wire)).not.toContain(t().warning.duckerTitle); // the other half is absent
+    plan.nodeParams[DUCKER] = { ...plan.nodeParams[DUCKER], duckerOn: true };
+    expect(shows()).toBe(true);
+    expect(inspectorNodes(u44v, plan, wire)).toContain(DUCKER);
+    // …and only for the wire whose source it hangs off. A send from another channel reads
+    // its own host's Ducker, which CH 5/6's is not.
+    expect(inspectorNodes(u44v, plan, connSel("ch1:out", "bus.mix1:in"))).not.toContain(DUCKER);
+  });
+
+  it("names the ducker the plan-wide warning card is read from", () => {
+    const plan = tapped();
+    const elsewhere = nodeSel("bus.mix1"); // names neither the ducker nor its host
+    const warns = (): boolean => rendered(plan, elsewhere).includes(t().warning.duckerTitle);
+
+    expect(warns()).toBe(false);
+    plan.nodeParams[DUCKER] = { ...plan.nodeParams[DUCKER], duckerOn: true };
+    expect(warns()).toBe(true);
+    expect(inspectorNodes(u44v, plan, elsewhere)).toContain(DUCKER);
+  });
+
+  // The other half of the same claim, and what keeps the set from being "every ducker":
+  // `duckerOn` is a toggle whose default edge binding flips on every CC >= 64, so one knob
+  // sweep bound to it applies 64 times. A ducker the panel does not read must not be named,
+  // or that sweep repaints the panel at the direct branch's ~20 Hz for a picture that did
+  // not move — the cost the monitor case below is narrowed for.
+  it("does NOT name a ducker whose state cannot change what is drawn", () => {
+    const plan = tapped(); // only out.ducker1's host carries the tap
+    const others = u44v.nodes.filter((n) => n.kind === "ducker" && n.id !== DUCKER).map((n) => n.id);
+    expect(others.length).toBeGreaterThan(0); // or the assertions below are vacuous
+    const selections: Selection[] = [null, nodeSel("ch1"), connSel("ch1:out", "bus.mix1:in")];
+    for (const sel of selections) {
+      const named = inspectorNodes(u44v, plan, sel);
+      expect(others.filter((id) => named.includes(id))).toEqual([]);
+    }
+    // Turning one of them ON does not change that: it is not on a direct out, and it is not
+    // the selected wire's source, so nothing the panel draws reads it.
+    plan.nodeParams[others[0]] = { ...plan.nodeParams[others[0]], duckerOn: true };
+    expect(inspectorNodes(u44v, plan, nodeSel("ch1"))).not.toContain(others[0]);
+  });
+
+  it("names a selected ducker once, not twice", () => {
+    // Both halves would offer out.ducker1 here: it is a bypass candidate AND the selection.
+    expect(inspectorNodes(u44v, tapped(), nodeSel(DUCKER))).toEqual([DUCKER]);
   });
 
   // An analog output's MONO row reads a MONITOR bus's switch, so the footprint has to
