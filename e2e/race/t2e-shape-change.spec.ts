@@ -357,8 +357,8 @@ test.describe("T2e shape-change", () => {
     await pushNotify(page, [[589, 0, 0, 1]]);
     await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 20_000 });
 
-    // The panel is repainted by the direct reflect itself, scoped to the nodes the
-    // selection reads (`inspectorNodes`): a wire's controls are derived from the
+    // The panel is repainted by the direct reflect itself, scoped to the nodes the panel
+    // reads (`inspectorNodes`): a wire's controls are derived from the
     // DESTINATION bus, so a lock taken on bus.mix1 removes a control the panel is
     // rendering for ch1. Read at the instant the barrier froze the app, so the repair
     // provably came from the ~50 ms reflect and not from the frozen 900 ms net.
