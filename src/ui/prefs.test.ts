@@ -105,6 +105,34 @@ describe("PrefsPanel", () => {
     expect(getSettings().warnRate).toBe(false);
     expect(hooks.onWarningsChanged).toHaveBeenCalledOnce();
 
+    // Its own row and its own key. The panel is the only writer of any settings key, and
+    // the rows are built from two helpers, so one wired to another's key silences the
+    // wrong card — or moves a setting the operator was not touching — with nothing to see
+    // it. Every key the panel writes is pressed somewhere in this case for that reason.
+    //
+    // Pressed back ON as well, which takes two more readings the OFF press cannot. A row
+    // whose buttons both wrote its OFF value reads the same from one press; and the panel
+    // re-renders on apply, so the ON button is live here only if the rebuilt row read the
+    // stored value back — a row built from a constant leaves ON already selected, where a
+    // press is a no-op the widget swallows.
+    const ducker = (i: number): void =>
+      row(t().prefs.warnDucker).querySelectorAll<HTMLButtonElement>("button")[i].click();
+    ducker(1);
+    expect(getSettings().warnDucker).toBe(false);
+    expect(hooks.onWarningsChanged).toHaveBeenCalledTimes(2);
+    ducker(0);
+    expect(getSettings().warnDucker).toBe(true);
+    expect(hooks.onWarningsChanged).toHaveBeenCalledTimes(3);
+
+    // The third row of the same section, and the one that must NOT notify: it gates a
+    // device-write confirmation rather than a card, so there is nothing on screen to
+    // repaint. Its key is the reading that separates it from the two above.
+    row(t().prefs.warnFirmware).querySelectorAll<HTMLButtonElement>("button")[1].click();
+    expect(getSettings().warnFirmware).toBe(false);
+    expect(getSettings().warnRate).toBe(false);
+    expect(getSettings().warnDucker).toBe(true);
+    expect(hooks.onWarningsChanged).toHaveBeenCalledTimes(3);
+
     row(t().prefs.fine).querySelectorAll<HTMLButtonElement>("button")[1].click();
     expect(getSettings().fineLatch).toBe(true);
     expect(mocks.resetFine).toHaveBeenCalledOnce();
@@ -119,11 +147,17 @@ describe("PrefsPanel", () => {
     change(row(t().prefs.exportScale).querySelector("select")!, "3");
     expect(getSettings().exportScale).toBe(3);
 
+    change(row(t().prefs.exportBg).querySelector("select")!, "dark");
+    expect(getSettings().exportTheme).toBe("dark");
+
     change(row(t().prefs.recent).querySelector("select")!, "12");
     expect(getSettings().recentMax).toBe(12);
     expect(hooks.onRecentChanged).toHaveBeenLastCalledWith([]);
     row(t().prefs.recent).querySelector<HTMLButtonElement>(".prefs-btn")!.click();
     expect(hooks.onRecentChanged).toHaveBeenLastCalledWith([]);
+
+    row(t().prefs.updateLaunch).querySelectorAll<HTMLButtonElement>("button")[1].click();
+    expect(getSettings().updateCheck).toBe(false);
 
     change(document.querySelector("#prefs-lang") as HTMLSelectElement, "ja");
     expect(document.documentElement.lang).toBe("ja");
