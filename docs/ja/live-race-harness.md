@@ -1048,8 +1048,11 @@ scoped / full 分岐を通る。
 
 どちらも**描画を変えうる ducker だけ**に絞ってある ── カード側は「カードが対象とする ducker」
 (吊り元 CH が USB タップを持つもの) で、警告自身の判定式から on 状態だけを外した
-`duckerBypassCandidates` に問う (カードは ducker が ON になった時に現れるため)。注記側は選択中の
-ワイヤの source に吊られたものだけ。全 ducker を名指す方が安いように見えるが違う: `duckerOn` は
+`duckerBypassCandidates` に問う (カードは ducker が ON になった時に現れるため)。注記側は**選択中の
+ワイヤ**に問い、source だけを見るより狭い: 注記が描かれるのは tap を持つ固定ワイヤの、しかも PRE の
+ときだけなので、同じ CH から出る POST 送り・STEREO 送り (tap 自体が無い)・microSD Rec タップは
+いずれも ducker を名指さない。source だけを見ると、そのワイヤが描けない注記のために ducker を
+フットプリントへ載せることになる。全 ducker を名指す方が安いように見えるが違う: `duckerOn` は
 toggle で、既定は edge バインド、`toggleTarget` は CC 値 `>= 64` のたびに反転するため、
 **ノブ 1 スイープで 64 回 apply される** (0→127 ランプでの実測。`state` モードなら 1 回)。パネルが
 読まない ducker を名指せば、そのスイープの間ずっと direct 分岐の約 20 Hz で再描画が走る ── 上の
