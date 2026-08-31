@@ -2995,9 +2995,10 @@ if (!DEMO) {
       // defect of its own — a MIDI apply is an app edit through markChanged, not a
       // device read — and removing it is a separate decision with its own cells.
       planHistory?.rebase();
-      // A toggle (mute / section ON) dims wires on the canvas; the reflect
-      // repaints nodes only, so repaint the wires here (rare, toggle-rate).
-      if (control.kind === "toggle" && !graphHost.hidden) graph.repaintWires();
+      // No wire repaint here: the reflect requested above redraws them. Its direct
+      // branch ends in graph.repaintDirtyNodes, whose own tail is redrawWires, and both
+      // sites carry the same `!graphHost.hidden` guard — so a toggle's wire dimming
+      // lands either way, at most one reflect window (REFLECT_MIN_MS) later.
     },
     // The operator-started latches, a strict subset of what the history refuses under:
     // a Fetch or a Live-sync start holds the plan for seconds and the latter then
