@@ -25,7 +25,7 @@ import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { PARAMS } from "./core/control/params";
 import { nameControl } from "./core/control/translate";
 import { getModel } from "./models";
-import { faceplate } from "./ui/graph.test-util";
+import { faceplate, press, wireHit } from "./ui/graph.test-util";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
@@ -2894,6 +2894,81 @@ describe("MIDI feedback and the live session", () => {
     await invoked(shell, "vd_disconnect");
     expect(errors(shell)).toEqual([t().status.liveError(t().error.unknownModel("URX88"))]);
     expect(shell.count("midi_send")).toBe(0);
+  });
+});
+
+// An incoming MIDI edit repaints through the direct-follow reflect, which repaints only
+// the nodes `inspectorNodes` names — and a Ducker's on/off is the one thing MIDI can move
+// on a node that the selection need not mention at all. That branch needs a shell, so the
+// panel's own suite cannot reach it: inspector.test.ts pins the footprint, and this is the
+// wiring that consumes it. A device-side Ducker change takes the other branch (no ducker
+// param follows directly) and refreshes the panel wholesale.
+describe("a Ducker moved over MIDI repaints the inspector", () => {
+  const DUCKER = "out.ducker1"; // hangs off CH 5/6 (models/build.ts)
+  const CC = 20;
+
+  const bootWithPad = async (): Promise<TauriShell> =>
+    (await bootApp({
+      seed: {
+        "urx-midi": JSON.stringify({
+          input: "Controller In",
+          models: {
+            URX44V: [
+              {
+                control: `${DUCKER}/duckerOn`,
+                addr: { type: "cc", channel: 0, controller: CC },
+                mode: "absolute",
+                button: "edge",
+              },
+            ],
+          },
+        }),
+      },
+      tauri: { midi_list_inputs: ["Controller In"], midi_open_input: null, midi_close_input: null },
+    }))!;
+
+  const panelText = (): string => $("inspector").textContent ?? "";
+
+  /** The section a title names, by its header rather than by position: the panel puts
+   *  several on a node and only one of them is the Ducker's. */
+  const section = (title: string): HTMLDetailsElement => {
+    const found = [...$("inspector").querySelectorAll<HTMLDetailsElement>("details.insp-section")].find(
+      (d) => d.querySelector(".sec-title")?.textContent === title,
+    );
+    expect(found, `the inspector shows a "${title}" section`).not.toBeUndefined();
+    return found!;
+  };
+
+  it("drops the PRE-send note when a pad turns the Ducker off under a selected send", SLOW, async () => {
+    const shell = await bootWithPad();
+    await invoked(shell, "midi_open_input");
+
+    // Reached through the app's own controls rather than a seeded plan: the Ducker's ON,
+    // then the send's PRE tap, which is what makes the note apply.
+    selectNode(DUCKER);
+    [...section(t().inspector.duckerOn).querySelectorAll<HTMLButtonElement>(".sec-body .toggle button")]
+      .find((b) => b.textContent === t().inspector.on)!
+      .click();
+    press(wireHit($("graph-host"), "ch_5_6:out", "bus.mix1:in")!);
+    const pre = [...$("inspector").querySelectorAll<HTMLButtonElement>(".param .toggle button")].find(
+      (b) => b.textContent === "PRE",
+    );
+    expect(pre, "the send offers a PRE / POST tap").not.toBeUndefined();
+    pre!.click();
+    expect(panelText()).toContain(t().inspector.duckerPreSend);
+
+    // The pad, and nothing else: an edge toggle flips on any CC >= 64. The wire is still
+    // what is selected — only the ducker node moved.
+    const opened = shell.args[shell.invokes.indexOf("midi_open_input")] as {
+      channel: { onmessage: (d: unknown) => void };
+    };
+    opened.channel.onmessage([{ bytes: [0xb0, CC, 127] }]);
+    await vi.waitFor(() => {
+      expect(panelText()).not.toContain(t().inspector.duckerPreSend);
+    });
+    // …and the send is still the selection, so the note went with the Ducker rather than
+    // with the panel changing subject.
+    expect(panelText()).toContain(t().inspector.prePost);
   });
 });
 

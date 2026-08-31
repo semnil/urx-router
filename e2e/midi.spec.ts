@@ -2,6 +2,7 @@ import { test, expect, type Page } from "./fixtures";
 import { LIVE_COMMANDS } from "./tauri-stub";
 import { pickBand } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
+import { selectWire } from "./graph-helpers";
 
 // External MIDI control is desktop-only (isTauri gate), so these tests stub the
 // Tauri IPC bridge before the app boots: invoke() answers the boot-time queries,
@@ -518,6 +519,36 @@ test("an incoming DUCKER toggle repaints the parent strip's chip in place", asyn
   await expect(duckChip()).toHaveClass(/\bon\b/);
   await sendMidi(page, [0x80, 62, 0], [0x90, 62, 127]); // release, press again
   await expect(duckChip()).not.toHaveClass(/\bon\b/);
+});
+
+test("an incoming DUCKER toggle repaints the inspector's PRE-send note in place", async ({ page }) => {
+  // The other half of the case above: the same MIDI edit, read by the panel rather than
+  // by a strip. The panel's repaint is scoped to the nodes `inspectorNodes` names, and a
+  // ducker is not one the SELECTION names — the wire's source is the host CHANNEL, and
+  // the ducker hangs off it as a node of its own.
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  const duckChip = () => strip(page, "CH 5/6").getByRole("button", { name: "DUCKER", exact: true });
+  await learnBinding(page, win, () => duckChip().click(), [0x90, 62, 127]);
+  await setLearn(page, win, false);
+
+  // The send the note is about, put on its PRE tap. Selected for the rest of the case —
+  // the panel must never change subject, or a note that went away went away with it.
+  await page.click("#btn-view-graph");
+  await selectWire(page, "ch_5_6:out", "bus.mix1:in");
+  const panel = page.locator("#inspector");
+  await panel.getByRole("button", { name: "PRE", exact: true }).click();
+  const note = panel.getByText(/PRE \(pre-fader\) send taps ahead of it/);
+  await expect(note).toHaveCount(0);
+
+  // On, then off, with no click on anything the panel draws in between.
+  await sendMidi(page, [0x90, 62, 127]);
+  await expect(note).toHaveCount(1);
+  await sendMidi(page, [0x80, 62, 0], [0x90, 62, 127]); // release, press again
+  await expect(note).toHaveCount(0);
+  // Still the same selection, so the note followed the Ducker rather than the panel
+  // being rebuilt for something else.
+  await expect(panel.getByRole("button", { name: "PRE", exact: true })).toHaveCount(1);
 });
 
 test("the SENDS rack controls arm with send-scoped control ids", async ({ page }) => {
