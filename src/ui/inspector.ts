@@ -65,6 +65,7 @@ import {
 import {
   channelDuckerOn,
   channelEqUnavailable,
+  duckerBypassCandidates,
   duckerBypassWarnings,
   formatRate,
   insertFxRateLock,
@@ -113,15 +114,62 @@ export interface InspectorActions {
 // set yet; matches the device's default head-amp gain.
 const HA_GAIN_DEFAULT_DB = -8;
 
-/** The nodes the panel's rendering for a selection is derived from. A node selection
- *  reads that node's params; a connection reads BOTH endpoints' — the destination
- *  bus's BUS Type / Pan Link decide which send controls exist at all (mixSendLocks),
- *  and the source channel's Signal Type / Ducker decide the pan label and the notes.
+/** The nodes the panel's rendering is derived from — not the nodes the SELECTION names,
+ *  which is a smaller set. A node selection reads that node's params; a connection reads
+ *  BOTH endpoints' — the destination bus's BUS Type / Pan Link decide which send controls
+ *  exist at all (mixSendLocks). What the selection does not name is here too: the monitor
+ *  an analog output reports MONO from, and the DUCKER nodes below.
  *  Exported so a caller holding a changed node can ask whether the panel it is not
  *  rendering has gone stale, instead of restating the footprint at the call site. */
 export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Selection): string[] {
-  if (!selection) return [];
-  if (selection.type !== "node") return [parseRef(selection.from).nodeId, parseRef(selection.to).nodeId];
+  // Ducker nodes are read in two places, neither of them the selection's own rows, and
+  // both are narrowed to the duckers that would actually change what is drawn — an
+  // arbitrary MIDI message can reach this branch holding one, and a ducker the panel does
+  // not read would then rebuild it for a picture that did not move:
+  //
+  //   the ducker-bypass warning card, which is plan-wide and is drawn for every
+  //   selection, including none — narrowed to the duckers the card is ABOUT (their host
+  //   channel carries the USB tap), asked of the same predicate the card itself asks, and
+  //   asked without the on-state, since a card appears when one turns ON;
+  //
+  //   the note under a send's own controls that a PRE tap sits ahead of the host
+  //   channel's Ducker — that host is the wire's source, but the ducker hangs off it as a
+  //   node of its own, which is the one the note is really read from.
+  //
+  // Neither is bounded by an operator's press. `duckerOn` is a toggle, and an edge
+  // binding — the default — flips on every CC value >= 64, so one knob sweep bound to it
+  // applies 64 times; naming a ducker the panel does not read would repaint at this
+  // branch's ~20 Hz for the whole sweep, which is the cost the monitor below narrows for.
+  //
+  // The card's own preference (Preferences > Warnings) is deliberately not consulted: with
+  // it off the card is not drawn and its duckers are named anyway, which over-names rather
+  // than under-names — a rebuild that changes nothing, against a stale panel.
+  const duckers = duckerBypassCandidates(model, plan).map((c) => c.ducker);
+  if (!selection) return duckers;
+  if (selection.type !== "node") {
+    const { from, to } = selection;
+    const host = parseRef(from).nodeId;
+    // Asked of the wire, not just of its source: the note is drawn under a FIXED wire
+    // carrying a tap, and only on PRE, so every other wire out of the same channel would
+    // name its ducker for a note it cannot draw.
+    //
+    // The answer reads a connection param, and stays current because nothing caches it —
+    // main.ts recomputes this on each reflect — and because each writer of a tap already
+    // repaints: `onUpdateParams` calls refreshInspector for a `tap` patch, the MIDI tap
+    // control is owned by the source channel (midi/controls.ts stamps `node: id`), which
+    // is named below unconditionally, and no tap param carries follow: "direct", so a
+    // device-side change lands on the scoped/full branch that refreshes wholesale.
+    const drawsNote =
+      isFixedConnection(model, from, to) &&
+      sendHasTap(model, from, to) &&
+      plan.connections.find((c) => c.from === from && c.to === to)?.params?.tap === "pre";
+    const own = drawsNote
+      ? model.nodes
+          .filter((n) => n.kind === "ducker" && n.attachTo === host && !duckers.includes(n.id))
+          .map((n) => n.id)
+      : [];
+    return [host, parseRef(to).nodeId, ...duckers, ...own];
+  }
   // An analog output's MONO row reports a MONITOR bus's switch, so a change on a node
   // the panel is not "showing" moves what it draws — exactly the case this function
   // exists for. Narrowed to the monitor the plan actually patches from, not both:
@@ -132,9 +180,12 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
   // whose content did not change. MONO itself is not in that direct set and arrives
   // on the full-reflect path, which refreshes the panel anyway; what this line buys
   // is the MIDI route, where the plan is written without a device read.
-  if (!canPatchFromMonitor(model, selection.id)) return [selection.id];
+  // The selected node is prepended rather than pushed, so a ducker that is also a
+  // candidate above appears once.
+  const own = duckers.includes(selection.id) ? duckers : [selection.id, ...duckers];
+  if (!canPatchFromMonitor(model, selection.id)) return own;
   const mono = outputMono(plan, selection.id);
-  return mono.via === "monitor" ? [selection.id, mono.monitorId] : [selection.id];
+  return mono.via === "monitor" ? [...own, mono.monitorId] : own;
 }
 
 /** The gate a rebuild of `host` asks before running, so it cannot land inside an IME

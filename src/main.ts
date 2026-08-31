@@ -572,8 +572,8 @@ function reflectFollow(): void {
     if (graphHost.hidden) graphDirty = true;
     else graph.repaintDirtyNodes(ids);
     for (const id of ids) consoleView.refreshStrip(id);
-    // The inspector renders ONE selection, and which controls it renders is read off
-    // that selection's endpoint nodes: a device-side Pan Link ON removes the send PAN
+    // The inspector renders ONE selection, but what it draws is read off more nodes than
+    // that selection names: a device-side Pan Link ON removes the send PAN
     // (mixSendLocks), and an unrefreshed panel leaves the removed control on screen and
     // live, writing the very address the MIDI catalog is refusing at the same instant.
     // Scoped to the nodes the panel reads, so a device sweep of an unselected node does

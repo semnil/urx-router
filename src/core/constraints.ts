@@ -222,17 +222,29 @@ export function channelDuckerOn(model: DeviceModel, plan: Plan, channelId: strin
 // makes that tap an explicit choice, so a standing warning there would be noise.
 // Returns the affected host-channel ids (the UI resolves them to labels).
 export function duckerBypassWarnings(model: DeviceModel, plan: Plan): string[] {
-  const hosts: string[] = [];
+  return duckerBypassCandidates(model, plan)
+    .filter((c) => plan.nodeParams[c.ducker]?.duckerOn === true)
+    .map((c) => c.host);
+}
+
+/** The duckers the warning above is about, WITHOUT asking whether each is currently on:
+ *  every ducker whose host channel carries that USB tap. Two callers need the same
+ *  predicate for different questions — the warning asks which of them fire now, and the
+ *  inspector's repaint footprint asks which of them could change what it draws, which is
+ *  all of them whatever state they are in: one turning on adds a warning row, and one
+ *  turning off takes its row away. Split apart, one copy would answer the tap differently
+ *  from the other and the panel would go stale exactly where they disagreed. */
+export function duckerBypassCandidates(model: DeviceModel, plan: Plan): { ducker: string; host: string }[] {
+  const out: { ducker: string; host: string }[] = [];
   for (const node of model.nodes) {
     if (node.kind !== "ducker" || !node.attachTo) continue;
-    if (plan.nodeParams[node.id]?.duckerOn !== true) continue;
     const host = node.attachTo;
     const tapped = plan.connections.some(
       (c) => parseRef(c.from).nodeId === host && directOutTarget(model, c.from, c.to) === "usb",
     );
-    if (tapped) hosts.push(host);
+    if (tapped) out.push({ ducker: node.id, host });
   }
-  return hosts;
+  return out;
 }
 
 // The analog outputs speakers are patched to. They are the only destinations

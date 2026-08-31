@@ -1082,17 +1082,35 @@ well as the two the operator starts — and **the refusal is decided before the 
 not merely before it is consumed: closing it would freeze the readback's own writes into the entry, and
 the retry the refusal invites would push them back at the unit.
 
-### 4. Scoping the inspector repaint to the selection's footprint (`main.ts` / `inspector.ts`)
+### 4. Scoping the inspector repaint to the panel's footprint (`main.ts` / `inspector.ts`)
 
 A device-side Pan Link ON is `follow: "direct"`, so it lands through the direct branch — which never
 called `refreshInspector()`. The panel renders a control whose OWNER is a different node, so the
 slider the lock had removed stayed on screen, and stayed live.
 
 A blanket call is not available: the direct branch runs at ~20 Hz and `renderInspector` opens with
-`replaceChildren`. So the repaint is scoped to the nodes the selection reads (`inspectorNodes()` in
+`replaceChildren`. So the repaint is scoped to the nodes the panel reads (`inspectorNodes()` in
 inspector.ts: a node selection reads that node, a wire reads BOTH endpoints, because the destination
 bus's BUS Type / Pan Link decide which send controls exist at all). The footprint belongs to the
 renderer, so it cannot rot as the param catalog grows. The repaint also carries focus and scroll.
+
+Not everything the panel reads belongs to the selection, and the part that does not is what the first
+version left out. DUCKER nodes are read in two places, neither of them the selection's own rows: the
+ducker-bypass warning card, which is plan-wide and is drawn for every selection including none, and
+the note under a send's controls that a PRE tap sits ahead of the host channel's Ducker — the host is
+the wire's source, but the ducker hangs off it as a node of its own, and that node is what the note
+is read from. Both were stale under external MIDI, whose Ducker on/off is the only writer that
+reaches this branch holding a ducker node; a device-side change takes the scoped/full branch, since
+no ducker param carries `follow: "direct"`.
+
+Each is narrowed to the duckers whose state could change what is drawn — the card's to the duckers it
+is ABOUT (their host channel carries the USB tap), asked of `duckerBypassCandidates`, which is the
+warning's own predicate minus the on-state, since a card appears when one turns ON; the note's to the
+selected wire's own source. Naming every ducker instead is not the cheap answer it looks like:
+`duckerOn` is a toggle, an edge binding is the default, and `toggleTarget` flips on every CC value
+`>= 64` — one knob sweep bound to it applies 64 times (measured over a 0→127 ramp; 1 in `state`
+mode). A ducker the panel does not read would repaint it at the direct branch's ~20 Hz for the whole
+sweep, which is exactly the cost the monitor narrowing above exists to avoid.
 
 The residual window — the slider under the operator's finger before the rebuild — is closed at the
 write path: `onUpdateParams` asks the same `mixSendLocks` the MIDI catalog asks. Measured: an `input`
