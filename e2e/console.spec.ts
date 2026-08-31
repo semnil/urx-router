@@ -575,7 +575,7 @@ test("a node hidden in the graph drops from the console", async ({ page }) => {
   await expect(strip(page, "CH 2")).toBeVisible();
 });
 
-test("scrolling stays inside the strip grid (no window scroll)", async ({ page }) => {
+test("scrolling stays inside the strip grid (no window scroll) @webkit", async ({ page }) => {
   const m = await page.evaluate(() => {
     const app = document.documentElement;
     const strips = document.querySelector(".con-strips") as HTMLElement;
@@ -632,7 +632,7 @@ test("switching the model rebuilds the console strip set in place", async ({ pag
   await expect(strip(page, "STEREO")).toBeVisible(); // master persists
 });
 
-test("a very short window keeps a usable fader instead of crushing it", async ({ page }) => {
+test("a very short window keeps a usable fader instead of crushing it @webkit", async ({ page }) => {
   // The head and the SENDS rack are fixed heights, so a short window (devtools
   // docked to the bottom) used to squeeze the fader zone to nothing. It now holds
   // a floor and the overflow goes to the strip grid's vertical scroll.

@@ -1,7 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
 // The GUI is browser-only (no Rust), so E2E runs against a served build.
-// Chromium alone is enough to exercise the SVG pointer interactions.
+// Chromium carries the app tier: it exercises the SVG pointer interactions, and the
+// app's own logic answers the same in either engine. What it does not carry is a
+// verdict about LAYOUT — see the `app-webkit` project below.
 //
 // It serves a PRODUCTION build (vite build + vite preview), not the dev server:
 // the dev server transforms modules on demand and can force a full page reload
@@ -56,6 +58,26 @@ export default defineConfig({
   },
   projects: [
     { name: "chromium", testIgnore: "race/**", use: { ...devices["Desktop Chrome"] } },
+    {
+      // The app tier's `@webkit`-tagged cases, in the engine the macOS build renders in.
+      // The set is one class: cases whose verdict is that a CONSTRAINED window still
+      // holds its layout — the app chrome does not scroll, a named inner container owns
+      // the overflow, and the controls that have to stay reachable stay reachable. That
+      // class is decided by CSS containment and overflow rules the two engines do not
+      // implement alike, so a Chromium-only pass says nothing about what ships: a rule
+      // that makes a strip clip its own overflow instead of handing it to the rack takes
+      // the console's vertical scroll away in WebKit and leaves Chromium's intact.
+      //
+      // Everything else stays out. A case about the app's own logic re-measures in WebKit
+      // what Chromium already settled, and a case about pointer geometry answers about
+      // Playwright's input emulation rather than about either engine. Tagged rather than
+      // listed by path, as `race-webkit` is, so a case cannot drift out of the set by
+      // being moved between files.
+      name: "app-webkit",
+      testIgnore: "race/**",
+      grep: /@webkit/,
+      use: { ...devices["Desktop Safari"] },
+    },
     {
       name: "race",
       testDir: "e2e/race",

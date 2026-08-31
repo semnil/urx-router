@@ -107,7 +107,7 @@ test.describe("plain browser", () => {
     await expect(page.locator("html")).not.toHaveClass(/fine-mode/);
   });
 
-  test("a shrunken window scrolls the grid while Close stays pinned in view", async ({ page }) => {
+  test("a shrunken window scrolls the grid while Close stays pinned in view @webkit", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 420 });
     await page.click("#btn-prefs");
     const box = page.locator("#prefs-box");
