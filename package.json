@@ -19,6 +19,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:app": "playwright test --project=chromium",
+    "test:e2e:app:webkit": "playwright test --project=app-webkit",
     "test:e2e:coverage": "cross-env E2E_COVERAGE=1 playwright test --project=chromium",
     "test:e2e:race": "playwright test --project=race",
     "test:e2e:race:webkit": "playwright test --project=race-webkit",

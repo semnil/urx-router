@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, scrollsByWheel } from "./fixtures";
 import type { Page } from "./fixtures";
 import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
@@ -107,7 +107,7 @@ test.describe("plain browser", () => {
     await expect(page.locator("html")).not.toHaveClass(/fine-mode/);
   });
 
-  test("a shrunken window scrolls the grid while Close stays pinned in view", async ({ page }) => {
+  test("a shrunken window scrolls the grid while Close stays pinned in view @webkit", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 420 });
     await page.click("#btn-prefs");
     const box = page.locator("#prefs-box");
@@ -124,6 +124,9 @@ test.describe("plain browser", () => {
     });
     expect(metrics.boxClient).toBeLessThanOrEqual(metrics.viewport);
     expect(metrics.gridScroll).toBeGreaterThan(metrics.gridClient);
+    // Content taller than its box is not the same fact as content the operator can REACH:
+    // a grid that clips reports both heights the same way. The wheel is what separates them.
+    await scrollsByWheel(page, page.locator(".prefs-grid"), "y");
     // Close is pinned below the grid — visible and clickable without scrolling.
     const close = page.locator("#prefs-modal .consent-btn-secondary");
     const closeBox = await close.boundingBox();

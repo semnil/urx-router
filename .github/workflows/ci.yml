@@ -339,6 +339,49 @@ jobs:
           path: test-results/
           retention-days: 7
 
+  # The app tier's layout invariants, in the engine the macOS build renders in
+  # (--project=app-webkit). What belongs in that set, and why the rest of the tier does
+  # not, is stated in playwright.config.ts and not restated here. It is a handful of
+  # cases, so what this job costs is its fixed half — the image, the install and the two
+  # vite builds — against a class of defect the chromium tier cannot see at all: a rule
+  # that clips a strip's own overflow takes the console's vertical scroll away in WebKit
+  # and leaves Chromium's intact, so the ordinary suite passes on the broken bundle.
+  #
+  # Its own job rather than a fourth shard of `e2e`: WebKit is a separate browser
+  # download, and the shards would each pay for it to run nothing in it.
+  e2e-webkit:
+    needs: preflight
+    if: needs.preflight.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # The browsers and their system libraries come from the image rather than from the
+    # runner's Ubuntu mirror, for the reasons .github/actions/install-browsers carries.
+    # WebKit is the browser those reasons were written about.
+    container: mcr.microsoft.com/playwright:v${{ needs.preflight.outputs.version }}-noble
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      # Already in the image; kept as the self-healing no-op described in the action.
+      - uses: ./.github/actions/install-browsers
+        with:
+          browser: webkit
+          with-deps: "false"
+      - run: pnpm test:e2e:app:webkit
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: playwright-traces-webkit
+          path: test-results/
+          retention-days: 7
+
   # The single context this workflow contributes to the branch ruleset (.github/required-checks.json).
   # It reports on every pull request, including a doc-only one where everything above it
   # skipped — which is the point: a required check that does not report cannot be waited
@@ -352,7 +395,7 @@ jobs:
     # `e2e` is one entry here whatever the matrix does: a matrix job's result is the
     # aggregate, failure if any shard failed, so the gate needs no per-shard knowledge and
     # a fourth shard does not have to be remembered here.
-    needs: [preflight, frontend, rust, e2e]
+    needs: [preflight, frontend, rust, e2e, e2e-webkit]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
@@ -368,6 +411,9 @@ jobs:
           FRONTEND: ${{ needs.frontend.result }}
           RUST: ${{ needs.rust.result }}
           E2E: ${{ needs.e2e.result }}
+          # Bracketed, not dotted: a hyphen is not a legal character in an expression's
+          # property path, and `needs.e2e-webkit.result` parses as a subtraction.
+          E2E_WEBKIT: ${{ needs['e2e-webkit'].result }}
         run: |
-          echo "::error::CI did not pass — preflight=${PREFLIGHT} frontend=${FRONTEND} rust=${RUST} e2e=${E2E}"
+          echo "::error::CI did not pass — preflight=${PREFLIGHT} frontend=${FRONTEND} rust=${RUST} e2e=${E2E} e2e-webkit=${E2E_WEBKIT}"
           exit 1

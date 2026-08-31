@@ -106,6 +106,18 @@ const PROSE_TOKENS = new Map([
   // listing: one annotates itself something other than a skip, the other is not there at all.
   ["test.fixme", "a Playwright declaration, named as itself"],
   ["test.skip()", "a Playwright declaration, named as itself"],
+  // Three from the WebKit-tier row: two Playwright project names and the tag that selects
+  // one of them. None is an entity in any tree — the projects are declared in
+  // playwright.config.ts under a `name:` key, and the tag is a fragment of a test title.
+  ["app-webkit", "a Playwright project, named as itself"],
+  ["chromium", "a Playwright project, named as itself"],
+  ["@webkit", "a title tag, named as what selects a project's cases"],
+  // Three from the same row's other half: two DOM properties and a CSS declaration,
+  // named as the two readings that cannot tell a scrollable box from a clipped one.
+  // None is an entity in any tree.
+  ["scrollHeight > clientHeight", "a DOM comparison, named as a reading that holds either way"],
+  ["scrollTop", "a DOM property, named as the other reading that holds either way"],
+  ["overflow: hidden", "a CSS declaration, named as the regression both readings miss"],
   ['grep -rn "window.__urx" src/', "an instruction to the reader, not a path"],
   // The CDP row names what it drives. None of these is a file in any tree: the first two
   // are Playwright's and CSS's own vocabulary, the last three are DevTools-protocol

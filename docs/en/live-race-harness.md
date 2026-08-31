@@ -588,6 +588,17 @@ it into:
 | `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside) |
 | `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways by measured duration (below), on every PR except a documentation-only one, and on the version bump |
 | `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job, on the same condition |
+| `app-webkit` — the app tier's layout invariants | — | — | `ci.yml`, its own job, on the same condition as `chromium` |
+
+`app-webkit` carries no figure because no figure cuts it. Its boundary is the **engine**, not the
+time: the cases in it are the ordinary tier's own, re-run in the engine the macOS build renders in
+because their verdict is about a layout rule the two engines do not implement alike — the app chrome
+must not scroll, a named inner container must own the overflow, and what has to stay reachable must
+stay reachable. A rule that makes a strip clip its own overflow rather than hand it to the rack takes
+the console's vertical scroll away in WebKit and leaves Chromium's intact, so a Chromium-only pass is
+no verdict on what ships. What the job spends is its fixed half — the image, the install and the two
+builds — rather than its handful of cases, which is also why it is not a fourth shard of the ordinary
+tier: WebKit is a separate browser download and each shard would pay for it to run nothing in it.
 
 **Read the ordinary tier's figure as a range rather than a budget.** The same 428 cases measured 5.2
 minutes in another run the same day, a fifth under the reading above — runner variance, not a change in
