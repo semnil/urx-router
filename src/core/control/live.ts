@@ -319,9 +319,11 @@ export class LiveSync {
    * read waits it out rather than answering from inside its staleness window; pass
    * nothing for a whole-device read, where every address is in scope.
    *
-   * `mustAnnounce` is deliberately empty. It is the flush's obligation and the flush
-   * already armed it for these same writes — arming a second watch here would report
-   * one silent write twice and arm two reconciles for it.
+   * `mustAnnounce` is deliberately empty: the flush arms the watch for its own writes,
+   * so a second one here would report one silent write twice and arm two reconciles for
+   * it. The flush arms it in two places — beside the refetch epilogue for the addresses
+   * that epilogue's read does not cover, and after the write loop for a flush that has
+   * no epilogue at all.
    *
    * Expired entries are dropped as they are met, so the map cannot grow across a long
    * session on its own.
@@ -931,6 +933,23 @@ export class LiveSync {
         // await — on the read node or any other — stays a diff. Null = the plan it read
         // into is gone, and there is nothing a snapshot could describe.
         if (deviceView) this.capture(deviceView, since);
+      }
+      // A flush with NEITHER epilogue — the ordinary edit: a fader, a mute, a pan, a
+      // rename — issues no read at all, so nothing here would ever notice the unit
+      // silently dropping one of its writes. The two epilogues each cover their own: a
+      // converge re-reads the whole write scope and re-sends the residual, and the
+      // refetch hands its own `mustAnnounce` to the settle above. This is the third case,
+      // and it gets the watch without the wait: there is no read to hold open, and the
+      // report is what arms follow's idle full sweep.
+      //
+      // `changed` is the obligation test the settle states: the write went out only
+      // because the snapshot held a DIFFERENT value, so the unit must move and must say
+      // so. A write the snapshot had no entry for may be a no-op, announces nothing, and
+      // must stay out or every flush would order a sweep.
+      if (!sideEffect && !(refetch.size && this.hooks.refetchNodes)) {
+        const announce = new Set<number>();
+        for (const [k, w] of writes) if (w.changed) announce.add(k);
+        if (announce.size) writeSettle.watch(new Map([...writes].map(([k, w]) => [k, w.mark])), announce);
       }
       // Before onSent, and unconditional on `sent`. A converge cannot be the reason — its
       // flag is set after `sent++`, so a flush that sent nothing never reaches one — but

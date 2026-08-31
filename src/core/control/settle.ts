@@ -179,6 +179,27 @@ export class WriteSettle {
     return this.seq;
   }
 
+  /** Watch a batch of writes for an announcement WITHOUT waiting for one — for a flush
+   *  that issues no read of its own, so it has nothing to hold open and nothing to be
+   *  answered from. The obligation is the same as `settle`'s `mustAnnounce`: every
+   *  address here is one the caller sent a value the device did not hold, so the unit
+   *  must change and must say so, and one still silent at the bound is a write that went
+   *  nowhere. `settle` would do this too, but only as a side effect of a wait it would
+   *  then have to be given an empty `mustSettle` to skip — which reads as a settle that
+   *  settles nothing and rests on that emptiness meaning "do not wait". */
+  watch(
+    written: ReadonlyMap<number, number>,
+    mustAnnounce: ReadonlySet<number>,
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): void {
+    const { timeoutMs = SETTLE_TIMEOUT_MS, signal } = opts;
+    // Same disable switch the settle honours: with the wait off there is no window for
+    // an announcement to arrive in, so judging one at the bound would report every
+    // write as silent.
+    if (timeoutMs <= 0 || !mustAnnounce.size) return;
+    this.watchAnnouncements(written, mustAnnounce, timeoutMs, signal);
+  }
+
   /** Record an incoming device notify. Called before the echo test — the answer to
    *  our own write IS an echo, so a settle fed after that filter would never see the
    *  one notify it is waiting for. */

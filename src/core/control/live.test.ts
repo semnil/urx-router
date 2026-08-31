@@ -1720,6 +1720,64 @@ describe("LiveSync recentPending", () => {
     expect(scoped.mustAnnounce.size).toBe(0);
   });
 
+  // The claim above is only true because the flush arms one for a flush with NO epilogue
+  // too. It used to arm one solely beside the refetch read, so an ordinary edit — a
+  // fader, a mute, a pan, a rename, every flush carrying no sideEffect head — had no
+  // watch at all: a write the unit silently dropped left the plan and the snapshot
+  // agreeing on a value the device does not hold, with nothing scheduled to notice.
+  // Follow's idle full sweep is the repair, and this report is the only thing that arms
+  // it from the write side.
+  it("reports an ordinary write the unit never announced", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      // A snapshot that already HOLDS a value for the address is what makes the write an
+      // obligation: the unit must move, so it must announce. begin() takes it from the
+      // plan, then the edit diffs against it.
+      live.begin();
+      setCh1Fader(plan, -6);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+      const [paramId, x, y] = vi.mocked(vdSet).mock.calls[0];
+      const k = addrKey(paramId, x, y);
+
+      // Nothing is reported before the bound: an announcement still in flight is not a
+      // silent write, and reporting it here would order a sweep for every edit.
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS - 1);
+      expect(reports).toEqual([]);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(reports.length).toBe(1);
+      expect(reports[0].has(k)).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
+  it("reports nothing when the unit did announce the write", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      live.begin();
+      setCh1Fader(plan, -6);
+      // The unit answers its own write, which is what the watch is looking for. Fed from
+      // inside vdSet so the notify lands AFTER that address's own mark, as a real one does.
+      vi.mocked(vdSet).mockImplementation(async (paramId: number, x: number, y: number, value: number) => {
+        writeSettle.note({ paramId, x, y, value });
+      });
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 10);
+      expect(reports).toEqual([]);
+    } finally {
+      release();
+    }
+  });
+
   it("forgets a write once it is older than the settle window, and at a session boundary", async () => {
     const plan = basePlan();
     const live = liveFor(plan);
