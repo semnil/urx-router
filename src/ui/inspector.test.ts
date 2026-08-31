@@ -110,6 +110,29 @@ describe("inspectorNodes", () => {
     expect(inspectorNodes(u44v, plan, nodeSel("ch1"))).not.toContain(others[0]);
   });
 
+  // The same rule applied to the note's own half. Its gate is the WIRE's, not the source
+  // channel's, so every other wire out of a ducker-carrying channel must leave that ducker
+  // out — a POST send and a STEREO send draw no note whatever the Ducker does.
+  it("does NOT name a wire's source ducker where the note cannot be drawn", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams[DUCKER] = { ...plan.nodeParams[DUCKER], duckerOn: true };
+    const named = (from: string, to: string): boolean => inspectorNodes(u44v, plan, connSel(from, to)).includes(DUCKER);
+    const send = plan.connections.find((c) => c.from === HOST + ":out" && c.to === "bus.mix1:in")!;
+
+    // The wire the note IS drawn under — the positive control, so the negatives below are
+    // this gate and not a footprint that names no ducker at all.
+    send.params = { ...send.params, tap: "pre" };
+    expect(named(HOST + ":out", "bus.mix1:in")).toBe(true);
+    // POST on the very same wire: the note is gone, so its ducker is out of the footprint.
+    send.params = { ...send.params, tap: "post" };
+    expect(named(HOST + ":out", "bus.mix1:in")).toBe(false);
+    // The channel's STEREO send carries no tap at all (sendHasTap is false for bus.stereo),
+    // and its Rec Point tap to microSD is not a send.
+    expect(named(HOST + ":out", "bus.stereo:in")).toBe(false);
+    for (const c of plan.connections.filter((w) => w.from === HOST + ":out" && w.to.startsWith("out.sdrec")))
+      expect(named(c.from, c.to)).toBe(false);
+  });
+
   it("names a selected ducker once, not twice", () => {
     // Both halves would offer out.ducker1 here: it is a bypass candidate AND the selection.
     expect(inspectorNodes(u44v, tapped(), nodeSel(DUCKER))).toEqual([DUCKER]);

@@ -229,10 +229,11 @@ export function duckerBypassWarnings(model: DeviceModel, plan: Plan): string[] {
 
 /** The duckers the warning above is about, WITHOUT asking whether each is currently on:
  *  every ducker whose host channel carries that USB tap. Two callers need the same
- *  predicate for opposite reasons — the warning asks which of them fire now, and the
+ *  predicate for different questions — the warning asks which of them fire now, and the
  *  inspector's repaint footprint asks which of them could change what it draws, which is
- *  a question about the ones that are off. Split apart, one copy would answer the tap
- *  differently from the other and the panel would go stale exactly where they disagreed. */
+ *  all of them whatever state they are in: one turning on adds a warning row, and one
+ *  turning off takes its row away. Split apart, one copy would answer the tap differently
+ *  from the other and the panel would go stale exactly where they disagreed. */
 export function duckerBypassCandidates(model: DeviceModel, plan: Plan): { ducker: string; host: string }[] {
   const out: { ducker: string; host: string }[] = [];
   for (const node of model.nodes) {

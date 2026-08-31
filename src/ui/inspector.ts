@@ -145,12 +145,30 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
   // it off the card is not drawn and its duckers are named anyway, which over-names rather
   // than under-names — a rebuild that changes nothing, against a stale panel.
   const duckers = duckerBypassCandidates(model, plan).map((c) => c.ducker);
-  const duckerOf = (host: string): string[] =>
-    model.nodes.filter((n) => n.kind === "ducker" && n.attachTo === host && !duckers.includes(n.id)).map((n) => n.id);
   if (!selection) return duckers;
   if (selection.type !== "node") {
-    const from = parseRef(selection.from).nodeId;
-    return [from, parseRef(selection.to).nodeId, ...duckers, ...duckerOf(from)];
+    const { from, to } = selection;
+    const host = parseRef(from).nodeId;
+    // Asked of the wire, not just of its source: the note is drawn under a FIXED wire
+    // carrying a tap, and only on PRE, so every other wire out of the same channel would
+    // name its ducker for a note it cannot draw.
+    //
+    // The answer reads a connection param, and stays current because nothing caches it —
+    // main.ts recomputes this on each reflect — and because each writer of a tap already
+    // repaints: `onUpdateParams` calls refreshInspector for a `tap` patch, the MIDI tap
+    // control is owned by the source channel (midi/controls.ts stamps `node: id`), which
+    // is named below unconditionally, and no tap param carries follow: "direct", so a
+    // device-side change lands on the scoped/full branch that refreshes wholesale.
+    const drawsNote =
+      isFixedConnection(model, from, to) &&
+      sendHasTap(model, from, to) &&
+      plan.connections.find((c) => c.from === from && c.to === to)?.params?.tap === "pre";
+    const own = drawsNote
+      ? model.nodes
+          .filter((n) => n.kind === "ducker" && n.attachTo === host && !duckers.includes(n.id))
+          .map((n) => n.id)
+      : [];
+    return [host, parseRef(to).nodeId, ...duckers, ...own];
   }
   // An analog output's MONO row reports a MONITOR bus's switch, so a change on a node
   // the panel is not "showing" moves what it draws — exactly the case this function
