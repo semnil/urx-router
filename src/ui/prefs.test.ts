@@ -11,7 +11,8 @@ vi.mock("../core/platform", () => ({ isTauri: () => mocks.desktop }));
 vi.mock("../core/env", () => ({ DEMO: false }));
 vi.mock("./fine", () => ({ resetFine: mocks.resetFine }));
 
-import { getSettings, resetSettingsCache } from "../core/settings";
+import { getSettings, resetSettingsCache, SETTINGS_DEFAULTS, updateSettings } from "../core/settings";
+import type { AppSettings } from "../core/settings";
 import { setLang, t } from "../i18n";
 import { PrefsPanel, type PrefsHooks, type UpdateCheckOutcome } from "./prefs";
 
@@ -224,5 +225,82 @@ describe("PrefsPanel", () => {
 
     panel.requestClose();
     expect(panel.isOpen()).toBe(false);
+  });
+});
+
+// Every row renders from the value in the store, and the panel rebuilds itself on apply,
+// so a row rendered from a constant instead is not merely wrong to look at: the widget
+// drops a press on the button it already shows as selected, and the operator is left with
+// a switch that does nothing. Writing the key is the other half and is pressed above; this
+// is the half a press cannot reach, because a press on a row already showing the value it
+// would write is the press that gets dropped.
+//
+// A table rather than a case per row, and its own coverage is asserted against
+// SETTINGS_DEFAULTS: the risk is per row, and a preference added tomorrow cannot arrive
+// without a row here.
+
+type RowPin = {
+  key: keyof AppSettings;
+  label: () => string;
+  /** A button group: the index that must read aria-pressed="true". */
+  pressed?: number;
+  /** A dropdown: the value it must show. */
+  value?: string;
+};
+
+const READ_BACK: RowPin[] = [
+  { key: "deviceScope", label: () => t().prefs.scope, pressed: 1 },
+  { key: "saveScope", label: () => t().prefs.saveScope, pressed: 1 },
+  { key: "warnFirmware", label: () => t().prefs.warnFirmware, pressed: 1 },
+  { key: "warnRate", label: () => t().prefs.warnRate, pressed: 1 },
+  { key: "warnDucker", label: () => t().prefs.warnDucker, pressed: 1 },
+  { key: "fineLatch", label: () => t().prefs.fine, pressed: 1 },
+  { key: "wheelSteps", label: () => t().prefs.wheel, value: "4" },
+  { key: "exportScale", label: () => t().prefs.exportScale, value: "3" },
+  { key: "exportTheme", label: () => t().prefs.exportBg, value: "light" },
+  { key: "recentMax", label: () => t().prefs.recent, value: "12" },
+  { key: "updateCheck", label: () => t().prefs.updateLaunch, pressed: 1 },
+  { key: "preventSleep", label: () => t().prefs.preventSleep, pressed: 0 },
+];
+
+/** The stored record every row below is read against — each key away from its default. */
+const STORED: AppSettings = {
+  deviceScope: "scene",
+  saveScope: "scene",
+  updateCheck: false,
+  warnFirmware: false,
+  warnRate: false,
+  warnDucker: false,
+  wheelSteps: 4,
+  fineLatch: true,
+  preventSleep: true,
+  exportScale: 3,
+  exportTheme: "light",
+  recentMax: 12,
+};
+
+describe("PrefsPanel rows read the stored value back", () => {
+  it("renders every row from the store, not from a constant", () => {
+    expect(READ_BACK.map((r) => r.key).sort()).toEqual(Object.keys(SETTINGS_DEFAULTS).sort());
+    for (const r of READ_BACK) expect(STORED[r.key], r.key).not.toEqual(SETTINGS_DEFAULTS[r.key]);
+
+    const { panel } = install();
+    panel.open();
+    updateSettings(STORED);
+    panel.refresh();
+
+    for (const r of READ_BACK) {
+      const el = row(r.label());
+      if (r.value !== undefined) {
+        expect(el.querySelector("select")!.value, r.key).toBe(r.value);
+        continue;
+      }
+      const buttons = [...el.querySelectorAll<HTMLButtonElement>(".prefs-toggle button")];
+      expect(buttons.length, r.key).toBeGreaterThan(1);
+      expect(
+        buttons.map((b) => b.getAttribute("aria-pressed")),
+        r.key,
+      ).toEqual(buttons.map((_, i) => String(i === r.pressed)));
+    }
   });
 });
