@@ -356,7 +356,8 @@ describe("WriteSettle unannounced report", () => {
 
   // The notify for a write can land BEFORE the flush arms its watch — the flush awaits a
   // vdSet per command and arms once at the end. That answer still counts, or an ordinary
-  // flush would report every write it made.
+  // flush would report every write it made. The order here is the flush's own: take the
+  // mark, write, register the obligation, and only later arm.
   it("counts an announcement that arrived before the watch was armed", async () => {
     const { settle, reported } = armed();
     const written = wrote(settle, ADDR);
@@ -364,6 +365,32 @@ describe("WriteSettle unannounced report", () => {
     settle.watch(written, new Set([ADDR]));
     await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
     expect(reported).toEqual([]);
+  });
+
+  // Nothing may accumulate for the life of a session: writeSettle is module state on one
+  // device link, and a drag appends a notify position per flush. Bounded by TIME, so the
+  // list holds what a watch still counting down could still be answered from and no more.
+  it("does not grow its notify list across a long run of answered writes", async () => {
+    const { settle, reported } = armed();
+    const held = (): number =>
+      ((settle as unknown as { positions: Map<number, unknown[]> }).positions.get(ADDR) ?? []).length;
+    for (let n = 0; n < 300; n++) {
+      settle.watch(wrote(settle, ADDR), new Set([ADDR]));
+      settle.note(NOTIFY);
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
+    }
+    expect(reported).toEqual([]);
+    expect(held()).toBeLessThan(20);
+  });
+
+  it("does not grow it for an address only the device is talking about", async () => {
+    const { settle } = armed();
+    for (let n = 0; n < 300; n++) {
+      settle.note(NOTIFY);
+      await vi.advanceTimersByTimeAsync(10);
+    }
+    const held = ((settle as unknown as { positions: Map<number, unknown[]> }).positions.get(ADDR) ?? []).length;
+    expect(held).toBeLessThan(200);
   });
 
   it("drops the report when the surrounding operation is aborted", async () => {

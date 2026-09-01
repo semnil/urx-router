@@ -1813,6 +1813,52 @@ describe("LiveSync recentPending", () => {
     }
   });
 
+  // A rename sharing its flush with a converge head. Neither epilogue covers names — the
+  // converge re-reads numeric commands — so before the watch was lifted out of the
+  // epilogue guard this rename was watched by nothing. An external MIDI control can send
+  // a bank-resetting selector while a name is being typed, so the two do meet.
+  it("reports a silent rename that shared a flush with a converge head", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      live.begin();
+      plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], busType: 1 };
+      plan.nodeNames = { ...plan.nodeNames, ch1: "RENAMED" };
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      expect(vi.mocked(vdSetStr)).toHaveBeenCalledTimes(1);
+      const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+      const k = addrKey(param, 0, y);
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+      expect(reports.some((r) => r.has(k))).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
+  it("says nothing about a rename the unit announced in a converge flush", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      live.begin();
+      plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], busType: 1 };
+      plan.nodeNames = { ...plan.nodeNames, ch1: "RENAMED" };
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+      const k = addrKey(param, 0, y);
+      writeSettle.note({ paramId: param, x: 0, y, value: 0 });
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+      expect(reports.some((r) => r.has(k))).toBe(false);
+    } finally {
+      release();
+    }
+  });
+
   it("reports nothing when the unit announced the rename", async () => {
     const plan = basePlan();
     const live = liveFor(plan);

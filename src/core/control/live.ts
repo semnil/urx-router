@@ -796,11 +796,16 @@ export class LiveSync {
         // Before the write, for the reason the numeric loop takes one: only a notify after
         // it can be this write's announcement.
         const nameMark = writeSettle.mark();
+        // A node rename carries neither `name` nor `node` (translate.NameWrite): it has no
+        // catalog row, so it can never be a sideEffect head and nothing reads it back. The
+        // catalogued string writes — the SSMCS preset — are read by their own refetch, and
+        // watching them here as well would report one silence twice.
+        const nameAddr = addrKey(w.param, 0, w.y);
         await vdSetStr(w.param, 0, w.y, value);
         if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
         this.notePending(this.pendingNames, k, value);
-        nameWrites.set(addrKey(w.param, 0, w.y), nameMark);
+        if (w.name === undefined) nameWrites.set(nameAddr, nameMark);
         sent++;
         // A string write can be a sideEffect head too: the SSMCS preset recomputes the strip
         // exactly as the morphing knob does. Only REFETCH is consulted — no string param is a
@@ -965,19 +970,20 @@ export class LiveSync {
           marks.set(k, w.mark);
           if (w.changed) announce.add(k);
         }
-        // Renames go in beside them. The unit announces a name change on the name address
-        // itself and says nothing for a write of the value it already holds — the same pair
-        // of rules the numeric side has — and the loop above already skipped the second
-        // case, so every entry here is owed an announcement. Leaving them out was a hole
-        // the comment above did not have: the plan and the name snapshot both move to the
-        // new name, so a dropped write leaves no diff for a later flush to re-send and the
-        // unit keeps the old name with nothing pointing at it.
-        for (const [k, mark] of nameWrites) {
-          marks.set(k, mark);
-          announce.add(k);
-        }
         if (announce.size) writeSettle.watch(marks, announce);
       }
+      // Renames are watched WHATEVER the epilogue, because neither epilogue covers them:
+      // the converge re-reads numeric commands, and the refetch is the one caller that
+      // asks applyNodeState to skip the names (main.ts). So a rename sharing a flush with
+      // a COMP 1-knob — which an external MIDI control can send while a name is being
+      // typed — fell outside the guard above and was watched by nothing. The unit
+      // announces a name change on the name address and stays silent for a write of the
+      // value it already holds, the same pair of rules the numeric side has, and the loop
+      // skips the second case before writing, so every entry here is owed an announcement.
+      //
+      // Left unwatched a dropped rename is invisible twice: the plan and the name snapshot
+      // both move to the new name, so no later flush finds a diff to re-send.
+      if (nameWrites.size) writeSettle.watch(nameWrites, new Set(nameWrites.keys()));
       // Before onSent, and unconditional on `sent`. A converge cannot be the reason — its
       // flag is set after `sent++`, so a flush that sent nothing never reaches one — but
       // `resync()` captures OUTSIDE any flush (the caller runs it after every device-side

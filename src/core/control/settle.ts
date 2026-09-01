@@ -170,7 +170,16 @@ export class WriteSettle {
   // sent more often than an announcement comes back, so consecutive moves of one fader
   // overlap that way in ordinary use. A notify may therefore satisfy AT MOST ONE
   // obligation, which needs the positions kept rather than collapsed.
-  private readonly positions = new Map<number, number[]>();
+  //
+  // Kept on a wall clock as well as a position, so the list is bounded by TIME rather than
+  // by the length of the session: a watch is armed in the same flush as the write it
+  // answers for and fires one window later, so a notify older than a few windows can no
+  // longer be the answer to anything unjudged. Trimming by LENGTH would not do — that
+  // drops the newest or the oldest without knowing which, and dropping a recent one puts
+  // back the case where an announcement that arrived before its watch was armed goes
+  // uncounted. `writeSettle` is module state on one device link, and a drag appends per
+  // flush, so an untrimmed list is a session-long leak and a linear scan that grows with it.
+  private readonly positions = new Map<number, Array<{ pos: number; at: number }>>();
   private readonly claimed = new Map<number, number>();
 
   /** Register the notify source; the returned call releases it. Held by whoever owns
@@ -218,7 +227,17 @@ export class WriteSettle {
     this.seen.set(k, { value: p.value, at: ++this.seq });
     let ps = this.positions.get(k);
     if (!ps) this.positions.set(k, (ps = []));
-    ps.push(this.seq);
+    ps.push({ pos: this.seq, at: Date.now() });
+    // Several windows back, so a watch that is still counting down cannot lose its answer.
+    // The consumed prefix goes with it: `claimed` is an index into this list, so it moves
+    // down by however many were dropped.
+    const cutoff = Date.now() - SETTLE_TIMEOUT_MS * 4;
+    let drop = 0;
+    while (drop < ps.length - 1 && ps[drop].at < cutoff) drop++;
+    if (drop) {
+      ps.splice(0, drop);
+      this.claimed.set(k, Math.max(0, (this.claimed.get(k) ?? 0) - drop));
+    }
     for (const w of this.waiters) {
       // The LAST announcement wins, unconditionally. A second notify for one address
       // inside one window is the unit correcting itself (a quantise arriving after the
@@ -330,7 +349,7 @@ export class WriteSettle {
         // out, nothing announced this one.
         const ps = this.positions.get(k) ?? [];
         let i = this.claimed.get(k) ?? 0;
-        while (i < ps.length && ps[i] <= at) i++;
+        while (i < ps.length && ps[i].pos <= at) i++;
         if (i < ps.length) this.claimed.set(k, i + 1);
         else {
           this.claimed.set(k, i);
