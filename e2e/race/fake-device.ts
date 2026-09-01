@@ -593,12 +593,20 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // Two things are captured when the write is APPLIED rather than read again when the
       // timer fires. The staleness entry, by identity, so a later write's window is not
       // closed by an earlier write's announcement. And the VALUE, because a notify reports
-      // the change it belongs to — two writes inside one window produce two notifies
-      // carrying their own values, in order. Read lazily, the first write's announcement
-      // carries the SECOND write's value and arrives before that write's ack, so the app
-      // sees a value its snapshot cannot hold yet, calls it a device-side change, and
-      // applies it over whatever the operator has moved to since. (Measured against the
-      // app: a 240-detent key train landed 5-14 dB off.)
+      // the change it belongs to. Read lazily, an announcement carries a LATER write's
+      // value and arrives before that write's ack, so the app sees a value its snapshot
+      // cannot hold yet, calls it a device-side change, and applies it over whatever the
+      // operator has moved to since. (Measured against the app: a 240-detent key train
+      // landed 5-14 dB off.)
+      //
+      // A write SUPERSEDED before its announcement went out is never announced: the unit
+      // reports the value it ended up holding and says nothing about what it passed
+      // through, so a run of writes to one address is answered by ONE notify carrying the
+      // last of them. Modelled by cancelling the pending timer, which is the same
+      // statement — a timer that has not fired is an announcement the device has not
+      // emitted, and one already out is past recall and stays overtakeable. Emitting one
+      // per write instead lets an implementation that expects an announcement per write
+      // pass here and order a whole-device sweep per flush against the unit.
       //
       // ONE function for both paths, dispatched on the value's own type — which is
       // already this file's model of a device value (`Stale.value` is `number |
@@ -607,16 +615,23 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // sat in a comment beside a twin nobody diffed against the numeric one. Two
       // copies of the ack anchor and the window-closing rule would recreate exactly
       // that, and the numeric copy is the one people edit.
+      const pendingAnnounce = new Map<string, ReturnType<typeof setTimeout>>();
       const announce = (k: string, armed: Stale | undefined, value: number | string): void => {
         const [p, x, y] = k.split(":").map(Number);
-        setTimeout(() => {
-          if (armed && fake.stale[k] === armed) {
-            armed.left = 0;
-            armed.notified = true;
-          }
-          if (typeof value === "string") emitNameNotify(p, x, y, value);
-          else fake.pushNotify([[p, x, y, value]], "device");
-        }, config.announceMs);
+        const superseded = pendingAnnounce.get(k);
+        if (superseded !== undefined) clearTimeout(superseded);
+        pendingAnnounce.set(
+          k,
+          setTimeout(() => {
+            pendingAnnounce.delete(k);
+            if (armed && fake.stale[k] === armed) {
+              armed.left = 0;
+              armed.notified = true;
+            }
+            if (typeof value === "string") emitNameNotify(p, x, y, value);
+            else fake.pushNotify([[p, x, y, value]], "device");
+          }, config.announceMs),
+        );
       };
       // `nth` counts EVERY call of that command, refused ones included, so two refusals
       // stacked on one command fire on the calls their numbers name. Returning at the

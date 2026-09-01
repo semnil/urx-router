@@ -25,7 +25,7 @@
     "e2e/race/t2c-shape-change.spec.ts": 1,
     "e2e/race/t2e-shape-change.spec.ts": 1,
     "e2e/race/t2f-shape-change.spec.ts": 1,
-    "e2e/race/t3-undo.spec.ts": 4,
+    "e2e/race/t3-undo.spec.ts": 3,
     "e2e/race/t3b-undo.spec.ts": 1,
     "e2e/race/t4-midi.spec.ts": 1,
     "e2e/race/t4b-midi.spec.ts": 2,

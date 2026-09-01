@@ -403,6 +403,28 @@ device-side change, wrote a superseded value back into the plan, and the idle re
 undo entry. `live.ts` now keeps the writes it has been acked for but not yet seen announced, and the case that
 deliberately raises `announceMs` above 120 is `late echo of an overtaken write` in `t3-undo.spec.ts`.
 
+And announcements **merge forward**. A write superseded by a later write to the same address *before its
+announcement went out* is never announced: the unit reports the value it ended up holding and says nothing about
+what it passed through, so a run of writes to one address is answered by ONE notify carrying the last of them
+(measured on a URX44V, `probe-overlap-announce{,2}.mjs`: 21 of 21 held overlaps across two encodings, and a triple
+announces once — a row whose later write did NOT beat the first announcement onto the wire is two serialised writes
+and is excluded rather than read as evidence). The fake models it by cancelling the pending timer, which is the same
+statement: a timer that has not fired is an announcement the device has not emitted, and one already out is past
+recall. Emitting one per write instead is how `settle.ts` came to ship a judge that expected an announcement per
+obliged write: a drag flushes more often than an announcement comes back, so every move but the last reported as a
+write that went nowhere and armed a whole-device sweep of its own, and the harness had no way to say so. What the
+measurement does NOT separate is which ack the surviving announcement is anchored on — the gaps that hold an overlap
+(0-27 ms) are far smaller than the spread of the announcement delay itself (20-405 ms), so the two anchors'
+distributions overlap.
+
+This is also what the overtake above has to be spelled out about, because merging is what bounds it. An overtake is a
+WINDOW rather than merely a late announcement — between the superseding write's ISSUE, where the app's snapshot
+moves, and its ACK, where the fake cancels — and that window is exactly `latency.set` wide, so at the default of 0
+there is none and no overtake can happen at all. `late echo of an overtaken write` therefore sets a set latency of
+its own, and ASSERTS that the first write's announcement both went out and arrived after the second write was
+issued. Without that assertion it passes on a run where nothing was overtaken: every other assertion in it says
+nothing went wrong, and nothing going wrong is also what an empty run looks like.
+
 **Coercion is deliberately not modelled at all.** `diverge` bends READS and leaves `mem` alone, so nothing the unit
 reports has moved and there is nothing for it to announce; making it announce its asserted value instead would be a
 notify carrying a value the app never sent, which to the app is a DEVICE-SIDE CHANGE rather than a coercion, and it
