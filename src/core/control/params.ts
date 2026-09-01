@@ -1046,27 +1046,6 @@ const D_GAIN_URX22: Record<string, number> = {
 export const dGainParam = (modelId: string, nodeId: string): number | undefined =>
   (modelId === "URX22" ? D_GAIN_URX22 : D_GAIN_URX44V)[nodeId];
 
-/** Every id either map uses, for the announcement rule below. Derived rather than
- *  listed: a model whose map moves must not leave a stale copy here. */
-const D_GAIN_IDS: ReadonlySet<number> = new Set([...Object.values(D_GAIN_URX44V), ...Object.values(D_GAIN_URX22)]);
-
-/** The shared engine arrays behind the insert-FX and FX editors, by the names their
- *  VALUE writes carry. The selectors and the type heads are not here: those announce,
- *  and they carry a sideEffect of their own. */
-const SILENT_WRITE_NAMES: ReadonlySet<string> = new Set(["INSERT_FX_EFFECT", "FX_EFFECT_PARAM"]);
-
-/**
- * Whether a write to this address is one the unit ANNOUNCES. False for two families the
- * device is recorded as never announcing: D.Gain, and the shared engine arrays. A write
- * to either is confirmed by reading it back, never by waiting for a notify.
- *
- * This is what a caller asks before treating a silence as a write that went nowhere. The
- * test is by ADDRESS and not by name alone, because D.Gain rides the `HA_GAIN` name at
- * its own ids while the analog gain (id 1) keeps that name and does announce.
- */
-export const announcesWrites = (name: string, paramId: number): boolean =>
-  !D_GAIN_IDS.has(paramId) && !SILENT_WRITE_NAMES.has(name);
-
 // microSD Rec Track Count (RECORDER menu): how many tracks record, an even 2..16.
 // The plan stores the actual count (readback = device raw × 2). Planned here but
 // never pushed: the broker refuses every value above two tracks (see

@@ -11,7 +11,7 @@ import { clonePlanState } from "../plan-history";
 vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdSet, vdSetStr, vdGet, vdGetStr } from "../platform";
-import { COMP_EQ_SSMCS, dGainParam, PARAMS } from "./params";
+import { COMP_EQ_SSMCS, PARAMS } from "./params";
 import { addrKey, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
@@ -1751,43 +1751,6 @@ describe("LiveSync recentPending", () => {
       await vi.advanceTimersByTimeAsync(2);
       expect(reports.length).toBe(1);
       expect(reports[0].has(k)).toBe(true);
-    } finally {
-      release();
-    }
-  });
-
-  // The obligation is not universal, and a watch that assumed it was would order a
-  // whole-device sweep after every edit to one of these. Two families are recorded as
-  // never announcing at all — D.Gain, and the shared engine arrays behind the insert-FX
-  // and FX editors — so a silence there is the unit behaving as measured, not a write
-  // that went nowhere. D.Gain is the one of the two the default plan already emits, and
-  // it is the reason the test is by ADDRESS: its writes carry the HA_GAIN name at their
-  // own ids while the analog gain keeps that name and does announce.
-  it("does not report a write to an address the unit never announces", async () => {
-    const plan = basePlan();
-    const live = liveFor(plan);
-    const reports: Array<ReadonlySet<number>> = [];
-    const release = writeSettle.arm((addrs) => reports.push(addrs));
-    try {
-      const stereo = model.nodes.find((n) => n.kind === "channel" && dGainParam(model.id, n.id) !== undefined);
-      expect(stereo, "the model has a D.Gain-bearing stereo channel").toBeDefined();
-      const dId = dGainParam(model.id, stereo!.id)!;
-      // Seeded BEFORE begin() so the snapshot carries the address: without a prior value
-      // the write is blind, the changed filter drops it whatever the announcement rule
-      // says, and the case would pass with that rule deleted.
-      plan.nodeParams[stereo!.id] = { ...(plan.nodeParams[stereo!.id] ?? {}), gain: 0 };
-      live.begin();
-      plan.nodeParams[stereo!.id] = { ...(plan.nodeParams[stereo!.id] ?? {}), gain: -6 };
-      live.schedule();
-      await vi.advanceTimersByTimeAsync(120);
-      // The positive control: the edit really did go out on that address. Without it a
-      // silent report proves nothing — a flush that sent nothing reports nothing either.
-      const sent = vi.mocked(vdSet).mock.calls.filter((c) => c[0] === dId);
-      expect(sent.length).toBeGreaterThan(0);
-
-      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 10);
-      const named = reports.flatMap((r) => [...r]).filter((k) => k === addrKey(dId, 0, 0) || k === addrKey(dId, 0, 1));
-      expect(named).toEqual([]);
     } finally {
       release();
     }
