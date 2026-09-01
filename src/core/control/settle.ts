@@ -162,6 +162,16 @@ export class WriteSettle {
   // one is still in flight.
   private readonly seen = new Map<number, { value: number; at: number }>();
   private readonly waiters = new Set<Waiter>();
+  // Every notify position per address, and how far into that list the announcement
+  // obligations have been satisfied. `seen` cannot answer the obligation question on its
+  // own: it keeps only the LAST notify, and `mark()` is a NOTIFY counter, so two writes to
+  // one address with nothing arriving between them take the SAME mark — after which one
+  // notify reads as later than both and the second write's loss is invisible. A flush is
+  // sent more often than an announcement comes back, so consecutive moves of one fader
+  // overlap that way in ordinary use. A notify may therefore satisfy AT MOST ONE
+  // obligation, which needs the positions kept rather than collapsed.
+  private readonly positions = new Map<number, number[]>();
+  private readonly claimed = new Map<number, number>();
 
   /** Register the notify source; the returned call releases it. Held by whoever owns
    *  the subscription — while it is up a write can be waited out exactly, and while it
@@ -206,6 +216,9 @@ export class WriteSettle {
   note(p: { paramId: number; x: number; y: number; value: number }): void {
     const k = addrKey(p.paramId, p.x, p.y);
     this.seen.set(k, { value: p.value, at: ++this.seq });
+    let ps = this.positions.get(k);
+    if (!ps) this.positions.set(k, (ps = []));
+    ps.push(this.seq);
     for (const w of this.waiters) {
       // The LAST announcement wins, unconditionally. A second notify for one address
       // inside one window is the unit correcting itself (a quantise arriving after the
@@ -304,9 +317,25 @@ export class WriteSettle {
       if (!to.length) return;
       const silent = new Set<number>();
       for (const k of mustAnnounce) {
-        const s = this.seen.get(k);
         const at = written.get(k);
-        if (s === undefined || at === undefined || s.at <= at) silent.add(k);
+        if (at === undefined) {
+          silent.add(k);
+          continue;
+        }
+        // One notify answers one write. Walk this address's notify positions from wherever
+        // an earlier obligation stopped: positions at or before this write's own mark
+        // belong to a write that came before it, and cannot answer a later one either,
+        // since every obligation still to come was armed at a mark no smaller. The first
+        // position past the mark is this write's answer and is consumed; if the list runs
+        // out, nothing announced this one.
+        const ps = this.positions.get(k) ?? [];
+        let i = this.claimed.get(k) ?? 0;
+        while (i < ps.length && ps[i] <= at) i++;
+        if (i < ps.length) this.claimed.set(k, i + 1);
+        else {
+          this.claimed.set(k, i);
+          silent.add(k);
+        }
       }
       if (silent.size) for (const sink of to) sink(silent);
     }, timeoutMs);

@@ -326,6 +326,46 @@ describe("WriteSettle unannounced report", () => {
     expect(reported).toEqual([]);
   });
 
+  // Two writes to ONE address with nothing arriving between them — the shape a second
+  // move of the same fader takes, since a flush goes out more often than an announcement
+  // comes back. Both take their mark from the same notify position, so a test that asks
+  // only "did a notify arrive after the mark" answers yes for both and the second write's
+  // loss is invisible. One notify answers one write.
+  it("does not let one notify answer two writes to the same address", async () => {
+    const { settle, reported } = armed();
+    const first = wrote(settle, ADDR);
+    settle.watch(first, new Set([ADDR]));
+    const second = wrote(settle, ADDR);
+    settle.watch(second, new Set([ADDR]));
+    // The mechanism the case exists for: with no notify between them the two marks are equal.
+    expect(first.get(ADDR)).toBe(second.get(ADDR));
+    settle.note(NOTIFY);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+    expect(reported).toEqual([[ADDR]]);
+  });
+
+  it("says nothing when both writes to one address are answered", async () => {
+    const { settle, reported } = armed();
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]));
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]));
+    settle.note(NOTIFY);
+    settle.note({ ...NOTIFY, value: 2 });
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+    expect(reported).toEqual([]);
+  });
+
+  // The notify for a write can land BEFORE the flush arms its watch — the flush awaits a
+  // vdSet per command and arms once at the end. That answer still counts, or an ordinary
+  // flush would report every write it made.
+  it("counts an announcement that arrived before the watch was armed", async () => {
+    const { settle, reported } = armed();
+    const written = wrote(settle, ADDR);
+    settle.note(NOTIFY);
+    settle.watch(written, new Set([ADDR]));
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+    expect(reported).toEqual([]);
+  });
+
   it("drops the report when the surrounding operation is aborted", async () => {
     const { settle, reported } = armed();
     const written = wrote(settle, ADDR);
