@@ -200,7 +200,15 @@ carries a one-line map of the same directories and points here.
       announces and can only end at the bound. Only `mustSettle` — the addresses inside the read's own scope
       — holds it open; a changed write OUTSIDE it that stayed silent is reported at the bound to the notify
       source, and `follow.ts` arms its existing idle full reconcile (class (b) must not, or a legitimate
-      silence orders an ~800-read sweep). Nothing is withdrawn from the handle: the last announcement wins,
+      silence orders an ~800-read sweep). A flush with NEITHER epilogue — the ordinary edit, which issues no read
+      at all — gets the same report through a **watch without a wait**: there is nothing to hold open, and
+      without it the everyday fader, mute or pan was the one write nothing was checking. **One notify answers
+      one write**: a mark is a notify position, so two writes to one address with nothing arriving between
+      them share it, and a test that asked only "did a notify land after the mark" let the first write's
+      announcement satisfy the second's obligation. **A rename is watched too, whatever epilogue its flush
+      takes** — neither covers names, since a converge re-reads numeric commands and the refetch is the one
+      caller that skips them, and a dropped rename leaves no diff for a later flush because the plan and the
+      name snapshot have both moved on. Nothing is withdrawn from the handle: the last announcement wins,
       so an address the operator moved on the board comes back carrying THEIR value. `sendConverging`'s
       INTER-ROUND wait stays blind **deliberately** — no `sideEffect: "converge"` head's reset latency has
       ever been measured, and a round sends whole groups the read diff never named — but its SEED read takes
