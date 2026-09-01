@@ -685,6 +685,15 @@ export class LiveSync {
       // each at the mark taken before its own write. Separate from `writes` because that map
       // is numeric and the read overlays answers from it; see the name loop.
       const nameSettle = new Map<number, number>();
+      // Every address the NAME loop wrote, at its own mark — the announcement obligation,
+      // which is a different question from nameSettle's (that one is only about the
+      // addresses a refetch is about to read). A name write reaches the unit only after the
+      // loop has found the value differs from the snapshot, so each one here is a write the
+      // unit must announce, the same test `changed` makes on the numeric side. Kept out of
+      // `writes`: that map answers a numeric read overlay and a string notify carries its
+      // text in a different field, so the value has no place there — but the ADDRESS and the
+      // mark are all an announcement watch needs.
+      const nameWrites = new Map<number, number>();
       // What this flush wrote and the device acked, keyed the way the snapshot is
       // (translate.addrKey). Handed to the refetch, whose read would otherwise be issued
       // inside the window in which the unit still answers these addresses with the
@@ -791,6 +800,7 @@ export class LiveSync {
         if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
         this.notePending(this.pendingNames, k, value);
+        nameWrites.set(addrKey(w.param, 0, w.y), nameMark);
         sent++;
         // A string write can be a sideEffect head too: the SSMCS preset recomputes the strip
         // exactly as the morphing knob does. Only REFETCH is consulted — no string param is a
@@ -934,9 +944,11 @@ export class LiveSync {
         // into is gone, and there is nothing a snapshot could describe.
         if (deviceView) this.capture(deviceView, since);
       }
-      // A flush with NEITHER epilogue — the ordinary edit: a fader, a mute, a pan, a
-      // rename — issues no read at all, so nothing here would ever notice the unit
-      // silently dropping one of its writes. The two epilogues each cover their own: a
+      // A flush with NEITHER epilogue — the ordinary edit: a fader, a mute, a pan, a rename
+      // — issues no read at all, so nothing here would ever notice the unit silently
+      // dropping one of its writes. The rename belongs in that list and is in the watch
+      // below because it is put there explicitly; it does not ride in `writes`, which the
+      // numeric loop alone fills. The two epilogues each cover their own: a
       // converge re-reads the whole write scope and re-sends the residual, and the
       // refetch hands its own `mustAnnounce` to the settle above. This is the third case,
       // and it gets the watch without the wait: there is no read to hold open, and the
@@ -948,8 +960,23 @@ export class LiveSync {
       // must stay out or every flush would order a sweep.
       if (!sideEffect && !(refetch.size && this.hooks.refetchNodes)) {
         const announce = new Set<number>();
-        for (const [k, w] of writes) if (w.changed) announce.add(k);
-        if (announce.size) writeSettle.watch(new Map([...writes].map(([k, w]) => [k, w.mark])), announce);
+        const marks = new Map<number, number>();
+        for (const [k, w] of writes) {
+          marks.set(k, w.mark);
+          if (w.changed) announce.add(k);
+        }
+        // Renames go in beside them. The unit announces a name change on the name address
+        // itself and says nothing for a write of the value it already holds — the same pair
+        // of rules the numeric side has — and the loop above already skipped the second
+        // case, so every entry here is owed an announcement. Leaving them out was a hole
+        // the comment above did not have: the plan and the name snapshot both move to the
+        // new name, so a dropped write leaves no diff for a later flush to re-send and the
+        // unit keeps the old name with nothing pointing at it.
+        for (const [k, mark] of nameWrites) {
+          marks.set(k, mark);
+          announce.add(k);
+        }
+        if (announce.size) writeSettle.watch(marks, announce);
       }
       // Before onSent, and unconditional on `sent`. A converge cannot be the reason — its
       // flag is set after `sent++`, so a flush that sent nothing never reaches one — but

@@ -1785,6 +1785,55 @@ describe("LiveSync recentPending", () => {
     }
   });
 
+  // A rename goes out through vdSetStr, which fills none of the numeric write ledger, so
+  // the watch has to be handed the name addresses separately. Left out, a dropped rename is
+  // invisible twice over: the plan and the name snapshot both hold the new name, so no later
+  // flush finds a diff to re-send, and the unit keeps the old one with nothing pointing at it.
+  it("reports a rename the unit never announced", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      live.begin();
+      plan.nodeNames = { ...plan.nodeNames, ch1: "RENAMED" };
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      expect(vi.mocked(vdSetStr)).toHaveBeenCalledTimes(1);
+      const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+      const k = addrKey(param, 0, y);
+
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS - 1);
+      expect(reports).toEqual([]);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(reports.length).toBe(1);
+      expect(reports[0].has(k)).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
+  it("reports nothing when the unit announced the rename", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      live.begin();
+      plan.nodeNames = { ...plan.nodeNames, ch1: "RENAMED" };
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+      // A name notify carries its text elsewhere; what the watch judges is that the address
+      // spoke at all, so the numeric value here stands for the announcement and nothing more.
+      writeSettle.note({ paramId: param, x: 0, y, value: 0 });
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
+      expect(reports).toEqual([]);
+    } finally {
+      release();
+    }
+  });
+
   it("reports nothing when the unit did announce the write", async () => {
     const plan = basePlan();
     const live = liveFor(plan);
