@@ -1458,6 +1458,12 @@ describe("reset chains (sideEffect heads vs converge groups)", () => {
     "FX_EFFECT_TYPE", // -> the FX_EFFECT_PARAM array
     "SIGNAL_TYPE", // -> the SECONDARY channel's state, so a group cannot express it
     "PAN_BAL", // -> CH_PAN + every SEND_PAN; its order is pinned above
+    // -> every SEND_LEVEL and SEND_ON into that MIX. Ungrouped for the ordinary reason and
+    // driven rather than reasoned: writing it moves the bank, writing the bank back the way
+    // a converge round would leaves nothing further moved, so the chain is two links. The
+    // unit takes those writes under FIXED as well as VARI, so the round settles in either
+    // direction instead of fighting the reset.
+    "BUS_TYPE",
     // The COMP 1-knob, ungrouped for the same reason as the rest after all. Its chain LOOKS
     // like the EQ 1-knob's — writing 42 discards 43 (measured), the shape that earned the EQ
     // triple its group — but it is two links where the EQ's is three, and two is what one

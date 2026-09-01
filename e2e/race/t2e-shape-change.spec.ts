@@ -209,7 +209,10 @@ test.describe("T2e shape-change", () => {
 
     trace = await traceOf(page);
     const fixedAt = markTime(trace, "bus-fixed")!;
-    const fixedWrites = setsAfter(trace, fixedAt);
+    // The FLUSH's writes, not the window's: BUS Type is a `sideEffect: "converge"` head now
+    // (the unit resets the send bank behind it), so a converge round follows and against
+    // this fake that round writes a lot for the reason flushWrites documents.
+    const fixedWrites = flushWrites(trace, fixedAt);
     const ledger = await ledgerOf(page);
     const uiKeys = [...new Set(ledger.filter((l) => l.source === "ui").map((l) => `${l.field}[${l.key}]`))];
     const write1 = await writeSetOf(page);
@@ -221,7 +224,9 @@ test.describe("T2e shape-change", () => {
     console.log(`write set: ${write0.size} → ${write1.size} address(es), ${grew.length} added`);
 
     // Exactly the bus's own two instances left, at the FIXED value. Nothing on ch1 —
-    // and it is the ch1 controls whose observable state the write just changed.
+    // and it is the ch1 controls whose observable state the write just changed. What the
+    // converge round behind it then puts back is the bank the unit reset, which is the
+    // repair rather than the gesture.
     expect(fixedWrites.map((s) => s.addr).sort()).toEqual([BUS_TYPE_L, BUS_TYPE_R]);
     expect(new Set(fixedWrites.map((s) => s.value))).toEqual(new Set([1]));
     // …and the plan agrees: the operator's gesture wrote one node's params, not four.

@@ -177,6 +177,35 @@ describe("LiveSync sideEffect converge", () => {
     expect(vi.mocked(vdSet).mock.calls.length).toBe(afterConverge);
   });
 
+  // BUS Type is the fourth of the structural selectors prepare.ts's SKIP list names as
+  // resetting a bank, and it was the one that did not declare it. On the unit, writing it
+  // resets every send into that MIX — levels to -infinity, ONs off — and writing it back
+  // restores neither: the levels stay down and sends that were off come back on. Nothing
+  // re-sends them, because the plan and the snapshot still agree, so the board goes on
+  // showing a mix the device does not have for the rest of the session.
+  it("converges after a BUS Type edit, the way the other bank-resetting selectors do", async () => {
+    const busTypeOf = (p: Plan, v: number): void => {
+      p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: v };
+    };
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+
+    // A plain fader edit is the control: it sends and stops, with no re-read behind it.
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    const plainReads = vi.mocked(vdGet).mock.calls.length;
+
+    busTypeOf(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    // The converge re-reads the write scope; an ordinary flush reads nothing.
+    expect(vi.mocked(vdGet).mock.calls.length).toBeGreaterThan(plainReads);
+  });
+
   it("does not silence an ordinary drag that merely follows a converge", async () => {
     // The back-off asks the pending diff, not "did the last flush converge". A
     // latch on history alone would put the next gesture — a plain fader drag after

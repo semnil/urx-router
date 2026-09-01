@@ -336,8 +336,19 @@ export const PARAMS = {
    *  the device keeps the BALANCE label even under Pan Link). */
   OUT_MASTER_BAL: { id: 676, encoding: "pan", follow: "direct" },
   /** MIX bus BUS Type: 0 = VARI (variable per-send level) / 1 = FIXED. L/R-linked
-   *  (written to both out instances). Confirmed by live snapshot-diff (MIX1 0 → 1). */
-  BUS_TYPE: { id: 587, encoding: "enum" },
+   *  (written to both out instances). Confirmed by live snapshot-diff (MIX1 0 → 1).
+   *
+   *  Writing it resets the whole send bank into that MIX on the device — every source's
+   *  send level to -∞ and every send ON off — and writing it BACK does not undo that:
+   *  the levels stay at -∞ and sends that were off come back on. So the plan's values
+   *  have to be pushed after it, which is what "converge" does. The unit takes them
+   *  under FIXED as well as VARI, so the round repairs the bank in either direction
+   *  rather than fighting the device.
+   *
+   *  This completes the set `prepare.ts`'s SKIP list already names as the structural
+   *  selectors whose change resets a bank: compEqType, stereoLink, panBal all declared
+   *  it and this one did not, which is the whole reason the divergence was silent. */
+  BUS_TYPE: { id: 587, encoding: "enum", sideEffect: "converge" },
   /** MIX bus master ON (675, fader+1, parallel to STEREO_MASTER_ON 582). L/R-linked
    *  per stereo MIX (MIX1 [0,1] / MIX2 [2,3]); default 1. Independent of the MIX →
    *  STEREO "TO ST" send. Confirmed by live readback (device-side MIX2 OFF → 675). */
