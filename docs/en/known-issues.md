@@ -143,14 +143,21 @@ gates by it follow. Under Preferences → device scope *Scene only* it does not:
 Track Count is one of the device-wide settings that scope leaves alone, in both
 directions.
 
-**Raising the sample rate past 96 kHz lowers it, and lowering the rate again does
-not put it back.** The unit's own ceiling is 16 tracks at 44.1 / 48 kHz, 8 at
-88.2 / 96 kHz and **2 at 176.4 / 192 kHz** (user guide, RECORDER menu), so the
-recorder drops to what the new rate allows. The app writes the sample rate, so
-this is reachable from the app — and by the paragraph above, nothing the app can
-write will raise the count afterwards. The way back is the unit's own microSD
-screen → RECORDER menu → [Track Count]. Setting a high rate is worth a thought
-about the recorder first.
+**Raising the sample rate can lower it, and lowering the rate again never raises
+it back.** The unit's own ceiling is 16 tracks at 44.1 / 48 kHz, 8 at 88.2 / 96
+kHz and **2 at 176.4 / 192 kHz** (user guide, RECORDER menu), and the recorder
+drops to that ceiling when the count is above it:
+
+- **to 88.2 / 96 kHz** — a count above 8 becomes 8
+- **to 176.4 / 192 kHz** — a count above 2 becomes 2
+- **back to a lower rate** — the count stays where the drop left it
+
+A count already at or below the new rate's ceiling is left alone, so a unit
+recording 8 tracks loses nothing going to 96 kHz and loses six going to 192 kHz.
+The app writes the sample rate, so all of this is reachable from the app — and by
+the paragraph above, nothing the app can write will raise the count afterwards.
+The way back is the unit's own microSD screen → RECORDER menu → [Track Count].
+Raising the rate is worth a thought about the recorder first.
 
 This applies to the URX44 / URX44V only (the URX22 has no microSD recording).
 
