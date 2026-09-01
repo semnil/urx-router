@@ -319,9 +319,11 @@ export class LiveSync {
    * read waits it out rather than answering from inside its staleness window; pass
    * nothing for a whole-device read, where every address is in scope.
    *
-   * `mustAnnounce` is deliberately empty. It is the flush's obligation and the flush
-   * already armed it for these same writes — arming a second watch here would report
-   * one silent write twice and arm two reconciles for it.
+   * `mustAnnounce` is deliberately empty: the flush arms the watch for its own writes,
+   * so a second one here would report one silent write twice and arm two reconciles for
+   * it. The flush arms it in two places — beside the refetch epilogue for the addresses
+   * that epilogue's read does not cover, and after the write loop for a flush that has
+   * no epilogue at all.
    *
    * Expired entries are dropped as they are met, so the map cannot grow across a long
    * session on its own.
@@ -683,6 +685,15 @@ export class LiveSync {
       // each at the mark taken before its own write. Separate from `writes` because that map
       // is numeric and the read overlays answers from it; see the name loop.
       const nameSettle = new Map<number, number>();
+      // Every address the NAME loop wrote, at its own mark — the announcement obligation,
+      // which is a different question from nameSettle's (that one is only about the
+      // addresses a refetch is about to read). A name write reaches the unit only after the
+      // loop has found the value differs from the snapshot, so each one here is a write the
+      // unit must announce, the same test `changed` makes on the numeric side. Kept out of
+      // `writes`: that map answers a numeric read overlay and a string notify carries its
+      // text in a different field, so the value has no place there — but the ADDRESS and the
+      // mark are all an announcement watch needs.
+      const nameWrites = new Map<number, number>();
       // What this flush wrote and the device acked, keyed the way the snapshot is
       // (translate.addrKey). Handed to the refetch, whose read would otherwise be issued
       // inside the window in which the unit still answers these addresses with the
@@ -785,10 +796,16 @@ export class LiveSync {
         // Before the write, for the reason the numeric loop takes one: only a notify after
         // it can be this write's announcement.
         const nameMark = writeSettle.mark();
+        // A node rename carries neither `name` nor `node` (translate.NameWrite): it has no
+        // catalog row, so it can never be a sideEffect head and nothing reads it back. The
+        // catalogued string writes — the SSMCS preset — are read by their own refetch, and
+        // watching them here as well would report one silence twice.
+        const nameAddr = addrKey(w.param, 0, w.y);
         await vdSetStr(w.param, 0, w.y, value);
         if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
         this.notePending(this.pendingNames, k, value);
+        if (w.name === undefined) nameWrites.set(nameAddr, nameMark);
         sent++;
         // A string write can be a sideEffect head too: the SSMCS preset recomputes the strip
         // exactly as the morphing knob does. Only REFETCH is consulted — no string param is a
@@ -932,6 +949,41 @@ export class LiveSync {
         // into is gone, and there is nothing a snapshot could describe.
         if (deviceView) this.capture(deviceView, since);
       }
+      // A flush with NEITHER epilogue — the ordinary edit: a fader, a mute, a pan, a rename
+      // — issues no read at all, so nothing here would ever notice the unit silently
+      // dropping one of its writes. The rename belongs in that list and is in the watch
+      // below because it is put there explicitly; it does not ride in `writes`, which the
+      // numeric loop alone fills. The two epilogues each cover their own: a
+      // converge re-reads the whole write scope and re-sends the residual, and the
+      // refetch hands its own `mustAnnounce` to the settle above. This is the third case,
+      // and it gets the watch without the wait: there is no read to hold open, and the
+      // report is what arms follow's idle full sweep.
+      //
+      // `changed` is the obligation test the settle states: the write went out only
+      // because the snapshot held a DIFFERENT value, so the unit must move and must say
+      // so. A write the snapshot had no entry for may be a no-op, announces nothing, and
+      // must stay out or every flush would order a sweep.
+      if (!sideEffect && !(refetch.size && this.hooks.refetchNodes)) {
+        const announce = new Set<number>();
+        const marks = new Map<number, number>();
+        for (const [k, w] of writes) {
+          marks.set(k, w.mark);
+          if (w.changed) announce.add(k);
+        }
+        if (announce.size) writeSettle.watch(marks, announce);
+      }
+      // Renames are watched WHATEVER the epilogue, because neither epilogue covers them:
+      // the converge re-reads numeric commands, and the refetch is the one caller that
+      // asks applyNodeState to skip the names (main.ts). So a rename sharing a flush with
+      // a COMP 1-knob — which an external MIDI control can send while a name is being
+      // typed — fell outside the guard above and was watched by nothing. The unit
+      // announces a name change on the name address and stays silent for a write of the
+      // value it already holds, the same pair of rules the numeric side has, and the loop
+      // skips the second case before writing, so every entry here is owed an announcement.
+      //
+      // Left unwatched a dropped rename is invisible twice: the plan and the name snapshot
+      // both move to the new name, so no later flush finds a diff to re-send.
+      if (nameWrites.size) writeSettle.watch(nameWrites, new Set(nameWrites.keys()));
       // Before onSent, and unconditional on `sent`. A converge cannot be the reason — its
       // flag is set after `sent++`, so a flush that sent nothing never reaches one — but
       // `resync()` captures OUTSIDE any flush (the caller runs it after every device-side

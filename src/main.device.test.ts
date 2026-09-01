@@ -2972,6 +2972,54 @@ describe("a Ducker moved over MIDI repaints the inspector", () => {
   });
 });
 
+// The canvas half of the same route, and the reason onApplied needs no repaint of its
+// own: the reflect it requests redraws the wires. graph.repaintDirtyNodes ends in
+// redrawWires, so a toggle's dimming lands one reflect window later without a second
+// call beside the apply — which used to be there, justified by a comment saying the
+// reflect "repaints nodes only".
+describe("a MIDI toggle dims its wire through the reflect alone", () => {
+  const CC = 22;
+
+  it("dashes the main send it muted, with no repaint beside the apply", SLOW, async () => {
+    const shell = (await bootApp({
+      seed: {
+        "urx-midi": JSON.stringify({
+          input: "Controller In",
+          models: {
+            URX44V: [
+              {
+                control: "ch1/mute",
+                addr: { type: "cc", channel: 0, controller: CC },
+                mode: "absolute",
+                button: "edge",
+              },
+            ],
+          },
+        }),
+      },
+      tauri: { midi_list_inputs: ["Controller In"], midi_open_input: null, midi_close_input: null },
+    }))!;
+    await invoked(shell, "midi_open_input");
+
+    // The painted path beside the transparent hit band, the way e2e/ducker.spec.ts
+    // addresses one.
+    const wire = (): SVGPathElement | null =>
+      $("graph-host").querySelector<SVGPathElement>(
+        'g:has(> .wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]) path:not(.wire-hit)',
+      );
+    // The STEREO main path, which ships at unity — the MIX sends ship at the level floor
+    // and are already drawn off, so a dimming there would assert nothing.
+    expect(wire(), "the CH 1 -> STEREO send is drawn").not.toBeNull();
+    expect(wire()!.getAttribute("stroke-dasharray")).toBeNull();
+
+    const opened = shell.args[shell.invokes.indexOf("midi_open_input")] as {
+      channel: { onmessage: (d: unknown) => void };
+    };
+    opened.channel.onmessage([{ bytes: [0xb0, CC, 127] }]);
+    await vi.waitFor(() => expect(wire()!.getAttribute("stroke-dasharray")).toBe("1.5 4"));
+  });
+});
+
 // Two funnels write the plan, and both have to name what they asserted. These drive the
 // CONSOLE half and the BAL mirror's half against a read in flight.
 describe("the inspector while the CONSOLE hides it", () => {

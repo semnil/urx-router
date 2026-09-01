@@ -177,6 +177,35 @@ describe("LiveSync sideEffect converge", () => {
     expect(vi.mocked(vdSet).mock.calls.length).toBe(afterConverge);
   });
 
+  // BUS Type is the fourth of the structural selectors prepare.ts's SKIP list names as
+  // resetting a bank, and it was the one that did not declare it. On the unit, writing it
+  // resets every send into that MIX — levels to -infinity, ONs off — and writing it back
+  // restores neither: the levels stay down and sends that were off come back on. Nothing
+  // re-sends them, because the plan and the snapshot still agree, so the board goes on
+  // showing a mix the device does not have for the rest of the session.
+  it("converges after a BUS Type edit, the way the other bank-resetting selectors do", async () => {
+    const busTypeOf = (p: Plan, v: number): void => {
+      p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: v };
+    };
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+
+    // A plain fader edit is the control: it sends and stops, with no re-read behind it.
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    const plainReads = vi.mocked(vdGet).mock.calls.length;
+
+    busTypeOf(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    // The converge re-reads the write scope; an ordinary flush reads nothing.
+    expect(vi.mocked(vdGet).mock.calls.length).toBeGreaterThan(plainReads);
+  });
+
   it("does not silence an ordinary drag that merely follows a converge", async () => {
     // The back-off asks the pending diff, not "did the last flush converge". A
     // latch on history alone would put the next gesture — a plain fader drag after
@@ -1718,6 +1747,159 @@ describe("LiveSync recentPending", () => {
     // The flush already armed the announcement watch for these writes; a second one
     // here would report one silent write twice and arm two reconciles for it.
     expect(scoped.mustAnnounce.size).toBe(0);
+  });
+
+  // The claim above is only true because the flush arms one for a flush with NO epilogue
+  // too. It used to arm one solely beside the refetch read, so an ordinary edit — a
+  // fader, a mute, a pan, a rename, every flush carrying no sideEffect head — had no
+  // watch at all: a write the unit silently dropped left the plan and the snapshot
+  // agreeing on a value the device does not hold, with nothing scheduled to notice.
+  // Follow's idle full sweep is the repair, and this report is the only thing that arms
+  // it from the write side.
+  it("reports an ordinary write the unit never announced", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      // A snapshot that already HOLDS a value for the address is what makes the write an
+      // obligation: the unit must move, so it must announce. begin() takes it from the
+      // plan, then the edit diffs against it.
+      live.begin();
+      setCh1Fader(plan, -6);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+      const [paramId, x, y] = vi.mocked(vdSet).mock.calls[0];
+      const k = addrKey(paramId, x, y);
+
+      // Nothing is reported before the bound: an announcement still in flight is not a
+      // silent write, and reporting it here would order a sweep for every edit.
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS - 1);
+      expect(reports).toEqual([]);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(reports.length).toBe(1);
+      expect(reports[0].has(k)).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
+  // A rename goes out through vdSetStr, which fills none of the numeric write ledger, so
+  // the watch has to be handed the name addresses separately. Left out, a dropped rename is
+  // invisible twice over: the plan and the name snapshot both hold the new name, so no later
+  // flush finds a diff to re-send, and the unit keeps the old one with nothing pointing at it.
+  it("reports a rename the unit never announced", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      live.begin();
+      plan.nodeNames = { ...plan.nodeNames, ch1: "RENAMED" };
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      expect(vi.mocked(vdSetStr)).toHaveBeenCalledTimes(1);
+      const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+      const k = addrKey(param, 0, y);
+
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS - 1);
+      expect(reports).toEqual([]);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(reports.length).toBe(1);
+      expect(reports[0].has(k)).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
+  // A rename sharing its flush with a converge head. Neither epilogue covers names — the
+  // converge re-reads numeric commands — so before the watch was lifted out of the
+  // epilogue guard this rename was watched by nothing. An external MIDI control can send
+  // a bank-resetting selector while a name is being typed, so the two do meet.
+  it("reports a silent rename that shared a flush with a converge head", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      live.begin();
+      plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], busType: 1 };
+      plan.nodeNames = { ...plan.nodeNames, ch1: "RENAMED" };
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      expect(vi.mocked(vdSetStr)).toHaveBeenCalledTimes(1);
+      const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+      const k = addrKey(param, 0, y);
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+      expect(reports.some((r) => r.has(k))).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
+  it("says nothing about a rename the unit announced in a converge flush", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      live.begin();
+      plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], busType: 1 };
+      plan.nodeNames = { ...plan.nodeNames, ch1: "RENAMED" };
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+      const k = addrKey(param, 0, y);
+      writeSettle.note({ paramId: param, x: 0, y, value: 0 });
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+      expect(reports.some((r) => r.has(k))).toBe(false);
+    } finally {
+      release();
+    }
+  });
+
+  it("reports nothing when the unit announced the rename", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      live.begin();
+      plan.nodeNames = { ...plan.nodeNames, ch1: "RENAMED" };
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+      // A name notify carries its text elsewhere; what the watch judges is that the address
+      // spoke at all, so the numeric value here stands for the announcement and nothing more.
+      writeSettle.note({ paramId: param, x: 0, y, value: 0 });
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
+      expect(reports).toEqual([]);
+    } finally {
+      release();
+    }
+  });
+
+  it("reports nothing when the unit did announce the write", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const reports: Array<ReadonlySet<number>> = [];
+    const release = writeSettle.arm((addrs) => reports.push(addrs));
+    try {
+      live.begin();
+      setCh1Fader(plan, -6);
+      // The unit answers its own write, which is what the watch is looking for. Fed from
+      // inside vdSet so the notify lands AFTER that address's own mark, as a real one does.
+      vi.mocked(vdSet).mockImplementation(async (paramId: number, x: number, y: number, value: number) => {
+        writeSettle.note({ paramId, x, y, value });
+      });
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 10);
+      expect(reports).toEqual([]);
+    } finally {
+      release();
+    }
   });
 
   it("forgets a write once it is older than the settle window, and at a session boundary", async () => {

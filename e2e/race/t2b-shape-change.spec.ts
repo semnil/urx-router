@@ -684,11 +684,13 @@ test.describe("T2b shape-change", () => {
     expect(reg.has(EQ_HIGH_TYPE)).toBe(true);
 
     // Phase 2 — accepted and discarded, and the flush loop that could form around it.
-    // The edit is sent once; the device acks and keeps nothing. Then the address-free
-    // bulk-change sentinel (see the call below) forces a whole-device reconcile,
-    // which reads the fader back as the device never-changed value and pulls the plan
-    // to it. If the resync ordering were wrong, that would re-open the same diff every
-    // time and the pair would ping-pong for the rest of the session.
+    // The edit is sent once; the device acks and keeps nothing. The app notices on its
+    // own — the announcement the unit owed never came, so the flush's watch reports the
+    // address and follow's idle sweep re-reads it — and pulls the plan to the device's
+    // never-changed value. The address-free bulk-change sentinel below then forces a
+    // SECOND whole-device reconcile over the settled state: if the resync ordering were
+    // wrong, that would re-open the same diff every time and the pair would ping-pong for
+    // the rest of the session.
     const before = (await faderReadout(page, "CH 1").textContent())!;
     await mark(page, "ignored-write");
     await faderOf(page, "CH 1").focus();
@@ -704,11 +706,20 @@ test.describe("T2b shape-change", () => {
       `accepted-and-ignored: ${firstSend.length} write(s), device holds ${(await memOf(page))[CH1_FADER]}` +
         `, screen shows ${await faderReadout(page, "CH 1").textContent()}`,
     );
-    // One command left, and the app treated the ack as success: the screen keeps the
-    // operator's value with nothing on the unit behind it. (That the fake stored
-    // nothing is its own configuration, not a result, so it is logged and not asserted.)
+    // One command left, and the app does NOT treat the ack as the end of it. The write
+    // went out because the snapshot held a different value, so the unit was obliged to
+    // change and to announce it; the flush watches for that announcement and, when the
+    // bound passes in silence, reports the address to the follow side, which arms its
+    // idle full sweep. That sweep re-reads the fader and pulls the plan to what the
+    // device actually holds — no sentinel, no operator gesture.
+    //
+    // The cost is the operator's edit: the device never had it and now the plan does not
+    // either. That is the intended end state — the alternative is a plan that disagrees
+    // with the unit for the rest of the session with nothing scheduled to notice.
+    // (That the fake stored nothing is its own configuration, not a result, so it is
+    // logged and not asserted.)
     expect(firstSend).toHaveLength(1);
-    expect(await faderReadout(page, "CH 1").textContent()).not.toBe("0.0");
+    await expect.poll(async () => await faderReadout(page, "CH 1").textContent(), { timeout: 8000 }).toBe(before);
 
     await mark(page, "forced-reconcile");
     // The sentinel is the address-free way to force one whole-device reconcile: it

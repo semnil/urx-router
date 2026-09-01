@@ -162,6 +162,25 @@ export class WriteSettle {
   // one is still in flight.
   private readonly seen = new Map<number, { value: number; at: number }>();
   private readonly waiters = new Set<Waiter>();
+  // Every notify position per address, and how far into that list the announcement
+  // obligations have been satisfied. `seen` cannot answer the obligation question on its
+  // own: it keeps only the LAST notify, and `mark()` is a NOTIFY counter, so two writes to
+  // one address with nothing arriving between them take the SAME mark — after which one
+  // notify reads as later than both and the second write's loss is invisible. A flush is
+  // sent more often than an announcement comes back, so consecutive moves of one fader
+  // overlap that way in ordinary use. A notify may therefore satisfy AT MOST ONE
+  // obligation, which needs the positions kept rather than collapsed.
+  //
+  // Kept on a wall clock as well as a position, so the list is bounded by TIME rather than
+  // by the length of the session: a watch is armed in the same flush as the write it
+  // answers for and fires one window later, so a notify older than a few windows can no
+  // longer be the answer to anything unjudged. Trimming by LENGTH would not do — that
+  // drops the newest or the oldest without knowing which, and dropping a recent one puts
+  // back the case where an announcement that arrived before its watch was armed goes
+  // uncounted. `writeSettle` is module state on one device link, and a drag appends per
+  // flush, so an untrimmed list is a session-long leak and a linear scan that grows with it.
+  private readonly positions = new Map<number, Array<{ pos: number; at: number }>>();
+  private readonly claimed = new Map<number, number>();
 
   /** Register the notify source; the returned call releases it. Held by whoever owns
    *  the subscription — while it is up a write can be waited out exactly, and while it
@@ -179,12 +198,46 @@ export class WriteSettle {
     return this.seq;
   }
 
+  /** Watch a batch of writes for an announcement WITHOUT waiting for one — for a flush
+   *  that issues no read of its own, so it has nothing to hold open and nothing to be
+   *  answered from. The obligation is the same as `settle`'s `mustAnnounce`: every
+   *  address here is one the caller sent a value the device did not hold, so the unit
+   *  must change and must say so, and one still silent at the bound is a write that went
+   *  nowhere. `settle` would do this too, but only as a side effect of a wait it would
+   *  then have to be given an empty `mustSettle` to skip — which reads as a settle that
+   *  settles nothing and rests on that emptiness meaning "do not wait". */
+  watch(
+    written: ReadonlyMap<number, number>,
+    mustAnnounce: ReadonlySet<number>,
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): void {
+    const { timeoutMs = SETTLE_TIMEOUT_MS, signal } = opts;
+    // Same disable switch the settle honours: with the wait off there is no window for
+    // an announcement to arrive in, so judging one at the bound would report every
+    // write as silent.
+    if (timeoutMs <= 0 || !mustAnnounce.size) return;
+    this.watchAnnouncements(written, mustAnnounce, timeoutMs, signal);
+  }
+
   /** Record an incoming device notify. Called before the echo test — the answer to
    *  our own write IS an echo, so a settle fed after that filter would never see the
    *  one notify it is waiting for. */
   note(p: { paramId: number; x: number; y: number; value: number }): void {
     const k = addrKey(p.paramId, p.x, p.y);
     this.seen.set(k, { value: p.value, at: ++this.seq });
+    let ps = this.positions.get(k);
+    if (!ps) this.positions.set(k, (ps = []));
+    ps.push({ pos: this.seq, at: Date.now() });
+    // Several windows back, so a watch that is still counting down cannot lose its answer.
+    // The consumed prefix goes with it: `claimed` is an index into this list, so it moves
+    // down by however many were dropped.
+    const cutoff = Date.now() - SETTLE_TIMEOUT_MS * 4;
+    let drop = 0;
+    while (drop < ps.length - 1 && ps[drop].at < cutoff) drop++;
+    if (drop) {
+      ps.splice(0, drop);
+      this.claimed.set(k, Math.max(0, (this.claimed.get(k) ?? 0) - drop));
+    }
     for (const w of this.waiters) {
       // The LAST announcement wins, unconditionally. A second notify for one address
       // inside one window is the unit correcting itself (a quantise arriving after the
@@ -283,9 +336,25 @@ export class WriteSettle {
       if (!to.length) return;
       const silent = new Set<number>();
       for (const k of mustAnnounce) {
-        const s = this.seen.get(k);
         const at = written.get(k);
-        if (s === undefined || at === undefined || s.at <= at) silent.add(k);
+        if (at === undefined) {
+          silent.add(k);
+          continue;
+        }
+        // One notify answers one write. Walk this address's notify positions from wherever
+        // an earlier obligation stopped: positions at or before this write's own mark
+        // belong to a write that came before it, and cannot answer a later one either,
+        // since every obligation still to come was armed at a mark no smaller. The first
+        // position past the mark is this write's answer and is consumed; if the list runs
+        // out, nothing announced this one.
+        const ps = this.positions.get(k) ?? [];
+        let i = this.claimed.get(k) ?? 0;
+        while (i < ps.length && ps[i].pos <= at) i++;
+        if (i < ps.length) this.claimed.set(k, i + 1);
+        else {
+          this.claimed.set(k, i);
+          silent.add(k);
+        }
       }
       if (silent.size) for (const sink of to) sink(silent);
     }, timeoutMs);
