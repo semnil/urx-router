@@ -202,10 +202,14 @@ carries a one-line map of the same directories and points here.
       source, and `follow.ts` arms its existing idle full reconcile (class (b) must not, or a legitimate
       silence orders an ~800-read sweep). A flush with NEITHER epilogue — the ordinary edit, which issues no read
       at all — gets the same report through a **watch without a wait**: there is nothing to hold open, and
-      without it the everyday fader, mute or pan was the one write nothing was checking. **One notify answers
-      one write**: a mark is a notify position, so two writes to one address with nothing arriving between
-      them share it, and a test that asked only "did a notify land after the mark" let the first write's
-      announcement satisfy the second's obligation. **A rename is watched too, whatever epilogue its flush
+      without it the everyday fader, mute or pan was the one write nothing was checking. **An address's
+      outstanding obligations merge FORWARD**: the unit announces the value it ended up holding and says
+      nothing about what a write passed through, so a run of writes to one address — a drag, which flushes
+      more often than an announcement comes back — is answered by ONE notify carrying the last of them. The
+      newest obligation is the one judged and the ones it superseded are discharged by it; judged against an
+      announcement each, every move of a drag but the last reports as a write that went nowhere and arms a
+      sweep of its own. Merging reaches the OUTSTANDING ones and no further — once a write has been judged,
+      the next write to that address is owed an announcement of its own. **A rename is watched too, whatever epilogue its flush
       takes** — neither covers names, since a converge re-reads numeric commands and the refetch is the one
       caller that skips them, and a dropped rename leaves no diff for a later flush because the plan and the
       name snapshot have both moved on. Nothing is withdrawn from the handle: the last announcement wins,

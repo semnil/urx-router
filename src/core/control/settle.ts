@@ -162,25 +162,20 @@ export class WriteSettle {
   // one is still in flight.
   private readonly seen = new Map<number, { value: number; at: number }>();
   private readonly waiters = new Set<Waiter>();
-  // Every notify position per address, and how far into that list the announcement
-  // obligations have been satisfied. `seen` cannot answer the obligation question on its
-  // own: it keeps only the LAST notify, and `mark()` is a NOTIFY counter, so two writes to
-  // one address with nothing arriving between them take the SAME mark — after which one
-  // notify reads as later than both and the second write's loss is invisible. A flush is
-  // sent more often than an announcement comes back, so consecutive moves of one fader
-  // overlap that way in ordinary use. A notify may therefore satisfy AT MOST ONE
-  // obligation, which needs the positions kept rather than collapsed.
+  // Which obligation is the live one per address. A write superseded by a later write to
+  // the same address before either was announced gets no announcement of its own: the unit
+  // announces the value it ENDED UP holding and says nothing about what it passed through,
+  // so a run of writes to one address — however long — is answered by exactly one notify.
+  // A flush goes out more often than an announcement comes back, so consecutive moves of
+  // one fader overlap that way in ordinary use, and judging each of them against an
+  // announcement of its own reports every move but the last as a write that went nowhere.
   //
-  // Kept on a wall clock as well as a position, so the list is bounded by TIME rather than
-  // by the length of the session: a watch is armed in the same flush as the write it
-  // answers for and fires one window later, so a notify older than a few windows can no
-  // longer be the answer to anything unjudged. Trimming by LENGTH would not do — that
-  // drops the newest or the oldest without knowing which, and dropping a recent one puts
-  // back the case where an announcement that arrived before its watch was armed goes
-  // uncounted. `writeSettle` is module state on one device link, and a drag appends per
-  // flush, so an untrimmed list is a session-long leak and a linear scan that grows with it.
-  private readonly positions = new Map<number, Array<{ pos: number; at: number }>>();
-  private readonly claimed = new Map<number, number>();
+  // So an address's outstanding obligations merge forward: the newest is judged, and the
+  // ones it superseded are discharged by it. One entry per address with an obligation in
+  // flight, dropped as that obligation is judged, and overwritten by the next one either
+  // way — so an abandoned wait leaves nothing that could answer for a later write.
+  private obligationSeq = 0;
+  private readonly latestObligation = new Map<number, number>();
 
   /** Register the notify source; the returned call releases it. Held by whoever owns
    *  the subscription — while it is up a write can be waited out exactly, and while it
@@ -225,19 +220,6 @@ export class WriteSettle {
   note(p: { paramId: number; x: number; y: number; value: number }): void {
     const k = addrKey(p.paramId, p.x, p.y);
     this.seen.set(k, { value: p.value, at: ++this.seq });
-    let ps = this.positions.get(k);
-    if (!ps) this.positions.set(k, (ps = []));
-    ps.push({ pos: this.seq, at: Date.now() });
-    // Several windows back, so a watch that is still counting down cannot lose its answer.
-    // The consumed prefix goes with it: `claimed` is an index into this list, so it moves
-    // down by however many were dropped.
-    const cutoff = Date.now() - SETTLE_TIMEOUT_MS * 4;
-    let drop = 0;
-    while (drop < ps.length - 1 && ps[drop].at < cutoff) drop++;
-    if (drop) {
-      ps.splice(0, drop);
-      this.claimed.set(k, Math.max(0, (this.claimed.get(k) ?? 0) - drop));
-    }
     for (const w of this.waiters) {
       // The LAST announcement wins, unconditionally. A second notify for one address
       // inside one window is the unit correcting itself (a quantise arriving after the
@@ -330,31 +312,32 @@ export class WriteSettle {
     // listening. If nobody was — the re-registration gap, and nothing else — it goes
     // to whoever is listening now, which is the same sink coming back.
     const armed = new Set(this.sinks);
+    // Claim each address for this obligation, displacing whatever was outstanding for it.
+    // Taken at ARM time rather than at the bound, because the order the watches fire in is
+    // the order they were armed and the displacement has to be visible to the earlier one.
+    const ids = new Map<number, number>();
+    for (const k of mustAnnounce) {
+      const id = ++this.obligationSeq;
+      ids.set(k, id);
+      this.latestObligation.set(k, id);
+    }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
       const to = armed.size ? [...this.sinks].filter((s) => armed.has(s)) : [...this.sinks];
       if (!to.length) return;
       const silent = new Set<number>();
       for (const k of mustAnnounce) {
+        // Superseded: a later write to this address is outstanding, and the announcement
+        // the unit makes will carry ITS value and stand for both. That later obligation is
+        // the one judged, so this one asks nothing and reports nothing.
+        if (this.latestObligation.get(k) !== ids.get(k)) continue;
+        this.latestObligation.delete(k);
+        // The live obligation, judged against the last thing the unit said about the
+        // address: anything after this write's own mark is its answer, and nothing after
+        // it means nothing announced this write or any it superseded.
         const at = written.get(k);
-        if (at === undefined) {
-          silent.add(k);
-          continue;
-        }
-        // One notify answers one write. Walk this address's notify positions from wherever
-        // an earlier obligation stopped: positions at or before this write's own mark
-        // belong to a write that came before it, and cannot answer a later one either,
-        // since every obligation still to come was armed at a mark no smaller. The first
-        // position past the mark is this write's answer and is consumed; if the list runs
-        // out, nothing announced this one.
-        const ps = this.positions.get(k) ?? [];
-        let i = this.claimed.get(k) ?? 0;
-        while (i < ps.length && ps[i].pos <= at) i++;
-        if (i < ps.length) this.claimed.set(k, i + 1);
-        else {
-          this.claimed.set(k, i);
-          silent.add(k);
-        }
+        const s = this.seen.get(k);
+        if (at === undefined || s === undefined || s.at <= at) silent.add(k);
       }
       if (silent.size) for (const sink of to) sink(silent);
     }, timeoutMs);
