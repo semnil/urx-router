@@ -10,6 +10,7 @@ import type { DeviceModel } from "../models/types";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, FX_LEVEL_MAX, FX_LEVEL_MIN, fxEffectTypes, fxParams } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
+import { isPlainRecord } from "./plan";
 import type { Plan } from "./plan";
 import { validatePlan } from "./routing";
 import type { PlanProblem } from "./routing";
@@ -62,15 +63,17 @@ export function insertFxSlotProblems(model: DeviceModel, plan: Plan): InsertFxSl
 export interface ParamRangeProblem {
   reason: "paramRange";
   node: string;
-  /** Which half of the effect object holds it. `level` is a field of its own, bounded by a
-   *  literal two lines above the parameter loop in `pushFxEffectCommands`; everything else is
-   *  a `params` key bounded by its own descriptor. */
-  where: "level" | "params";
-  /** The catalogue key, as the plan stores it. */
+  /** Which container holds it: the node's `fxEffect` value itself, a field of that object
+   *  (`type` / `level` / `params`), or a member of its `params` map. `level` is bounded by a
+   *  literal two lines above the parameter loop in `pushFxEffectCommands`; a `params` member
+   *  is bounded by its own descriptor. */
+  where: "effect" | "field" | "params";
+  /** The field or catalogue key, as the plan stores it. `fxEffect` for the object itself. */
   key: string;
-  /** What the document carries. NOT always a number: the sanitiser keeps a boolean leaf,
-   *  since node params have toggles, and a document can put one under a numeric key. */
-  stored: number | boolean;
+  /** What the document carries. NOT always a number: the sanitiser keeps a boolean leaf and a
+   *  non-empty object, since node params have toggles and groups, and a document can put
+   *  either under a key that holds a number. */
+  stored: unknown;
   /** `bound` writes the value the window admits; `drop` removes the key.
    *
    *  A leaf that is not a finite number is DROPPED rather than replaced by a default, because
@@ -78,7 +81,14 @@ export interface ParamRangeProblem {
    *  every type a channel offers (the catalogue pins that), but `FX_TYPE_DEFAULTS` gives each
    *  type its own value. Writing one type's default is therefore a guess about which type is
    *  selected — and the emit already substitutes the SELECTED type's default for a key that is
-   *  absent, so dropping it lands on the same value now and stays right if the type changes. */
+   *  absent, so dropping it lands on the same value now and stays right if the type changes.
+   *
+   *  A `type` outside the channel's menu is dropped for a different reason: a menu is a set,
+   *  so there is no nearest member to bound to, and `resolveFxEffectType` already answers the
+   *  channel's own default for it. Same for the two containers — an `fxEffect` or a `params`
+   *  that is not an object holds nothing to bound. All four cases emit exactly what the same
+   *  document emits with the key absent, so the drop moves no value; what it changes is that
+   *  the plan stops carrying something the write path silently ignores, and the load says so. */
   action: "bound" | "drop";
   /** The value the loader writes. Absent for `drop`, which writes nothing. */
   bound?: number;
@@ -91,7 +101,7 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
   const out: ParamRangeProblem[] = [];
   const take = (
     node: string,
-    where: "level" | "params",
+    where: "field" | "params",
     key: string,
     stored: number | undefined,
     lo: number | undefined,
@@ -113,14 +123,32 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     if (bound !== stored) out.push({ reason: "paramRange", node, where, key, stored, action: "bound", bound });
   };
   for (const [node, fxIndex] of Object.entries(FX_CHANNEL_NODE_INDEX)) {
-    const fx = plan.nodeParams[node]?.fxEffect;
-    if (!fx) continue;
+    const fx: unknown = plan.nodeParams[node]?.fxEffect;
+    if (fx === undefined) continue;
+    // The effect OBJECT. The sanitiser keeps a boolean and a non-empty array of objects, and
+    // every reader of the plan treats one as no effect at all — thirteen addresses the write
+    // path then never sends, with the document still holding what it holds.
+    if (!isPlainRecord(fx)) {
+      out.push({ reason: "paramRange", node, where: "effect", key: "fxEffect", stored: fx, action: "drop" });
+      continue;
+    }
+    // The effect TYPE, against the channel's MENU rather than a window.
+    if (fx.type !== undefined && !fxEffectTypes(fxIndex).some((o) => o.value === fx.type)) {
+      out.push({ reason: "paramRange", node, where: "field", key: "type", stored: fx.type, action: "drop" });
+    }
     // The effect's own level, which `pushFxEffectCommands` bounds two lines ABOVE the
     // parameter loop and by a literal rather than by a descriptor. Named here because the
     // sentence this section opens with says every FX slot, and a slot bounded by a literal
     // is no less bounded.
-    take(node, "level", "level", fx.level, FX_LEVEL_MIN, FX_LEVEL_MAX);
-    if (!fx.params) continue;
+    take(node, "field", "level", fx.level as number | undefined, FX_LEVEL_MIN, FX_LEVEL_MAX);
+    // The parameter MAP, which the readers below and the write path both skip when it is not
+    // an object — the same silent loss as an unreadable effect, one channel's worth of raws.
+    if (fx.params !== undefined && !isPlainRecord(fx.params)) {
+      out.push({ reason: "paramRange", node, where: "field", key: "params", stored: fx.params, action: "drop" });
+      continue;
+    }
+    const fxParamsMap = fx.params as Record<string, number> | undefined;
+    if (!fxParamsMap) continue;
     // EVERY type the CHANNEL offers, not only the one selected. The migration leaves a key
     // the selected type does not own exactly where it is (fx-effect.ts), so a document saved
     // under another type keeps the raw untouched, and selecting that type later brings it
@@ -132,7 +160,7 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
       for (const d of fxParams(type.value)) {
         if (seen.has(d.key)) continue;
         seen.add(d.key);
-        take(node, "params", d.key, fx.params[d.key], d.rawMin, d.rawMax);
+        take(node, "params", d.key, fxParamsMap[d.key], d.rawMin, d.rawMax);
       }
     }
   }
@@ -143,9 +171,16 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
  *  report without repairing, and so a test can assert the two halves apart. */
 export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void {
   for (const p of problems) {
-    const fx = plan.nodeParams[p.node]!.fxEffect!;
-    if (p.where === "level") {
-      if (p.action === "drop") delete fx.level;
+    const np = plan.nodeParams[p.node]!;
+    if (p.where === "effect") {
+      delete np.fxEffect;
+      continue;
+    }
+    const fx = np.fxEffect!;
+    if (p.where === "field") {
+      // `level` is the only field carrying a window, so a bound here is that field and a
+      // drop is any of the three.
+      if (p.action === "drop") delete (fx as unknown as Record<string, unknown>)[p.key];
       else fx.level = p.bound;
     } else if (p.action === "drop") {
       delete fx.params![p.key];

@@ -110,8 +110,12 @@ carries a one-line map of the same directories and points here.
   are reported differently: an illegal wire refuses the document; an insert-FX slot collision only warns and
   offers to open it anyway; a stored value outside what the app can write is repaired before the document
   opens and reported on the status line, since nothing failed and nothing is being asked — bounded to the
-  window, or dropped outright when the leaf is not a finite number, since the window is shared across a
-  channel's types and the DEFAULT is not. `isRefusal` and `needsDecision` are the two predicates that split
+  window, or DROPPED where there is nothing to bound: a leaf that is not a finite number (the window is
+  shared across a channel's types and the DEFAULT is not), a `type` the channel's menu does not offer (a
+  menu has no nearest member), and an `fxEffect` or its `params` that is not an object at all, which the
+  sanitiser keeps and every reader below then treats as absent. The two actions are counted and said
+  separately, since a value moved to the nearest one the app can send and a value removed are different
+  events. `isRefusal` and `needsDecision` are the two predicates that split
   them, one seat each / `plan.ts` plan state + JSON + the `?plan=` deep-link codec (deflate-compressed
   `"z"` format; legacy uncompressed links must keep decoding) / `levels.ts` the device's discrete level_gain
   grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Every
@@ -3244,8 +3248,13 @@ canvas down on its first paint.
 
 One value is **rewritten** rather than dropped in the DESERIALIZER, and it is the only one there — the
 loader rewrites a second class one layer later, after validation, where an FX value outside what the app can
-write is bounded — or dropped, when the leaf is not a finite number, so the selected type's own default
-applies rather than one type's guessed in — and reported (`plan-validate.ts`). Here: a **node name** is cut to
+write is bounded, and one there is nothing to bound is dropped: a leaf that is not a finite number (so the
+selected type's own default applies rather than one type's guessed in), a `type` no menu offers, and an
+`fxEffect` or `params` that is not an object. That last pair is why the class reaches past the leaves — the
+sanitiser above keeps a boolean and a non-empty object under any key, so an unreadable effect object loads
+and every reader below reads it as absent, and a truthy one is worse still, since the write path then sends
+thirteen factory defaults over whatever the unit holds. Both actions are reported (`plan-validate.ts`), in
+two sentences rather than one count. Here: a **node name** is cut to
 **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on
 the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured

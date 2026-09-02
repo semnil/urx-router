@@ -776,6 +776,8 @@ export const en = {
     planLoaded: tr("Plan loaded"),
     paramsBounded: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} outside what this app can write, and now read as the nearest value it can send`,
+    paramsDropped: (count: number): string =>
+      `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the effect's own default`,
     recentRemoved: (name: string): string => `Removed ${name} from the recent plans`,
     planSaved: tr("Plan saved"),
     savedTo: (name: string): string => `Saved to ${name}`,

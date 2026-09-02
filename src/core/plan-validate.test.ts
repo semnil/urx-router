@@ -11,6 +11,7 @@ import { fxEffectTypes, fxParams } from "./control/fx-effect";
 import { planToCommands } from "./control/translate";
 import { validatePlan } from "./routing";
 import { emptyPlan } from "./plan";
+import type { Plan } from "./plan";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
@@ -178,7 +179,7 @@ describe("paramRangeProblems", () => {
     const plan = emptyPlan("URX44V");
     plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, level: 500 } };
     expect(paramRangeProblems(plan)).toEqual([
-      { reason: "paramRange", node: "bus.fx2", where: "level", key: "level", stored: 500, action: "bound", bound: 100 },
+      { reason: "paramRange", node: "bus.fx2", where: "field", key: "level", stored: 500, action: "bound", bound: 100 },
     ]);
     applyParamRange(plan, paramRangeProblems(plan));
     expect(plan.nodeParams["bus.fx2"]?.fxEffect?.level).toBe(100);
@@ -207,11 +208,17 @@ describe("paramRangeProblems", () => {
 
   it("asks the window of the type the write path will resolve to, not the one stored", () => {
     // 768 is Rev.R3 Hall, which FX2 offers and FX1 does not; on FX1 the write path coerces
-    // it to that channel's factory type, so its window is the one that decides.
+    // it to that channel's factory type, so its window is the one that decides — and the
+    // stored type is itself reported, since the document says one effect and the unit gets
+    // another.
     const plan = emptyPlan("URX44V");
     plan.nodeParams["bus.fx1"] = { fxEffect: { type: 768, params: { revxLpf: 0 } } };
     // Rev-X's own LPF starts at 34, so a stored 0 is out of range under the resolved type.
-    expect(paramRangeProblems(plan).map((p) => p.key)).toEqual(["revxLpf"]);
+    expect(paramRangeProblems(plan).map((p) => p.key)).toEqual(["type", "revxLpf"]);
+    applyParamRange(plan, paramRangeProblems(plan));
+    // Dropped, not corrected: a menu has no nearest member, and the emit already answers the
+    // channel's own default for an absent type.
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect?.type).toBeUndefined();
   });
 
   it("repairs the plan to exactly what it reported, and only that", () => {
@@ -306,6 +313,58 @@ describe("paramRangeProblems", () => {
     plan.nodeParams["bus.fx1"]!.fxEffect!.type = 1; // Rev-X Room
     const slot = fxParams(1).find((d) => d.key === "reverbTime")!;
     expect(planToCommands(model, plan).find((c) => c.paramId === 681 && c.y === slot.slot)?.vdValue).toBe(slot.def);
+  });
+
+  // The three shapes no descriptor describes: the effect object itself, its parameter map, and
+  // its type. The sanitiser keeps a boolean and a non-empty object or array under any key —
+  // node params legitimately carry toggles and groups — and every reader below then treats the
+  // effect, or its whole parameter map, as absent. So a document can lose a channel's worth of
+  // raws, or all thirteen of its addresses, with the load saying nothing. Each is measured
+  // against the SAME document with the key simply left out: the repair has to land on the plan
+  // that says what this one turned out to say.
+  //
+  // One of them moves the wire, and that is the point of it: an unreadable effect object that
+  // happens to be TRUTHY is not skipped by the write path — it writes thirteen factory defaults
+  // over whatever the unit holds, from a value that says nothing. A plan with no FX section
+  // leaves that channel alone, and so does the repaired one.
+  it("reports an unreadable effect, parameter map or type, and repairs to the plan without it", () => {
+    const model = getModel("URX44V");
+    const wire = (plan: Plan): string =>
+      planToCommands(model, plan)
+        .map((c) => `${c.paramId}/${c.x}/${c.y}=${c.vdValue}`)
+        .join("\n");
+    const control = (fx: unknown): Plan => {
+      const plan = emptyPlan("URX44V");
+      if (fx !== undefined) plan.nodeParams["bus.fx1"] = { fxEffect: fx } as never;
+      return plan;
+    };
+    const cases: [string, unknown, unknown, string, boolean][] = [
+      ["a falsy effect object", false, undefined, "fxEffect", false],
+      ["a truthy effect object", [{}], undefined, "fxEffect", true],
+      ["the parameter map", { type: 0, level: 50, params: false }, { type: 0, level: 50 }, "params", false],
+      ["the type", { type: 999, level: 50 }, { level: 50 }, "type", false],
+    ];
+    for (const [name, bad, good, key, movesWire] of cases) {
+      const plan = control(bad);
+      const before = wire(plan);
+      expect(
+        paramRangeProblems(plan).map((p) => [p.key, p.action]),
+        name,
+      ).toEqual([[key, "drop"]]);
+      applyParamRange(plan, paramRangeProblems(plan));
+      expect(wire(plan), name).toBe(wire(control(good)));
+      expect(wire(plan) !== before, name).toBe(movesWire);
+      // …and it settles: a second load finds nothing left to do.
+      expect(paramRangeProblems(plan), name).toEqual([]);
+    }
+  });
+
+  // An effect object that IS an object is left alone however little it carries: an empty one
+  // says every value is the effect's own default, which is a document this app writes itself.
+  it("leaves an empty effect object alone", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: {} };
+    expect(paramRangeProblems(plan)).toEqual([]);
   });
 
   it("neither refuses the document nor asks the operator about it", () => {

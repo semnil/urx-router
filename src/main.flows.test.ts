@@ -269,6 +269,51 @@ describe("the deep link", () => {
     expect(t().status.paramsBounded(1).replace("1", "N")).not.toBe(t().status.paramsBounded(2).replace("2", "N"));
   });
 
+  // The other half of the repair, and the other sentence. A value the loader could not read at
+  // all is REMOVED and the effect runs on its own default — told with the bounded sentence, a
+  // document whose values were discarded is reported as having been adjusted to the nearest
+  // one, which is a different event and a different number on screen.
+  it("says a dropped value was dropped, and shows the default it fell back to", async () => {
+    const { encodePlanParam, emptyPlan } = await import("./core/plan");
+    const { FX_LEVEL_DEFAULT } = await import("./core/control/fx-effect");
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, level: false } } as never;
+
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.paramsDropped(1)), APP_SETTLE);
+    expect(status()).not.toContain(t().status.paramsBounded(1));
+    // …and the panel shows the effect's own default rather than the boolean's numeric shadow.
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    const row = [...$("inspector").querySelectorAll<HTMLElement>(".param")].find(
+      (r) => r.dataset.paramLabel === t().inspector.fxEffect.level,
+    );
+    expect(row?.querySelector(".param-val")?.textContent).toContain(String(FX_LEVEL_DEFAULT));
+  });
+
+  // Both at once, which neither case above can see: the line has to carry two sentences, and
+  // a single count cannot say that one value was moved and another removed.
+  it("says both when a document carries a bounded value and a dropped one", async () => {
+    const { encodePlanParam, emptyPlan } = await import("./core/plan");
+    const { fxParams } = await import("./core/control/fx-effect");
+    const delayLpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, level: false } } as never;
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: delayLpf.rawMin! - 1 } } };
+
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.paramsBounded(1)), APP_SETTLE);
+    expect(status()).toContain(t().status.paramsDropped(1));
+    // Neither sentence counts the other's value: a single count over both would read 2 twice.
+    expect(status()).not.toContain(t().status.paramsBounded(2));
+    expect(status()).not.toContain(t().status.paramsDropped(2));
+  });
+
   // The bar is where a repair, a partial success and a cancellation are all reported, and it
   // is the only place several of them are said at all. Its sibling `#live-tally` is already a
   // live region; this one was not, so a screen reader was told none of it.
