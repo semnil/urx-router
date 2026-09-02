@@ -185,10 +185,31 @@ describe("fx-effect translate", () => {
     expect(cmds.some((c) => c.paramId === 685 && c.y === 12)).toBe(false);
   });
 
-  it("emits nothing for an FX channel without an fxEffect", () => {
-    const plan = emptyPlan("URX44V");
-    const cmds = planToCommands(model, plan);
-    expect(cmds.some((c) => c.paramId === 679 || c.paramId === 681)).toBe(false);
+  // A channel the plan does not describe is emitted anyway, as the panel's own defaults.
+  // The inspector reads an absent fxEffect as `{}` and draws the resolved type, ON, level
+  // 100 and each descriptor's def; skipping the channel here made that a set of values the
+  // operator can see and the unit never receives, with no way in the app to have meant it.
+  // This used to pin the opposite, with no reason recorded beside it.
+  it("emits the panel's own defaults for an FX channel the plan does not describe", () => {
+    const bare = planToCommands(model, emptyPlan("URX44V"));
+    const explicit = (() => {
+      const plan = emptyPlan("URX44V");
+      plan.nodeParams["bus.fx1"] = { fxEffect: {} };
+      plan.nodeParams["bus.fx2"] = { fxEffect: {} };
+      return planToCommands(model, plan);
+    })();
+    const fx = (cs: typeof bare): string =>
+      cs
+        .filter((c) => c.name.startsWith("FX_EFFECT"))
+        .map((c) => `${c.paramId}/${c.y}=${c.vdValue}`)
+        .join("\n");
+    // The two readings of "this plan says nothing about the effect" agree.
+    expect(fx(bare)).toBe(fx(explicit));
+    // …and it is the channel's own factory type, ON and full level, not silence.
+    expect(bare.find((c) => c.paramId === 679)?.vdValue).toBe(0);
+    expect(bare.find((c) => c.paramId === 683)?.vdValue).toBe(1024);
+    expect(bare.find((c) => c.paramId === 681 && c.y === 1)?.vdValue).toBe(1);
+    expect(bare.find((c) => c.paramId === 681 && c.y === 2)?.vdValue).toBe(100);
   });
 
   // Both types read a raw as raw / 10 and differ in the range they take. A 2000 ms Mono

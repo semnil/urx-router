@@ -323,10 +323,9 @@ describe("paramRangeProblems", () => {
   // against the SAME document with the key simply left out: the repair has to land on the plan
   // that says what this one turned out to say.
   //
-  // One of them moves the wire, and that is the point of it: an unreadable effect object that
-  // happens to be TRUTHY is not skipped by the write path — it writes thirteen factory defaults
-  // over whatever the unit holds, from a value that says nothing. A plan with no FX section
-  // leaves that channel alone, and so does the repaired one.
+  // None of them moves the wire, and that is not an accident of these values: an FX channel is
+  // emitted whether or not the plan describes it, as the panel's own defaults, so a document
+  // that says nothing readable and one that says nothing at all reach the unit alike.
   it("reports an unreadable effect, parameter map or type, and repairs to the plan without it", () => {
     const model = getModel("URX44V");
     const wire = (plan: Plan): string =>
@@ -338,13 +337,13 @@ describe("paramRangeProblems", () => {
       if (fx !== undefined) plan.nodeParams["bus.fx1"] = { fxEffect: fx } as never;
       return plan;
     };
-    const cases: [string, unknown, unknown, string, boolean][] = [
-      ["a falsy effect object", false, undefined, "fxEffect", false],
-      ["a truthy effect object", [{}], undefined, "fxEffect", true],
-      ["the parameter map", { type: 0, level: 50, params: false }, { type: 0, level: 50 }, "params", false],
-      ["the type", { type: 999, level: 50 }, { level: 50 }, "type", false],
+    const cases: [string, unknown, unknown, string][] = [
+      ["a falsy effect object", false, undefined, "fxEffect"],
+      ["a truthy effect object", [{}], undefined, "fxEffect"],
+      ["the parameter map", { type: 0, level: 50, params: false }, { type: 0, level: 50 }, "params"],
+      ["the type", { type: 999, level: 50 }, { level: 50 }, "type"],
     ];
-    for (const [name, bad, good, key, movesWire] of cases) {
+    for (const [name, bad, good, key] of cases) {
       const plan = control(bad);
       const before = wire(plan);
       expect(
@@ -353,7 +352,8 @@ describe("paramRangeProblems", () => {
       ).toEqual([[key, "drop"]]);
       applyParamRange(plan, paramRangeProblems(plan));
       expect(wire(plan), name).toBe(wire(control(good)));
-      expect(wire(plan) !== before, name).toBe(movesWire);
+      // The repair moves no value at all, which is what makes it a repair.
+      expect(wire(plan), name).toBe(before);
       // …and it settles: a second load finds nothing left to do.
       expect(paramRangeProblems(plan), name).toEqual([]);
     }

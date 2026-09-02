@@ -611,6 +611,49 @@ describe("renderInspector — a stored value outside its control's range", () =>
   });
 });
 
+// The panel and the write path have to answer "what is this FX channel set to" the same way,
+// and an FX channel the plan says NOTHING about is where they used to diverge: the panel reads
+// an absent fxEffect as `{}` and draws the effect's own defaults, while the emit skipped the
+// channel entirely, so every value on screen was one the unit never received. Nothing was red —
+// each side is coherent on its own — and the app offers no way to mean "leave this channel
+// alone", so the panel's reading is the one the operator has.
+describe("renderInspector — an FX channel the plan does not describe", () => {
+  const rowValue = (label: string): string => {
+    const row = [...panel.querySelectorAll<HTMLElement>(".param")].find((r) => r.dataset.paramLabel === label);
+    return row?.querySelector(".param-val")?.textContent ?? "";
+  };
+
+  it("draws exactly the values the write path sends", () => {
+    const model = getModel("URX44V");
+    const plan = emptyPlan("URX44V");
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect, "the premise: nothing describes it").toBeUndefined();
+    renderInspector(panel, model, plan, nodeSel("bus.fx1"), act);
+
+    const cmds = planToCommands(model, plan);
+    const type = cmds.find((c) => c.paramId === 679)?.vdValue;
+    expect(type, "the channel is emitted at all").toBeTypeOf("number");
+    const raw = (slot: number): number => cmds.find((c) => c.paramId === 681 && c.y === slot)!.vdValue;
+
+    const descs = fxParams(type!);
+    // Siblings first: a readout can fold one in (REV-X Reverb Time reads Room Size).
+    const ctx: Record<string, number> = {};
+    for (const d of descs) ctx[d.key] = raw(d.slot);
+    const labels = t().inspector.fxEffect.params;
+    let compared = 0;
+    for (const d of descs) {
+      if (d.control !== "slider" && d.control !== undefined) continue;
+      const label = labels[d.label as keyof typeof labels] ?? d.label;
+      expect(rowValue(label), d.key).toBe(d.format ? d.format(raw(d.slot), ctx) : String(raw(d.slot)));
+      compared += 1;
+    }
+    // Counted, or a filter that matched nothing would satisfy every assertion above.
+    expect(compared).toBe(descs.filter((d) => d.control === undefined || d.control === "slider").length);
+    expect(compared).toBeGreaterThan(4);
+    // The effect level is a field of its own and no descriptor names it.
+    expect(rowValue(t().inspector.fxEffect.level)).toBe(String(raw(2)));
+  });
+});
+
 describe("renderInspector — every node of every model", () => {
   it.each(MODEL_IDS)("renders every %s node without throwing, and names each one", (id) => {
     const model = getModel(id);
