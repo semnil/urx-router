@@ -30,15 +30,47 @@ import {
 import { planToCommands } from "./translate";
 
 describe("fx-effect encodings (live calibration anchors)", () => {
-  it("REV-X frequency = 20 × 2^(raw/6)", () => {
-    expect(revxFreqHz(0)).toBeCloseTo(20, 1);
-    expect(Math.round(revxFreqHz(9))).toBe(57); // LCD 56, idealized 56.6
-    expect(Math.round(revxFreqHz(52))).toBe(8127); // LCD 8.00k
+  // Every filter frequency read off the unit's own screen, and the law has to reproduce each
+  // EXACTLY rather than closely. That is the whole difference between a preferred-number
+  // series and the geometric formula it looks like: 10^(1/40) and 2^(1/12) agree to four
+  // digits, so a formula passes at the bottom of a range and drifts at the top — which is how
+  // the previous version stood, with two of these assertions written to the formula's own
+  // answer and a comment beside each recording that the unit said otherwise.
+  it("REV-X frequency is the R20 series, at every point read off the unit", () => {
+    for (const [raw, hz] of [
+      [0, 20],
+      [9, 56],
+      [52, 8000],
+      [34, 1000],
+      [45, 3550],
+      [60, 20000],
+      [28, 500],
+      [59, 18000],
+    ] as const) {
+      expect(revxFreqHz(raw), `raw ${raw}`).toBe(hz);
+    }
   });
-  it("Rev.R3 / delay frequency = 15 × 2^(raw/12)", () => {
-    expect(Math.round(fx2FreqHz(31))).toBe(90);
-    expect(Math.round(fx2FreqHz(41))).toBe(160);
-    expect(Math.round(fx2FreqHz(111))).toBe(9133); // LCD 9.00k
+  it("Rev.R3 / delay frequency is the R40 series, at every point read off the unit", () => {
+    for (const [raw, hz] of [
+      [6, 21.2],
+      [21, 50],
+      [31, 90],
+      [41, 160],
+      [53, 315],
+      [101, 5000],
+      [109, 8000],
+      [111, 9000],
+      [121, 16000],
+    ] as const) {
+      expect(fx2FreqHz(raw), `raw ${raw}`).toBe(hz);
+    }
+  });
+  // A series steps by its grade, which is what a formula cannot do: the neighbours of a
+  // labelled value are the next labels, not the value times a ratio. Without this, a formula
+  // fitted to the points above would still pass them.
+  it("steps in grades, so a neighbour is the next label rather than a ratio", () => {
+    expect([53, 54, 55].map(fx2FreqHz)).toEqual([315, 335, 355]);
+    expect([44, 45, 46].map(revxFreqHz)).toEqual([3150, 3550, 4000]);
   });
   it("Initial/ER delay = raw × 200/127", () => {
     expect(initDelayMs(0)).toBeCloseTo(0, 1);
@@ -83,11 +115,15 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect([lpf.rawMin, lpf.rawMax]).toEqual([21, 122]);
     expect(hpf.format!(0, {})).toBe("THRU");
     expect(hpf.format!(5, {})).toBe("THRU");
-    expect(hpf.format!(6, {})).toBe("21 Hz"); // LCD 21.2
-    expect(hpf.format!(109, {})).toBe("8.14 kHz"); // LCD 8.00k
-    expect(lpf.format!(21, {})).toBe("50 Hz"); // LCD 50.0
-    expect(lpf.format!(121, {})).toBe("16.27 kHz"); // LCD 16.0k
     expect(lpf.format!(122, {})).toBe("THRU");
+    // The ends themselves are pinned as VALUES, which is what the unit was read for. How many
+    // digits it prints them with is a different question and a different measurement — the
+    // formatter is shared with every other frequency readout in the app — so this asserts
+    // where the window reaches rather than how the row is spelled.
+    expect(fx2FreqHz(6)).toBe(21.2);
+    expect(fx2FreqHz(109)).toBe(8000);
+    expect(fx2FreqHz(21)).toBe(50);
+    expect(fx2FreqHz(121)).toBe(16000);
     // Rev.R3 takes the same window on its own slots.
     for (const [k, want] of [
       ["revr3Hpf", [0, 109]],

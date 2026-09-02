@@ -90,13 +90,39 @@ export function resolveFxEffectType(fxIndex: number, typeValue: number | undefin
 
 // ---- raw → display encodings (calibrated; raw is the broker array value) ----
 
-/** REV-X frequency table (HPF / LPF / Low Freq): 1/6-octave from 20 Hz. */
-export function revxFreqHz(raw: number): number {
-  return 20 * Math.pow(2, raw / 6);
+/* The two filter-frequency tables are PREFERRED NUMBER series (ISO 3, the Renard grades),
+ * not octave divisions. A geometric law fits either one closely enough to pass at the bottom
+ * of its range and to drift at the top: R40's ratio is 10^(1/40) = 1.0593 against 2^(1/12) =
+ * 1.0595, and R20's is 10^(1/20) = 1.122 against 2^(1/6) = 1.122. What separates them is that
+ * a series is ROUNDED to its grade's own values, so its steps land on the numbers a filter is
+ * labelled with (315, 5k, 8k, 16k) while a formula lands beside them (320.4, 5125.8, 8136.7,
+ * 16273.4). The unit prints the series.
+ *
+ * The values are the grades themselves rather than a computed ratio, since a grade carries
+ * roundings a formula does not reproduce — R40 holds 3.15 where 10^(21/40) = 3.162, and the
+ * whole point of the table is the number the unit shows. */
+const R40 = [
+  10.0, 10.6, 11.2, 11.8, 12.5, 13.2, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.2, 22.4, 23.6, 25.0, 26.5, 28.0,
+  30.0, 31.5, 33.5, 35.5, 37.5, 40.0, 42.5, 45.0, 47.5, 50.0, 53.0, 56.0, 60.0, 63.0, 67.0, 71.0, 75.0, 80.0, 85.0,
+  90.0, 95.0,
+];
+/** R20 is R40's every other grade, and the FX1 tables step in it — one decade in 20. */
+const R20 = R40.filter((_, i) => i % 2 === 0);
+
+/** One grade of a series, `offset` places above its 1.0 decade start. */
+function preferredNumber(series: readonly number[], offset: number): number {
+  const n = series.length;
+  const i = ((offset % n) + n) % n;
+  return series[i]! * Math.pow(10, Math.floor(offset / n) - 1);
 }
-/** Rev.R3 / delay frequency table (HPF / LPF): 1/12-octave from 15 Hz. */
+
+/** REV-X frequency table (HPF / LPF / Low Freq): R20, with raw 0 at 20 Hz. */
+export function revxFreqHz(raw: number): number {
+  return preferredNumber(R20, raw + 26);
+}
+/** Rev.R3 / delay frequency table (HPF / LPF): R40, with raw 6 at its 21.2 Hz floor. */
 export function fx2FreqHz(raw: number): number {
-  return 15 * Math.pow(2, raw / 12);
+  return preferredNumber(R40, raw + 47);
 }
 /** Initial Delay / ER-Reverb Delay (REV-X + Rev.R3): linear ms = raw × 200/127. */
 export function initDelayMs(raw: number): number {

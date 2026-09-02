@@ -899,8 +899,8 @@ settle も idle 網も張られない）。フェーダー 1 detent は遅延 0 
   書き込むことになる。**真の欠陥はプラン側にあった → 修正済み**: 1 つの FX チャンネルの families が
   params マップを共有しているのに、**別スロットを指す記述子が同じ `key` を持っていた** —
   `hpf` / `lpf` / `hiRatio` / `initialDelay` / `diffusion` / `feedback` の 6 つ。Rev-X の HPF は
-  20 Hz 起点 1/6 oct、delay のそれは 15 Hz 起点 1/12 oct なので、共有キーは一方の index を他方の
-  パラメータへ書いていた。family 資格付きの名前に分離し、旧プランは保存時の type の family へ移行する
+  標準数 R20 系列、delay のそれは R40 系列の index で、段数もオフセットも別なので、共有キーは一方の
+  index を他方のパラメータへ書いていた。family 資格付きの名前に分離し、旧プランは保存時の type の family へ移行する
   (`reverbTime` は両リバーブとも slot 7 = 同一パラメータなので共有のまま)
 - **デバイス側の Pan Link ON がインスペクタに古い PAN スライダーを残した → 修正済み**。
   `reflectFollow` の direct 分岐が `refreshInspector()` を呼ばないため、`core/midi/controls.ts` が同じ
