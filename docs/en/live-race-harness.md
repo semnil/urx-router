@@ -413,9 +413,11 @@ statement: a timer that has not fired is an announcement the device has not emit
 recall. Emitting one per write instead is how `settle.ts` came to ship a judge that expected an announcement per
 obliged write: a drag flushes more often than an announcement comes back, so every move but the last reported as a
 write that went nowhere and armed a whole-device sweep of its own, and the harness had no way to say so. What the
-measurement does NOT separate is which ack the surviving announcement is anchored on — the gaps that hold an overlap
-(0-27 ms) are far smaller than the spread of the announcement delay itself (20-405 ms), so the two anchors'
-distributions overlap.
+measurement does NOT separate is which write the surviving announcement is anchored on: the delays that still held
+an overlap — the second write issued 0-32 ms after the first — are far smaller than the spread of the announcement
+delay itself, 1-172 ms (n = 44 across both runs, median 65), so the two anchors' distributions overlap. Every delay
+quoted here is measured from the ISSUE of the write it belongs to; mixing that origin with a burst-relative one
+makes a range that is neither.
 
 This is also what the overtake above has to be spelled out about, because merging is what bounds it. An overtake is a
 WINDOW rather than merely a late announcement — between the superseding write's ISSUE, where the app's snapshot
