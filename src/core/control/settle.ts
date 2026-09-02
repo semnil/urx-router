@@ -113,7 +113,7 @@ export interface SettleOptions {
    *  value and stands only for that one). An obligation with no entry here is discharged
    *  by any announcement after its mark — the name path, whose notify carries its text in
    *  a different field and a numeric value of 0. */
-  expected?: ReadonlyMap<number, number>;
+  expected?: ReadonlyMap<number, number | string>;
   /** Marks for addresses that bound the wait but whose VALUE must not be reported: the
    *  flush's string writes. They cannot travel in `written` — that map is what a numeric
    *  read is answered from, and a string notify carries its text in a different field — but
@@ -143,7 +143,7 @@ export interface PendingWrites {
    *  from — the flush's string writes. See SettleOptions.boundaryMarks. */
   boundaryMarks?: ReadonlyMap<number, number>;
   /** What each obliged write sent. See SettleOptions.expected. */
-  expected?: ReadonlyMap<number, number>;
+  expected?: ReadonlyMap<number, number | string>;
   /** The subset outside that scope which the unit owes an announcement (see
    *  SettleOptions.mustAnnounce). This read neither confirms nor repairs them — it does
    *  not look at them at all — so the one repair available is the reconcile a silent
@@ -156,7 +156,9 @@ export interface PendingWrites {
 interface Obligation {
   id: number;
   mark: number;
-  value?: number;
+  /** Either kind, because both paths overlap the same way: a rename typed over another
+   *  before the first is announced is the name twin of a drag's second fader move. */
+  value?: number | string;
 }
 
 /** One in-flight wait: what the caller is owed an answer about (`announced` filling as
@@ -179,7 +181,7 @@ export class WriteSettle {
   // called AFTER its own notify already landed resolve at once: the flush awaits a
   // vdSet per command, so the answer to an early command can arrive while a later
   // one is still in flight.
-  private readonly seen = new Map<number, { value: number; at: number }>();
+  private readonly seen = new Map<number, { value: number | string; at: number }>();
   private readonly waiters = new Set<Waiter>();
   // Every write still owed an announcement, oldest first per address. A write superseded
   // by a later write to the same address BEFORE its announcement went out gets none of its
@@ -225,7 +227,7 @@ export class WriteSettle {
   watch(
     written: ReadonlyMap<number, number>,
     mustAnnounce: ReadonlySet<number>,
-    opts: { timeoutMs?: number; signal?: AbortSignal; expected?: ReadonlyMap<number, number> } = {},
+    opts: { timeoutMs?: number; signal?: AbortSignal; expected?: ReadonlyMap<number, number | string> } = {},
   ): void {
     const { timeoutMs = SETTLE_TIMEOUT_MS, signal, expected } = opts;
     // Same disable switch the settle honours: with the wait off there is no window for
@@ -238,16 +240,20 @@ export class WriteSettle {
   /** Record an incoming device notify. Called before the echo test — the answer to
    *  our own write IS an echo, so a settle fed after that filter would never see the
    *  one notify it is waiting for. */
-  note(p: { paramId: number; x: number; y: number; value: number }): void {
+  note(p: { paramId: number; x: number; y: number; value: number; valueStr?: string }): void {
     const k = addrKey(p.paramId, p.x, p.y);
-    this.seen.set(k, { value: p.value, at: ++this.seq });
-    this.discharge(k, p.value, this.seq);
+    // A name notify carries its text here and a numeric `value` of 0, so the text is what
+    // it said and the 0 is filler. Taking the filler would let any rename discharge any
+    // other write on that address, and would put a 0 into a numeric read's answer.
+    const said = p.valueStr ?? p.value;
+    this.seen.set(k, { value: said, at: ++this.seq });
+    this.discharge(k, said, this.seq);
     for (const w of this.waiters) {
       // The LAST announcement wins, unconditionally. A second notify for one address
       // inside one window is the unit correcting itself (a quantise arriving after the
       // raw echo) or the operator moving the control on the board, and in both readings
       // the later word is the one the unit is standing behind.
-      if (w.written.has(k)) w.announced.set(k, p.value);
+      if (typeof said === "number" && w.written.has(k)) w.announced.set(k, said);
       // The two are answered independently: this notify may end the wait without being
       // one this caller is owed an answer about, and far more often the other way round.
       if (w.waitFor.delete(k) && !w.waitFor.size) w.done();
@@ -278,7 +284,7 @@ export class WriteSettle {
     const announced = new Map<number, number>();
     for (const [k, at] of written) {
       const s = this.seen.get(k);
-      if (s !== undefined && s.at > at) announced.set(k, s.value);
+      if (s !== undefined && s.at > at && typeof s.value === "number") announced.set(k, s.value);
     }
     const named = mustSettle ?? new Set(written.keys());
     const waitFor = new Set<number>();
@@ -315,7 +321,7 @@ export class WriteSettle {
     mustAnnounce: ReadonlySet<number>,
     timeoutMs: number,
     signal: AbortSignal | undefined,
-    expected: ReadonlyMap<number, number> | undefined,
+    expected: ReadonlyMap<number, number | string> | undefined,
   ): void {
     // Who the report goes to is decided at the BOUND, from two facts rather than one:
     // who was listening when the watch was armed, and who is listening when it fires.
@@ -392,7 +398,7 @@ export class WriteSettle {
   // by its first, which is the whole of the merge. An obligation this does not match is
   // left standing — an announcement carrying an EARLIER write's value says that write was
   // announced on its own, and says nothing at all about the one that superseded it.
-  private discharge(k: number, value: number, at: number): void {
+  private discharge(k: number, value: number | string, at: number): void {
     const q = this.outstanding.get(k);
     if (!q) return;
     for (let i = q.length - 1; i >= 0; i--) {

@@ -694,6 +694,11 @@ export class LiveSync {
       // text in a different field, so the value has no place there — but the ADDRESS and the
       // mark are all an announcement watch needs.
       const nameWrites = new Map<number, number>();
+      // The text each rename sent, so a run of renames on one address is judged the way a
+      // run of fader moves is: the unit answers the run with one notify carrying the last
+      // name, and a notify carrying an EARLIER one says that rename was announced on its
+      // own and says nothing about the one that replaced it.
+      const nameExpected = new Map<number, string>();
       // What this flush wrote and the device acked, keyed the way the snapshot is
       // (translate.addrKey). Handed to the refetch, whose read would otherwise be issued
       // inside the window in which the unit still answers these addresses with the
@@ -805,7 +810,10 @@ export class LiveSync {
         if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
         this.notePending(this.pendingNames, k, value);
-        if (w.name === undefined) nameWrites.set(nameAddr, nameMark);
+        if (w.name === undefined) {
+          nameWrites.set(nameAddr, nameMark);
+          nameExpected.set(nameAddr, value);
+        }
         sent++;
         // A string write can be a sideEffect head too: the SSMCS preset recomputes the strip
         // exactly as the morphing knob does. Only REFETCH is consulted — no string param is a
@@ -991,7 +999,7 @@ export class LiveSync {
       //
       // Left unwatched a dropped rename is invisible twice: the plan and the name snapshot
       // both move to the new name, so no later flush finds a diff to re-send.
-      if (nameWrites.size) writeSettle.watch(nameWrites, new Set(nameWrites.keys()));
+      if (nameWrites.size) writeSettle.watch(nameWrites, new Set(nameWrites.keys()), { expected: nameExpected });
       // Before onSent, and unconditional on `sent`. A converge cannot be the reason — its
       // flag is set after `sent++`, so a flush that sent nothing never reaches one — but
       // `resync()` captures OUTSIDE any flush (the caller runs it after every device-side

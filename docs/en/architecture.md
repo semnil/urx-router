@@ -209,7 +209,16 @@ carries a one-line map of the same directories and points here.
       newest obligation is the one judged and the ones it superseded are discharged by it; judged against an
       announcement each, every move of a drag but the last reports as a write that went nowhere and arms a
       sweep of its own. Merging reaches the OUTSTANDING ones and no further — once a write has been judged,
-      the next write to that address is owed an announcement of its own. **A rename is watched too, whatever epilogue its flush
+      the next write to that address is owed an announcement of its own. **Which of them a notify answers is
+      settled by its VALUE, not by the overlap**: the same single notify is produced when the earlier write
+      was announced normally and the later one was acked and silently discarded, and there the later write
+      really is lost. So an obligation carries what its write sent, a notify discharges the newest obligation
+      it can be the answer to plus every obligation older than that, and one it matches nothing in is left
+      standing. **A rename is judged on its TEXT for the same reason** — a name notify carries its text beside
+      a numeric 0, so an obligation judged on the number would let any rename answer for any other write on
+      that address, and would put that 0 into a numeric read's answer. Every caller that hands over pending
+      writes hands the values with them, the refetch's settle included; without them that path judges by
+      overlap alone and takes the reading that is wrong exactly when a write was discarded. **A rename is watched too, whatever epilogue its flush
       takes** — neither covers names, since a converge re-reads numeric commands and the refetch is the one
       caller that skips them, and a dropped rename leaves no diff for a later flush because the plan and the
       name snapshot have both moved on. Nothing is withdrawn from the handle: the last announcement wins,

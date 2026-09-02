@@ -483,9 +483,11 @@ describe("applyDeviceState write overlay", () => {
   // pass them all unnoticed. Here a wait nothing advances never ends, so the case times
   // out instead of quietly measuring a slower app.
   let armedSource: (() => void) | null = null;
+  let reported: number[][] = [];
   beforeEach(() => {
     vi.useFakeTimers();
-    armedSource = writeSettle.arm(() => {});
+    reported = [];
+    armedSource = writeSettle.arm((addrs) => reported.push([...addrs]));
   });
   afterEach(() => {
     armedSource?.();
@@ -555,6 +557,56 @@ describe("applyDeviceState write overlay", () => {
 
     expect(wasRead(cmd)).toBe(true);
     expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(false);
+  });
+
+  // Two writes to ONE address inside a refetch's window, which is what a drag produces:
+  // the flush goes out more often than an announcement comes back, so both take the same
+  // mark. ONE notify arrives and it carries the FIRST write's value — the unit announced
+  // that one on its own and acked-then-discarded the second, so the second really is lost.
+  // The only thing that separates this from the ordinary overlap, where the notify carries
+  // the LAST value and stands for both, is the value; a settle handed no values has to
+  // guess, and guesses that both are answered.
+  it("reports a write the refetch's own settle can only tell is lost by its value", async () => {
+    const source = oneKnobPlan();
+    const cmd = oneKnobCommand(source);
+    mockVdGetFrom(staleTable(source, cmd));
+
+    const at = writeSettle.mark();
+    const target = emptyPlan("URX44V");
+    const pending: PendingWrites = {
+      written: new Map([[keyOf(cmd), at]]),
+      // What the LATER write sent. The notify below carries the earlier value.
+      expected: new Map([[keyOf(cmd), 0]]),
+      mustSettle: new Set(),
+      mustAnnounce: new Set([keyOf(cmd)]),
+    };
+    writeSettle.note({ paramId: cmd.paramId, x: cmd.x, y: cmd.y, value: 1 });
+    await applyDeviceState(model, target, undefined, undefined, pending);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 3);
+
+    expect(reported).toEqual([[keyOf(cmd)]]);
+  });
+
+  // The other half, and the one that keeps the case above from being satisfied by a settle
+  // that simply reports everything: the same overlap answered by the LATER value is the
+  // ordinary drag, and it must arm nothing.
+  it("says nothing when the announcement carries the value the write sent", async () => {
+    const source = oneKnobPlan();
+    const cmd = oneKnobCommand(source);
+    mockVdGetFrom(staleTable(source, cmd));
+
+    const at = writeSettle.mark();
+    const target = emptyPlan("URX44V");
+    writeSettle.note({ paramId: cmd.paramId, x: cmd.x, y: cmd.y, value: 1 });
+    await applyDeviceState(model, target, undefined, undefined, {
+      written: new Map([[keyOf(cmd), at]]),
+      expected: new Map([[keyOf(cmd), 1]]),
+      mustSettle: new Set(),
+      mustAnnounce: new Set([keyOf(cmd)]),
+    });
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 3);
+
+    expect(reported).toEqual([]);
   });
 
   it("answers the announced write and reads the one beside it that nothing announced", async () => {

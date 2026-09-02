@@ -373,6 +373,38 @@ describe("WriteSettle unannounced report", () => {
     expect(reported).toEqual([[ADDR]]);
   });
 
+  // The name twin of the pair above, and it is not a variation: a rename typed over
+  // another before the first is announced produces the same one notify, and the text is
+  // the only thing that says which reading it is. A name notify carries its text beside a
+  // numeric value of 0, so an obligation judged on the number cannot tell them apart.
+  it("answers a superseded rename with the announcement of the rename that replaced it", async () => {
+    const { settle, reported } = armed();
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, "old"]]) });
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, "new"]]) });
+    settle.note({ ...NOTIFY, value: 0, valueStr: "new" });
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 3);
+    expect(reported).toEqual([]);
+  });
+
+  it("reports a discarded rename whose predecessor's announcement arrived after it", async () => {
+    const { settle, reported } = armed();
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, "old"]]) });
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, "new"]]) });
+    settle.note({ ...NOTIFY, value: 0, valueStr: "old" });
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 3);
+    expect(reported).toEqual([[ADDR]]);
+  });
+
+  // A name notify is not an answer a NUMERIC read may be given: its numeric value is 0
+  // filler, and answering a numeric address from it would write that 0 into the plan.
+  it("does not answer a numeric read from a name announcement", async () => {
+    const { settle } = armed();
+    const written = wrote(settle, ADDR);
+    settle.note({ ...NOTIFY, value: 0, valueStr: "a name" });
+    const announced = await settle.settle(written, { mustSettle: new Set() });
+    expect(announced.has(ADDR)).toBe(false);
+  });
+
   // The same run of writes, and the unit says nothing at all. That IS a write that went
   // nowhere, and it is reported ONCE however many writes the run held: the address needs
   // re-reading, and it needs it no harder for having been written three times.

@@ -295,6 +295,11 @@ export async function applyDeviceState(
         mustSettle: pending.mustSettle,
         mustAnnounce: pending.mustAnnounce,
         boundaryMarks: pending.boundaryMarks,
+        // Without this the obligations here are value-less, and a value-less obligation
+        // cannot tell the two one-notify cases apart: it takes an EARLIER write's
+        // announcement as the answer to the write that superseded it, which is the reading
+        // that is wrong exactly when the later write was acked and silently discarded.
+        expected: pending.expected,
         signal,
       })
     : undefined;

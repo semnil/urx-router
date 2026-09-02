@@ -1849,9 +1849,12 @@ describe("LiveSync recentPending", () => {
       plan.nodeNames = { ...plan.nodeNames, ch1: "RENAMED" };
       live.schedule();
       await vi.advanceTimersByTimeAsync(120);
-      const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+      const [param, , y, sent] = vi.mocked(vdSetStr).mock.calls[0];
       const k = addrKey(param, 0, y);
-      writeSettle.note({ paramId: param, x: 0, y, value: 0 });
+      // The TEXT, because that is what a name announcement carries — its numeric value is
+      // 0 filler. Announcing the filler alone is a shape the unit never sends, and it is
+      // now the shape of a rename the unit did NOT announce.
+      writeSettle.note({ paramId: param, x: 0, y, value: 0, valueStr: sent });
       await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
       expect(reports.some((r) => r.has(k))).toBe(false);
     } finally {
@@ -1869,10 +1872,11 @@ describe("LiveSync recentPending", () => {
       plan.nodeNames = { ...plan.nodeNames, ch1: "RENAMED" };
       live.schedule();
       await vi.advanceTimersByTimeAsync(120);
-      const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
-      // A name notify carries its text elsewhere; what the watch judges is that the address
-      // spoke at all, so the numeric value here stands for the announcement and nothing more.
-      writeSettle.note({ paramId: param, x: 0, y, value: 0 });
+      const [param, , y, sent] = vi.mocked(vdSetStr).mock.calls[0];
+      // The TEXT the unit announces, not merely that the address spoke: a run of renames on
+      // one address produces ONE notify, and only its text says whether it answers the last
+      // rename or an earlier one the next rename replaced.
+      writeSettle.note({ paramId: param, x: 0, y, value: 0, valueStr: sent });
       await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
       expect(reports).toEqual([]);
     } finally {
