@@ -205,10 +205,34 @@ const FX_NOTE_OPTIONS = [
 
 // ---- shared display formatters ----
 
-/** Hz value → "560 Hz" / "3.55 kHz". Shared with the inspector's SSMCS readouts. */
+/** Hz value → "560 Hz" / "3.55 kHz". Shared with the inspector's SSMCS readouts and the
+ *  channel EQ, so it is the app's own default rather than any one control's rule. */
 export function formatHz(hz: number): string {
   if (hz >= 1000) return `${(hz / 1000).toFixed(2)} kHz`;
   return `${Math.round(hz)} Hz`;
+}
+
+/* The two FX filter families are printed to DIFFERENT precisions, and the app follows each
+ * rather than the default above, because these rows name a setting the unit also displays.
+ *
+ *  band        FX1 (REV-X, R20)     FX2 (Rev.R3 / delay, R40)
+ *  < 1 kHz     integer  22, 250     3 significant figures  21.2, 50.0, 315
+ *  >= 1 kHz    3 s.f.   1.12k       3 s.f.                 8.00k, 16.0k
+ *
+ * The difference is the Hz band alone: FX1 drops the decimal that FX2 keeps. R20's grades
+ * stay distinct as integers there (20 / 22 / 25 / 28 / 32 / 36) while R40's do not — 10.6 and
+ * 11.2 would both read 11 — which is the shape of the two tables rather than a display quirk.
+ *
+ * `toPrecision(3)` is the three-figure half: it keeps the trailing zeros the unit shows
+ * (50.0, 8.00k, 16.0k) that a fixed decimal count cannot give across bands. */
+const threeFigures = (v: number): string => v.toPrecision(3);
+/** REV-X filter frequency → the label the unit prints for it. */
+export function formatFx1Hz(hz: number): string {
+  return hz >= 1000 ? `${threeFigures(hz / 1000)} kHz` : `${Math.round(hz)} Hz`;
+}
+/** Rev.R3 / delay filter frequency → the label the unit prints for it. */
+export function formatFx2Hz(hz: number): string {
+  return hz >= 1000 ? `${threeFigures(hz / 1000)} kHz` : `${threeFigures(hz)} Hz`;
 }
 function formatSec(s: number): string {
   return `${s < 10 ? s.toFixed(2) : s.toFixed(1)} s`;
@@ -220,10 +244,10 @@ function formatSec(s: number): string {
 const FX2_HPF_THRU_TOP = 5;
 const FX2_LPF_THRU = 122;
 function fx2HpfLabel(raw: number): string {
-  return raw <= FX2_HPF_THRU_TOP ? "THRU" : formatHz(fx2FreqHz(raw));
+  return raw <= FX2_HPF_THRU_TOP ? "THRU" : formatFx2Hz(fx2FreqHz(raw));
 }
 function fx2LpfLabel(raw: number): string {
-  return raw >= FX2_LPF_THRU ? "THRU" : formatHz(fx2FreqHz(raw));
+  return raw >= FX2_LPF_THRU ? "THRU" : formatFx2Hz(fx2FreqHz(raw));
 }
 function formatMs(ms: number): string {
   return `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
@@ -332,7 +356,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     rawMax: 52,
     rawStep: 1,
     def: 4,
-    format: (r) => formatHz(revxFreqHz(r)),
+    format: (r) => formatFx1Hz(revxFreqHz(r)),
   },
   {
     key: "revxLpf",
@@ -343,7 +367,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     rawMax: 60,
     rawStep: 1,
     def: 50,
-    format: (r) => formatHz(revxFreqHz(r)),
+    format: (r) => formatFx1Hz(revxFreqHz(r)),
   },
   {
     key: "revxHiRatio",
@@ -376,7 +400,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     rawMax: 59,
     rawStep: 1,
     def: 32,
-    format: (r) => formatHz(revxFreqHz(r)),
+    format: (r) => formatFx1Hz(revxFreqHz(r)),
   },
 ];
 

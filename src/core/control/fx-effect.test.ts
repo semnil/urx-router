@@ -10,6 +10,8 @@ import {
   balanceLabel,
   delayMs,
   FX_TYPE_DEFAULTS,
+  formatFx1Hz,
+  formatFx2Hz,
   fx2FreqHz,
   FX_EFFECT_TYPE_DEFAULT,
   fxEffectTypes,
@@ -65,6 +67,89 @@ describe("fx-effect encodings (live calibration anchors)", () => {
       expect(fx2FreqHz(raw), `raw ${raw}`).toBe(hz);
     }
   });
+  // Every filter frequency label read off the unit, both families. The two are printed to
+  // DIFFERENT precisions and only the Hz band differs: FX1 drops the decimal FX2 keeps. That is
+  // the shape of the two tables — R20's grades stay distinct as integers (20/22/25/28/32/36)
+  // while R40's would not (10.6 and 11.2 both read 11) — so a single formatter cannot serve
+  // both, and the app's shared `formatHz` serves neither.
+  //
+  // The app writes a space before the unit and the LCD does not; that is house typography,
+  // applied to every frequency row in the app, and the VALUE is what the panel and the unit
+  // have to agree on.
+  it("prints each family at the precision the unit prints it", () => {
+    for (const [hz, label] of [
+      // FX1, below 1 kHz: an integer, so the grade's own decimal is dropped.
+      [22.4, "22 Hz"],
+      [25, "25 Hz"],
+      [28, "28 Hz"],
+      [31.5, "32 Hz"],
+      [35.5, "36 Hz"],
+      // …and at 100 Hz and up the grades are already integers, which is where "round to the
+      // integer" and "two significant figures" part company (315 rather than 320).
+      [250, "250 Hz"],
+      [280, "280 Hz"],
+      [315, "315 Hz"],
+      [355, "355 Hz"],
+      [450, "450 Hz"],
+      // From 1 kHz, three significant figures, trailing zeros and all.
+      [1120, "1.12 kHz"],
+      [1400, "1.40 kHz"],
+      [2800, "2.80 kHz"],
+      [3150, "3.15 kHz"],
+      [5000, "5.00 kHz"],
+      [18000, "18.0 kHz"],
+    ] as const) {
+      expect(formatFx1Hz(hz), `${hz}`).toBe(label);
+    }
+    for (const [hz, label] of [
+      [21.2, "21.2 Hz"],
+      [50, "50.0 Hz"],
+      [315, "315 Hz"],
+      [8000, "8.00 kHz"],
+      [16000, "16.0 kHz"],
+    ] as const) {
+      expect(formatFx2Hz(hz), `${hz}`).toBe(label);
+    }
+    // The one value both families reach, printed the same way by each, so the pair above is a
+    // difference in the Hz band rather than two unrelated formatters.
+    expect(formatFx1Hz(315)).toBe(formatFx2Hz(315));
+    // …and the difference itself: the same grade, one dropping the decimal.
+    expect(formatFx1Hz(22.4)).not.toBe(formatFx2Hz(22.4));
+  });
+
+  // …and the rows themselves take it. Pinning the formatters alone leaves a descriptor free to
+  // go on calling the app's shared `formatHz`, which is a row that reads 3.55 kHz as "3.55 kHz"
+  // and 22.4 Hz as "22 Hz" — right by luck in one band and wrong in the other. Measured raws,
+  // through the descriptor the panel actually renders.
+  it("renders each filter row through its own family's formatter", () => {
+    const row = (type: number, key: string): FxParamDesc => fxParams(type).find((d) => d.key === key)!;
+    for (const [type, key, raw, label] of [
+      // REV-X Hall: the two readings taken one click above each control's floor, and the LPF
+      // point the old record already carried.
+      [0, "revxHpf", 1, "22 Hz"],
+      [0, "lowFreq", 1, "22 Hz"],
+      [0, "revxLpf", 44, "3.15 kHz"],
+      [0, "revxLpf", 45, "3.55 kHz"],
+      // The top of each REV-X window, which is the band where the app's shared formatHz and
+      // this one part company (it writes two decimals in kHz, so 18.0 would read 18.00).
+      // Without a point here the row can go on calling the shared one and every other
+      // assertion still passes. `revxHpf` has no such point and cannot: measured over its
+      // whole window (raw 0-52, 20 Hz to 8 kHz) the two formatters agree on every raw, since
+      // they diverge only from 10 kHz up. Swapping that ONE row to the shared formatter is
+      // behaviour-preserving, so it stays green here — correctly.
+      [0, "lowFreq", 59, "18.0 kHz"],
+      [0, "revxLpf", 60, "20.0 kHz"],
+      // Mono Delay: one click above THRU, and both ends of the LPF's window.
+      [1024, "delayHpf", 6, "21.2 Hz"],
+      [1024, "delayLpf", 21, "50.0 Hz"],
+      [1024, "delayLpf", 121, "16.0 kHz"],
+      // Rev.R3 shares the delay family's table and window, so it shares its precision.
+      [768, "revr3Hpf", 6, "21.2 Hz"],
+    ] as const) {
+      expect(row(type, key).format!(raw, {}), `${key} raw ${raw}`).toBe(label);
+    }
+  });
+
   // A series steps by its grade, which is what a formula cannot do: the neighbours of a
   // labelled value are the next labels, not the value times a ratio. Without this, a formula
   // fitted to the points above would still pass them.
