@@ -105,6 +105,15 @@ export interface SettleOptions {
    *  repair is. Class (b) — a write that may be a no-op — must stay out of it, or a
    *  legitimate silence would order a whole-device sweep every time. */
   mustAnnounce?: ReadonlySet<number>;
+  /** What each obliged write SENT, so a notify can be matched to the write it answers.
+   *  Without it an address's obligations can only be counted, and counting cannot tell the
+   *  two one-notify cases apart: a write superseded before its announcement went out (the
+   *  notify carries the LATER value and stands for both) and a write announced normally
+   *  whose successor was acked and silently discarded (the notify carries the EARLIER
+   *  value and stands only for that one). An obligation with no entry here is discharged
+   *  by any announcement after its mark — the name path, whose notify carries its text in
+   *  a different field and a numeric value of 0. */
+  expected?: ReadonlyMap<number, number>;
   /** Marks for addresses that bound the wait but whose VALUE must not be reported: the
    *  flush's string writes. They cannot travel in `written` — that map is what a numeric
    *  read is answered from, and a string notify carries its text in a different field — but
@@ -133,11 +142,21 @@ export interface PendingWrites {
   /** Marks for addresses the read must wait for but whose value it must not be answered
    *  from — the flush's string writes. See SettleOptions.boundaryMarks. */
   boundaryMarks?: ReadonlyMap<number, number>;
+  /** What each obliged write sent. See SettleOptions.expected. */
+  expected?: ReadonlyMap<number, number>;
   /** The subset outside that scope which the unit owes an announcement (see
    *  SettleOptions.mustAnnounce). This read neither confirms nor repairs them — it does
    *  not look at them at all — so the one repair available is the reconcile a silent
    *  one arms. */
   mustAnnounce: ReadonlySet<number>;
+}
+
+/** One write the unit owes an announcement for, still unanswered. `value` is what that
+ *  write sent; absent where the caller cannot say (the name path). */
+interface Obligation {
+  id: number;
+  mark: number;
+  value?: number;
 }
 
 /** One in-flight wait: what the caller is owed an answer about (`announced` filling as
@@ -162,20 +181,22 @@ export class WriteSettle {
   // one is still in flight.
   private readonly seen = new Map<number, { value: number; at: number }>();
   private readonly waiters = new Set<Waiter>();
-  // Which obligation is the live one per address. A write superseded by a later write to
-  // the same address before either was announced gets no announcement of its own: the unit
-  // announces the value it ENDED UP holding and says nothing about what it passed through,
-  // so a run of writes to one address — however long — is answered by exactly one notify.
-  // A flush goes out more often than an announcement comes back, so consecutive moves of
-  // one fader overlap that way in ordinary use, and judging each of them against an
-  // announcement of its own reports every move but the last as a write that went nowhere.
+  // Every write still owed an announcement, oldest first per address. A write superseded
+  // by a later write to the same address BEFORE its announcement went out gets none of its
+  // own: the unit announces the value it ENDED UP holding and says nothing about what it
+  // passed through, so such a run is answered by exactly one notify. A flush goes out more
+  // often than an announcement comes back, so consecutive moves of one fader overlap that
+  // way in ordinary use, and asking each of them for an announcement reports every move but
+  // the last as a write that went nowhere.
   //
-  // So an address's outstanding obligations merge forward: the newest is judged, and the
-  // ones it superseded are discharged by it. One entry per address with an obligation in
-  // flight, dropped as that obligation is judged, and overwritten by the next one either
-  // way — so an abandoned wait leaves nothing that could answer for a later write.
+  // Whether a write WAS superseded is settled by the notify's value rather than assumed
+  // from the overlap: the same single notify is produced when the earlier write was
+  // announced normally and the later one was acked and silently discarded, and there the
+  // later write really is lost. So a notify discharges the newest obligation it can be the
+  // answer to, and every obligation older than that one — which the unit passed through
+  // without announcing — and nothing else.
   private obligationSeq = 0;
-  private readonly latestObligation = new Map<number, number>();
+  private readonly outstanding = new Map<number, Obligation[]>();
 
   /** Register the notify source; the returned call releases it. Held by whoever owns
    *  the subscription — while it is up a write can be waited out exactly, and while it
@@ -204,14 +225,14 @@ export class WriteSettle {
   watch(
     written: ReadonlyMap<number, number>,
     mustAnnounce: ReadonlySet<number>,
-    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+    opts: { timeoutMs?: number; signal?: AbortSignal; expected?: ReadonlyMap<number, number> } = {},
   ): void {
-    const { timeoutMs = SETTLE_TIMEOUT_MS, signal } = opts;
+    const { timeoutMs = SETTLE_TIMEOUT_MS, signal, expected } = opts;
     // Same disable switch the settle honours: with the wait off there is no window for
     // an announcement to arrive in, so judging one at the bound would report every
     // write as silent.
     if (timeoutMs <= 0 || !mustAnnounce.size) return;
-    this.watchAnnouncements(written, mustAnnounce, timeoutMs, signal);
+    this.watchAnnouncements(written, mustAnnounce, timeoutMs, signal, expected);
   }
 
   /** Record an incoming device notify. Called before the echo test — the answer to
@@ -220,6 +241,7 @@ export class WriteSettle {
   note(p: { paramId: number; x: number; y: number; value: number }): void {
     const k = addrKey(p.paramId, p.x, p.y);
     this.seen.set(k, { value: p.value, at: ++this.seq });
+    this.discharge(k, p.value, this.seq);
     for (const w of this.waiters) {
       // The LAST announcement wins, unconditionally. A second notify for one address
       // inside one window is the unit correcting itself (a quantise arriving after the
@@ -243,7 +265,7 @@ export class WriteSettle {
    * device rather than answering it from what was sent.
    */
   async settle(written: ReadonlyMap<number, number>, opts: SettleOptions = {}): Promise<ReadonlyMap<number, number>> {
-    const { signal, timeoutMs = SETTLE_TIMEOUT_MS, mustSettle, mustAnnounce, boundaryMarks } = opts;
+    const { signal, timeoutMs = SETTLE_TIMEOUT_MS, mustSettle, mustAnnounce, boundaryMarks, expected } = opts;
     signal?.throwIfAborted();
     // The settle is switched off (the unit tests, whose mock device has no asynchronous
     // anything to settle). Nothing was waited for, so nothing was announced: switching
@@ -265,7 +287,7 @@ export class WriteSettle {
       const at = written.get(k) ?? boundaryMarks?.get(k);
       if (s === undefined || at === undefined || s.at <= at) waitFor.add(k);
     }
-    if (mustAnnounce?.size) this.watchAnnouncements(written, mustAnnounce, timeoutMs, signal);
+    if (mustAnnounce?.size) this.watchAnnouncements(written, mustAnnounce, timeoutMs, signal, expected);
     if (waitFor.size > 0) {
       await this.wait(timeoutMs, signal, (done) => {
         const waiter: Waiter = { written, announced, waitFor, done };
@@ -293,6 +315,7 @@ export class WriteSettle {
     mustAnnounce: ReadonlySet<number>,
     timeoutMs: number,
     signal: AbortSignal | undefined,
+    expected: ReadonlyMap<number, number> | undefined,
   ): void {
     // Who the report goes to is decided at the BOUND, from two facts rather than one:
     // who was listening when the watch was armed, and who is listening when it fires.
@@ -312,14 +335,26 @@ export class WriteSettle {
     // listening. If nobody was — the re-registration gap, and nothing else — it goes
     // to whoever is listening now, which is the same sink coming back.
     const armed = new Set(this.sinks);
-    // Claim each address for this obligation, displacing whatever was outstanding for it.
-    // Taken at ARM time rather than at the bound, because the order the watches fire in is
-    // the order they were armed and the displacement has to be visible to the earlier one.
+    // Registered at ARM time, not at the bound: a notify can arrive before this watch is
+    // armed, and one that arrives after must be able to see every obligation it might be
+    // the answer to — including the ones armed by flushes still to come.
     const ids = new Map<number, number>();
     for (const k of mustAnnounce) {
+      const mark = written.get(k);
+      if (mark === undefined) continue;
       const id = ++this.obligationSeq;
       ids.set(k, id);
-      this.latestObligation.set(k, id);
+      const q = this.outstanding.get(k);
+      const entry: Obligation = { id, mark, ...(expected?.has(k) ? { value: expected.get(k) } : {}) };
+      if (q) q.push(entry);
+      else this.outstanding.set(k, [entry]);
+      // The answer can already be in hand: the flush awaits a vdSet per command and arms
+      // once at the end, so a notify for an early write lands while a later one is still in
+      // flight. Judged against `seen`, which holds the last thing the unit said — one
+      // announcement, so a pair that both arrived before the arming leaves the older
+      // obligation standing, and its own bound then hands it to the newer one.
+      const s = this.seen.get(k);
+      if (s !== undefined) this.discharge(k, s.value, s.at);
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
@@ -327,22 +362,46 @@ export class WriteSettle {
       if (!to.length) return;
       const silent = new Set<number>();
       for (const k of mustAnnounce) {
-        // Superseded: a later write to this address is outstanding, and the announcement
-        // the unit makes will carry ITS value and stand for both. That later obligation is
-        // the one judged, so this one asks nothing and reports nothing.
-        if (this.latestObligation.get(k) !== ids.get(k)) continue;
-        this.latestObligation.delete(k);
-        // The live obligation, judged against the last thing the unit said about the
-        // address: anything after this write's own mark is its answer, and nothing after
-        // it means nothing announced this write or any it superseded.
-        const at = written.get(k);
-        const s = this.seen.get(k);
-        if (at === undefined || s === undefined || s.at <= at) silent.add(k);
+        if (written.get(k) === undefined) {
+          silent.add(k);
+          continue;
+        }
+        const q = this.outstanding.get(k);
+        const idx = q ? q.findIndex((o) => o.id === ids.get(k)) : -1;
+        // Gone from the list = a notify answered it, on its own or as one this address's
+        // later write spoke for.
+        if (idx < 0 || !q) continue;
+        // A LATER obligation on this address is still standing, so the unit has said
+        // nothing about either yet. Hand the question to that one rather than reporting
+        // here: the answer it is waiting for would have covered this write too, and
+        // reporting now orders a sweep for an announcement merely still in flight.
+        const last = idx === q.length - 1;
+        q.splice(idx, 1);
+        if (!q.length) this.outstanding.delete(k);
+        if (last) silent.add(k);
       }
       if (silent.size) for (const sink of to) sink(silent);
     }, timeoutMs);
     const onAbort = (): void => clearTimeout(timer);
     signal?.addEventListener("abort", onAbort, { once: true });
+  }
+
+  // The newest obligation an announcement can be the answer to, and with it every
+  // obligation OLDER than that one: those the unit passed through without announcing.
+  // Searched from the newest so a run of writes is answered by its LAST value rather than
+  // by its first, which is the whole of the merge. An obligation this does not match is
+  // left standing — an announcement carrying an EARLIER write's value says that write was
+  // announced on its own, and says nothing at all about the one that superseded it.
+  private discharge(k: number, value: number, at: number): void {
+    const q = this.outstanding.get(k);
+    if (!q) return;
+    for (let i = q.length - 1; i >= 0; i--) {
+      if (q[i].mark >= at) continue;
+      if (q[i].value !== undefined && q[i].value !== value) continue;
+      q.splice(0, i + 1);
+      if (!q.length) this.outstanding.delete(k);
+      return;
+    }
   }
 
   // One wait, one teardown: the timeout, the optional early resolve, and the abort

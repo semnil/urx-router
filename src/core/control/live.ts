@@ -708,7 +708,7 @@ export class LiveSync {
       // emits no notify at all (measured). `node` decides which of the two subsets below
       // the address lands in, and cannot be resolved until the loop has finished: the
       // command that puts a node into `refetch` may come after the ones that wrote it.
-      const writes = new Map<number, { mark: number; node?: string; changed: boolean }>();
+      const writes = new Map<number, { mark: number; node?: string; changed: boolean; value: number }>();
       const scope = this.scope();
       const commands = planToCommands(model, plan, scope);
       // The set can only be rebuilt by a capture, and a flush reaches one only through a
@@ -763,7 +763,7 @@ export class LiveSync {
         if (this.sessionGen !== gen) return;
         this.snapshot.set(k, value);
         this.notePending(this.pendingValues, k, value);
-        writes.set(k, { mark, node: c.node, changed: had !== undefined });
+        writes.set(k, { mark, node: c.node, changed: had !== undefined, value });
         this.recentWrites.set(k, { mark, node: c.node, at: Date.now() });
         sent++;
         if (CONVERGE.has(c.name)) sideEffect = true;
@@ -930,8 +930,13 @@ export class LiveSync {
         const written = new Map<number, number>();
         const mustSettle = new Set<number>();
         const mustAnnounce = new Set<number>();
+        // What each write SENT, so the settle can tell a superseded write's silence from a
+        // discarded one's — the two produce the same single notify and differ only in the
+        // value it carries (settle.ts, SettleOptions.expected).
+        const expected = new Map<number, number>();
         for (const [k, w] of writes) {
           written.set(k, w.mark);
+          expected.set(k, w.value);
           if (w.node !== undefined && refetch.has(w.node)) mustSettle.add(k);
           else if (w.changed) mustAnnounce.add(k);
         }
@@ -940,6 +945,7 @@ export class LiveSync {
           written,
           mustSettle,
           mustAnnounce,
+          expected,
           ...(nameSettle.size ? { boundaryMarks: nameSettle } : {}),
         });
         if (this.sessionGen !== gen) return;
@@ -966,11 +972,13 @@ export class LiveSync {
       if (!sideEffect && !(refetch.size && this.hooks.refetchNodes)) {
         const announce = new Set<number>();
         const marks = new Map<number, number>();
+        const expected = new Map<number, number>();
         for (const [k, w] of writes) {
           marks.set(k, w.mark);
+          expected.set(k, w.value);
           if (w.changed) announce.add(k);
         }
-        if (announce.size) writeSettle.watch(marks, announce);
+        if (announce.size) writeSettle.watch(marks, announce, { expected });
       }
       // Renames are watched WHATEVER the epilogue, because neither epilogue covers them:
       // the converge re-reads numeric commands, and the refetch is the one caller that
