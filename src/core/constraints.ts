@@ -7,7 +7,7 @@
 import { parseRef, ref } from "../models/types";
 import type { DeviceModel } from "../models/types";
 import { insertFxControl, isStereoChannel } from "./control/translate";
-import { INSERT_FX_NONE, insertFxAvailable } from "./control/params";
+import { INSERT_FX_NONE, insertFxAvailable, SD_REC_TRACK_COUNT_OPTIONS } from "./control/params";
 import type { InsertFxOption, InsertFxSlot } from "./control/params";
 import type { Plan } from "./plan";
 import { incomingConnection } from "./plan";
@@ -53,6 +53,22 @@ export function trackCountCeiling(sampleRate: number): number {
 export function trackCountDrop(count: number | undefined, sampleRate: number): { from: number; to: number } | null {
   const to = trackCountCeiling(sampleRate);
   return count !== undefined && count > to ? { from: count, to } : null;
+}
+
+/** The count the recorder is left with once the plan moves to `sampleRate`. Applied when
+ *  the RATE CHANGES rather than when the count is read, because the unit does not restore
+ *  what it lowered: a read-time clamp would hand 16 back the moment the rate came down,
+ *  and the plan would then describe a recorder the unit does not have. */
+export function trackCountAtRate(count: number | undefined, sampleRate: number): number | undefined {
+  return count === undefined ? undefined : Math.min(count, trackCountCeiling(sampleRate));
+}
+
+/** The Track Counts the planner may offer at `sampleRate` — the catalogue up to the
+ *  ceiling. Offering more would let a plan be authored that the unit cannot hold and that
+ *  no write could establish. */
+export function trackCountOptionsAt(sampleRate: number): typeof SD_REC_TRACK_COUNT_OPTIONS {
+  const ceiling = trackCountCeiling(sampleRate);
+  return SD_REC_TRACK_COUNT_OPTIONS.filter((o) => o.value <= ceiling);
 }
 
 // The stereo channels' EQ is inert at 176.4 / 192 kHz — the block diagram flags the

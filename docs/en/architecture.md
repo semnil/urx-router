@@ -2288,6 +2288,16 @@ the diff, and settles the rate before anything is sent (`settleSampleRate` in `m
 plan's rate is the one that sticks. With it **on**, a modal (`ui/rate-choice.ts`) offers the two real answers —
 write at the device's rate, or turn Follow USB off and write the plan's — rather than guessing which was meant.
 
+**The plan follows the recorder's ceiling, one way.** `trackCountCeiling` (`core/constraints.ts`) is the single
+statement of what a rate can carry, and `setPlanSampleRate` (`core/plan.ts`) is the only way the plan's rate moves:
+it lowers the stored Track Count to fit and never raises it back, because the unit does not either. Every path that
+moves the rate takes it — the picker, adopting the unit's rate, a device read, a fresh plan, and a LOAD, where it
+also normalises a document naming a rate and a count that cannot both be true. Applied when the rate CHANGES rather
+than when the count is read: a read-time clamp would hand 16 back the moment the rate came down, and the plan would
+then describe a recorder the unit does not have. The Inspector offers only the counts the rate allows and says why
+the menu is short, and the graph gates the recorder's track slots on the ceiling as well as on the stored value, so
+no plan can offer a slot to wire against a track the unit has no room for.
+
 **The rate settle also names what the change costs the microSD recorder**, which is the one rate side effect the
 unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at
 44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the rate again does not raise it, and param 839

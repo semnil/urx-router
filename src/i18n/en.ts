@@ -567,6 +567,8 @@ export const en = {
     sdRecTrackCountLive: tr(
       "Track Count is set on the device only — the broker exposes just one of its eight settings.",
     ),
+    sdRecTrackCountRate: (ceiling: number): string =>
+      `This sample rate allows ${ceiling} tracks. Lowering the rate again does not raise the recorder back — the way back is the unit's own microSD screen, RECORDER menu, [Track Count].`,
     signalType: dev("Signal Type"),
     panBal: dev("PAN / BAL"),
     deleteConnection: tr("Delete this connection"),

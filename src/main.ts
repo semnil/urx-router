@@ -21,6 +21,7 @@ import {
   normalizeNodeName,
   PlanError,
   serialize,
+  setPlanSampleRate,
   SSMCS_INITIAL,
 } from "./core/plan";
 import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
@@ -1753,7 +1754,7 @@ async function applyDeviceStateScoped(
 // shell's business (the startup plan takes the same detectRate path).
 function newPlanAtLastRate(id: ModelId): Plan {
   const next = newPlan(id);
-  next.sampleRate = detectRate(next.sampleRate);
+  setPlanSampleRate(next, detectRate(next.sampleRate));
   return next;
 }
 
@@ -2093,7 +2094,8 @@ picker.addEventListener("change", async () => {
 });
 
 ratePicker.addEventListener("change", () => {
-  plan.sampleRate = Number(ratePicker.value);
+  // The recorder's Track Count goes with the rate, one way: see setPlanSampleRate.
+  setPlanSampleRate(plan, Number(ratePicker.value));
   // Same change funnel as every other edit: dirty + (in Live sync) push the new
   // rate to the device. Re-clocking glitches audio, but that is inherent to a
   // deliberate rate change and keeps Live sync from deferring it onto a later edit.
@@ -2769,7 +2771,7 @@ if (!DEMO) {
       // gating downstream matches what the hardware can actually hold. This is an
       // edit like any other — the operator chose it — so it goes through the same
       // funnel and is remembered as the last known rate.
-      plan.sampleRate = clock.sampleRate;
+      setPlanSampleRate(plan, clock.sampleRate);
       markChanged();
       syncRateUi(); // persists the adopted rate as the last known one
       return true;

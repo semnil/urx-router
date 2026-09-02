@@ -464,6 +464,8 @@ export const ja: Messages = {
     panLinked: "パンは Send 元チャンネルの PAN に追従 (Pan Link)。",
     sdRecTrackCount: "Track Count",
     sdRecTrackCountLive: "Track Count はデバイス側でのみ設定できます (broker が公開するのは 8 段階のうち 1 つだけ)。",
+    sdRecTrackCountRate: (ceiling: number): string =>
+      `このサンプルレートで使えるのは ${ceiling} トラックです。レートを下げ直してもレコーダーは戻りません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。`,
     signalType: "Signal Type",
     panBal: "PAN / BAL",
     deleteConnection: "この接続を削除",

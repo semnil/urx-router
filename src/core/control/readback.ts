@@ -23,6 +23,7 @@ import {
   normalizeNodeName,
   removeConnection,
   setExclusiveConnection,
+  setPlanSampleRate,
 } from "../plan";
 import {
   applyPatchInContext,
@@ -820,7 +821,11 @@ async function readPass(
   // touches it (a sample-rate change escalates to a full read in follow.ts).
   if (only === undefined) {
     try {
-      plan.sampleRate = await vdGet(PARAMS.SAMPLE_RATE.id, 0, 0);
+      // Through the transition, not by assignment: a scoped read that brings the rate back
+      // without reaching the recorder node would otherwise leave the plan holding a count
+      // the rate cannot carry. Where 839 IS read (below) the unit's own value lands after
+      // this and wins, and the two agree — the unit applies the same ceiling.
+      setPlanSampleRate(plan, await vdGet(PARAMS.SAMPLE_RATE.id, 0, 0));
       deviceSampleRate = plan.sampleRate;
       applied++;
     } catch (e) {
