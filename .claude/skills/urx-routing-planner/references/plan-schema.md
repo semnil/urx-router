@@ -216,14 +216,33 @@ expected, say) falls back to empty and loses every entry. Nothing is reported to
 the user when this happens, so `plan_tool.py validate` warns about each one.
 
 **One entry is rewritten rather than dropped by the deserializer**, and the loader
-rewrites a second class after it: an FX effect value outside the range the app can
-write is bounded to the nearest one it can send, and a leaf that is not a finite
-number at all is DROPPED so the selected effect type's own default applies. The
-count is reported on the status line. **`plan_tool.py validate` does NOT warn about that second class**: the
-windows live in the app's effect catalogue, and the data bundled with this skill
-carries routing only. Settling it means exporting those windows alongside
-`models.json`; until then a plan this tool calls clean can still have an FX value
-the app will bound on load.
+rewrites a second class after it. Everything under a node's `fxEffect` that the
+write path cannot send is repaired before the document opens, and the counts are
+reported on the status line — one sentence for the values moved, another for the
+values removed:
+
+| What the document holds | What the load does |
+| --- | --- |
+| a finite number outside its parameter's own window | bounded to the nearest value the app can send |
+| a leaf that is not a finite number (a boolean, an object) | DROPPED, so the selected type's own default applies |
+| `type` the channel's menu does not offer | DROPPED — a menu has no nearest member, and the app resolves an absent type to the channel's default |
+| `params` that is not an object | DROPPED whole; every parameter goes with it |
+| `fxEffect` that is not an object | DROPPED whole; the channel keeps whatever the unit holds |
+
+The last two matter because the sanitiser keeps a boolean and a non-empty object
+under any key, so an unreadable effect object survives the load and every reader
+below treats it as absent — and one that happens to be truthy is worse, since the
+write path then sends thirteen factory defaults over the unit's own settings.
+
+**`plan_tool.py validate` warns about every row that needs no effect catalogue** —
+the non-numeric leaf, the non-object `params`, the non-object `fxEffect` — and
+CANNOT see the two that do: a finite number outside its window, and a `type` no
+channel offers. Those windows and menus live in the app's effect catalogue, and the
+data bundled with this skill carries routing only. Settling it means exporting them
+alongside `models.json`; until then a plan this tool calls clean can still have an
+FX value the app will bound on load. `scripts/plan-tool.test.mjs` in the repository
+holds both halves — the agreement and the two blind spots — by running this tool and
+the app's own loader over the same documents.
 
 A `nodeNames` value longer than
 **8 characters** is CUT to that length — the unit's own CH SETTING name screen

@@ -308,10 +308,51 @@ def insert_fx_slot(node_id, params, nodes):
     return None
 
 
+def fx_effect_warnings(node_id, fx, out):
+    """Collect everything the app removes from one node's fxEffect (path, why).
+
+    Two stages remove a value and this owns both, because at this path they mean the
+    same thing to the author. The document sanitiser drops a leaf that is neither a
+    boolean nor a finite number; the load-time repair then drops what SURVIVED that and
+    still is not a value the write path can send — a boolean or an object under a key
+    that holds a number, an effect object or a parameter map that is not an object. The
+    effect then runs on its own factory default and the app says so on the status line.
+
+    NOT covered, because both need the app's effect catalogue and the data bundled here
+    carries routing only: a finite number outside its own parameter window, and a `type`
+    the channel's menu does not offer (the app drops that one too, since a menu has no
+    nearest member to move to). Exporting the windows and the menus beside models.json is
+    what would settle it."""
+    if not isinstance(fx, dict):
+        out.append((f"{node_id}.fxEffect", f"{fx!r} is not an object, which drops the whole effect"))
+        return
+    # `on` is the one field read as a flag, so a number works there by truthiness.
+    if "on" in fx and not isinstance(fx["on"], bool) and not is_number(fx["on"]):
+        out.append((f"{node_id}.fxEffect.on", f"{fx['on']!r} is neither a boolean nor a finite number"))
+    for field in ("type", "level"):
+        if field in fx and not is_number(fx[field]):
+            out.append((f"{node_id}.fxEffect.{field}", f"{fx[field]!r} is not a finite number"))
+    params = fx.get("params")
+    if params is None and "params" not in fx:
+        return
+    if not isinstance(params, dict):
+        out.append((f"{node_id}.fxEffect.params", f"{params!r} is not an object, which drops every parameter"))
+        return
+    for k, v in params.items():
+        # NOT recursed into: a parameter is one number, so an object here is a malformed
+        # parameter rather than a group whose leaves could be read one at a time.
+        if not is_number(v):
+            out.append((f"{node_id}.fxEffect.params.{k}", f"{v!r} is not a finite number"))
+
+
 def dropped_values(value, path, out):
     """Collect the node-param values the app's loader drops (path, why). Every leaf
     it keeps is a boolean or a finite number, and one malformed element drops the
-    whole array — a dropped value silently falls back to the device default."""
+    whole array — a dropped value silently falls back to the device default.
+
+    The `fxEffect` subtree is NOT walked here: a boolean and a non-empty object survive
+    this stage and are removed by the load-time repair instead, so one owner reports
+    both (fx_effect_warnings)."""
     if isinstance(value, dict):
         for k, v in value.items():
             dropped_values(v, f"{path}.{k}", out)
@@ -331,13 +372,11 @@ def node_param_warnings(plan, nodes):
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
     claim at once.
 
-    NOT covered: an FX effect value outside the range the app can write. The app
-    bounds one on load (or drops it, when the leaf is not a finite number, so the
-    selected type's own default applies) and reports the count, and this tool
-    cannot see it — the
-    windows live in the app's effect catalogue and the data bundled here carries
-    routing only. Exporting those windows beside models.json is what would settle
-    it."""
+    NOT covered: a finite FX value outside the window its own parameter admits, and a
+    `type` the channel's menu does not offer. The app bounds the first on load and drops
+    the second, reporting the count; this tool cannot see either, because both need the
+    app's effect catalogue and the data bundled here carries routing only. What it CAN
+    see without one is a value that is not a number at all, which is fx_effect_warnings."""
     out = []
     slot_holders = {}
     node_params = plan.get("nodeParams")
@@ -348,7 +387,9 @@ def node_param_warnings(plan, nodes):
             out.append(f"node {node_id}: the app drops this node's params on load — nodeParams entries must be objects")
             continue
         dropped = []
-        dropped_values(params, node_id, dropped)
+        dropped_values({k: v for k, v in params.items() if k != "fxEffect"}, node_id, dropped)
+        if "fxEffect" in params:
+            fx_effect_warnings(node_id, params["fxEffect"], dropped)
         for path, why in dropped:
             out.append(f"node param {path}: the app drops this value on load — {why}")
         if any(k in params for k in DUCKER_KEYS) and nodes.get(node_id, {}).get("kind") != "ducker":
