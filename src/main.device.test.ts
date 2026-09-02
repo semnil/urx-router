@@ -1420,6 +1420,37 @@ describe("Write to device", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
+  // The read is worth nothing until something redraws. The plan taking the unit's value
+  // is not the same as the operator seeing it: the follow queue this tail used to call
+  // drains a dirty-node set the tail never fills, so it repainted nothing and the panel
+  // went on showing the count from before the write until some other selection rebuilt it.
+  it("shows the recorder's re-read count without any further interaction", SLOW, async () => {
+    // The unit holds the full 16 tracks (839 counts stereo pairs), which 96 kHz cannot
+    // carry — so the write earns a re-read. The plan is put on 4, so what the read brings
+    // back differs from what the panel is showing and the difference is visible.
+    const shell = await bootDevice({}, true, { [TRACK_COUNT_SEED]: 8 });
+    selectNode("out.sdrec");
+    const menu = row(t().inspector.sdRecTrackCount).querySelector<HTMLSelectElement>("select")!;
+    // Driven the way the operator does — through the app's own change handler — rather
+    // than by assigning the plan, so the case measures the surface it is about.
+    menu.value = "4";
+    menu.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(menu.value).toBe("4");
+
+    chooseRate(96_000);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    // The SAME element, re-read from the document: no reselection, no other gesture.
+    const after = row(t().inspector.sdRecTrackCount).querySelector<HTMLSelectElement>("select")!;
+    expect(after.value).toBe("16");
+    // And the board followed too, which is why this needs a render rather than a node
+    // repaint: the count decides how many recorder slots are drawn as active, so the
+    // graph carries the slot nodes the new count reaches.
+    const slots = $("graph-host").querySelectorAll('g.node[data-id^="out.sdrec.t"]');
+    expect(slots.length).toBeGreaterThan(0);
+  });
+
   // Cancelling BETWEEN two sends is not the same as cancelling before the first. The rate
   // goes out first, and `sendCommands` detects the abort at the top of the NEXT iteration
   // and throws — taking every outcome collected so far with it. A flag armed from the

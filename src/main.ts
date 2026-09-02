@@ -2994,9 +2994,14 @@ if (!DEMO) {
                 // rebase drops any open entry — an edit the operator started while the read
                 // ran would become un-undoable (ui/history.ts states the split).
                 planHistory?.absorb(merged.devicePatch);
-                // The read is worth nothing on screen until something redraws: the panel
-                // showed the plan's old count beside a plan that already held the unit's.
-                requestReflect();
+                // The same repaint a Track Count EDIT earns, not the follow queue:
+                // `requestReflect` drains followDirtyNodes / followFull, which this tail
+                // sets neither of, so it repaints nothing at all. The count changes how
+                // many recorder slots exist (`app/node-param-effects.ts` classes it as a
+                // rerender rather than a local repaint), and the panel has to be rebuilt
+                // or it goes on showing the value the plan held before the read.
+                graph.render();
+                refreshInspector();
                 planValuesChanged();
                 // And a read that FAILED is not a write that succeeded: without this the
                 // whole flow reports success while the recorder's value is whatever the
