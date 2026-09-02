@@ -4,7 +4,8 @@ import { test, expect, type Page } from "./fixtures";
 // OVER frame (`.con-meter.stereo`), but splits into two bar columns (`.mtrcol.l` /
 // `.mtrcol.r`) and two clip cells (`.lit.l` / `.lit.r`), while a mono strip has a single
 // column and clip. The split follows the selected tap's channel count, so switching an
-// FX strip from its stereo POST tap to a mono PRE FADER tap collapses it to one bar.
+// FX strip from its stereo POST tap to its mono INPUT tap collapses it to one bar. INPUT is
+// the FX bus sum reaching the effect, which is mono; the strip's other two taps are stereo.
 const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 
 test.beforeEach(async ({ page }) => {
@@ -46,7 +47,7 @@ test("selecting a mono tap collapses an FX strip's dual meter to one bar", async
   await expect(meter.locator(".con-ladder.sig .mtrcol")).toHaveCount(2);
 
   await strip(page, "FX 1").locator(".con-tap").click();
-  await page.locator(".con-tappop .crow", { has: page.getByText("PRE FADER", { exact: true }) }).click();
+  await page.locator(".con-tappop .crow", { has: page.getByText("INPUT", { exact: true }) }).click();
 
   await expect(strip(page, "FX 1").locator(".con-meter")).not.toHaveClass(/stereo/);
   await expect(strip(page, "FX 1").locator(".con-meter .con-ladder.sig .mtrcol")).toHaveCount(1);

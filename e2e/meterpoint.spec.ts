@@ -53,11 +53,11 @@ test("a stereo channel offers INPUT / PRE FADER / PRE DUCKER / POST (default POS
   await expect(page.locator(".con-tappop .crow .nm")).toHaveText(["INPUT", "PRE FADER", "PRE DUCKER", "POST"]);
 });
 
-test("an FX channel offers PRE FADER and POST", async ({ page }) => {
+test("an FX channel offers INPUT / PRE FADER / POST", async ({ page }) => {
   const badge = strip(page, "FX 1").locator(".con-tap");
   await expect(badge).toContainText("POST");
   await badge.click();
-  await expect(page.locator(".con-tappop .crow .nm")).toHaveText(["PRE FADER", "POST"]);
+  await expect(page.locator(".con-tappop .crow .nm")).toHaveText(["INPUT", "PRE FADER", "POST"]);
 });
 
 test("an output bus lists PRE EQ / PRE FADER / PRE INS FX / POST", async ({ page }) => {
