@@ -185,31 +185,40 @@ describe("fx-effect translate", () => {
     expect(cmds.some((c) => c.paramId === 685 && c.y === 12)).toBe(false);
   });
 
-  // A channel the plan does not describe is emitted anyway, as the panel's own defaults.
-  // The inspector reads an absent fxEffect as `{}` and draws the resolved type, ON, level
-  // 100 and each descriptor's def; skipping the channel here made that a set of values the
-  // operator can see and the unit never receives, with no way in the app to have meant it.
-  // This used to pin the opposite, with no reason recorded beside it.
-  it("emits the panel's own defaults for an FX channel the plan does not describe", () => {
-    const bare = planToCommands(model, emptyPlan("URX44V"));
-    const explicit = (() => {
-      const plan = emptyPlan("URX44V");
-      plan.nodeParams["bus.fx1"] = { fxEffect: {} };
-      plan.nodeParams["bus.fx2"] = { fxEffect: {} };
-      return planToCommands(model, plan);
-    })();
-    const fx = (cs: typeof bare): string =>
-      cs
-        .filter((c) => c.name.startsWith("FX_EFFECT"))
-        .map((c) => `${c.paramId}/${c.y}=${c.vdValue}`)
-        .join("\n");
-    // The two readings of "this plan says nothing about the effect" agree.
-    expect(fx(bare)).toBe(fx(explicit));
-    // …and it is the channel's own factory type, ON and full level, not silence.
-    expect(bare.find((c) => c.paramId === 679)?.vdValue).toBe(0);
-    expect(bare.find((c) => c.paramId === 683)?.vdValue).toBe(1024);
-    expect(bare.find((c) => c.paramId === 681 && c.y === 1)?.vdValue).toBe(1);
-    expect(bare.find((c) => c.paramId === 681 && c.y === 2)?.vdValue).toBe(100);
+  // Silence is a statement, and this is the one place it is held. The skill's SKILL.md and
+  // plan-schema.md both instruct a plan author to omit the FX section when the user did not
+  // ask to change the effect, and promise that the unit keeps its current settings — so
+  // emitting defaults for an undescribed channel resets a unit's FX from a document that says
+  // nothing, and the EFFECT TYPE write is not recoverable (it refills the engine array with
+  // that type's defaults, and selecting the old type back does not bring the old values).
+  // This case carried no reason for a while, which is how it came to be rewritten as its own
+  // opposite.
+  it("emits nothing for an FX channel without an fxEffect", () => {
+    const plan = emptyPlan("URX44V");
+    const cmds = planToCommands(model, plan);
+    expect(cmds.some((c) => c.paramId === 679 || c.paramId === 681)).toBe(false);
+    expect(cmds.some((c) => c.paramId === 683 || c.paramId === 685)).toBe(false);
+    // The positive control: the same plan DESCRIBING the channel writes it, so the assertion
+    // above is about the omission rather than about an emit that never runs.
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0 } };
+    expect(planToCommands(model, plan).some((c) => c.paramId === 679)).toBe(true);
+  });
+
+  // …and the other half of that contract, which is the trap: there is no PARTIAL FX write.
+  // An author told "author a selector only when the user asked to change the effect" can
+  // write `{ level: 80 }` believing no selector goes out. The whole channel is authored the
+  // moment the section exists — the array is absolute state, and a type write would refill
+  // the slots left out anyway.
+  it("writes the whole channel, selector included, once the plan describes it at all", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { level: 80 } };
+    const cmds = planToCommands(model, plan).filter((c) => c.paramId === 679 || c.paramId === 681);
+    // The selector goes out although the document names no type…
+    expect(cmds.find((c) => c.paramId === 679)?.vdValue).toBe(0);
+    // …and every parameter slot with it, at the type's own defaults.
+    const full = fxParams(0);
+    expect(cmds.filter((c) => c.paramId === 681).length).toBe(full.length + 2);
+    for (const d of full) expect(cmds.find((c) => c.y === d.slot)?.vdValue, d.key).toBe(d.def);
   });
 
   // Both types read a raw as raw / 10 and differ in the range they take. A 2000 ms Mono

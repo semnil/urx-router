@@ -1113,20 +1113,20 @@ function boundEnum(v: number, options: readonly { value: number }[], def: number
   return options.some((o) => o.value === v) ? v : def;
 }
 
-function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectParams | undefined): void {
+function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectParams): void {
   const typeId = FX_EFFECT_TYPE_PARAM[fxIndex];
   const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
   // A type this CHANNEL's menu does not offer (hand-edited / ?plan= payload) falls
   // back to the channel's factory type rather than being written verbatim: the
   // device would take an unknown selector value, and fxFamilyOf would emit
   // delay-family slots with it.
-  const type = resolveFxEffectType(fxIndex, fx?.type);
+  const type = resolveFxEffectType(fxIndex, fx.type);
   out.push(rawCommand("FX_EFFECT_TYPE", typeId, "enum", 0, type));
-  out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx?.on ?? true) ? 1 : 0));
-  const level = fxRawToSend(fx?.level, FX_LEVEL_DEFAULT, FX_LEVEL_MIN, FX_LEVEL_MAX);
+  out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx.on ?? true) ? 1 : 0));
+  const level = fxRawToSend(fx.level, FX_LEVEL_DEFAULT, FX_LEVEL_MIN, FX_LEVEL_MAX);
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, level));
   for (const desc of fxParams(type)) {
-    const raw = fxRawToSend(fx?.params?.[desc.key], desc.def, desc.rawMin, desc.rawMax);
+    const raw = fxRawToSend(fx.params?.[desc.key], desc.def, desc.rawMin, desc.rawMax);
     out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", desc.slot, raw));
   }
 }
@@ -1967,17 +1967,22 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     own(node.id);
   }
 
-  // FX-channel effects: EFFECT TYPE + parameter array for every FX channel the model
-  // has, as absolute state. Emitted whether or not the plan carries an fxEffect,
-  // because the INSPECTOR reads an absent one as `{}` and draws the effect's own
-  // defaults — a channel skipped here is one the panel names and the unit never
-  // receives, and the plan has no way to say "leave this channel alone" for the
-  // operator to have meant. Every default taken here is the one the panel drew:
-  // the resolved type, ON, level 100, and each descriptor's own def.
+  // FX-channel effects: EFFECT TYPE + parameter array for each FX channel the plan
+  // DESCRIBES. An absent fxEffect writes nothing, and that silence is the plan
+  // format's way of saying "leave this channel as the unit has it" — the skill's
+  // plan-schema.md and SKILL.md both instruct an author to omit the section when the
+  // user did not ask to change the effect. Emitting defaults for it instead resets a
+  // unit's FX from a document that says nothing, and the EFFECT TYPE write is not
+  // recoverable: it refills the engine array with that type's defaults, and selecting
+  // the old type back does not bring the old values with it.
+  // Once the section IS present the whole channel is authored, selector included: the
+  // array is absolute state, and a type write would refill the slots the plan left out
+  // anyway. There is no partial FX write.
   for (const node of model.nodes) {
     const fxY = fxChannelIndex(node.id);
     if (fxY === null) continue;
-    pushFxEffectCommands(out, fxY, plan.nodeParams[node.id]?.fxEffect);
+    const fx = plan.nodeParams[node.id]?.fxEffect;
+    if (fx) pushFxEffectCommands(out, fxY, fx);
     own(node.id);
   }
 

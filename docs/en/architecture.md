@@ -113,8 +113,8 @@ carries a one-line map of the same directories and points here.
   window, or DROPPED where there is nothing to bound: a leaf that is not a finite number (the window is
   shared across a channel's types and the DEFAULT is not), a `type` the channel's menu does not offer (a
   menu has no nearest member), and an `fxEffect` or its `params` that is not an object at all, which the
-  sanitiser keeps and every reader below then treats as absent. A drop moves no value, because an FX
-  channel is emitted whether or not the plan describes it — see "An FX channel the plan does not
+  sanitiser keeps and every reader below then treats as absent. A drop of the effect OBJECT is the one
+  repair that changes what is sent, and in the safe direction — see "An FX channel the plan does not
   describe". The two actions are counted and said
   separately, since a value moved to the nearest one the app can send and a value removed are different
   events. `isRefusal` and `needsDecision` are the two predicates that split
@@ -3250,21 +3250,27 @@ canvas down on its first paint.
 
 ### An FX channel the plan does not describe
 
-`planToCommands` emits **every** FX channel the model has, as absolute state, whether or not the plan
-carries an `fxEffect` for it — with the resolved type, ON, level 100 and each descriptor's own default
-standing in for what the plan does not say.
+`planToCommands` emits an FX channel only when the plan carries an `fxEffect` for it. **That silence is
+a statement**: it is how a plan says "leave this channel as the unit has it", and the skill's `SKILL.md`
+and `references/plan-schema.md` both instruct an author to omit the section when the user did not ask to
+change the effect. Emitting defaults for an undescribed channel instead resets a unit's FX from a
+document that says nothing, and an EFFECT TYPE write is not recoverable — it refills the engine array
+with that type's defaults, and selecting the old type back does not bring the old values with it.
 
-The reason is that the panel already says all of it. `inspector.ts` reads an absent `fxEffect` as `{}`
-and draws exactly those defaults, so a channel skipped by the emit is a set of values the operator can
-read on screen and the unit never receives — with nothing red, since each side is coherent on its own.
-The app offers no way to express "leave this channel alone", so there is no intent the skip could have
-been honouring; the panel's reading is the only one an operator has. The emit takes the same defaults
-the panel draws, which is what makes the two one answer rather than two that happen to agree.
+Once the section is present, the whole channel is authored — **there is no partial FX write**. The
+selector goes out whether or not the document names a type (an absent one resolves to the channel's
+factory type), and every parameter slot goes with it at that type's defaults, because a type write would
+refill the slots the plan left out anyway. So `{ "level": 80 }` resets the effect exactly as a document
+naming a type does, and omitting only `fxEffect.params` preserves nothing.
 
-It also settles what the load-time repair does with an unreadable effect object: dropping the key is
-the whole repair, and it moves no value. The alternative — leaving one in place — is worse than it
-looks, since an unreadable object that happens to be TRUTHY (`[{}]`, say) reached the emit and wrote
-thirteen factory defaults from a value that says nothing.
+**The panel does not say any of this.** `inspector.ts` reads an absent `fxEffect` as `{}` and draws the
+resolved type, ON, level 100 and each descriptor's own default, so an undescribed channel shows a full
+effect that the write path will not send. The two readings are each coherent and they disagree; the
+divergence is pinned in `inspector.test.ts` rather than left to be noticed, because aligning the *emit*
+to the panel is the fix that looks obvious and is destructive — it was written, measured and reverted.
+What the panel would need is a way to say that a row is showing a default rather than a plan value, and
+that is a question about every sparse parameter (a bus master's level and pan skip the same way), not
+about FX.
 
 Every plan the app itself authors carries an `fxEffect` on both channels — the shipped default plans do
 (all three models), and a device readback writes one — so what this reaches is a document authored
