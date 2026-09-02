@@ -154,6 +154,11 @@ drops to that ceiling when the count is above it:
 
 A count already at or below the new rate's ceiling is left alone, so a unit
 recording 8 tracks loses nothing going to 96 kHz and loses six going to 192 kHz.
+**The app models the same one-way move** — the plan's count follows the rate down
+and is not raised when the rate comes back up, the Inspector offers only what the
+rate allows, the graph gates the track slots on it, and the paths that re-clock
+the unit say what the change costs before it is made (architecture.md, "What the
+app models"). What it cannot do is put the tracks back.
 The app writes the sample rate, so all of this is reachable from the app — and by
 the paragraph above, nothing the app can write will raise the count afterwards.
 The way back is the unit's own microSD screen → RECORDER menu → [Track Count].
