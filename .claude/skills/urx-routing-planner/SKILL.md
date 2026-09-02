@@ -206,8 +206,17 @@ document to repair before it can be opened.
 **6. Flag the parameters that need care.** Two classes the validator warns about;
 `plan-schema.md` carries the detail, and both are worth surfacing to the user:
    - **Raw-encoded** — `ssmcs` and `insertFxParams` hold the device's own internal
-     units, not an authorable scale. Prefer omitting them (the unit keeps its
-     current values, because only the keys a plan carries are written).
+     units, not an authorable scale. Prefer omitting them — but **omitting a key
+     keeps the unit's value only when nothing else in the plan makes the unit
+     RECOMPUTE it**, and three things do. The app writes only the keys a plan
+     carries; the device is the other half. Write `insertFx` and the selector
+     repopulates that engine with the effect's factory defaults before the plan's
+     slots land, so an omitted slot is that default rather than the unit's value.
+     Write `ssmcs.morphing` or `ssmcs.sweetSpotData` and the unit recomputes the
+     whole strip. Write the Multi-Band Compressor's 1-Knob or Pitch Fix's MIDI
+     Control and the unit recomputes the slots that switch drives. `plan_tool.py`
+     says which of these a plan is in; `insertFxParams` with no `insertFx` is not
+     sent at all.
    - **`fxEffect` is all-or-nothing, and omitting the WHOLE section is the only way
      to leave an FX channel alone.** Its `params` map is raw-encoded too, but the
      advice above does not apply to it: include the section in ANY form — even

@@ -195,11 +195,21 @@ reads a unit, not a scale you can author a value on. A hand-written number lands
 wherever that raw value happens to sit on the device's curve, so have the user dial
 the effect in on the device and fetch it back rather than authoring one.
 
-**For `ssmcs` and `insertFxParams`, omitting a key keeps the unit's value**, because
-only the keys a plan carries are written. **For `fxEffect` it does not** — see the
-paragraph below — so the two must not be followed as one instruction.
+**For `ssmcs` and `insertFxParams`, omitting a key keeps the unit's value only when
+nothing else in the plan makes the unit RECOMPUTE it.** Writing only the keys a plan
+carries is what the APP does; the device is the other half, and four cases break the
+promise:
+
+| What the plan writes | What happens to the keys it omits |
+| --- | --- |
+| `insertFxParams` with no `insertFx` | nothing is sent at all — the engine array is written only alongside a selection |
+| `insertFx` | the selector repopulates that engine with the effect's factory defaults before the plan's slots land, so an omitted slot is that default |
+| `ssmcs.morphing` / `ssmcs.sweetSpotData` | the unit recomputes the whole strip (`sideEffect: "refetch"`) |
+| the Multi-Band Compressor's 1-Knob / Pitch Fix's MIDI Control | the unit recomputes the slots that switch drives, listed above |
+
+**For `fxEffect` the promise never holds at all** — see the paragraph below.
 `scripts/plan_tool.py` emits a WARNING whenever a plan carries any of the three, and
-the FX one carries its own advice for that reason.
+says which of the cases above it is in rather than repeating one instruction.
 
 **`fxEffect` is the exception to "omit the raws and the unit keeps its values", and
 it is all-or-nothing.** Omitting the whole section writes nothing for that channel —

@@ -160,6 +160,69 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     }
   });
 
+  // "Omit a key and the unit keeps its value" is a statement about the APP — both emitters
+  // are guarded per key — and the DEVICE is the other half: a selector repopulates an engine,
+  // and three writes make the unit recompute what the plan left out. Unconditional, the advice
+  // walks an author into dropping a slot beside a selector and losing the effect's settings.
+  // One row per branch, each carrying what it must say and what it must NOT.
+  describe("says whether omitting a key actually keeps the unit's value", () => {
+    const KEEP = "omit to keep its current value";
+    const ch = (np) => ({ ...doc({}), nodeParams: { ch1: np } });
+    const CASES = [
+      ["plain SSMCS raws", { ssmcs: { outGain: 10 } }, [KEEP], ["recomputes"]],
+      [
+        "SSMCS carrying Morphing",
+        { ssmcs: { morphing: 60, outGain: 10 } },
+        ["recomputes the whole strip", "Morphing"],
+        [KEEP],
+      ],
+      [
+        "SSMCS carrying Sweet Spot Data",
+        { ssmcs: { sweetSpotData: 3, outGain: 10 } },
+        ["recomputes the whole strip", "Sweet Spot Data"],
+        [KEEP],
+      ],
+      ["engine values with no selection", { insertFxParams: { "mbc:8": 4 } }, ["none of it is sent"], [KEEP]],
+      [
+        "engine values under a selection",
+        { insertFx: 1793, insertFxParams: { "compander:1": 5 } },
+        ["repopulates the engine", "factory defaults"],
+        [KEEP, "none of it is sent"],
+      ],
+      [
+        "a device-driven switch, keyed by family",
+        { insertFx: 1792, insertFxParams: { "mbc:6": 1, "mbc:8": 4 } },
+        ["1-Knob", "recomputes the slots that switch drives"],
+        [KEEP],
+      ],
+      [
+        "the same switch keyed the way a readback writes it",
+        { insertFx: 1792, insertFxParams: { 6: 1, 8: 4 } },
+        ["1-Knob", "recomputes the slots that switch drives"],
+        [KEEP],
+      ],
+      [
+        "that switch turned OFF, which drives nothing",
+        { insertFx: 1792, insertFxParams: { "mbc:6": 0, "mbc:8": 4 } },
+        ["repopulates the engine"],
+        ["1-Knob", KEEP],
+      ],
+      [
+        "Pitch Fix MIDI Control",
+        { insertFx: 512, insertFxParams: { "pitch:34": 1 } },
+        ["MIDI Control", "recomputes the slots that switch drives"],
+        [KEEP],
+      ],
+    ];
+    for (const [name, np, says, silent] of CASES) {
+      it(name, () => {
+        const out = toolWarnings(dir, ch(np));
+        for (const phrase of says) expect(out, `${name} says "${phrase}"`).toContain(phrase);
+        for (const phrase of silent) expect(out, `${name} does not say "${phrase}"`).not.toContain(phrase);
+      });
+    }
+  });
+
   // The gap, as a count. Two documents the app rewrites and the tool cannot see — both need
   // the effect catalogue, which the bundled data does not carry.
   it("has exactly two blind spots, both needing the effect catalogue", () => {
