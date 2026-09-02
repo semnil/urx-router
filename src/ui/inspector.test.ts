@@ -15,6 +15,7 @@ import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
 import { COMP_EQ_SSMCS, INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { planToCommands } from "../core/control/translate";
+import { fxParams } from "../core/control/fx-effect";
 import type { DeviceModel } from "../models/types";
 import { setLang, t } from "../i18n";
 
@@ -558,6 +559,55 @@ describe("renderInspector — empty selection", () => {
     const first = rowLabels().length;
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
     expect(rowLabels()).toHaveLength(first);
+  });
+});
+
+// A raw outside a descriptor's window reaches the plan two ways and BOTH want the stored
+// value on screen. A device read stores what the unit holds (readback.ts reads each slot
+// verbatim), and the unit can hold a raw this window excludes because an earlier build of
+// this app could write one — the unit's own encoder stops at the window, but the wire does
+// not. A plan saved by that build carries the same thing. Showing the window's bound instead
+// names a value the unit is not at, which is the reading the panel is being looked at for.
+//
+// What the NEXT WRITE would send is a different question, and one readout cannot answer
+// both: the emit path bounds the value, which architecture.md's "Aborting on failure" keeps
+// as a standing exception. These two cases hold the panel to the first question.
+describe("renderInspector — a stored value outside its control's range", () => {
+  const fxPlanWith = (params: Record<string, number>): Plan => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params } };
+    return plan;
+  };
+  const rowValue = (label: string): string => {
+    const row = [...panel.querySelectorAll<HTMLElement>(".param")].find((r) => r.dataset.paramLabel === label);
+    return row?.querySelector(".param-val")?.textContent ?? "";
+  };
+  const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+  const LPF = t().inspector.fxEffect.params.lpf;
+
+  it("shows what the unit holds, not the bound the next write will apply", () => {
+    // raw 20 is below the window and IS a state a unit can be in: v1.11.0 shipped this
+    // slider starting at 0, so its Live sync could put one there.
+    const plan = fxPlanWith({ delayLpf: 20 });
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("bus.fx2"), act);
+    expect(rowValue(LPF)).toBe(lpf.format!(20, {}));
+    expect(rowValue(LPF)).not.toBe(lpf.format!(lpf.rawMin!, {}));
+    // …while the write path still sends the bound. Both are true, and the row shows the first.
+    expect(planToCommands(getModel("URX44V"), plan).find((c) => c.paramId === 685 && c.y === 10)?.vdValue).toBe(
+      lpf.rawMin,
+    );
+  });
+
+  // The same rule one layer down, and the reason the bound is not applied in rangeSlider
+  // either: a mono channel's A.Gain slider runs -8..+70 while gainToVd clamps to the union of
+  // the analog and digital ranges (-24..+70), so there the slider is TIGHTER than the write
+  // path and a stored -20 is sent as -20.
+  it("does not clamp a row whose slider is tighter than the value it will send", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], gain: -20 };
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
+    expect(rowValue(t().inspector.gainAnalog)).toContain("-20");
+    expect(planToCommands(getModel("URX44V"), plan).some((c) => c.vdValue === -2000)).toBe(true);
   });
 });
 

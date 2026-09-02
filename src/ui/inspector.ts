@@ -1263,11 +1263,16 @@ function fxEffectSection(
   );
 
   // Sibling raw values, so the REV-X Reverb Time readout can fold in Room Size.
+  // Read verbatim, NOT bounded to the descriptor: a device read stores what the unit holds,
+  // and the unit can hold a raw outside this window because an earlier build of this app
+  // could write one. Showing the bound instead names a value the unit is not at, which is
+  // the reading the operator is looking at the panel for. What the next write would send is
+  // a different question from what the unit holds now, and one row cannot answer both.
   const ctx: Record<string, number> = {};
   for (const d of descs) ctx[d.key] = fx.params?.[d.key] ?? d.def;
 
   for (const d of descs) {
-    const cur = fx.params?.[d.key] ?? d.def;
+    const cur = ctx[d.key];
     const label = t.params[d.label as keyof typeof t.params] ?? d.label;
     if (d.control === "toggle") {
       body.append(boolToggle(label, cur !== 0, (v) => mergeFxParam(actions, plan, nodeId, d.key, v ? 1 : 0)));
