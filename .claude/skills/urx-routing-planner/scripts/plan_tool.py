@@ -246,11 +246,30 @@ def name_warnings(plan):
 # hand-written number lands wherever that raw value sits on the device curve;
 # recommend leaving them out (the device keeps its own value) or dialing the effect
 # in on the unit and fetching. Routing and human-readable scalars are unaffected.
+#
+# `fxEffect` is NOT in this table: it writes the selector and every slot of the resolved
+# type whenever the section is present, so a partial omission preserves nothing there.
+# Its own advisory is emitted below.
+#
+# For the two that ARE here, this tool does NOT say whether omitting a key keeps the
+# unit's value, and the omission is the point. It carries routing data and no model of
+# the write path, and the answer depends on things only that path knows: whether the
+# channel is in the mode that sends SSMCS at all, which effect family the selector names
+# (a slot keyed under another family is never sent), what the loader normalizes a bare
+# slot number into, and which slots the unit recomputes for itself. A conditional version
+# of this advice was written and reverted — three of its branches contradicted the app
+# they described, because reproducing those conditions here is a second implementation of
+# the emitter that drifts from it silently. Say what is true without one: verify on the
+# device, or dial it in on the unit and fetch the plan back.
 RAW_PARAM_KEYS = {
     "ssmcs": "SSMCS channel strip (raw curve values)",
-    "fxEffect": "FX bus effect parameters (raw per-effect slot values)",
     "insertFxParams": "insert-FX engine parameters (raw slot values)",
 }
+RAW_ADVICE = (
+    "verify on the device, or have the user dial it in on the unit and fetch the plan back. "
+    "Omitting a key is NOT a way to keep the unit's value — whether it is depends on what else "
+    "the plan writes, which this tool does not model"
+)
 
 
 # Effect type selectors. Writing one makes the device refill that effect's whole
@@ -308,10 +327,63 @@ def insert_fx_slot(node_id, params, nodes):
     return None
 
 
+def fx_effect_warnings(node_id, fx, out):
+    """Collect everything the app removes from one node's fxEffect (path, why).
+
+    Two stages remove a value and this owns both, because at this path they mean the
+    same thing to the author. The document sanitiser drops a leaf that is neither a
+    boolean nor a finite number; the load-time repair then drops what SURVIVED that and
+    still is not a value the write path can send — a boolean or an object under a key
+    that holds a number, an effect object or a parameter map that is not an object. The
+    effect then runs on its own factory default and the app says so on the status line.
+
+    NOT covered, because both need the app's effect catalogue and the data bundled here
+    carries routing only: a finite number outside its own parameter window, and a `type`
+    the channel's menu does not offer (the app drops that one too, since a menu has no
+    nearest member to move to). Exporting the windows and the menus beside models.json is
+    what would settle it."""
+    if not isinstance(fx, dict):
+        out.append((f"{node_id}.fxEffect", f"{fx!r} is not an object, which drops the whole effect"))
+        return
+    # An empty group sanitizes to nothing and the key is removed, which is not a harmless
+    # difference: the document as written authors the whole channel at the factory defaults,
+    # while the loaded plan leaves the channel alone.
+    if not fx:
+        out.append(
+            (
+                f"{node_id}.fxEffect",
+                "an empty effect object carries nothing and the app removes the key, "
+                "so the channel is left as the unit has it rather than written with defaults",
+            )
+        )
+        return
+    # `on` is the one field read as a flag, so a number works there by truthiness.
+    if "on" in fx and not isinstance(fx["on"], bool) and not is_number(fx["on"]):
+        out.append((f"{node_id}.fxEffect.on", f"{fx['on']!r} is neither a boolean nor a finite number"))
+    for field in ("type", "level"):
+        if field in fx and not is_number(fx[field]):
+            out.append((f"{node_id}.fxEffect.{field}", f"{fx[field]!r} is not a finite number"))
+    params = fx.get("params")
+    if params is None and "params" not in fx:
+        return
+    if not isinstance(params, dict):
+        out.append((f"{node_id}.fxEffect.params", f"{params!r} is not an object, which drops every parameter"))
+        return
+    for k, v in params.items():
+        # NOT recursed into: a parameter is one number, so an object here is a malformed
+        # parameter rather than a group whose leaves could be read one at a time.
+        if not is_number(v):
+            out.append((f"{node_id}.fxEffect.params.{k}", f"{v!r} is not a finite number"))
+
+
 def dropped_values(value, path, out):
     """Collect the node-param values the app's loader drops (path, why). Every leaf
     it keeps is a boolean or a finite number, and one malformed element drops the
-    whole array — a dropped value silently falls back to the device default."""
+    whole array — a dropped value silently falls back to the device default.
+
+    The `fxEffect` subtree is NOT walked here: a boolean and a non-empty object survive
+    this stage and are removed by the load-time repair instead, so one owner reports
+    both (fx_effect_warnings)."""
     if isinstance(value, dict):
         for k, v in value.items():
             dropped_values(v, f"{path}.{k}", out)
@@ -329,7 +401,13 @@ def node_param_warnings(plan, nodes):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
-    claim at once."""
+    claim at once.
+
+    NOT covered: a finite FX value outside the window its own parameter admits, and a
+    `type` the channel's menu does not offer. The app bounds the first on load and drops
+    the second, reporting the count; this tool cannot see either, because both need the
+    app's effect catalogue and the data bundled here carries routing only. What it CAN
+    see without one is a value that is not a number at all, which is fx_effect_warnings."""
     out = []
     slot_holders = {}
     node_params = plan.get("nodeParams")
@@ -340,7 +418,9 @@ def node_param_warnings(plan, nodes):
             out.append(f"node {node_id}: the app drops this node's params on load — nodeParams entries must be objects")
             continue
         dropped = []
-        dropped_values(params, node_id, dropped)
+        dropped_values({k: v for k, v in params.items() if k != "fxEffect"}, node_id, dropped)
+        if "fxEffect" in params:
+            fx_effect_warnings(node_id, params["fxEffect"], dropped)
         for path, why in dropped:
             out.append(f"node param {path}: the app drops this value on load — {why}")
         if any(k in params for k in DUCKER_KEYS) and nodes.get(node_id, {}).get("kind") != "ducker":
@@ -353,18 +433,25 @@ def node_param_warnings(plan, nodes):
         slot = insert_fx_slot(node_id, params, nodes)
         if slot:
             slot_holders.setdefault(slot, []).append(node_id)
-        if isinstance(params.get("fxEffect"), dict) and "type" in params["fxEffect"]:
-            out.append(f"node {node_id}: {SELECTOR_KEYS['fxEffect.type']} resets that effect's parameters on the device")
+        # The section's PRESENCE, not the `type` key: the selector is emitted whether or not
+        # the document names a type (an absent one resolves to the channel's factory type),
+        # and every parameter slot goes with it. There is no partial FX write, so a plan
+        # carrying `{"level": 80}` resets the effect exactly as one naming a type does — and
+        # so the ONLY way to keep the unit's effect is to leave the whole section out. That
+        # sentence has to be in this line rather than beside it: paired with the raw-values
+        # advice it used to draw, an author was told to omit `fxEffect.params`, which keeps
+        # the section, writes the selector, and resets what they meant to preserve.
+        if isinstance(params.get("fxEffect"), dict) and params["fxEffect"]:
+            named = "type" in params["fxEffect"]
+            out.append(
+                f"node {node_id}: {SELECTOR_KEYS['fxEffect.type']} resets that effect's parameters on the device"
+                + ("" if named else " — the selector is written even though this plan names no type")
+                + ". The EFFECT TYPE and every parameter slot go out whenever this section is present, so "
+                "omitting fxEffect.params keeps nothing; omit the whole fxEffect section to keep the unit's effect"
+            )
         for key, note in RAW_PARAM_KEYS.items():
-            if key not in params:
-                continue
-            # fxEffect's on / level are plain values and its type is warned about
-            # above; only the raw `params` map belongs to this class.
-            if key == "fxEffect":
-                fx = params.get("fxEffect") or {}
-                if not isinstance(fx, dict) or not fx.get("params"):
-                    continue
-            out.append(f"node {node_id}: {note} — verify on the device or omit to keep its current value")
+            if key in params:
+                out.append(f"node {node_id}: {note} — {RAW_ADVICE}")
     for slot, ids in slot_holders.items():
         if len(ids) > 1:
             out.append(

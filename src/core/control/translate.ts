@@ -25,8 +25,12 @@ import {
   FX_CHANNEL_NODE_INDEX,
   FX_EFFECT_ARRAY_PARAM,
   FX_EFFECT_TYPE_PARAM,
+  FX_LEVEL_DEFAULT,
+  FX_LEVEL_MAX,
+  FX_LEVEL_MIN,
   FX_SLOT_LEVEL,
   FX_SLOT_ON,
+  fxRawToSend,
   resolveFxEffectType,
   fxParams,
   formatHz,
@@ -1119,9 +1123,10 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
   const type = resolveFxEffectType(fxIndex, fx.type);
   out.push(rawCommand("FX_EFFECT_TYPE", typeId, "enum", 0, type));
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx.on ?? true) ? 1 : 0));
-  out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, boundRaw(planRaw(fx.level, 100), 0, 100)));
+  const level = fxRawToSend(fx.level, FX_LEVEL_DEFAULT, FX_LEVEL_MIN, FX_LEVEL_MAX);
+  out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, level));
   for (const desc of fxParams(type)) {
-    const raw = boundRaw(planRaw(fx.params?.[desc.key], desc.def), desc.rawMin, desc.rawMax);
+    const raw = fxRawToSend(fx.params?.[desc.key], desc.def, desc.rawMin, desc.rawMax);
     out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", desc.slot, raw));
   }
 }
@@ -1962,8 +1967,17 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     own(node.id);
   }
 
-  // FX-channel effects: EFFECT TYPE + parameter array for each FX channel present
-  // in the plan (emitted as absolute state once the plan carries an fxEffect).
+  // FX-channel effects: EFFECT TYPE + parameter array for each FX channel the plan
+  // DESCRIBES. An absent fxEffect writes nothing, and that silence is the plan
+  // format's way of saying "leave this channel as the unit has it" — the skill's
+  // plan-schema.md and SKILL.md both instruct an author to omit the section when the
+  // user did not ask to change the effect. Emitting defaults for it instead resets a
+  // unit's FX from a document that says nothing, and the EFFECT TYPE write is not
+  // recoverable: it refills the engine array with that type's defaults, and selecting
+  // the old type back does not bring the old values with it.
+  // Once the section IS present the whole channel is authored, selector included: the
+  // array is absolute state, and a type write would refill the slots the plan left out
+  // anyway. There is no partial FX write.
   for (const node of model.nodes) {
     const fxY = fxChannelIndex(node.id);
     if (fxY === null) continue;

@@ -212,6 +212,117 @@ describe("the deep link", () => {
     expect(vi.mocked(alert)).not.toHaveBeenCalled();
   });
 
+  // A document from an older build can hold a value outside the range this one admits —
+  // the unit's own encoder stops at the window, but the wire and an earlier catalogue did
+  // not. The loader repairs it before the document opens, so the panel and the write path
+  // stop naming different numbers, and says so on the status line rather than in a modal:
+  // nothing failed and nothing is being asked.
+  it("bounds a stored value the range no longer admits, and says how many on the status line", async () => {
+    const { encodePlanParam, emptyPlan } = await import("./core/plan");
+    const { fxParams } = await import("./core/control/fx-effect");
+    const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: lpf.rawMin! - 1 } } };
+
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.paramsBounded(1)), APP_SETTLE);
+    // Reported, not asked about: no modal, and the document is open.
+    expect($("load-report").hidden).toBe(true);
+    expect(nodes()).toBeGreaterThan(5);
+    // …and the plan itself carries the bound, so a save does not write the old value back.
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    const row = [...$("inspector").querySelectorAll<HTMLElement>(".param")].find(
+      (r) => r.dataset.paramLabel === t().inspector.fxEffect.params.lpf,
+    );
+    expect(row?.querySelector(".param-val")?.textContent).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
+
+  // The plural half of the same message, and the walk over BOTH channels. A one-value plan
+  // satisfies the singular branch and the first node alone, so neither is pinned by the case
+  // above — the sentence and the loop are only visible when the count is not one.
+  it("counts every bounded value, across both FX channels", async () => {
+    const { encodePlanParam, emptyPlan } = await import("./core/plan");
+    const { fxParams } = await import("./core/control/fx-effect");
+    const revxLpf = fxParams(0).find((d) => d.key === "revxLpf")!;
+    const delayLpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, params: { revxLpf: revxLpf.rawMin! - 1 } } };
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: delayLpf.rawMin! - 1 } } };
+
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.paramsBounded(2)), APP_SETTLE);
+    expect(status()).not.toContain(t().status.paramsBounded(1));
+    // …and it LEADS the line. The bar is one ellipsized line and the other half of this
+    // sentence is a file name with no length limit, so a notice placed after one is clipped
+    // away by a long name — and this is the only thing said about a document that changed.
+    expect(status().startsWith(t().status.paramsBounded(2))).toBe(true);
+    // The count and its verb have to agree, and nothing above can see them disagree: every
+    // assertion here compares the line against the same message function, so a sentence that
+    // is always plural renders both sides of every comparison the same way. Compared with the
+    // digits masked, which is the difference the number itself is not.
+    expect(t().status.paramsBounded(1).replace("1", "N")).not.toBe(t().status.paramsBounded(2).replace("2", "N"));
+  });
+
+  // The other half of the repair, and the other sentence. A value the loader could not read at
+  // all is REMOVED and the effect runs on its own default — told with the bounded sentence, a
+  // document whose values were discarded is reported as having been adjusted to the nearest
+  // one, which is a different event and a different number on screen.
+  it("says a dropped value was dropped, and shows the default it fell back to", async () => {
+    const { encodePlanParam, emptyPlan } = await import("./core/plan");
+    const { FX_LEVEL_DEFAULT } = await import("./core/control/fx-effect");
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, level: false } } as never;
+
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.paramsDropped(1)), APP_SETTLE);
+    expect(status()).not.toContain(t().status.paramsBounded(1));
+    // …and the panel shows the effect's own default rather than the boolean's numeric shadow.
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    const row = [...$("inspector").querySelectorAll<HTMLElement>(".param")].find(
+      (r) => r.dataset.paramLabel === t().inspector.fxEffect.level,
+    );
+    expect(row?.querySelector(".param-val")?.textContent).toContain(String(FX_LEVEL_DEFAULT));
+  });
+
+  // Both at once, which neither case above can see: the line has to carry two sentences, and
+  // a single count cannot say that one value was moved and another removed.
+  it("says both when a document carries a bounded value and a dropped one", async () => {
+    const { encodePlanParam, emptyPlan } = await import("./core/plan");
+    const { fxParams } = await import("./core/control/fx-effect");
+    const delayLpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, level: false } } as never;
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: delayLpf.rawMin! - 1 } } };
+
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.paramsBounded(1)), APP_SETTLE);
+    expect(status()).toContain(t().status.paramsDropped(1));
+    // Neither sentence counts the other's value: a single count over both would read 2 twice.
+    expect(status()).not.toContain(t().status.paramsBounded(2));
+    expect(status()).not.toContain(t().status.paramsDropped(2));
+  });
+
+  // The bar is where a repair, a partial success and a cancellation are all reported, and it
+  // is the only place several of them are said at all. Its sibling `#live-tally` is already a
+  // live region; this one was not, so a screen reader was told none of it.
+  it("announces the status bar as a live region", async () => {
+    await boot();
+    expect($("statusbar").getAttribute("role")).toBe("status");
+    expect($("statusbar").getAttribute("aria-live")).toBe("polite");
+  });
+
   it("reports a link that decodes into something that is not a plan, as a load error", async () => {
     // An uncompressed link whose base64 is valid but whose bytes are not a document:
     // the decode succeeds and the PLAN loader is the one that refuses, which is the

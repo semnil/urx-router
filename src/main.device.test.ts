@@ -1470,6 +1470,45 @@ describe("Write to device", () => {
     expect(statusText()).toContain(t().status.writeNoChanges);
   });
 
+  // The plan format's silence, held at the only place it can actually be measured: the
+  // commands that reach a unit. The skill instructs a plan author to omit `fxEffect` when the
+  // user did not ask to change the effect, and promises the unit keeps its FX. Emitting
+  // defaults for an undescribed channel instead resets it from a document that says nothing —
+  // and the EFFECT TYPE write is not recoverable, since it refills the engine array with that
+  // type's defaults. This was written that way, measured, and reverted; the case is what stops
+  // the next attempt at "make the panel and the wire agree" from agreeing in this direction.
+  it("writes no FX address for a plan that omits the effect, leaving the unit's own settings", SLOW, async () => {
+    const { emptyPlan, serialize } = await import("./core/plan");
+    // A plan with something to write and NOTHING about either FX channel.
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["ch1"] = { level: -10 };
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect, "the premise").toBeUndefined();
+    expect(plan.nodeParams["bus.fx2"]?.fxEffect, "the premise").toBeUndefined();
+
+    // The unit is holding FX settings of its own, on both channels' selector and array.
+    const FX = new Set([679, 681, 683, 685]);
+    const custom = (a: Record<string, unknown>): number =>
+      FX.has(a.paramId as number) ? 4242 : clockReads(false, 48_000)(a);
+    // The legacy UNCOMPRESSED link shape, which the codec still decodes: jsdom here has no
+    // Blob.stream for the compressed one, and the plan is what this case is about.
+    const link = Buffer.from(serialize(plan), "utf8").toString("base64url");
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(link)}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: custom }),
+    }))!;
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    // The positive control: the write ran and sent something, so the absence below is an
+    // absence of FX writes rather than of writes.
+    expect(shell.count("vd_set")).toBeGreaterThan(0);
+
+    const fxWrites = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set" ? shell.args[i] : undefined))
+      .filter((a): a is Record<string, unknown> => !!a && FX.has(a.paramId as number));
+    expect(fxWrites).toEqual([]);
+  });
+
   // A parameter whose current value could not be read is one the write has no diff for,
   // so the sweep stops at the first rather than establishing values for a write that is
   // already canceled. `vd_set` at zero is the assertion: a read failure that let the write

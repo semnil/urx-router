@@ -34,7 +34,7 @@ import {
   type PatchTouch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
-import { isRefusal, planProblems } from "./core/plan-validate";
+import { applyParamRange, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
@@ -1853,11 +1853,16 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
     `model: ${model}`,
     `problems: ${problems.length}`,
     "",
-    ...problems.map((p) =>
-      p.reason === "insertFxSlot"
-        ? `[${p.reason}] ${p.slot}: ${p.nodes.join(", ")}`
-        : `[${p.reason}] ${p.from} -> ${p.to}`,
-    ),
+    ...problems.map((p) => {
+      if (p.reason === "insertFxSlot") return `[${p.reason}] ${p.slot}: ${p.nodes.join(", ")}`;
+      if (p.reason === "paramRange") {
+        // JSON rather than String(): a stored value is a number in the ordinary case but can be
+        // a boolean or an object, and `[object Object]` names neither what was there nor why.
+        const was = JSON.stringify(p.stored);
+        return `[${p.reason}] ${p.node}.${p.key}: ${was} -> ${p.action === "drop" ? "(dropped)" : p.bound}`;
+      }
+      return `[${p.reason}] ${p.from} -> ${p.to}`;
+    }),
   ].join("\n");
 }
 
@@ -1892,20 +1897,43 @@ function loadFromText(text: string, path?: string): boolean | null {
       showLoadReport(buildPlanReport(next.modelId, refused, true));
       return false;
     }
+    // Repaired before the document opens, so what the panel shows and what the write sends
+    // are the same number from here on. The count goes on the status line rather than into
+    // a modal: nothing failed and nothing is being asked, which is where architecture.md
+    // puts a partial success. It is applied even when a decision below holds the load,
+    // because the plan the operator is deciding about is this one.
+    const ranged = problems.filter((p) => p.reason === "paramRange");
+    applyParamRange(next, ranged);
     const finishLoad = (): boolean => {
       // Refused (a device read holds the plan): loadPlan said so, and the caller must
       // not go on to remember a recent path and announce a document that never opened.
       if (!loadPlan(next)) return false;
+      // LEADS the line rather than trailing it. The status bar is one ellipsized line and a
+      // file name has no length limit, so a notice placed after the name is off screen for a
+      // long one. This is the only thing said about a document the loader changed, and a
+      // repair that reports nothing is the defect the report exists to prevent.
+      // Two counts, not one: a bound moves a value to the nearest one this app can send, while
+      // a drop removes what it could not read at all and leaves the effect on its own default.
+      // Said with the bounded sentence alone, a document whose values were discarded is told
+      // they were adjusted.
+      const boundCount = ranged.filter((p) => p.action === "bound").length;
+      const dropCount = ranged.length - boundCount;
+      const notes = [
+        ...(boundCount > 0 ? [t().status.paramsBounded(boundCount)] : []),
+        ...(dropCount > 0 ? [t().status.paramsDropped(dropCount)] : []),
+      ];
+      const line = (what: string): string => [...notes, what].join(" — ");
       if (path) {
         recent = rememberRecent({ path, name: baseName(path), modelId }, getSettings().recentMax);
         refreshInspector();
-        setStatus(t().status.openedFrom(baseName(path)));
+        setStatus(line(t().status.openedFrom(baseName(path))));
       } else {
-        setStatus(t().status.planLoaded);
+        setStatus(line(t().status.planLoaded));
       }
       return true;
     };
-    if (problems.length > 0) {
+    const decisions = problems.filter(needsDecision);
+    if (decisions.length > 0) {
       const m = t().loadReport;
       showLoadReport(buildPlanReport(next.modelId, problems, false), {
         title: m.slotTitle,

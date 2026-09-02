@@ -611,6 +611,51 @@ describe("renderInspector — a stored value outside its control's range", () =>
   });
 });
 
+// The panel and the write path answer "what is this FX channel set to" DIFFERENTLY when the
+// plan does not describe the channel, and that is recorded here rather than left to be
+// noticed. The panel reads an absent fxEffect as `{}` and draws the effect's own defaults;
+// the emit sends nothing, because the plan format's silence means "leave this channel as the
+// unit has it" (the skill instructs an author to omit the section, and a type write is not
+// recoverable). So these rows are DEFAULTS ON SCREEN, not a statement the plan is making.
+//
+// Aligning the emit to the panel is the fix that looks obvious and is destructive: it resets
+// a unit's FX from a document that says nothing. It was written, measured and reverted. What
+// is genuinely open is the other direction — the panel saying that it is showing defaults —
+// and that is a design question about every sparse param, not only these.
+describe("renderInspector — an FX channel the plan does not describe", () => {
+  const rowValue = (label: string): string => {
+    const row = [...panel.querySelectorAll<HTMLElement>(".param")].find((r) => r.dataset.paramLabel === label);
+    return row?.querySelector(".param-val")?.textContent ?? "";
+  };
+
+  it("draws the effect's own defaults, which the write path does not send", () => {
+    const model = getModel("URX44V");
+    const plan = emptyPlan("URX44V");
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect, "the premise: nothing describes it").toBeUndefined();
+    renderInspector(panel, model, plan, nodeSel("bus.fx1"), act);
+
+    // The rows are the FX1 factory type's descriptors, at their own defaults.
+    const descs = fxParams(0);
+    const labels = t().inspector.fxEffect.params;
+    const ctx: Record<string, number> = {};
+    for (const d of descs) ctx[d.key] = d.def;
+    let compared = 0;
+    for (const d of descs) {
+      if (d.control !== "slider" && d.control !== undefined) continue;
+      const label = labels[d.label as keyof typeof labels] ?? d.label;
+      expect(rowValue(label), d.key).toBe(d.format ? d.format(d.def, ctx) : String(d.def));
+      compared += 1;
+    }
+    // Counted, or a filter that matched nothing would satisfy every assertion above.
+    expect(compared).toBe(descs.filter((d) => d.control === undefined || d.control === "slider").length);
+    expect(compared).toBeGreaterThan(4);
+    expect(rowValue(t().inspector.fxEffect.level)).toBe("100");
+
+    // …and not one of them reaches the unit.
+    expect(planToCommands(model, plan).some((c) => c.paramId === 679 || c.paramId === 681)).toBe(false);
+  });
+});
+
 describe("renderInspector — every node of every model", () => {
   it.each(MODEL_IDS)("renders every %s node without throwing, and names each one", (id) => {
     const model = getModel(id);

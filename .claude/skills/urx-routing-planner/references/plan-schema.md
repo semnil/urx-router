@@ -192,11 +192,32 @@ the device default. The full set:
 
 These three are the device's own internal units — what URX Router captures when it
 reads a unit, not a scale you can author a value on. A hand-written number lands
-wherever that raw value happens to sit on the device's curve, so prefer to omit
-them (the unit keeps its current value) or have the user dial the effect in on the
-device and fetch it back. `scripts/plan_tool.py` emits a WARNING whenever a plan
-carries them, and another whenever it carries an effect selector (`insertFx` /
-`fxEffect.type`), whose write resets that effect's parameters as described above.
+wherever that raw value happens to sit on the device's curve, so have the user dial
+the effect in on the device and fetch it back rather than authoring one.
+
+**For `ssmcs` and `insertFxParams`, do not rely on omitting a key to keep the unit's
+value.** Writing only the keys a plan carries is what the APP does, and the device is
+the other half — but so is the rest of the write path, and between them the answer
+depends on things a plan cannot state: whether the channel is in the comp/EQ mode that
+sends SSMCS at all, which effect family the selector names (a slot keyed under another
+family is never sent), what the loader turns a bare slot number into when no selector
+is present, and which slots the unit recomputes for itself (the two switches above).
+Have the user dial the effect in on the unit and fetch the plan back, or verify on the
+device. `scripts/plan_tool.py` warns whenever a plan carries one of these maps and
+deliberately says nothing about omission: reproducing those conditions in a tool that
+carries routing data only is a second implementation of the write path, and it was
+tried — three of its branches contradicted the app they described.
+
+**`fxEffect` is the exception to "omit the raws and the unit keeps its values", and
+it is all-or-nothing.** Omitting the whole section writes nothing for that channel —
+that silence is how a plan leaves an FX channel as the unit has it. Including the
+section in ANY form authors the whole channel: the EFFECT TYPE selector is emitted
+whether or not the section names a type (an absent one resolves to the channel's
+factory type), and every parameter slot goes with it at that type's defaults. So
+`{ "level": 80 }` writes the selector and resets the array, and omitting only
+`fxEffect.params` does not preserve anything. There is no partial FX write, because
+a type write refills the array regardless. `plan_tool.py` warns on the section's
+presence for that reason, not only on a `type` written into it.
 
 ## nodeNames / nodeColors / notes
 
@@ -215,7 +236,42 @@ collection that is not the right container at all (an array where an object is
 expected, say) falls back to empty and loses every entry. Nothing is reported to
 the user when this happens, so `plan_tool.py validate` warns about each one.
 
-**One entry is rewritten rather than dropped.** A `nodeNames` value longer than
+**One entry is rewritten rather than dropped by the deserializer**, and the loader
+rewrites a second class after it. Everything under a node's `fxEffect` that the
+write path cannot send is repaired before the document opens, and the counts are
+reported on the status line — one sentence for the values moved, another for the
+values removed:
+
+| What the document holds | What the load does |
+| --- | --- |
+| a finite number outside its parameter's own window | bounded to the nearest value the app can send |
+| a leaf that is not a finite number (a boolean, an object) | DROPPED, so the selected type's own default applies |
+| `type` the channel's menu does not offer | DROPPED — a menu has no nearest member, and the app resolves an absent type to the channel's default |
+| `params` that is not an object | DROPPED whole; every parameter goes with it |
+| `fxEffect` that is not an object | DROPPED whole; the channel keeps whatever the unit holds |
+
+The last two matter because the sanitiser keeps a boolean and a non-empty object
+under any key, so an unreadable effect object survives the load and every reader
+below treats it as absent.
+
+An **empty** `fxEffect` (`{}`) is removed by the sanitiser before any of that, and
+warned about for the same reason the rows above are: the document does not survive
+as written. It is not a harmless difference — a document keeping it would author the
+whole channel at the factory defaults, while the loaded plan leaves the channel
+alone. If you meant the defaults, write them; if you meant to leave the unit's FX
+as it is, omit the section.
+
+**`plan_tool.py validate` warns about every row that needs no effect catalogue** —
+the non-numeric leaf, the non-object `params`, the non-object `fxEffect` — and
+CANNOT see the two that do: a finite number outside its window, and a `type` no
+channel offers. Those windows and menus live in the app's effect catalogue, and the
+data bundled with this skill carries routing only. Settling it means exporting them
+alongside `models.json`; until then a plan this tool calls clean can still have an
+FX value the app will bound on load. `scripts/plan-tool.test.mjs` in the repository
+holds both halves — the agreement and the two blind spots — by running this tool and
+the app's own loader over the same documents.
+
+A `nodeNames` value longer than
 **8 characters** is CUT to that length — the unit's own CH SETTING name screen
 takes no more (`ch 1xxxx`), and a longer name also draws a node label across its
 neighbours on the canvas. Counted in characters, not bytes, so a Japanese name

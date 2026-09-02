@@ -524,7 +524,9 @@ export async function pipeBytes(
   return new Uint8Array(await new Response(out).arrayBuffer());
 }
 
-function isPlainRecord(v: unknown): v is Record<string, unknown> {
+/** Exported so `plan-validate.ts` asks the same question the sanitiser asked: what
+ *  survives a load as an object is what this says is one, arrays and null included. */
+export function isPlainRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
