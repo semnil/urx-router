@@ -106,9 +106,11 @@ carries a one-line map of the same directories and points here.
   `planProblems` (split out of `constraints.ts`, which is rate limits and nothing else: a rate limit warns
   about a plan the app authored, these check a plan built ELSEWHERE — a file, a `?plan=` link, a generator).
   `routing.ts` cannot host them (the cycle constraints → translate → routing). It runs from `loadFromText`
-  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its two halves
-  are reported differently: an illegal wire refuses the document, an insert-FX slot collision only warns and
-  offers to open it anyway / `plan.ts` plan state + JSON + the `?plan=` deep-link codec (deflate-compressed
+  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its three kinds
+  are reported differently: an illegal wire refuses the document; an insert-FX slot collision only warns and
+  offers to open it anyway; a stored value outside what the app can write is repaired before the document
+  opens and reported on the status line, since nothing failed and nothing is being asked. `isRefusal` and
+  `needsDecision` are the two predicates that split them, one seat each / `plan.ts` plan state + JSON + the `?plan=` deep-link codec (deflate-compressed
   `"z"` format; legacy uncompressed links must keep decoding) / `levels.ts` the device's discrete level_gain
   grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Every
   level the APP authors snaps to this grid — inspector, CONSOLE and external MIDI alike, with the steps laid
@@ -3238,7 +3240,9 @@ a generator or an older build out of the plan, where they would break routing in
 formatter that throws on them — a note written as an object used to load cleanly and then take the
 canvas down on its first paint.
 
-One value is **rewritten** rather than dropped, and it is the only one: a **node name** is cut to
+One value is **rewritten** rather than dropped in the DESERIALIZER, and it is the only one there — the
+loader rewrites a second class one layer later, after validation, where an FX value outside what the app can
+write is bounded and reported (`plan-validate.ts`). Here: a **node name** is cut to
 **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on
 the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured

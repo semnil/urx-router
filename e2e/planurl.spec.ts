@@ -29,6 +29,23 @@ const slotConflictPlan = {
   nodeParams: { ch1: { insertFx: 256 }, ch2: { insertFx: 257 } },
 };
 
+// A plan carrying BOTH kinds the loader answers differently: a slot collision, which is the
+// operator's to decide, and an FX value outside what the app can write, which is repaired
+// before the document opens. Together they are the only shape that reaches the report row for
+// the second kind, and the only one that exercises the loader's claim that the repair applies
+// even while a decision holds the load. raw 20 is one step below the delay LPF's window.
+const conflictAndBoundedPlan = {
+  format: "urx-router-plan",
+  version: 2,
+  modelId: "URX44V",
+  connections: [],
+  nodeParams: {
+    ch1: { insertFx: 256 },
+    ch2: { insertFx: 257 },
+    "bus.fx2": { fxEffect: { type: 1024, params: { delayLpf: 20 } } },
+  },
+};
+
 const report = (page: Page) => page.locator("#load-report");
 
 test.beforeEach(async ({ page }) => {
@@ -107,6 +124,23 @@ test("an insert-FX slot conflict warns and loads on the operator's word", async 
   await expect(page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select")).toHaveValue("256");
   await page.locator('#graph-host g.node[data-id="ch2"]').click();
   await expect(page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select")).toHaveValue("257");
+});
+
+test("a repaired value is reported beside the conflict, and is repaired once the load runs", async ({ page }) => {
+  await page.goto(`/?plan=${planParam(conflictAndBoundedPlan)}`);
+  await expect(report(page)).toBeVisible();
+  // Both kinds in the one copyable body, each in its own row: the operator reads this away
+  // from the modal, and a row that named only the conflict would hide the rewrite entirely.
+  await expect(page.locator("#load-report-body")).toContainText("[insertFxSlot] amp: ch1, ch2");
+  await expect(page.locator("#load-report-body")).toContainText("[paramRange] bus.fx2.delayLpf: 20 -> 21");
+
+  await page.locator("#load-report-proceed").click();
+  await expect(report(page)).toBeHidden();
+  await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+  // The repair survived the decision — the plan the operator agreed to open is the repaired
+  // one, not the document as it arrived.
+  await page.locator('#graph-host g.node[data-id="bus.fx2"]').click();
+  await expect(page.locator("#inspector .param", { hasText: "LPF" }).locator(".param-val")).toHaveText("50 Hz");
 });
 
 test("closing an insert-FX slot conflict report loads nothing", async ({ page }) => {

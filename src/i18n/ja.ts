@@ -610,6 +610,8 @@ export const ja: Messages = {
     followUsbOn: "Follow USB ON — デバイスは USB ホストのクロックで動作します",
     followUsbOff: "Follow USB OFF — デバイスは自身のクロックで動作します",
     newPlan: "新規計画を作成しました",
+    paramsBounded: (count: number): string =>
+      `このアプリが書き込める範囲の外にあった保存値 ${count} 件を、送信できる最も近い値に寄せました`,
     planLoaded: "計画を読み込みました",
     recentRemoved: (name: string): string => `${name} を最近使った計画から削除しました`,
     planSaved: "計画を保存しました",

@@ -212,6 +212,54 @@ describe("the deep link", () => {
     expect(vi.mocked(alert)).not.toHaveBeenCalled();
   });
 
+  // A document from an older build can hold a value outside the range this one admits —
+  // the unit's own encoder stops at the window, but the wire and an earlier catalogue did
+  // not. The loader repairs it before the document opens, so the panel and the write path
+  // stop naming different numbers, and says so on the status line rather than in a modal:
+  // nothing failed and nothing is being asked.
+  it("bounds a stored value the range no longer admits, and says how many on the status line", async () => {
+    const { encodePlanParam, emptyPlan } = await import("./core/plan");
+    const { fxParams } = await import("./core/control/fx-effect");
+    const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: lpf.rawMin! - 1 } } };
+
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.paramsBounded(1)), APP_SETTLE);
+    // Reported, not asked about: no modal, and the document is open.
+    expect($("load-report").hidden).toBe(true);
+    expect(nodes()).toBeGreaterThan(5);
+    // …and the plan itself carries the bound, so a save does not write the old value back.
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    const row = [...$("inspector").querySelectorAll<HTMLElement>(".param")].find(
+      (r) => r.dataset.paramLabel === t().inspector.fxEffect.params.lpf,
+    );
+    expect(row?.querySelector(".param-val")?.textContent).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
+
+  // The plural half of the same message, and the walk over BOTH channels. A one-value plan
+  // satisfies the singular branch and the first node alone, so neither is pinned by the case
+  // above — the sentence and the loop are only visible when the count is not one.
+  it("counts every bounded value, across both FX channels", async () => {
+    const { encodePlanParam, emptyPlan } = await import("./core/plan");
+    const { fxParams } = await import("./core/control/fx-effect");
+    const revxLpf = fxParams(0).find((d) => d.key === "revxLpf")!;
+    const delayLpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, params: { revxLpf: revxLpf.rawMin! - 1 } } };
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: delayLpf.rawMin! - 1 } } };
+
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.paramsBounded(2)), APP_SETTLE);
+    expect(status()).not.toContain(t().status.paramsBounded(1));
+  });
+
   it("reports a link that decodes into something that is not a plan, as a load error", async () => {
     // An uncompressed link whose base64 is valid but whose bytes are not a document:
     // the decode succeeds and the PLAN loader is the one that refuses, which is the

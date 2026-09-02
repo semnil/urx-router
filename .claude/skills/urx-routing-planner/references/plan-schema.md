@@ -215,7 +215,16 @@ collection that is not the right container at all (an array where an object is
 expected, say) falls back to empty and loses every entry. Nothing is reported to
 the user when this happens, so `plan_tool.py validate` warns about each one.
 
-**One entry is rewritten rather than dropped.** A `nodeNames` value longer than
+**One entry is rewritten rather than dropped by the deserializer**, and the loader
+rewrites a second class after it: an FX effect value outside the range the app can
+write is bounded to the nearest one it can send, and the count is reported on the
+status line. **`plan_tool.py validate` does NOT warn about that second class**: the
+windows live in the app's effect catalogue, and the data bundled with this skill
+carries routing only. Settling it means exporting those windows alongside
+`models.json`; until then a plan this tool calls clean can still have an FX value
+the app will bound on load.
+
+A `nodeNames` value longer than
 **8 characters** is CUT to that length — the unit's own CH SETTING name screen
 takes no more (`ch 1xxxx`), and a longer name also draws a node label across its
 neighbours on the canvas. Counted in characters, not bytes, so a Japanese name

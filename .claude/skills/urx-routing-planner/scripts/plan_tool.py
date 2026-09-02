@@ -329,7 +329,13 @@ def node_param_warnings(plan, nodes):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
-    claim at once."""
+    claim at once.
+
+    NOT covered: an FX effect value outside the range the app can write. The app
+    bounds one on load and reports the count, and this tool cannot see it — the
+    windows live in the app's effect catalogue and the data bundled here carries
+    routing only. Exporting those windows beside models.json is what would settle
+    it."""
     out = []
     slot_holders = {}
     node_params = plan.get("nodeParams")

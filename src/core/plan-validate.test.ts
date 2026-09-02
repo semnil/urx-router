@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { insertFxSlotProblems, isRefusal, planProblems } from "./plan-validate";
+import {
+  applyParamRange,
+  insertFxSlotProblems,
+  isRefusal,
+  needsDecision,
+  paramRangeProblems,
+  planProblems,
+} from "./plan-validate";
+import { fxParams } from "./control/fx-effect";
 import { validatePlan } from "./routing";
 import { emptyPlan } from "./plan";
 import { getModel } from "../models";
@@ -97,6 +105,133 @@ describe("insertFxSlotProblems", () => {
 // plan (`e2e/race/t2b-shape-change.spec.ts` skips its silent-hole case for exactly
 // this reason, and `e2e/race/skip-ledger.json` names this test as what keeps that
 // reason true).
+// A stored value outside its own control's range means one thing on screen and another on
+// the wire: the panel shows what the plan holds and translate.ts bounds what it sends. The
+// app cannot author one — the sliders stop at the window — so it arrives from a file an
+// older build saved, a hand edit or a ?plan= payload, and the loader repairs it.
+describe("paramRangeProblems", () => {
+  const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+  const fx2 = (params: Record<string, number>) => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params } };
+    return plan;
+  };
+
+  it("names the value, what it would be sent as, and nothing else", () => {
+    // v1.11.0 shipped this slider starting at raw 0, so a plan it saved can hold one below
+    // the window; the unit's own encoder stops at the window, so nothing else can.
+    expect(paramRangeProblems(fx2({ delayLpf: lpf.rawMin! - 1 }))).toEqual([
+      {
+        reason: "paramRange",
+        node: "bus.fx2",
+        where: "params",
+        key: "delayLpf",
+        stored: lpf.rawMin! - 1,
+        bound: lpf.rawMin,
+      },
+    ]);
+  });
+
+  it("reports nothing for a value the window admits — including both of its ends", () => {
+    for (const raw of [lpf.rawMin!, lpf.rawMax!, Math.round((lpf.rawMin! + lpf.rawMax!) / 2)]) {
+      expect(paramRangeProblems(fx2({ delayLpf: raw })), String(raw)).toEqual([]);
+    }
+  });
+
+  // The end the ends-are-admitted case cannot reach: it walks rawMax as a value the window
+  // TAKES, which pins the ceiling only from inside. A shipped document can sit outside it —
+  // 6b252e5 on this branch's own base moved the Mono delay ceiling from raw 40436 to 27000,
+  // and v1.11.0 predates that commit, so a plan it saved can hold a delay time above what
+  // this build writes.
+  it("reports a value ABOVE the window as well as one below it", () => {
+    const delay = fxParams(1024).find((d) => d.key === "delay")!;
+    expect(paramRangeProblems(fx2({ delay: delay.rawMax! + 1 }))).toEqual([
+      {
+        reason: "paramRange",
+        node: "bus.fx2",
+        where: "params",
+        key: "delay",
+        stored: delay.rawMax! + 1,
+        bound: delay.rawMax,
+      },
+    ]);
+  });
+
+  // A descriptor with no window at either end. `?? stored` on each side is what leaves these
+  // alone; a bound substituted for a missing end would clamp them to it.
+  it("leaves a parameter whose descriptor declares no window", () => {
+    for (const key of ["sync", "note"]) {
+      const d = fxParams(1024).find((x) => x.key === key)!;
+      expect([d.rawMin, d.rawMax], key).toEqual([undefined, undefined]);
+      expect(paramRangeProblems(fx2({ [key]: 9999 })), key).toEqual([]);
+    }
+  });
+
+  // The effect level is a field of its own, bounded two lines above the parameter loop and
+  // by a literal rather than by a descriptor — so a walk over descriptors alone misses it
+  // while the file's own sentence claims every FX slot.
+  it("covers the effect level, which no descriptor describes", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, level: 500 } };
+    expect(paramRangeProblems(plan)).toEqual([
+      { reason: "paramRange", node: "bus.fx2", where: "level", key: "level", stored: 500, bound: 100 },
+    ]);
+    applyParamRange(plan, paramRangeProblems(plan));
+    expect(plan.nodeParams["bus.fx2"]?.fxEffect?.level).toBe(100);
+  });
+
+  // A key the SELECTED type does not own. The migration leaves it exactly where it is, so a
+  // walk over the selected type's descriptors alone never sees it — and selecting that type
+  // later brings the unwritable raw back, with the load already past.
+  it("reports a key the selected type does not own, so selecting it later cannot revive it", () => {
+    const plan = emptyPlan("URX44V");
+    // FX2 on Rev.R3 Hall, carrying a delay-family key from a document saved under a delay.
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 768, params: { delayLpf: 0 } } };
+    expect(paramRangeProblems(plan).map((p) => [p.key, p.bound])).toEqual([["delayLpf", lpf.rawMin]]);
+  });
+
+  // Two at once, on both channels: the plural half of the message and the per-node walk are
+  // each satisfied by a single-value plan, so neither is pinned by one.
+  it("reports both channels in one pass", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, params: { revxLpf: 0 } } };
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: 0 } } };
+    expect(paramRangeProblems(plan).map((p) => p.node)).toEqual(["bus.fx1", "bus.fx2"]);
+    applyParamRange(plan, paramRangeProblems(plan));
+    expect(paramRangeProblems(plan)).toEqual([]);
+  });
+
+  it("asks the window of the type the write path will resolve to, not the one stored", () => {
+    // 768 is Rev.R3 Hall, which FX2 offers and FX1 does not; on FX1 the write path coerces
+    // it to that channel's factory type, so its window is the one that decides.
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 768, params: { revxLpf: 0 } } };
+    // Rev-X's own LPF starts at 34, so a stored 0 is out of range under the resolved type.
+    expect(paramRangeProblems(plan).map((p) => p.key)).toEqual(["revxLpf"]);
+  });
+
+  it("repairs the plan to exactly what it reported, and only that", () => {
+    const plan = fx2({ delayLpf: 0, delayHpf: 40 });
+    const problems = paramRangeProblems(plan);
+    applyParamRange(plan, problems);
+    expect(plan.nodeParams["bus.fx2"]?.fxEffect?.params).toEqual({ delayLpf: lpf.rawMin, delayHpf: 40 });
+    // Idempotent: a repaired plan reports nothing, so a re-load cannot report it twice.
+    expect(paramRangeProblems(plan)).toEqual([]);
+  });
+
+  it("neither refuses the document nor asks the operator about it", () => {
+    const [problem] = paramRangeProblems(fx2({ delayLpf: 0 }));
+    expect(isRefusal(problem)).toBe(false);
+    expect(needsDecision(problem)).toBe(false);
+  });
+
+  it("reaches the loader, which reads the one funnel rather than each check", () => {
+    // planProblems is the single seat every load path takes; a check outside it is one a
+    // load path can pick up half of, which is what the funnel exists to prevent.
+    expect(planProblems(getModel("URX44V"), fx2({ delayLpf: 0 })).map((p) => p.reason)).toEqual(["paramRange"]);
+  });
+});
+
 describe("planProblems", () => {
   const u44v = getModel("URX44V");
   const refused = (plan: ReturnType<typeof emptyPlan>) => planProblems(u44v, plan).filter(isRefusal);
