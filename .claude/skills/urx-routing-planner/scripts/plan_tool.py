@@ -251,45 +251,25 @@ def name_warnings(plan):
 # type whenever the section is present, so a partial omission preserves nothing there.
 # Its own advisory is emitted below.
 #
-# For the two that ARE here, "omit to keep" is CONDITIONAL and the condition is emitted
-# with it. Both emitters write only the keys a plan carries — that much is a property of
-# the app — but what the app sends is half the question and the DEVICE is the other half:
-# an insert-FX selector repopulates the engine before the plan's slots land, and three
-# writes make the unit recompute the values a plan left out. An author who reads an
-# unconditional "omit to keep" and drops a slot beside a selector loses that effect's
-# settings, and the loss is not recoverable.
+# For the two that ARE here, this tool does NOT say whether omitting a key keeps the
+# unit's value, and the omission is the point. It carries routing data and no model of
+# the write path, and the answer depends on things only that path knows: whether the
+# channel is in the mode that sends SSMCS at all, which effect family the selector names
+# (a slot keyed under another family is never sent), what the loader normalizes a bare
+# slot number into, and which slots the unit recomputes for itself. A conditional version
+# of this advice was written and reverted — three of its branches contradicted the app
+# they described, because reproducing those conditions here is a second implementation of
+# the emitter that drifts from it silently. Say what is true without one: verify on the
+# device, or dial it in on the unit and fetch the plan back.
 RAW_PARAM_KEYS = {
     "ssmcs": "SSMCS channel strip (raw curve values)",
     "insertFxParams": "insert-FX engine parameters (raw slot values)",
 }
-RAW_KEEP = "verify on the device or omit to keep its current value"
-
-# SSMCS values whose write makes the unit recompute the rest of the strip
-# (`sideEffect: "refetch"` in src/core/control/params.ts, which names what each drives).
-SSMCS_RECOMPUTE = {"morphing": "Morphing", "sweetSpotData": "Sweet Spot Data"}
-
-# Insert-FX engine slots whose write makes the unit recompute OTHER slots of the same
-# effect; plan-schema.md lists which. Keyed as the plan stores them (`<family>:<slot>`)
-# and as a device readback writes them (the bare slot number, resolved through the
-# selector's own family below).
-INSERT_FX_RECOMPUTE = {
-    ("mbc", 6): "the Multi-Band Compressor's 1-Knob",
-    ("pitch", 34): "Pitch Fix's MIDI Control",
-    ("pitch", 35): "Pitch Fix's MIDI Control",
-}
-
-# Selector value -> the family a plan keys engine values under, mirroring
-# insertFxFamilyOf in src/core/control/insert-fx-effect.ts.
-INSERT_FX_FAMILY = {
-    256: "guitar-clean",
-    257: "guitar-crunch",
-    258: "guitar-lead",
-    259: "guitar-drive",
-    512: "pitch",
-    1792: "mbc",
-    1793: "compander",
-    1794: "compander",
-}
+RAW_ADVICE = (
+    "verify on the device, or have the user dial it in on the unit and fetch the plan back. "
+    "Omitting a key is NOT a way to keep the unit's value — whether it is depends on what else "
+    "the plan writes, which this tool does not model"
+)
 
 
 # Effect type selectors. Writing one makes the device refill that effect's whole
@@ -417,62 +397,6 @@ def dropped_values(value, path, out):
         out.append((path, f"{value!r} is neither a boolean nor a finite number"))
 
 
-def ssmcs_recomputed(ssmcs):
-    """The SSMCS values in this plan whose write makes the unit recompute the strip."""
-    if not isinstance(ssmcs, dict):
-        return []
-    return sorted({label for key, label in SSMCS_RECOMPUTE.items() if is_number(ssmcs.get(key))})
-
-
-def insert_fx_recomputed(params):
-    """The insert-FX switches in this plan whose write makes the unit recompute other
-    slots. A value of 0 is the switch OFF and drives nothing."""
-    engine = params.get("insertFxParams")
-    if not isinstance(engine, dict):
-        return []
-    family = INSERT_FX_FAMILY.get(params.get("insertFx")) if is_number(params.get("insertFx")) else None
-    found = set()
-    for (fam, slot), label in INSERT_FX_RECOMPUTE.items():
-        keys = [f"{fam}:{slot}"] + ([str(slot)] if fam == family else [])
-        if any(is_number(engine.get(k)) and engine[k] for k in keys):
-            found.add(label)
-    return sorted(found)
-
-
-def raw_param_warnings(node_id, params, out):
-    """The raw maps, each with the CONDITION under which omitting a key keeps the unit's
-    value. Never the promise on its own: an author who drops a slot beside a selector
-    loses that effect's settings, and the loss is not recoverable."""
-    if "ssmcs" in params:
-        note = f"node {node_id}: {RAW_PARAM_KEYS['ssmcs']}"
-        driving = ssmcs_recomputed(params["ssmcs"])
-        if driving:
-            out.append(
-                f"{note} — this plan writes {' and '.join(driving)}, and the unit recomputes the whole strip "
-                "when that lands, so a value omitted here is recomputed rather than kept"
-            )
-        else:
-            out.append(f"{note} — {RAW_KEEP}")
-    if "insertFxParams" in params:
-        note = f"node {node_id}: {RAW_PARAM_KEYS['insertFxParams']}"
-        if "insertFx" not in params:
-            out.append(
-                f"{note} — none of it is sent: the app writes the engine array only alongside an insertFx "
-                "selection, so these values reach the device only once this plan selects the effect"
-            )
-        else:
-            out.append(
-                f"{note} — the insertFx selection repopulates the engine with that effect's factory defaults "
-                "before these land, so a slot omitted here is that default rather than the unit's current value"
-            )
-        driving = insert_fx_recomputed(params)
-        if driving:
-            out.append(
-                f"{note} — this plan also writes {' and '.join(driving)}, and the unit recomputes the slots "
-                "that switch drives, so those are the plan's to mirror rather than to author"
-            )
-
-
 def node_param_warnings(plan, nodes):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
@@ -525,7 +449,9 @@ def node_param_warnings(plan, nodes):
                 + ". The EFFECT TYPE and every parameter slot go out whenever this section is present, so "
                 "omitting fxEffect.params keeps nothing; omit the whole fxEffect section to keep the unit's effect"
             )
-        raw_param_warnings(node_id, params, out)
+        for key, note in RAW_PARAM_KEYS.items():
+            if key in params:
+                out.append(f"node {node_id}: {note} — {RAW_ADVICE}")
     for slot, ids in slot_holders.items():
         if len(ids) > 1:
             out.append(

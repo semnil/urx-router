@@ -195,21 +195,18 @@ reads a unit, not a scale you can author a value on. A hand-written number lands
 wherever that raw value happens to sit on the device's curve, so have the user dial
 the effect in on the device and fetch it back rather than authoring one.
 
-**For `ssmcs` and `insertFxParams`, omitting a key keeps the unit's value only when
-nothing else in the plan makes the unit RECOMPUTE it.** Writing only the keys a plan
-carries is what the APP does; the device is the other half, and four cases break the
-promise:
-
-| What the plan writes | What happens to the keys it omits |
-| --- | --- |
-| `insertFxParams` with no `insertFx` | nothing is sent at all — the engine array is written only alongside a selection |
-| `insertFx` | the selector repopulates that engine with the effect's factory defaults before the plan's slots land, so an omitted slot is that default |
-| `ssmcs.morphing` / `ssmcs.sweetSpotData` | the unit recomputes the whole strip (`sideEffect: "refetch"`) |
-| the Multi-Band Compressor's 1-Knob / Pitch Fix's MIDI Control | the unit recomputes the slots that switch drives, listed above |
-
-**For `fxEffect` the promise never holds at all** — see the paragraph below.
-`scripts/plan_tool.py` emits a WARNING whenever a plan carries any of the three, and
-says which of the cases above it is in rather than repeating one instruction.
+**For `ssmcs` and `insertFxParams`, do not rely on omitting a key to keep the unit's
+value.** Writing only the keys a plan carries is what the APP does, and the device is
+the other half — but so is the rest of the write path, and between them the answer
+depends on things a plan cannot state: whether the channel is in the comp/EQ mode that
+sends SSMCS at all, which effect family the selector names (a slot keyed under another
+family is never sent), what the loader turns a bare slot number into when no selector
+is present, and which slots the unit recomputes for itself (the two switches above).
+Have the user dial the effect in on the unit and fetch the plan back, or verify on the
+device. `scripts/plan_tool.py` warns whenever a plan carries one of these maps and
+deliberately says nothing about omission: reproducing those conditions in a tool that
+carries routing data only is a second implementation of the write path, and it was
+tried — three of its branches contradicted the app they described.
 
 **`fxEffect` is the exception to "omit the raws and the unit keeps its values", and
 it is all-or-nothing.** Omitting the whole section writes nothing for that channel —

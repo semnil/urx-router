@@ -153,74 +153,65 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       },
     };
     const out = toolWarnings(dir, both);
-    expect(out).toContain(`SSMCS channel strip (raw curve values) — verify on the device or ${KEEP}`);
+    expect(out).toContain("SSMCS channel strip (raw curve values) — verify on the device");
     // …and the FX node is not the one carrying it.
-    for (const line of out.split("\n").filter((l) => l.includes(KEEP))) {
-      expect(line, "the omit-to-keep advice reaches no FX node").not.toContain("bus.fx");
+    for (const line of out.split("\n").filter((l) => l.includes("verify on the device,"))) {
+      expect(line, "the raw-map advice reaches no FX node").not.toContain("bus.fx");
     }
   });
 
-  // "Omit a key and the unit keeps its value" is a statement about the APP — both emitters
-  // are guarded per key — and the DEVICE is the other half: a selector repopulates an engine,
-  // and three writes make the unit recompute what the plan left out. Unconditional, the advice
-  // walks an author into dropping a slot beside a selector and losing the effect's settings.
-  // One row per branch, each carrying what it must say and what it must NOT.
-  describe("says whether omitting a key actually keeps the unit's value", () => {
-    const KEEP = "omit to keep its current value";
+  // What this tool must NOT do is decide whether omitting a raw key keeps the unit's value.
+  // It carries routing data and no model of the write path, and that answer depends on things
+  // only the write path knows — the channel's comp/EQ mode (SSMCS values are sent in one mode
+  // and in no other), which family the selector names (a slot keyed under another family is
+  // never sent), what the loader turns a bare slot number into with no selector present, and
+  // which slots the unit recomputes for itself.
+  //
+  // A conditional version WAS written, and three of its branches contradicted the app: it
+  // warned that the unit would recompute a strip the plan never sends, fired on a foreign
+  // family's switch key, and told an author that bare slots would be sent "once this plan
+  // selects an effect" when the loader had already dropped them. So the pin is the shape of
+  // the answer rather than any one branch: the sentence is the SAME whatever else the plan
+  // writes, which is what a tool with no emit model can honestly say.
+  it("says the same thing about a raw map whatever else the plan writes", () => {
     const ch = (np) => ({ ...doc({}), nodeParams: { ch1: np } });
-    const CASES = [
-      ["plain SSMCS raws", { ssmcs: { outGain: 10 } }, [KEEP], ["recomputes"]],
-      [
-        "SSMCS carrying Morphing",
-        { ssmcs: { morphing: 60, outGain: 10 } },
-        ["recomputes the whole strip", "Morphing"],
-        [KEEP],
-      ],
-      [
-        "SSMCS carrying Sweet Spot Data",
-        { ssmcs: { sweetSpotData: 3, outGain: 10 } },
-        ["recomputes the whole strip", "Sweet Spot Data"],
-        [KEEP],
-      ],
-      ["engine values with no selection", { insertFxParams: { "mbc:8": 4 } }, ["none of it is sent"], [KEEP]],
-      [
-        "engine values under a selection",
-        { insertFx: 1793, insertFxParams: { "compander:1": 5 } },
-        ["repopulates the engine", "factory defaults"],
-        [KEEP, "none of it is sent"],
-      ],
-      [
-        "a device-driven switch, keyed by family",
-        { insertFx: 1792, insertFxParams: { "mbc:6": 1, "mbc:8": 4 } },
-        ["1-Knob", "recomputes the slots that switch drives"],
-        [KEEP],
-      ],
-      [
-        "the same switch keyed the way a readback writes it",
-        { insertFx: 1792, insertFxParams: { 6: 1, 8: 4 } },
-        ["1-Knob", "recomputes the slots that switch drives"],
-        [KEEP],
-      ],
-      [
-        "that switch turned OFF, which drives nothing",
-        { insertFx: 1792, insertFxParams: { "mbc:6": 0, "mbc:8": 4 } },
-        ["repopulates the engine"],
-        ["1-Knob", KEEP],
-      ],
-      [
-        "Pitch Fix MIDI Control",
-        { insertFx: 512, insertFxParams: { "pitch:34": 1 } },
-        ["MIDI Control", "recomputes the slots that switch drives"],
-        [KEEP],
-      ],
+    const line = (out, note) =>
+      out
+        .split("\n")
+        .filter((l) => l.includes(note))
+        .join("|");
+    const SSMCS = "SSMCS channel strip (raw curve values)";
+    const ENGINE = "insert-FX engine parameters (raw slot values)";
+    const SHAPES = [
+      // Each pair is a plan the reverted branches answered DIFFERENTLY.
+      [SSMCS, { ssmcs: { outGain: 10 } }],
+      [SSMCS, { ssmcs: { morphing: 60, outGain: 10 } }],
+      [SSMCS, { compEqType: 1, ssmcs: { morphing: 60, outGain: 10 } }],
+      [SSMCS, { ssmcs: { sweetSpotData: 3, outGain: 10 } }],
+      [ENGINE, { insertFxParams: { "mbc:8": 4 } }],
+      [ENGINE, { insertFxParams: { 8: 4 } }],
+      [ENGINE, { insertFx: 1793, insertFxParams: { "compander:1": 5 } }],
+      [ENGINE, { insertFx: 1793, insertFxParams: { "mbc:6": 1 } }],
+      [ENGINE, { insertFx: 1792, insertFxParams: { "mbc:6": 1, "mbc:8": 4 } }],
+      [ENGINE, { insertFx: 1792, insertFxParams: { 6: 1, 8: 4 } }],
+      [ENGINE, { insertFx: 512, insertFxParams: { "pitch:34": 1 } }],
     ];
-    for (const [name, np, says, silent] of CASES) {
-      it(name, () => {
-        const out = toolWarnings(dir, ch(np));
-        for (const phrase of says) expect(out, `${name} says "${phrase}"`).toContain(phrase);
-        for (const phrase of silent) expect(out, `${name} does not say "${phrase}"`).not.toContain(phrase);
-      });
+    const said = new Map();
+    for (const [note, np] of SHAPES) {
+      const got = line(toolWarnings(dir, ch(np)), note);
+      expect(got, `${note}: ${JSON.stringify(np)}`).not.toBe("");
+      said.set(note, (said.get(note) ?? new Set()).add(got));
     }
+    for (const [note, variants] of said) {
+      expect([...variants], `${note} is said one way`).toHaveLength(1);
+      // …and the one way it is said makes no promise about omission.
+      expect([...variants][0]).toContain("Omitting a key is NOT a way to keep the unit's value");
+      expect([...variants][0]).not.toContain("recompute");
+    }
+    // The advice it does keep, which needs no emit model: the selector reset, unchanged.
+    expect(toolWarnings(dir, ch({ insertFx: 1793 }))).toContain(
+      "selecting an insert effect resets that effect's parameters on the device",
+    );
   });
 
   // The gap, as a count. Two documents the app rewrites and the tool cannot see — both need
