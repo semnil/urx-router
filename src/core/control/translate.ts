@@ -25,8 +25,12 @@ import {
   FX_CHANNEL_NODE_INDEX,
   FX_EFFECT_ARRAY_PARAM,
   FX_EFFECT_TYPE_PARAM,
+  FX_LEVEL_DEFAULT,
+  FX_LEVEL_MAX,
+  FX_LEVEL_MIN,
   FX_SLOT_LEVEL,
   FX_SLOT_ON,
+  fxRawToSend,
   resolveFxEffectType,
   fxParams,
   formatHz,
@@ -1119,9 +1123,10 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
   const type = resolveFxEffectType(fxIndex, fx.type);
   out.push(rawCommand("FX_EFFECT_TYPE", typeId, "enum", 0, type));
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx.on ?? true) ? 1 : 0));
-  out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, boundRaw(planRaw(fx.level, 100), 0, 100)));
+  const level = fxRawToSend(fx.level, FX_LEVEL_DEFAULT, FX_LEVEL_MIN, FX_LEVEL_MAX);
+  out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, level));
   for (const desc of fxParams(type)) {
-    const raw = boundRaw(planRaw(fx.params?.[desc.key], desc.def), desc.rawMin, desc.rawMax);
+    const raw = fxRawToSend(fx.params?.[desc.key], desc.def, desc.rawMin, desc.rawMax);
     out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", desc.slot, raw));
   }
 }

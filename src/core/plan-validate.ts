@@ -8,7 +8,15 @@
 
 import type { DeviceModel } from "../models/types";
 import { insertFxCensus } from "./constraints";
-import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "./control/fx-effect";
+import {
+  FX_CHANNEL_NODE_INDEX,
+  FX_LEVEL_DEFAULT,
+  FX_LEVEL_MAX,
+  FX_LEVEL_MIN,
+  fxEffectTypes,
+  fxParams,
+  fxRawToSend,
+} from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import type { Plan } from "./plan";
 import { validatePlan } from "./routing";
@@ -36,11 +44,6 @@ export function insertFxSlotProblems(model: DeviceModel, plan: Plan): InsertFxSl
     .filter(([, nodes]) => nodes.length > 1)
     .map(([slot, nodes]) => ({ reason: "insertFxSlot" as const, slot, nodes: [...nodes] }));
 }
-
-/** The FX effect level's own bounds, which `pushFxEffectCommands` spells as a literal rather
- *  than as a descriptor. Named here so the two cannot drift apart unnoticed. */
-const FX_LEVEL_MIN = 0;
-const FX_LEVEL_MAX = 100;
 
 /** One stored parameter outside the range its own control admits. `translate.ts` bounds
  *  every FX slot to the same rawMin/rawMax the slider declares, so a document holding one
@@ -73,7 +76,9 @@ export interface ParamRangeProblem {
   where: "level" | "params";
   /** The catalogue key, as the plan stores it. */
   key: string;
-  stored: number;
+  /** What the document carries. NOT always a number: the sanitiser keeps a boolean leaf,
+   *  since node params have toggles, and a document can put one under a numeric key. */
+  stored: number | boolean;
   /** What the write path would send in its place, and what the loader stores. */
   bound: number;
 }
@@ -88,15 +93,19 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     where: "level" | "params",
     key: string,
     stored: number | undefined,
+    def: number,
     lo: number | undefined,
     hi: number | undefined,
   ): void => {
     // An ABSENT value is not a problem: the emit substitutes the catalogue default and the
-    // panel shows that same default, so the two already agree. `?? stored` on each end is
-    // live rather than defensive — `sync` and `note` carry no window at all, and a bound
-    // substituted for a missing end would clamp them to it.
+    // panel shows that same default, so the two already agree, and reporting it would write
+    // a key the document never carried.
     if (stored === undefined) return;
-    const bound = Math.min(Math.max(stored, lo ?? stored), hi ?? stored);
+    // `fxRawToSend` rather than arithmetic here: it is the rule the emit uses, so the repair
+    // lands on exactly the value that will be sent. Reached with a boolean — which the
+    // document sanitiser keeps — plain arithmetic reads `false` as 0 and would repair a level
+    // to the window's floor while the emit substitutes the default.
+    const bound = fxRawToSend(stored, def, lo, hi);
     if (bound !== stored) out.push({ reason: "paramRange", node, where, key, stored, bound });
   };
   for (const [node, fxIndex] of Object.entries(FX_CHANNEL_NODE_INDEX)) {
@@ -106,7 +115,7 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     // parameter loop and by a literal rather than by a descriptor. Named here because the
     // sentence this section opens with says every FX slot, and a slot bounded by a literal
     // is no less bounded.
-    take(node, "level", "level", fx.level, FX_LEVEL_MIN, FX_LEVEL_MAX);
+    take(node, "level", "level", fx.level, FX_LEVEL_DEFAULT, FX_LEVEL_MIN, FX_LEVEL_MAX);
     if (!fx.params) continue;
     // EVERY type the CHANNEL offers, not only the one selected. The migration leaves a key
     // the selected type does not own exactly where it is (fx-effect.ts), so a document saved
@@ -119,7 +128,7 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
       for (const d of fxParams(type.value)) {
         if (seen.has(d.key)) continue;
         seen.add(d.key);
-        take(node, "params", d.key, fx.params[d.key], d.rawMin, d.rawMax);
+        take(node, "params", d.key, fx.params[d.key], d.def, d.rawMin, d.rawMax);
       }
     }
   }

@@ -636,6 +636,30 @@ export function fxParams(type: number): FxParamDesc[] {
   return out;
 }
 
+/** The FX effect LEVEL's own bounds and default, which the emit spells as literals because no
+ *  descriptor describes that slot. */
+export const FX_LEVEL_MIN = 0;
+export const FX_LEVEL_MAX = 100;
+export const FX_LEVEL_DEFAULT = 100;
+
+/** The raw the write path sends for one FX value: a leaf that is not a finite NUMBER takes the
+ *  catalogue default, then the window bounds it.
+ *
+ *  `Number.isFinite` is the load-bearing half, and specifically NOT the global `isFinite`,
+ *  which coerces: a plan may hold a boolean under a numeric key — the document sanitiser keeps
+ *  booleans, since node params have toggles — and plain arithmetic reads `false` as 0, so a
+ *  bound computed without this lands on the window's floor where the emit substitutes the
+ *  default — for an FX level that is the difference between 0 and 100, which is the effect
+ *  going silent. The `typeof` in front of it narrows `unknown` for the compiler and decides
+ *  nothing at run time.
+ *
+ *  ONE seat, because the loader repairs a document to exactly what the emit would send, and two
+ *  spellings of that rule are two answers to the same question. */
+export function fxRawToSend(stored: unknown, def: number, lo?: number, hi?: number): number {
+  const v = typeof stored === "number" && Number.isFinite(stored) ? stored : def;
+  return Math.min(Math.max(v, lo ?? v), hi ?? v);
+}
+
 /** The keys that were shared across families before they carried a family name. */
 const LEGACY_FX_PARAM_KEYS = ["initialDelay", "diffusion", "hpf", "lpf", "hiRatio", "feedback"] as const;
 

@@ -258,6 +258,19 @@ describe("the deep link", () => {
 
     await vi.waitFor(() => expect(status()).toContain(t().status.paramsBounded(2)), APP_SETTLE);
     expect(status()).not.toContain(t().status.paramsBounded(1));
+    // …and it LEADS the line. The bar is one ellipsized line and the other half of this
+    // sentence is a file name with no length limit, so a notice placed after one is clipped
+    // away by a long name — and this is the only thing said about a document that changed.
+    expect(status().startsWith(t().status.paramsBounded(2))).toBe(true);
+  });
+
+  // The bar is where a repair, a partial success and a cancellation are all reported, and it
+  // is the only place several of them are said at all. Its sibling `#live-tally` is already a
+  // live region; this one was not, so a screen reader was told none of it.
+  it("announces the status bar as a live region", async () => {
+    await boot();
+    expect($("statusbar").getAttribute("role")).toBe("status");
+    expect($("statusbar").getAttribute("aria-live")).toBe("polite");
   });
 
   it("reports a link that decodes into something that is not a plan, as a load error", async () => {

@@ -1903,13 +1903,17 @@ function loadFromText(text: string, path?: string): boolean | null {
       // Refused (a device read holds the plan): loadPlan said so, and the caller must
       // not go on to remember a recent path and announce a document that never opened.
       if (!loadPlan(next)) return false;
-      const bounded = ranged.length > 0 ? ` — ${t().status.paramsBounded(ranged.length)}` : "";
+      // LEADS the line rather than trailing it. The status bar is one ellipsized line and a
+      // file name has no length limit, so a notice placed after the name is off screen for a
+      // long one. This is the only thing said about a document the loader changed, and a
+      // repair that reports nothing is the defect the report exists to prevent.
+      const bounded = ranged.length > 0 ? `${t().status.paramsBounded(ranged.length)} — ` : "";
       if (path) {
         recent = rememberRecent({ path, name: baseName(path), modelId }, getSettings().recentMax);
         refreshInspector();
-        setStatus(t().status.openedFrom(baseName(path)) + bounded);
+        setStatus(bounded + t().status.openedFrom(baseName(path)));
       } else {
-        setStatus(t().status.planLoaded + bounded);
+        setStatus(bounded + t().status.planLoaded);
       }
       return true;
     };

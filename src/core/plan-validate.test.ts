@@ -8,6 +8,7 @@ import {
   planProblems,
 } from "./plan-validate";
 import { fxParams } from "./control/fx-effect";
+import { planToCommands } from "./control/translate";
 import { validatePlan } from "./routing";
 import { emptyPlan } from "./plan";
 import { getModel } from "../models";
@@ -217,6 +218,34 @@ describe("paramRangeProblems", () => {
     expect(plan.nodeParams["bus.fx2"]?.fxEffect?.params).toEqual({ delayLpf: lpf.rawMin, delayHpf: 40 });
     // Idempotent: a repaired plan reports nothing, so a re-load cannot report it twice.
     expect(paramRangeProblems(plan)).toEqual([]);
+  });
+
+  // The property the repair exists to have, and the one that says the loader and the emit
+  // are one rule rather than two: repairing a document must not change what the write path
+  // sends. It failed on a boolean — the sanitiser keeps one and arithmetic reads `false` as
+  // 0, so the level was repaired to the window's floor while the emit substituted 100, which
+  // is the effect going silent.
+  it("never changes what the write path would send", () => {
+    const sent = (p: ReturnType<typeof emptyPlan>): (number | undefined)[] =>
+      planToCommands(getModel("URX44V"), p)
+        .filter((c) => c.paramId === 685)
+        .map((c) => c.vdValue);
+    for (const [name, params, level] of [
+      ["a boolean under numeric keys", { delayLpf: false, note: false }, false],
+      ["a value below the window", { delayLpf: 0 }, undefined],
+      ["a value above the window", { delay: fxParams(1024).find((d) => d.key === "delay")!.rawMax! + 1 }, undefined],
+      ["a value the window admits", { delayLpf: 110 }, 50],
+    ] as const) {
+      const plan = emptyPlan("URX44V");
+      plan.nodeParams["bus.fx2"] = {
+        fxEffect: { type: 1024, ...(level === undefined ? {} : { level }), params: { ...params } },
+      } as never;
+      const before = sent(plan);
+      applyParamRange(plan, paramRangeProblems(plan));
+      expect(sent(plan), name).toEqual(before);
+      // …and afterwards the document holds what it sends, so a second load reports nothing.
+      expect(paramRangeProblems(plan), name).toEqual([]);
+    }
   });
 
   it("neither refuses the document nor asks the operator about it", () => {
