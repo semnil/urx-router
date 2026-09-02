@@ -208,10 +208,20 @@ document to repair before it can be opened.
    - **Raw-encoded** — `ssmcs`, `fxEffect.params`, `insertFxParams` hold the
      device's own internal units, not an authorable scale. Prefer omitting them
      (the unit keeps its current values).
+   - **`fxEffect` is all-or-nothing, and omitting it is the only way to leave an FX
+     channel alone.** Omit the whole section and nothing is written for that
+     channel. Include it in ANY form — even `{ "level": 80 }` — and the whole
+     channel is authored: the EFFECT TYPE selector goes out (resolved to the
+     channel's factory type when the section names none) and every parameter slot
+     with it, at that type's defaults. There is no partial FX write, because a type
+     write refills the array anyway. Omitting only `fxEffect.params` therefore does
+     NOT keep the unit's parameter values.
    - **Effect selectors** — writing `insertFx` or `fxEffect.type` makes the device
      refill that effect's parameters with the new type's defaults, and selecting
      the old type back does **not** bring them back. Author a selector only when
      the user asked to change the effect, and say so when you deliver the plan.
+     For `fxEffect` that means: author the section only when the user asked to
+     change the effect, since the selector goes out whether or not you named it.
 
 Routing and the human-readable params (levels, pan, gain, HPF, mute, EQ in dB/Hz)
 are unaffected by either.

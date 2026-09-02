@@ -326,11 +326,17 @@ def fx_effect_warnings(node_id, fx, out):
     if not isinstance(fx, dict):
         out.append((f"{node_id}.fxEffect", f"{fx!r} is not an object, which drops the whole effect"))
         return
-    # An empty group sanitizes to nothing and the key is removed. It costs no setting —
-    # a channel the plan does not describe is written with the effect's own defaults
-    # either way — but the document does not survive as written, so say so.
+    # An empty group sanitizes to nothing and the key is removed, which is not a harmless
+    # difference: the document as written authors the whole channel at the factory defaults,
+    # while the loaded plan leaves the channel alone.
     if not fx:
-        out.append((f"{node_id}.fxEffect", "an empty effect object carries nothing and the app removes the key"))
+        out.append(
+            (
+                f"{node_id}.fxEffect",
+                "an empty effect object carries nothing and the app removes the key, "
+                "so the channel is left as the unit has it rather than written with defaults",
+            )
+        )
         return
     # `on` is the one field read as a flag, so a number works there by truthiness.
     if "on" in fx and not isinstance(fx["on"], bool) and not is_number(fx["on"]):
@@ -408,8 +414,16 @@ def node_param_warnings(plan, nodes):
         slot = insert_fx_slot(node_id, params, nodes)
         if slot:
             slot_holders.setdefault(slot, []).append(node_id)
-        if isinstance(params.get("fxEffect"), dict) and "type" in params["fxEffect"]:
-            out.append(f"node {node_id}: {SELECTOR_KEYS['fxEffect.type']} resets that effect's parameters on the device")
+        # The section's PRESENCE, not the `type` key: the selector is emitted whether or not
+        # the document names a type (an absent one resolves to the channel's factory type),
+        # and every parameter slot goes with it. There is no partial FX write, so a plan
+        # carrying `{"level": 80}` resets the effect exactly as one naming a type does.
+        if isinstance(params.get("fxEffect"), dict) and params["fxEffect"]:
+            named = "type" in params["fxEffect"]
+            out.append(
+                f"node {node_id}: {SELECTOR_KEYS['fxEffect.type']} resets that effect's parameters on the device"
+                + ("" if named else " — the selector is written even though this plan names no type")
+            )
         for key, note in RAW_PARAM_KEYS.items():
             if key not in params:
                 continue

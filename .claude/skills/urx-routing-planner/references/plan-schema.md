@@ -198,6 +198,17 @@ device and fetch it back. `scripts/plan_tool.py` emits a WARNING whenever a plan
 carries them, and another whenever it carries an effect selector (`insertFx` /
 `fxEffect.type`), whose write resets that effect's parameters as described above.
 
+**`fxEffect` is the exception to "omit the raws and the unit keeps its values", and
+it is all-or-nothing.** Omitting the whole section writes nothing for that channel —
+that silence is how a plan leaves an FX channel as the unit has it. Including the
+section in ANY form authors the whole channel: the EFFECT TYPE selector is emitted
+whether or not the section names a type (an absent one resolves to the channel's
+factory type), and every parameter slot goes with it at that type's defaults. So
+`{ "level": 80 }` writes the selector and resets the array, and omitting only
+`fxEffect.params` does not preserve anything. There is no partial FX write, because
+a type write refills the array regardless. `plan_tool.py` warns on the section's
+presence for that reason, not only on a `type` written into it.
+
 ## nodeNames / nodeColors / notes
 
 - `nodeNames` — display/CH-SETTING name override per node id (string).
@@ -235,11 +246,10 @@ below treats it as absent.
 
 An **empty** `fxEffect` (`{}`) is removed by the sanitiser before any of that, and
 warned about for the same reason the rows above are: the document does not survive
-as written. It costs no setting, because **an FX channel is written whether or not
-the plan describes it** — the app's own panel reads an absent `fxEffect` as `{}` and
-draws the effect's own defaults, and the write path sends exactly those. Omitting
-the section is therefore not a way to leave the unit's FX alone; there is no way to
-say that. Author the values you want.
+as written. It is not a harmless difference — a document keeping it would author the
+whole channel at the factory defaults, while the loaded plan leaves the channel
+alone. If you meant the defaults, write them; if you meant to leave the unit's FX
+as it is, omit the section.
 
 **`plan_tool.py validate` warns about every row that needs no effect catalogue** —
 the non-numeric leaf, the non-object `params`, the non-object `fxEffect` — and

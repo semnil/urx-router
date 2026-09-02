@@ -40,6 +40,18 @@ const doc = (fx) => ({
   nodeParams: { [NODE]: { fxEffect: fx } },
 });
 
+/** Every warning line, whatever it is about. The differential above reads only the paths the
+ *  app removes; the selector advisory is a statement about what the WRITE does to a document
+ *  the app keeps as written, so it has no place in that comparison and its own case reads
+ *  the whole output. */
+const toolWarnings = (dir, plan) => {
+  const file = join(dir, "plan.json");
+  writeFileSync(file, JSON.stringify(plan));
+  const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+  expect(r.status, r.stdout).toBe(0);
+  return r.stderr;
+};
+
 /** The paths the tool says the app removes. Node-level advice (selector warnings, "verify on
  *  the device") is not an answer to this question and is left out. */
 const toolPaths = (dir, plan) => {
@@ -94,6 +106,30 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       expect(toolPaths(dir, plan).length > 0, "the tool warns about it").toBe(warns);
     });
   }
+
+  // The advisory that stops a plan author destroying an effect. Writing the FX section makes
+  // the unit refill that effect's array with the type's defaults, and it is not recoverable —
+  // and the selector goes out whether or not the document names a type, since an absent one
+  // resolves to the channel's factory type. Asked about the `type` KEY instead, a plan saying
+  // only `{ "level": 80 }` was silently in that class.
+  it("warns on the effect section's presence, not on a named type", () => {
+    const named = toolWarnings(dir, doc({ type: 0, level: 80 }));
+    const unnamed = toolWarnings(dir, doc({ level: 80 }));
+    for (const [what, out] of [
+      ["a named type", named],
+      ["no type named", unnamed],
+    ]) {
+      expect(out, what).toContain("resets that effect's parameters on the device");
+    }
+    // …and the one without a type says so, since the author did not write the selector.
+    expect(unnamed).toContain("names no type");
+    expect(named).not.toContain("names no type");
+
+    // The control: a plan that omits the section is the way to leave the effect alone, and
+    // nothing about it is advised against.
+    const omitted = { ...doc({}), nodeParams: { "bus.fx1": { level: -10 } } };
+    expect(toolWarnings(dir, omitted)).not.toContain("resets that effect's parameters");
+  });
 
   // The gap, as a count. Two documents the app rewrites and the tool cannot see — both need
   // the effect catalogue, which the bundled data does not carry.
