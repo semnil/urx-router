@@ -31,6 +31,30 @@ const FX2_NODE = "bus.fx2";
 /** Rate above which the >96 kHz feature drops (INS FX, FX2, stereo EQ) kick in. */
 const HI_RATE_HZ = 96000;
 
+// The microSD recorder's Track Count is capped by the sample rate: 16 tracks at 44.1 /
+// 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz (user guide, RECORDER menu). Unlike
+// every other rate constraint in this file the unit ACTS on it — it lowers its own Track
+// Count to fit the new rate — and lowering the rate again does not raise it back. Nothing
+// the app can write raises it either: param 839 refuses 16, 8 and 4 alike with a 400. So
+// this one is not a warning about what a write will leave out; it is a warning about
+// something the write destroys, and it belongs in front of the operator's decision.
+//
+// URX22 has no microSD recorder, so it has no ceiling. Callers gate on the model owning
+// the recorder node rather than on the model id.
+export function trackCountCeiling(sampleRate: number): number {
+  if (sampleRate > HI_RATE_HZ) return 2;
+  if (sampleRate > 48000) return 8;
+  return 16;
+}
+
+/** What moving to `sampleRate` costs the recorder, or null if it costs nothing. A count
+ *  already at or below the new ceiling is left alone, so the answer is null there rather
+ *  than a drop of zero — the caller's question is whether to say anything at all. */
+export function trackCountDrop(count: number | undefined, sampleRate: number): { from: number; to: number } | null {
+  const to = trackCountCeiling(sampleRate);
+  return count !== undefined && count > to ? { from: count, to } : null;
+}
+
 // The stereo channels' EQ is inert at 176.4 / 192 kHz — the block diagram flags the
 // CH 5/6-11/12 EQ as "Disabled when sample rate is 176.4 kHz or 192 kHz". Mono
 // channel and output-bus EQ are unaffected. Callers force the control OFF and lock
