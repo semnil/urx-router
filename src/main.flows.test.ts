@@ -262,6 +262,11 @@ describe("the deep link", () => {
     // sentence is a file name with no length limit, so a notice placed after one is clipped
     // away by a long name — and this is the only thing said about a document that changed.
     expect(status().startsWith(t().status.paramsBounded(2))).toBe(true);
+    // The count and its verb have to agree, and nothing above can see them disagree: every
+    // assertion here compares the line against the same message function, so a sentence that
+    // is always plural renders both sides of every comparison the same way. Compared with the
+    // digits masked, which is the difference the number itself is not.
+    expect(t().status.paramsBounded(1).replace("1", "N")).not.toBe(t().status.paramsBounded(2).replace("2", "N"));
   });
 
   // The bar is where a repair, a partial success and a cancellation are all reported, and it

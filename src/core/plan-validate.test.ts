@@ -11,7 +11,8 @@ import { fxParams } from "./control/fx-effect";
 import { planToCommands } from "./control/translate";
 import { validatePlan } from "./routing";
 import { emptyPlan } from "./plan";
-import { getModel } from "../models";
+import { getModel, MODEL_IDS } from "../models";
+import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
 import {
   INSERT_FX_NONE,
@@ -246,6 +247,13 @@ describe("paramRangeProblems", () => {
       // …and afterwards the document holds what it sends, so a second load reports nothing.
       expect(paramRangeProblems(plan), name).toEqual([]);
     }
+  });
+
+  // The plan every model ships with. One out-of-window value here would be repaired on every
+  // load of a new document — and, once the write path takes the same rule, authored back into
+  // the plan by every flush that reaches the device.
+  it("finds nothing in any model's shipped default plan", () => {
+    for (const id of MODEL_IDS) expect(paramRangeProblems(defaultPlan(id)), id).toEqual([]);
   });
 
   it("neither refuses the document nor asks the operator about it", () => {
