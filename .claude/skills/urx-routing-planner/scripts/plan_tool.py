@@ -332,7 +332,9 @@ def node_param_warnings(plan, nodes):
     claim at once.
 
     NOT covered: an FX effect value outside the range the app can write. The app
-    bounds one on load and reports the count, and this tool cannot see it — the
+    bounds one on load (or drops it, when the leaf is not a finite number, so the
+    selected type's own default applies) and reports the count, and this tool
+    cannot see it — the
     windows live in the app's effect catalogue and the data bundled here carries
     routing only. Exporting those windows beside models.json is what would settle
     it."""

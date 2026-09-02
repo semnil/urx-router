@@ -217,8 +217,9 @@ the user when this happens, so `plan_tool.py validate` warns about each one.
 
 **One entry is rewritten rather than dropped by the deserializer**, and the loader
 rewrites a second class after it: an FX effect value outside the range the app can
-write is bounded to the nearest one it can send, and the count is reported on the
-status line. **`plan_tool.py validate` does NOT warn about that second class**: the
+write is bounded to the nearest one it can send, and a leaf that is not a finite
+number at all is DROPPED so the selected effect type's own default applies. The
+count is reported on the status line. **`plan_tool.py validate` does NOT warn about that second class**: the
 windows live in the app's effect catalogue, and the data bundled with this skill
 carries routing only. Settling it means exporting those windows alongside
 `models.json`; until then a plan this tool calls clean can still have an FX value

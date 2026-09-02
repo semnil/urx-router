@@ -1855,7 +1855,9 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
     "",
     ...problems.map((p) => {
       if (p.reason === "insertFxSlot") return `[${p.reason}] ${p.slot}: ${p.nodes.join(", ")}`;
-      if (p.reason === "paramRange") return `[${p.reason}] ${p.node}.${p.key}: ${p.stored} -> ${p.bound}`;
+      if (p.reason === "paramRange") {
+        return `[${p.reason}] ${p.node}.${p.key}: ${p.stored} -> ${p.action === "drop" ? "(dropped)" : p.bound}`;
+      }
       return `[${p.reason}] ${p.from} -> ${p.to}`;
     }),
   ].join("\n");

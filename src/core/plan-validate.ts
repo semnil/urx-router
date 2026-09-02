@@ -8,15 +8,7 @@
 
 import type { DeviceModel } from "../models/types";
 import { insertFxCensus } from "./constraints";
-import {
-  FX_CHANNEL_NODE_INDEX,
-  FX_LEVEL_DEFAULT,
-  FX_LEVEL_MAX,
-  FX_LEVEL_MIN,
-  fxEffectTypes,
-  fxParams,
-  fxRawToSend,
-} from "./control/fx-effect";
+import { FX_CHANNEL_NODE_INDEX, FX_LEVEL_MAX, FX_LEVEL_MIN, fxEffectTypes, fxParams } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import type { Plan } from "./plan";
 import { validatePlan } from "./routing";
@@ -79,8 +71,17 @@ export interface ParamRangeProblem {
   /** What the document carries. NOT always a number: the sanitiser keeps a boolean leaf,
    *  since node params have toggles, and a document can put one under a numeric key. */
   stored: number | boolean;
-  /** What the write path would send in its place, and what the loader stores. */
-  bound: number;
+  /** `bound` writes the value the window admits; `drop` removes the key.
+   *
+   *  A leaf that is not a finite number is DROPPED rather than replaced by a default, because
+   *  the default is the one thing about a key that is not shared: the window is the same under
+   *  every type a channel offers (the catalogue pins that), but `FX_TYPE_DEFAULTS` gives each
+   *  type its own value. Writing one type's default is therefore a guess about which type is
+   *  selected — and the emit already substitutes the SELECTED type's default for a key that is
+   *  absent, so dropping it lands on the same value now and stays right if the type changes. */
+  action: "bound" | "drop";
+  /** The value the loader writes. Absent for `drop`, which writes nothing. */
+  bound?: number;
 }
 
 /** Every FX parameter a plan holds outside its own control's range, in model order.
@@ -93,7 +94,6 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     where: "level" | "params",
     key: string,
     stored: number | undefined,
-    def: number,
     lo: number | undefined,
     hi: number | undefined,
   ): void => {
@@ -101,12 +101,16 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     // panel shows that same default, so the two already agree, and reporting it would write
     // a key the document never carried.
     if (stored === undefined) return;
-    // `fxRawToSend` rather than arithmetic here: it is the rule the emit uses, so the repair
-    // lands on exactly the value that will be sent. Reached with a boolean — which the
-    // document sanitiser keeps — plain arithmetic reads `false` as 0 and would repair a level
-    // to the window's floor while the emit substitutes the default.
-    const bound = fxRawToSend(stored, def, lo, hi);
-    if (bound !== stored) out.push({ reason: "paramRange", node, where, key, stored, bound });
+    // Not a finite NUMBER — a boolean, which the document sanitiser keeps — so there is no
+    // value to bound. Dropped rather than defaulted, for the reason on `action`.
+    if (typeof stored !== "number" || !Number.isFinite(stored)) {
+      out.push({ reason: "paramRange", node, where, key, stored, action: "drop" });
+      return;
+    }
+    // The window, and only the window. It is the same under every type the channel offers, so
+    // whichever type named the key, this is the pair the emit will bound against.
+    const bound = Math.min(Math.max(stored, lo ?? stored), hi ?? stored);
+    if (bound !== stored) out.push({ reason: "paramRange", node, where, key, stored, action: "bound", bound });
   };
   for (const [node, fxIndex] of Object.entries(FX_CHANNEL_NODE_INDEX)) {
     const fx = plan.nodeParams[node]?.fxEffect;
@@ -115,7 +119,7 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     // parameter loop and by a literal rather than by a descriptor. Named here because the
     // sentence this section opens with says every FX slot, and a slot bounded by a literal
     // is no less bounded.
-    take(node, "level", "level", fx.level, FX_LEVEL_DEFAULT, FX_LEVEL_MIN, FX_LEVEL_MAX);
+    take(node, "level", "level", fx.level, FX_LEVEL_MIN, FX_LEVEL_MAX);
     if (!fx.params) continue;
     // EVERY type the CHANNEL offers, not only the one selected. The migration leaves a key
     // the selected type does not own exactly where it is (fx-effect.ts), so a document saved
@@ -128,7 +132,7 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
       for (const d of fxParams(type.value)) {
         if (seen.has(d.key)) continue;
         seen.add(d.key);
-        take(node, "params", d.key, fx.params[d.key], d.def, d.rawMin, d.rawMax);
+        take(node, "params", d.key, fx.params[d.key], d.rawMin, d.rawMax);
       }
     }
   }
@@ -140,8 +144,14 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
 export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void {
   for (const p of problems) {
     const fx = plan.nodeParams[p.node]!.fxEffect!;
-    if (p.where === "level") fx.level = p.bound;
-    else fx.params![p.key] = p.bound;
+    if (p.where === "level") {
+      if (p.action === "drop") delete fx.level;
+      else fx.level = p.bound;
+    } else if (p.action === "drop") {
+      delete fx.params![p.key];
+    } else {
+      fx.params![p.key] = p.bound!;
+    }
   }
 }
 

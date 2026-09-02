@@ -7,7 +7,7 @@ import {
   paramRangeProblems,
   planProblems,
 } from "./plan-validate";
-import { fxParams } from "./control/fx-effect";
+import { fxEffectTypes, fxParams } from "./control/fx-effect";
 import { planToCommands } from "./control/translate";
 import { validatePlan } from "./routing";
 import { emptyPlan } from "./plan";
@@ -129,6 +129,7 @@ describe("paramRangeProblems", () => {
         where: "params",
         key: "delayLpf",
         stored: lpf.rawMin! - 1,
+        action: "bound",
         bound: lpf.rawMin,
       },
     ]);
@@ -154,6 +155,7 @@ describe("paramRangeProblems", () => {
         where: "params",
         key: "delay",
         stored: delay.rawMax! + 1,
+        action: "bound",
         bound: delay.rawMax,
       },
     ]);
@@ -176,7 +178,7 @@ describe("paramRangeProblems", () => {
     const plan = emptyPlan("URX44V");
     plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, level: 500 } };
     expect(paramRangeProblems(plan)).toEqual([
-      { reason: "paramRange", node: "bus.fx2", where: "level", key: "level", stored: 500, bound: 100 },
+      { reason: "paramRange", node: "bus.fx2", where: "level", key: "level", stored: 500, action: "bound", bound: 100 },
     ]);
     applyParamRange(plan, paramRangeProblems(plan));
     expect(plan.nodeParams["bus.fx2"]?.fxEffect?.level).toBe(100);
@@ -254,6 +256,56 @@ describe("paramRangeProblems", () => {
   // the plan by every flush that reaches the device.
   it("finds nothing in any model's shipped default plan", () => {
     for (const id of MODEL_IDS) expect(paramRangeProblems(defaultPlan(id)), id).toEqual([]);
+  });
+
+  // The review's own sweep, kept. The repair must not change what the write path sends for
+  // ANY key of ANY type either channel offers, in all three shapes a document can be wrong in.
+  // Walking one type hid the defect this replaced: the window is shared across a channel's
+  // types but the DEFAULT is not, so repairing a non-numeric leaf to "the first type that
+  // names this key" changed the value for every type that was not first — 41 combinations.
+  it("never changes what the write path sends, for any key of any type", () => {
+    const model = getModel("URX44V");
+    const offenders: string[] = [];
+    for (const [node, arrId, fxIndex] of [
+      ["bus.fx1", 681, 0],
+      ["bus.fx2", 685, 1],
+    ] as const) {
+      for (const t of fxEffectTypes(fxIndex)) {
+        for (const d of fxParams(t.value)) {
+          for (const [shape, stored] of [
+            ["not a number", false],
+            ["below", (d.rawMin ?? 0) - 1],
+            ["above", (d.rawMax ?? 0) + 1],
+          ] as const) {
+            const plan = emptyPlan("URX44V");
+            plan.nodeParams[node] = { fxEffect: { type: t.value, params: { [d.key]: stored } } } as never;
+            const sent = (): number | undefined =>
+              planToCommands(model, plan).find((c) => c.paramId === arrId && c.y === d.slot)?.vdValue;
+            const before = sent();
+            applyParamRange(plan, paramRangeProblems(plan));
+            const where = `${node} type ${t.value} ${d.key} (${shape})`;
+            if (sent() !== before) offenders.push(`${where}: ${before} -> ${sent()}`);
+            // …and the repair settles: a second load finds nothing left to do.
+            if (paramRangeProblems(plan).length) offenders.push(`${where}: still reported after repair`);
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  // The half a same-type sweep cannot see: a key stored under one type and read under another.
+  // Dropping a non-numeric leaf rather than writing one type's default is what makes the later
+  // selection land on ITS default instead of the one that happened to be repaired in.
+  it("leaves a later type selection on its own default", () => {
+    const model = getModel("URX44V");
+    const plan = emptyPlan("URX44V");
+    // Saved under Rev-X Hall, whose reverbTime default is not Room's.
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, params: { reverbTime: false } } } as never;
+    applyParamRange(plan, paramRangeProblems(plan));
+    plan.nodeParams["bus.fx1"]!.fxEffect!.type = 1; // Rev-X Room
+    const slot = fxParams(1).find((d) => d.key === "reverbTime")!;
+    expect(planToCommands(model, plan).find((c) => c.paramId === 681 && c.y === slot.slot)?.vdValue).toBe(slot.def);
   });
 
   it("neither refuses the document nor asks the operator about it", () => {
