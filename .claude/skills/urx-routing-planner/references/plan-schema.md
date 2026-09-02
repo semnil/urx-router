@@ -231,8 +231,15 @@ values removed:
 
 The last two matter because the sanitiser keeps a boolean and a non-empty object
 under any key, so an unreadable effect object survives the load and every reader
-below treats it as absent — and one that happens to be truthy is worse, since the
-write path then sends thirteen factory defaults over the unit's own settings.
+below treats it as absent.
+
+An **empty** `fxEffect` (`{}`) is removed by the sanitiser before any of that, and
+warned about for the same reason the rows above are: the document does not survive
+as written. It costs no setting, because **an FX channel is written whether or not
+the plan describes it** — the app's own panel reads an absent `fxEffect` as `{}` and
+draws the effect's own defaults, and the write path sends exactly those. Omitting
+the section is therefore not a way to leave the unit's FX alone; there is no way to
+say that. Author the values you want.
 
 **`plan_tool.py validate` warns about every row that needs no effect catalogue** —
 the non-numeric leaf, the non-object `params`, the non-object `fxEffect` — and

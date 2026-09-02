@@ -326,6 +326,12 @@ def fx_effect_warnings(node_id, fx, out):
     if not isinstance(fx, dict):
         out.append((f"{node_id}.fxEffect", f"{fx!r} is not an object, which drops the whole effect"))
         return
+    # An empty group sanitizes to nothing and the key is removed. It costs no setting —
+    # a channel the plan does not describe is written with the effect's own defaults
+    # either way — but the document does not survive as written, so say so.
+    if not fx:
+        out.append((f"{node_id}.fxEffect", "an empty effect object carries nothing and the app removes the key"))
+        return
     # `on` is the one field read as a flag, so a number works there by truthiness.
     if "on" in fx and not isinstance(fx["on"], bool) and not is_number(fx["on"]):
         out.append((f"{node_id}.fxEffect.on", f"{fx['on']!r} is neither a boolean nor a finite number"))

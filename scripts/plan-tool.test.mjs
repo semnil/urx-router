@@ -68,6 +68,7 @@ const appChanges = async (plan) => {
 // tool cannot answer without the app's effect catalogue.
 const CASES = [
   ["a document the app writes itself", { on: true, type: 0, level: 50, params: { revxLpf: 40 } }, false, false],
+  ["an empty effect object, whose key the app removes", {}, true, true],
   ["a boolean where a number belongs", { type: 0, level: false }, true, true],
   ["a boolean type", { type: false }, true, true],
   ["a boolean parameter map", { type: 0, params: false }, true, true],
