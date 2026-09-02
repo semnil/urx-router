@@ -895,6 +895,8 @@ export const ja: Messages = {
     errorReport: "デバイスエラーレポート",
   },
   error: {
+    trackCountReread: (message: string): string =>
+      `設定は書き込みましたが、その後 microSD レコーダーの Track Count を読み戻せませんでした: ${message}。レートが運べない本数は実機が自分で下げるため、画面の表示は変更前の値である可能性があります。実機を読み取って確認してください。`,
     deviceSetupRead: (message: string): string => `本体の設定を読み込めませんでした: ${message}`,
     deviceSetupWrite: (message: string): string => `設定を適用できませんでした: ${message}`,
     noRule: "この経路は接続できません",

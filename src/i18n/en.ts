@@ -1103,6 +1103,8 @@ export const en = {
     errorReport: tr("Device error report"),
   },
   error: {
+    trackCountReread: (message: string): string =>
+      `The settings were written, but the microSD recorder's Track Count could not be read back afterwards: ${message}. The unit lowers it by itself when the rate cannot carry it, so what the panel shows may be the value from before the change — read the device to find out.`,
     deviceSetupRead: (message: string): string => `Could not read the device's settings: ${message}`,
     deviceSetupWrite: (message: string): string => `Could not apply the settings: ${message}`,
     noRule: tr("This route cannot be connected"),

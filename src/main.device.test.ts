@@ -1420,6 +1420,31 @@ describe("Write to device", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
+  // Cancelling BETWEEN two sends is not the same as cancelling before the first. The rate
+  // goes out first, and `sendCommands` detects the abort at the top of the NEXT iteration
+  // and throws — taking every outcome collected so far with it. A flag armed from the
+  // returned outcomes is therefore never set, and the recorder the unit has just lowered
+  // is never re-read.
+  it("re-reads the recorder when the write is cancelled right after the rate lands", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [TRACK_COUNT_SEED]: 8 });
+    chooseRate(96_000);
+    // Cancel the moment the rate is acked: clicking the write button again aborts it.
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      if (Number(a.paramId) === 766) queueMicrotask(() => $("btn-write").click());
+      return null;
+    });
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const lastSet = shell.invokes.lastIndexOf("vd_set");
+    const readAfter = shell.invokes.some((cmd, i) => {
+      if (i <= lastSet || cmd !== "vd_get") return false;
+      const a = shell.args[i] ?? {};
+      return `${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR;
+    });
+    expect(readAfter).toBe(true);
+  });
+
   // The unit does the lowering itself, so the plan is stale the moment the write lands.
   // Whether the unit ANNOUNCES it is not something this project has measured, so the read
   // is unconditional rather than left to a notify that may never arrive.

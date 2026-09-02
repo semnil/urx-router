@@ -635,12 +635,23 @@ describe("applyDeviceState write overlay", () => {
   // plan would claim a value the device never gave.
   it("stores the count the unit reported, not one derived from the plan's rate", async () => {
     const table = recorderTable(96_000);
-    table.delete("766:0:0"); // the rate read answers 0, so the plan keeps its own
+    // The rate read REJECTS. Deleting its row instead is not the same thing: the mock
+    // answers a missing address 0, the plan then takes 0 as its rate, and a clamp against
+    // trackCountCeiling(0) — which is 16 — is a no-op that lets the old behaviour pass.
+    const answers = vi.mocked(vdGet).getMockImplementation();
     mockVdGetFrom(table);
+    const withRateRead = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) =>
+      paramId === SAMPLE_RATE_ID ? Promise.reject(new Error("read timeout")) : withRateRead(paramId, x, y),
+    );
     const target = emptyPlan("URX44V");
     target.sampleRate = 192_000;
     await applyDeviceState(model, target);
+    // Both halves: the plan kept ITS rate, and the count is the unit's own answer. Clamped
+    // to 192 kHz the count would read 2 — a value the device never gave.
+    expect(target.sampleRate).toBe(192_000);
     expect(target.nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(16);
+    if (answers) vi.mocked(vdGet).mockImplementation(answers);
   });
 
   it("stores the count as reported when the rate can carry it", async () => {

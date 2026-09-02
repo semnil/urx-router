@@ -2911,13 +2911,20 @@ if (!DEMO) {
               outcomes,
               residual,
               readErrors: convergeErrors,
-            } = await sendConverging(getModel(modelId), plan, { initialDiffs: diffs, signal, scope });
-            // The rate REACHED the unit. Anything short of that — a declined change count, a
-            // failed diff, an abort before the rate went out — leaves the recorder where it
-            // was, and a read then contradicts the plan instead of catching up with it.
-            if (pendingTrackCost !== null && outcomes.some((o) => o.ok && o.command.name === "SAMPLE_RATE")) {
-              trackCountMayHaveDropped = true;
-            }
+            } = await sendConverging(getModel(modelId), plan, {
+              initialDiffs: diffs,
+              signal,
+              scope,
+              // Armed the moment the rate LANDS, not from the returned outcomes: an abort
+              // between two sends throws out of the send loop and takes those outcomes
+              // with it, so a rate that reached the unit would go unrecorded and the
+              // recorder would never be re-read.
+              onSent: (o) => {
+                if (pendingTrackCost !== null && o.ok && o.command.name === "SAMPLE_RATE") {
+                  trackCountMayHaveDropped = true;
+                }
+              },
+            });
             const skipped = outcomes.filter((o) => o.skipped).length;
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
@@ -2981,12 +2988,26 @@ if (!DEMO) {
               const merged = await followRead("track count after a rate change", (into, signal) =>
                 applyNodeState(getModel(modelId), into, new Set([SDREC_NODE_ID]), signal, undefined, true),
               );
-              // The same tail a fetch takes, not a shorter one invented here: the value has
-              // to reach the board and the panel, and the history has to be re-based onto it
-              // or the next undo diffs against a plan that no longer describes the unit.
               if (merged) {
                 noteMergeConflicts(merged);
-                planReadFromDevice();
+                // absorb, not rebase: this writer KNOWS which keys the device authored, and
+                // rebase drops any open entry — an edit the operator started while the read
+                // ran would become un-undoable (ui/history.ts states the split).
+                planHistory?.absorb(merged.devicePatch);
+                // The read is worth nothing on screen until something redraws: the panel
+                // showed the plan's old count beside a plan that already held the unit's.
+                requestReflect();
+                planValuesChanged();
+                // And a read that FAILED is not a write that succeeded: without this the
+                // whole flow reports success while the recorder's value is whatever the
+                // plan happened to hold. Caught rather than thrown on, because the throw
+                // would leave withDevice reporting that the WRITE failed — it did not, and
+                // the operator would go looking for a write that is already on the unit.
+                try {
+                  assertReadComplete(merged, "track count read issues:");
+                } catch (err) {
+                  showError(t().error.trackCountReread(errorText(err)));
+                }
               }
             }
           }
