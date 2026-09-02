@@ -2105,6 +2105,29 @@ describe("the Follow USB badge", () => {
   // Turning it ON hands the clock back to the USB host, which re-clocks the hardware
   // then and there when the host runs another rate — so it confirms. Declining has to
   // leave the state as READ, not as asked for.
+  // The pair that keeps the recorder sentence honest. It is asked of the model the UNIT
+  // reports, and URX22 has no microSD recorder at all — warning it about an irreversible
+  // Track Count loss describes hardware it does not have, and the documents say it is
+  // silent throughout.
+  it("says nothing about the recorder on a unit that has none", SLOW, async () => {
+    const shell = await bootDevice(
+      {
+        vd_get: clockReads(false, 48_000),
+        vd_connect: { model: "URX22", label: "URX22", firmware: SUPPORTED_SYSTEM_FIRMWARE, epoch: 1 },
+      },
+      false,
+    );
+    badge().click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).length;
+    badge().click();
+    await vi.waitFor(() => expect(confirms(shell).length).toBe(asked + 1), { timeout: 10_000 });
+    const askedText = confirms(shell).at(-1) ?? "";
+    // The clock question is still asked — this is about the recorder clause alone.
+    expect(askedText).toContain(t().confirm.followUsbOn);
+    expect(askedText).not.toContain(t().confirm.trackCountMayDrop);
+  });
+
   it("asks before handing the clock to the host, and writes nothing when declined", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(false, 48_000) }, false);
     badge().click();

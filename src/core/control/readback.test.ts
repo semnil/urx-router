@@ -609,6 +609,47 @@ describe("applyDeviceState write overlay", () => {
     expect(reported).toEqual([]);
   });
 
+  // The recorder's count arrives from the unit, and the unit may still be on a rate the
+  // plan has already left — a rate write that was declined after its confirm, or one that
+  // failed. Stored as reported, the plan then holds 16 tracks at 96 kHz: a count its own
+  // ceiling forbids, and one the Inspector's menu does not contain, so the control has no
+  // selected entry at all.
+  // Spelled out rather than imported from PARAMS, the way this file already pins the port
+  // refs: the addresses are what the test is about.
+  const SD_REC_TRACK_COUNT_ID = 839;
+  const SAMPLE_RATE_ID = 766;
+
+  // The RATE the unit reports is what decides, since the read applies it to the plan first.
+  const recorderTable = (rate: number): Map<string, number> => {
+    const source = oneKnobPlan();
+    const table = staleTable(source, oneKnobCommand(source));
+    // 8 stereo pairs = the full 16 tracks.
+    table.set(`${SD_REC_TRACK_COUNT_ID}:0:0`, 8);
+    table.set(`${SAMPLE_RATE_ID}:0:0`, rate);
+    return table;
+  };
+
+  // A read reports what the unit said. Clamping it to the plan's rate would turn a device
+  // reading into a different number and count it as applied — with the rate read failing
+  // and this one succeeding, a unit holding 16 would be written into the plan as 2 and the
+  // plan would claim a value the device never gave.
+  it("stores the count the unit reported, not one derived from the plan's rate", async () => {
+    const table = recorderTable(96_000);
+    table.delete("766:0:0"); // the rate read answers 0, so the plan keeps its own
+    mockVdGetFrom(table);
+    const target = emptyPlan("URX44V");
+    target.sampleRate = 192_000;
+    await applyDeviceState(model, target);
+    expect(target.nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(16);
+  });
+
+  it("stores the count as reported when the rate can carry it", async () => {
+    mockVdGetFrom(recorderTable(48_000));
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target);
+    expect(target.nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(16);
+  });
+
   it("answers the announced write and reads the one beside it that nothing announced", async () => {
     // Both halves in one flush, which is the shape live sync actually produces: the
     // 1-knob write is what made it refetch, and an HPF frequency moved in the same

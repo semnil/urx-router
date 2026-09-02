@@ -470,7 +470,14 @@ export function renderInspector(
       // Only what the rate can carry. Offering more would let a plan be authored that the
       // unit cannot hold and no write could establish — the rate change already lowered the
       // count itself (setPlanSampleRate), so this is the menu agreeing with the value.
-      const trackOptions = trackCountOptionsAt(plan.sampleRate);
+      // Plus the value the plan actually holds, when the rate would not offer it: a device
+      // read reports what the UNIT said, and the unit may still be on a rate this plan has
+      // left. A menu without its own value in it leaves the control with nothing selected,
+      // which reads as empty rather than as "16, which this rate cannot carry".
+      const allowed = trackCountOptionsAt(plan.sampleRate);
+      const trackOptions = allowed.some((o) => o.value === count)
+        ? allowed
+        : [...allowed, { value: count, label: String(count) }].sort((a, b) => a.value - b.value);
       host.append(
         enumSelect(
           m.inspector.sdRecTrackCount,

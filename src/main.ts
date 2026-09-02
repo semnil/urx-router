@@ -20,6 +20,7 @@ import {
   ensureFixedConnections,
   normalizeNodeName,
   PlanError,
+  SDREC_NODE_ID,
   serialize,
   setPlanSampleRate,
   SSMCS_INITIAL,
@@ -1168,6 +1169,18 @@ function planValuesChanged(): void {
 // — each settles the history at its own site, where what the device authored is known:
 // a notify's own keys (applyDirect → absorb), a refetch's patch (refetchNodes →
 // absorb), a reconcile's reset (reflectFollow's full branch).
+/** Whether the model has the microSD recorder at all. URX22 does not, so nothing about
+ *  Track Count — a menu entry, a ceiling, a warning — belongs on it. Spelled once so the
+ *  three sites that ask cannot drift apart.
+ *
+ *  Takes what the UNIT reported, which is a string and may name a model this build does
+ *  not know. An unknown one is answered from the plan's model rather than from a guess:
+ *  reading it as "no recorder" would drop a warning about a loss that cannot be undone. */
+function hasRecorder(reported: string): boolean {
+  const known = MODEL_IDS.includes(reported as ModelId);
+  return getModel(known ? (reported as ModelId) : modelId).nodes.some((n) => n.id === SDREC_NODE_ID);
+}
+
 function planReadFromDevice(): void {
   planValuesChanged();
   // No full re-send here. This funnel is reached by a cancelled fetch and a partly
@@ -2523,10 +2536,19 @@ if (!DEMO) {
         return;
       }
       const next = !followUsbState;
-      // Unconditional, and it names no numbers: the device will clock from whatever the
-      // computer is running, which this app cannot read. So the choice is between saying
-      // it may cost the Track Count and saying nothing, and the cost is irreversible.
-      if (next && !(await confirmDialog(`${t().confirm.followUsbOn} ${t().confirm.trackCountMayDrop}`))) return;
+      // Asked of the model the UNIT reports, not the one the plan names: a plan may be open
+      // against a device it was not written for, and a recorder warning is either missing or
+      // invented on the model that is actually on the wire. While live the session already
+      // verified the two agree, so the plan's model IS the unit's there.
+      const ask = async (deviceModel: string): Promise<boolean> => {
+        if (!next) return true;
+        // It names no numbers: the device will clock from whatever the computer is running,
+        // which this app cannot read. So on a model that HAS a recorder the choice is
+        // between saying it may cost the Track Count and saying nothing, and the cost is
+        // irreversible. URX22 has no recorder and is asked nothing about one.
+        const cost = hasRecorder(deviceModel) ? ` ${t().confirm.trackCountMayDrop}` : "";
+        return confirmDialog(`${t().confirm.followUsbOn}${cost}`);
+      };
       const apply = async (): Promise<void> => {
         await setFollowUsb(next);
         setFollowUsbBadge(next);
@@ -2535,6 +2557,7 @@ if (!DEMO) {
       // While live the connection is already held for the session; opening a second
       // one would fight it. Otherwise connect just for this write.
       if (liveSessionUp) {
+        if (!(await ask(modelId))) return;
         try {
           await apply();
         } catch (err) {
@@ -2542,7 +2565,15 @@ if (!DEMO) {
         }
         return;
       }
-      await withDevice("follow-usb", t().status.writeConnecting, t().status.writeError, apply);
+      // Inside the holder, so the question is asked of a unit that answered: declining
+      // leaves the link released by withDevice's own teardown and writes nothing.
+      await withDevice("follow-usb", t().status.writeConnecting, t().status.writeError, async (device) => {
+        if (!(await ask(device.model))) {
+          setStatus(t().status.canceled);
+          return;
+        }
+        await apply();
+      });
     }),
   );
 
@@ -2668,15 +2699,20 @@ if (!DEMO) {
   // fails falls back to the sentence that names no numbers rather than to silence — the
   // numbers are what the read buys, and what it cannot buy is the right to say nothing
   // about a loss the app cannot undo.
-  // Set when the operator committed to a rate change that the recorder cannot carry at its
-  // current Track Count, so the unit is about to lower it. Consumed after the write, which
-  // is the only moment the new count exists to be read: the unit does the lowering itself
-  // and whether it announces one is not something this app has measured, so the plan is
-  // re-read rather than left to a notify that may never come.
+  // What the settle decided a rate change would cost the recorder, held until the write
+  // either sends the rate or does not. NOT a flag set at the confirm: the operator can
+  // approve the re-clock and then decline the change count, and the write then sends
+  // nothing at all — re-reading there would apply the unit's UNCHANGED count over a plan
+  // whose rate had already moved, leaving a count the rate cannot carry and an Inspector
+  // whose menu does not contain its own value.
+  let pendingTrackCost: { from: number; to: number } | "unknown" | null = null;
+  // Set once the rate has actually gone out, and consumed after the write: the unit does
+  // the lowering itself, and whether it announces one is not something this app has
+  // measured, so the plan is re-read rather than left to a notify that may never come.
   let trackCountMayHaveDropped = false;
 
   async function trackCountCost(nextRate: number): Promise<{ from: number; to: number } | "unknown" | null> {
-    if (!getModel(modelId).nodes.some((n) => n.id === "out.sdrec")) return null;
+    if (!hasRecorder(modelId)) return null;
     let count: number;
     try {
       count = await readTrackCount();
@@ -2736,7 +2772,7 @@ if (!DEMO) {
             : "";
       const ask = [t().confirm.reclock(deviceRate, planRate), cost].filter(Boolean).join(" ");
       if (await confirmDialog(ask)) {
-        trackCountMayHaveDropped = trackCost !== null;
+        pendingTrackCost = trackCost;
         return true;
       }
       setStatus(t().status.canceled);
@@ -2785,7 +2821,7 @@ if (!DEMO) {
     setFollowUsbBadge(false);
     // Only this arm writes the plan's rate. `adopt` takes the DEVICE's, which the recorder
     // is already living with, so it costs the Track Count nothing.
-    trackCountMayHaveDropped = trackCost !== null;
+    pendingTrackCost = trackCost;
     return true;
   }
 
@@ -2817,6 +2853,7 @@ if (!DEMO) {
           // Scene scope drops SAMPLE_RATE from the write set, so there is no
           // rate to settle — the device keeps running at its own.
           const scope = getSettings().deviceScope;
+          pendingTrackCost = null;
           if (scope !== "scene" && !(await settleSampleRate())) return;
           // One attempt of the whole diff → confirm → send sequence. Returns the
           // sent/not-sent split when the send stopped part-way (so the caller can
@@ -2875,6 +2912,12 @@ if (!DEMO) {
               residual,
               readErrors: convergeErrors,
             } = await sendConverging(getModel(modelId), plan, { initialDiffs: diffs, signal, scope });
+            // The rate REACHED the unit. Anything short of that — a declined change count, a
+            // failed diff, an abort before the rate went out — leaves the recorder where it
+            // was, and a read then contradicts the plan instead of catching up with it.
+            if (pendingTrackCost !== null && outcomes.some((o) => o.ok && o.command.name === "SAMPLE_RATE")) {
+              trackCountMayHaveDropped = true;
+            }
             const skipped = outcomes.filter((o) => o.skipped).length;
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
@@ -2922,26 +2965,35 @@ if (!DEMO) {
           // A stopped write leaves the device holding part of what was confirmed.
           // Offer to run it again rather than reporting a breakdown the user cannot
           // act on: the retry re-diffs, so what already landed drops out by itself.
-          let stop = await attemptWrite(true);
-          while (stop && (await confirmDialog(t().confirm.writeRetry(stop.sent, stop.notSent)))) {
-            stop = await attemptWrite(false);
+          try {
+            let stop = await attemptWrite(true);
+            while (stop && (await confirmDialog(t().confirm.writeRetry(stop.sent, stop.notSent)))) {
+              stop = await attemptWrite(false);
+            }
+          } finally {
+            // INSIDE the action, because withDevice awaits its own vdDisconnect on the way
+            // out: a read placed after it is issued with no connection installed and the
+            // shell answers "not-connected" for every address. It is in a FINALLY because
+            // the rate goes out first — a write that failed or was cancelled after it still
+            // moved the unit, and the recorder still needs re-reading.
+            if (trackCountMayHaveDropped) {
+              trackCountMayHaveDropped = false;
+              const merged = await followRead("track count after a rate change", (into, signal) =>
+                applyNodeState(getModel(modelId), into, new Set([SDREC_NODE_ID]), signal, undefined, true),
+              );
+              // The same tail a fetch takes, not a shorter one invented here: the value has
+              // to reach the board and the panel, and the history has to be re-based onto it
+              // or the next undo diffs against a plan that no longer describes the unit.
+              if (merged) {
+                noteMergeConflicts(merged);
+                planReadFromDevice();
+              }
+            }
           }
         });
       } finally {
         writeAbort = null;
         writeBtn.textContent = t().toolbar.writeDevice;
-        // The unit lowers its own Track Count to fit a rate it cannot carry, and this is
-        // the first moment the new value exists to be read. In the FINALLY because every
-        // exit from the write reaches here, a partial one included: the rate goes out
-        // early, so a write that stopped later still moved it. Still inside the device
-        // holder, so the link is up.
-        if (trackCountMayHaveDropped) {
-          trackCountMayHaveDropped = false;
-          const merged = await followRead("track count after a rate change", (into, signal) =>
-            applyNodeState(getModel(modelId), into, new Set(["out.sdrec"]), signal, undefined, true),
-          );
-          if (merged) noteMergeConflicts(merged);
-        }
       }
       await offerErrorReport(report);
     });

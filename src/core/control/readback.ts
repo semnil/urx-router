@@ -971,6 +971,12 @@ async function readPass(
   // read would succeed, and the value would not change.
   if (want("out.sdrec") && model.nodes.some((n) => n.id === "out.sdrec")) {
     try {
+      // Stored AS REPORTED. Clamping it to the plan's rate looked like a way to keep the
+      // pair consistent and is a way to invent a reading: with the rate read failing and
+      // this one succeeding, a unit holding 16 was written into the plan as 2 and counted
+      // as applied, so the plan claimed a device value the device never gave. What the
+      // ceiling governs is what the PLAN may author (setPlanSampleRate); what a read owes
+      // is the unit's own answer.
       const sdRecTrackCount = (await vdGet(PARAMS.SD_REC_TRACK_COUNT.id, 0, 0)) * 2;
       plan.nodeParams["out.sdrec"] = { ...plan.nodeParams["out.sdrec"], sdRecTrackCount };
       applied++;
