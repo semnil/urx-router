@@ -85,11 +85,17 @@ const busTaps = (sum: number, postEq: number, postFader: number, postInsfx: numb
   { key: "preinsfx", label: "PRE INS FX", l: [postFader, x], r: [postFader, x + 1] },
   { key: "post", label: "POST", l: [postInsfx, x], r: [postInsfx, x + 1] },
 ];
-// FX channel (effect → fader → STEREO): PRE FADER (131, mono effect out) and POST
-// (118, stereo post-fader). FX1 = 131:0 / 118:0,1; FX2 = 131:1 / 118:2,3.
-const fxTaps = (mono: number, l: number): MeterTap[] => [
-  { key: "prefader", label: "PRE FADER", l: [131, mono] },
-  { key: "post", label: "POST", l: [118, l], r: [118, l + 1] },
+// FX channel (sends → effect → fader → BAL → STEREO). Three taps, and 131 is the one
+// BEFORE the effect: changing only the ping-pong feedback moves the other two and
+// leaves 131 alone, which is what separates it from the effect's own output. Its being
+// mono is the same fact — the FX send sum is mono, and the effect is what makes the
+// signal stereo. "Does not move with the fader" is true of the input and of the
+// effect's output alike, so it never told them apart.
+// FX1 = 131:0 / 103:0,1 / 118:0,1;  FX2 = 131:1 / 103:2,3 / 118:2,3.
+const fxTaps = (mono: number, x: number): MeterTap[] => [
+  { key: "input", label: "INPUT", l: [131, mono] },
+  { key: "prefader", label: "PRE FADER", l: [103, x], r: [103, x + 1] },
+  { key: "post", label: "POST", l: [118, x], r: [118, x + 1] },
 ];
 // Single-point node (monitor / oscillator): one output meter, no chain to choose.
 const single = (l: readonly [number, number], r?: readonly [number, number]): MeterTap[] => [

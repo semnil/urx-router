@@ -1019,7 +1019,8 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   device against the block diagram (`core/meters.ts`; the stereo-channel maps are per-model — `NODE_TAPS_URX22` / `NODE_TAPS_URX44`, with URX44V aliasing the URX44 map — because the meters are indexed by stereo-pair position and the URX22's first stereo channel is CH3/4, confirmed on real URX22 hardware): mono channels INPUT → PRE GATE → PRE COMP →
   PRE EQ → PRE INS FX → PRE FADER → POST; stereo channels INPUT → PRE FADER → PRE DUCKER → POST (no
   HPF/GATE/COMP/INS FX, and the LEVEL sits before the DUCKER); output buses PRE EQ (sum) → PRE FADER →
-  PRE INS FX → POST; FX channels PRE FADER → POST; monitors and the oscillator are single-meter and have
+  PRE INS FX → POST; FX channels INPUT → PRE FADER → POST, where INPUT is the mono send sum reaching the
+  effect and PRE FADER is the effect's own stereo output; monitors and the oscillator are single-meter and have
   no selector. STREAMING and the OSCILLATOR have device meters but no level fader, so they are **meter-only
   strips** (`buildMeterOnlyStrip`: a live meter with no fader, no set-level readout, and no tap selector). The
   **OSCILLATOR**'s on/off is the scribble power LED (`osc.on`, normally OFF, so its strip rests dimmed until
@@ -1812,7 +1813,9 @@ coincidence: an address the app only READS was in no registration, so the unit's
 the value caught up only at the next full read. Both were measured announcing a front-panel change on a URX44V
 (2026-08-11, System V1.3.1.0), which is what separates them from the addresses that genuinely stay silent — D.Gain
 and the FX / insert-FX engine arrays emit nothing when the panel moves them, and for those a registration would be
-useless.
+useless for that purpose. **A device-side RECOMPUTE is a different trigger and does announce**: writing an FX
+delay's Sync, Note or BPM makes the unit recalculate the delay time from BPM and the note value and notify the
+array address it wrote. So the silence is about the front panel, not about the address.
 
 | Address | Why the app never writes it | Which node's scoped read repairs it |
 | --- | --- | --- |
@@ -2220,7 +2223,10 @@ listed here so they are not proposed again as gaps:
    power cycle read back by eye on the unit's own screen). `diag` reports what a run could not send; the
    save-off is outside even that, and the private reference tree carries the measurements.
 2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
-   a coerced in-range value is a better outcome than an out-of-range one reaching the unit.
+   a coerced in-range value is a better outcome than an out-of-range one reaching the unit. The clamp is
+   deliberately NOT applied to the readout beside it: the panel shows what the plan holds, which after a
+   device read is what the unit holds, and the unit can hold a value this app's own range excludes. One
+   readout cannot answer both "what is the unit at" and "what would the next write send".
 3. **`pump` discards an invalid binary frame.** The vd protocol is JSON text, TCP has already settled frame
    integrity underneath it, and a stray frame on the idle drain is noise rather than a failed operation —
    so discarding it *is* the salvage. A binary frame arriving while a command waits for its reply still fails

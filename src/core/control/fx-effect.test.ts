@@ -9,6 +9,7 @@ import { deserialize, emptyPlan, serialize } from "../plan";
 import {
   balanceLabel,
   delayMs,
+  FX_TYPE_DEFAULTS,
   fx2FreqHz,
   FX_EFFECT_TYPE_DEFAULT,
   fxEffectTypes,
@@ -44,23 +45,92 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect(initDelayMs(26)).toBeCloseTo(41.0, 0);
     expect(initDelayMs(127)).toBeCloseTo(200, 1);
   });
-  it("Mono delay = raw / 14.976", () => {
-    expect(delayMs(7563)).toBeCloseTo(505, 0);
-    expect(Math.round(delayMs(40436))).toBe(2700);
+  it("Mono delay = raw / 10, on the three points that disproved raw / 14.976", () => {
+    // Read off the unit with Sync off. 7563 is the raw the retired record claimed was
+    // 505.0 ms; it is 756.3, which is what settled the law.
+    expect(delayMs(5000)).toBeCloseTo(500.0, 1);
+    expect(delayMs(20000)).toBeCloseTo(2000.0, 1);
+    expect(delayMs(7563)).toBeCloseTo(756.3, 1);
+    expect(Math.round(delayMs(27000))).toBe(2700); // official max
+  });
+  it("both delay types read a raw the same way", () => {
+    for (const raw of [10, 5000, 13500]) expect(delayMs(raw)).toBe(pingPongDelayMs(raw));
   });
   it("Ping Pong delay = raw / 10 (LCD-confirmed 2026-07-19)", () => {
     expect(pingPongDelayMs(13500)).toBeCloseTo(1350, 1); // official max
     expect(pingPongDelayMs(20218)).toBeCloseTo(2021.8, 1);
     expect(pingPongDelayMs(10)).toBeCloseTo(1.0, 5); // official min
   });
-  it("Ping Pong delay-time slot has its own law and range, not Mono's", () => {
+  it("Ping Pong delay-time slot has its own RANGE, not its own law", () => {
     const pp = fxParams(1025).find((d) => d.key === PINGPONG_DELAY_KEY)!;
     const mono = fxParams(1024).find((d) => d.key === MONO_DELAY_KEY)!;
-    expect(pp.rawMax).toBe(13500);
-    expect(mono.rawMax).toBe(40436);
-    // Same raw, different displayed ms between the two delay types.
+    expect(pp.rawMin).toBe(10); // 1.0 ms
+    expect(pp.rawMax).toBe(13500); // 1350 ms
+    expect(mono.rawMin).toBe(1); // 0.1 ms
+    expect(mono.rawMax).toBe(27000); // 2700 ms
+    // Same raw, same displayed ms — the split is the range, and it is what keeps a
+    // Mono time above 1350 ms off a descriptor that would have the device clamp it.
     expect(pp.format!(13500, {})).toBe("1350 ms");
-    expect(pp.format!(13500, {})).not.toBe(mono.format!(13500, {}));
+    expect(pp.format!(13500, {})).toBe(mono.format!(13500, {}));
+    expect(mono.rawMax).toBeGreaterThan(pp.rawMax!);
+  });
+  it("the FX2 / delay filters read THRU at the ends the official range names", () => {
+    const hpf = fxParams(1024).find((d) => d.key === "delayHpf")!;
+    const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    // "Thru, 21.2 Hz - 8 kHz" and "50 Hz - 16 kHz, Thru": the word sits on the end the
+    // unit puts it on, and the window reaches the official limits at both ends.
+    expect([hpf.rawMin, hpf.rawMax]).toEqual([0, 109]);
+    expect([lpf.rawMin, lpf.rawMax]).toEqual([21, 122]);
+    expect(hpf.format!(0, {})).toBe("THRU");
+    expect(hpf.format!(5, {})).toBe("THRU");
+    expect(hpf.format!(6, {})).toBe("21 Hz"); // LCD 21.2
+    expect(hpf.format!(109, {})).toBe("8.14 kHz"); // LCD 8.00k
+    expect(lpf.format!(21, {})).toBe("50 Hz"); // LCD 50.0
+    expect(lpf.format!(121, {})).toBe("16.27 kHz"); // LCD 16.0k
+    expect(lpf.format!(122, {})).toBe("THRU");
+    // Rev.R3 takes the same window on its own slots.
+    for (const [k, want] of [
+      ["revr3Hpf", [0, 109]],
+      ["revr3Lpf", [21, 122]],
+    ] as const) {
+      const d = fxParams(768).find((x) => x.key === k)!;
+      expect([d.rawMin, d.rawMax]).toEqual(want);
+    }
+  });
+  it("REV-X reverb time carries the selected type's own scale", () => {
+    const at = (type: number, raw: number, roomSize: number): number => revxTimeSec(raw, roomSize, type);
+    // Room Size 0, raw 69: the LCD reads 10.3 / 15.2 / 17.6 s on Hall / Room / Plate.
+    expect(at(0, 69, 0)).toBeCloseTo(10.3, 1);
+    expect(at(1, 69, 0)).toBeCloseTo(15.2, 1);
+    expect(at(2, 69, 0)).toBeCloseTo(17.6, 1);
+    // The Room Size scale is exactly 3 and type-independent, so each ceiling is its own
+    // rs0 reading times three. The guide's published ceilings are 31.0 / 45.3 / 52.0 and
+    // the products are 30.9 / 45.6 / 52.8 — near them, and NOT asserted against them:
+    // those are nominal figures, and widening the tolerance until they pass would be
+    // fitting the measurement to the rounding.
+    for (const t of [0, 1, 2]) expect(at(t, 69, 31)).toBeCloseTo(at(t, 69, 0) * 3, 5);
+    expect(at(0, 69, 31)).toBeCloseTo(30.9, 1);
+    expect(at(1, 69, 31)).toBeCloseTo(45.6, 1);
+    expect(at(2, 69, 31)).toBeCloseTo(52.8, 1);
+    // An unknown type reads as Hall rather than throwing.
+    expect(at(99, 69, 0)).toBeCloseTo(at(0, 69, 0), 5);
+  });
+  it("every EFFECT TYPE carries its own factory defaults", () => {
+    // The device keeps these per type; a family-wide table would write one type's
+    // values for all of them. Spot the rows that differ inside a family.
+    expect(fxParams(0).find((d) => d.key === "reverbTime")!.def).toBe(23); // Rev-X Hall
+    expect(fxParams(1).find((d) => d.key === "reverbTime")!.def).toBe(6); // Room
+    expect(fxParams(2).find((d) => d.key === "revxHpf")!.def).toBe(12); // Plate
+    expect(fxParams(770).find((d) => d.key === "erRevBalance")!.def).toBe(63); // Rev.R3 Plate
+    for (const [key, mono, pp] of [
+      ["delayFeedback", 20, 14],
+      ["delayHiRatio", 7, 4],
+      ["delayHpf", 40, 0],
+      ["delayLpf", 110, 120],
+    ] as const) {
+      expect(fxParams(1024).find((d) => d.key === key)!.def).toBe(mono);
+      expect(fxParams(1025).find((d) => d.key === key)!.def).toBe(pp);
+    }
   });
   it("Hi/Low ratio = raw / 10", () => {
     expect(ratio10(8)).toBeCloseTo(0.8, 5);
@@ -121,13 +191,12 @@ describe("fx-effect translate", () => {
     expect(cmds.some((c) => c.paramId === 679 || c.paramId === 681)).toBe(false);
   });
 
-  // Mono ms = raw / 14.976, Ping Pong ms = raw / 10. One raw under the other's law is
-  // a different time, and the clamp that follows hides it: a 2000 ms Mono delay read
-  // as Ping Pong is 2995 ms, bounded to the type's 13500 = 1350 ms at the device while
-  // the plan still shows 2000 ms.
+  // Both types read a raw as raw / 10 and differ in the range they take. A 2000 ms Mono
+  // delay is raw 20000, which is past Ping Pong's 13500, so re-keying it onto that type
+  // would have the device clamp it to 1350 ms while the plan still showed 2000.
   it("does not re-interpret a Mono delay time as a Ping Pong one across a type switch", () => {
     const plan = emptyPlan("URX44V");
-    const mono = 29952; // 2000 ms under the Mono law
+    const mono = 20000; // 2000 ms
     plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { [MONO_DELAY_KEY]: mono } } };
     expect(planToCommands(model, plan).find((c) => c.paramId === 685 && c.y === 6)?.vdValue).toBe(mono);
     // The EFFECT TYPE menu patches the type and keeps the params (inspector.ts).
@@ -186,15 +255,23 @@ describe("fx-effect parameter keys", () => {
   });
 
   // The family is not the finest grain that matters: Mono Delay and Ping Pong are both
-  // family "delay" and both put the delay time on slot 6, under laws that differ by
-  // 1.5x. A key shared by two types a CHANNEL offers is one storage slot the operator
-  // can move between with the EFFECT TYPE menu, so the two must agree on everything
-  // observable about it — the slot, the settable range, and what a raw displays as.
-  it("never gives two of one channel's types the same key under a different law", () => {
-    const probe = (d: FxParamDesc): string =>
-      [d.slot, d.rawMin, d.rawMax, d.rawStep, ...[d.rawMin ?? 0, d.rawMax ?? 0].map((r) => d.format?.(r, {}))].join(
-        "|",
-      );
+  // family "delay" and both put the delay time on slot 6. A key shared by two types a
+  // CHANNEL offers is one storage slot the operator can move between with the EFFECT
+  // TYPE menu, so the two must agree on where it lives and what it accepts.
+  //
+  // The DISPLAY is in the probe, with the one key that legitimately differs declared as
+  // data: REV-X scales its Reverb Time per type, so one storage slot reads as three
+  // different times. A new type-dependent display is red until it is named here.
+  // Sampled at fixed raws rather than at `def`, which is per type by design.
+  const DISPLAY_EXCEPTIONS = new Set(["reverbTime"]);
+  it("never gives two of one channel's types the same key a different slot, range or display", () => {
+    const probe = (d: FxParamDesc): string => {
+      const shape = [d.slot, d.rawMin, d.rawMax, d.rawStep].join("|");
+      if (!d.format || DISPLAY_EXCEPTIONS.has(d.key)) return shape;
+      const lo = d.rawMin ?? 0;
+      const hi = d.rawMax ?? 0;
+      return [shape, ...[lo, Math.round((lo + hi) / 2), hi].map((r) => d.format!(r, {}))].join("|");
+    };
     const offenders: string[] = [];
     for (const fxIndex of [0, 1]) {
       const byKey = new Map<string, { type: number; probe: string }>();
@@ -210,6 +287,45 @@ describe("fx-effect parameter keys", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  // The table is keyed by SLOT, and a slot number means a different parameter in each
+  // family — 16 is internal to REV-X and the LPF in Rev.R3 — so a row pasted under the
+  // wrong type id lands on a real slot of another parameter and applies without complaint.
+  // A row short of a slot is as quiet: fxParams falls back to the family array's own def,
+  // which is one type's factory capture, and that is the defect the table exists to remove.
+  it("every EFFECT TYPE names a default for exactly the slots its own descriptors address", () => {
+    const offenders: string[] = [];
+    for (const t of [...fxEffectTypes(0), ...fxEffectTypes(1)]) {
+      const descs = fxParams(t.value);
+      const row = FX_TYPE_DEFAULTS[t.value];
+      if (!row) {
+        offenders.push(`type ${t.value}: no row at all`);
+        continue;
+      }
+      const addressed = new Set(descs.map((d) => d.slot));
+      for (const d of descs) {
+        if (row[d.slot] === undefined) offenders.push(`type ${t.value}: no default for ${d.key} @ slot ${d.slot}`);
+      }
+      for (const slot of Object.keys(row).map(Number)) {
+        if (!addressed.has(slot))
+          offenders.push(`type ${t.value}: default for slot ${slot}, which it does not address`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("REV-X shares one reverb-time slot across three types that display differently", () => {
+    const seen = [0, 1, 2].map((t) => {
+      const d = fxParams(t).find((x) => x.key === "reverbTime")!;
+      return { slot: d.slot, range: [d.rawMin, d.rawMax].join("-"), shown: d.format!(69, { roomSize: 0 }) };
+    });
+    // One device parameter: same slot, same domain.
+    expect(new Set(seen.map((x) => x.slot)).size).toBe(1);
+    expect(new Set(seen.map((x) => x.range)).size).toBe(1);
+    // Three readings, because the unit scales the seconds by type — and each type reads
+    // its own, so swapping two rows of the scale table is red rather than still three.
+    expect(seen.map((x) => x.shown)).toEqual(["10.3 s", "15.2 s", "17.6 s"]);
   });
 
   it("gives the two delay types their own delay-time key", () => {

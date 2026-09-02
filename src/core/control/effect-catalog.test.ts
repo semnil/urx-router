@@ -9,7 +9,7 @@
 // the value-domain tests, which only probe calibrated interior points, do not.
 
 import { describe, expect, it } from "vitest";
-import { DELAY_PARAMS, REVR3_PARAMS, REVX_PARAMS, fxParams, type FxParamDesc } from "./fx-effect";
+import { fxEffectTypes, fxParams, type FxParamDesc } from "./fx-effect";
 import { MBC_BAND_PARAM, insertFxParams, type InsertFxFamily, type InsertFxParamDesc } from "./insert-fx-effect";
 
 // A label must be a non-empty string with no NaN/undefined leaking into it.
@@ -29,9 +29,14 @@ function checkDesc(d: Desc, ctx: string): void {
     const lo = d.rawMin as number;
     const hi = d.rawMax as number;
     expect.soft(lo, `${ctx} rawMin <= rawMax`).toBeLessThanOrEqual(hi);
-    // The factory default must be settable on the slider it belongs to.
+    // The factory default must be settable on the slider it belongs to — inside the
+    // range AND on the step grid, which starts at rawMin. A range input snaps a value
+    // off that grid, so an unaligned default or rawMax is one the operator cannot pick.
     expect.soft(d.def, `${ctx} def >= rawMin`).toBeGreaterThanOrEqual(lo);
     expect.soft(d.def, `${ctx} def <= rawMax`).toBeLessThanOrEqual(hi);
+    const stride = d.rawStep ?? 1;
+    expect.soft((d.def - lo) % stride, `${ctx} def is on the step grid`).toBe(0);
+    expect.soft((hi - lo) % stride, `${ctx} rawMax is reachable`).toBe(0);
     if (d.format) {
       // Formatter is finite (no NaN/undefined) across both endpoints and the default.
       for (const raw of [lo, hi, d.def]) assertLabel(d.format(raw, {}), `${ctx} format(${raw})`);
@@ -45,16 +50,16 @@ function checkDesc(d: Desc, ctx: string): void {
 }
 
 describe("FX-channel effect descriptors are internally consistent", () => {
-  const families: [string, FxParamDesc[]][] = [
-    ["revx", REVX_PARAMS],
-    ["revr3", REVR3_PARAMS],
-    ["delay", DELAY_PARAMS],
-    // fxParams(0)/(1024) return REVX_PARAMS/DELAY_PARAMS (covered above); only the
-    // Ping Pong variant is a distinct array worth checking here.
-    ["fxParams(pingpong=1025)", fxParams(1025)],
-  ];
-  for (const [name, descs] of families) {
-    it(`${name}: defaults in bounds, formatters finite at endpoints`, () => {
+  // Every EFFECT TYPE either menu offers, not the three family arrays: fxParams overlays
+  // that type's own factory defaults and its own reverb-time formatter on the family, so
+  // the array a type resolves to is the one the inspector and the write path use, and it
+  // is not the base array. Derived from the menus, so a type added tomorrow is swept the
+  // day it is offered.
+  const types: [string, FxParamDesc[]][] = [0, 1].flatMap((fxIndex) =>
+    fxEffectTypes(fxIndex).map((o): [string, FxParamDesc[]] => [`FX${fxIndex + 1} type ${o.value}`, fxParams(o.value)]),
+  );
+  for (const [name, descs] of types) {
+    it(`${name}: defaults in bounds and on the grid, formatters finite at endpoints`, () => {
       for (const d of descs) checkDesc(d, `${name}.${d.key}`);
     });
   }

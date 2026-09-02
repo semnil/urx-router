@@ -162,7 +162,7 @@ describe("tapAddrs → apply → reading pipeline (subscription set is sufficien
     // The subscription set must cover exactly what reading() needs: feeding a value
     // at each returned address and reading the node back must surface that value, so
     // no metered node is left silent for want of a subscribed address.
-    const nodes = ["ch1", "ch_5_6", "bus.mix1", "bus.mix2", "bus.osc"];
+    const nodes = ["ch1", "ch_5_6", "bus.fx1", "bus.mix1", "bus.mix2", "bus.osc"];
     const taps = nodes.map((id) => tapFor(id, defaultTapKey(id))!);
     const addrs = tapAddrs(taps);
     const store = new MeterStore();

@@ -102,14 +102,15 @@ export function fx2FreqHz(raw: number): number {
 export function initDelayMs(raw: number): number {
   return (raw * 200) / 127;
 }
-/** Mono Delay time: linear ms = raw / 14.976. */
+/** Delay time for BOTH delay types: linear ms = raw / 10. The two differ in the
+ *  RANGE they accept, not in how a raw reads. */
 export function delayMs(raw: number): number {
-  return raw / 14.976;
-}
-/** Ping Pong Delay time: linear ms = raw / 10 (LCD-confirmed 2026-07-19: raw
- *  13500 → 1350.0 ms, raw 20218 → 2021.8 ms — a different law from Mono Delay). */
-export function pingPongDelayMs(raw: number): number {
   return raw / 10;
+}
+/** The Ping Pong spelling of the same law, kept so a descriptor names the type it
+ *  belongs to rather than borrowing the other one's function. */
+export function pingPongDelayMs(raw: number): number {
+  return delayMs(raw);
 }
 /** Hi / Low Ratio: display = raw / 10. */
 export function ratio10(raw: number): number {
@@ -142,9 +143,19 @@ function revxTimeBaseUnits(raw: number): number {
   if (raw <= 67) return 100 + 10 * (raw - 57);
   return 200 + 50 * (raw - 67); // raw 68, 69
 }
-/** REV-X Reverb Time seconds for a Reverb-Time raw and the channel's Room Size raw. */
-export function revxTimeSec(raw: number, roomSizeRaw: number): number {
-  return REVX_TIME_UNIT * revxTimeBaseUnits(raw) * Math.pow(3, roomSizeRaw / 31);
+/** How much longer than Hall a REV-X type runs at the same Reverb-Time raw. The unit's
+ *  own maxima are the ratio: at Room Size 0 and raw 69 the LCD reads 10.3 s on Hall,
+ *  15.2 s on Room and 17.6 s on Plate, and multiplying each by the Room Size scale of 3
+ *  lands on the guide's per-type ceilings (31.0 / 45.3 / 52.0 s). The Room Size scale
+ *  itself is type-independent. */
+const REVX_TYPE_SCALE: Record<number, number> = { 0: 1, 1: 15.2 / 10.3, 2: 17.6 / 10.3 };
+
+/** REV-X Reverb Time seconds for a Reverb-Time raw, the channel's Room Size raw and the
+ *  selected type. Without the type this reads Hall's seconds for all three, which is
+ *  short by a factor of 1.7 on Plate. */
+export function revxTimeSec(raw: number, roomSizeRaw: number, type = 0): number {
+  const scale = REVX_TYPE_SCALE[type] ?? 1;
+  return REVX_TIME_UNIT * scale * revxTimeBaseUnits(raw) * Math.pow(3, roomSizeRaw / 31);
 }
 
 // Tempo-sync Note values (raw 0..14, short → long; 0 = off). Standard Yamaha list.
@@ -175,6 +186,18 @@ export function formatHz(hz: number): string {
 }
 function formatSec(s: number): string {
   return `${s < 10 ? s.toFixed(2) : s.toFixed(1)} s`;
+}
+/** The FX2 / delay filters read THRU rather than a frequency at the ends of their
+ *  windows — the HPF's bottom six raws and the LPF's top one. The official ranges
+ *  spell that out and put the word on the end it belongs to: the HPF's is written
+ *  "Thru, 21.2 Hz–8 kHz" and the LPF's "50 Hz–16 kHz, Thru". */
+const FX2_HPF_THRU_TOP = 5;
+const FX2_LPF_THRU = 122;
+function fx2HpfLabel(raw: number): string {
+  return raw <= FX2_HPF_THRU_TOP ? "THRU" : formatHz(fx2FreqHz(raw));
+}
+function fx2LpfLabel(raw: number): string {
+  return raw >= FX2_LPF_THRU ? "THRU" : formatHz(fx2FreqHz(raw));
 }
 function formatMs(ms: number): string {
   return `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
@@ -427,36 +450,39 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     label: "hpf",
     control: "slider",
     rawMin: 0,
-    rawMax: 60,
+    rawMax: 109,
     rawStep: 1,
     def: 29,
-    format: (r) => formatHz(fx2FreqHz(r)),
+    format: (r) => fx2HpfLabel(r),
   },
   {
     key: "revr3Lpf",
     slot: 16,
     label: "lpf",
     control: "slider",
-    rawMin: 0,
-    rawMax: 120,
+    rawMin: 21,
+    rawMax: 122,
     rawStep: 1,
     def: 99,
-    format: (r) => formatHz(fx2FreqHz(r)),
+    format: (r) => fx2LpfLabel(r),
   },
 ];
 
-// Mono / Ping Pong Delay (both FX channels). Delay time uses a different law per
-// type — Mono ms = raw / 14.976 (0.1–2700 ms), Ping Pong ms = raw / 10
-// (1.0–1350 ms) — so the delay-time slot is overridden for Ping Pong (see
-// PINGPONG_DELAY_PARAMS). Note is only meaningful when Sync is on.
-const DELAY_RAW_MAX_MONO = 40436; // 2700 ms × 14.976
+// Mono / Ping Pong Delay (both FX channels). The two encode the delay time the same
+// way and differ in the RANGE they take — Mono 0.1–2700 ms, Ping Pong 1.0–1350 ms —
+// so the delay-time slot is overridden for Ping Pong (see PINGPONG_DELAY_PARAMS).
+// Note is only meaningful when Sync is on, and while Sync is on the UNIT owns the
+// delay-time slot: it recomputes it from BPM and the note value and announces the
+// result on the array address.
+const DELAY_RAW_MAX_MONO = 27000; // 2700 ms × 10
 const DELAY_RAW_MAX_PINGPONG = 13500; // 1350 ms × 10
 const DELAY_RAW_MIN_PINGPONG = 10; // 1.0 ms × 10
 /** Plan storage key for each delay type's time slot. Both types are family "delay"
  *  and both put the time on slot 6, so the family name does not separate them —
- *  only the type does, and it has to: a raw stored under one law reads as a
- *  different number of milliseconds under the other. Mono keeps the bare name (one
- *  type uses it); Ping Pong names itself. */
+ *  only the type does, and it has to: the two accept different RANGES, so a Mono
+ *  time above 1350 ms handed to a Ping Pong descriptor is clamped at the device
+ *  while the plan goes on showing the value it was set to. Mono keeps the bare name
+ *  (one type uses it); Ping Pong names itself. */
 export const MONO_DELAY_KEY = "delay";
 export const PINGPONG_DELAY_KEY = "pingPongDelay";
 export const DELAY_PARAMS: FxParamDesc[] = [
@@ -467,7 +493,9 @@ export const DELAY_PARAMS: FxParamDesc[] = [
     control: "slider",
     rawMin: 1,
     rawMax: DELAY_RAW_MAX_MONO,
-    rawStep: 15,
+    // The only step that puts both official ends and the factory default on the slider's
+    // grid: 26999 and 4999 share no divisor above 1.
+    rawStep: 1,
     def: 5000,
     format: (r) => formatMs(delayMs(r)),
   },
@@ -499,21 +527,21 @@ export const DELAY_PARAMS: FxParamDesc[] = [
     label: "hpf",
     control: "slider",
     rawMin: 0,
-    rawMax: 60,
+    rawMax: 109,
     rawStep: 1,
     def: 40,
-    format: (r) => formatHz(fx2FreqHz(r)),
+    format: (r) => fx2HpfLabel(r),
   },
   {
     key: "delayLpf",
     slot: 10,
     label: "lpf",
     control: "slider",
-    rawMin: 0,
-    rawMax: 120,
+    rawMin: 21,
+    rawMax: 122,
     rawStep: 1,
     def: 110,
-    format: (r) => formatHz(fx2FreqHz(r)),
+    format: (r) => fx2LpfLabel(r),
   },
   { key: "sync", slot: 4, label: "sync", control: "toggle", def: 0 },
   {
@@ -548,13 +576,64 @@ const PINGPONG_DELAY_PARAMS: FxParamDesc[] = DELAY_PARAMS.map((d) =>
 /** EFFECT TYPE value for Ping Pong Delay (shared by both FX channels). */
 const PINGPONG_TYPE = 1025;
 
-/** Parameter descriptors for an EFFECT TYPE. Delay splits by type because Mono
- *  and Ping Pong encode the delay time differently (see PINGPONG_DELAY_PARAMS). */
+/**
+ * The unit's own factory value for every descriptor slot, per EFFECT TYPE.
+ *
+ * The device keeps these PER TYPE, not per family: selecting a type refills the array
+ * with that type's values. A family-wide table therefore shows one type's defaults on
+ * all of them — and because `translate` writes a descriptor's `def` for any slot the
+ * plan does not carry, it would also WRITE them, so a plan that had only ever selected
+ * Ping Pong sent Mono Delay's four filter and feedback values to the hardware.
+ *
+ * Captured off a factory unit by cycling the selector through all five types per FX
+ * channel; `reference/work/device-tests/fx-cycle-capture.json` is the capture and this
+ * is its transcription. Keyed by SLOT so a row reads against that file directly.
+ *
+ * The same shape the insert-FX catalogue already takes for the two companders, whose
+ * defaults are likewise all that separate them.
+ */
+export const FX_TYPE_DEFAULTS: Record<number, Record<number, number>> = {
+  // FX1 — Rev-X. Slots 16/17 are internal and not in the descriptor list.
+  0: { 7: 23, 8: 10, 9: 2, 10: 4, 11: 50, 12: 29, 13: 8, 14: 12, 15: 27, 18: 32 },
+  1: { 7: 6, 8: 8, 9: 2, 10: 6, 11: 47, 12: 15, 13: 7, 14: 11, 15: 5, 18: 32 },
+  2: { 7: 21, 8: 8, 9: 2, 10: 12, 11: 52, 12: 18, 13: 9, 14: 10, 15: 5, 18: 32 },
+  // FX2 — Rev.R3.
+  768: { 7: 15, 8: 25, 9: 7, 10: 7, 11: 3, 12: 0, 13: 1, 14: 55, 15: 29, 16: 99 },
+  769: { 7: 13, 8: 2, 9: 4, 10: 7, 11: 1, 12: 0, 13: 2, 14: 48, 15: 39, 16: 111 },
+  770: { 7: 17, 8: 12, 9: 9, 10: 6, 11: 2, 12: 0, 13: 0, 14: 63, 15: 41, 16: 111 },
+  // Both FX channels — the two delays.
+  1024: { 3: 120, 4: 0, 6: 5000, 7: 20, 8: 7, 9: 40, 10: 110, 11: 9 },
+  1025: { 3: 120, 4: 0, 6: 5000, 7: 14, 8: 4, 9: 0, 10: 120, 11: 9 },
+};
+
+/** Parameter descriptors for an EFFECT TYPE: the family's shape, carrying that TYPE's
+ *  own factory defaults — and, for REV-X, its own Reverb Time scale. Memoized because
+ *  every emit, every readback and every inspector render asks for it. */
+const FX_PARAMS_BY_TYPE = new Map<number, FxParamDesc[]>();
 export function fxParams(type: number): FxParamDesc[] {
+  const memo = FX_PARAMS_BY_TYPE.get(type);
+  if (memo) return memo;
   const family = fxFamilyOf(type);
-  if (family === "revx") return REVX_PARAMS;
-  if (family === "revr3") return REVR3_PARAMS;
-  return type === PINGPONG_TYPE ? PINGPONG_DELAY_PARAMS : DELAY_PARAMS;
+  const base =
+    family === "revx"
+      ? REVX_PARAMS
+      : family === "revr3"
+        ? REVR3_PARAMS
+        : type === PINGPONG_TYPE
+          ? PINGPONG_DELAY_PARAMS
+          : DELAY_PARAMS;
+  const defs = FX_TYPE_DEFAULTS[type];
+  const out = base.map((d) => {
+    const def = defs?.[d.slot] ?? d.def;
+    // Reverb Time is the one display that cannot be written without knowing the type.
+    const format =
+      family === "revx" && d.key === "reverbTime"
+        ? (r: number, c: Record<string, number>) => formatSec(revxTimeSec(r, c.roomSize ?? 31, type))
+        : d.format;
+    return def === d.def && format === d.format ? d : { ...d, def, format };
+  });
+  FX_PARAMS_BY_TYPE.set(type, out);
+  return out;
 }
 
 /** The keys that were shared across families before they carried a family name. */
@@ -585,9 +664,9 @@ const LEGACY_FX_PARAM_KEYS = ["initialDelay", "diffusion", "hpf", "lpf", "hiRati
  *  shipped: the released app is version 1, so no document exists that needs them told
  *  apart. The boundary is the safety property, not a formality — from 2 on, a `delay`
  *  key beside a Ping Pong type is the MONO value parked under its own name, and a
- *  wider gate would re-key it: raw/14.976 ms read as raw/10 ms, which is exactly the
- *  re-interpretation the key split exists to prevent, and translate would then write
- *  that value to the hardware. */
+ *  wider gate would re-key it onto a descriptor whose range stops at 13500, so a time
+ *  the operator set above 1350 ms would be clamped at the device while the plan went
+ *  on showing it, and translate would write the clamped value to the hardware. */
 export function migrateFxEffectParams(
   fx: { type?: number; params?: Record<string, number> },
   fxIndex: number,

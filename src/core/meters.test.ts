@@ -127,8 +127,19 @@ describe("tap points", () => {
     expect(tapsFor("bus.mix1").map((t) => t.key)).toEqual(["preeq", "prefader", "preinsfx", "post"]);
   });
 
-  it("lists PRE FADER and POST for an FX channel", () => {
-    expect(tapsFor("bus.fx1").map((t) => t.key)).toEqual(["prefader", "post"]);
+  it("lists INPUT, PRE FADER and POST for an FX channel, and only INPUT is mono", () => {
+    expect(tapsFor("bus.fx1").map((t) => t.key)).toEqual(["input", "prefader", "post"]);
+    // The send sum reaching the effect is mono; the effect is what makes it stereo, so
+    // the two taps after it carry both sides.
+    const [input, prefader, post] = tapsFor("bus.fx1");
+    expect(input.r).toBeUndefined();
+    expect(prefader.r).toBeDefined();
+    expect(post.r).toBeDefined();
+    expect(tapsFor("bus.fx2").map((t) => [t.l[0], t.l[1]])).toEqual([
+      [131, 1],
+      [103, 2],
+      [118, 2],
+    ]);
   });
 
   it("gives a single output tap for monitor buses, none for unknown nodes", () => {
