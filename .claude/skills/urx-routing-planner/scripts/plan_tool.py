@@ -246,9 +246,15 @@ def name_warnings(plan):
 # hand-written number lands wherever that raw value sits on the device curve;
 # recommend leaving them out (the device keeps its own value) or dialing the effect
 # in on the unit and fetching. Routing and human-readable scalars are unaffected.
+#
+# `fxEffect` is NOT in this table, and that is the point of the table: leaving a key
+# out keeps the unit's value only where the emit writes the keys the plan carries and
+# no others, which is what these two do. The FX channel writes the selector and every
+# slot of the resolved type whenever the section is present, so the advice here would
+# be false there — the author would omit `fxEffect.params`, keep the section, and reset
+# the effect they meant to preserve. Its own advisory is emitted below.
 RAW_PARAM_KEYS = {
     "ssmcs": "SSMCS channel strip (raw curve values)",
-    "fxEffect": "FX bus effect parameters (raw per-effect slot values)",
     "insertFxParams": "insert-FX engine parameters (raw slot values)",
 }
 
@@ -417,22 +423,22 @@ def node_param_warnings(plan, nodes):
         # The section's PRESENCE, not the `type` key: the selector is emitted whether or not
         # the document names a type (an absent one resolves to the channel's factory type),
         # and every parameter slot goes with it. There is no partial FX write, so a plan
-        # carrying `{"level": 80}` resets the effect exactly as one naming a type does.
+        # carrying `{"level": 80}` resets the effect exactly as one naming a type does — and
+        # so the ONLY way to keep the unit's effect is to leave the whole section out. That
+        # sentence has to be in this line rather than beside it: paired with the raw-values
+        # advice it used to draw, an author was told to omit `fxEffect.params`, which keeps
+        # the section, writes the selector, and resets what they meant to preserve.
         if isinstance(params.get("fxEffect"), dict) and params["fxEffect"]:
             named = "type" in params["fxEffect"]
             out.append(
                 f"node {node_id}: {SELECTOR_KEYS['fxEffect.type']} resets that effect's parameters on the device"
                 + ("" if named else " — the selector is written even though this plan names no type")
+                + ". The EFFECT TYPE and every parameter slot go out whenever this section is present, so "
+                "omitting fxEffect.params keeps nothing; omit the whole fxEffect section to keep the unit's effect"
             )
         for key, note in RAW_PARAM_KEYS.items():
             if key not in params:
                 continue
-            # fxEffect's on / level are plain values and its type is warned about
-            # above; only the raw `params` map belongs to this class.
-            if key == "fxEffect":
-                fx = params.get("fxEffect") or {}
-                if not isinstance(fx, dict) or not fx.get("params"):
-                    continue
             out.append(f"node {node_id}: {note} — verify on the device or omit to keep its current value")
     for slot, ids in slot_holders.items():
         if len(ids) > 1:

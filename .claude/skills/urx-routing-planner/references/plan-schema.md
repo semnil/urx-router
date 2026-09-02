@@ -192,11 +192,14 @@ the device default. The full set:
 
 These three are the device's own internal units — what URX Router captures when it
 reads a unit, not a scale you can author a value on. A hand-written number lands
-wherever that raw value happens to sit on the device's curve, so prefer to omit
-them (the unit keeps its current value) or have the user dial the effect in on the
-device and fetch it back. `scripts/plan_tool.py` emits a WARNING whenever a plan
-carries them, and another whenever it carries an effect selector (`insertFx` /
-`fxEffect.type`), whose write resets that effect's parameters as described above.
+wherever that raw value happens to sit on the device's curve, so have the user dial
+the effect in on the device and fetch it back rather than authoring one.
+
+**For `ssmcs` and `insertFxParams`, omitting a key keeps the unit's value**, because
+only the keys a plan carries are written. **For `fxEffect` it does not** — see the
+paragraph below — so the two must not be followed as one instruction.
+`scripts/plan_tool.py` emits a WARNING whenever a plan carries any of the three, and
+the FX one carries its own advice for that reason.
 
 **`fxEffect` is the exception to "omit the raws and the unit keeps its values", and
 it is all-or-nothing.** Omitting the whole section writes nothing for that channel —

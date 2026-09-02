@@ -205,17 +205,18 @@ document to repair before it can be opened.
 
 **6. Flag the parameters that need care.** Two classes the validator warns about;
 `plan-schema.md` carries the detail, and both are worth surfacing to the user:
-   - **Raw-encoded** — `ssmcs`, `fxEffect.params`, `insertFxParams` hold the
-     device's own internal units, not an authorable scale. Prefer omitting them
-     (the unit keeps its current values).
-   - **`fxEffect` is all-or-nothing, and omitting it is the only way to leave an FX
-     channel alone.** Omit the whole section and nothing is written for that
-     channel. Include it in ANY form — even `{ "level": 80 }` — and the whole
-     channel is authored: the EFFECT TYPE selector goes out (resolved to the
-     channel's factory type when the section names none) and every parameter slot
-     with it, at that type's defaults. There is no partial FX write, because a type
-     write refills the array anyway. Omitting only `fxEffect.params` therefore does
-     NOT keep the unit's parameter values.
+   - **Raw-encoded** — `ssmcs` and `insertFxParams` hold the device's own internal
+     units, not an authorable scale. Prefer omitting them (the unit keeps its
+     current values, because only the keys a plan carries are written).
+   - **`fxEffect` is all-or-nothing, and omitting the WHOLE section is the only way
+     to leave an FX channel alone.** Its `params` map is raw-encoded too, but the
+     advice above does not apply to it: include the section in ANY form — even
+     `{ "level": 80 }` — and the whole channel is authored, the EFFECT TYPE selector
+     going out (resolved to the channel's factory type when the section names none)
+     and every parameter slot with it at that type's defaults. There is no partial
+     FX write, because a type write refills the array anyway. **Omitting only
+     `fxEffect.params` therefore preserves nothing** — it leaves the section, so the
+     effect is reset exactly as if you had named a type.
    - **Effect selectors** — writing `insertFx` or `fxEffect.type` makes the device
      refill that effect's parameters with the new type's defaults, and selecting
      the old type back does **not** bring them back. Author a selector only when

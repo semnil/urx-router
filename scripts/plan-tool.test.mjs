@@ -131,6 +131,35 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     expect(toolWarnings(dir, omitted)).not.toContain("resets that effect's parameters");
   });
 
+  // The two advisories a plan with `fxEffect.params` used to draw at once said opposite
+  // things: "selecting an FX type resets that effect's parameters" and "omit to keep its
+  // current value". Following the second — omitting the params and keeping the section —
+  // writes the selector and every slot, which resets the effect the author meant to keep.
+  // The shared advice is TRUE of the other two raw maps, and that is what makes this a
+  // pair rather than a wording fix: `ssmcs` and `insertFxParams` write only the keys a plan
+  // carries, so it stays on them and comes off FX.
+  it("does not tell an FX plan to omit the params, and still tells an SSMCS plan to", () => {
+    const KEEP = "omit to keep its current value";
+    const fx = toolWarnings(dir, doc({ type: 0, params: { revxLpf: 40 } }));
+    expect(fx).not.toContain(KEEP);
+    expect(fx).toContain("omit the whole fxEffect section");
+
+    // The control, on the same run: the shared advice is not simply gone.
+    const both = {
+      ...doc({ type: 0, params: { revxLpf: 40 } }),
+      nodeParams: {
+        "bus.fx1": { fxEffect: { type: 0, params: { revxLpf: 40 } } },
+        ch1: { ssmcs: { outGain: 10 } },
+      },
+    };
+    const out = toolWarnings(dir, both);
+    expect(out).toContain(`SSMCS channel strip (raw curve values) — verify on the device or ${KEEP}`);
+    // …and the FX node is not the one carrying it.
+    for (const line of out.split("\n").filter((l) => l.includes(KEEP))) {
+      expect(line, "the omit-to-keep advice reaches no FX node").not.toContain("bus.fx");
+    }
+  });
+
   // The gap, as a count. Two documents the app rewrites and the tool cannot see — both need
   // the effect catalogue, which the bundled data does not carry.
   it("has exactly two blind spots, both needing the effect catalogue", () => {
