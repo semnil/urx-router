@@ -18,11 +18,23 @@ export type RateChoice = "adopt" | "release" | "cancel";
  * `hiRateNote` names the plan settings a device rate above 96 kHz would leave
  * unwritten, so choosing `adopt` is not a surprise. The plan keeps them either way.
  */
-export function askRateChoice(planRate: string, deviceRate: string, hiRateNote: string | null): Promise<RateChoice> {
+/**
+ * `releaseNote` belongs to the RELEASE arm alone and is rendered under that button, not in
+ * the shared note: it is what writing the plan's rate costs, and adopting the device's rate
+ * costs nothing. A cost put in the shared note would read as true of the choice the
+ * operator makes to AVOID it.
+ */
+export function askRateChoice(
+  planRate: string,
+  deviceRate: string,
+  hiRateNote: string | null,
+  releaseNote = "",
+): Promise<RateChoice> {
   const scrim = document.getElementById("rate-choice") as HTMLElement;
   const title = document.getElementById("rate-choice-title") as HTMLElement;
   const intro = document.getElementById("rate-choice-intro") as HTMLElement;
   const note = document.getElementById("rate-choice-note") as HTMLElement;
+  const releaseNoteEl = document.getElementById("rate-choice-release-note") as HTMLElement;
   const adopt = document.getElementById("rate-choice-adopt") as HTMLButtonElement;
   const release = document.getElementById("rate-choice-release") as HTMLButtonElement;
   const cancel = document.getElementById("rate-choice-cancel") as HTMLButtonElement;
@@ -32,6 +44,8 @@ export function askRateChoice(planRate: string, deviceRate: string, hiRateNote: 
   intro.textContent = m.intro(planRate, deviceRate);
   note.textContent = hiRateNote ?? "";
   note.hidden = hiRateNote === null;
+  releaseNoteEl.textContent = releaseNote;
+  releaseNoteEl.hidden = releaseNote === "";
   adopt.textContent = m.adopt(deviceRate);
   release.textContent = m.release(planRate);
   cancel.textContent = m.cancel;

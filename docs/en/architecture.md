@@ -2287,6 +2287,22 @@ the diff, and settles the rate before anything is sent (`settleSampleRate` in `m
 `client.ts`). Matching rates proceed unchanged. With Follow USB **off**, a mismatch is a plain confirm, since the
 plan's rate is the one that sticks. With it **on**, a modal (`ui/rate-choice.ts`) offers the two real answers —
 write at the device's rate, or turn Follow USB off and write the plan's — rather than guessing which was meant.
+
+**The rate settle also names what the change costs the microSD recorder**, which is the one rate side effect the
+unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at
+44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the rate again does not raise it, and param 839
+refuses every value the app could write it back with. So this is not a feature left out of one write like the
+>96 kHz family — it is destroyed, and the notice belongs in front of the decision. `trackCountCeiling` /
+`trackCountDrop` (`core/constraints.ts`) decide it and `client.ts`'s `readTrackCount` supplies the count, read from
+the DEVICE rather than the plan: an offline plan's count is whatever was last authored, which would both miss real
+drops and invent false ones. A count that already fits is silent, because a loss notice shown to someone losing
+nothing is how a notice stops being read, and a read that fails falls back to the wording that names no numbers
+rather than to silence. Three paths carry it — the plain re-clock confirm, the three-way's RELEASE arm (its own
+element under that button, since adopting the device's rate costs nothing and the shared note speaks for both
+arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
+can read. **URX22 has no recorder and is silent throughout.** Afterwards the write's own epilogue re-reads the
+recorder node: the unit does the lowering itself, and whether it announces one has not been measured here, so the
+plan is refreshed rather than left waiting for a notify that may never come.
 A failed read cancels the write, per the rule above: the rate decides which parameters the write may even contain.
 
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen

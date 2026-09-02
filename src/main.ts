@@ -33,7 +33,7 @@ import {
   PlanWriteWitness,
   type PatchTouch,
 } from "./core/plan-history";
-import { formatRate, rateConstraints, SAMPLE_RATES } from "./core/constraints";
+import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import { applyParamRange, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
 import {
@@ -148,6 +148,7 @@ import {
   rateAction,
   readClockState,
   readFollowUsb,
+  readTrackCount,
   sendConverging,
   sendNames,
   setFollowUsb,
@@ -2520,7 +2521,10 @@ if (!DEMO) {
         return;
       }
       const next = !followUsbState;
-      if (next && !(await confirmDialog(t().confirm.followUsbOn))) return;
+      // Unconditional, and it names no numbers: the device will clock from whatever the
+      // computer is running, which this app cannot read. So the choice is between saying
+      // it may cost the Track Count and saying nothing, and the cost is irreversible.
+      if (next && !(await confirmDialog(`${t().confirm.followUsbOn} ${t().confirm.trackCountMayDrop}`))) return;
       const apply = async (): Promise<void> => {
         await setFollowUsb(next);
         setFollowUsbBadge(next);
@@ -2650,6 +2654,36 @@ if (!DEMO) {
     await offerErrorReport(report, reportPrompt);
   });
 
+  // What a move to `nextRate` costs the microSD recorder, as the sentence to put in front
+  // of the operator — or "" when it costs nothing.
+  //
+  // Empty for a model with no recorder (URX22 has none), and for a count that already fits
+  // the new rate: an irreversible-loss warning shown to someone losing nothing is how a
+  // warning stops being read.
+  //
+  // The count comes from the DEVICE, not the plan. An offline plan's count is whatever was
+  // last authored, which would both miss real drops and invent false ones. A read that
+  // fails falls back to the sentence that names no numbers rather than to silence — the
+  // numbers are what the read buys, and what it cannot buy is the right to say nothing
+  // about a loss the app cannot undo.
+  // Set when the operator committed to a rate change that the recorder cannot carry at its
+  // current Track Count, so the unit is about to lower it. Consumed after the write, which
+  // is the only moment the new count exists to be read: the unit does the lowering itself
+  // and whether it announces one is not something this app has measured, so the plan is
+  // re-read rather than left to a notify that may never come.
+  let trackCountMayHaveDropped = false;
+
+  async function trackCountCost(nextRate: number): Promise<{ from: number; to: number } | "unknown" | null> {
+    if (!getModel(modelId).nodes.some((n) => n.id === "out.sdrec")) return null;
+    let count: number;
+    try {
+      count = await readTrackCount();
+    } catch {
+      return "unknown";
+    }
+    return trackCountDrop(count, nextRate);
+  }
+
   // Settle what sample rate this write is going to happen at, before anything is
   // sent. Returns true to go ahead, false to abort the write.
   //
@@ -2679,11 +2713,30 @@ if (!DEMO) {
     if (action === "proceed") return true;
     const planRate = formatRate(plan.sampleRate);
     const deviceRate = formatRate(clock.sampleRate);
+    // What the plan's rate would cost the recorder. The unit lowers its own Track Count to
+    // fit a rate it cannot carry and nothing this app can write raises it again, so unlike
+    // every other rate constraint this one is destroyed rather than merely left out — it
+    // has to be in front of the decision, not in the release notes. Read from the DEVICE
+    // rather than taken from the plan: an offline plan's count is whatever was last
+    // authored, and warning from that would both miss real drops and invent false ones.
+    // A read that fails leaves `null`, and the caller then warns without naming numbers
+    // rather than staying silent.
+    const trackCost = await trackCountCost(plan.sampleRate);
     if (action === "confirmReclock") {
       // The device will take the rate and hold it. Re-clocking interrupts audio and
       // renegotiates the USB stream, so it is worth stating outright — but it is a
       // plain yes/no: the plan's rate is the one that sticks.
-      if (await confirmDialog(t().confirm.reclock(deviceRate, planRate))) return true;
+      const cost =
+        trackCost === "unknown"
+          ? t().confirm.trackCountMayDrop
+          : trackCost
+            ? t().confirm.trackCountDrop(trackCost.from, trackCost.to)
+            : "";
+      const ask = [t().confirm.reclock(deviceRate, planRate), cost].filter(Boolean).join(" ");
+      if (await confirmDialog(ask)) {
+        trackCountMayHaveDropped = trackCost !== null;
+        return true;
+      }
       setStatus(t().status.canceled);
       return false;
     }
@@ -2692,8 +2745,21 @@ if (!DEMO) {
     const limits = rateConstraints(getModel(modelId), clock.sampleRate)
       .warnings.map((w) => t().warning[w])
       .join(" ");
+    // The note belongs to the whole dialog, so it may only say what is true of every arm.
+    // `limits` is: adopting the device's high rate and releasing to the plan's each leave
+    // those features out. The Track Count warning is NOT — it is what RELEASING costs, and
+    // adopting costs nothing — so it goes on that button rather than into the note.
     const note = limits ? t().rateChoice.hiRateNote(limits) : null;
-    const choice = await askRateChoice(planRate, deviceRate, note);
+    // Its own wording, not the confirm's: this arm is one of three answers and the sentence
+    // has to say which one it is about. `trackWarning` decides WHETHER, the message decides
+    // how it reads here.
+    const releaseNote =
+      trackCost === "unknown"
+        ? t().confirm.trackCountMayDrop
+        : trackCost
+          ? t().rateChoice.trackCountDrop(trackCost.from, trackCost.to)
+          : "";
+    const choice = await askRateChoice(planRate, deviceRate, note, releaseNote);
     if (choice === "cancel") {
       setStatus(t().status.canceled);
       return false;
@@ -2715,6 +2781,9 @@ if (!DEMO) {
       return false;
     }
     setFollowUsbBadge(false);
+    // Only this arm writes the plan's rate. `adopt` takes the DEVICE's, which the recorder
+    // is already living with, so it costs the Track Count nothing.
+    trackCountMayHaveDropped = trackCost !== null;
     return true;
   }
 
@@ -2859,6 +2928,18 @@ if (!DEMO) {
       } finally {
         writeAbort = null;
         writeBtn.textContent = t().toolbar.writeDevice;
+        // The unit lowers its own Track Count to fit a rate it cannot carry, and this is
+        // the first moment the new value exists to be read. In the FINALLY because every
+        // exit from the write reaches here, a partial one included: the rate goes out
+        // early, so a write that stopped later still moved it. Still inside the device
+        // holder, so the link is up.
+        if (trackCountMayHaveDropped) {
+          trackCountMayHaveDropped = false;
+          const merged = await followRead("track count after a rate change", (into, signal) =>
+            applyNodeState(getModel(modelId), into, new Set(["out.sdrec"]), signal, undefined, true),
+          );
+          if (merged) noteMergeConflicts(merged);
+        }
       }
       await offerErrorReport(report);
     });

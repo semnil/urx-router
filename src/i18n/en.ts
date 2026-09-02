@@ -925,6 +925,11 @@ export const en = {
     followUsbOn: tr(
       "Turn Follow USB on? The device hands its clock back to the computer. If the computer is running a different rate, the device re-clocks to it immediately, which can interrupt audio; if the rates already match, nothing changes.",
     ),
+    trackCountDrop: (from: number, to: number): string =>
+      `The microSD recorder is set to ${from} tracks and this rate allows ${to}, so the unit lowers it. Nothing this app can write raises it again — the way back is the unit's own microSD screen, RECORDER menu, [Track Count].`,
+    trackCountMayDrop: tr(
+      "Above 48 kHz the unit also lowers the microSD recorder's Track Count to what the rate allows, and nothing this app can write raises it again — the way back is the unit's own microSD screen, RECORDER menu, [Track Count].",
+    ),
     writeRetry: (sent: number, notSent: number): string =>
       `The write stopped after a failure: ${sent} setting${sent === 1 ? "" : "s"} reached the device and ${notSent} did not. Try again? Only what still differs will be sent.`,
   },
@@ -949,6 +954,11 @@ export const en = {
       `The plan is set to ${planRate}, but the device is running at ${deviceRate} and Follow USB is on, so it takes its clock from the computer. Writing ${planRate} now would re-clock the device and then revert to ${deviceRate} a moment later.`,
     hiRateNote: (limits: string): string =>
       `${limits} Those settings stay out of this write, but the plan keeps them — lowering the rate writes them again.`,
+    /** Named for its ARM, not positioned next to it: the three buttons wrap onto a second
+     *  row on a narrow window, so anything that reads as "the note above the buttons"
+     *  reads as true of the arm that costs nothing too. */
+    trackCountDrop: (from: number, to: number): string =>
+      `Turning Follow USB off and writing the plan's rate lowers the microSD recorder: it is set to ${from} tracks and that rate allows ${to}. Nothing this app can write raises it again — the way back is the unit's own microSD screen, RECORDER menu, [Track Count].`,
     adopt: (deviceRate: string): string => `Write at ${deviceRate}`,
     release: (planRate: string): string => `Turn Follow USB off and write at ${planRate}`,
     cancel: tr("Cancel"),

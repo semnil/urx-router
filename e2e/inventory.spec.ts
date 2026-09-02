@@ -356,6 +356,22 @@ test("the rate-choice modal shows all three answers and the high-rate note", asy
   await startWrite();
   await inv.take(page, "#rate-choice");
 
+  // The release arm's own note, which appears only when writing the PLAN's rate would cost
+  // the recorder tracks it currently holds. So the device stays low (48 kHz, nothing to
+  // lose by adopting), the recorder is full (839 counts stereo pairs: 8 is 16 tracks) and
+  // the plan is put on a rate that cannot carry them.
+  await stubTauriDevice(page, { values: { 766: 48000, 848: 1, 839: 8 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.locator("#rate-picker").evaluate((el: HTMLSelectElement) => {
+    el.value = "96000";
+    el.dispatchEvent(new Event("change"));
+  });
+  await page.click("#btn-device");
+  await page.click("#btn-write");
+  await expect(page.locator("#rate-choice")).toBeVisible();
+  await inv.take(page, "#rate-choice");
+
   expectComplete("rateChoice", inv);
 });
 

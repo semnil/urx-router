@@ -37,8 +37,14 @@ beforeEach(installAppGlobals);
 afterEach(restoreAppGlobals);
 
 /** Boot with a connected unit. `agree` answers every confirm with Ok. */
-const bootDevice = async (over: Record<string, unknown> = {}, agree = true): Promise<TauriShell> =>
-  (await bootApp({ tauri: deviceCommands({ ...(agree ? { "plugin:dialog|message": "Ok" } : {}), ...over }) }))!;
+const bootDevice = async (
+  over: Record<string, unknown> = {},
+  agree = true,
+  /** Addresses the unit already holds a value for. Needed for anything the app only READS:
+   *  the table answers an unwritten address 0, and 0 is a legal value there. */
+  seed: Record<string, number> = {},
+): Promise<TauriShell> =>
+  (await bootApp({ tauri: deviceCommands({ ...(agree ? { "plugin:dialog|message": "Ok" } : {}), ...over }, seed) }))!;
 
 /**
  * Wait until `cmd` has been invoked `n` times. The device flows here write the status
@@ -1370,6 +1376,72 @@ describe("Write to device", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
+  // param 839 counts stereo PAIRS, so 8 is 16 tracks — the full recorder. The seed table
+  // keys on the stub's own address form, "id/x/y".
+  const TRACK_COUNT_SEED = "839/0/0";
+  const TRACK_COUNT_ADDR = "839:0:0";
+
+  /** Put the plan on `rate` through the picker, the way the operator does. */
+  const chooseRate = (rate: number): void => {
+    const picker = $<HTMLSelectElement>("rate-picker");
+    picker.value = String(rate);
+    picker.dispatchEvent(new Event("change"));
+  };
+
+  // The unit lowers its own Track Count to fit a rate it cannot carry and nothing the app
+  // can write raises it again, so this is the one rate side effect that has to be in front
+  // of the decision. 16 tracks at 96 kHz becomes 8.
+  it("names what a rate change costs the recorder, before writing it", SLOW, async () => {
+    const shell = await bootDevice({}, false, { [TRACK_COUNT_SEED]: 8 });
+    chooseRate(96_000);
+    $("btn-write").click();
+    // The flow's own terminal command, not a sleep: a case that returns while the write is
+    // still unwinding leaves an app running against a shell the next case replaces, and
+    // its writes then land on that one's counter.
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).at(-1) ?? "";
+    // Both halves: the rate question it was already asking, and the cost it was not.
+    expect(asked).toContain(t().confirm.reclock(formatRate(0), formatRate(96_000)));
+    expect(asked).toContain(t().confirm.trackCountDrop(16, 8));
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
+  // The other half of the same rule, and the one that keeps the warning worth reading: a
+  // count the new rate can already carry loses nothing, and saying so anyway puts an
+  // irreversible-loss notice in front of someone losing nothing.
+  it("says nothing about the recorder when the count already fits the new rate", SLOW, async () => {
+    const shell = await bootDevice({}, false, { [TRACK_COUNT_SEED]: 4 }); // 8 tracks
+    chooseRate(96_000);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).at(-1) ?? "";
+    expect(asked).toContain(t().confirm.reclock(formatRate(0), formatRate(96_000)));
+    expect(asked).not.toContain("Track Count");
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
+  // The unit does the lowering itself, so the plan is stale the moment the write lands.
+  // Whether the unit ANNOUNCES it is not something this project has measured, so the read
+  // is unconditional rather than left to a notify that may never arrive.
+  it("re-reads the recorder's Track Count after a rate change that lowers it", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [TRACK_COUNT_SEED]: 8 });
+    chooseRate(96_000);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shell.count("vd_set")).toBeGreaterThan(10);
+    // AFTER the last write, which is the only reading that separates this from the write's
+    // own diff: the diff reads 839 too, so counting reads of the address passes whether or
+    // not the epilogue runs at all.
+    const lastSet = shell.invokes.lastIndexOf("vd_set");
+    expect(lastSet).toBeGreaterThan(-1);
+    const readAfterWrite = shell.invokes.some((cmd, i) => {
+      if (i <= lastSet || cmd !== "vd_get") return false;
+      const a = shell.args[i] ?? {};
+      return `${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR;
+    });
+    expect(readAfterWrite).toBe(true);
+  });
+
   // The confirm the case above never reaches: with the device already on the plan's rate
   // and its clock its own, the rate question does not arise and the change count is the
   // first thing asked. It is the last thing between one press and hundreds of parameters
@@ -2049,7 +2121,13 @@ describe("the Follow USB badge", () => {
     // the dialog's ARGUMENTS. A count-based version of this case could not separate
     // "asked" from "threw on the way to asking": the second raises a dialog too, writes
     // nothing, and leaves the badge where it was.
-    expect(confirms(shell).at(-1)).toBe(t().confirm.followUsbOn);
+    // Both sentences, not the composed literal: what the case is about is that the
+    // operator is told BOTH what handing the clock over does and that it can cost the
+    // recorder's Track Count irreversibly. Pinning the joined string would pass a rewrite
+    // that dropped either one, as long as the other still read the same.
+    const askedText = confirms(shell).at(-1) ?? "";
+    expect(askedText).toContain(t().confirm.followUsbOn);
+    expect(askedText).toContain(t().confirm.trackCountMayDrop);
     expect(errors(shell)).toEqual([]);
     expect(followUsbWrites(shell)).toEqual([]);
     expect(badge().dataset.state).toBe("off");

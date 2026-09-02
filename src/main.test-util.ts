@@ -123,8 +123,17 @@ const addr = (a: Record<string, unknown>): string => `${a.paramId}/${a.x}/${a.y}
  * `firmware` defaults to the version the app accepts, read from the gate itself so a
  * bump does not silently start every case on the mismatch dialog.
  */
-export function deviceCommands(over: Record<string, unknown> = {}): Record<string, unknown> {
-  const values = new Map<string, number>();
+export function deviceCommands(
+  over: Record<string, unknown> = {},
+  /** Addresses the unit already holds a value for, keyed the way the table keys them
+   *  ("id/x/y"). The table answers an
+   *  unwritten address 0, which is the right default for a plan-shaped read but wrong for
+   *  anything the app only ever READS: 0 is a legal value there and a case cannot tell a
+   *  seeded 0 from an unseeded one. Seeding puts the value in the same map a write would,
+   *  so a read after a write still answers what was written. */
+  seed: Record<string, number> = {},
+): Record<string, unknown> {
+  const values = new Map<string, number>(Object.entries(seed));
   const strings = new Map<string, string>();
   return {
     vd_connect: { model: "URX44V", label: "URX44V", firmware: SUPPORTED_SYSTEM_FIRMWARE, epoch: 1 },

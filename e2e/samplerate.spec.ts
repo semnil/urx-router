@@ -1,6 +1,7 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "./fixtures";
 import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
+import { chooseOption } from "./choose-option";
 
 // The sample rate is the one plan value the device can accept and then undo by
 // itself: with SETUP > Follow USB on it slaves its clock to the USB host, so a rate
@@ -10,6 +11,8 @@ import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
 // Param ids, spelled out here so the test pins the addresses the app must use.
 const SAMPLE_RATE = 766;
 const FOLLOW_USB = 848;
+// The microSD Track Count, in stereo PAIRS: 8 is the full 16 tracks.
+const SD_REC_TRACK_COUNT = 839;
 
 interface StubOptions {
   /** What the device reports as its running rate (the plan defaults to 48 kHz). */
@@ -18,6 +21,9 @@ interface StubOptions {
   followUsb?: boolean;
   /** Reject the Follow USB read, so the clock state cannot be established. */
   failClockRead?: boolean;
+  /** The recorder's Track Count in stereo pairs. Unset reads 0, which is no recorder
+   *  state at all and warns about nothing. */
+  trackPairs?: number;
 }
 
 // Only the two clock addresses are spec-specific; the rest of the link is the
@@ -26,6 +32,7 @@ interface StubOptions {
 function stubDevice(page: Page, opts: StubOptions = {}): Promise<void> {
   const values: Record<number, number> = { [SAMPLE_RATE]: opts.deviceRate ?? 48000 };
   if (!opts.failClockRead) values[FOLLOW_USB] = opts.followUsb ? 1 : 0;
+  if (opts.trackPairs !== undefined) values[SD_REC_TRACK_COUNT] = opts.trackPairs;
   return stubTauriDevice(page, { values, failReads: opts.failClockRead });
 }
 
@@ -126,4 +133,52 @@ test("clicking the badge while unknown reads the device instead of toggling it",
   await expect(page.locator("#follow-usb")).toHaveAttribute("data-state", "on");
   // Toggling from unknown would have to guess a direction; nothing was written.
   expect(await writesOf(page)).toEqual([]);
+});
+
+// The unit lowers its own Track Count to fit a rate it cannot carry, and nothing the app
+// can write raises it again. The two arms of this dialog do not share that cost: releasing
+// writes the PLAN's rate and can pay it, adopting takes the rate the device is already
+// running and pays nothing. So the warning sits on the release arm rather than in the
+// note, which speaks for the whole dialog.
+test("the release arm names what the plan's rate costs the recorder, and the shared note does not", async ({
+  page,
+}) => {
+  await stubDevice(page, { deviceRate: 48000, followUsb: true, trackPairs: 8 });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await chooseOption(page.locator("#rate-picker"), { value: "96000" });
+  await page.click("#btn-device");
+  await page.click("#btn-write");
+
+  await expect(page.locator("#rate-choice")).toBeVisible();
+  // The premise: the plan really is on the high rate, so the release arm really would
+  // cost the recorder. Without this the case can pass on a dialog about nothing.
+  await expect(page.locator("#rate-choice-intro")).toContainText("96 kHz");
+  const releaseNote = page.locator("#rate-choice-release-note");
+  await expect(releaseNote).toBeVisible();
+  await expect(releaseNote).toContainText("16");
+  await expect(releaseNote).toContainText("8");
+  // Where it must NOT be: the note belongs to every arm, adopting included.
+  await expect(page.locator("#rate-choice-note")).not.toContainText("Track Count");
+
+  await page.click("#rate-choice-cancel");
+  expect(await writesOf(page)).toEqual([]);
+});
+
+// The other half, and the one that keeps the warning worth reading: a count the new rate
+// can already carry loses nothing, so the arm carries no note at all.
+test("the release arm is silent when the recorder's count already fits the plan's rate", async ({ page }) => {
+  await stubDevice(page, { deviceRate: 48000, followUsb: true, trackPairs: 4 }); // 8 tracks
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await chooseOption(page.locator("#rate-picker"), { value: "96000" });
+  await page.click("#btn-device");
+  await page.click("#btn-write");
+
+  await expect(page.locator("#rate-choice")).toBeVisible();
+  // Attached AND hidden. `toBeHidden` alone passes on an element that is not there at all,
+  // so it would go on passing if the note were deleted outright.
+  await expect(page.locator("#rate-choice-release-note")).toBeAttached();
+  await expect(page.locator("#rate-choice-release-note")).toBeHidden();
+  await page.click("#rate-choice-cancel");
 });
