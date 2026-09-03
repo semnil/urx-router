@@ -39,6 +39,8 @@
 // vd_set or a diagnostic probe. Anything doing that must snapshot every slot first
 // and write them all back explicitly; re-selecting the old type does not restore.
 
+import { preferredNumber, R40 } from "./preferred-numbers";
+
 // Engine array param_id each effect family binds (confirmed by the live pointer
 // read; the selector/enable/pointer params themselves live in params.ts).
 export const ENGINE_GUITAR = 697;
@@ -114,19 +116,18 @@ function mbcGainLabel(raw: number): string {
   const db = mbcGainDb(raw);
   return db === -Infinity ? "-∞ dB" : `${Math.round(db)} dB`;
 }
-// MBC crossover frequency table: the ISO/IEC R40 (Renard) preferred-number
-// series, shared by L-M and M-H XOVER (they differ only in valid raw range). Full
-// L-M sweep read on the device confirmed the exact rounded values (125 not the
-// 127 a pure 1/12-oct formula gives). raw is the R40 sequence index with raw 0 =
-// 15 Hz, raw 6 = 21.2 Hz; freq = R40[(raw+47) mod 40] × 10^floor((raw+47)/40).
-const R40_MANTISSA = [
-  1.0, 1.06, 1.12, 1.18, 1.25, 1.32, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.12, 2.24, 2.36, 2.5, 2.65, 2.8, 3.0, 3.15,
-  3.35, 3.55, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0, 5.3, 5.6, 6.0, 6.3, 6.7, 7.1, 7.5, 8.0, 8.5, 9.0, 9.5,
-];
+// MBC crossover frequency table: the same ISO 3 R40 series the FX channel filters step in,
+// at the same offset, shared by L-M and M-H XOVER (they differ only in valid raw range). Full
+// L-M sweep read on the device confirmed the exact rounded values (125 not the 127 a pure
+// 1/12-oct formula gives). raw is the R40 sequence index with raw 0 = 15 Hz, raw 6 = 21.2 Hz.
+//
+// The grades come from `preferred-numbers.ts` rather than a second copy: this module used to
+// hold its own 1.0-based mantissa table, which multiplied up to 111.99999999999999 where the
+// grade is 112 — and the label below, which prints an integer grade as an integer, then read
+// "112.0 Hz" for a frequency the unit shows as "112".
 /** MBC crossover raw → Hz (exact R40 table; raw 0 = 15 Hz). */
 export function mbcXoverHz(raw: number): number {
-  const g = raw + 47;
-  return R40_MANTISSA[((g % 40) + 40) % 40] * Math.pow(10, Math.floor(g / 40));
+  return preferredNumber(R40, raw + 47);
 }
 /** MBC crossover display matching the device ("21.2 Hz" / "125 Hz" / "3.35 kHz"). */
 export function mbcXoverLabel(raw: number): string {

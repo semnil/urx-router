@@ -69,6 +69,30 @@ describe("insert-fx encodings (live calibration anchors)", () => {
     expect(mbcXoverLabel(37)).toBe("125 Hz");
     expect(mbcXoverLabel(95)).toBe("3.55 kHz");
   });
+  // The label prints an integer grade as an integer, so it is the reader that a float error
+  // in the table surfaces in. The module used to build the grades from its own 1.0-based
+  // mantissa, which multiplies up to 111.99999999999999 where the grade is 112 — five raws
+  // inside the L-M crossover's own window then read "112.0 Hz" and the like for frequencies
+  // the unit shows as integers. Sharing one grade table with the FX filters removed the
+  // arithmetic that produced them; these are those five raws.
+  it("prints an integer grade as an integer, at every raw a float error used to catch", () => {
+    for (const [raw, label] of [
+      [35, "112 Hz"],
+      [36, "118 Hz"],
+      [38, "132 Hz"],
+      [47, "224 Hz"],
+      [48, "236 Hz"],
+    ] as const) {
+      expect(mbcXoverLabel(raw), `raw ${raw}`).toBe(label);
+    }
+    // …and every raw of both crossover windows prints without a spurious decimal.
+    const withDecimal = [];
+    for (let raw = MBC_XOVER_LM_RANGE.min; raw <= MBC_XOVER_MH_RANGE.max; raw++) {
+      const hz = mbcXoverHz(raw);
+      if (hz < 1000 && Number.isInteger(Math.round(hz * 10) / 10) && !Number.isInteger(hz)) withDecimal.push(raw);
+    }
+    expect(withDecimal).toEqual([]);
+  });
   it("MBC crossover valid ranges hit the device endpoints", () => {
     expect(mbcXoverLabel(MBC_XOVER_LM_RANGE.min)).toBe("21.2 Hz");
     expect(mbcXoverLabel(MBC_XOVER_LM_RANGE.max)).toBe("4.00 kHz");
