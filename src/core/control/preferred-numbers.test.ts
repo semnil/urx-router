@@ -40,11 +40,11 @@ describe("preferred-number series", () => {
     expect(preferredNumber(R20, -1)).toBeCloseTo(0.9, 10);
   });
 
-  // A non-integer offset names no grade. It reaches here from a hand-edited or generated plan
-  // — the document sanitiser keeps any finite number and the load-time repair only bounds it
-  // to the control's window, so a fractional raw inside that window is stored as written —
-  // and the readout it feeds has to print a frequency. Indexing on it directly read past the
-  // array and made the row say "NaN Hz", where the formula it replaced said "30 Hz".
+  // A non-integer offset names no grade. The load-time repair now rounds a fractional raw into
+  // the value its control admits, so a plan the app opened does not carry one — but this is the
+  // lookup, and a device readback and the tuning screens reach it without passing that repair.
+  // Indexing on a fractional offset directly read past the array and made a row say "NaN Hz",
+  // where the formula it replaced said "30 Hz".
   it("takes a non-integer offset to the nearest grade rather than off the array", () => {
     expect(preferredNumber(R20, 29.5)).toBe(preferredNumber(R20, 30));
     expect(preferredNumber(R20, 29.4)).toBe(preferredNumber(R20, 29));

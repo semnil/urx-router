@@ -162,14 +162,78 @@ describe("paramRangeProblems", () => {
     ]);
   });
 
-  // A descriptor with no window at either end. `?? stored` on each side is what leaves these
-  // alone; a bound substituted for a missing end would clamp them to it.
-  it("leaves a parameter whose descriptor declares no window", () => {
-    for (const key of ["sync", "note"]) {
-      const d = fxParams(1024).find((x) => x.key === key)!;
-      expect([d.rawMin, d.rawMax], key).toEqual([undefined, undefined]);
-      expect(paramRangeProblems(fx2({ [key]: 9999 })), key).toEqual([]);
+  // The two descriptors that declare no window are the two that are not sliders, and a window
+  // is a slider's answer alone: a toggle admits 0 and 1, a select admits its option values.
+  // This case used to assert the opposite — that a value outside them is "left alone", which
+  // is what `?? stored` does when there are no bounds to apply — and 9999 therefore reached
+  // the unit on a two-state control and on a menu of fifteen.
+  it("normalises a toggle and a select to their own admitted values, having no window", () => {
+    const model = getModel("URX44V");
+    const sync = fxParams(1024).find((x) => x.key === "sync")!;
+    const note = fxParams(1024).find((x) => x.key === "note")!;
+    expect([sync.rawMin, sync.rawMax, note.rawMin, note.rawMax]).toEqual([undefined, undefined, undefined, undefined]);
+    expect(note.options!.at(-1)!.value, "the menu's last value is what 15 is past").toBe(14);
+
+    for (const [key, stored, want] of [
+      // Fractional, and rounding alone lands outside the control: 1.6 -> 2 is not a state a
+      // toggle has, and 14.6 -> 15 is one past the menu's end.
+      ["sync", 1.6, 1],
+      ["note", 14.6, 14],
+      // …and an integer already outside, which no rounding touches.
+      ["sync", 9999, 1],
+      ["note", 9999, 14],
+      ["sync", -3, 0],
+      ["note", -3, 0],
+    ] as const) {
+      const plan = fx2({ [key]: stored });
+      expect(
+        paramRangeProblems(plan).map((p) => [p.key, p.action, p.bound]),
+        `${key} ${stored}`,
+      ).toEqual([[key, "bound", want]]);
+      applyParamRange(plan, paramRangeProblems(plan));
+      expect(plan.nodeParams["bus.fx2"]?.fxEffect?.params?.[key], `${key} ${stored}`).toBe(want);
+      const slot = key === "sync" ? sync.slot : note.slot;
+      expect(planToCommands(model, plan).find((c) => c.paramId === 685 && c.y === slot)?.vdValue).toBe(want);
     }
+    // The values they DO admit are untouched.
+    for (const [key, ok] of [
+      ["sync", 0],
+      ["sync", 1],
+      ["note", 0],
+      ["note", 14],
+    ] as const) {
+      expect(paramRangeProblems(fx2({ [key]: ok })), `${key} ${ok}`).toEqual([]);
+    }
+  });
+
+  // Whatever a control is, what the repair writes has to be a value that control admits — the
+  // sweep below asserts the repair does not move the wire, which a repair to an inadmissible
+  // value satisfies just as well when the emit is wrong in the same way.
+  it("repairs every parameter of every type to a value its own control admits", () => {
+    const offenders: string[] = [];
+    for (const [node, fxIndex] of [
+      ["bus.fx1", 0],
+      ["bus.fx2", 1],
+    ] as const) {
+      for (const t of fxEffectTypes(fxIndex)) {
+        for (const d of fxParams(t.value)) {
+          for (const stored of [-9999, 9999, 0.6, 1.6, 14.6, ((d.rawMin ?? 0) + (d.rawMax ?? 0)) / 2 + 0.6]) {
+            const plan = emptyPlan("URX44V");
+            plan.nodeParams[node] = { fxEffect: { type: t.value, params: { [d.key]: stored } } };
+            applyParamRange(plan, paramRangeProblems(plan));
+            const v = plan.nodeParams[node]!.fxEffect!.params![d.key]!;
+            const admits =
+              d.control === "toggle"
+                ? v === 0 || v === 1
+                : d.control === "select"
+                  ? d.options!.some((o) => o.value === v)
+                  : Number.isInteger(v) && v >= (d.rawMin ?? v) && v <= (d.rawMax ?? v);
+            if (!admits) offenders.push(`${node} type ${t.value} ${d.key} (${d.control}) ${stored} -> ${v}`);
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
   // The effect level is a field of its own, bounded two lines above the parameter loop and

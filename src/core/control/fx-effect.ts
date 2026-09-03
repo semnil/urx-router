@@ -682,16 +682,49 @@ export const FX_LEVEL_DEFAULT = 100;
  *  going silent. The `typeof` in front of it narrows `unknown` for the compiler and decides
  *  nothing at run time.
  *
- *  A FRACTIONAL value is rounded rather than sent as it stands: a raw is a broker integer and
- *  every one of these controls steps by one, so 35.6 names no setting the unit has. The readout
- *  rounds it the same way, and the loader's repair writes that rounded value into the plan — the
- *  three have to agree or the panel, the document and the wire name different settings.
+ *  A FRACTIONAL value is rounded rather than sent as it stands: a raw is a broker integer, so
+ *  35.6 names no setting the unit has. The readout rounds it the same way, and the loader's
+ *  repair writes that rounded value into the plan — the three have to agree or the panel, the
+ *  document and the wire name different settings.
  *
  *  ONE seat, because the loader repairs a document to exactly what the emit would send, and two
- *  spellings of that rule are two answers to the same question. */
+ *  spellings of that rule are two answers to the same question. This form takes the bounds
+ *  directly and is for the effect LEVEL, which no descriptor describes; everything a descriptor
+ *  DOES describe goes through `fxRawForDesc`, since a window is not the only shape a valid set
+ *  comes in. */
 export function fxRawToSend(stored: unknown, def: number, lo?: number, hi?: number): number {
   const v = typeof stored === "number" && Number.isFinite(stored) ? Math.round(stored) : def;
   return Math.min(Math.max(v, lo ?? v), hi ?? v);
+}
+
+/** The raw this descriptor's own control admits, nearest to `raw`.
+ *
+ *  A window is only the SLIDER's answer. A toggle admits 0 and 1 and carries no bounds at all,
+ *  so a window-only normalisation leaves 2 on a two-state control; a select admits its option
+ *  values, so the same normalisation leaves the delay Note at 15 where the menu ends at 14 and
+ *  no item corresponds. Both reach the plan the way any raw does — a generated document, a hand
+ *  edit — and both are then written to the unit. */
+export function fxRawForDesc(desc: FxParamDesc, raw: number): number {
+  const v = Math.round(raw);
+  if (desc.control === "toggle") return v <= 0 ? 0 : 1;
+  if (desc.control === "select") {
+    const options = desc.options ?? [];
+    if (options.length === 0) return v;
+    // Nearest by distance, and the FIRST of a tie, so the answer does not depend on the order
+    // two equally distant options happen to sit in.
+    return options.reduce(
+      (best, o) => (Math.abs(o.value - v) < Math.abs(best - v) ? o.value : best),
+      options[0]!.value,
+    );
+  }
+  return Math.min(Math.max(v, desc.rawMin ?? v), desc.rawMax ?? v);
+}
+
+/** What the write path sends for one descriptor: its own default when the plan carries nothing
+ *  readable, and otherwise the nearest raw its control admits. */
+export function fxDescRawToSend(desc: FxParamDesc, stored: unknown): number {
+  const v = typeof stored === "number" && Number.isFinite(stored) ? stored : desc.def;
+  return fxRawForDesc(desc, v);
 }
 
 /** The keys that were shared across families before they carried a family name. */
