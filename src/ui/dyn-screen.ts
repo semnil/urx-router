@@ -904,6 +904,35 @@ export class DynScreen {
     this.syncCap();
   }
 
+  /**
+   * Rewrite every row's READOUT from the current values, leaving the controls alone.
+   *
+   * One field's number can be a function of another's: the REV-X Reverb Time prints
+   * `base(raw) x 3^(RoomSize/31)`, so turning Room Size changes the seconds on the Reverb
+   * Time card and nothing on its own. A handler that writes only its own card leaves the
+   * other one showing what it was, and the panel then disagrees with the plan until
+   * something else rebuilds it.
+   *
+   * A RULE rather than a declared dependency per field: a table saying which readouts a
+   * field moves lives apart from the formatter that decides it, and goes quietly stale the
+   * first time a formatter starts folding in a value it did not before. Rewriting every
+   * readout cannot.
+   *
+   * The controls are untouched on purpose. `syncValues` is the pass that also moves the
+   * sliders, and it is for a change arriving from elsewhere; this one runs INSIDE a gesture,
+   * where writing the value back into the input under the pointer is how a drag fights
+   * itself. The Inspector solves the same coupling by keeping a live sibling snapshot.
+   */
+  private syncReadouts(): void {
+    const vals = this.vals();
+    for (const f of this.fields) {
+      const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
+      if (!out) continue;
+      const v = vals[f.key];
+      setLevelText(out, this.valueText(f, typeof v === "number" ? v : f.def));
+    }
+  }
+
   /** What a field's value reads as. The descriptor gets first refusal, because a raw
    *  broker integer becomes a millisecond or a hertz only through a device curve; what
    *  it declines falls through to the field's own unit. */
@@ -1965,6 +1994,8 @@ export class DynScreen {
       const v = dynFromPos(f, pos);
       show(v);
       this.setVals({ [f.key]: v });
+      // Another card's reading may be a function of this value.
+      this.syncReadouts();
       this.markPlotDirty();
     });
     wheelStep(input, () => this.hooks.midi?.learnActive());
@@ -2014,6 +2045,8 @@ export class DynScreen {
       const v = dynFromPos(f, Number(input.value));
       show(v);
       this.setVals({ [f.key]: v });
+      // Another row's reading may be a function of this value.
+      this.syncReadouts();
       if (f.key === this.capKey) this.syncCap();
       else this.markPlotDirty();
     });
