@@ -1581,8 +1581,9 @@ export const cmdAddr = (c: VdCommand): number => addrKey(c.paramId, c.x, c.y);
  *  sent to, and the report from `plan-validate.ts` names a plan key rather than an address.
  *  This is the join, and it lives here because the mapping does: the slot comes from the
  *  descriptor of the type the write path resolves, and the array param from the channel. An
- *  entry is `undefined` where the plan carries no such command — a node the model does not
- *  have, or a key no type of that channel names.
+ *  entry is `undefined` where there is no such command to name — a node the model does not
+ *  have, a key no type of that channel names, or a problem that is not a `params` one at all
+ *  (the effect object and its `type` / `params` fields have no parameter-array address).
  *
  *  The commands are looked up in the emit's own output rather than rebuilt from the catalogue,
  *  so a change to how an FX slot is addressed cannot leave this answering the old address. */

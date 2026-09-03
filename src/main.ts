@@ -368,12 +368,13 @@ const live = DEMO
       getModel: () => getModel(modelId),
       getPlan: () => plan,
       onError: (message) => stopLiveOnError(errorText(message)),
-      onSent: (n, confirmed) => {
-        // A live flush that reached the device is a successful write like any other, so the
-        // same adoption runs here — for the addresses this flush actually carried, which is
-        // what stops it firing on a value no write touched.
+      onSent: (n) => setStatus(t().status.liveSynced(n)),
+      // Fired from inside the converge with nothing awaited in between, so the addresses and
+      // the plan they are joined to are the same instant's. Its own count goes on the line the
+      // flush is about to write rather than replacing it.
+      onConfirmed: (confirmed) => {
         const taken = adoptConfirmedWrites(confirmed);
-        setStatus(t().status.liveSynced(n) + (taken ? ` — ${t().status.paramsBounded(taken)}` : ""));
+        if (taken) setStatus(t().status.paramsBounded(taken));
       },
       onCollapsed: (owners) => setStatus(sharedSettingText(owners)),
       // One bidirectional scope for the session: the same filter shapes the
@@ -511,12 +512,14 @@ let inspectorDeferred = false;
 const followDirtyNodes = new Set<string>();
 /**
  * The one ritual for "the device authored this into the plan", shared by the two
- * direct-follow hooks (a numeric scalar and a rename). `place` performs the
- * mutation and answers whether it landed.
+ * direct-follow hooks (a numeric scalar and a rename) and by the write-adoption, which is
+ * not a follow at all — no notify arrives, the write path is writing back what a converge
+ * confirmed — and passes its own `kind` for that reason. `place` performs the mutation and
+ * answers whether it landed.
  *
  * The device authored these keys, so the history takes exactly them into its
- * baseline — the per-key rule the refetch path runs on, at the one other site that
- * writes device values into the plan outside a readback. A whole-plan `rebase()`
+ * baseline — the per-key rule the refetch path runs on, which is what the other sites that
+ * write device values into the plan outside a readback run on too. A whole-plan `rebase()`
  * here dropped the entry an app gesture had open, which made an edit taken while the
  * unit was being touched silently un-undoable AND spent the entry beneath it on the
  * Ctrl+Z that should have taken it back.
@@ -531,10 +534,14 @@ const followDirtyNodes = new Set<string>();
  * the record of what re-opening it costs, so a second copy kept in step by hand is
  * the shape that goes wrong quietly.
  */
-function authorFromDevice(node: string, place: () => boolean): boolean {
+function authorFromDevice(node: string, place: () => boolean, kind: WriteSource = "follow-direct"): boolean {
   const before = clonePlanState(plan);
   if (!place()) return false;
-  traceProbe?.sample("follow-direct");
+  // The trace kind is the caller's, because the harness classifies authorship by it and the
+  // callers are not one writer: a follow is a notify landing, while the write-adoption is the
+  // device-action funnel writing back what a write confirmed. Sharing one kind made a trace
+  // unable to tell them apart, and invariant 13 reads that field.
+  traceProbe?.sample(kind);
   followDirtyNodes.add(node);
   planHistory?.absorb(diffPlans(before, plan));
   return true;
@@ -561,12 +568,18 @@ function adoptConfirmedWrites(confirmed: ReadonlySet<number>): number {
   if (!confirmed.size) return 0;
   const problems = paramRangeProblems(plan);
   const addrs = paramRangeAddrs(getModel(modelId), plan, problems);
-  const mine = problems.filter((_, i) => addrs[i] !== undefined && confirmed.has(addrs[i]!));
+  // BOUND only. A drop removes the key, and the load path's own split says why that is a
+  // different sentence — "now read as the nearest value it can send" is false of a value that
+  // was discarded. No input reaching here produces one today: the load path repairs every
+  // document, so what is left is a device read, and a device read yields finite numbers. The
+  // filter is kept because that is a property of `readback.ts` rather than a guarantee, and
+  // what it would otherwise cost is a count reported under the wrong sentence.
+  const mine = problems.filter((p, i) => p.action === "bound" && addrs[i] !== undefined && confirmed.has(addrs[i]!));
   if (!mine.length) return 0;
   let taken = 0;
   for (const node of new Set(mine.map((b) => b.node))) {
     const forNode = mine.filter((b) => b.node === node);
-    if (authorFromDevice(node, () => (applyParamRange(plan, forNode), true))) taken += forNode.length;
+    if (authorFromDevice(node, () => (applyParamRange(plan, forNode), true), "device-action")) taken += forNode.length;
   }
   if (taken) requestReflect();
   return taken;
@@ -1207,7 +1220,8 @@ function planValuesChanged(): void {
 // operator's own move on the hardware. The follow-side writers do NOT come through here
 // — each settles the history at its own site, where what the device authored is known:
 // a notify's own keys (applyDirect → absorb), a refetch's patch (refetchNodes →
-// absorb), a reconcile's reset (reflectFollow's full branch).
+// absorb), a reconcile's reset (reflectFollow's full branch), and the write-adoption's
+// confirmed keys (adoptConfirmedWrites → absorb).
 /** Whether the model has the microSD recorder at all. URX22 does not, so nothing about
  *  Track Count — a menu entry, a ceiling, a warning — belongs on it. Spelled once so the
  *  three sites that ask cannot drift apart.
@@ -2961,6 +2975,12 @@ if (!DEMO) {
               },
             });
             const { outcomes, residual, readErrors: convergeErrors } = convergeResult;
+            // Here, with nothing awaited between the converge and this line: the adoption joins
+            // the confirmed ADDRESSES to plan KEYS, and one address is a different key under a
+            // different effect type, so a front-panel type change announced during the awaits
+            // below would join one moment's addresses to another moment's plan. `sendNames` is
+            // one such await, on the clean path.
+            const takenBack = adoptConfirmedWrites(confirmedAddrs(convergeResult));
             const skipped = outcomes.filter((o) => o.skipped).length;
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
@@ -2986,11 +3006,7 @@ if (!DEMO) {
               saveReport(failed, residual, convergeErrors);
             }
             if (!skipped) {
-              // Keyed on the addresses the device confirmed rather than on the run's verdict:
-              // a partial or non-converged write still confirmed the addresses it landed, and
-              // a clean one confirmed nothing about an address it never sent.
-              const taken = adoptConfirmedWrites(confirmedAddrs(convergeResult));
-              const note = taken ? ` — ${t().status.paramsBounded(taken)}` : "";
+              const note = takenBack ? ` — ${t().status.paramsBounded(takenBack)}` : "";
               setStatus(
                 (failed.length
                   ? t().status.writePartial(total - failed.length, failed.length)

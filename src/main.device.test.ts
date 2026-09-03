@@ -1816,20 +1816,93 @@ describe("a value the unit holds and the app cannot write", () => {
     await invoked(shell, "vd_disconnect");
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
 
+    const sets = shell.count("vd_set");
     $("btn-write").click();
     await invoked(shell, "vd_disconnect", 2);
+    // The positive control. Without it the case passes on a write that never happened — with
+    // `total === 0` forced, it goes green in a tenth of the time and asserts nothing.
+    expect(shell.count("vd_set")).toBeGreaterThan(sets);
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
     expect(statusText()).not.toContain(t().status.paramsBounded(1));
+  });
+
+  // Two nodes and two keys on one of them. Every flow case above carries exactly one problem,
+  // so neither the per-node loop nor the count is pinned by them: adopting one channel and
+  // leaving the other stranded, or reporting 1 where 3 were taken, both pass.
+  it("takes every confirmed value, across keys and across channels", SLOW, async () => {
+    const hpf = fxParams(1024).find((d) => d.key === "delayHpf")!;
+    const revxLpf = fxParams(0).find((d) => d.key === "revxLpf")!;
+    const seed = unitHoldingLowLpf();
+    seed[`685/0/${hpf.slot}`] = hpf.rawMin! - 1;
+    seed[`681/0/${revxLpf.slot}`] = revxLpf.rawMin! - 1;
+    const shell = await bootDevice({}, true, seed);
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(statusText()).toContain(t().status.paramsBounded(3));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    // …and the OTHER channel, which a loop over one node would have left where it was.
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.fx1"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    expect(paramRow(t().inspector.fxEffect.params.lpf).querySelector(".param-val")?.textContent).toBe(
+      revxLpf.format!(revxLpf.rawMin!, {}),
+    );
+  });
+
+  // The adoption lands in the history BASELINE rather than as an entry, so an undo taken after
+  // it spends the operator's own edit and leaves the adopted value standing. Nothing pinned
+  // that: skipping the absorb entirely left all four cases above green.
+  it("survives an undo, which spends the operator's edit instead", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+
+    // An ordinary app edit first, so the undo has something of the operator's to spend.
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    const level = paramRow(t().inspector.fxEffect.level).querySelector<HTMLInputElement>("input[type=range]")!;
+    const before = level.value;
+    level.value = String(Number(before) - 10);
+    level.dispatchEvent(new Event("input", { bubbles: true }));
+    level.dispatchEvent(new Event("change", { bubbles: true }));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+
+    // The chord goes to the focused range input otherwise (ui/history.ts routes it there).
+    (document.activeElement as HTMLElement | null)?.blur();
+    shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID);
+    await vi.waitFor(
+      () => {
+        $("graph-host")
+          .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
+          .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+        expect(paramRow(t().inspector.fxEffect.level).querySelector<HTMLInputElement>("input[type=range]")!.value).toBe(
+          before,
+        );
+      },
+      { timeout: 10_000 },
+    );
+    // …and the adopted value is still there: the undo did not hand the unwritable raw back.
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
   });
 
   it("takes it from a live flush that carried the address", SLOW, async () => {
     const shell = await bootDevice({}, true, unitHoldingLowLpf());
     $("btn-live").click();
     await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
-    // A session on its own sends nothing — the snapshot agrees with the unit, unwritable raw
-    // and all. What sends this address is an edit that rewrites the array, and the EFFECT TYPE
-    // menu is the one that does: it carries every slot of the new type out, the LPF among them,
-    // and the LPF is a key both delay types share.
+    // A session on its own sends nothing, and NOT because the snapshot carries the unwritable
+    // raw: `capture` fills it from `planToCommands`, so it holds the NORMALISED value while the
+    // unit holds the raw. Nothing is sent because plan-normalised equals snapshot-normalised.
+    // What sends this address is an edit that rewrites the array, and the EFFECT TYPE menu is
+    // the one that does: it carries every slot of the new type out, the LPF among them, and the
+    // LPF is a key both delay types share.
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
     const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
     sel.value = "1025";
@@ -1840,9 +1913,9 @@ describe("a value the unit holds and the app cannot write", () => {
   });
 
   // The reproduction the first version of this failed. An edit somewhere else flushes, the
-  // flush succeeds, and this address is not in it — the snapshot already agrees with the unit,
-  // unwritable raw and all, so there is no diff to send. Keyed on the run's success rather than
-  // on the addresses it carried, the plan took a value nothing had written.
+  // flush succeeds, and this address is not in it — the snapshot holds the normalised value the
+  // emit produces, so there is no diff to send. Keyed on the run's success rather than on the
+  // addresses it carried, the plan took a value nothing had written.
   it("takes nothing from a live flush that did not carry the address", SLOW, async () => {
     const shell = await bootDevice({}, true, unitHoldingLowLpf());
     $("btn-live").click();
@@ -1862,6 +1935,30 @@ describe("a value the unit holds and the app cannot write", () => {
     // The flush happened — without this the case would pass on nothing having been sent at all.
     await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(sets), { timeout: 20_000 });
     await new Promise((r) => setTimeout(r, 200));
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+  });
+
+  // …and the same, with a flush whose converge DID confirm a set — just not this address. The
+  // case above cannot separate "the set does not carry it" from "there is no set", because a
+  // plain fader flush runs no converge and the set is empty. An effect-type change on the OTHER
+  // channel converges its own slots and leaves this one alone.
+  it("takes nothing from a flush whose confirmed addresses are another channel's", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    const sets = shell.count("vd_set");
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.fx1"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+    sel.value = "1";
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(sets), { timeout: 20_000 });
+    await new Promise((r) => setTimeout(r, 300));
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
   });
 });

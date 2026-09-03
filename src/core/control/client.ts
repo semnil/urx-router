@@ -102,6 +102,13 @@ export interface DiffResult {
   /** Per-command read failures (e.g. timeout). A non-empty list means the
    *  comparison is incomplete and the caller must not write on it. */
   errors: string[];
+  /** The addresses this pass actually got a value for. NOT the complement of `unread`:
+   *  `stopOnError` breaks the loop at the first failure, so every command after it in emit
+   *  order is in neither list — it was never asked about. A caller deciding per address
+   *  whether the device is known to hold the plan's value has to intersect with this rather
+   *  than subtract the failures, which is the difference between "did not differ" and "was
+   *  never read". */
+  read: Set<number>;
   /** The commands behind those failures. `errors` carries a name and a message, which
    *  is what a report prints; a caller that has to decide something PER ADDRESS — the
    *  self-test, deciding whether a guessed mapping round-tripped — cannot get there
@@ -147,11 +154,13 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
   const unread: VdCommand[] = [];
+  const read = new Set<number>();
   for (const command of planToCommands(model, plan, scope, emit)) {
     if (exclude?.has(cmdAddr(command))) continue;
     signal?.throwIfAborted();
     try {
       const current = await vdGet(command.paramId, command.x, command.y);
+      read.add(cmdAddr(command));
       if (current !== command.vdValue) diffs.push({ command, current });
     } catch (e) {
       errors.push(`${command.name}: ${e instanceof Error ? e.message : String(e)}`);
@@ -159,7 +168,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
       if (stopOnError) break;
     }
   }
-  return { diffs, errors, unread };
+  return { diffs, errors, unread, read };
 }
 
 export interface SendOutcome {
@@ -224,14 +233,20 @@ export const reachedAndFailed = (o: SendOutcome): boolean => !o.ok && !o.skipped
  *  than on the address adopted values no write had touched, which an unrelated fader move
  *  reproduced.
  *
- *  Residual and unread are both removed. Residual is a difference that survived the last round,
- *  so the device is NOT at the plan's value; unread is an address the re-diff could not read,
- *  so what the device holds is unknown — and unknown is not confirmed. */
+ *  An address is confirmed by having been READ, not by not having failed. `stopOnError` breaks
+ *  the diff at its first failure, so the addresses after it are in neither the differences nor
+ *  the failures — never asked about, and a subtraction leaves them in. What survives the
+ *  intersection is then reduced by the residual, which is a difference the last round left
+ *  standing: the device is demonstrably NOT at the plan's value there. */
 export function confirmedAddrs(r: ConvergeResult): Set<number> {
   const out = new Set<number>();
-  for (const o of r.outcomes) if (o.ok && !o.skipped) out.add(cmdAddr(o.command));
+  // Sent and acknowledged, INTERSECTED with what the last diff actually read, then minus what
+  // it found still differing. The intersection is the load-bearing half: subtracting the read
+  // failures is not enough, because `stopOnError` breaks the diff at the first one and leaves
+  // every later address unasked — in neither `unread` nor `residual`, and sent, so subtraction
+  // alone reported it confirmed and the plan took a value the unit did not hold.
+  for (const o of r.outcomes) if (o.ok && r.readAddrs.has(cmdAddr(o.command))) out.add(cmdAddr(o.command));
   for (const d of r.residual) out.delete(cmdAddr(d.command));
-  for (const c of r.unread) out.delete(cmdAddr(c));
   return out;
 }
 
@@ -312,6 +327,11 @@ export interface ConvergeResult {
   /** The commands behind them (see DiffResult.unread), so a caller can decide per
    *  address rather than per message. */
   unread: VdCommand[];
+  /** What the LAST diff this loop performed actually read. Empty when it performed none —
+   *  a round that broke on a send failure re-reads nothing, and neither does a loop that
+   *  never entered one. `confirmedAddrs` intersects with it, so an address the loop never
+   *  asked about is not confirmed by having been sent. */
+  readAddrs: Set<number>;
 }
 
 /**
@@ -442,6 +462,9 @@ export async function sendConverging(
   const readErrors: string[] = [];
   const unread: VdCommand[] = [];
   const trace: ConvergeRound[] = [];
+  // The last diff this loop performed. Reassigned rather than accumulated: an address read in
+  // an earlier round says nothing about where the device is now.
+  let readAddrs = new Set<number>();
   let residual = initialDiffs;
   if (!residual) {
     // The whole write set holds this wait, not a subset: the seed read asks the
@@ -459,6 +482,7 @@ export async function sendConverging(
     const seed = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude });
     readErrors.push(...seed.errors);
     unread.push(...seed.unread);
+    readAddrs = seed.read;
     residual = seed.diffs;
   }
   let rounds = 0;
@@ -473,6 +497,9 @@ export async function sendConverging(
       if (wantTrace) trace.push({ sent: sending, elapsedMs: Date.now() - startedAt, reread });
     };
     if (sent.some(reachedAndFailed)) {
+      // No re-read follows, so nothing this round sent is confirmed — including the group
+      // members `roundCommands` pulled in that were never in the diff to begin with.
+      readAddrs = new Set();
       record(null);
       break;
     }
@@ -492,10 +519,11 @@ export async function sendConverging(
     const next = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude });
     readErrors.push(...next.errors);
     unread.push(...next.unread);
+    readAddrs = next.read;
     residual = next.diffs;
     record(residual);
   }
-  return { outcomes, rounds, trace, residual, readErrors, unread };
+  return { outcomes, rounds, trace, residual, readErrors, unread, readAddrs };
 }
 
 /**

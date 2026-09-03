@@ -22,11 +22,11 @@ import {
   readClockState,
   readFollowUsb,
   sendCommands,
+  reachedAndFailed,
   sendConverging,
   sendNames,
   setFollowUsb,
 } from "./client";
-import type { ConvergeResult } from "./client";
 import { addrKey, cmdAddr, planToCommands, planToNameWrites, type VdCommand } from "./translate";
 import { NODE_NAME_MAX_CHARS, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { PORT_REF_NONE } from "./vd";
@@ -822,42 +822,89 @@ describe("compareNames", () => {
 // What a caller may take from a converge, as a set of ADDRESSES. A run-level verdict answers a
 // different question: a write can succeed without having sent the address in question at all,
 // which is how an earlier version of the adoption took values no write had touched.
+//
+// Driven through `sendConverging` rather than built as a literal. The first version of these
+// cases handed the function a `ConvergeResult` object, which pins the arithmetic over a record
+// and is blind to what the loop actually produces — and the loop produces a record these cases
+// were reading wrong: `stopOnError` breaks the diff at the first read failure, so the addresses
+// AFTER it are in neither `residual` nor `unread`, and subtracting those two left them
+// confirmed although nothing had read them.
 describe("confirmedAddrs", () => {
-  const cmd = (paramId: number, y: number): VdCommand =>
-    ({ name: "FX_EFFECT_PARAM", paramId, x: 0, y, planValue: 0, vdValue: 0 }) as unknown as VdCommand;
-  const result = (over: Partial<ConvergeResult>): ConvergeResult => ({
-    outcomes: [],
-    rounds: 1,
-    trace: [],
-    residual: [],
-    readErrors: [],
-    unread: [],
-    ...over,
+  const dirty = (): Plan => {
+    const plan = basePlan();
+    plan.nodeParams["ch1"] = { on: true, hpf: true, gain: 6 };
+    return plan;
+  };
+  /** A device that stores what it is written, with `breakAt` deciding which read throws. */
+  const device = (breakAt?: (id: number, x: number, y: number) => boolean): Map<string, number> => {
+    const table = new Map<string, number>();
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      if (breakAt?.(id, x, y)) return Promise.reject(new Error("read timeout"));
+      const k = `${id}:${x}:${y}`;
+      return Promise.resolve(table.has(k) ? table.get(k)! : PORT_REF_PARAMS.has(id) ? PORT_REF_NONE : 0);
+    });
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+    return table;
+  };
+
+  it("confirms what the loop sent, read back and found matching", async () => {
+    device();
+    const plan = dirty();
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+    const confirmed = confirmedAddrs(r);
+    expect(r.residual).toEqual([]);
+    expect(r.outcomes.length).toBeGreaterThan(0);
+    // Everything it sent, since the device kept all of it and the re-read saw no difference.
+    expect([...confirmed].sort()).toEqual([...new Set(r.outcomes.map((o) => cmdAddr(o.command)))].sort());
   });
 
-  it("keeps what was sent and acknowledged", () => {
-    const r = result({
-      outcomes: [
-        { command: cmd(681, 7), ok: true },
-        // Reached the device and was refused: the unit is not at the plan's value.
-        { command: cmd(681, 8), ok: false, error: "refused" },
-        // Never tried, because the loop stopped: the device never saw it.
-        { command: cmd(681, 9), ok: true, skipped: true },
-      ],
+  it("confirms nothing the re-diff never asked about, not just what it failed on", async () => {
+    // The seed diff reads the whole scope, a round goes out, and THEN reads start failing — so
+    // the re-diff breaks at its first address and asks about none of them. The addresses the
+    // round sent are in neither `residual` nor `unread`, which is what subtraction missed.
+    let sets = 0;
+    device(() => sets > 0);
+    vi.mocked(vdSet).mockImplementation(() => {
+      sets++;
+      return Promise.resolve();
     });
-    expect([...confirmedAddrs(r)]).toEqual([cmdAddr(cmd(681, 7))]);
+    const r = await sendConverging(model, dirty(), { settleMs: 0 });
+    expect(r.readErrors).toHaveLength(1);
+    expect(r.outcomes.some((o) => o.ok)).toBe(true);
+    // Nothing is confirmed: the only diff that read anything ran BEFORE the write, and the one
+    // after it read nothing at all. An earlier reading kept the seed's reads and confirmed them.
+    expect(r.readAddrs.size).toBe(0);
+    expect(confirmedAddrs(r).size).toBe(0);
   });
 
-  it("drops an address the converge left differing, or could not read back", () => {
-    const sent = [cmd(681, 7), cmd(681, 8), cmd(681, 10)];
-    const r = result({
-      outcomes: sent.map((command) => ({ command, ok: true })),
-      // Still differing after the last round: the device did NOT take the plan's value.
-      residual: [{ command: cmd(681, 8), current: 3 }],
-      // The re-diff could not read it, so what the device holds is unknown — and unknown is
-      // not confirmed, which is the distinction a caller taking a value depends on.
-      unread: [cmd(681, 10)],
+  it("confirms nothing from a round that broke on a send failure", async () => {
+    // No re-read follows such a round, so what it sent is unverified — including the group
+    // members `roundCommands` pulls in that were never in the diff. The seed diff DID read the
+    // scope, so this is the same distinction: the reads that count are the last diff's.
+    device();
+    vi.mocked(vdSet).mockRejectedValue(new Error("nak"));
+    const r = await sendConverging(model, dirty(), { settleMs: 0 });
+    expect(r.outcomes.some(reachedAndFailed)).toBe(true);
+    expect(r.readAddrs.size).toBe(0);
+    expect(confirmedAddrs(r).size).toBe(0);
+  });
+
+  it("drops an address the converge left differing", async () => {
+    // One address accepts the write and does not keep it: it is read back, and differs.
+    const stuck = planToCommands(model, dirty()).find((c) => c.name === "CH_ON")!;
+    const table = device();
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (!(id === stuck.paramId && x === stuck.x && y === stuck.y)) table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
     });
-    expect([...confirmedAddrs(r)]).toEqual([cmdAddr(cmd(681, 7))]);
+    const r = await sendConverging(model, dirty(), { settleMs: 0 });
+    const confirmed = confirmedAddrs(r);
+    expect(r.residual.map((d) => cmdAddr(d.command))).toContain(cmdAddr(stuck));
+    expect(confirmed.has(cmdAddr(stuck))).toBe(false);
+    // The positive control: its neighbours, which the same rounds sent, ARE confirmed.
+    expect(confirmed.size).toBeGreaterThan(0);
   });
 });

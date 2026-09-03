@@ -81,11 +81,14 @@ export interface LiveSyncHooks {
   /** A write failed; sync is already stopped — the caller drops the connection. */
   onError: (message: string) => void;
   /** A flush sent `count` writes — for an optional, quiet "→ device" status. */
-  /** A flush reached the device. `confirmed` is the addresses a converge in this flush read
-   *  back as matching — empty when none ran. A caller taking a value the write path normalised
-   *  may only take it for an address in here: a session whose snapshot already agrees sends
-   *  nothing, so a flush can succeed without the address in question being in it at all. */
-  onSent: (count: number, confirmed: ReadonlySet<number>) => void;
+  onSent: (count: number) => void;
+  /** A converge in this flush read these addresses back and found the device at the plan's
+   *  value. Fired from the converge itself rather than beside `onSent`, with nothing awaited
+   *  in between, because a caller acting on it maps addresses to plan keys and the plan moves:
+   *  an edit or a device notify landing in that window would have it join one flush's addresses
+   *  to another plan's keys. Absent when no converge ran — a direct write is acknowledged and
+   *  not re-read, and an acknowledgement says the unit accepted a write, not that it kept it. */
+  onConfirmed?: (confirmed: ReadonlySet<number>) => void;
   /** Two or more plan owners resolved to one device address and the emitted set
    *  kept the last; the rest carried a different value and were dropped. Reported
    *  once per distinct owner set, not once per flush. */
@@ -677,12 +680,6 @@ export class LiveSync {
       const model = this.hooks.getModel();
       const plan = this.hooks.getPlan();
       let sent = 0;
-      // The addresses this flush had READ BACK as matching, for the hook above. A direct write
-      // is acknowledged and not re-read, so it is deliberately not in here: the hook's caller
-      // takes a value on the strength of this set, and an ack says the unit accepted a write
-      // rather than that it kept it. A converge is the path that answers the stronger question,
-      // and an address it does not cover simply waits for one that does.
-      const confirmed = new Set<number>();
       let sideEffect = false;
       const refetch = new Set<string>();
       // Per node, the command names a refetch head written in THIS flush handed to the
@@ -904,7 +901,6 @@ export class LiveSync {
         // would then record the plan as device truth, leaving those parameters
         // diverged for the rest of the session with no diff left to retry them.
         // Route it into the same teardown a direct write failure takes.
-        for (const a of confirmedAddrs(r)) confirmed.add(a);
         const failed = r.outcomes.find(reachedAndFailed);
         if (failed || r.readErrors.length) {
           // `||` throughout: an empty message is what a rejection with no reason
@@ -912,6 +908,8 @@ export class LiveSync {
           // teardown that names nothing.
           throw new Error(failed?.error || r.readErrors[0] || "converge failed");
         }
+        // Immediately, with nothing awaited between the converge and the caller: see onConfirmed.
+        this.hooks.onConfirmed?.(confirmedAddrs(r));
         this.capture(converged, since);
       }
       // A refetch after the converge, if both happened: converge rebuilds the snapshot
@@ -1021,7 +1019,7 @@ export class LiveSync {
         this.followSetStale = false;
         this.hooks.reregister?.();
       }
-      if (sent) this.hooks.onSent(sent, confirmed);
+      if (sent) this.hooks.onSent(sent);
       // After onSent because the status line is last-writer-wins, and never from
       // capture(), whose report the session's own "live sync on" would overwrite.
       const owners = collisionOwners(commands);

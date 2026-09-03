@@ -3344,10 +3344,12 @@ snapshot already agrees with the unit sends nothing, so a flush can succeed with
 in question at all. A first version keyed on the run's success and adopted values no write had touched —
 an unrelated fader move was enough to reproduce it.
 
-`confirmedAddrs` (`control/client.ts`) is that set: sent, acknowledged, and no longer differing when the
-converge re-read them, minus anything it could not read — unknown is not confirmed. A DIRECT live write
-is deliberately outside it: an acknowledgement says the unit accepted a write, not that it kept it, and
-an address no converge covered simply waits for one that does. `paramRangeAddrs` (`control/translate.ts`)
+`confirmedAddrs` (`control/client.ts`) is that set: sent and acknowledged, INTERSECTED with what the
+converge's last diff actually read, then minus what that diff found still differing. The intersection is
+the load-bearing half — subtracting the read failures is not enough, because the diff stops at its first
+one and leaves every later address unasked, in neither list and sent, which reported it confirmed. A
+DIRECT live write is deliberately outside the set: an acknowledgement says the unit accepted a write, not
+that it kept it, and an address no converge covered simply waits for one that does. `paramRangeAddrs` (`control/translate.ts`)
 is the join between the loader's report, which names a node and a key, and the address the emit sends it
 to; it reads the emit's own output rather than rebuilding the addressing, so a change to how an FX slot
 is addressed cannot leave it answering the old one.
@@ -3355,6 +3357,13 @@ is addressed cannot leave it answering the old one.
 The value is authored FROM the device (`authorFromDevice`), the seat a device-side recompute already
 takes, rather than pushed as an edit: it is the write path's value rather than the operator's, and an undo
 that put the unwritable raw back would only have it normalised again on the next write.
+
+**SCOPE: the FX channel effect, and nothing else.** The premise holds wherever the emit normalises —
+`translate.ts` has nineteen `boundRaw` and eleven `boundEnum` call sites against the two FX ones — and the
+reachable sibling is insert FX, whose engine slots are bounded at the emit while `readback.ts` stores the
+unit's raw verbatim. That case is untouched here: it diverges the same way and `comparePlan` sees it no
+better. The mechanism is bounded to `paramRangeProblems`' own walk for the same reason that walk is
+(`plan-validate.ts`'s SCOPE note): the FX catalogue is the family whose windows have actually moved.
 
 One value is **rewritten** rather than dropped in the DESERIALIZER, and it is the only one there — the
 loader rewrites a second class one layer later, after validation, where an FX value outside what the app can
