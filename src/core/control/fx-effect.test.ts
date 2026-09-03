@@ -17,6 +17,7 @@ import {
   fxEffectTypes,
   fxFamilyOf,
   fxParams,
+  fxRawForDesc,
   initDelayMs,
   migrateFxEffectParams,
   MONO_DELAY_KEY,
@@ -168,6 +169,58 @@ describe("fx-effect encodings (live calibration anchors)", () => {
       [768, "revr3Lpf", 21, "50.0 Hz"],
     ] as const) {
       expect(row(type, key).format!(raw, {}), `${key} raw ${raw}`).toBe(label);
+    }
+  });
+
+  // What each control admits, asked of the function directly rather than through a plan. The
+  // ends are the part a distance search cannot do: every option is the same distance from a
+  // far-outside value once the subtraction saturates, so a nearest-of scan keeps whichever it
+  // started with and the menu's FIRST item answers for a value past its LAST.
+  it("takes a raw to the nearest value its own control admits, at the ends included", () => {
+    const sync = fxParams(1024).find((d) => d.key === "sync")!;
+    const note = fxParams(1024).find((d) => d.key === "note")!;
+    const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    const last = note.options!.at(-1)!.value;
+    for (const [desc, raw, want] of [
+      // A toggle has no bounds written down; 0 and 1 are its whole domain.
+      [sync, 1.6, 1],
+      [sync, -3, 0],
+      [sync, Number.MAX_VALUE, 1],
+      [sync, -Number.MAX_VALUE, 0],
+      // A select admits its option values. Both ends, and a value so far outside that every
+      // option is the same distance from it.
+      [note, 14.6, last],
+      [note, 9999, last],
+      [note, Number.MAX_VALUE, last],
+      [note, -Number.MAX_VALUE, 0],
+      // …and a half-step resolves the way the round does, which is the way a slider's does.
+      [note, 0.5, 1],
+      [sync, 0.5, 1],
+      [lpf, 35.5, 36],
+      // A slider is its window.
+      [lpf, 35.6, 36],
+      [lpf, Number.MAX_VALUE, lpf.rawMax],
+      [lpf, -Number.MAX_VALUE, lpf.rawMin],
+    ] as const) {
+      expect(fxRawForDesc(desc, raw), `${desc.key} ${raw}`).toBe(want);
+    }
+    // A TIE goes to the lower value. The delay Note's own options are consecutive integers, so
+    // a rounded raw always lands exactly on one and no tie can arise from the shipped catalogue
+    // — the rule is stated, so it is asked of a menu that can produce one.
+    const gapped: FxParamDesc = {
+      ...note,
+      options: [
+        { value: 0, label: "a" },
+        { value: 2, label: "b" },
+      ],
+    };
+    expect(fxRawForDesc(gapped, 1)).toBe(0);
+    expect(fxRawForDesc({ ...gapped, options: [...gapped.options!].reverse() }, 1)).toBe(0);
+
+    // The declared order of the options decides nothing: reversed, the answers are the same.
+    const reversed: FxParamDesc = { ...note, options: [...note.options!].reverse() };
+    for (const raw of [0.5, 3.5, 14.6, 9999, -9999, Number.MAX_VALUE]) {
+      expect(fxRawForDesc(reversed, raw), `reversed ${raw}`).toBe(fxRawForDesc(note, raw));
     }
   });
 

@@ -217,7 +217,18 @@ describe("paramRangeProblems", () => {
     ] as const) {
       for (const t of fxEffectTypes(fxIndex)) {
         for (const d of fxParams(t.value)) {
-          for (const stored of [-9999, 9999, 0.6, 1.6, 14.6, ((d.rawMin ?? 0) + (d.rawMax ?? 0)) / 2 + 0.6]) {
+          for (const stored of [
+            -9999,
+            9999,
+            0.6,
+            1.6,
+            14.6,
+            // Far enough outside that every option is the same distance from it, which is
+            // where a nearest-of search stops discriminating at all.
+            Number.MAX_VALUE,
+            -Number.MAX_VALUE,
+            ((d.rawMin ?? 0) + (d.rawMax ?? 0)) / 2 + 0.6,
+          ]) {
             const plan = emptyPlan("URX44V");
             plan.nodeParams[node] = { fxEffect: { type: t.value, params: { [d.key]: stored } } };
             applyParamRange(plan, paramRangeProblems(plan));

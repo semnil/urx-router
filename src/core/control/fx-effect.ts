@@ -705,17 +705,27 @@ export function fxRawToSend(stored: unknown, def: number, lo?: number, hi?: numb
  *  no item corresponds. Both reach the plan the way any raw does — a generated document, a hand
  *  edit — and both are then written to the unit. */
 export function fxRawForDesc(desc: FxParamDesc, raw: number): number {
+  // Rounded first, and by the same rule every control uses, so a value halfway between two
+  // settings resolves the same way whichever control holds it.
   const v = Math.round(raw);
   if (desc.control === "toggle") return v <= 0 ? 0 : 1;
   if (desc.control === "select") {
-    const options = desc.options ?? [];
-    if (options.length === 0) return v;
-    // Nearest by distance, and the FIRST of a tie, so the answer does not depend on the order
-    // two equally distant options happen to sit in.
-    return options.reduce(
-      (best, o) => (Math.abs(o.value - v) < Math.abs(best - v) ? o.value : best),
-      options[0]!.value,
-    );
+    const values = (desc.options ?? []).map((o) => o.value).sort((a, b) => a - b);
+    if (values.length === 0) return v;
+    // The TOP is answered before any distance is measured. Subtracting a far-outside value from
+    // each option gives the same double for all of them — every distance from Number.MAX_VALUE
+    // is Number.MAX_VALUE — so a nearest-of search keeps whichever option it started with, and
+    // the menu's first item was answering for a value past its last. The bottom needs no such
+    // guard and is deliberately not given one: the search starts at the lowest option, which is
+    // already the answer for anything below the menu, saturating or not. `>=` rather than `>`
+    // for the same reason in reverse — the search answers the last option correctly when v IS
+    // it, so the two spellings cannot be told apart; this one says what the line is for.
+    if (v >= values.at(-1)!) return values.at(-1)!;
+    // Inside the menu, the nearest; a tie goes to the lower value, which the sort above makes
+    // independent of the order the options are declared in.
+    let best = values[0]!;
+    for (const o of values) if (Math.abs(o - v) < Math.abs(best - v)) best = o;
+    return best;
   }
   return Math.min(Math.max(v, desc.rawMin ?? v), desc.rawMax ?? v);
 }
