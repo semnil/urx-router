@@ -450,7 +450,8 @@ carries a one-line map of the same directories and points here.
   node has (`bind` → fields + meter lanes), reads and writes its own corner of the plan (`read`/`patch`),
   and arranges its display column out of the parts the host offers (`display` over `parts.lanes()` /
   `parts.plot()`). It owns the session's one meter subscription while open, so the console is told to release and
-  regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` / `dyn-ssmcs.ts` / `insert-fx-screen.ts` are the
+  regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` / `dyn-ssmcs.ts` / `insert-fx-screen.ts` /
+  `fx-effect-screen.ts` are the
   descriptors — DUCKER is
   the one whose node is not the node it tunes, since a ducker hangs under a stereo channel keyed by a wire
   from somewhere else, so its lanes are gathered from three places instead of read off the node the screen
@@ -464,7 +465,18 @@ carries a one-line map of the same directories and points here.
   by family and slot. It shows every family the app edits at all — nothing is edited in the inspector any more,
   so a value cannot be authored on two surfaces — and a family whose state the flat catalogue does not carry
   supplies its own rows beside the catalogue's: Pitch Fix its Key, Scale and note mask, and the multi-band
-  compressor the 1-Knob pair the app reads and never writes. `dyn-chan.ts` the binding the
+  compressor the 1-Knob pair the app reads and never writes. `fx-effect-screen.ts` is the second of that kind and stands for the three parameter
+  families an FX channel's effect can take (Rev-X on FX1, Rev.R3 on FX2, the two delays on both), resolved from
+  the EFFECT TYPE the plan holds. It carries no EFFECT TYPE row for the same reason INS FX does not, and its
+  fields name the PLAN KEY rather than a family and a slot: the two delay types are one family and put their
+  time on one slot, differing only in the range they accept, so that spelling would name two parameters with
+  one key — while the catalogue's own keys already carry a family name exactly where two families collide and
+  share one where the parameter really is one. Its display is a lane rack alone: neither reverb's decay nor a
+  delay's repeats is derivable from the values (the algorithms are the unit's, and the frequency a Hi Ratio
+  acts from is not a parameter at all), so a curve there would be an invention. Its two lanes are the effect's
+  own input and output — the mono FX send sum arriving, and the stereo tap immediately after the effect and
+  before the fader — so the shared Input / Output captions are literally true on it; the channel's post-fader
+  level belongs to the CONSOLE strip, and the fader is not this screen's. `dyn-chan.ts` the binding the
   MONO IN channel-strip processors share, `dyn-plot.ts` the dB×dB transfer plot they draw, `dyn-freq-plot.ts`
   the frequency×gain plot the two EQs draw, and
   `dyn-registry.ts` the one place that knows which processors exist.

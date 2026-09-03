@@ -1353,6 +1353,122 @@ emits no engine parameter for it at all, so an editor over it collects edits not
 `INSERT_FX_EFFECT` commands. Both sides now ask one function, `effectiveInsertFx`, so what the screen
 offers to edit and what the unit receives cannot come apart.
 
+## FX EFFECT
+
+One screen for the effect an FX channel holds, and one descriptor for the three parameter families it
+can be: **Rev-X** on FX 1, **Rev.R3** on FX 2, and the **two delays** on both. The family is resolved
+from the EFFECT TYPE in the plan on every call, so a type change — from this app or from a device
+follow — re-binds the same modal rather than closing one screen and opening another. That is the INS
+FX arrangement, for the INS FX reason.
+
+### What it owns, and what it does not
+
+It owns the selected effect's parameters, Mix included, and the meter subscription for its FX channel.
+It does not own EFFECT TYPE, EFFECT ON, the channel fader, the FX send amounts or the sample rate.
+Two of those are on the strip beside it and in the inspector; the rest are where they already were.
+
+**No EFFECT TYPE row, deliberately.** Count what the writer emits and the selector is the odd one out:
+every other command names ONE slot — ON is slot 1, Mix is slot 2, one slot per descriptor — so the
+value it overwrites is the knob the operator is looking at. The selector alone replaces the contents of
+slots nobody named, because the unit refills the engine array with the incoming type's factory values.
+Putting it on a face of knobs would make those two edits look alike.
+
+**What a type write actually costs is not what it looks like.** In the PLAN nothing is lost: an FX
+channel keeps every family's values side by side under keys that carry the family name (`revxHpf` /
+`revr3Hpf` / `delayHpf`), so the outgoing effect's settings stay where they are and selecting a type of
+that family back finds them. Within one family the three Rev-X types share those keys, so a swap
+between them shares the values too rather than parking one set and restoring it. On the UNIT the array is refilled, and the writer then puts the plan back over it, so
+the two agree again. What is genuinely lost is **a value the unit holds that the plan has never seen**
+— and that is reachable, because the effect arrays announce nothing when the front panel moves them
+(architecture.md, "Live sync"). An operator who tunes a reverb on the unit itself and then changes the
+type from the app loses that tuning, and nothing on screen says so, because nothing on screen knows.
+Reading the outgoing array into the plan before the selector is written is what would keep it;
+`readback.ts` already reads exactly that pair (the type, then that type's slots).
+
+### One face, two groups
+
+Every family is 9-11 continuous values with no second axis to split them on — no bands, no modes — so
+the face is one panel and the segmented bar reserves its space without drawing. What the panel has
+instead is a single full-width break: **time** above it, **band and balance** below.
+
+Mix leads because slot 2 is where the device's own array puts it. Room Size sits beside Reverb Time on
+the REV-X face rather than at the guide's table position, because the two are one value: the seconds
+printed on Reverb Time are `base(raw) x 3^(RoomSize/31)`, so turning Room Size moves the number on the
+other card. Hi Ratio and Low Ratio are lengths of reverb and so are times, but WHICH BAND each is the
+length of is decided by Low Freq, and the HPF and LPF ride the same axis — the per-band values are read
+together.
+
+**Six columns**, which is what puts each family's first group on one row, drops the break on a row
+boundary, and makes the three faces the same height at every width where the modal still has two
+columns of its own.
+
+### The rack is the effect's own input and output
+
+Two lanes: `131` — the FX send sum arriving at the effect, mono, because the sum is — and `103`, the
+stereo tap immediately after the effect and before the channel fader. So the shared Input / Output
+captions are literally true here; there is a fader between `103` and the channel's post-fader `118`,
+and that one belongs to the CONSOLE strip rather than to this screen.
+
+**No reduction lane.** All five of the unit's reduction meters are identified and an FX channel's
+effect has none — a reverb and a delay take no gain off — so a bar there could never move.
+
+**No curve.** Neither reverb's decay envelope nor a delay's repeat train is derivable from these
+values: the algorithms are the unit's, the frequency a Hi Ratio starts acting at is not a parameter at
+all, and a feedback percentage has never been measured against an amplitude ratio. The HPF and LPF
+corners could be drawn as boundary lines on a log-frequency axis, the way the multi-band compressor's
+MAIN face draws its crossovers — but two lines are not a figure worth a column, so the display is the
+lane rack alone, as the guitar amp's and Pitch Fix's are.
+
+### What the unit owns while Sync is on
+
+The delay families carry a tempo Sync switch, and while it is on **the delay time is the device's**: it
+recomputes that slot from the BPM and the note value and announces the result on the array address.
+The row stays, readable and tagged, because it is where the computed time is read. With Sync off it is
+the NOTE that goes unread — the effect guide conditions it on tempo sync being enabled — so that row is
+locked and tagged instead. BPM is neither: the guide puts no condition on it.
+
+The cost is that a note value cannot be chosen before Sync is switched on; switching Sync on first is
+the one extra gesture. `fxRowOwners` is the one list **three** surfaces read — this screen locks and
+tags the row, the MIDI catalogue declines a write to it, and `pushFxEffectCommands` leaves it out of
+what it sends — so a mapping cannot drive a row the screen says is not the operator's, and neither can
+a Device-menu write. The writer's share is the one that is not merely tidy: **the unit accepts a write
+to that slot while Sync is on and keeps it**, so re-sending the plan's copy takes the delay time off
+the note value and leaves Sync switched on with nothing driving it, until the operator next touches
+the BPM or the note. The note value is the other half of the list and is NOT withheld — the unit
+stores it while it is not reading it, and the app is still its author.
+
+### The value keys name the plan key, not a slot
+
+The INS FX screen keys a field by family and slot. This one cannot: **the two delay types are both
+family `delay` and both put the delay time on slot 6**, differing only in the range they take (Mono
+0.1-2700 ms, Ping Pong 1.0-1350 ms), so `fx:delay:6` would name two different parameters — and a Mono
+time handed to the Ping Pong descriptor is clamped at the unit while the plan goes on showing what it
+was set to. The catalogue's own keys already carry a family name exactly where two families collide and
+share one where the parameter really is one (`reverbTime` is slot 7 of both reverbs), so they are
+unique and they mean the right thing. The purpose is the same as INS FX's: a device follow can replace
+the effect while a knob is under the pointer, and a drag still firing at a detached row lands under the
+outgoing family's own name rather than under the incoming family's parameter of that slot.
+
+### Delay time is a linear knob
+
+`logSteps` is not used, although the EQ's band frequency takes it. Three things separate the two. The
+unit's own grid is uniform in ms — the law is `raw / 10` — so a linear position walks the device's own
+steps. A logarithmic mapping would not resolve better anywhere that matters: the knob face is
+`clamp(48px, 5vw, 56px)`, and around 240 ms one pixel is about 48 ms linear against about 46 ms
+logarithmic, so what is deciding the resolution is the face's width and not the mapping. And it would
+be **coarser than the unit at the top**, where its last step is about 28 ms against the unit's 5 ms
+detent. Precision comes from the keyboard and the wheel instead: an arrow key and one wheel notch each
+move a single step, which is 0.1 ms.
+
+### Above 96 kHz, and while bypassed
+
+Both states open the screen and lock nothing; the note under the display says which one it is, rate
+first and bypass second — the order the INS FX screen takes. The unit accepts and keeps a parameter
+write at any rate, and a bypassed effect is still an effect to tune: the plan holds the values, the
+unit stores them, and both lanes go on reading the signal passing through untouched. The CONSOLE dims
+an FX 2 strip above 96 kHz but leaves its own controls reachable — what the rate closes is the sends
+INTO that bus — so the chip and the disclosure stay pressable there.
+
 ## Off the scale is off the frame
 
 Every plot draws its curve at the **true** value, and the host **clips it to the plot area**. Clamping
@@ -1515,6 +1631,8 @@ per address, so a batch carrying more than one frame for an address keeps only t
 | GRAPH inspector, GATE / SSMCS / COMP / EQ section | A full-width button below the ON/OFF toggle, its label centred and a caret at the trailing edge |
 | CONSOLE strip | A narrow chip beside each processor chip the strip has, labelled `▸` |
 | GRAPH inspector, Insert FX | The same full-width button, below the Insert FX selector and its ON toggle — shown once an effect this screen tunes is selected, since with none there is nothing to open on |
+| CONSOLE FX strip | A face reading `EFFECT` and a `▸` beside it. The face switches EFFECT ON; the disclosure opens the EFFECT TYPE popover, whose footer carries the launcher and whose rows open the screen on what they choose |
+| GRAPH inspector, FX Effect | The same full-width button, below the EFFECT TYPE selector and the Effect ON toggle. Never inert — an FX channel always holds an effect |
 
 In SSMCS mode the inspector keeps all four sections and hands each launcher over: the SSMCS section
 opens the MAIN face, and the COMP and EQ sections open the COMP and EQ faces of the same bank. They
@@ -1589,6 +1707,18 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
 - **The grid is the field table's.** A MIDI value and a dragged slider both resolve a position first
   (`dynToPos` / `dynFromPos` in `control/translate.ts`), so the two cannot land on different values of
   one grid.
+- **…except where the control is finer than the wire, and then the WIRE's grid wins.** The Mono Delay
+  time runs 1..27000 by 1, which is 27000 settings against a 14-bit controller's 16384 positions, so
+  several of its values share a position. Its codec snaps the READING to the wire's grid as well as the
+  writing, which keeps the exactness the engine's echo decision rests on (`core/midi/engine.ts`) true of
+  the reading. **It does not make it true of the value**: an echo of the app's own feedback moves an
+  off-grid setting to the nearest addressable one — one raw, 0.1 ms, once, after which it is idempotent
+  — and that move stays visible rather than silent, since a cc14 arrives as two messages and the
+  intermediate value fires the engine's applied path, so it reaches the dirty flag and the undo ledger
+  like any other edit. What it costs otherwise is resolution over MIDI and nothing else: one notch moves
+  0.165 ms against the 0.1 ms a pointer, a wheel or an arrow key still reaches, and a controller
+  addresses 16384 of the 27000 settings. The step itself is not free to coarsen — it is the only one
+  that puts both official ends and the factory default on the grid.
 - **The screen opens while learn is on.** The `▸` opener is not itself assignable, so it passes the
   arming guard through rather than arming instead of opening.
 
