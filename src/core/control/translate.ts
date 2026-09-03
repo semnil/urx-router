@@ -30,6 +30,7 @@ import {
   FX_LEVEL_MIN,
   FX_SLOT_LEVEL,
   FX_SLOT_ON,
+  fxDescRawToSend,
   fxRawToSend,
   resolveFxEffectType,
   fxParams,
@@ -1126,7 +1127,7 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
   const level = fxRawToSend(fx.level, FX_LEVEL_DEFAULT, FX_LEVEL_MIN, FX_LEVEL_MAX);
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, level));
   for (const desc of fxParams(type)) {
-    const raw = fxRawToSend(fx.params?.[desc.key], desc.def, desc.rawMin, desc.rawMax);
+    const raw = fxDescRawToSend(desc, fx.params?.[desc.key]);
     out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", desc.slot, raw));
   }
 }

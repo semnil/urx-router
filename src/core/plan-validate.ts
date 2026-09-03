@@ -8,7 +8,14 @@
 
 import type { DeviceModel } from "../models/types";
 import { insertFxCensus } from "./constraints";
-import { FX_CHANNEL_NODE_INDEX, FX_LEVEL_MAX, FX_LEVEL_MIN, fxEffectTypes, fxParams } from "./control/fx-effect";
+import {
+  FX_CHANNEL_NODE_INDEX,
+  FX_LEVEL_MAX,
+  FX_LEVEL_MIN,
+  fxEffectTypes,
+  fxParams,
+  fxRawForDesc,
+} from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import { isPlainRecord } from "./plan";
 import type { Plan } from "./plan";
@@ -104,22 +111,29 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     where: "field" | "params",
     key: string,
     stored: number | undefined,
-    lo: number | undefined,
-    hi: number | undefined,
+    normalise: (raw: number) => number,
   ): void => {
     // An ABSENT value is not a problem: the emit substitutes the catalogue default and the
     // panel shows that same default, so the two already agree, and reporting it would write
     // a key the document never carried.
     if (stored === undefined) return;
-    // Not a finite NUMBER — a boolean, which the document sanitiser keeps — so there is no
-    // value to bound. Dropped rather than defaulted, for the reason on `action`.
+    // Not a NUMBER at all — a boolean or an object, which the document sanitiser keeps — so
+    // there is no value to bound. Dropped rather than defaulted, for the reason on `action`.
     if (typeof stored !== "number" || !Number.isFinite(stored)) {
       out.push({ reason: "paramRange", node, where, key, stored, action: "drop" });
       return;
     }
-    // The window, and only the window. It is the same under every type the channel offers, so
-    // whichever type named the key, this is the pair the emit will bound against.
-    const bound = Math.min(Math.max(stored, lo ?? stored), hi ?? stored);
+    // The nearest value the control admits, which is the emit's own answer for it. A raw is a
+    // broker integer, so a fractional value names no setting the unit has — and it is not
+    // dropped, because unlike a boolean it HAS a numeric neighbour: dropping sends the type's
+    // own default instead, which for the delay LPF is 8.50 kHz where the document said 118 Hz.
+    //
+    // The admitted set is the CONTROL's, not a window: a window is what a slider has, while a
+    // toggle admits 0 and 1 with no bounds written down at all and a select admits its option
+    // values. Normalising against bounds alone left 2 on a two-state control and 15 on a menu
+    // that ends at 14. Which value a key belongs to is the same under every type the channel
+    // offers, so whichever type named it, this is the answer the emit will reach.
+    const bound = normalise(stored);
     if (bound !== stored) out.push({ reason: "paramRange", node, where, key, stored, action: "bound", bound });
   };
   for (const [node, fxIndex] of Object.entries(FX_CHANNEL_NODE_INDEX)) {
@@ -140,7 +154,9 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     // parameter loop and by a literal rather than by a descriptor. Named here because the
     // sentence this section opens with says every FX slot, and a slot bounded by a literal
     // is no less bounded.
-    take(node, "field", "level", fx.level as number | undefined, FX_LEVEL_MIN, FX_LEVEL_MAX);
+    take(node, "field", "level", fx.level as number | undefined, (v) =>
+      Math.min(Math.max(Math.round(v), FX_LEVEL_MIN), FX_LEVEL_MAX),
+    );
     // The parameter MAP, which the readers below and the write path both skip when it is not
     // an object — the same silent loss as an unreadable effect, one channel's worth of raws.
     if (fx.params !== undefined && !isPlainRecord(fx.params)) {
@@ -160,7 +176,7 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
       for (const d of fxParams(type.value)) {
         if (seen.has(d.key)) continue;
         seen.add(d.key);
-        take(node, "params", d.key, fxParamsMap[d.key], d.rawMin, d.rawMax);
+        take(node, "params", d.key, fxParamsMap[d.key], (v) => fxRawForDesc(d, v));
       }
     }
   }

@@ -975,9 +975,9 @@ agreement, zero findings.
   under Rev-X (measured 0/1/2 across Hall/Room/Plate) — "restoring" it would push an out-of-range
   sub-type into a live reverb. **The real defect was plan-side, and is fixed**: one FX channel's
   families share a params map, and descriptors addressing DIFFERENT slots carried the same `key` —
-  `hpf`, `lpf`, `hiRatio`, `initialDelay`, `diffusion`, `feedback`, six of them. Rev-X's HPF is a
-  1/6-octave index from 20 Hz and the delay family's a 1/12-octave index from 15 Hz, so a shared key
-  wrote one family's index into the other's parameter. The keys are now family-qualified and a legacy
+  `hpf`, `lpf`, `hiRatio`, `initialDelay`, `diffusion`, `feedback`, six of them. Rev-X's HPF indexes
+  the R20 preferred-number series and the delay family's the R40 one — different grades on different
+  offsets — so a shared key wrote one family's index into the other's parameter. The keys are now family-qualified and a legacy
   plan migrates onto the saved type's family (`reverbTime` stays shared — slot 7 in both reverb
   families is one device parameter)
 - **A device-side Pan Link ON left a stale PAN slider in the inspector — fixed.** `reflectFollow`'s

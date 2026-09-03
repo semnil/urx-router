@@ -232,8 +232,15 @@ carries a one-line map of the same directories and points here.
       nothing to answer from and a settle could only spend its bound — and a rename read back inside its own
       81 ms window goes into the plan and `nameSnapshot` together, leaving no diff to retry. See "A write is
       not readable when it is acked" / `params.ts` catalog of confirmed parameters
+    - `preferred-numbers.ts` the ISO 3 (Renard) grade tables R40 and R20, and the lookup that reads one.
+      The unit's frequency tables step in these rather than in octave divisions, and the two catalogues
+      below both index them — one seat, because each carried its own copy until they disagreed in float
+      (a 1.0-based mantissa multiplies up to 112.00000000000001 where the grade is 112, and the crossover
+      screen then printed "112.0 Hz" for a frequency the unit shows as "112")
     - `fx-effect.ts` catalog of FX-channel effects (Rev-X/Rev.R3/Mono Delay/Ping Pong) — slot addressing of
-      the type selector + parameter arrays, and raw↔display encoding
+      the type selector + parameter arrays, and raw↔display encoding. The two filter tables are R20 (REV-X)
+      and R40 (Rev.R3 / delay) at their own offsets, and each family is PRINTED at its own precision: FX1
+      an integer below 1 kHz, FX2 three significant figures throughout, both three at or above 1 kHz
     - `insert-fx-effect.ts` effect parameter catalog for insert FX (Guitar Amp Classics/Pitch
       Fix/Compander-H/S/Multi-Band Comp) — reads/writes the engine arrays bound by the selector (Guitar 697
       / Pitch 701 / Compander 689 / output 693) via slot addressing; raw↔display uses values calibrated

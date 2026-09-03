@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { planParam, planParamZ } from "./plan-param";
+import { fxParams } from "../src/core/control/fx-effect";
 
 const validPlan = {
   format: "urx-router-plan",
@@ -140,7 +141,16 @@ test("a repaired value is reported beside the conflict, and is repaired once the
   // The repair survived the decision — the plan the operator agreed to open is the repaired
   // one, not the document as it arrived.
   await page.locator('#graph-host g.node[data-id="bus.fx2"]').click();
-  await expect(page.locator("#inspector .param", { hasText: "LPF" }).locator(".param-val")).toHaveText("50 Hz");
+  // The BOUND raw's frequency, taken from the catalogue rather than written out: what this
+  // asserts is that the row shows raw 21 and not the document's raw 20, and spelling the
+  // label here would tie the case to how many digits the readout carries as well.
+  const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+  await expect(page.locator("#inspector .param", { hasText: "LPF" }).locator(".param-val")).toHaveText(
+    lpf.format!(lpf.rawMin!, {}),
+  );
+  await expect(page.locator("#inspector .param", { hasText: "LPF" }).locator(".param-val")).not.toHaveText(
+    lpf.format!(lpf.rawMin! - 1, {}),
+  );
 });
 
 test("closing an insert-FX slot conflict report loads nothing", async ({ page }) => {

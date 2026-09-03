@@ -10,11 +10,14 @@ import {
   balanceLabel,
   delayMs,
   FX_TYPE_DEFAULTS,
+  formatFx1Hz,
+  formatFx2Hz,
   fx2FreqHz,
   FX_EFFECT_TYPE_DEFAULT,
   fxEffectTypes,
   fxFamilyOf,
   fxParams,
+  fxRawForDesc,
   initDelayMs,
   migrateFxEffectParams,
   MONO_DELAY_KEY,
@@ -30,15 +33,203 @@ import {
 import { planToCommands } from "./translate";
 
 describe("fx-effect encodings (live calibration anchors)", () => {
-  it("REV-X frequency = 20 × 2^(raw/6)", () => {
-    expect(revxFreqHz(0)).toBeCloseTo(20, 1);
-    expect(Math.round(revxFreqHz(9))).toBe(57); // LCD 56, idealized 56.6
-    expect(Math.round(revxFreqHz(52))).toBe(8127); // LCD 8.00k
+  // Every filter frequency read off the unit's own screen, and the law has to reproduce each
+  // EXACTLY rather than closely. That is the whole difference between a preferred-number
+  // series and the geometric formula it looks like: 10^(1/40) and 2^(1/12) agree to four
+  // digits, so a formula passes at the bottom of a range and drifts at the top — which is how
+  // the previous version stood, with two of these assertions written to the formula's own
+  // answer and a comment beside each recording that the unit said otherwise.
+  it("REV-X frequency is the R20 series, at every point read off the unit", () => {
+    for (const [raw, hz] of [
+      [0, 20],
+      [9, 56],
+      [52, 8000],
+      [34, 1000],
+      [45, 3550],
+      [60, 20000],
+      [28, 500],
+      [59, 18000],
+    ] as const) {
+      expect(revxFreqHz(raw), `raw ${raw}`).toBe(hz);
+    }
   });
-  it("Rev.R3 / delay frequency = 15 × 2^(raw/12)", () => {
-    expect(Math.round(fx2FreqHz(31))).toBe(90);
-    expect(Math.round(fx2FreqHz(41))).toBe(160);
-    expect(Math.round(fx2FreqHz(111))).toBe(9133); // LCD 9.00k
+  it("Rev.R3 / delay frequency is the R40 series, at every point read off the unit", () => {
+    for (const [raw, hz] of [
+      [6, 21.2],
+      [21, 50],
+      [31, 90],
+      [41, 160],
+      [53, 315],
+      [101, 5000],
+      [109, 8000],
+      [111, 9000],
+      [121, 16000],
+    ] as const) {
+      expect(fx2FreqHz(raw), `raw ${raw}`).toBe(hz);
+    }
+  });
+  // Every filter frequency label read off the unit, both families. The two are printed to
+  // DIFFERENT precisions and only the Hz band differs: FX1 drops the decimal FX2 keeps. That is
+  // the shape of the two tables — R20's grades stay distinct as integers (20/22/25/28/32/36)
+  // while R40's would not (10.6 and 11.2 both read 11) — so a single formatter cannot serve
+  // both, and the app's shared `formatHz` serves neither.
+  //
+  // The app writes a space before the unit and the LCD does not; that is house typography,
+  // applied to every frequency row in the app, and the VALUE is what the panel and the unit
+  // have to agree on.
+  it("prints each family at the precision the unit prints it", () => {
+    for (const [hz, label] of [
+      // FX1, below 1 kHz: an integer, so the grade's own decimal is dropped.
+      [22.4, "22 Hz"],
+      [25, "25 Hz"],
+      [28, "28 Hz"],
+      [31.5, "32 Hz"],
+      [35.5, "36 Hz"],
+      // …and at 100 Hz and up the grades are already integers, which is where "round to the
+      // integer" and "two significant figures" part company (315 rather than 320).
+      [250, "250 Hz"],
+      [280, "280 Hz"],
+      [315, "315 Hz"],
+      [355, "355 Hz"],
+      [450, "450 Hz"],
+      // From 1 kHz, three significant figures, trailing zeros and all.
+      [1120, "1.12 kHz"],
+      [1400, "1.40 kHz"],
+      [2800, "2.80 kHz"],
+      [3150, "3.15 kHz"],
+      [5000, "5.00 kHz"],
+      [18000, "18.0 kHz"],
+      // The band boundary itself. Exactly 1000 is a value the old octave formula never
+      // produced from an integer raw, so which side of it the unit prints was a new question:
+      // it takes the kHz form, and the grade below stays in Hz.
+      [900, "900 Hz"],
+      [1000, "1.00 kHz"],
+    ] as const) {
+      expect(formatFx1Hz(hz), `${hz}`).toBe(label);
+    }
+    for (const [hz, label] of [
+      [21.2, "21.2 Hz"],
+      [50, "50.0 Hz"],
+      [315, "315 Hz"],
+      [8000, "8.00 kHz"],
+      [16000, "16.0 kHz"],
+      // …and the same boundary on this family, read across it one grade at a time.
+      [900, "900 Hz"],
+      [950, "950 Hz"],
+      [1000, "1.00 kHz"],
+    ] as const) {
+      expect(formatFx2Hz(hz), `${hz}`).toBe(label);
+    }
+    // The one value both families reach, printed the same way by each, so the pair above is a
+    // difference in the Hz band rather than two unrelated formatters.
+    expect(formatFx1Hz(315)).toBe(formatFx2Hz(315));
+    // …and the difference itself: the same grade, one dropping the decimal.
+    expect(formatFx1Hz(22.4)).not.toBe(formatFx2Hz(22.4));
+  });
+
+  // …and the rows themselves take it. Pinning the formatters alone leaves a descriptor free to
+  // go on calling the app's shared `formatHz`, which is a row that reads 3.55 kHz as "3.55 kHz"
+  // and 22.4 Hz as "22 Hz" — right by luck in one band and wrong in the other. Measured raws,
+  // through the descriptor the panel actually renders.
+  it("renders each filter row through its own family's formatter", () => {
+    const row = (type: number, key: string): FxParamDesc => fxParams(type).find((d) => d.key === key)!;
+    for (const [type, key, raw, label] of [
+      // REV-X Hall: the two readings taken one click above each control's floor, and the LPF
+      // point the old record already carried.
+      [0, "revxHpf", 1, "22 Hz"],
+      [0, "lowFreq", 1, "22 Hz"],
+      [0, "revxLpf", 44, "3.15 kHz"],
+      [0, "revxLpf", 45, "3.55 kHz"],
+      // The top of each REV-X window, which is the band where the app's shared formatHz and
+      // this one part company (it writes two decimals in kHz, so 18.0 would read 18.00).
+      // Without a point here the row can go on calling the shared one and every other
+      // assertion still passes. Two swaps here are behaviour-preserving over the DECLARED
+      // window and stay green correctly: `revxHpf` to the shared `formatHz` (its window,
+      // raw 0-52 = 20 Hz to 8 kHz, ends below the 10 kHz band where the two diverge), and
+      // `revxLpf` to `formatFx2Hz` (its window, raw 34-60, is entirely at or above 1 kHz,
+      // where the two families print alike). Both are equivalences of the window, not of the
+      // functions — `format` does not clamp, so either is separable at an out-of-window raw.
+      [0, "lowFreq", 59, "18.0 kHz"],
+      [0, "revxLpf", 60, "20.0 kHz"],
+      // Mono Delay: one click above THRU, and both ends of the LPF's window.
+      [1024, "delayHpf", 6, "21.2 Hz"],
+      [1024, "delayLpf", 21, "50.0 Hz"],
+      [1024, "delayLpf", 121, "16.0 kHz"],
+      [1024, "delayHpf", 109, "8.00 kHz"],
+      // The 1 kHz boundary through the rows that reach it — FX1's LPF has it at the very
+      // bottom of its window, which is where the load-time repair lands an under-range
+      // document, so it is the label a repaired plan shows.
+      [1024, "delayHpf", 71, "900 Hz"],
+      [1024, "delayHpf", 73, "1.00 kHz"],
+      [0, "revxLpf", 34, "1.00 kHz"],
+      // Rev.R3 shares the delay family's table and window, so it shares its precision. BOTH
+      // of its rows: they are separate descriptors and each carries its own formatter call,
+      // so one of them can be rewired without the other going red.
+      [768, "revr3Hpf", 6, "21.2 Hz"],
+      [768, "revr3Lpf", 21, "50.0 Hz"],
+    ] as const) {
+      expect(row(type, key).format!(raw, {}), `${key} raw ${raw}`).toBe(label);
+    }
+  });
+
+  // What each control admits, asked of the function directly rather than through a plan. The
+  // ends are the part a distance search cannot do: every option is the same distance from a
+  // far-outside value once the subtraction saturates, so a nearest-of scan keeps whichever it
+  // started with and the menu's FIRST item answers for a value past its LAST.
+  it("takes a raw to the nearest value its own control admits, at the ends included", () => {
+    const sync = fxParams(1024).find((d) => d.key === "sync")!;
+    const note = fxParams(1024).find((d) => d.key === "note")!;
+    const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    const last = note.options!.at(-1)!.value;
+    for (const [desc, raw, want] of [
+      // A toggle has no bounds written down; 0 and 1 are its whole domain.
+      [sync, 1.6, 1],
+      [sync, -3, 0],
+      [sync, Number.MAX_VALUE, 1],
+      [sync, -Number.MAX_VALUE, 0],
+      // A select admits its option values. Both ends, and a value so far outside that every
+      // option is the same distance from it.
+      [note, 14.6, last],
+      [note, 9999, last],
+      [note, Number.MAX_VALUE, last],
+      [note, -Number.MAX_VALUE, 0],
+      // …and a half-step resolves the way the round does, which is the way a slider's does.
+      [note, 0.5, 1],
+      [sync, 0.5, 1],
+      [lpf, 35.5, 36],
+      // A slider is its window.
+      [lpf, 35.6, 36],
+      [lpf, Number.MAX_VALUE, lpf.rawMax],
+      [lpf, -Number.MAX_VALUE, lpf.rawMin],
+    ] as const) {
+      expect(fxRawForDesc(desc, raw), `${desc.key} ${raw}`).toBe(want);
+    }
+    // A TIE goes to the lower value. The delay Note's own options are consecutive integers, so
+    // a rounded raw always lands exactly on one and no tie can arise from the shipped catalogue
+    // — the rule is stated, so it is asked of a menu that can produce one.
+    const gapped: FxParamDesc = {
+      ...note,
+      options: [
+        { value: 0, label: "a" },
+        { value: 2, label: "b" },
+      ],
+    };
+    expect(fxRawForDesc(gapped, 1)).toBe(0);
+    expect(fxRawForDesc({ ...gapped, options: [...gapped.options!].reverse() }, 1)).toBe(0);
+
+    // The declared order of the options decides nothing: reversed, the answers are the same.
+    const reversed: FxParamDesc = { ...note, options: [...note.options!].reverse() };
+    for (const raw of [0.5, 3.5, 14.6, 9999, -9999, Number.MAX_VALUE]) {
+      expect(fxRawForDesc(reversed, raw), `reversed ${raw}`).toBe(fxRawForDesc(note, raw));
+    }
+  });
+
+  // A series steps by its grade, which is what a formula cannot do: the neighbours of a
+  // labelled value are the next labels, not the value times a ratio. Without this, a formula
+  // fitted to the points above would still pass them.
+  it("steps in grades, so a neighbour is the next label rather than a ratio", () => {
+    expect([53, 54, 55].map(fx2FreqHz)).toEqual([315, 335, 355]);
+    expect([44, 45, 46].map(revxFreqHz)).toEqual([3150, 3550, 4000]);
   });
   it("Initial/ER delay = raw × 200/127", () => {
     expect(initDelayMs(0)).toBeCloseTo(0, 1);
@@ -83,11 +274,14 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect([lpf.rawMin, lpf.rawMax]).toEqual([21, 122]);
     expect(hpf.format!(0, {})).toBe("THRU");
     expect(hpf.format!(5, {})).toBe("THRU");
-    expect(hpf.format!(6, {})).toBe("21 Hz"); // LCD 21.2
-    expect(hpf.format!(109, {})).toBe("8.14 kHz"); // LCD 8.00k
-    expect(lpf.format!(21, {})).toBe("50 Hz"); // LCD 50.0
-    expect(lpf.format!(121, {})).toBe("16.27 kHz"); // LCD 16.0k
     expect(lpf.format!(122, {})).toBe("THRU");
+    // The ends themselves are pinned as VALUES, which is what the unit was read for. Where the
+    // window reaches is this case's subject; how the row is spelled belongs to the formatter
+    // cases above, which pin every label read off the unit.
+    expect(fx2FreqHz(6)).toBe(21.2);
+    expect(fx2FreqHz(109)).toBe(8000);
+    expect(fx2FreqHz(21)).toBe(50);
+    expect(fx2FreqHz(121)).toBe(16000);
     // Rev.R3 takes the same window on its own slots.
     for (const [k, want] of [
       ["revr3Hpf", [0, 109]],

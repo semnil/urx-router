@@ -11,6 +11,8 @@
 // into the device's display units here, so a captured plan round-trips exactly and
 // the inspector sliders edit raw with a display-only formatter.
 
+import { preferredNumber, R20, R40 } from "./preferred-numbers";
+
 /** EFFECT TYPE selector param_id per FX channel index (FX1 = 0, FX2 = 1). Note the
  *  selector is per CHANNEL, not a y index on one param — FX2 is 683, not 679:0:1.
  *
@@ -90,13 +92,16 @@ export function resolveFxEffectType(fxIndex: number, typeValue: number | undefin
 
 // ---- raw → display encodings (calibrated; raw is the broker array value) ----
 
-/** REV-X frequency table (HPF / LPF / Low Freq): 1/6-octave from 20 Hz. */
+/* Both filter tables are ISO 3 preferred-number series, and the offsets below are the only
+ * part of them this module owns: the grades themselves are shared with the multi-band
+ * compressor crossover, which steps in the same R40. */
+/** REV-X frequency table (HPF / LPF / Low Freq): R20, with raw 0 at 20 Hz. */
 export function revxFreqHz(raw: number): number {
-  return 20 * Math.pow(2, raw / 6);
+  return preferredNumber(R20, raw + 26);
 }
-/** Rev.R3 / delay frequency table (HPF / LPF): 1/12-octave from 15 Hz. */
+/** Rev.R3 / delay frequency table (HPF / LPF): R40, with raw 6 at its 21.2 Hz floor. */
 export function fx2FreqHz(raw: number): number {
-  return 15 * Math.pow(2, raw / 12);
+  return preferredNumber(R40, raw + 47);
 }
 /** Initial Delay / ER-Reverb Delay (REV-X + Rev.R3): linear ms = raw × 200/127. */
 export function initDelayMs(raw: number): number {
@@ -179,10 +184,34 @@ const FX_NOTE_OPTIONS = [
 
 // ---- shared display formatters ----
 
-/** Hz value → "560 Hz" / "3.55 kHz". Shared with the inspector's SSMCS readouts. */
+/** Hz value → "560 Hz" / "3.55 kHz". Shared with the inspector's SSMCS readouts and the
+ *  channel EQ, so it is the app's own default rather than any one control's rule. */
 export function formatHz(hz: number): string {
   if (hz >= 1000) return `${(hz / 1000).toFixed(2)} kHz`;
   return `${Math.round(hz)} Hz`;
+}
+
+/* The two FX filter families are printed to DIFFERENT precisions, and the app follows each
+ * rather than the default above, because these rows name a setting the unit also displays.
+ *
+ *  band        FX1 (REV-X, R20)     FX2 (Rev.R3 / delay, R40)
+ *  < 1 kHz     integer  22, 250     3 significant figures  21.2, 50.0, 315
+ *  >= 1 kHz    3 s.f.   1.12k       3 s.f.                 8.00k, 16.0k
+ *
+ * The difference is the Hz band alone: FX1 drops the decimal that FX2 keeps. R20's grades
+ * stay distinct as integers there (20 / 22 / 25 / 28 / 32 / 36) while R40's do not — 10.6 and
+ * 11.2 would both read 11 — which is the shape of the two tables rather than a display quirk.
+ *
+ * `toPrecision(3)` is the three-figure half: it keeps the trailing zeros the unit shows
+ * (50.0, 8.00k, 16.0k) that a fixed decimal count cannot give across bands. */
+const threeFigures = (v: number): string => v.toPrecision(3);
+/** REV-X filter frequency → the label the unit prints for it. */
+export function formatFx1Hz(hz: number): string {
+  return hz >= 1000 ? `${threeFigures(hz / 1000)} kHz` : `${Math.round(hz)} Hz`;
+}
+/** Rev.R3 / delay filter frequency → the label the unit prints for it. */
+export function formatFx2Hz(hz: number): string {
+  return hz >= 1000 ? `${threeFigures(hz / 1000)} kHz` : `${threeFigures(hz)} Hz`;
 }
 function formatSec(s: number): string {
   return `${s < 10 ? s.toFixed(2) : s.toFixed(1)} s`;
@@ -194,10 +223,10 @@ function formatSec(s: number): string {
 const FX2_HPF_THRU_TOP = 5;
 const FX2_LPF_THRU = 122;
 function fx2HpfLabel(raw: number): string {
-  return raw <= FX2_HPF_THRU_TOP ? "THRU" : formatHz(fx2FreqHz(raw));
+  return raw <= FX2_HPF_THRU_TOP ? "THRU" : formatFx2Hz(fx2FreqHz(raw));
 }
 function fx2LpfLabel(raw: number): string {
-  return raw >= FX2_LPF_THRU ? "THRU" : formatHz(fx2FreqHz(raw));
+  return raw >= FX2_LPF_THRU ? "THRU" : formatFx2Hz(fx2FreqHz(raw));
 }
 function formatMs(ms: number): string {
   return `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
@@ -233,14 +262,14 @@ export interface FxParamDesc {
 // keyed by `key`), so a key two families both use is one storage slot: switching the
 // effect type hands whatever is stored there to the family that is now selected. Where
 // the two families address different device slots — or the same slot under a different
-// law (REV-X's HPF/LPF are a 1/6-octave index from 20 Hz, the delay family's a
-// 1/12-octave index from 15 Hz) — a shared key therefore writes one family's value into
+// law (REV-X's HPF/LPF index the R20 preferred-number series, the delay family's the R40
+// one, at different offsets) — a shared key therefore writes one family's value into
 // the other's parameter, so those keys carry the family name. `reverbTime` is slot 7 in
 // both reverb families, one device parameter, and stays shared. `label` is what the UI
 // and i18n resolve, and is bare regardless.
 
 // REV-X (FX1 reverbs). Slots from live calibration. Reverb Time display needs the
-// Room Size sibling raw. Frequencies use the 1/6-oct table; ratios are raw/10.
+// Room Size sibling raw. Frequencies use the R20 table; ratios are raw/10.
 export const REVX_PARAMS: FxParamDesc[] = [
   {
     key: "reverbTime",
@@ -306,7 +335,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     rawMax: 52,
     rawStep: 1,
     def: 4,
-    format: (r) => formatHz(revxFreqHz(r)),
+    format: (r) => formatFx1Hz(revxFreqHz(r)),
   },
   {
     key: "revxLpf",
@@ -317,7 +346,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     rawMax: 60,
     rawStep: 1,
     def: 50,
-    format: (r) => formatHz(revxFreqHz(r)),
+    format: (r) => formatFx1Hz(revxFreqHz(r)),
   },
   {
     key: "revxHiRatio",
@@ -350,11 +379,11 @@ export const REVX_PARAMS: FxParamDesc[] = [
     rawMax: 59,
     rawStep: 1,
     def: 32,
-    format: (r) => formatHz(revxFreqHz(r)),
+    format: (r) => formatFx1Hz(revxFreqHz(r)),
   },
 ];
 
-// Rev.R3 (FX2 reverbs). Frequencies use the 1/12-oct table; Feedback is signed raw.
+// Rev.R3 (FX2 reverbs). Frequencies use the R40 table; Feedback is signed raw.
 export const REVR3_PARAMS: FxParamDesc[] = [
   {
     key: "reverbTime",
@@ -653,11 +682,59 @@ export const FX_LEVEL_DEFAULT = 100;
  *  going silent. The `typeof` in front of it narrows `unknown` for the compiler and decides
  *  nothing at run time.
  *
+ *  A FRACTIONAL value is rounded rather than sent as it stands: a raw is a broker integer, so
+ *  35.6 names no setting the unit has. The readout rounds it the same way, and the loader's
+ *  repair writes that rounded value into the plan — the three have to agree or the panel, the
+ *  document and the wire name different settings.
+ *
  *  ONE seat, because the loader repairs a document to exactly what the emit would send, and two
- *  spellings of that rule are two answers to the same question. */
+ *  spellings of that rule are two answers to the same question. This form takes the bounds
+ *  directly and is for the effect LEVEL, which no descriptor describes; everything a descriptor
+ *  DOES describe goes through `fxRawForDesc`, since a window is not the only shape a valid set
+ *  comes in. */
 export function fxRawToSend(stored: unknown, def: number, lo?: number, hi?: number): number {
-  const v = typeof stored === "number" && Number.isFinite(stored) ? stored : def;
+  const v = typeof stored === "number" && Number.isFinite(stored) ? Math.round(stored) : def;
   return Math.min(Math.max(v, lo ?? v), hi ?? v);
+}
+
+/** The raw this descriptor's own control admits, nearest to `raw`.
+ *
+ *  A window is only the SLIDER's answer. A toggle admits 0 and 1 and carries no bounds at all,
+ *  so a window-only normalisation leaves 2 on a two-state control; a select admits its option
+ *  values, so the same normalisation leaves the delay Note at 15 where the menu ends at 14 and
+ *  no item corresponds. Both reach the plan the way any raw does — a generated document, a hand
+ *  edit — and both are then written to the unit. */
+export function fxRawForDesc(desc: FxParamDesc, raw: number): number {
+  // Rounded first, and by the same rule every control uses, so a value halfway between two
+  // settings resolves the same way whichever control holds it.
+  const v = Math.round(raw);
+  if (desc.control === "toggle") return v <= 0 ? 0 : 1;
+  if (desc.control === "select") {
+    const values = (desc.options ?? []).map((o) => o.value).sort((a, b) => a - b);
+    if (values.length === 0) return v;
+    // The TOP is answered before any distance is measured. Subtracting a far-outside value from
+    // each option gives the same double for all of them — every distance from Number.MAX_VALUE
+    // is Number.MAX_VALUE — so a nearest-of search keeps whichever option it started with, and
+    // the menu's first item was answering for a value past its last. The bottom needs no such
+    // guard and is deliberately not given one: the search starts at the lowest option, which is
+    // already the answer for anything below the menu, saturating or not. `>=` rather than `>`
+    // for the same reason in reverse — the search answers the last option correctly when v IS
+    // it, so the two spellings cannot be told apart; this one says what the line is for.
+    if (v >= values.at(-1)!) return values.at(-1)!;
+    // Inside the menu, the nearest; a tie goes to the lower value, which the sort above makes
+    // independent of the order the options are declared in.
+    let best = values[0]!;
+    for (const o of values) if (Math.abs(o - v) < Math.abs(best - v)) best = o;
+    return best;
+  }
+  return Math.min(Math.max(v, desc.rawMin ?? v), desc.rawMax ?? v);
+}
+
+/** What the write path sends for one descriptor: its own default when the plan carries nothing
+ *  readable, and otherwise the nearest raw its control admits. */
+export function fxDescRawToSend(desc: FxParamDesc, stored: unknown): number {
+  const v = typeof stored === "number" && Number.isFinite(stored) ? stored : desc.def;
+  return fxRawForDesc(desc, v);
 }
 
 /** The keys that were shared across families before they carried a family name. */
