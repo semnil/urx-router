@@ -1033,6 +1033,61 @@ describe("the live session", () => {
     expect(statusText()).toBe(t().status.newPlan);
   });
 
+  // The link outliving the session is only safe while nothing else can take it. A read
+  // still doing round trips has no epoch of its own — `vd::sender` hands it whatever worker
+  // is installed when it asks — so an action connecting here would replace the worker under
+  // it, and its epilogue would re-base and flush through the session that replaced it.
+  it("lets nothing else connect while the ended session's read is still running", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+    notifyRate(shell, { delayMs: 1 });
+    const before = shell.count("vd_get");
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(before + 20), {
+      timeout: 25_000,
+      interval: 5,
+    });
+
+    const connects = shell.count("vd_connect");
+    const disconnects = shell.count("vd_disconnect");
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+
+    // The toggle is off and the link is NOT: the read is still running over it.
+    expect(shell.count("vd_disconnect")).toBe(disconnects);
+    expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(true);
+    expect($<HTMLSelectElement>("rate-picker").disabled).toBe(true);
+    // The toggle stays usable — it is the holder's own entry — so the restart is refused
+    // by the latch rather than by the affordance. Read synchronously: `holdDeviceLink`
+    // writes the line before the click handler's first await, and the read still running
+    // writes its own over it.
+    $("btn-live").click();
+    expect(statusText()).toBe(t().status.deviceLinkBusy);
+    expect(shell.count("vd_connect")).toBe(connects);
+
+    // …and the disconnect is what lifts it, not the toggle going off.
+    await invoked(shell, "vd_disconnect", disconnects + 1);
+    await vi.waitFor(() => expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false), { timeout: 25_000 });
+  });
+
+  // …and the release has to give the link back even when it fails. The holder is what
+  // every connect path takes, so a release that skipped it on the error path would leave
+  // the device actions greyed with nothing but a relaunch to undo it.
+  it("gives the link back and says so when the disconnect itself fails", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+    shell.failOnce("vd_disconnect", new Error("control-worker-gone"));
+    $("btn-live").click();
+
+    await vi.waitFor(() => expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false), { timeout: 25_000 });
+    // Told, not only recovered: the app cannot say whether the unit is still attached to a
+    // worker, and the console does not reach an installed build.
+    expect(errors(shell)).toContain(t().status.liveError(t().error.shell.controlWorkerGone));
+  });
+
   // The other cause of the same cleared values, told apart by the notify stream rather
   // than by the read's own values — which come from different moments and cannot answer
   // it. Here the unit announces the selector itself while the read runs, so the clearing
@@ -1392,7 +1447,7 @@ describe("the live session", () => {
   // whole duration — a switch replaces the plan wholesale, which a session cannot
   // survive. (The race harness pins the same rule from the other side.)
   it("locks the model picker and the other device actions for its duration", SLOW, async () => {
-    await bootDevice();
+    const shell = await bootDevice();
     const picker = $<HTMLSelectElement>("model-picker");
     expect(picker.disabled).toBe(false);
 
@@ -1402,9 +1457,17 @@ describe("the live session", () => {
     expect(($("btn-fetch") as HTMLButtonElement).disabled).toBe(true);
     expect($<HTMLSelectElement>("rate-picker").disabled).toBe(true);
 
+    const disconnects = shell.count("vd_disconnect");
     $("btn-live").click();
+    // The model picker goes with the SESSION and the rest with the LINK, and the two no
+    // longer end together: the release waits out a follow read still doing round trips, so
+    // an action taken between them would connect over the read (the case below drives that
+    // window). The picker is free at once because a plan replacement is what it costs, and
+    // that is the session's business rather than the connection's.
     await vi.waitFor(() => expect(picker.disabled).toBe(false), { timeout: 10_000 });
-    expect(($("btn-fetch") as HTMLButtonElement).disabled).toBe(false);
+    await invoked(shell, "vd_disconnect", disconnects + 1, 10_000);
+    await vi.waitFor(() => expect(($("btn-fetch") as HTMLButtonElement).disabled).toBe(false), { timeout: 10_000 });
+    expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false);
   });
 
   // Two clicks inside the activation must admit one session: the flow is long and

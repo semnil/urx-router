@@ -347,10 +347,12 @@ function beginLinkLedger(device: string): void {
   linkStatsView?.setSession(true);
 }
 
-/** Close the ledger and release the connection, in that order — a reading taken after
- *  the disconnect reports a session that did nothing, and the counters go to zero with
- *  the link. THE one release: every exit from a live session goes through here, so the
- *  ordering is a property of the code rather than a rule each exit re-implements.
+/** Close the ledger, then the connection, then hand the link holder back — in that
+ *  order. A reading taken after the disconnect reports a session that did nothing and the
+ *  counters go to zero with the link, and the holder is what keeps another action from
+ *  connecting over a read this is still waiting out. THE one release: every exit from a
+ *  live session goes through here, so the ordering is a property of the code rather than
+ *  a rule each exit re-implements.
  *
  *  Chained rather than awaited so callers stay synchronous where they were: the
  *  disconnect was already fire-and-forget, and its epoch guard is what makes a late one
@@ -369,7 +371,26 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   // in front of it beginning. allSettled rather than all: a ledger that rejects still has
   // to release the link.
   const reads = Promise.all([...followReads].map((r) => r.done));
-  return Promise.allSettled([ledger, reads]).then(() => vdDisconnect(epoch));
+  return (
+    Promise.allSettled([ledger, reads])
+      .then(() => vdDisconnect(epoch))
+      // The holder goes back HERE and not in deactivateLive, because it is what stops
+      // another action from connecting: an install replaces the worker, and the read still
+      // running above has no epoch of its own — its next round trip would go to whatever is
+      // installed by then, and its epilogue would re-base and flush through the session
+      // that replaced it. Ahead of the catch rather than behind it, so a disconnect that
+      // failed cannot leave the app locked out of its own device actions: behind one that
+      // absorbs the rejection, a `finally` and a `then` do the same thing and neither says
+      // which was meant.
+      .finally(() => releaseDeviceLink("live"))
+      // …and a disconnect that could not be sent leaves the app unable to say whether the
+      // unit is still attached to a worker, which is a dialog rather than a status line.
+      // Not on a session ending in ERROR: stopLiveOnError has already raised one naming
+      // the same drop, and the disconnect failing is how a dropped link answers.
+      .catch((err) => {
+        if (reason !== "error") showError(t().status.liveError(errorText(err)));
+      })
+  );
 }
 
 const live = DEMO
@@ -1086,8 +1107,6 @@ function setLiveUi(on: boolean): void {
 function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   if (!liveSessionUp) return;
   liveSessionUp = false;
-  // Before setLiveUi below, which repaints the group from whoever holds the link.
-  releaseDeviceLink("live");
   midi?.probeMark("live:off");
   // Nothing keeps the plan and the unit together from here, so the output side closes
   // until the next session's readback settles.
