@@ -98,6 +98,11 @@ describe("fx-effect encodings (live calibration anchors)", () => {
       [3150, "3.15 kHz"],
       [5000, "5.00 kHz"],
       [18000, "18.0 kHz"],
+      // The band boundary itself. Exactly 1000 is a value the old octave formula never
+      // produced from an integer raw, so which side of it the unit prints was a new question:
+      // it takes the kHz form, and the grade below stays in Hz.
+      [900, "900 Hz"],
+      [1000, "1.00 kHz"],
     ] as const) {
       expect(formatFx1Hz(hz), `${hz}`).toBe(label);
     }
@@ -107,6 +112,10 @@ describe("fx-effect encodings (live calibration anchors)", () => {
       [315, "315 Hz"],
       [8000, "8.00 kHz"],
       [16000, "16.0 kHz"],
+      // …and the same boundary on this family, read across it one grade at a time.
+      [900, "900 Hz"],
+      [950, "950 Hz"],
+      [1000, "1.00 kHz"],
     ] as const) {
       expect(formatFx2Hz(hz), `${hz}`).toBe(label);
     }
@@ -146,6 +155,12 @@ describe("fx-effect encodings (live calibration anchors)", () => {
       [1024, "delayLpf", 21, "50.0 Hz"],
       [1024, "delayLpf", 121, "16.0 kHz"],
       [1024, "delayHpf", 109, "8.00 kHz"],
+      // The 1 kHz boundary through the rows that reach it — FX1's LPF has it at the very
+      // bottom of its window, which is where the load-time repair lands an under-range
+      // document, so it is the label a repaired plan shows.
+      [1024, "delayHpf", 71, "900 Hz"],
+      [1024, "delayHpf", 73, "1.00 kHz"],
+      [0, "revxLpf", 34, "1.00 kHz"],
       // Rev.R3 shares the delay family's table and window, so it shares its precision. BOTH
       // of its rows: they are separate descriptors and each carries its own formatter call,
       // so one of them can be rewired without the other going red.
