@@ -21,6 +21,7 @@ import type {
   SsmcsParams,
 } from "../plan";
 import { incomingConnection, normalizeNodeName, SSMCS_INITIAL } from "../plan";
+import type { ParamRangeProblem } from "../plan-validate";
 import {
   FX_CHANNEL_NODE_INDEX,
   FX_EFFECT_ARRAY_PARAM,
@@ -1573,6 +1574,33 @@ export const addrKey = (paramId: number, x: number, y: number): number =>
   (paramId << (ADDR_SHIFT * 2)) | (x << ADDR_SHIFT) | y;
 
 export const cmdAddr = (c: VdCommand): number => addrKey(c.paramId, c.x, c.y);
+
+/** The address each reported out-of-range FX value is written to, in the same order.
+ *
+ *  A caller adopting such a value has to ask whether the DEVICE confirmed the address it was
+ *  sent to, and the report from `plan-validate.ts` names a plan key rather than an address.
+ *  This is the join, and it lives here because the mapping does: the slot comes from the
+ *  descriptor of the type the write path resolves, and the array param from the channel. An
+ *  entry is `undefined` where the plan carries no such command — a node the model does not
+ *  have, or a key no type of that channel names.
+ *
+ *  The commands are looked up in the emit's own output rather than rebuilt from the catalogue,
+ *  so a change to how an FX slot is addressed cannot leave this answering the old address. */
+export function paramRangeAddrs(model: DeviceModel, plan: Plan, problems: ParamRangeProblem[]): (number | undefined)[] {
+  const byNodeSlot = new Map<string, number>();
+  for (const c of planToCommands(model, plan)) {
+    if (c.name === "FX_EFFECT_PARAM" && c.node !== undefined) byNodeSlot.set(`${c.node}/${c.y}`, cmdAddr(c));
+  }
+  return problems.map((p) => {
+    if (p.where === "field" && p.key === "level") return byNodeSlot.get(`${p.node}/${FX_SLOT_LEVEL}`);
+    if (p.where !== "params") return undefined;
+    const fxIndex = FX_CHANNEL_NODE_INDEX[p.node];
+    if (fxIndex === undefined) return undefined;
+    const type = resolveFxEffectType(fxIndex, plan.nodeParams[p.node]?.fxEffect?.type);
+    const slot = fxParams(type).find((d) => d.key === p.key)?.slot;
+    return slot === undefined ? undefined : byNodeSlot.get(`${p.node}/${slot}`);
+  });
+}
 
 /** A packed key back as "paramId:x:y" — the form the trace probe and the race
  *  harness read off LiveSync.snapshotEntries(). Probe-only, so it stays out of

@@ -132,6 +132,11 @@ export function deviceCommands(
    *  seeded 0 from an unseeded one. Seeding puts the value in the same map a write would,
    *  so a read after a write still answers what was written. */
   seed: Record<string, number> = {},
+  /** Addresses the unit ACCEPTS a write to and does not keep — a value that lands and is not
+   *  held. A refusing stub is the other shape and the wrong one here: a refusal is reported
+   *  per command, so one refusing everything builds a failure list the size of the plan
+   *  instead of exercising the behaviour under test. */
+  ignoreWrite?: (a: Record<string, unknown>) => boolean,
 ): Record<string, unknown> {
   const values = new Map<string, number>(Object.entries(seed));
   const strings = new Map<string, string>();
@@ -140,7 +145,8 @@ export function deviceCommands(
     vd_disconnect: null,
     vd_get: (a: Record<string, unknown>) => values.get(addr(a)) ?? 0,
     vd_get_str: (a: Record<string, unknown>) => strings.get(addr(a)) ?? "",
-    vd_set: (a: Record<string, unknown>) => void values.set(addr(a), a.value as number),
+    vd_set: (a: Record<string, unknown>) =>
+      void (ignoreWrite?.(a) ? undefined : values.set(addr(a), a.value as number)),
     vd_set_str: (a: Record<string, unknown>) => void strings.set(addr(a), a.value as string),
     vd_params_subscribe: null,
     vd_params_unsubscribe: null,

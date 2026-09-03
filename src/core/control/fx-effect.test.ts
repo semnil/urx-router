@@ -17,6 +17,7 @@ import {
   fxEffectTypes,
   fxFamilyOf,
   fxParams,
+  FX_SLOT_LEVEL,
   fxRawForDesc,
   initDelayMs,
   migrateFxEffectParams,
@@ -30,7 +31,8 @@ import {
   type FxFamily,
   type FxParamDesc,
 } from "./fx-effect";
-import { planToCommands } from "./translate";
+import { paramRangeProblems } from "../plan-validate";
+import { cmdAddr, paramRangeAddrs, planToCommands } from "./translate";
 
 describe("fx-effect encodings (live calibration anchors)", () => {
   // Every filter frequency read off the unit's own screen, and the law has to reproduce each
@@ -670,5 +672,54 @@ describe("fx-effect readback round-trip", () => {
     expect(fx?.params?.reverbTime).toBe(15);
     expect(fx?.params?.erRevBalance).toBe(54);
     vi.doUnmock("../platform");
+  });
+});
+
+// The join between what the loader REPORTS about a plan (a node and a key) and the address the
+// write path sends it to. A caller adopting a normalised value has to ask whether the device
+// confirmed that address, and the two halves name the value differently; without this the
+// question could only be answered by rebuilding the addressing a second time.
+describe("paramRangeAddrs", () => {
+  const model = getModel("URX44V");
+
+  it("names the address each reported value is written to", () => {
+    const plan = emptyPlan("URX44V");
+    const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    // Out of the window at one end, and the effect level at the other — the level is a field
+    // no descriptor describes, so it is the half a descriptor lookup alone would miss.
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, level: 500, params: { delayLpf: 0 } } };
+    const problems = paramRangeProblems(plan);
+    expect(problems.map((p) => p.key)).toEqual(["level", "delayLpf"]);
+
+    const cmds = planToCommands(model, plan);
+    const at = (slot: number): number =>
+      cmdAddr(cmds.find((c) => c.node === "bus.fx2" && c.name === "FX_EFFECT_PARAM" && c.y === slot)!);
+    expect(paramRangeAddrs(model, plan, problems)).toEqual([at(FX_SLOT_LEVEL), at(lpf.slot)]);
+  });
+
+  it("resolves the slot under the type the write path will use, not the one stored", () => {
+    // 768 is Rev.R3 Hall, which FX2 offers and FX1 does not, so on FX1 the emit falls back to
+    // that channel's factory type — and the key's slot is the fallback's, not the stored type's.
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 768, params: { revxLpf: 0 } } };
+    const problems = paramRangeProblems(plan).filter((p) => p.key === "revxLpf");
+    expect(problems).toHaveLength(1);
+    const slot = fxParams(0).find((d) => d.key === "revxLpf")!.slot;
+    const cmds = planToCommands(model, plan);
+    expect(paramRangeAddrs(model, plan, problems)).toEqual([
+      cmdAddr(cmds.find((c) => c.node === "bus.fx1" && c.name === "FX_EFFECT_PARAM" && c.y === slot)!),
+    ]);
+  });
+
+  it("answers undefined where the plan carries no such command", () => {
+    // A node the model does not have: URX22 has one FX channel's worth of nodes and the plan
+    // below names the other, so nothing is emitted for it and there is no address to name.
+    const plan = emptyPlan("URX44V");
+    expect(
+      paramRangeAddrs(model, plan, [
+        { reason: "paramRange", node: "bus.nonesuch", where: "params", key: "delayLpf", stored: 0, action: "drop" },
+        { reason: "paramRange", node: "bus.fx2", where: "params", key: "notAKey", stored: 0, action: "drop" },
+      ]),
+    ).toEqual([undefined, undefined]);
   });
 });

@@ -3330,6 +3330,32 @@ Every plan the app itself authors carries an `fxEffect` on both channels — the
 (all three models), and a device readback writes one — so what this reaches is a document authored
 elsewhere: a `?plan=` payload from a generator, or a hand edit.
 
+### Taking back a value the write path normalised
+
+A normalised write leaves the plan naming a setting the unit is not at: the write path sends the value
+the control admits, the unit takes it, and the plan still holds the raw it was given. `comparePlan`
+cannot report the difference, because it compares the normalised value too and finds the device agreeing.
+The load path repairs a document, so the way one arrives is a DEVICE read — the unit's own encoder stops
+where the window does, but the wire does not, and an earlier build of this app could put a raw there.
+
+After a write, the plan takes those values back. What decides it is the set of ADDRESSES the device
+confirmed, not whether the write succeeded, and the two come apart exactly here: a live session whose
+snapshot already agrees with the unit sends nothing, so a flush can succeed without carrying the address
+in question at all. A first version keyed on the run's success and adopted values no write had touched —
+an unrelated fader move was enough to reproduce it.
+
+`confirmedAddrs` (`control/client.ts`) is that set: sent, acknowledged, and no longer differing when the
+converge re-read them, minus anything it could not read — unknown is not confirmed. A DIRECT live write
+is deliberately outside it: an acknowledgement says the unit accepted a write, not that it kept it, and
+an address no converge covered simply waits for one that does. `paramRangeAddrs` (`control/translate.ts`)
+is the join between the loader's report, which names a node and a key, and the address the emit sends it
+to; it reads the emit's own output rather than rebuilding the addressing, so a change to how an FX slot
+is addressed cannot leave it answering the old one.
+
+The value is authored FROM the device (`authorFromDevice`), the seat a device-side recompute already
+takes, rather than pushed as an edit: it is the write path's value rather than the operator's, and an undo
+that put the unwritable raw back would only have it normalised again on the next write.
+
 One value is **rewritten** rather than dropped in the DESERIALIZER, and it is the only one there — the
 loader rewrites a second class one layer later, after validation, where an FX value outside what the app can
 write is bounded, and one there is nothing to bound is dropped: a leaf that is not a finite number (so the

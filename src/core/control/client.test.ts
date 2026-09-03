@@ -10,6 +10,7 @@ vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn(), vdGetStr: vi.fn(
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import {
   compareCounts,
+  confirmedAddrs,
   compareNames,
   comparePlan,
   diffNames,
@@ -25,7 +26,8 @@ import {
   sendNames,
   setFollowUsb,
 } from "./client";
-import { addrKey, planToCommands, planToNameWrites, type VdCommand } from "./translate";
+import type { ConvergeResult } from "./client";
+import { addrKey, cmdAddr, planToCommands, planToNameWrites, type VdCommand } from "./translate";
 import { NODE_NAME_MAX_CHARS, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import { PORT_REF_NONE } from "./vd";
 
@@ -814,5 +816,48 @@ describe("compareNames", () => {
   it("reads nothing for a plan that names no node", async () => {
     expect(await compareNames(model, basePlan())).toEqual({ entries: [], errors: [] });
     expect(vi.mocked(vdGetStr)).not.toHaveBeenCalled();
+  });
+});
+
+// What a caller may take from a converge, as a set of ADDRESSES. A run-level verdict answers a
+// different question: a write can succeed without having sent the address in question at all,
+// which is how an earlier version of the adoption took values no write had touched.
+describe("confirmedAddrs", () => {
+  const cmd = (paramId: number, y: number): VdCommand =>
+    ({ name: "FX_EFFECT_PARAM", paramId, x: 0, y, planValue: 0, vdValue: 0 }) as unknown as VdCommand;
+  const result = (over: Partial<ConvergeResult>): ConvergeResult => ({
+    outcomes: [],
+    rounds: 1,
+    trace: [],
+    residual: [],
+    readErrors: [],
+    unread: [],
+    ...over,
+  });
+
+  it("keeps what was sent and acknowledged", () => {
+    const r = result({
+      outcomes: [
+        { command: cmd(681, 7), ok: true },
+        // Reached the device and was refused: the unit is not at the plan's value.
+        { command: cmd(681, 8), ok: false, error: "refused" },
+        // Never tried, because the loop stopped: the device never saw it.
+        { command: cmd(681, 9), ok: true, skipped: true },
+      ],
+    });
+    expect([...confirmedAddrs(r)]).toEqual([cmdAddr(cmd(681, 7))]);
+  });
+
+  it("drops an address the converge left differing, or could not read back", () => {
+    const sent = [cmd(681, 7), cmd(681, 8), cmd(681, 10)];
+    const r = result({
+      outcomes: sent.map((command) => ({ command, ok: true })),
+      // Still differing after the last round: the device did NOT take the plan's value.
+      residual: [{ command: cmd(681, 8), current: 3 }],
+      // The re-diff could not read it, so what the device holds is unknown — and unknown is
+      // not confirmed, which is the distinction a caller taking a value depends on.
+      unread: [cmd(681, 10)],
+    });
+    expect([...confirmedAddrs(r)]).toEqual([cmdAddr(cmd(681, 7))]);
   });
 });

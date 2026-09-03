@@ -36,7 +36,7 @@ import {
   type PatchTouch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
-import { applyParamRange, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
+import { applyParamRange, isRefusal, needsDecision, paramRangeProblems, planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
@@ -151,13 +151,14 @@ import {
   readClockState,
   readFollowUsb,
   readTrackCount,
+  confirmedAddrs,
   sendConverging,
   sendNames,
   setFollowUsb,
   type CommandDiff,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
-import { collisionOwners } from "./core/control/translate";
+import { collisionOwners, paramRangeAddrs } from "./core/control/translate";
 import type { SharedOwners } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
@@ -367,7 +368,13 @@ const live = DEMO
       getModel: () => getModel(modelId),
       getPlan: () => plan,
       onError: (message) => stopLiveOnError(errorText(message)),
-      onSent: (n) => setStatus(t().status.liveSynced(n)),
+      onSent: (n, confirmed) => {
+        // A live flush that reached the device is a successful write like any other, so the
+        // same adoption runs here — for the addresses this flush actually carried, which is
+        // what stops it firing on a value no write touched.
+        const taken = adoptConfirmedWrites(confirmed);
+        setStatus(t().status.liveSynced(n) + (taken ? ` — ${t().status.paramsBounded(taken)}` : ""));
+      },
       onCollapsed: (owners) => setStatus(sharedSettingText(owners)),
       // One bidirectional scope for the session: the same filter shapes the
       // snapshot, the flush, and the follow notify registration.
@@ -531,6 +538,38 @@ function authorFromDevice(node: string, place: () => boolean): boolean {
   followDirtyNodes.add(node);
   planHistory?.absorb(diffPlans(before, plan));
   return true;
+}
+/** After a write the device confirmed, the plan takes the values that were actually sent.
+ *
+ *  `translate.ts` normalises a raw this app cannot write — outside a slider's window, off a
+ *  select's menu, fractional — so from the moment such a write lands the plan names a setting
+ *  the unit is not at, and `comparePlan` cannot report it: it compares the normalised value
+ *  too and finds the device agreeing. The load path repairs a document, so what reaches this is
+ *  a DEVICE read: the unit holds a raw its own encoder stops short of, because an earlier build
+ *  could write one and the wire does not stop where the encoder does.
+ *
+ *  Keyed on the ADDRESSES the device confirmed, not on the write having succeeded. The two come
+ *  apart exactly where this runs: a live session whose snapshot already agrees sends nothing, so
+ *  the flush that succeeds is one the stranded address was never in — an earlier version keyed
+ *  on success and adopted values no write had touched, which an unrelated fader move reproduced.
+ *
+ *  Authored FROM the device rather than pushed as an edit, through the seat a device-side
+ *  recompute already takes: the value is the write path's rather than the operator's, and an
+ *  undo that put the unwritable raw back would only have it normalised again on the next write.
+ *  Returns how many the plan took, so a caller can say so beside its own outcome. */
+function adoptConfirmedWrites(confirmed: ReadonlySet<number>): number {
+  if (!confirmed.size) return 0;
+  const problems = paramRangeProblems(plan);
+  const addrs = paramRangeAddrs(getModel(modelId), plan, problems);
+  const mine = problems.filter((_, i) => addrs[i] !== undefined && confirmed.has(addrs[i]!));
+  if (!mine.length) return 0;
+  let taken = 0;
+  for (const node of new Set(mine.map((b) => b.node))) {
+    const forNode = mine.filter((b) => b.node === node);
+    if (authorFromDevice(node, () => (applyParamRange(plan, forNode), true))) taken += forNode.length;
+  }
+  if (taken) requestReflect();
+  return taken;
 }
 let followFull = false;
 // How many keys the follow reads behind the pending reflect actually authored. A COUNT
@@ -2907,11 +2946,7 @@ if (!DEMO) {
               setStatus(t().status.canceled);
               return null;
             }
-            const {
-              outcomes,
-              residual,
-              readErrors: convergeErrors,
-            } = await sendConverging(getModel(modelId), plan, {
+            const convergeResult = await sendConverging(getModel(modelId), plan, {
               initialDiffs: diffs,
               signal,
               scope,
@@ -2925,6 +2960,7 @@ if (!DEMO) {
                 }
               },
             });
+            const { outcomes, residual, readErrors: convergeErrors } = convergeResult;
             const skipped = outcomes.filter((o) => o.skipped).length;
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
@@ -2950,12 +2986,17 @@ if (!DEMO) {
               saveReport(failed, residual, convergeErrors);
             }
             if (!skipped) {
+              // Keyed on the addresses the device confirmed rather than on the run's verdict:
+              // a partial or non-converged write still confirmed the addresses it landed, and
+              // a clean one confirmed nothing about an address it never sent.
+              const taken = adoptConfirmedWrites(confirmedAddrs(convergeResult));
+              const note = taken ? ` — ${t().status.paramsBounded(taken)}` : "";
               setStatus(
-                failed.length
+                (failed.length
                   ? t().status.writePartial(total - failed.length, failed.length)
                   : residual.length
                     ? t().status.writeResidual(residual.length)
-                    : t().status.written(total),
+                    : t().status.written(total)) + note,
               );
               return null;
             }

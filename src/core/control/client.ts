@@ -213,6 +213,28 @@ export async function sendCommands(
  *  Both are ok:false, so every reader of an outcome list needs the distinction. */
 export const reachedAndFailed = (o: SendOutcome): boolean => !o.ok && !o.skipped;
 
+/** The addresses this converge left the device demonstrably holding the plan's value: sent,
+ *  acknowledged, and no longer differing when the loop re-read them.
+ *
+ *  It is a set of ADDRESSES rather than a verdict on the run, because the two questions have
+ *  different answers. A caller that wants to take a value the write path normalised — the plan
+ *  says one thing, the wire carried another — may only take it for an address the device was
+ *  actually asked about: a session whose snapshot already agrees sends nothing, so "the write
+ *  succeeded" is true while that address was never in it. Keying the decision on the run rather
+ *  than on the address adopted values no write had touched, which an unrelated fader move
+ *  reproduced.
+ *
+ *  Residual and unread are both removed. Residual is a difference that survived the last round,
+ *  so the device is NOT at the plan's value; unread is an address the re-diff could not read,
+ *  so what the device holds is unknown — and unknown is not confirmed. */
+export function confirmedAddrs(r: ConvergeResult): Set<number> {
+  const out = new Set<number>();
+  for (const o of r.outcomes) if (o.ok && !o.skipped) out.add(cmdAddr(o.command));
+  for (const d of r.residual) out.delete(cmdAddr(d.command));
+  for (const c of r.unread) out.delete(cmdAddr(c));
+  return out;
+}
+
 export interface NameOutcome {
   write: NameWrite;
   ok: boolean;

@@ -24,7 +24,7 @@ import {
   planToNameWrites,
 } from "./translate";
 import type { SharedOwners, NameWrite, VdCommand, WriteScope } from "./translate";
-import { reachedAndFailed, sendConverging } from "./client";
+import { confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 
@@ -81,7 +81,11 @@ export interface LiveSyncHooks {
   /** A write failed; sync is already stopped — the caller drops the connection. */
   onError: (message: string) => void;
   /** A flush sent `count` writes — for an optional, quiet "→ device" status. */
-  onSent: (count: number) => void;
+  /** A flush reached the device. `confirmed` is the addresses a converge in this flush read
+   *  back as matching — empty when none ran. A caller taking a value the write path normalised
+   *  may only take it for an address in here: a session whose snapshot already agrees sends
+   *  nothing, so a flush can succeed without the address in question being in it at all. */
+  onSent: (count: number, confirmed: ReadonlySet<number>) => void;
   /** Two or more plan owners resolved to one device address and the emitted set
    *  kept the last; the rest carried a different value and were dropped. Reported
    *  once per distinct owner set, not once per flush. */
@@ -673,6 +677,12 @@ export class LiveSync {
       const model = this.hooks.getModel();
       const plan = this.hooks.getPlan();
       let sent = 0;
+      // The addresses this flush had READ BACK as matching, for the hook above. A direct write
+      // is acknowledged and not re-read, so it is deliberately not in here: the hook's caller
+      // takes a value on the strength of this set, and an ack says the unit accepted a write
+      // rather than that it kept it. A converge is the path that answers the stronger question,
+      // and an address it does not cover simply waits for one that does.
+      const confirmed = new Set<number>();
       let sideEffect = false;
       const refetch = new Set<string>();
       // Per node, the command names a refetch head written in THIS flush handed to the
@@ -894,6 +904,7 @@ export class LiveSync {
         // would then record the plan as device truth, leaving those parameters
         // diverged for the rest of the session with no diff left to retry them.
         // Route it into the same teardown a direct write failure takes.
+        for (const a of confirmedAddrs(r)) confirmed.add(a);
         const failed = r.outcomes.find(reachedAndFailed);
         if (failed || r.readErrors.length) {
           // `||` throughout: an empty message is what a rejection with no reason
@@ -1010,7 +1021,7 @@ export class LiveSync {
         this.followSetStale = false;
         this.hooks.reregister?.();
       }
-      if (sent) this.hooks.onSent(sent);
+      if (sent) this.hooks.onSent(sent, confirmed);
       // After onSent because the status line is last-writer-wins, and never from
       // capture(), whose report the session's own "live sync on" would overwrite.
       const owners = collisionOwners(commands);

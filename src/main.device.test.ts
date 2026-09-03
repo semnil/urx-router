@@ -19,7 +19,7 @@ import { $, bootApp, deviceCommands, installAppGlobals, restoreAppGlobals, statu
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
 import { attackToVd, eqFreqToVd } from "./core/control/vd";
-import { formatHz } from "./core/control/fx-effect";
+import { formatHz, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { PARAMS } from "./core/control/params";
@@ -43,8 +43,12 @@ const bootDevice = async (
   /** Addresses the unit already holds a value for. Needed for anything the app only READS:
    *  the table answers an unwritten address 0, and 0 is a legal value there. */
   seed: Record<string, number> = {},
+  /** Addresses the unit accepts a write to and does not keep (main.test-util.ts). */
+  ignoreWrite?: (a: Record<string, unknown>) => boolean,
 ): Promise<TauriShell> =>
-  (await bootApp({ tauri: deviceCommands({ ...(agree ? { "plugin:dialog|message": "Ok" } : {}), ...over }, seed) }))!;
+  (await bootApp({
+    tauri: deviceCommands({ ...(agree ? { "plugin:dialog|message": "Ok" } : {}), ...over }, seed, ignoreWrite),
+  }))!;
 
 /**
  * Wait until `cmd` has been invoked `n` times. The device flows here write the status
@@ -1754,6 +1758,114 @@ describe("Write to device", () => {
 // Offered after the disconnect rather than during it (why, in `offerErrorReport`'s own
 // comment in main.ts). The write's read-failure case above covers the arm where the offer
 // is taken and a file appears; these are the two that leave nothing behind.
+// A raw the unit holds and this app cannot write. The load path repairs a document, so the way
+// one reaches the plan is a DEVICE read: the unit's own encoder stops where the window does,
+// but the wire does not, and an earlier build of this app could put one there.
+//
+// What the plan may take from a write is keyed on the ADDRESSES the device confirmed, not on
+// the write having succeeded — the last case is why. A live session whose snapshot already
+// agrees sends nothing, so an unrelated edit produces a successful flush that never carried
+// this address, and an earlier version of this adopted on that flush.
+describe("a value the unit holds and the app cannot write", () => {
+  const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+  const BELOW = lpf.rawMin! - 1;
+  // BOTH channels' slots are seeded, from the catalogue rather than by hand: an address the
+  // table has not been told about reads 0, and 0 is outside several of these windows too, so
+  // a partial seed would move the count this case asserts for a reason it is not about.
+  const unitHoldingLowLpf = (): Record<string, number> => {
+    const seed: Record<string, number> = { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
+    for (const [typeId, arrId, type] of [
+      [679, 681, 0],
+      [683, 685, 1024],
+    ] as const) {
+      seed[`${typeId}/0/0`] = type;
+      for (const d of fxParams(type)) seed[`${arrId}/0/${d.slot}`] = d.def;
+    }
+    seed[`685/0/${lpf.slot}`] = BELOW;
+    return seed;
+  };
+  // Read off the panel rather than out of module state: what the operator sees IS the question.
+  const shownLpf = (): string => {
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    return paramRow(t().inspector.fxEffect.params.lpf).querySelector(".param-val")?.textContent ?? "(no row)";
+  };
+
+  it("reads it verbatim, then takes the sent value once the device has confirmed it", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    // The read is verbatim: what the unit holds, not what the app could write.
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // …and the write's own value is what the plan ends up holding, so the panel and the unit
+    // name the same setting from here on.
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    expect(statusText()).toContain(t().status.paramsBounded(1));
+  });
+
+  it("takes nothing from a write the device did not keep", SLOW, async () => {
+    // The one address under test accepts the write and does not hold it. The converge cannot
+    // close on it, the write reports a residual, and the unit's value for that address is then
+    // not what was sent — which is the whole reason nothing may be taken from it.
+    const shell = await bootDevice(SAVES, true, unitHoldingLowLpf(), (a) => a.paramId === 685 && a.y === lpf.slot);
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+    expect(statusText()).not.toContain(t().status.paramsBounded(1));
+  });
+
+  it("takes it from a live flush that carried the address", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    // A session on its own sends nothing — the snapshot agrees with the unit, unwritable raw
+    // and all. What sends this address is an edit that rewrites the array, and the EFFECT TYPE
+    // menu is the one that does: it carries every slot of the new type out, the LPF among them,
+    // and the LPF is a key both delay types share.
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+    sel.value = "1025";
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {})), { timeout: 20_000 });
+  });
+
+  // The reproduction the first version of this failed. An edit somewhere else flushes, the
+  // flush succeeds, and this address is not in it — the snapshot already agrees with the unit,
+  // unwritable raw and all, so there is no diff to send. Keyed on the run's success rather than
+  // on the addresses it carried, the plan took a value nothing had written.
+  it("takes nothing from a live flush that did not carry the address", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    // An unrelated control on an unrelated node, driven the way the operator drives it.
+    const sets = shell.count("vd_set");
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.stereo"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    const fader = paramRow(t().inspector.level).querySelector<HTMLInputElement>("input[type=range]")!;
+    fader.value = String(Number(fader.value) - 3);
+    fader.dispatchEvent(new Event("input", { bubbles: true }));
+    fader.dispatchEvent(new Event("change", { bubbles: true }));
+
+    // The flush happened — without this the case would pass on nothing having been sent at all.
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(sets), { timeout: 20_000 });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+  });
+});
+
 describe("the failure report a device action offers", () => {
   /** A write that cancels on its first diff read, which is the cheapest way to a report. */
   const failingWrite = async (over: Record<string, unknown>): Promise<TauriShell> => {
