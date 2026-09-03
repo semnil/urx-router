@@ -227,7 +227,13 @@ test.describe("T2d shape-change", () => {
     // the new slot family.
     await mark(page, "to-delay");
     await chooseOption(typeSel, "1024"); // Mono Delay
-    await expect(typeSel).toHaveValue("1024");
+    // The barrier is the app COMMITTING the edit, not the select carrying the value:
+    // `chooseOption` writes `el.value` itself inside its own evaluate, so asserting the
+    // value back is satisfied by the helper on the first poll with nothing having been
+    // processed. The rows that used to serve as this barrier moved to the tuning screen,
+    // and the screen is closed here — the undo ledger is the observation that survives
+    // that move, and it is the one this phase is about to count anyway.
+    await expect.poll(async () => (await depthOf(page)).undo, { timeout: 5_000 }).toBeGreaterThan(depthBefore.undo);
     await settleAfter(page, "to-delay", 1500);
 
     trace = await traceOf(page);
@@ -356,6 +362,8 @@ test.describe("T2d shape-change", () => {
     // Phase 3 — one undo of the type change.
     await mark(page, "undo");
     await page.keyboard.press("Control+z");
+    // …and the same barrier in reverse: the entry is spent, not merely the select redrawn.
+    await expect.poll(async () => (await depthOf(page)).undo, { timeout: 5_000 }).toBe(depthBefore.undo);
     await expect(fxRow(page, "EFFECT TYPE").locator("select")).toHaveValue("0");
     await settleAfter(page, "undo", 1500);
 
