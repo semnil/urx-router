@@ -11,6 +11,8 @@
 // into the device's display units here, so a captured plan round-trips exactly and
 // the inspector sliders edit raw with a display-only formatter.
 
+import { preferredNumber, R20, R40 } from "./preferred-numbers";
+
 /** EFFECT TYPE selector param_id per FX channel index (FX1 = 0, FX2 = 1). Note the
  *  selector is per CHANNEL, not a y index on one param — FX2 is 683, not 679:0:1.
  *
@@ -90,32 +92,9 @@ export function resolveFxEffectType(fxIndex: number, typeValue: number | undefin
 
 // ---- raw → display encodings (calibrated; raw is the broker array value) ----
 
-/* The two filter-frequency tables are PREFERRED NUMBER series (ISO 3, the Renard grades),
- * not octave divisions. A geometric law fits either one closely enough to pass at the bottom
- * of its range and to drift at the top: R40's ratio is 10^(1/40) = 1.0593 against 2^(1/12) =
- * 1.0595, and R20's is 10^(1/20) = 1.122 against 2^(1/6) = 1.122. What separates them is that
- * a series is ROUNDED to its grade's own values, so its steps land on the numbers a filter is
- * labelled with (315, 5k, 8k, 16k) while a formula lands beside them (320.4, 5125.8, 8136.7,
- * 16273.4). The unit prints the series.
- *
- * The values are the grades themselves rather than a computed ratio, since a grade carries
- * roundings a formula does not reproduce — R40 holds 3.15 where 10^(21/40) = 3.162, and the
- * whole point of the table is the number the unit shows. */
-const R40 = [
-  10.0, 10.6, 11.2, 11.8, 12.5, 13.2, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.2, 22.4, 23.6, 25.0, 26.5, 28.0,
-  30.0, 31.5, 33.5, 35.5, 37.5, 40.0, 42.5, 45.0, 47.5, 50.0, 53.0, 56.0, 60.0, 63.0, 67.0, 71.0, 75.0, 80.0, 85.0,
-  90.0, 95.0,
-];
-/** R20 is R40's every other grade, and the FX1 tables step in it — one decade in 20. */
-const R20 = R40.filter((_, i) => i % 2 === 0);
-
-/** One grade of a series, `offset` places above its 1.0 decade start. */
-function preferredNumber(series: readonly number[], offset: number): number {
-  const n = series.length;
-  const i = ((offset % n) + n) % n;
-  return series[i]! * Math.pow(10, Math.floor(offset / n) - 1);
-}
-
+/* Both filter tables are ISO 3 preferred-number series, and the offsets below are the only
+ * part of them this module owns: the grades themselves are shared with the multi-band
+ * compressor crossover, which steps in the same R40. */
 /** REV-X frequency table (HPF / LPF / Low Freq): R20, with raw 0 at 20 Hz. */
 export function revxFreqHz(raw: number): number {
   return preferredNumber(R20, raw + 26);
@@ -283,14 +262,14 @@ export interface FxParamDesc {
 // keyed by `key`), so a key two families both use is one storage slot: switching the
 // effect type hands whatever is stored there to the family that is now selected. Where
 // the two families address different device slots — or the same slot under a different
-// law (REV-X's HPF/LPF are a 1/6-octave index from 20 Hz, the delay family's a
-// 1/12-octave index from 15 Hz) — a shared key therefore writes one family's value into
+// law (REV-X's HPF/LPF index the R20 preferred-number series, the delay family's the R40
+// one, at different offsets) — a shared key therefore writes one family's value into
 // the other's parameter, so those keys carry the family name. `reverbTime` is slot 7 in
 // both reverb families, one device parameter, and stays shared. `label` is what the UI
 // and i18n resolve, and is bare regardless.
 
 // REV-X (FX1 reverbs). Slots from live calibration. Reverb Time display needs the
-// Room Size sibling raw. Frequencies use the 1/6-oct table; ratios are raw/10.
+// Room Size sibling raw. Frequencies use the R20 table; ratios are raw/10.
 export const REVX_PARAMS: FxParamDesc[] = [
   {
     key: "reverbTime",
@@ -404,7 +383,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
   },
 ];
 
-// Rev.R3 (FX2 reverbs). Frequencies use the 1/12-oct table; Feedback is signed raw.
+// Rev.R3 (FX2 reverbs). Frequencies use the R40 table; Feedback is signed raw.
 export const REVR3_PARAMS: FxParamDesc[] = [
   {
     key: "reverbTime",

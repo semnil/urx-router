@@ -133,18 +133,24 @@ describe("fx-effect encodings (live calibration anchors)", () => {
       // The top of each REV-X window, which is the band where the app's shared formatHz and
       // this one part company (it writes two decimals in kHz, so 18.0 would read 18.00).
       // Without a point here the row can go on calling the shared one and every other
-      // assertion still passes. `revxHpf` has no such point and cannot: measured over its
-      // whole window (raw 0-52, 20 Hz to 8 kHz) the two formatters agree on every raw, since
-      // they diverge only from 10 kHz up. Swapping that ONE row to the shared formatter is
-      // behaviour-preserving, so it stays green here — correctly.
+      // assertion still passes. Two swaps here are behaviour-preserving over the DECLARED
+      // window and stay green correctly: `revxHpf` to the shared `formatHz` (its window,
+      // raw 0-52 = 20 Hz to 8 kHz, ends below the 10 kHz band where the two diverge), and
+      // `revxLpf` to `formatFx2Hz` (its window, raw 34-60, is entirely at or above 1 kHz,
+      // where the two families print alike). Both are equivalences of the window, not of the
+      // functions — `format` does not clamp, so either is separable at an out-of-window raw.
       [0, "lowFreq", 59, "18.0 kHz"],
       [0, "revxLpf", 60, "20.0 kHz"],
       // Mono Delay: one click above THRU, and both ends of the LPF's window.
       [1024, "delayHpf", 6, "21.2 Hz"],
       [1024, "delayLpf", 21, "50.0 Hz"],
       [1024, "delayLpf", 121, "16.0 kHz"],
-      // Rev.R3 shares the delay family's table and window, so it shares its precision.
+      [1024, "delayHpf", 109, "8.00 kHz"],
+      // Rev.R3 shares the delay family's table and window, so it shares its precision. BOTH
+      // of its rows: they are separate descriptors and each carries its own formatter call,
+      // so one of them can be rewired without the other going red.
       [768, "revr3Hpf", 6, "21.2 Hz"],
+      [768, "revr3Lpf", 21, "50.0 Hz"],
     ] as const) {
       expect(row(type, key).format!(raw, {}), `${key} raw ${raw}`).toBe(label);
     }
@@ -201,10 +207,9 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect(hpf.format!(0, {})).toBe("THRU");
     expect(hpf.format!(5, {})).toBe("THRU");
     expect(lpf.format!(122, {})).toBe("THRU");
-    // The ends themselves are pinned as VALUES, which is what the unit was read for. How many
-    // digits it prints them with is a different question and a different measurement — the
-    // formatter is shared with every other frequency readout in the app — so this asserts
-    // where the window reaches rather than how the row is spelled.
+    // The ends themselves are pinned as VALUES, which is what the unit was read for. Where the
+    // window reaches is this case's subject; how the row is spelled belongs to the formatter
+    // cases above, which pin every label read off the unit.
     expect(fx2FreqHz(6)).toBe(21.2);
     expect(fx2FreqHz(109)).toBe(8000);
     expect(fx2FreqHz(21)).toBe(50);
