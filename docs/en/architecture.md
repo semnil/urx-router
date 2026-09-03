@@ -214,7 +214,7 @@ carries a one-line map of the same directories and points here.
     - `preferred-numbers.ts` the ISO 3 (Renard) grade tables R40 and R20, and the lookup that reads one.
       The unit's frequency tables step in these rather than in octave divisions, and the two catalogues
       below both index them — one seat, because each carried its own copy until they disagreed in float
-      (a 1.0-based mantissa multiplies up to 111.99999999999999 where the grade is 112, and the crossover
+      (a 1.0-based mantissa multiplies up to 112.00000000000001 where the grade is 112, and the crossover
       screen then printed "112.0 Hz" for a frequency the unit shows as "112")
     - `fx-effect.ts` catalog of FX-channel effects (Rev-X/Rev.R3/Mono Delay/Ping Pong) — slot addressing of
       the type selector + parameter arrays, and raw↔display encoding. The two filter tables are R20 (REV-X)

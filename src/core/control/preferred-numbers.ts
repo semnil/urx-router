@@ -2,7 +2,7 @@
 // step in — for the FX channel filters and for the multi-band compressor's crossover alike.
 // One seat, because the two catalogues were carrying the same forty grades and the same
 // offset separately and had already drifted apart in float: the copy built from a 1.0-based
-// mantissa answered 111.99999999999999 for the grade the other answered 112 for, and its
+// mantissa answered 112.00000000000001 for the grade the other answered 112 for, and its
 // screen printed "112.0 Hz" where the unit prints "112".
 //
 // A geometric law looks like one of these and is not: R40's ratio is 10^(1/40) = 1.0593
@@ -12,7 +12,7 @@
 // (320.4, 5125.8, 8136.7, 16273.4).
 //
 // The grades are written out rather than computed, since a grade carries roundings a formula
-// does not reproduce — R40 holds 31.5 where 10 × 10^(21/40) = 31.62.
+// does not reproduce — R40 holds 31.5 where 10 × 10^(20/40) = 31.62.
 
 /** R40: one decade in forty grades. */
 export const R40 = [

@@ -122,9 +122,10 @@ function mbcGainLabel(raw: number): string {
 // 1/12-oct formula gives). raw is the R40 sequence index with raw 0 = 15 Hz, raw 6 = 21.2 Hz.
 //
 // The grades come from `preferred-numbers.ts` rather than a second copy: this module used to
-// hold its own 1.0-based mantissa table, which multiplied up to 111.99999999999999 where the
+// hold its own 1.0-based mantissa table, which multiplied up to 112.00000000000001 where the
 // grade is 112 — and the label below, which prints an integer grade as an integer, then read
-// "112.0 Hz" for a frequency the unit shows as "112".
+// "112.0 Hz" for a frequency the unit shows as "112". Two raws of the crossover's windows
+// landed on such a product; the rest of the mantissas scale exactly.
 /** MBC crossover raw → Hz (exact R40 table; raw 0 = 15 Hz). */
 export function mbcXoverHz(raw: number): number {
   return preferredNumber(R40, raw + 47);

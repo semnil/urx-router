@@ -359,6 +359,22 @@ describe("paramRangeProblems", () => {
     }
   });
 
+  // A FRACTIONAL raw sits inside the window, so the bound passes it through unchanged and the
+  // document keeps it — while the emit sends it to a device whose parameters are integers and
+  // the readout shows the nearest grade, which is the panel and the wire naming two different
+  // settings. It is dropped for the same reason a boolean is: not a value this app can send.
+  it("drops a fractional raw, which the window would otherwise admit", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, params: { revxHpf: 3.5 } } };
+    expect(paramRangeProblems(plan).map((p) => [p.key, p.action, p.stored])).toEqual([["revxHpf", "drop", 3.5]]);
+    applyParamRange(plan, paramRangeProblems(plan));
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect?.params?.revxHpf).toBeUndefined();
+    // …and the integer beside it is untouched, so this is the fraction and not the window.
+    const kept = emptyPlan("URX44V");
+    kept.nodeParams["bus.fx1"] = { fxEffect: { type: 0, params: { revxHpf: 3 } } };
+    expect(paramRangeProblems(kept)).toEqual([]);
+  });
+
   // An effect object that IS an object is left alone however little it carries: an empty one
   // says every value is the effect's own default, which is a document this app writes itself.
   it("leaves an empty effect object alone", () => {

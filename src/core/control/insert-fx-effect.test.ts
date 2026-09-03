@@ -69,19 +69,19 @@ describe("insert-fx encodings (live calibration anchors)", () => {
     expect(mbcXoverLabel(37)).toBe("125 Hz");
     expect(mbcXoverLabel(95)).toBe("3.55 kHz");
   });
-  // The label prints an integer grade as an integer, so it is the reader that a float error
-  // in the table surfaces in. The module used to build the grades from its own 1.0-based
-  // mantissa, which multiplies up to 111.99999999999999 where the grade is 112 — five raws
-  // inside the L-M crossover's own window then read "112.0 Hz" and the like for frequencies
-  // the unit shows as integers. Sharing one grade table with the FX filters removed the
-  // arithmetic that produced them; these are those five raws.
-  it("prints an integer grade as an integer, at every raw a float error used to catch", () => {
+  // The label prints an integer grade as an integer, so it is the reader that a float error in
+  // the table surfaces in. The module used to build the grades from its own 1.0-based mantissa,
+  // which multiplies up to 112.00000000000001 where the grade is 112 — and TWO raws of the
+  // crossover's windows landed on such a product, reading "112.0 Hz" and "224.0 Hz" for
+  // frequencies the unit shows as integers. Sharing one grade table removed that arithmetic.
+  //
+  // The two are named, and then the sweep is what holds the class: a row for a raw that was
+  // already exact pins the label but says nothing about this fix, and listing more of them
+  // than there were is how a case comes to look like a guard it is not.
+  it("prints an integer grade as an integer, at every raw of both windows", () => {
     for (const [raw, label] of [
       [35, "112 Hz"],
-      [36, "118 Hz"],
-      [38, "132 Hz"],
       [47, "224 Hz"],
-      [48, "236 Hz"],
     ] as const) {
       expect(mbcXoverLabel(raw), `raw ${raw}`).toBe(label);
     }
