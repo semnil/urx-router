@@ -167,9 +167,16 @@ describe("arming surfaces against the control catalog", () => {
       const ctxAt = (nodeId: string): DynCtx => ({ model, plan, nodeId, sel: 0, m: t() });
       const binding = model.nodes.map((n) => n.id).filter((id) => proc.bind(ctxAt(id)) !== null);
       expect(binding.length, `${kind} binds no node of URX44V`).toBeGreaterThan(0);
-      // Every node it binds for the one kind that shows a different thing on each; the
+      // Every node it binds for the two kinds that show a different thing on each; the
       // first for the rest, whose faces do not vary by node.
-      const nodeIds = kind === "insfx" ? binding : binding.slice(0, 1);
+      //
+      // `fx` is the second: its two channels hold different effects out of the factory —
+      // FX1 a Rev-X and FX2 a Mono Delay — so opening both is what puts a face carrying a
+      // toggle and a select (the delay's Sync and Note) in front of this, beside one that
+      // is knobs alone. Opening only the first covered no non-slider row at all. The third
+      // family, Rev.R3, is not reachable without seeding a type and adds no control KIND
+      // that Rev-X does not already put here: every row of both reverbs is a slider.
+      const nodeIds = kind === "insfx" || kind === "fx" ? binding : binding.slice(0, 1);
 
       /** One face's own verdict. Per face rather than per screen: the counts have to
        *  match on each, and totals let a face that marks nothing hide behind one that

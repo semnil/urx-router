@@ -836,6 +836,33 @@ describe("where the focus goes after the INS FX popover closes", () => {
     expect(document.activeElement, "the same row of the rebuilt list").toBe(rows()[idx]);
   });
 
+  // The SAME two rules asked of the other selector the one popover now serves. An FX strip
+  // carries `.con-fxopen` / `.con-fxface` and neither INS FX class, so a focus table naming
+  // only the INS FX pair finds nothing on it and the browser parks focus on <body>.
+  const fxOpenerOf = (id: string): HTMLElement | null => h.strip(id).root.querySelector<HTMLElement>(".con-fxopen");
+
+  it("returns it to the FX disclosure when a whole-rack repaint closes the type list", () => {
+    h = consoleHost();
+    fxOpenerOf("bus.fx1")!.click();
+    const row = document.querySelector<HTMLElement>(".con-ifxpop .irow");
+    row?.focus();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.contains(document.activeElement)).toBe(true);
+    h.view.refresh();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden, "the repaint closed it").toBe(true);
+    expect(document.activeElement, "not the document body").toBe(fxOpenerOf("bus.fx1"));
+  });
+
+  it("keeps it on the same row when a one-strip repaint re-opens the FX type list", () => {
+    h = consoleHost();
+    fxOpenerOf("bus.fx1")!.click();
+    const rows = () => [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];
+    const idx = 1;
+    rows()[idx].focus();
+    h.view.refreshStrip("bus.fx1");
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden, "still open").toBe(false);
+    expect(document.activeElement, "the same row of the rebuilt list").toBe(rows()[idx]);
+  });
+
   // The floor under both, keyed the same way: a strip carrying neither control still keeps
   // the operator's place rather than sending them to the top of the document.
   it("keeps the operator on the strip root across a repaint", () => {

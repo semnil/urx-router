@@ -32,6 +32,7 @@ import {
   FX_SLOT_ON,
   fxDescRawToSend,
   fxRawToSend,
+  fxRowOwners,
   resolveFxEffectType,
   fxParams,
   formatHz,
@@ -718,7 +719,7 @@ export function eqOneKnob(model: DeviceModel, nodeId: string, compEqType: number
 export interface DynField {
   /** The GateParams / CompParams / EqBand sub-field this controls, or one of the SSMCS
    *  keys the descriptor flattens its nested sub-objects onto. */
-  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey | InsertFxFieldKey;
+  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey | InsertFxFieldKey | FxFieldKey;
   /** The catalog row the numeric writer emits this value through. Absent for the SSMCS
    *  strip, whose commands are built from the plan's own nested shape
    *  (`pushSsmcsCommands`) rather than from a field table — a name here would be a
@@ -765,6 +766,24 @@ export type SsmcsFieldKey = "compDrive" | "morphing" | "outGain" | "scQ" | "scFr
  *  parked them anyway — instead of under the incoming family's slot of the same number,
  *  which is a different parameter on a different scale. */
 export type InsertFxFieldKey = `ifx:${string}:${number}`;
+
+/** An FX-channel effect value, named by the PLAN KEY it is stored under.
+ *
+ *  Not the family and the slot an insert-FX value takes. The two delay types are both
+ *  family `delay` and both put the delay time on slot 6, so that spelling would name two
+ *  different parameters with one key — they accept different RANGES, and a Mono time handed
+ *  to a Ping Pong descriptor is clamped at the unit while the plan goes on showing the value
+ *  it was set to. The catalogue's own keys already carry a family name exactly where two
+ *  families collide (`revxHpf` / `revr3Hpf` / `delayHpf`, `delay` / `pingPongDelay`) and
+ *  share one where the parameter really is one (`reverbTime` is slot 7 of both reverbs), so
+ *  they are unique and they mean the right thing. `fx:level` is the Mix, which lives at the
+ *  top of `fxEffect` rather than in its params map.
+ *
+ *  The purpose is `InsertFxFieldKey`'s: a device follow can replace the effect while a knob
+ *  is under the pointer, and the drag goes on firing at a row that is already detached —
+ *  keyed this way that write lands under the outgoing family's own name instead of under
+ *  the incoming family's parameter of the same slot. */
+export type FxFieldKey = `fx:${string}`;
 
 const SSMCS_SC_PREFIX = /^sc[A-Z]/;
 
@@ -1114,7 +1133,12 @@ function boundEnum(v: number, options: readonly { value: number }[], def: number
   return options.some((o) => o.value === v) ? v : def;
 }
 
-function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectParams): void {
+function pushFxEffectCommands(
+  out: VdCommand[],
+  fxIndex: number,
+  fx: FxEffectParams,
+  includeDeviceDriven: boolean,
+): void {
   const typeId = FX_EFFECT_TYPE_PARAM[fxIndex];
   const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
   // A type this CHANNEL's menu does not offer (hand-edited / ?plan= payload) falls
@@ -1126,7 +1150,17 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx.on ?? true) ? 1 : 0));
   const level = fxRawToSend(fx.level, FX_LEVEL_DEFAULT, FX_LEVEL_MIN, FX_LEVEL_MAX);
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, level));
+  // The slot the unit is computing for itself, skipped for the reason the insert-FX loop
+  // below skips its own: while tempo Sync is on the unit derives the delay time from the BPM
+  // and the note value, and it ACCEPTS a write to that slot and holds it — so re-sending the
+  // plan's copy does not merely repeat what is there, it takes the delay time off the note
+  // value and leaves Sync on with nothing driving it. `unused` is not skipped: the unit
+  // stores the note value while it is not reading it, and the app is still its author.
+  const driven = includeDeviceDriven
+    ? new Set<string>()
+    : new Set([...fxRowOwners(type, fx.params)].filter(([, why]) => why === "computed").map(([key]) => key));
   for (const desc of fxParams(type)) {
+    if (driven.has(desc.key)) continue;
     const raw = fxDescRawToSend(desc, fx.params?.[desc.key]);
     out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", desc.slot, raw));
   }
@@ -1983,7 +2017,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     const fxY = fxChannelIndex(node.id);
     if (fxY === null) continue;
     const fx = plan.nodeParams[node.id]?.fxEffect;
-    if (fx) pushFxEffectCommands(out, fxY, fx);
+    if (fx) pushFxEffectCommands(out, fxY, fx, emit.includeDeviceDriven === true);
     own(node.id);
   }
 

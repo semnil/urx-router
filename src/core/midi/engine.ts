@@ -493,9 +493,16 @@ export class MidiEngine {
       //
       // The 14-bit forms are deliberately left unarmed. A cc14 echo cannot be matched
       // here at all — it arrives as two 7-bit halves — and neither needs to be: at 14
-      // bits that same sweep found NO control that fails to round-trip, so their echo
-      // re-enters the same plan value and edits nothing. That is the load-bearing half
+      // bits that same sweep found no control whose READING fails to round-trip, so their
+      // echo re-enters the same plan value and edits nothing. That is the load-bearing half
       // of this decision rather than an aside, so it is pinned in controls.test.ts.
+      // ONE control is an exception, and it is stated here rather than left to be
+      // rediscovered: the Mono Delay time carries more settings than the wire has
+      // positions (27000 against 16384), so an echo of its own feedback snaps it to the
+      // nearest addressable value — one raw, and idempotent from there. The move stays
+      // visible: a cc14 arrives as two messages, so the intermediate value differs and
+      // `applied` fires, which puts it on the dirty flag and in the undo ledger rather
+      // than only in the plan. `controls.test.ts` pins both halves.
       // Asked of the address' resolution rather than of its type: the property is what
       // decides, and `wireSteps` is the one place a new address type has to choose.
       if (deliver && wireSteps(mapping.addr) === 127) {

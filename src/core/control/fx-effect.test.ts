@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { getModel, MODEL_IDS } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
 import { deserialize, emptyPlan, serialize } from "../plan";
+import type { Plan } from "../plan";
 import {
   balanceLabel,
   delayMs,
@@ -670,5 +671,33 @@ describe("fx-effect readback round-trip", () => {
     expect(fx?.params?.reverbTime).toBe(15);
     expect(fx?.params?.erRevBalance).toBe(54);
     vi.doUnmock("../platform");
+  });
+});
+
+// The third layer of the ownership list. The screen locks the row and the MIDI catalogue
+// refuses it; the writer has to skip it too, and that is not redundancy: the unit ACCEPTS a
+// write to the delay-time slot while Sync is on and holds it, so re-sending the plan's copy
+// takes the delay time off the note value and leaves Sync on with nothing driving it.
+describe("what the writer sends while tempo Sync is on", () => {
+  const arrSlots = (plan: Plan): number[] =>
+    planToCommands(getModel("URX44V"), plan)
+      .filter((c) => c.paramId === 685)
+      .map((c) => c.y);
+
+  const held = (sync: number): Plan => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delay: 5000, sync, bpm: 120, note: 9 } } };
+    return plan;
+  };
+
+  it("leaves the delay-time slot to the unit while Sync is on", () => {
+    expect(arrSlots(held(1)), "slot 6 is the unit's").not.toContain(6);
+    // The note value is NOT skipped: the unit stores it while it is not reading it, and the
+    // app is still its author — a different half of the same list.
+    expect(arrSlots(held(1)), "slot 11 is still the app's").toContain(11);
+  });
+
+  it("sends it again once Sync is off", () => {
+    expect(arrSlots(held(0)), "the positive control").toContain(6);
   });
 });

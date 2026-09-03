@@ -13,12 +13,15 @@ import {
   sendConnection,
   SSMCS_INITIAL,
   type EqBand,
+  type FxEffectParams,
   type NodeParams,
   type Plan,
   type PlanConnection,
   type SsmcsParams,
 } from "../plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../levels";
+import { FX_CHANNEL_NODE_INDEX, fxParams, fxRowOwners, resolveFxEffectType } from "../control/fx-effect";
+import type { FxParamDesc } from "../control/fx-effect";
 import {
   busBalance,
   channelControl,
@@ -83,6 +86,7 @@ export const eqBandScope = (index: number): string => `${EQ_SCOPE}.${EQ_BAND_NAM
 /** The insert effect's scope root. Its full scope carries the family and the slot after
  *  it, since the node can change what family it holds. */
 export const INSFX_SCOPE = "insfx";
+export const FX_SCOPE = "fx";
 export const SSMCS_SCOPE = "ssmcs";
 export const SSMCS_COMP_SCOPE = `${SSMCS_SCOPE}.comp`;
 export const SSMCS_SC_SCOPE = `${SSMCS_SCOPE}.sc`;
@@ -142,7 +146,13 @@ export type ControlParam =
   // slot go in the SCOPE (`insfx.compander.6`) and the union stays closed. A mapping made
   // under one family simply does not bind while the node holds another — the same answer
   // `bindControl` already gives a mapping for a node that lost the processor it named.
-  | "insfx";
+  | "insfx"
+  // The FX channel's effect values. ONE token, as `insfx` is, and for the same reason: an
+  // FX value is a raw slot under a type the channel can change, so the plan key it is stored
+  // under goes in the SCOPE (`fx.revxHpf`) and the union stays closed. The plan key rather
+  // than a family and a slot — the two delay types share both of those and differ only in
+  // range, so that spelling would let a mapping made on one drive the other.
+  | "fx";
 
 export type ControlKind = "continuous" | "toggle";
 
@@ -194,6 +204,47 @@ function linearCodec(min: number, max: number, step: number): { get(x: number): 
     // arithmetic yields 2.9000000000000004) — the same snap wireKnob applies.
     set: (v) => Number((min + Math.round((clamp01(v) * span) / step) * step).toFixed(4)),
   };
+}
+
+/** Positions a 14-bit control carries, and the highest index of them. */
+const WIRE_14_BIT_MAX = (1 << 14) - 1;
+
+/**
+ * A codec whose normalized domain IS the 14-bit grid.
+ *
+ * The engine leaves 14-bit feedback unguarded against its own echo, and that is only safe
+ * while every 14-bit round trip is exact — the case in `controls.test.ts` pins it and says
+ * why. A control with more settings than the wire has positions cannot satisfy that on a
+ * plain linear codec: several of its values share a position, so the value read back after
+ * an echo is not the value set, and under Live sync that difference reaches the unit.
+ *
+ * Snapping the READING to the same grid the writing lands on makes the trip exact again.
+ * What it costs is resolution over MIDI and nothing else: the control keeps every setting
+ * for a pointer, a wheel and an arrow key, and a controller reaches 16384 of them.
+ */
+function wireGridCodec(min: number, max: number, step: number): { get(x: number): number; set(v: number): number } {
+  const span = max - min;
+  return {
+    get: (x) => clamp01(Math.round(((x - min) / span) * WIRE_14_BIT_MAX) / WIRE_14_BIT_MAX),
+    set: (v) => {
+      const i = Math.round(clamp01(v) * WIRE_14_BIT_MAX);
+      const raw = min + Math.round((i * span) / WIRE_14_BIT_MAX / step) * step;
+      return Math.min(max, Math.max(min, Number(raw.toFixed(4))));
+    },
+  };
+}
+
+/** The codec one FX descriptor is driven through. Linear wherever the wire can address every
+ *  setting, and the wire's own grid where it cannot — the Mono Delay time is the one that
+ *  cannot, at 27000 settings against 16384 positions. Its step is not free to coarsen (it is
+ *  the only one putting both official ends and the factory default on the grid), so the
+ *  resolution is given up on the wire rather than in the value. */
+function fxCodec(d: FxParamDesc): { get(x: number): number; set(v: number): number } {
+  const min = d.rawMin ?? 0;
+  const max = d.rawMax ?? 1;
+  const step = d.rawStep ?? 1;
+  const fine = (max - min) / step > WIRE_14_BIT_MAX;
+  return fine ? wireGridCodec(min, max, step) : linearCodec(min, max, step);
 }
 
 const panCodec = linearCodec(PAN_MIN, PAN_MAX, 1);
@@ -738,6 +789,78 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         get: () => codec.get(cur()),
         set: (v) => {
           if (lockedNow()) return false;
+          write(codec.set(v));
+          return true;
+        },
+      });
+    }
+  }
+
+  // ---- the effect an FX channel holds -------------------------------------
+  // Scoped by the PLAN KEY, so a mapping names the value it was made on. The two delay
+  // types share a family AND a slot and differ only in the range they take, so a family +
+  // slot scope would let a mapping made on Mono Delay drive Ping Pong's time; the catalogue
+  // keys already separate exactly those and share the keys that really are one parameter.
+  // Enum rows answer nothing — a select has no normalized domain.
+  if (isFx) {
+    const fxIndex = FX_CHANNEL_NODE_INDEX[id];
+    const fxType = resolveFxEffectType(fxIndex, plan.nodeParams[id]?.fxEffect?.type);
+    const fxParamsOf = (): Record<string, number> | undefined => plan.nodeParams[id]?.fxEffect?.params;
+    const mergeFx = (patch: Partial<FxEffectParams>): void => {
+      const p = np();
+      p.fxEffect = { ...p.fxEffect, ...patch };
+    };
+    // Mix lives at the top of `fxEffect` rather than in the params map, so it is written
+    // through its own path — the one row here with no catalogue descriptor.
+    const mixCodec = linearCodec(0, 100, 1);
+    out.push({
+      id: controlId(id, "fx", `${FX_SCOPE}.level`),
+      node: id,
+      param: "fx",
+      scope: `${FX_SCOPE}.level`,
+      kind: "continuous",
+      get: () => mixCodec.get(plan.nodeParams[id]?.fxEffect?.level ?? 100),
+      set: (v) => {
+        mergeFx({ level: mixCodec.set(v) });
+        return true;
+      },
+    });
+    for (const d of fxParams(fxType)) {
+      if (d.control === "select") continue;
+      const scope = `${FX_SCOPE}.${d.key}`;
+      const cur = (): number => fxParamsOf()?.[d.key] ?? d.def;
+      const write = (raw: number): void => mergeFx({ params: { ...fxParamsOf(), [d.key]: raw } });
+      // The same refusal the tuning screen draws, asked of the same predicate and asked NOW
+      // rather than when the mapping was made: while tempo Sync is on the unit is computing
+      // the delay time and announcing it, so a mapping made before Sync went on would drive
+      // a value the unit overwrites on its own.
+      const drivenNow = (): boolean => fxRowOwners(fxType, fxParamsOf()).get(d.key) === "computed";
+      if (d.control === "toggle") {
+        out.push({
+          id: controlId(id, "fx", scope),
+          node: id,
+          param: "fx",
+          scope,
+          kind: "toggle",
+          get: () => (cur() ? 1 : 0),
+          set: (v) => {
+            if (drivenNow()) return false;
+            write(v >= 0.5 ? 1 : 0);
+            return true;
+          },
+        });
+        continue;
+      }
+      const codec = fxCodec(d);
+      out.push({
+        id: controlId(id, "fx", scope),
+        node: id,
+        param: "fx",
+        scope,
+        kind: "continuous",
+        get: () => codec.get(cur()),
+        set: (v) => {
+          if (drivenNow()) return false;
           write(codec.set(v));
           return true;
         },

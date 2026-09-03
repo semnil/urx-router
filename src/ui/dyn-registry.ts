@@ -7,6 +7,7 @@ import { EQ_DYN } from "./dyn-eq";
 import { DUCKER_DYN } from "./dyn-ducker";
 import { SSMCS_COMP_DYN, SSMCS_DYN, SSMCS_EQ_DYN } from "./dyn-ssmcs";
 import { INSFX_DYN } from "./insert-fx-screen";
+import { FX_DYN } from "./fx-effect-screen";
 import type { DynProcessor } from "./dyn-screen";
 import type { Messages } from "../i18n/en";
 
@@ -25,6 +26,10 @@ export const DYN_PROCESSORS = {
   // plan value the operator changes elsewhere, so the descriptor resolves it per call and
   // a follow re-binds the same modal instead of swapping screens.
   insfx: INSFX_DYN,
+  // One entry for the three FX parameter families, for the reason above it: an FX channel's
+  // EFFECT TYPE is a plan value changed elsewhere, so the descriptor resolves the family per
+  // call and a type change re-binds the same modal.
+  fx: FX_DYN,
 } satisfies Record<string, DynProcessor>;
 
 /** Which processor a screen is opened for. */
