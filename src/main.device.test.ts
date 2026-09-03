@@ -1001,6 +1001,38 @@ describe("the live session", () => {
     }
   });
 
+  // The OTHER half of the same rule, and the one that made the split worth stating: a
+  // session that merely ends lets its read finish, but a plan REPLACED under it does not —
+  // the document is gone, so the read is filling something nothing shows. Nothing else in
+  // this file drives `abandonFollowWork` with a read actually in flight, and the abort is
+  // invisible from the merge (readIntoPlan drops the result either way, whether the round
+  // trips stopped or ran to the end).
+  it("abandons a follow read when the plan it was filling is replaced", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    // The session's own starting read, which is what a WHOLE-device sweep costs. The
+    // control for the count below, taken from this run rather than written down.
+    const sweep = shell.count("vd_get");
+
+    // A rate notify escalates to a whole-device reconcile; a millisecond per read is what
+    // makes the window to replace the plan inside it real.
+    notifyRate(shell, { delayMs: 1 });
+    const before = shell.count("vd_get");
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(before + 20), {
+      timeout: 25_000,
+      interval: 5,
+    });
+
+    $("btn-new").click();
+    await quiet(shell);
+    // Not zero: the readback checks the signal at group boundaries, so reads already on
+    // the wire still land. Against the sweep, though, an abandoned read is a fraction of
+    // one left running — which is what the count says and an exact figure could not.
+    expect(shell.count("vd_get") - before).toBeLessThan(sweep / 2);
+    expect(statusText()).toBe(t().status.newPlan);
+  });
+
   // The other cause of the same cleared values, told apart by the notify stream rather
   // than by the read's own values — which come from different moments and cannot answer
   // it. Here the unit announces the selector itself while the read runs, so the clearing
