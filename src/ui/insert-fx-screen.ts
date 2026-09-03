@@ -56,7 +56,7 @@ import type { NodeParams, Plan } from "../core/plan";
 import type { DeviceModel } from "../models/types";
 import { el, onOff, onOffButton, settingsRow, settingsSection, sliderRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { enumRow } from "./dyn-chan";
+import { enumRow, rowBreak } from "./dyn-chan";
 import { curveMarks, drawTransferCurve, transferPlot } from "./dyn-plot";
 import { splitDisplay } from "./dyn-screen";
 import type { DynPlotGeo } from "./dyn-screen";
@@ -1239,15 +1239,6 @@ function deviceOwned(ctx: DynRowCtx): SettingsRowOptions | undefined {
   return pitchDeviceDriven(ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams).size
     ? { locked: true, tag: ctx.m.dynTuning.insfx.deviceOnlyTag }
     : undefined;
-}
-
-/** The one element that ends a row of a knob grid: it spans every column, so what follows
- *  it starts a row of its own. Empty and hidden — it separates two groups and names
- *  neither, and a caption here would be a heading inside a panel that has one already. */
-function rowBreak(): HTMLElement {
-  const b = el("span", "gt-break");
-  b.setAttribute("aria-hidden", "true");
-  return b;
 }
 
 /**
