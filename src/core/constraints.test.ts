@@ -7,6 +7,8 @@ import {
   duckerBypassWarnings,
   channelDuckerOn,
   channelEqUnavailable,
+  trackCountCeiling,
+  trackCountDrop,
   insertFxAllRateLocked,
   insertFxFree,
   insertFxMenu,
@@ -58,6 +60,68 @@ describe("rateConstraints", () => {
     const a = rateConstraints(getModel("URX22"), 176400);
     const b = rateConstraints(getModel("URX22"), 192000);
     expect(a).toEqual(b);
+  });
+});
+
+describe("trackCountCeiling", () => {
+  // The user guide's own table (RECORDER menu). Every selectable rate is asked, so a rate
+  // added to SAMPLE_RATES without a ceiling of its own is a failure here rather than a
+  // silent 16.
+  it.each([
+    [44100, 16],
+    [48000, 16],
+    [88200, 8],
+    [96000, 8],
+    [176400, 2],
+    [192000, 2],
+  ])("caps the recorder at %i Hz to %i tracks", (rate, ceiling) => {
+    expect(trackCountCeiling(rate)).toBe(ceiling);
+  });
+
+  it("has a ceiling for every selectable rate", () => {
+    for (const rate of SAMPLE_RATES) expect([2, 8, 16]).toContain(trackCountCeiling(rate));
+  });
+
+  // The boundaries are the whole of it: 48 kHz keeps 16 and the next rate up does not,
+  // 96 kHz keeps 8 and the next rate up does not. A ceiling written with >= instead of >
+  // moves both by one rate and nothing else here would notice.
+  it("changes only where the guide's table changes", () => {
+    expect(trackCountCeiling(48000)).not.toBe(trackCountCeiling(88200));
+    expect(trackCountCeiling(96000)).not.toBe(trackCountCeiling(176400));
+    expect(trackCountCeiling(44100)).toBe(trackCountCeiling(48000));
+    expect(trackCountCeiling(88200)).toBe(trackCountCeiling(96000));
+    expect(trackCountCeiling(176400)).toBe(trackCountCeiling(192000));
+  });
+});
+
+describe("trackCountDrop", () => {
+  it("reports the drop the unit will make", () => {
+    expect(trackCountDrop(16, 96000)).toEqual({ from: 16, to: 8 });
+    expect(trackCountDrop(16, 192000)).toEqual({ from: 16, to: 2 });
+    expect(trackCountDrop(8, 192000)).toEqual({ from: 8, to: 2 });
+  });
+
+  // A count already at or below the new ceiling loses nothing, and saying so anyway would
+  // put an irreversible-loss warning in front of an operator who is losing nothing — which
+  // is how a warning stops being read.
+  it("says nothing when the count already fits", () => {
+    expect(trackCountDrop(8, 96000)).toBeNull();
+    expect(trackCountDrop(2, 192000)).toBeNull();
+    expect(trackCountDrop(4, 48000)).toBeNull();
+    expect(trackCountDrop(16, 48000)).toBeNull();
+  });
+
+  // Lowering the rate raises no ceiling the unit will act on: the drop already happened
+  // and this function is asked only about what a change costs.
+  it("says nothing about lowering the rate", () => {
+    expect(trackCountDrop(2, 48000)).toBeNull();
+    expect(trackCountDrop(8, 44100)).toBeNull();
+  });
+
+  // The count is absent until something has read it off the unit. Guessing a full 16 there
+  // would warn on every rate change of an offline plan.
+  it("says nothing when the count is not known", () => {
+    expect(trackCountDrop(undefined, 192000)).toBeNull();
   });
 });
 

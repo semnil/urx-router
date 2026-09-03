@@ -694,6 +694,11 @@ export class LiveSync {
       // text in a different field, so the value has no place there — but the ADDRESS and the
       // mark are all an announcement watch needs.
       const nameWrites = new Map<number, number>();
+      // The text each rename sent, so a run of renames on one address is judged the way a
+      // run of fader moves is: the unit answers the run with one notify carrying the last
+      // name, and a notify carrying an EARLIER one says that rename was announced on its
+      // own and says nothing about the one that replaced it.
+      const nameExpected = new Map<number, string>();
       // What this flush wrote and the device acked, keyed the way the snapshot is
       // (translate.addrKey). Handed to the refetch, whose read would otherwise be issued
       // inside the window in which the unit still answers these addresses with the
@@ -708,7 +713,7 @@ export class LiveSync {
       // emits no notify at all (measured). `node` decides which of the two subsets below
       // the address lands in, and cannot be resolved until the loop has finished: the
       // command that puts a node into `refetch` may come after the ones that wrote it.
-      const writes = new Map<number, { mark: number; node?: string; changed: boolean }>();
+      const writes = new Map<number, { mark: number; node?: string; changed: boolean; value: number }>();
       const scope = this.scope();
       const commands = planToCommands(model, plan, scope);
       // The set can only be rebuilt by a capture, and a flush reaches one only through a
@@ -763,7 +768,7 @@ export class LiveSync {
         if (this.sessionGen !== gen) return;
         this.snapshot.set(k, value);
         this.notePending(this.pendingValues, k, value);
-        writes.set(k, { mark, node: c.node, changed: had !== undefined });
+        writes.set(k, { mark, node: c.node, changed: had !== undefined, value });
         this.recentWrites.set(k, { mark, node: c.node, at: Date.now() });
         sent++;
         if (CONVERGE.has(c.name)) sideEffect = true;
@@ -805,7 +810,10 @@ export class LiveSync {
         if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
         this.notePending(this.pendingNames, k, value);
-        if (w.name === undefined) nameWrites.set(nameAddr, nameMark);
+        if (w.name === undefined) {
+          nameWrites.set(nameAddr, nameMark);
+          nameExpected.set(nameAddr, value);
+        }
         sent++;
         // A string write can be a sideEffect head too: the SSMCS preset recomputes the strip
         // exactly as the morphing knob does. Only REFETCH is consulted — no string param is a
@@ -930,8 +938,13 @@ export class LiveSync {
         const written = new Map<number, number>();
         const mustSettle = new Set<number>();
         const mustAnnounce = new Set<number>();
+        // What each write SENT, so the settle can tell a superseded write's silence from a
+        // discarded one's — the two produce the same single notify and differ only in the
+        // value it carries (settle.ts, SettleOptions.expected).
+        const expected = new Map<number, number>();
         for (const [k, w] of writes) {
           written.set(k, w.mark);
+          expected.set(k, w.value);
           if (w.node !== undefined && refetch.has(w.node)) mustSettle.add(k);
           else if (w.changed) mustAnnounce.add(k);
         }
@@ -940,6 +953,7 @@ export class LiveSync {
           written,
           mustSettle,
           mustAnnounce,
+          expected,
           ...(nameSettle.size ? { boundaryMarks: nameSettle } : {}),
         });
         if (this.sessionGen !== gen) return;
@@ -966,11 +980,13 @@ export class LiveSync {
       if (!sideEffect && !(refetch.size && this.hooks.refetchNodes)) {
         const announce = new Set<number>();
         const marks = new Map<number, number>();
+        const expected = new Map<number, number>();
         for (const [k, w] of writes) {
           marks.set(k, w.mark);
+          expected.set(k, w.value);
           if (w.changed) announce.add(k);
         }
-        if (announce.size) writeSettle.watch(marks, announce);
+        if (announce.size) writeSettle.watch(marks, announce, { expected });
       }
       // Renames are watched WHATEVER the epilogue, because neither epilogue covers them:
       // the converge re-reads numeric commands, and the refetch is the one caller that
@@ -983,7 +999,7 @@ export class LiveSync {
       //
       // Left unwatched a dropped rename is invisible twice: the plan and the name snapshot
       // both move to the new name, so no later flush finds a diff to re-send.
-      if (nameWrites.size) writeSettle.watch(nameWrites, new Set(nameWrites.keys()));
+      if (nameWrites.size) writeSettle.watch(nameWrites, new Set(nameWrites.keys()), { expected: nameExpected });
       // Before onSent, and unconditional on `sent`. A converge cannot be the reason — its
       // flag is set after `sent++`, so a flush that sent nothing never reaches one — but
       // `resync()` captures OUTSIDE any flush (the caller runs it after every device-side

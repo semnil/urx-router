@@ -32,6 +32,20 @@ export async function readClockState(): Promise<ClockState> {
   return { followUsb, sampleRate };
 }
 
+/**
+ * The microSD recorder's Track Count, in TRACKS. The parameter counts stereo pairs, so the
+ * doubling here is the same one `readback` applies and the two cannot disagree about the
+ * unit.
+ *
+ * Read on its own rather than folded into `readClockState`, which rejects unless both of
+ * its halves answer because a rate write cannot be decided without them. This one is
+ * advisory: it decides whether a warning can name the numbers, and a caller that cannot
+ * get it warns in the form that names none rather than staying silent.
+ */
+export async function readTrackCount(): Promise<number> {
+  return (await vdGet(PARAMS.SD_REC_TRACK_COUNT.id, 0, 0)) * 2;
+}
+
 /** Read just the Follow USB policy. Separate from readClockState because the badge
  *  refresh runs right after a full readback, which has already brought the rate
  *  back — re-reading it there would be a round-trip for a value just obtained. */
@@ -167,13 +181,24 @@ export interface SendOutcome {
  * device did and did not see. The caller must have connected first
  * (platform.vdConnect).
  */
-export async function sendCommands(commands: VdCommand[], signal?: AbortSignal): Promise<SendOutcome[]> {
+export async function sendCommands(
+  commands: VdCommand[],
+  signal?: AbortSignal,
+  /** Told about each send AS IT LANDS. The returned array is not a substitute: an abort
+   *  is detected at the top of the next iteration and THROWS, so every outcome collected
+   *  so far is lost and a caller that only reads the return value cannot know which
+   *  commands the unit actually took. A caller acting on one send in particular — the
+   *  sample rate, whose arrival is what makes the recorder's Track Count worth
+   *  re-reading — has to be told here. */
+  onSent?: (outcome: SendOutcome) => void,
+): Promise<SendOutcome[]> {
   const outcomes: SendOutcome[] = [];
   for (const command of commands) {
     signal?.throwIfAborted();
     try {
       await vdSet(command.paramId, command.x, command.y, command.vdValue);
       outcomes.push({ command, ok: true });
+      onSent?.(outcomes[outcomes.length - 1]);
     } catch (e) {
       outcomes.push({ command, ok: false, error: e instanceof Error ? e.message : String(e) });
       break;
@@ -309,6 +334,10 @@ export interface ConvergeOptions {
    *  exactly what the operator agreed to. Live sync is the caller that does NOT: its
    *  flush has already sent the diff itself, so a seeded round would send it twice. */
   initialDiffs?: CommandDiff[];
+  /** Told about each send as it lands, ahead of this call returning. See sendCommands:
+   *  an abort throws out of the loop and takes the collected outcomes with it, so a
+   *  caller that must act on one command having reached the unit cannot wait for them. */
+  onSent?: (outcome: SendOutcome) => void;
   /** What the caller wrote immediately before calling, when it is leaving the
    *  diff to be seeded. The seed read is otherwise issued inside those writes'
    *  own staleness window (see architecture.md, "A write is not readable when it
@@ -373,6 +402,7 @@ export async function sendConverging(
 ): Promise<ConvergeResult> {
   const {
     initialDiffs,
+    onSent,
     pending,
     maxRounds = 3,
     // One source with settle.ts: this site's blind window and the notify wait's bounded
@@ -414,7 +444,7 @@ export async function sendConverging(
     signal?.throwIfAborted();
     const startedAt = Date.now();
     const sending = roundCommands(model, plan, scope, emit, residual, exclude);
-    const sent = await sendCommands(sending, signal);
+    const sent = await sendCommands(sending, signal, onSent);
     outcomes.push(...sent);
     rounds++;
     const record = (reread: CommandDiff[] | null): void => {

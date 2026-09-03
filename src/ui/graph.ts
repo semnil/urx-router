@@ -26,6 +26,7 @@ import { getSettings } from "../core/settings";
 import type { ExportOptions, SaveResult } from "../core/storage";
 import { oscAssign } from "../core/control/translate";
 import { SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
+import { trackCountCeiling } from "../core/constraints";
 import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
 import { sendlessNote } from "./send-fields";
 import { t } from "../i18n";
@@ -908,7 +909,11 @@ export class Graph {
   private sdRecSlotInactive(id: string): boolean {
     const m = /^out\.sdrec\.t(\d+)$/.exec(id);
     if (!m) return false;
-    const count = this.plan.nodeParams["out.sdrec"]?.sdRecTrackCount ?? SD_REC_TRACK_COUNT_DEFAULT;
+    const stored = this.plan.nodeParams["out.sdrec"]?.sdRecTrackCount ?? SD_REC_TRACK_COUNT_DEFAULT;
+    // Against the RATE's ceiling as well. setPlanSampleRate already lowers the stored value,
+    // so the two normally agree; drawing from the ceiling too means a plan that arrived any
+    // other way cannot offer a slot to wire that the unit has no track for.
+    const count = Math.min(stored, trackCountCeiling(this.plan.sampleRate));
     return Number(m[1]) > Math.floor(count / 2);
   }
 

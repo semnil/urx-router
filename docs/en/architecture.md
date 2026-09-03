@@ -200,7 +200,28 @@ carries a one-line map of the same directories and points here.
       announces and can only end at the bound. Only `mustSettle` — the addresses inside the read's own scope
       — holds it open; a changed write OUTSIDE it that stayed silent is reported at the bound to the notify
       source, and `follow.ts` arms its existing idle full reconcile (class (b) must not, or a legitimate
-      silence orders an ~800-read sweep). Nothing is withdrawn from the handle: the last announcement wins,
+      silence orders an ~800-read sweep). A flush with NEITHER epilogue — the ordinary edit, which issues no read
+      at all — gets the same report through a **watch without a wait**: there is nothing to hold open, and
+      without it the everyday fader, mute or pan was the one write nothing was checking. **An address's
+      outstanding obligations merge FORWARD**: the unit announces the value it ended up holding and says
+      nothing about what a write passed through, so a run of writes to one address — a drag, which flushes
+      more often than an announcement comes back — is answered by ONE notify carrying the last of them. The
+      newest obligation is the one judged and the ones it superseded are discharged by it; judged against an
+      announcement each, every move of a drag but the last reports as a write that went nowhere and arms a
+      sweep of its own. Merging reaches the OUTSTANDING ones and no further — once a write has been judged,
+      the next write to that address is owed an announcement of its own. **Which of them a notify answers is
+      settled by its VALUE, not by the overlap**: the same single notify is produced when the earlier write
+      was announced normally and the later one was acked and silently discarded, and there the later write
+      really is lost. So an obligation carries what its write sent, a notify discharges the newest obligation
+      it can be the answer to plus every obligation older than that, and one it matches nothing in is left
+      standing. **A rename is judged on its TEXT for the same reason** — a name notify carries its text beside
+      a numeric 0, so an obligation judged on the number would let any rename answer for any other write on
+      that address, and would put that 0 into a numeric read's answer. Every caller that hands over pending
+      writes hands the values with them, the refetch's settle included; without them that path judges by
+      overlap alone and takes the reading that is wrong exactly when a write was discarded. **A rename is watched too, whatever epilogue its flush
+      takes** — neither covers names, since a converge re-reads numeric commands and the refetch is the one
+      caller that skips them, and a dropped rename leaves no diff for a later flush because the plan and the
+      name snapshot have both moved on. Nothing is withdrawn from the handle: the last announcement wins,
       so an address the operator moved on the board comes back carrying THEIR value. `sendConverging`'s
       INTER-ROUND wait stays blind **deliberately** — no `sideEffect: "converge"` head's reset latency has
       ever been measured, and a round sends whole groups the read diff never named — but its SEED read takes
@@ -2266,6 +2287,32 @@ the diff, and settles the rate before anything is sent (`settleSampleRate` in `m
 `client.ts`). Matching rates proceed unchanged. With Follow USB **off**, a mismatch is a plain confirm, since the
 plan's rate is the one that sticks. With it **on**, a modal (`ui/rate-choice.ts`) offers the two real answers —
 write at the device's rate, or turn Follow USB off and write the plan's — rather than guessing which was meant.
+
+**The plan follows the recorder's ceiling, one way.** `trackCountCeiling` (`core/constraints.ts`) is the single
+statement of what a rate can carry, and `setPlanSampleRate` (`core/plan.ts`) is the only way the plan's rate moves:
+it lowers the stored Track Count to fit and never raises it back, because the unit does not either. Every path that
+moves the rate takes it — the picker, adopting the unit's rate, a device read, a fresh plan, and a LOAD, where it
+also normalises a document naming a rate and a count that cannot both be true. Applied when the rate CHANGES rather
+than when the count is read: a read-time clamp would hand 16 back the moment the rate came down, and the plan would
+then describe a recorder the unit does not have. The Inspector offers only the counts the rate allows and says why
+the menu is short, and the graph gates the recorder's track slots on the ceiling as well as on the stored value, so
+no plan can offer a slot to wire against a track the unit has no room for.
+
+**The rate settle also names what the change costs the microSD recorder**, which is the one rate side effect the
+unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at
+44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the rate again does not raise it, and param 839
+refuses every value the app could write it back with. So this is not a feature left out of one write like the
+>96 kHz family — it is destroyed, and the notice belongs in front of the decision. `trackCountCeiling` /
+`trackCountDrop` (`core/constraints.ts`) decide it and `client.ts`'s `readTrackCount` supplies the count, read from
+the DEVICE rather than the plan: an offline plan's count is whatever was last authored, which would both miss real
+drops and invent false ones. A count that already fits is silent, because a loss notice shown to someone losing
+nothing is how a notice stops being read, and a read that fails falls back to the wording that names no numbers
+rather than to silence. Three paths carry it — the plain re-clock confirm, the three-way's RELEASE arm (its own
+element under that button, since adopting the device's rate costs nothing and the shared note speaks for both
+arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
+can read. **URX22 has no recorder and is silent throughout.** Afterwards the write's own epilogue re-reads the
+recorder node: the unit does the lowering itself, and whether it announces one has not been measured here, so the
+plan is refreshed rather than left waiting for a notify that may never come.
 A failed read cancels the write, per the rule above: the rate decides which parameters the write may even contain.
 
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen

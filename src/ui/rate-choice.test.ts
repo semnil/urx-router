@@ -10,6 +10,7 @@ function installDom(): void {
       <h1 id="rate-choice-title"></h1>
       <p id="rate-choice-intro"></p>
       <p id="rate-choice-note"></p>
+      <p id="rate-choice-release-note"></p>
       <button id="rate-choice-adopt"></button>
       <button id="rate-choice-release"></button>
       <button id="rate-choice-cancel"></button>
@@ -33,6 +34,25 @@ describe("askRateChoice", () => {
     (document.getElementById(buttonId) as HTMLButtonElement).click();
     await expect(result).resolves.toBe(choice);
     expect((document.getElementById("rate-choice") as HTMLElement).hidden).toBe(true);
+  });
+
+  // The release arm's own note. It is not the shared one: what it says is true of writing
+  // the PLAN's rate and false of adopting the device's, and the shared note speaks for
+  // both arms.
+  it("puts the release-arm note on its own element, and hides it when there is none", async () => {
+    const withNote = askRateChoice("96 kHz", "48 kHz", null, "the recorder drops to 8");
+    const el = document.getElementById("rate-choice-release-note") as HTMLElement;
+    expect(el.textContent).toBe("the recorder drops to 8");
+    expect(el.hidden).toBe(false);
+    // And it is NOT folded into the shared note, which every arm reads.
+    expect(document.getElementById("rate-choice-note")?.textContent).toBe("");
+    document.getElementById("rate-choice-cancel")!.click();
+    await withNote;
+
+    const without = askRateChoice("96 kHz", "48 kHz", null);
+    expect(el.hidden).toBe(true);
+    document.getElementById("rate-choice-cancel")!.click();
+    await without;
   });
 
   it("hides an absent high-rate warning and formats both rates", () => {

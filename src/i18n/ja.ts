@@ -464,6 +464,8 @@ export const ja: Messages = {
     panLinked: "パンは Send 元チャンネルの PAN に追従 (Pan Link)。",
     sdRecTrackCount: "Track Count",
     sdRecTrackCountLive: "Track Count はデバイス側でのみ設定できます (broker が公開するのは 8 段階のうち 1 つだけ)。",
+    sdRecTrackCountRate: (ceiling: number): string =>
+      `このサンプルレートで使えるのは ${ceiling} トラックです。レートを下げ直してもレコーダーは戻りません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。`,
     signalType: "Signal Type",
     panBal: "PAN / BAL",
     deleteConnection: "この接続を削除",
@@ -746,6 +748,10 @@ export const ja: Messages = {
       `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。コンピューター側はデバイスの新しいレートに追従します。続行しますか?`,
     followUsbOn:
       "Follow USB を ON にしますか? デバイスはクロックをコンピューターに委ねます。コンピューターが別のレートで動作している場合は直ちにそのレートへリクロックするため、音声が中断される場合があります。レートが既に一致していれば何も起きません。",
+    trackCountDrop: (from: number, to: number): string =>
+      `microSD レコーダーの Track Count が ${from} トラックに設定されており、このレートで使えるのは ${to} トラックです。デバイスが自動的に下げます。このアプリから書ける値では元に戻せません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。`,
+    trackCountMayDrop:
+      "48 kHz より上ではデバイスが microSD レコーダーの Track Count もそのレートで使える本数まで下げます。このアプリから書ける値では元に戻せません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。",
     writeRetry: (sent: number, notSent: number): string =>
       `失敗により書き込みが停止しました: ${sent} 件がデバイスに届き、${notSent} 件が未送信です。もう一度実施しますか? 差分のある設定のみを送信します。`,
   },
@@ -766,6 +772,8 @@ export const ja: Messages = {
       `計画は ${planRate} ですが、デバイスは ${deviceRate} で動作しており、Follow USB が ON のためクロックをコンピューターから受け取っています。ここで ${planRate} を書き込むとデバイスは一度リクロックしますが、まもなく ${deviceRate} に戻ります。`,
     hiRateNote: (limits: string): string =>
       `${limits} これらの設定は今回の書き込みから除外されますが、計画には保持されるため、レートを下げれば再び書き込まれます。`,
+    trackCountDrop: (from: number, to: number): string =>
+      `Follow USB を OFF にしてプランのレートで書き込むと、microSD レコーダーの Track Count が下がります: 現在 ${from} トラックで、そのレートで使えるのは ${to} トラックです。このアプリから書ける値では元に戻せません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。`,
     adopt: (deviceRate: string): string => `${deviceRate} で書き込む`,
     release: (planRate: string): string => `Follow USB を OFF にして ${planRate} で書き込む`,
     cancel: "キャンセル",
@@ -887,6 +895,8 @@ export const ja: Messages = {
     errorReport: "デバイスエラーレポート",
   },
   error: {
+    trackCountReread: (message: string): string =>
+      `設定は書き込みましたが、その後 microSD レコーダーの Track Count を読み戻せませんでした: ${message}。レートが運べない本数は実機が自分で下げるため、画面の表示は変更前の値である可能性があります。実機を読み取って確認してください。`,
     deviceSetupRead: (message: string): string => `本体の設定を読み込めませんでした: ${message}`,
     deviceSetupWrite: (message: string): string => `設定を適用できませんでした: ${message}`,
     noRule: "この経路は接続できません",

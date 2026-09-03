@@ -1064,13 +1064,21 @@ test.describe("T3 undo", () => {
 // ---------------------------------------------------------------------------
 test.describe("T3 undo — a late announcement", () => {
   test.beforeEach(async ({ page }) => {
-    // 220 ms, deliberately above the flush window. The unit announces a numeric write
-    // ack+58-151 ms after acking it (measured on a URX44V), so the second write of a
-    // drag really can move the snapshot before the first write's announcement lands.
-    // Every other case in the harness runs under the default, which sits below the
-    // window — which is why this branch went unexercised for a year while the comment
-    // in fake-device.ts said the unit does not present it.
-    await installFake(page, { announceMs: 220 });
+    // The overtake needs the first write's announcement to be EMITTED and then arrive
+    // after the app has issued the second write. It is a window, not merely a late
+    // announcement: a write superseded before its announcement goes out is never
+    // announced at all (measured on a URX44V), which the fake models by cancelling the
+    // pending timer at the superseding write's ack. So the announcement has to land
+    // between the second write's ISSUE — where the app's snapshot moves — and its ACK,
+    // and that window is exactly `latency.set` wide. At the default of 0 there is no
+    // window and the overtake cannot happen at all, which is why this case carries a
+    // set latency of its own rather than only a raised `announceMs`.
+    //
+    // `announceMs` still sits above live.ts's 120 ms flush window, which is what makes
+    // the second write of a drag able to move the snapshot first. The case asserts the
+    // overtake actually occurred, so a configuration that stops producing one fails here
+    // rather than passing on an empty run.
+    await installFake(page, { announceMs: 150, latency: { set: 120 } });
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   });
@@ -1118,9 +1126,24 @@ test.describe("T3 undo — a late announcement", () => {
     console.log(`writes on ${CH1_FADER}: ${writes.map((w) => `${w.start.toFixed(0)}ms=${w.value}`).join(", ")}`);
     console.log(`reads after the second edit: ${readsAfter.length}`);
 
-    // THE assertion. The first write's announcement arrives after the second write's ack
-    // has moved the snapshot past it (measured on this trace: the ack at edit-2 + ~120
-    // ms, the announcement ~20 ms later). Compared against the snapshot alone it equals
+    // The premise, asserted rather than assumed: the first write's announcement was
+    // emitted AND arrived after the second write was issued. Without this the case
+    // passes on a run where nothing was overtaken — every assertion below is a statement
+    // that nothing went wrong, and nothing going wrong is what an empty run looks like.
+    // The two writes come first, so name them before indexing: one write means the drag
+    // never reached the shape this is about, and a TypeError says that far less clearly.
+    expect(writes.length, "both edits must have reached the device").toBeGreaterThanOrEqual(2);
+    const overtake = trace.find(
+      (e) => e.kind === "notify" && e.addr === CH1_FADER && e.value === 40 && e.t > writes[1].start,
+    );
+    console.log(
+      `overtake: first write's announcement at ${overtake ? `${overtake.t.toFixed(0)}ms` : "NOT DELIVERED"}, ` +
+        `second write issued at ${writes[1].start.toFixed(0)}ms`,
+    );
+    expect(overtake, "no overtake happened — the case measured nothing").toBeDefined();
+
+    // THE assertion. The first write's announcement arrives once the second write has
+    // moved the snapshot past it. Compared against the snapshot alone it equals
     // nothing the app holds, so it reads as a device-side change: the app answers it by
     // re-reading, arms the idle net, and ~900 ms later sweeps the whole device — several
     // hundred reads, for its own write coming home. With the pending-write memory it is

@@ -13,6 +13,7 @@ import {
   PlanError,
   PLAN_FORMAT,
   PLAN_VERSION,
+  setPlanSampleRate,
   type Plan,
 } from "./plan";
 import { defaultPlan } from "../models/initial-state";
@@ -334,5 +335,59 @@ describe("encodePlanParam / decodePlanParam", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("the recorder's Track Count follows the sample rate one way", () => {
+  const at = (rate: number, count: number): Plan => {
+    const p = emptyPlan("URX44V");
+    p.nodeParams["out.sdrec"] = { ...p.nodeParams["out.sdrec"], sdRecTrackCount: count };
+    setPlanSampleRate(p, rate);
+    return p;
+  };
+  const countOf = (p: Plan): number | undefined => p.nodeParams["out.sdrec"]?.sdRecTrackCount;
+
+  // The unit lowers its own count to fit a rate it cannot carry. The plan has to make the
+  // same move, or it offers track slots to wire against tracks the recorder does not have.
+  it("lowers the count to what the new rate allows", () => {
+    expect(countOf(at(96_000, 16))).toBe(8);
+    expect(countOf(at(192_000, 16))).toBe(2);
+    expect(countOf(at(192_000, 8))).toBe(2);
+  });
+
+  // The whole point, and the half that a read-time clamp would get wrong: the unit does not
+  // raise it back, so neither may the plan. 48 -> 192 -> 48 ends at 2, not at 16.
+  it("does not raise it again when the rate comes back down", () => {
+    const p = at(48_000, 16);
+    setPlanSampleRate(p, 192_000);
+    expect(countOf(p)).toBe(2);
+    setPlanSampleRate(p, 96_000);
+    expect(countOf(p)).toBe(2);
+    setPlanSampleRate(p, 48_000);
+    expect(countOf(p)).toBe(2);
+  });
+
+  it("leaves a count the new rate can already carry alone", () => {
+    expect(countOf(at(96_000, 8))).toBe(8);
+    expect(countOf(at(48_000, 16))).toBe(16);
+    expect(countOf(at(192_000, 2))).toBe(2);
+  });
+
+  // A document may name a rate and a count that cannot both be true — written before the
+  // ceilings were modelled, or hand-edited. It is normalised on the way in rather than left
+  // for every reader to check.
+  it("normalises a loaded plan whose count the loaded rate cannot carry", () => {
+    const source = at(48_000, 16);
+    const doc = JSON.parse(serialize(source)) as Record<string, unknown>;
+    doc.sampleRate = 192_000;
+    const loaded = deserialize(JSON.stringify(doc));
+    expect(loaded.sampleRate).toBe(192_000);
+    expect(countOf(loaded)).toBe(2);
+  });
+
+  it("leaves a consistent document as it is", () => {
+    const loaded = deserialize(serialize(at(96_000, 8)));
+    expect(loaded.sampleRate).toBe(96_000);
+    expect(countOf(loaded)).toBe(8);
   });
 });

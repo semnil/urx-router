@@ -74,6 +74,8 @@ import {
   canPatchFromMonitor,
   outputMono,
   rateConstraints,
+  trackCountCeiling,
+  trackCountOptionsAt,
 } from "../core/constraints";
 import { getSettings } from "../core/settings";
 import type { RecentEntry } from "../core/storage";
@@ -465,16 +467,33 @@ export function renderInspector(
     // is done by canvas wires.
     if (node.id === "out.sdrec") {
       const count = plan.nodeParams[node.id]?.sdRecTrackCount ?? SD_REC_TRACK_COUNT_DEFAULT;
+      // Only what the rate can carry. Offering more would let a plan be authored that the
+      // unit cannot hold and no write could establish — the rate change already lowered the
+      // count itself (setPlanSampleRate), so this is the menu agreeing with the value.
+      // Plus the value the plan actually holds, when the rate would not offer it: a device
+      // read reports what the UNIT said, and the unit may still be on a rate this plan has
+      // left. A menu without its own value in it leaves the control with nothing selected,
+      // which reads as empty rather than as "16, which this rate cannot carry".
+      const allowed = trackCountOptionsAt(plan.sampleRate);
+      const trackOptions = allowed.some((o) => o.value === count)
+        ? allowed
+        : [...allowed, { value: count, label: String(count) }].sort((a, b) => a.value - b.value);
       host.append(
         enumSelect(
           m.inspector.sdRecTrackCount,
-          SD_REC_TRACK_COUNT_OPTIONS,
+          trackOptions,
           count,
           (v) => actions.onUpdateNodeParams(node.id, { sdRecTrackCount: v }),
           liveActive,
         ),
       );
       if (liveActive) host.append(hint(m.inspector.sdRecTrackCountLive));
+      // Why the menu is short. Without this the missing entries read as a defect, and the
+      // one fact the operator needs — that going back down does not bring them back — has
+      // nowhere else to appear on this panel.
+      if (trackOptions.length < SD_REC_TRACK_COUNT_OPTIONS.length) {
+        host.append(hint(m.inspector.sdRecTrackCountRate(trackCountCeiling(plan.sampleRate))));
+      }
     }
 
     // After a device readback, a node in plan.unreadNodes still shows its plan

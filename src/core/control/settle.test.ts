@@ -328,10 +328,13 @@ describe("WriteSettle unannounced report", () => {
 
   // Two writes to ONE address with nothing arriving between them — the shape a second
   // move of the same fader takes, since a flush goes out more often than an announcement
-  // comes back. Both take their mark from the same notify position, so a test that asks
-  // only "did a notify arrive after the mark" answers yes for both and the second write's
-  // loss is invisible. One notify answers one write.
-  it("does not let one notify answer two writes to the same address", async () => {
+  // comes back. The unit answers the run with ONE notify carrying the value it ended up
+  // holding, so the second write's announcement is the first write's too. Judging each
+  // against an announcement of its own reports every move of a drag but the last as a
+  // write that went nowhere, and arms a whole-device sweep for each. No values here: this
+  // is the name path, whose notify carries its text in a different field, and where any
+  // announcement after the mark is the answer.
+  it("answers a run of writes to one address with a single announcement", async () => {
     const { settle, reported } = armed();
     const first = wrote(settle, ADDR);
     settle.watch(first, new Set([ADDR]));
@@ -340,7 +343,91 @@ describe("WriteSettle unannounced report", () => {
     // The mechanism the case exists for: with no notify between them the two marks are equal.
     expect(first.get(ADDR)).toBe(second.get(ADDR));
     settle.note(NOTIFY);
-    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 2);
+    expect(reported).toEqual([]);
+  });
+
+  // The same overlap with the VALUES in hand, and the one announcement carries the LAST
+  // write's: the unit passed through the first without announcing it, so that announcement
+  // is the first write's too.
+  it("answers a superseded write with the announcement of the write that superseded it", async () => {
+    const { settle, reported } = armed();
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, 7]]) });
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, NOTIFY.value]]) });
+    settle.note(NOTIFY);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 3);
+    expect(reported).toEqual([]);
+  });
+
+  // The same overlap, the same ONE announcement — and it carries the FIRST write's value.
+  // That write was announced on its own, which says nothing about the one that superseded
+  // it: the unit acked that one and silently discarded it, and the plan now holds a value
+  // the device does not. Counting announcements cannot tell this from the case above —
+  // both are two writes and one notify — so the value is what separates them.
+  it("reports a discarded write whose predecessor's announcement arrived after it", async () => {
+    const { settle, reported } = armed();
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, 7]]) });
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, NOTIFY.value]]) });
+    settle.note({ ...NOTIFY, value: 7 });
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 3);
+    expect(reported).toEqual([[ADDR]]);
+  });
+
+  // The name twin of the pair above, and it is not a variation: a rename typed over
+  // another before the first is announced produces the same one notify, and the text is
+  // the only thing that says which reading it is. A name notify carries its text beside a
+  // numeric value of 0, so an obligation judged on the number cannot tell them apart.
+  it("answers a superseded rename with the announcement of the rename that replaced it", async () => {
+    const { settle, reported } = armed();
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, "old"]]) });
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, "new"]]) });
+    settle.note({ ...NOTIFY, value: 0, valueStr: "new" });
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 3);
+    expect(reported).toEqual([]);
+  });
+
+  it("reports a discarded rename whose predecessor's announcement arrived after it", async () => {
+    const { settle, reported } = armed();
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, "old"]]) });
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]), { expected: new Map([[ADDR, "new"]]) });
+    settle.note({ ...NOTIFY, value: 0, valueStr: "old" });
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 3);
+    expect(reported).toEqual([[ADDR]]);
+  });
+
+  // A name notify is not an answer a NUMERIC read may be given: its numeric value is 0
+  // filler, and answering a numeric address from it would write that 0 into the plan.
+  it("does not answer a numeric read from a name announcement", async () => {
+    const { settle } = armed();
+    const written = wrote(settle, ADDR);
+    settle.note({ ...NOTIFY, value: 0, valueStr: "a name" });
+    const announced = await settle.settle(written, { mustSettle: new Set() });
+    expect(announced.has(ADDR)).toBe(false);
+  });
+
+  // The same run of writes, and the unit says nothing at all. That IS a write that went
+  // nowhere, and it is reported ONCE however many writes the run held: the address needs
+  // re-reading, and it needs it no harder for having been written three times.
+  it("reports the address once when a run of writes to it is answered by nothing", async () => {
+    const { settle, reported } = armed();
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]));
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]));
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]));
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 4);
+    expect(reported).toEqual([[ADDR]]);
+  });
+
+  // Merging forward reaches an address's OUTSTANDING obligations and no further: once a
+  // write has been judged, the next write to the same address is owed an announcement of
+  // its own, and the notify that answered the first cannot answer it.
+  it("does not let a judged announcement answer the next write to that address", async () => {
+    const { settle, reported } = armed();
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]));
+    settle.note(NOTIFY);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
+    expect(reported).toEqual([]);
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]));
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
     expect(reported).toEqual([[ADDR]]);
   });
 
@@ -350,7 +437,7 @@ describe("WriteSettle unannounced report", () => {
     settle.watch(wrote(settle, ADDR), new Set([ADDR]));
     settle.note(NOTIFY);
     settle.note({ ...NOTIFY, value: 2 });
-    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 2);
     expect(reported).toEqual([]);
   });
 
@@ -368,29 +455,27 @@ describe("WriteSettle unannounced report", () => {
   });
 
   // Nothing may accumulate for the life of a session: writeSettle is module state on one
-  // device link, and a drag appends a notify position per flush. Bounded by TIME, so the
-  // list holds what a watch still counting down could still be answered from and no more.
-  it("does not grow its notify list across a long run of answered writes", async () => {
+  // device link, and a drag arms an obligation per flush. What is kept is one entry per
+  // address with an obligation in flight, so a run that judges each one leaves nothing.
+  it("does not grow its obligation table across a long run of answered writes", async () => {
     const { settle, reported } = armed();
-    const held = (): number =>
-      ((settle as unknown as { positions: Map<number, unknown[]> }).positions.get(ADDR) ?? []).length;
+    const held = (): number => (settle as unknown as { outstanding: Map<number, unknown[]> }).outstanding.size;
     for (let n = 0; n < 300; n++) {
       settle.watch(wrote(settle, ADDR), new Set([ADDR]));
       settle.note(NOTIFY);
       await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
     }
     expect(reported).toEqual([]);
-    expect(held()).toBeLessThan(20);
+    expect(held()).toBe(0);
   });
 
-  it("does not grow it for an address only the device is talking about", async () => {
+  it("keeps nothing for an address only the device is talking about", async () => {
     const { settle } = armed();
     for (let n = 0; n < 300; n++) {
       settle.note(NOTIFY);
       await vi.advanceTimersByTimeAsync(10);
     }
-    const held = ((settle as unknown as { positions: Map<number, unknown[]> }).positions.get(ADDR) ?? []).length;
-    expect(held).toBeLessThan(200);
+    expect((settle as unknown as { outstanding: Map<number, unknown[]> }).outstanding.size).toBe(0);
   });
 
   it("drops the report when the surrounding operation is aborted", async () => {

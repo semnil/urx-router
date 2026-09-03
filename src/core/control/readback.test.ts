@@ -483,9 +483,11 @@ describe("applyDeviceState write overlay", () => {
   // pass them all unnoticed. Here a wait nothing advances never ends, so the case times
   // out instead of quietly measuring a slower app.
   let armedSource: (() => void) | null = null;
+  let reported: number[][] = [];
   beforeEach(() => {
     vi.useFakeTimers();
-    armedSource = writeSettle.arm(() => {});
+    reported = [];
+    armedSource = writeSettle.arm((addrs) => reported.push([...addrs]));
   });
   afterEach(() => {
     armedSource?.();
@@ -555,6 +557,108 @@ describe("applyDeviceState write overlay", () => {
 
     expect(wasRead(cmd)).toBe(true);
     expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(false);
+  });
+
+  // Two writes to ONE address inside a refetch's window, which is what a drag produces:
+  // the flush goes out more often than an announcement comes back, so both take the same
+  // mark. ONE notify arrives and it carries the FIRST write's value — the unit announced
+  // that one on its own and acked-then-discarded the second, so the second really is lost.
+  // The only thing that separates this from the ordinary overlap, where the notify carries
+  // the LAST value and stands for both, is the value; a settle handed no values has to
+  // guess, and guesses that both are answered.
+  it("reports a write the refetch's own settle can only tell is lost by its value", async () => {
+    const source = oneKnobPlan();
+    const cmd = oneKnobCommand(source);
+    mockVdGetFrom(staleTable(source, cmd));
+
+    const at = writeSettle.mark();
+    const target = emptyPlan("URX44V");
+    const pending: PendingWrites = {
+      written: new Map([[keyOf(cmd), at]]),
+      // What the LATER write sent. The notify below carries the earlier value.
+      expected: new Map([[keyOf(cmd), 0]]),
+      mustSettle: new Set(),
+      mustAnnounce: new Set([keyOf(cmd)]),
+    };
+    writeSettle.note({ paramId: cmd.paramId, x: cmd.x, y: cmd.y, value: 1 });
+    await applyDeviceState(model, target, undefined, undefined, pending);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 3);
+
+    expect(reported).toEqual([[keyOf(cmd)]]);
+  });
+
+  // The other half, and the one that keeps the case above from being satisfied by a settle
+  // that simply reports everything: the same overlap answered by the LATER value is the
+  // ordinary drag, and it must arm nothing.
+  it("says nothing when the announcement carries the value the write sent", async () => {
+    const source = oneKnobPlan();
+    const cmd = oneKnobCommand(source);
+    mockVdGetFrom(staleTable(source, cmd));
+
+    const at = writeSettle.mark();
+    const target = emptyPlan("URX44V");
+    writeSettle.note({ paramId: cmd.paramId, x: cmd.x, y: cmd.y, value: 1 });
+    await applyDeviceState(model, target, undefined, undefined, {
+      written: new Map([[keyOf(cmd), at]]),
+      expected: new Map([[keyOf(cmd), 1]]),
+      mustSettle: new Set(),
+      mustAnnounce: new Set([keyOf(cmd)]),
+    });
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 3);
+
+    expect(reported).toEqual([]);
+  });
+
+  // The recorder's count arrives from the unit, and the unit may still be on a rate the
+  // plan has already left — a rate write that was declined after its confirm, or one that
+  // failed. Stored as reported, the plan then holds 16 tracks at 96 kHz: a count its own
+  // ceiling forbids, and one the Inspector's menu does not contain, so the control has no
+  // selected entry at all.
+  // Spelled out rather than imported from PARAMS, the way this file already pins the port
+  // refs: the addresses are what the test is about.
+  const SD_REC_TRACK_COUNT_ID = 839;
+  const SAMPLE_RATE_ID = 766;
+
+  // The RATE the unit reports is what decides, since the read applies it to the plan first.
+  const recorderTable = (rate: number): Map<string, number> => {
+    const source = oneKnobPlan();
+    const table = staleTable(source, oneKnobCommand(source));
+    // 8 stereo pairs = the full 16 tracks.
+    table.set(`${SD_REC_TRACK_COUNT_ID}:0:0`, 8);
+    table.set(`${SAMPLE_RATE_ID}:0:0`, rate);
+    return table;
+  };
+
+  // A read reports what the unit said. Clamping it to the plan's rate would turn a device
+  // reading into a different number and count it as applied — with the rate read failing
+  // and this one succeeding, a unit holding 16 would be written into the plan as 2 and the
+  // plan would claim a value the device never gave.
+  it("stores the count the unit reported, not one derived from the plan's rate", async () => {
+    const table = recorderTable(96_000);
+    // The rate read REJECTS. Deleting its row instead is not the same thing: the mock
+    // answers a missing address 0, the plan then takes 0 as its rate, and a clamp against
+    // trackCountCeiling(0) — which is 16 — is a no-op that lets the old behaviour pass.
+    const answers = vi.mocked(vdGet).getMockImplementation();
+    mockVdGetFrom(table);
+    const withRateRead = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) =>
+      paramId === SAMPLE_RATE_ID ? Promise.reject(new Error("read timeout")) : withRateRead(paramId, x, y),
+    );
+    const target = emptyPlan("URX44V");
+    target.sampleRate = 192_000;
+    await applyDeviceState(model, target);
+    // Both halves: the plan kept ITS rate, and the count is the unit's own answer. Clamped
+    // to 192 kHz the count would read 2 — a value the device never gave.
+    expect(target.sampleRate).toBe(192_000);
+    expect(target.nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(16);
+    if (answers) vi.mocked(vdGet).mockImplementation(answers);
+  });
+
+  it("stores the count as reported when the rate can carry it", async () => {
+    mockVdGetFrom(recorderTable(48_000));
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target);
+    expect(target.nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(16);
   });
 
   it("answers the announced write and reads the one beside it that nothing announced", async () => {

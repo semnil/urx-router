@@ -4,11 +4,32 @@
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../models/types";
 import { parseRef, ref } from "../models/types";
-import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
+import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES, trackCountAtRate } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, migrateFxEffectParams } from "./control/fx-effect";
 import { insertFxFamilyOf, qualifyInsertFxParams } from "./control/insert-fx-effect";
 import { NODE_NAME_MAX_CHARS } from "./control/params";
 import { stripSceneExternal } from "./scene-scope";
+
+/**
+ * Move `plan` onto `rate`, and with it the recorder's Track Count.
+ *
+ * The unit lowers its own count to fit a rate it cannot carry and does NOT raise it when
+ * the rate comes back down, so this is a one-way transition and every path that moves the
+ * rate has to take it — the picker, a load, a device read, adopting the unit's rate. A plan
+ * that kept 16 at 192 kHz would offer eight pairs of track slots to wire against a recorder
+ * holding two, and no write could ever establish it.
+ */
+export function setPlanSampleRate(plan: Plan, rate: number): void {
+  plan.sampleRate = rate;
+  const at = trackCountAtRate(plan.nodeParams[SDREC_NODE_ID]?.sdRecTrackCount, rate);
+  if (at !== undefined) {
+    plan.nodeParams[SDREC_NODE_ID] = { ...plan.nodeParams[SDREC_NODE_ID], sdRecTrackCount: at };
+  }
+}
+
+/** The microSD recorder's node. Spelled once: the count, the slots and the scene scope all
+ *  key on it. */
+export const SDREC_NODE_ID = "out.sdrec";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
 // fader, send and the monitor — UG "Range: -∞ dB to +10.00 dB"). The slider's
@@ -442,9 +463,12 @@ export function deserializeDocument(text: string): PlanDocument {
   if (typeof data.modelId !== "string") {
     throw new PlanError("missingModel");
   }
+  const loadedRate = SAMPLE_RATES.includes(data.sampleRate as number)
+    ? (data.sampleRate as number)
+    : DEFAULT_SAMPLE_RATE;
   const plan: Plan = {
     modelId: data.modelId as ModelId,
-    sampleRate: SAMPLE_RATES.includes(data.sampleRate as number) ? (data.sampleRate as number) : DEFAULT_SAMPLE_RATE,
+    sampleRate: loadedRate,
     positions: posRecord(data.positions),
     connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection).map(rebuildConn) : [],
     nodeParams: sanitizeNodeParams(data.nodeParams, version),
@@ -454,6 +478,11 @@ export function deserializeDocument(text: string): PlanDocument {
     notes: stringRecord(data.notes),
     noteCollapsed: stringArray(data.noteCollapsed),
   };
+  // A document may name a rate and a Track Count that cannot both be true — an older plan
+  // written before the ceilings were modelled, or one hand-edited. Normalised on the way
+  // in, through the same one-way transition a rate change takes, so nothing downstream has
+  // to ask whether the pair it was handed is consistent.
+  setPlanSampleRate(plan, loadedRate);
   return { plan, sceneScoped: data.scope === "scene" };
 }
 

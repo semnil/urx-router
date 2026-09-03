@@ -23,6 +23,7 @@ import {
   normalizeNodeName,
   removeConnection,
   setExclusiveConnection,
+  setPlanSampleRate,
 } from "../plan";
 import {
   applyPatchInContext,
@@ -295,6 +296,11 @@ export async function applyDeviceState(
         mustSettle: pending.mustSettle,
         mustAnnounce: pending.mustAnnounce,
         boundaryMarks: pending.boundaryMarks,
+        // Without this the obligations here are value-less, and a value-less obligation
+        // cannot tell the two one-notify cases apart: it takes an EARLIER write's
+        // announcement as the answer to the write that superseded it, which is the reading
+        // that is wrong exactly when the later write was acked and silently discarded.
+        expected: pending.expected,
         signal,
       })
     : undefined;
@@ -815,7 +821,11 @@ async function readPass(
   // touches it (a sample-rate change escalates to a full read in follow.ts).
   if (only === undefined) {
     try {
-      plan.sampleRate = await vdGet(PARAMS.SAMPLE_RATE.id, 0, 0);
+      // Through the transition, not by assignment: a scoped read that brings the rate back
+      // without reaching the recorder node would otherwise leave the plan holding a count
+      // the rate cannot carry. Where 839 IS read (below) the unit's own value lands after
+      // this and wins, and the two agree — the unit applies the same ceiling.
+      setPlanSampleRate(plan, await vdGet(PARAMS.SAMPLE_RATE.id, 0, 0));
       deviceSampleRate = plan.sampleRate;
       applied++;
     } catch (e) {
@@ -961,6 +971,12 @@ async function readPass(
   // read would succeed, and the value would not change.
   if (want("out.sdrec") && model.nodes.some((n) => n.id === "out.sdrec")) {
     try {
+      // Stored AS REPORTED. Clamping it to the plan's rate looked like a way to keep the
+      // pair consistent and is a way to invent a reading: with the rate read failing and
+      // this one succeeding, a unit holding 16 was written into the plan as 2 and counted
+      // as applied, so the plan claimed a device value the device never gave. What the
+      // ceiling governs is what the PLAN may author (setPlanSampleRate); what a read owes
+      // is the unit's own answer.
       const sdRecTrackCount = (await vdGet(PARAMS.SD_REC_TRACK_COUNT.id, 0, 0)) * 2;
       plan.nodeParams["out.sdrec"] = { ...plan.nodeParams["out.sdrec"], sdRecTrackCount };
       applied++;
