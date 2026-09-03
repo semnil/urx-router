@@ -1437,6 +1437,7 @@ describe("Write to device", () => {
     menu.dispatchEvent(new Event("change", { bubbles: true }));
     expect(menu.value).toBe("4");
 
+    const beforeSlots = $("graph-host").querySelectorAll('g.node[data-id^="out.sdrec.t"]').length;
     chooseRate(96_000);
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
@@ -1448,7 +1449,12 @@ describe("Write to device", () => {
     // repaint: the count decides how many recorder slots are drawn as active, so the
     // graph carries the slot nodes the new count reaches.
     const slots = $("graph-host").querySelectorAll('g.node[data-id^="out.sdrec.t"]');
-    expect(slots.length).toBeGreaterThan(0);
+    // The exact counts, not "more than none": the board draws two recorder slot nodes for
+    // the count the panel was showing and four for the one the read brought back, and a
+    // lower bound of zero passes on either — so it says nothing about the render this
+    // needs, and the Inspector's own assertion above would carry the case alone.
+    expect(beforeSlots).toBe(2);
+    expect(slots.length).toBe(4);
   });
 
   // Cancelling BETWEEN two sends is not the same as cancelling before the first. The rate
