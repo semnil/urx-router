@@ -1646,6 +1646,87 @@ describe("Write to device", () => {
     expect(readAfterWrite).toBe(true);
   });
 
+  /** A device table whose recorder re-read the case drives itself. The write's own
+   *  pre-flight and diff read 839 too, both before anything is written, and Track Count is
+   *  never emitted (translate.ts) so no converge round re-reads it — which is what makes
+   *  "a read of 839 once something has been written" the epilogue's read and no other. */
+  const epilogueRead = (over: (a: Record<string, unknown>, base: () => number) => unknown): Record<string, unknown> => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" }, { [TRACK_COUNT_SEED]: 8 });
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+    let written = false;
+    table.vd_set = (a: Record<string, unknown>) => {
+      written = true;
+      return baseSet(a);
+    };
+    table.vd_get = (a: Record<string, unknown>) =>
+      written && Number(a.paramId) === 839 ? over(a, () => baseGet(a)) : baseGet(a);
+    return table;
+  };
+
+  // A read that failed is not a write that succeeded. Reported rather than thrown on: the
+  // throw would leave withDevice saying the WRITE failed, and it did not — it is on the
+  // unit, and the operator would go looking for it.
+  it("reports a recorder re-read that failed, without calling the write failed", SLOW, async () => {
+    const shell = (await bootApp({
+      tauri: epilogueRead(() => {
+        throw new Error("device-lost");
+      }),
+    }))!;
+    chooseRate(96_000);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    // The write itself went out — without this the case would pass over a build that
+    // failed before sending anything, which is the state the message denies.
+    expect(shell.count("vd_set")).toBeGreaterThan(10);
+    expect(errors(shell)).toContain(t().error.trackCountReread(t().error.shell.deviceLost));
+  });
+
+  // What the re-read does to the undo history. The tail spells it absorb(), not rebase():
+  // rebase drops any entry still OPEN, so an edit the operator started while the read ran
+  // would come back un-undoable. Held open by a press rather than by racing the idle
+  // backstop — history.ts does not arm it while a pointer is down — so the entry is open
+  // when the read lands however long the read takes.
+  it("leaves an edit made while the recorder was being re-read undoable", SLOW, async () => {
+    let issued = (): void => {};
+    const reading = new Promise<void>((r) => (issued = r));
+    let release = (): void => {};
+    const held = new Promise<void>((r) => (release = r));
+    const shell = (await bootApp({
+      tauri: epilogueRead((_a, base) => {
+        issued();
+        return held.then(base);
+      }),
+    }))!;
+    chooseRate(96_000);
+    $("btn-write").click();
+    await reading;
+
+    // A node the epilogue read does not touch: it reads out.sdrec alone, so an edit
+    // anywhere else is undone by the history or by nothing.
+    window.dispatchEvent(new Event("pointerdown"));
+    selectNode("bus.osc");
+    const btns = [...paramRow(t().inspector.oscOn).querySelectorAll<HTMLButtonElement>("button")];
+    (btns.find((b) => b.textContent === "ON") ?? btns[0]).click();
+    expect(paramRow(t().inspector.oscOn).querySelector("button.on")?.textContent).toBe("ON");
+    release();
+    await invoked(shell, "vd_disconnect");
+
+    // End the gesture, then undo it. The commit is deferred one macrotask (click is
+    // dispatched after pointerup), so the undo has to come after that.
+    window.dispatchEvent(new Event("pointerup"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(paramRow(t().inspector.oscOn).querySelector("button.on")?.textContent).toBe("OFF"), {
+      timeout: 10_000,
+    });
+    // …and the count the device authored stayed: it went into the baseline rather than
+    // into the entry, so the undo does not take it back with the edit.
+    selectNode("out.sdrec");
+    expect(row(t().inspector.sdRecTrackCount).querySelector<HTMLSelectElement>("select")!.value).toBe("16");
+  });
+
   // The confirm the case above never reaches: with the device already on the plan's rate
   // and its clock its own, the rate question does not arise and the change count is the
   // first thing asked. It is the last thing between one press and hundreds of parameters
