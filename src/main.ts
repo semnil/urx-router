@@ -358,7 +358,18 @@ function beginLinkLedger(device: string): void {
 function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   linkStatsView?.setSession(false);
   const ledger = linkLedger?.active ? linkLedger.end(reason) : Promise.resolve();
-  return ledger.finally(() => vdDisconnect(epoch));
+  // A follow read already in flight goes on reading over this connection: a session that
+  // merely ends lets its read finish rather than abandoning it (abandonFollowWork says
+  // why), and the link it reads over is this session's. Disconnecting under it answers its
+  // next round trip "not-connected", which stops it exactly where abandoning it would have
+  // — the document left holding a mix of device and plan values with nothing marking which
+  // is which — and reports nothing, since the session is already down and stopLiveOnError
+  // returns on that. No caller can add to the set while it is waited on: the two that can
+  // have reads in flight stop the follow layer first, and the start's own cancels are all
+  // in front of it beginning. allSettled rather than all: a ledger that rejects still has
+  // to release the link.
+  const reads = Promise.all([...followReads].map((r) => r.done));
+  return Promise.allSettled([ledger, reads]).then(() => vdDisconnect(epoch));
 }
 
 const live = DEMO
@@ -679,7 +690,8 @@ function requestReflect(): void {
 // is refused rather than lost. Membership rather than a separate count, so that
 // abandonFollowWork's clear also ends the refusal — a read bound to a discarded plan
 // provably cannot touch the open one, so it must not keep undo shut.
-const followReads = new Set<AbortController>();
+type FollowRead = { abort: () => void; done: Promise<void> };
+const followReads = new Set<FollowRead>();
 // Routes the UNIT announced an insert-FX change on, appended in notify order. A read is
 // not a snapshot: its addresses are answered hundreds of milliseconds apart, so a change
 // landing inside one is caught on the addresses read after it and missed on those read
@@ -717,7 +729,7 @@ let rateSeq = 0;
 // queued reflect goes too — it names nodes in the outgoing plan and its full path resets
 // the history of whatever replaced it; loadPlan re-renders the new plan whole anyway.
 function abandonFollowWork(): void {
-  for (const c of followReads) c.abort();
+  for (const r of followReads) r.abort();
   followReads.clear();
   // The reads that would have consumed these are gone, so nothing is left to own them.
   announcedInsertFx.length = 0;
@@ -742,7 +754,13 @@ async function followRead(
   read: (into: Plan, signal: AbortSignal) => Promise<ReadbackResult>,
 ): Promise<MergedRead | null> {
   const controller = new AbortController();
-  followReads.add(controller);
+  // The `done` half is what the session's own release waits on (releaseLive).
+  let finished = (): void => {};
+  const entry: FollowRead = {
+    abort: () => controller.abort(),
+    done: new Promise<void>((resolve) => (finished = resolve)),
+  };
+  followReads.add(entry);
   const mark = announcedInsertFx.length;
   // Where this read's own share of the rate history ends. Everything after it arrived
   // WHILE the read ran, which means it belongs to the reconcile it scheduled rather than
@@ -766,7 +784,8 @@ async function followRead(
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
     return merged;
   } finally {
-    followReads.delete(controller);
+    followReads.delete(entry);
+    finished();
     if (!followReads.size) announcedInsertFx.length = 0;
     // The rate history outlives a read that established no rate of its own, and a read
     // that did takes only what was already there when it started. Both halves are about

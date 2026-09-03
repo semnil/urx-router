@@ -15,7 +15,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
-import { $, bootApp, deviceCommands, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
+import {
+  $,
+  bootApp,
+  currentShell,
+  deviceCommands,
+  installAppGlobals,
+  restoreAppGlobals,
+  statusText,
+} from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
 import { attackToVd, eqFreqToVd } from "./core/control/vd";
@@ -34,7 +42,50 @@ import { t } from "./i18n";
 const SLOW = { timeout: 30_000 };
 
 beforeEach(installAppGlobals);
-afterEach(restoreAppGlobals);
+// The app a case leaves behind. A case returns as soon as its own assertion holds, but the
+// flow it started runs on: a live session reads the whole unit before it comes up, and a
+// release waits out a follow read that is hundreds of round trips long. Once the next
+// `bootApp` installs a fresh table those calls land in it — where they read as that case's
+// own traffic, and where a teardown's `vd_disconnect` satisfies a wait for the disconnect
+// the case is actually about.
+afterEach(async () => {
+  const rate = document.getElementById("rate-picker") as HTMLSelectElement | null;
+  const btn = document.getElementById("btn-live");
+  // The app's OWN signal, not a guess at how long things take: the rate picker is locked
+  // for exactly as long as something holds the device link, whichever action holds it. A
+  // session in the middle of starting holds it with the toggle still down, so the two are
+  // waited on together — and the loop is what lets a start that completes here be ended.
+  for (let i = 0; rate && i < 5; i++) {
+    if (btn?.getAttribute("aria-pressed") === "true") {
+      btn.click();
+      await vi.waitFor(() => expect(btn.getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    }
+    if (!rate.disabled) break;
+    await vi.waitFor(() => expect(!rate.disabled || btn?.getAttribute("aria-pressed") === "true").toBe(true), {
+      timeout: 25_000,
+    });
+  }
+  const shell = currentShell();
+  if (shell) await drainShell(shell);
+  restoreAppGlobals();
+});
+
+/** Wait until the page stops invoking. Bounded, and it THROWS at the bound rather than
+ *  returning: an app that never goes quiet is a case leaking into the next one, which is
+ *  the thing this exists to stop, and swallowing it here would put that back silently. */
+async function drainShell(shell: TauriShell): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  let seen = shell.invokes.length;
+  // Several readings: one sample of "unchanged" is satisfied inside a pause between two
+  // phases of the very flow being waited out.
+  for (let quiet = 0; quiet < 10;) {
+    if (Date.now() > deadline) throw new Error(`the page is still invoking (${shell.invokes.length})`);
+    await new Promise((r) => setTimeout(r, 10));
+    const now = shell.invokes.length;
+    quiet = now === seen ? quiet + 1 : 0;
+    seen = now;
+  }
+}
 
 /** Boot with a connected unit. `agree` answers every confirm with Ok. */
 const bootDevice = async (
@@ -289,6 +340,91 @@ const quiet = async (shell: TauriShell): Promise<void> => {
     { timeout: 25_000, interval: 200 },
   );
 };
+
+// The device table's own contract, which no case below can state: it is the fixture all of
+// them run on, so a loosening here is invisible from inside them and every one of them goes
+// on passing. What it copies is the shell (`src-tauri/src/vd.rs`): every vd command but
+// connect, disconnect and the link stats goes through `sender()`, which answers
+// "not-connected" while no worker is installed, and `disconnect` closes only the generation
+// whose epoch it is handed.
+describe("the device table the desktop cases run on", () => {
+  /** One command out of the table, called the way the shell calls it. */
+  const call = (table: Record<string, unknown>, cmd: string, a: Record<string, unknown> = {}): unknown =>
+    (table[cmd] as (x: Record<string, unknown>) => unknown)(a);
+  const CH1 = { paramId: PARAMS.CH_FADER.id, x: 0, y: 0 };
+
+  it("refuses device traffic until a connection is open, and again once it is released", () => {
+    const table = deviceCommands();
+    expect(() => call(table, "vd_get", CH1)).toThrow(/not-connected/);
+
+    const { epoch } = call(table, "vd_connect") as { epoch: number };
+    expect(call(table, "vd_get", CH1)).toBe(0);
+
+    call(table, "vd_disconnect", { epoch });
+    expect(() => call(table, "vd_get", CH1)).toThrow(/not-connected/);
+  });
+
+  // The subscriptions reach the shell through that same `sender()`. Answering them while
+  // disconnected would let a session start over a link that is not there.
+  it("refuses the subscriptions on the same rule as the reads", () => {
+    const table = deviceCommands();
+    const subs = ["vd_params_subscribe", "vd_meters_subscribe", "vd_watch_link"];
+    for (const cmd of subs) expect(() => call(table, cmd)).toThrow(/not-connected/);
+    call(table, "vd_connect");
+    for (const cmd of subs) expect(call(table, cmd)).toBeNull();
+  });
+
+  // A stale epoch closes nothing: the app opens a connection inside a live session and
+  // releases it again, and a teardown that ignored the epoch would end the session.
+  it("closes only the generation the disconnect names", () => {
+    const table = deviceCommands();
+    const first = (call(table, "vd_connect") as { epoch: number }).epoch;
+    const second = (call(table, "vd_connect") as { epoch: number }).epoch;
+    expect(second).not.toBe(first);
+
+    call(table, "vd_disconnect", { epoch: first });
+    expect(call(table, "vd_get", CH1)).toBe(0);
+    call(table, "vd_disconnect", { epoch: second });
+    expect(() => call(table, "vd_get", CH1)).toThrow(/not-connected/);
+  });
+
+  // What a case overrides is what the unit REPORTS, and the bookkeeping is not part of
+  // that. Written as a plain answer it used to replace the whole command: three cases then
+  // drove a model switch whose every read was refused, by a table that was answering
+  // correctly.
+  it("keeps the connection when a case says what the unit reports", () => {
+    const table = deviceCommands({ vd_connect: { model: "URX22", label: "URX22", firmware: "1.0.0.0", epoch: 0 } });
+    const answer = call(table, "vd_connect") as { model: string; epoch: number };
+    expect(answer.model).toBe("URX22");
+    // The generation is the table's to assign, so the one written into the answer is
+    // replaced rather than handed back. 0 is a value the counter never produces.
+    expect(answer.epoch).not.toBe(0);
+    expect(call(table, "vd_get", CH1)).toBe(0);
+  });
+
+  // Counted for the whole run rather than per table: a table restarting at 1 gives an app
+  // a generation that a disconnect leaked from an EARLIER one matches, and that teardown
+  // then closes a connection it never opened — every read after it refused, on a link the
+  // case believes is up. The shell's own counter lives in the process (`vd.rs`), which a
+  // page load does not restart either.
+  it("does not restart the generation for a new table", () => {
+    const first = (call(deviceCommands(), "vd_connect") as { epoch: number }).epoch;
+    const second = (call(deviceCommands(), "vd_connect") as { epoch: number }).epoch;
+    expect(second).toBeGreaterThan(first);
+  });
+
+  // …and a connect that FAILS installs nothing, which is what the cases stubbing a broken
+  // link rest on.
+  it("stays disconnected when the connect itself fails", () => {
+    const table = deviceCommands({
+      vd_connect: () => {
+        throw new Error("no-device");
+      },
+    });
+    expect(() => call(table, "vd_connect")).toThrow(/no-device/);
+    expect(() => call(table, "vd_get", CH1)).toThrow(/not-connected/);
+  });
+});
 
 describe("Fetch from device", () => {
   // The same rule for what a MIRROR wrote. While a pair is linked the insert FX travels
@@ -854,6 +990,12 @@ describe("the live session", () => {
       // session up and DOES write: an absence here is the session and not the setup.
       expect(insertFxWrites(shell).length).toBe(written);
       expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+      // And the branch above is reachable at all because the LINK outlived the read: the
+      // release waits for a follow read still doing round trips (releaseLive). Without the
+      // wait the read dies at its next one, on a link taken out from under it — the same
+      // half-filled document abandoning it would have left, reported nowhere, since the
+      // session is already down and stopLiveOnError returns on that.
+      expect(shell.invokes.lastIndexOf("vd_disconnect")).toBeGreaterThan(shell.invokes.lastIndexOf("vd_get"));
     } finally {
       warn.mockRestore();
     }
