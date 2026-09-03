@@ -682,10 +682,15 @@ export const FX_LEVEL_DEFAULT = 100;
  *  going silent. The `typeof` in front of it narrows `unknown` for the compiler and decides
  *  nothing at run time.
  *
+ *  A FRACTIONAL value is rounded rather than sent as it stands: a raw is a broker integer and
+ *  every one of these controls steps by one, so 35.6 names no setting the unit has. The readout
+ *  rounds it the same way, and the loader's repair writes that rounded value into the plan — the
+ *  three have to agree or the panel, the document and the wire name different settings.
+ *
  *  ONE seat, because the loader repairs a document to exactly what the emit would send, and two
  *  spellings of that rule are two answers to the same question. */
 export function fxRawToSend(stored: unknown, def: number, lo?: number, hi?: number): number {
-  const v = typeof stored === "number" && Number.isFinite(stored) ? stored : def;
+  const v = typeof stored === "number" && Number.isFinite(stored) ? Math.round(stored) : def;
   return Math.min(Math.max(v, lo ?? v), hi ?? v);
 }
 

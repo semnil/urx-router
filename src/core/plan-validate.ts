@@ -111,20 +111,21 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     // panel shows that same default, so the two already agree, and reporting it would write
     // a key the document never carried.
     if (stored === undefined) return;
-    // Not a value this app can send, so there is nothing to bound. Dropped rather than
-    // defaulted, for the reason on `action`. Two shapes reach here: a boolean or an object,
-    // which the document sanitiser keeps; and a FRACTIONAL number, which it keeps too — a raw
-    // is a broker integer and every one of these controls steps by one, so 35.6 is no more
-    // writable than `false` is. The bound below would pass it through, since it sits inside
-    // the window, and the emit does not round either: the plan would hold it, the readout
-    // would show the grade nearest it, and the wire would carry the fraction.
-    if (typeof stored !== "number" || !Number.isFinite(stored) || !Number.isInteger(stored)) {
+    // Not a NUMBER at all — a boolean or an object, which the document sanitiser keeps — so
+    // there is no value to bound. Dropped rather than defaulted, for the reason on `action`.
+    if (typeof stored !== "number" || !Number.isFinite(stored)) {
       out.push({ reason: "paramRange", node, where, key, stored, action: "drop" });
       return;
     }
+    // Rounded first, then the window. A raw is a broker integer and every one of these controls
+    // steps by one, so a fractional value names no setting the unit has — and it is not dropped,
+    // because unlike a boolean it HAS a numeric neighbour: dropping sends the type's own default
+    // instead, which for the delay LPF is 8.50 kHz where the document said 118 Hz.
+    //
     // The window, and only the window. It is the same under every type the channel offers, so
     // whichever type named the key, this is the pair the emit will bound against.
-    const bound = Math.min(Math.max(stored, lo ?? stored), hi ?? stored);
+    const r = Math.round(stored);
+    const bound = Math.min(Math.max(r, lo ?? r), hi ?? r);
     if (bound !== stored) out.push({ reason: "paramRange", node, where, key, stored, action: "bound", bound });
   };
   for (const [node, fxIndex] of Object.entries(FX_CHANNEL_NODE_INDEX)) {

@@ -283,6 +283,10 @@ describe("paramRangeProblems", () => {
             ["not a number", false],
             ["below", (d.rawMin ?? 0) - 1],
             ["above", (d.rawMax ?? 0) + 1],
+            // Inside the window and not a raw the unit has. It joins this invariant because
+            // the emit rounds as well: what the repair writes down is what was already going
+            // out, which is the whole claim of the repair.
+            ["fractional", ((d.rawMin ?? 0) + (d.rawMax ?? 0)) / 2 + 0.6],
           ] as const) {
             const plan = emptyPlan("URX44V");
             plan.nodeParams[node] = { fxEffect: { type: t.value, params: { [d.key]: stored } } } as never;
@@ -359,19 +363,38 @@ describe("paramRangeProblems", () => {
     }
   });
 
-  // A FRACTIONAL raw sits inside the window, so the bound passes it through unchanged and the
-  // document keeps it — while the emit sends it to a device whose parameters are integers and
-  // the readout shows the nearest grade, which is the panel and the wire naming two different
-  // settings. It is dropped for the same reason a boolean is: not a value this app can send.
-  it("drops a fractional raw, which the window would otherwise admit", () => {
+  // A FRACTIONAL raw sits inside the window, so the window alone passes it through — while a
+  // raw is a broker integer and every one of these controls steps by one, so 35.6 names no
+  // setting the unit has. It is ROUNDED, not dropped: unlike a boolean it has a numeric
+  // neighbour, and dropping it hands the key to the type's own default instead.
+  //
+  // The value is chosen so the two answers differ. `delayLpf` rounds to 36 and defaults to
+  // 110, which is 118 Hz against 8.50 kHz — a case whose default happens to equal its rounded
+  // value (revxHpf 3.5, def 4) cannot tell a drop from a bound, and one written that way is
+  // why this reads as it does now.
+  it("rounds a fractional raw rather than handing the key to the type's default", () => {
+    const model = getModel("URX44V");
+    const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    expect(lpf.def, "the case needs a default that is not the rounded value").not.toBe(36);
+
     const plan = emptyPlan("URX44V");
-    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, params: { revxHpf: 3.5 } } };
-    expect(paramRangeProblems(plan).map((p) => [p.key, p.action, p.stored])).toEqual([["revxHpf", "drop", 3.5]]);
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: 35.6 } } };
+    expect(paramRangeProblems(plan).map((p) => [p.key, p.action, p.bound])).toEqual([["delayLpf", "bound", 36]]);
     applyParamRange(plan, paramRangeProblems(plan));
-    expect(plan.nodeParams["bus.fx1"]?.fxEffect?.params?.revxHpf).toBeUndefined();
+    expect(plan.nodeParams["bus.fx2"]?.fxEffect?.params?.delayLpf).toBe(36);
+    // …and the row reads the rounded raw rather than the default the drop would have left.
+    expect(lpf.format!(36, {})).not.toBe(lpf.format!(lpf.def, {}));
+    // The wire agrees with both, before the repair as well as after: the emit rounds too, so
+    // the repair moves no value — it only writes down what was already being sent.
+    const sent = (p: typeof plan): number | undefined =>
+      planToCommands(model, p).find((c) => c.paramId === 685 && c.y === lpf.slot)?.vdValue;
+    expect(sent(plan)).toBe(36);
+    const raw = emptyPlan("URX44V");
+    raw.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: 35.6 } } };
+    expect(sent(raw)).toBe(36);
     // …and the integer beside it is untouched, so this is the fraction and not the window.
     const kept = emptyPlan("URX44V");
-    kept.nodeParams["bus.fx1"] = { fxEffect: { type: 0, params: { revxHpf: 3 } } };
+    kept.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: 36 } } };
     expect(paramRangeProblems(kept)).toEqual([]);
   });
 
