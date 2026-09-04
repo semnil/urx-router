@@ -521,6 +521,32 @@ describe("feedback round trip", () => {
     return p;
   };
 
+  // What that sweep cannot see, stated where it is blind. It compares `c.get()` either side
+  // of the trip, and the FX delay time's codec snaps its READING to the wire's grid — so a
+  // value between two positions round-trips as "unchanged" there while the plan underneath
+  // it has moved. The control is offered all the same (a controller reaches 16384 of its
+  // 27000 settings), so what is pinned is the SIZE of the move and that it happens once.
+  it("snaps the FX delay time to the wire grid once, and no further", () => {
+    const m = getModel("URX44V");
+    const plan = seeded("URX44V");
+    ensureFixedConnections(m, plan);
+    const id = controlId("bus.fx2", "fx", "fx.delay");
+    const c = bindControl(m, plan, id)!;
+    const raw = (): number => plan.nodeParams["bus.fx2"]!.fxEffect!.params!.delay!;
+    // Deliberately OFF the wire grid — the factory default is one such value, which is why
+    // it is the seed: the case has to fail if the snap ever grows past a raw.
+    plan.nodeParams["bus.fx2"]!.fxEffect!.params = { ...plan.nodeParams["bus.fx2"]!.fxEffect!.params, delay: 5000 };
+    const echo = (): void => {
+      expect(c.set(wireRaw(PAIR, c.get()) / wireSteps(PAIR))).toBe(true);
+    };
+    echo();
+    const settled = raw();
+    expect(Math.abs(settled - 5000), "one echo moves it by at most one raw").toBeLessThanOrEqual(1);
+    echo();
+    echo();
+    expect(raw(), "and no further: the snapped value is on the grid").toBe(settled);
+  });
+
   it.each(["URX22", "URX44", "URX44V"] as const)("is exact at 14 bits for every %s control", (id) => {
     const m = getModel(id);
     const offenders = new Set<string>();
@@ -567,6 +593,28 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     if (!c) throw new Error(`no control ${cid}`);
     return c.set(v);
   };
+
+  // The eighth lock, and the only one outside insert FX. While tempo Sync is on the unit
+  // recomputes the delay time from BPM and the note value and announces the result, so the
+  // screen locks the row and the catalogue has to refuse the write — `fxRowOwners` is the one
+  // list both read. Asked in BOTH directions, like every case around it: without the second
+  // half a `set` that never takes at all would satisfy the first.
+  it("refuses the FX delay time while tempo Sync is on, and takes it back when it is off", () => {
+    const cid = controlId("bus.fx2", "fx", "fx.delay");
+    const fxParamsOf = (): Record<string, number> | undefined => plan.nodeParams["bus.fx2"]?.fxEffect?.params;
+    const hold = (sync: number): void => {
+      plan.nodeParams["bus.fx2"] = {
+        ...plan.nodeParams["bus.fx2"],
+        fxEffect: { ...plan.nodeParams["bus.fx2"]?.fxEffect, type: 1024, params: { delay: 5000, sync } },
+      };
+    };
+    hold(1);
+    expect(push(cid, 0.75), "while the unit is computing it").toBe(false);
+    expect(fxParamsOf()?.delay, "and the value did not move").toBe(5000);
+    hold(0);
+    expect(push(cid, 0.75), "with Sync off it is the operator's again").toBe(true);
+    expect(fxParamsOf()?.delay).not.toBe(5000);
+  });
 
   it("refuses the slots the multi-band compressor's 1-Knob is driving, and takes them back", () => {
     const th = MBC_BANDS[0].threshold;

@@ -104,8 +104,11 @@ const SURFACES: Record<SurfaceName, Surface> = {
     // The peak readout is the prefix in front of its own value ("pk -12.0"), and the INS
     // FX screen's name is the first half of its heading ("INS FX — Compander-H"): that
     // screen shows whichever effect the node holds, so the effect's own name is part of
-    // the title rather than something else on the panel.
-    composed: ["dynTuning.peakPrefix", "dynTuning.insfx.title"],
+    // the title rather than something else on the panel. The FX EFFECT screen's name is
+    // the same shape ("FX EFFECT — Rev-X Hall") for the same reason, and unlike INS FX it
+    // is not also a chip label anywhere: the strip's face reads EFFECT, since the scribble
+    // above it already says which FX channel this is.
+    composed: ["dynTuning.peakPrefix", "dynTuning.insfx.title", "dynTuning.fx.title"],
     // What the panel says on screen is the pill beside the switch ("Device"); this is the
     // sentence behind it, and it is three lines — printed on the panel it would be the
     // largest thing on a section whose whole content is one dead row. The same arrangement
@@ -646,6 +649,53 @@ test("the channel tuning screens show every processor, both displays and their n
   await openInsertFxSection(page);
   await page.locator("#btn-insfx-screen").click();
   await expect(box).toBeVisible();
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+
+  // The FX EFFECT screen: three parameter families behind one EFFECT TYPE, and the two rows
+  // whose tag says the unit is the one setting them. Reached from the Inspector, whose
+  // launcher is the only place this screen's "…screen" wording appears.
+  const openFx = async (nodeId: string): Promise<void> => {
+    await page.locator(`#graph-host g.node[data-id="${nodeId}"]`).click();
+    const sec = page.locator("#inspector .insp-section", {
+      has: page.locator("summary", { hasText: /^FX Effect$/ }),
+    });
+    if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+    await inv.take(page, "#inspector");
+    await sec.locator("#btn-fx-screen").click();
+    await expect(box).toBeVisible();
+  };
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  // FX 1 out of the factory: a Rev-X, which is knobs alone and carries no tag.
+  await openFx("bus.fx1");
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+
+  // FX 2 holds Mono Delay, whose Sync switch decides which of two rows the unit owns —
+  // with it off the note value goes unread, with it on the delay time is recomputed. Both
+  // states, because each prints a different tag and neither row is ever removed.
+  await openFx("bus.fx2");
+  await inv.take(page, "#dyn-screen-modal");
+  await box
+    .locator(".prefs-row", { has: page.getByText("Sync", { exact: true }) })
+    .getByRole("button")
+    .first()
+    .click();
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+
+  // …and with the effect switched out, which is the state that puts a line under the
+  // display. Seeded through the plan so the screen opens already in it.
+  const fxBypassed = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { "bus.fx1": { fxEffect: { on: false } } },
+  };
+  await page.goto(`/?plan=${planParamZ(fxBypassed)}`);
+  await openFx("bus.fx1");
   await inv.take(page, "#dyn-screen-modal");
   await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 

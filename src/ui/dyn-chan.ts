@@ -10,7 +10,7 @@
 import { channelDynamics } from "../core/control/translate";
 import type { ChannelDynamics, DynField } from "../core/control/translate";
 import { COMP_EQ_COMP_FIRST } from "../core/control/params";
-import { settingsRow, settingsSelect } from "./dom";
+import { el, settingsRow, settingsSelect } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { grAddr, tapFor } from "../core/meters";
 import type { GrKind } from "../core/meters";
@@ -156,4 +156,13 @@ export function enumRow(
     ),
     opts,
   );
+}
+
+/** The one element that ends a row of a knob grid: it spans every column, so what follows
+ *  it starts a row of its own. Empty and hidden — it separates two groups and names
+ *  neither, and a caption here would be a heading inside a panel that has one already. */
+export function rowBreak(): HTMLElement {
+  const b = el("span", "gt-break");
+  b.setAttribute("aria-hidden", "true");
+  return b;
 }

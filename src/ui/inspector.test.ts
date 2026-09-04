@@ -583,16 +583,16 @@ describe("renderInspector — a stored value outside its control's range", () =>
     return row?.querySelector(".param-val")?.textContent ?? "";
   };
   const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
-  const LPF = t().inspector.fxEffect.params.lpf;
 
-  it("shows what the unit holds, not the bound the next write will apply", () => {
+  it("sends the bound for a stored value the window no longer admits", () => {
     // raw 20 is below the window and IS a state a unit can be in: v1.11.0 shipped this
     // slider starting at 0, so its Live sync could put one there.
     const plan = fxPlanWith({ delayLpf: 20 });
     renderInspector(panel, getModel("URX44V"), plan, nodeSel("bus.fx2"), act);
-    expect(rowValue(LPF)).toBe(lpf.format!(20, {}));
-    expect(rowValue(LPF)).not.toBe(lpf.format!(lpf.rawMin!, {}));
-    // …while the write path still sends the bound. Both are true, and the row shows the first.
+    // The write path sends the BOUND, while the surface that draws the value shows what the
+    // unit holds. Both are true; this half is the writer's, and the display half is asked of
+    // the FX tuning screen, which is where the effect's parameters are drawn
+    // (`fx-effect-screen.test.ts`).
     expect(planToCommands(getModel("URX44V"), plan).find((c) => c.paramId === 685 && c.y === 10)?.vdValue).toBe(
       lpf.rawMin,
     );
@@ -623,35 +623,18 @@ describe("renderInspector — a stored value outside its control's range", () =>
 // is genuinely open is the other direction — the panel saying that it is showing defaults —
 // and that is a design question about every sparse param, not only these.
 describe("renderInspector — an FX channel the plan does not describe", () => {
-  const rowValue = (label: string): string => {
-    const row = [...panel.querySelectorAll<HTMLElement>(".param")].find((r) => r.dataset.paramLabel === label);
-    return row?.querySelector(".param-val")?.textContent ?? "";
-  };
-
-  it("draws the effect's own defaults, which the write path does not send", () => {
+  it("sends nothing for a channel the plan does not describe", () => {
     const model = getModel("URX44V");
     const plan = emptyPlan("URX44V");
     expect(plan.nodeParams["bus.fx1"]?.fxEffect, "the premise: nothing describes it").toBeUndefined();
     renderInspector(panel, model, plan, nodeSel("bus.fx1"), act);
+    // The section still draws — a selector, an ON toggle and the launcher, and no value rows
+    // (a select carries no `.param-val`, which is why this asks for the launcher).
+    expect(panel.querySelector("#btn-fx-screen")).not.toBeNull();
 
-    // The rows are the FX1 factory type's descriptors, at their own defaults.
-    const descs = fxParams(0);
-    const labels = t().inspector.fxEffect.params;
-    const ctx: Record<string, number> = {};
-    for (const d of descs) ctx[d.key] = d.def;
-    let compared = 0;
-    for (const d of descs) {
-      if (d.control !== "slider" && d.control !== undefined) continue;
-      const label = labels[d.label as keyof typeof labels] ?? d.label;
-      expect(rowValue(label), d.key).toBe(d.format ? d.format(d.def, ctx) : String(d.def));
-      compared += 1;
-    }
-    // Counted, or a filter that matched nothing would satisfy every assertion above.
-    expect(compared).toBe(descs.filter((d) => d.control === undefined || d.control === "slider").length);
-    expect(compared).toBeGreaterThan(4);
-    expect(rowValue(t().inspector.fxEffect.level)).toBe("100");
-
-    // …and not one of them reaches the unit.
+    // …and not one value reaches the unit. What the app SHOWS for such a channel is the
+    // effect's own defaults, and that half is asked of the tuning screen that draws them
+    // (`fx-effect-screen.test.ts`), which is where those rows now are.
     expect(planToCommands(model, plan).some((c) => c.paramId === 679 || c.paramId === 681)).toBe(false);
   });
 });

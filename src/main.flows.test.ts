@@ -217,6 +217,20 @@ describe("the deep link", () => {
   // not. The loader repairs it before the document opens, so the panel and the write path
   // stop naming different numbers, and says so on the status line rather than in a modal:
   // nothing failed and nothing is being asked.
+  /** What the FX tuning screen prints for one row of a channel, opened from the Inspector.
+   *  The effect's parameters are drawn there rather than in the Inspector, so a case about
+   *  what the app SHOWS for a stored raw has to open it. */
+  const fxScreenValue = (nodeId: string, label: string): string => {
+    $("graph-host")
+      .querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    $("btn-fx-screen").click();
+    const card = [...$("dyn-screen-box").querySelectorAll<HTMLElement>(".gt-knob")].find(
+      (c) => c.querySelector(".lbl")?.textContent === label,
+    );
+    return card?.querySelector(".gt-val")?.textContent ?? "";
+  };
+
   it("bounds a stored value the range no longer admits, and says how many on the status line", async () => {
     const { encodePlanParam, emptyPlan } = await import("./core/plan");
     const { fxParams } = await import("./core/control/fx-effect");
@@ -232,13 +246,8 @@ describe("the deep link", () => {
     expect($("load-report").hidden).toBe(true);
     expect(nodes()).toBeGreaterThan(5);
     // …and the plan itself carries the bound, so a save does not write the old value back.
-    $("graph-host")
-      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
-      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    const row = [...$("inspector").querySelectorAll<HTMLElement>(".param")].find(
-      (r) => r.dataset.paramLabel === t().inspector.fxEffect.params.lpf,
-    );
-    expect(row?.querySelector(".param-val")?.textContent).toBe(lpf.format!(lpf.rawMin!, {}));
+    // Read off the FX tuning screen, which is where the effect's parameters are drawn.
+    expect(fxScreenValue("bus.fx2", t().inspector.fxEffect.params.lpf)).toBe(lpf.format!(lpf.rawMin!, {}));
   });
 
   // The plural half of the same message, and the walk over BOTH channels. A one-value plan
@@ -284,14 +293,8 @@ describe("the deep link", () => {
 
     await vi.waitFor(() => expect(status()).toContain(t().status.paramsDropped(1)), APP_SETTLE);
     expect(status()).not.toContain(t().status.paramsBounded(1));
-    // …and the panel shows the effect's own default rather than the boolean's numeric shadow.
-    $("graph-host")
-      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
-      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    const row = [...$("inspector").querySelectorAll<HTMLElement>(".param")].find(
-      (r) => r.dataset.paramLabel === t().inspector.fxEffect.level,
-    );
-    expect(row?.querySelector(".param-val")?.textContent).toContain(String(FX_LEVEL_DEFAULT));
+    // …and the screen shows the effect's own default rather than the boolean's numeric shadow.
+    expect(fxScreenValue("bus.fx2", t().inspector.fxEffect.level)).toContain(String(FX_LEVEL_DEFAULT));
   });
 
   // Both at once, which neither case above can see: the line has to carry two sentences, and

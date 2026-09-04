@@ -141,16 +141,22 @@ test("a repaired value is reported beside the conflict, and is repaired once the
   // The repair survived the decision — the plan the operator agreed to open is the repaired
   // one, not the document as it arrived.
   await page.locator('#graph-host g.node[data-id="bus.fx2"]').click();
+  // Read off the FX tuning screen, which is where the effect's parameters are drawn. The
+  // section folds with the effect's own ON state, so it is opened before the launcher inside
+  // it is pressed.
+  const sec = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: "FX Effect" }) });
+  if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+  await sec.locator("#btn-fx-screen").click();
+  const value = page
+    .locator("#dyn-screen-box .gt-knob")
+    .filter({ has: page.getByText("LPF", { exact: true }) })
+    .locator(".gt-val");
   // The BOUND raw's frequency, taken from the catalogue rather than written out: what this
   // asserts is that the row shows raw 21 and not the document's raw 20, and spelling the
   // label here would tie the case to how many digits the readout carries as well.
   const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
-  await expect(page.locator("#inspector .param", { hasText: "LPF" }).locator(".param-val")).toHaveText(
-    lpf.format!(lpf.rawMin!, {}),
-  );
-  await expect(page.locator("#inspector .param", { hasText: "LPF" }).locator(".param-val")).not.toHaveText(
-    lpf.format!(lpf.rawMin! - 1, {}),
-  );
+  await expect(value).toHaveText(lpf.format!(lpf.rawMin!, {}));
+  await expect(value).not.toHaveText(lpf.format!(lpf.rawMin! - 1, {}));
 });
 
 test("closing an insert-FX slot conflict report loads nothing", async ({ page }) => {
