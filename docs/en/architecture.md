@@ -2298,11 +2298,14 @@ Errors are surfaced by meaning. An **operation that did not complete** (a failed
 fetch, write, self-test, connect, or live-sync start, plus a link drop during live sync) is shown as a
 **modal** so it cannot be missed
 (`errorDialog` → `showError`, which clears the status line first so a stale "Connecting…" does not linger behind
-it). **Routine progress, info, cancellation, and partial successes** stay on the status line at the bottom. One
-site takes that clearing back: the write's recorder re-read runs in a `finally`, AFTER the write has written its
-outcome, so a failure there wipes a line that is not stale — a write that took values back says so on it and
-nowhere else, while the dialog names the recorder read. It captures the line ahead of the read and restores it
-behind the dialog. A live
+it). **Routine progress, info, cancellation, and partial successes** stay on the status line at the bottom. Two sites take that
+clearing back, and what they have in common is the rule: a dialog raised AFTER an action has written its outcome
+would clear a line that is not stale — an action that changed the plan says so on it and nowhere else, while the
+dialog names something else. The write's recorder re-read is one (it runs in a `finally`, after the write's own
+line), the offer to save a failure report the other (it runs after `withDevice` returned). Each reads the line at
+the moment the dialog goes up rather than earlier, so a refusal written in between — an undo declined because a
+device read holds the history — is what comes back; and the write's does it only where the write ENDED, since a
+throw leaves a progress message, which is what the clearing is for. A live
 runtime error can arrive from several sources at once (live / follow / link watch), so they funnel through
 `stopLiveOnError`, which uses the `liveSessionUp` flag to drop the connection and show the dialog exactly once — the
 second and later calls return early because `deactivateLive` clears that flag synchronously.
