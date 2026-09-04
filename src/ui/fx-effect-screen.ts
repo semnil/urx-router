@@ -28,7 +28,7 @@ import {
 } from "../core/control/fx-effect";
 import type { FxFamily, FxParamDesc } from "../core/control/fx-effect";
 import { nodeRateDisabled } from "../core/constraints";
-import { controlId, FX_SCOPE } from "../core/midi/controls";
+import { controlId, FX_LEVEL_SCOPE, FX_ON_SCOPE, FX_SCOPE } from "../core/midi/controls";
 import type { DynField, FxFieldKey } from "../core/control/translate";
 import { tapFor } from "../core/meters";
 import type { FxEffectParams, NodeParams } from "../core/plan";
@@ -260,6 +260,33 @@ function lockedRows(ctx: DynCtx, type: number): ReadonlyMap<string, { locked: tr
 const labelOf = (d: FxParamDesc, m: Messages): string =>
   m.inspector.fxEffect.params[d.label as keyof Messages["inspector"]["fxEffect"]["params"]] ?? d.label;
 
+/**
+ * The words a MIDI assignment prints for one of this screen's control ids, or null when the
+ * scope is not one of them. The screen's own title leads, the way the insert effect's does:
+ * a scope is built from the PLAN KEY, so printed raw an assignment read "FX 1 · fx.reverbTime
+ * · fx" — three tokens, none of them a word that appears on any surface the operator sees.
+ *
+ * Resolved across every type BOTH channels offer rather than against the one a channel holds
+ * now: an assignment outlives the effect it was made on, and a list that fell back to the raw
+ * key the moment the type changed would print the token exactly where the name is most needed.
+ * The catalogue shares a key wherever two families really are one parameter and separates the
+ * ones that only look alike, so the first descriptor found under a key is the right label.
+ */
+export function fxControlLabel(scope: string | undefined, m: Messages): string | null {
+  if (scope === undefined || !scope.startsWith(`${FX_SCOPE}.`)) return null;
+  const head = m.dynTuning.fx.title;
+  if (scope === FX_LEVEL_SCOPE) return `${head} · ${m.inspector.fxEffect.level}`;
+  if (scope === FX_ON_SCOPE) return `${head} · ${m.inspector.fxEffect.effectOn}`;
+  const key = scope.slice(FX_SCOPE.length + 1);
+  for (const fxIndex of [0, 1]) {
+    for (const opt of fxEffectTypes(fxIndex)) {
+      const d = fxParams(opt.value).find((x) => x.key === key);
+      if (d) return `${head} · ${labelOf(d, m)}`;
+    }
+  }
+  return null;
+}
+
 function fxFace(): DynProcessor {
   return {
     key: "fx",
@@ -452,7 +479,7 @@ function fxFace(): DynProcessor {
     controlId: (ctx, key) => {
       const planKey = planKeyOf(key);
       if (!planKey) return null;
-      if (planKey === MIX_KEY) return controlId(ctx.nodeId, "fx", `${FX_SCOPE}.${MIX_KEY}`);
+      if (planKey === MIX_KEY) return controlId(ctx.nodeId, "fx", FX_LEVEL_SCOPE);
       const type = typeOf(ctx);
       const d = type === null ? undefined : fxParams(type).find((x) => x.key === planKey);
       // An enum answers null — a select has no normalized domain, which is the treatment

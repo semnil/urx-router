@@ -125,6 +125,22 @@ describe("arming surfaces against the control catalog", () => {
     expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
   });
 
+  // The case above compares two counts, and both of them count only controls that MARKED
+  // themselves — so a chip carrying no id at all is absent from each side and the totals
+  // still agree. That is the shape the FX strip's EFFECT face had: a toggle the CONSOLE
+  // draws, in the row where every other face arms, offering nothing. It has to be named to
+  // be seen, which is what this does.
+  it("marks and binds the FX strip's EFFECT face by name", () => {
+    const armed: string[] = [];
+    ch = consoleHost({ modelId: "URX44V", midi: learnHooks(armed) });
+    const face = ch.strip("bus.fx1").root.querySelector<HTMLElement>(".con-fxface");
+    if (!face) throw new Error(".con-fxface is missing — the FX strip draws no EFFECT chip");
+    expect(face.classList.contains("midi-target"), "the EFFECT face offers itself").toBe(true);
+    face.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(armed, "and arms exactly one id").toEqual(["bus.fx1/fx@fx.on"]);
+    expect(bindControl(ch.model, ch.plan, armed[0]), "which the catalog binds").toBeTruthy();
+  });
+
   // Every registered processor, on the first node it will bind to — so a processor
   // added to dyn-registry.ts is covered the day it is registered rather than when
   // someone remembers to list it here.

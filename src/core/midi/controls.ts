@@ -87,6 +87,11 @@ export const eqBandScope = (index: number): string => `${EQ_SCOPE}.${EQ_BAND_NAM
  *  it, since the node can change what family it holds. */
 export const INSFX_SCOPE = "insfx";
 export const FX_SCOPE = "fx";
+/** The two `fxEffect` fields that are not catalogue rows, as the scope suffix each is
+ *  addressed by. Named here because three surfaces spell them — this catalog, the CONSOLE
+ *  chip that arms the first, and the label an assignment prints. */
+export const FX_ON_SCOPE = `${FX_SCOPE}.on`;
+export const FX_LEVEL_SCOPE = `${FX_SCOPE}.level`;
 export const SSMCS_SCOPE = "ssmcs";
 export const SSMCS_COMP_SCOPE = `${SSMCS_SCOPE}.comp`;
 export const SSMCS_SC_SCOPE = `${SSMCS_SCOPE}.sc`;
@@ -810,14 +815,30 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       const p = np();
       p.fxEffect = { ...p.fxEffect, ...patch };
     };
+    // EFFECT ON: the CONSOLE strip draws it as a face and the Inspector as a two-button
+    // switch, so it is a toggle this catalog owes an id the same way it owes one to every
+    // other chip in that row. It sits at the top of `fxEffect` beside Mix, not in the params
+    // map, and it has no catalogue descriptor either.
+    out.push({
+      id: controlId(id, "fx", FX_ON_SCOPE),
+      node: id,
+      param: "fx",
+      scope: FX_ON_SCOPE,
+      kind: "toggle",
+      get: () => ((plan.nodeParams[id]?.fxEffect?.on ?? true) ? 1 : 0),
+      set: (v) => {
+        mergeFx({ on: v >= 0.5 });
+        return true;
+      },
+    });
     // Mix lives at the top of `fxEffect` rather than in the params map, so it is written
     // through its own path — the one row here with no catalogue descriptor.
     const mixCodec = linearCodec(0, 100, 1);
     out.push({
-      id: controlId(id, "fx", `${FX_SCOPE}.level`),
+      id: controlId(id, "fx", FX_LEVEL_SCOPE),
       node: id,
       param: "fx",
-      scope: `${FX_SCOPE}.level`,
+      scope: FX_LEVEL_SCOPE,
       kind: "continuous",
       get: () => mixCodec.get(plan.nodeParams[id]?.fxEffect?.level ?? 100),
       set: (v) => {

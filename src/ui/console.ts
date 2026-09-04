@@ -89,7 +89,7 @@ import {
 } from "../core/control/vd";
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
-import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
+import { controlId, FX_ON_SCOPE, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
 import { el, focusables, onWheelStep, popLeft, popTop, preserveFocus, scrubFloat } from "./dom";
 import { fineActive, fineTag } from "./fine";
@@ -2651,7 +2651,7 @@ export class Console {
           // The nested field by name, not the group: naming `fxEffect` would claim every
           // sibling this rebuild merely copied and take the device's answer for all of them.
           // The morphing strip's chips solved the same shape first.
-          { cls: "con-chip con-fxface", keys: ["fxEffect.on"] },
+          { cls: "con-chip con-fxface", keys: ["fxEffect.on"], midiId: controlId(m.id, "fx", FX_ON_SCOPE) },
         ),
       );
       this.appendOpener(proc, this.fxTypeOpenChip(m.id));

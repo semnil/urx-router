@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { FX_DYN, ORDER_FOR_TEST } from "./fx-effect-screen";
-import { fxParams, fxFamilyOf } from "../core/control/fx-effect";
-import { bindControl, controlId, listControls, FX_SCOPE } from "../core/midi/controls";
+import { FX_DYN, ORDER_FOR_TEST, fxControlLabel } from "./fx-effect-screen";
+import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxFamilyOf } from "../core/control/fx-effect";
+import { bindControl, controlId, listControls, FX_LEVEL_SCOPE, FX_ON_SCOPE, FX_SCOPE } from "../core/midi/controls";
 import { ensureFixedConnections } from "../core/plan";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import { diffPlans, nodeParamContestPath, patchContestNames } from "../core/plan-history";
 import { defaultPlan } from "../models/initial-state";
 import { getModel } from "../models";
-import { t } from "../i18n";
+import { setLang, t } from "../i18n";
 import type { DynCtx } from "./dyn-screen";
 import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
@@ -187,6 +187,58 @@ describe("the row order and the break", () => {
         if (d.control !== "slider") continue;
         expect(order, `type ${type} / ${d.key}`).toContain(d.key);
       }
+    }
+  });
+});
+
+// What an assignment PRINTS. A control id's scope is built from the plan key, so the list
+// read "FX 1 · fx.reverbTime · fx" — three tokens, none of them a word on any surface the
+// operator sees. Driven from `listControls` rather than a written-out list of scopes, so a
+// row the catalogue gains is covered the day it is added; and asked in both languages,
+// because a label composed of tokens is equally unreadable in either.
+describe("the words a MIDI assignment prints for an FX control", () => {
+  const model = getModel("URX44V");
+
+  /** Every FX-scoped control id the catalogue offers across every type both channels can
+   *  hold — the ids an assignment list can ever be asked to name. */
+  const everyFxScope = (): Set<string> => {
+    const out = new Set<string>();
+    for (const nodeId of ["bus.fx1", "bus.fx2"]) {
+      for (const opt of fxEffectTypes(FX_CHANNEL_NODE_INDEX[nodeId])) {
+        const plan = defaultPlan("URX44V");
+        ensureFixedConnections(model, plan);
+        plan.nodeParams[nodeId] = { ...plan.nodeParams[nodeId], fxEffect: { type: opt.value } };
+        for (const c of listControls(model, plan)) {
+          if (c.param === "fx" && c.scope) out.add(c.scope);
+        }
+      }
+    }
+    return out;
+  };
+
+  it.each(["en", "ja"] as const)("names every FX scope in %s, never its plan key", (lang) => {
+    setLang(lang);
+    const scopes = [...everyFxScope()];
+    // The positive control: the catalogue really did offer the rows this is about. A run
+    // that enumerated nothing would satisfy every assertion below.
+    expect(scopes.length, "the catalogue offered no FX control at all").toBeGreaterThan(10);
+    expect(scopes, "EFFECT ON is one of them").toContain(FX_ON_SCOPE);
+    expect(scopes, "…and so is Mix").toContain(FX_LEVEL_SCOPE);
+    for (const scope of scopes) {
+      const label = fxControlLabel(scope, t());
+      expect(label, `${scope} names nothing`).not.toBeNull();
+      // The screen's own title leads, as the insert effect's does.
+      expect(label, scope).toContain(t().dynTuning.fx.title);
+      // …and the token the scope is built from never reaches the reader.
+      expect(label, `${scope} printed its own plan key`).not.toContain(scope.slice(FX_SCOPE.length + 1));
+    }
+    setLang("en");
+  });
+
+  it("declines a scope that is not one of its own", () => {
+    setLang("en");
+    for (const scope of [undefined, "gate", "insfx.compander.6", "fxsomething.level"]) {
+      expect(fxControlLabel(scope, t()), String(scope)).toBeNull();
     }
   });
 });
