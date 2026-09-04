@@ -1150,3 +1150,110 @@ describe("a gang holding both members of a mirrored pair", () => {
     expect(a.ch1, "the primary's value is the one that moved").toBe(!ch1On);
   });
 });
+
+// What a mirror covers is a property of the NODE and the link mode, not of one parameter. BAL
+// replaces the partner's whole node params and every send, so a BAL pair's CH ON is one value the
+// same way its insert effect is — declared per parameter it was the insert effect's alone.
+describe("what a mirrored pair covers, by link mode", () => {
+  const press = (first: "ch1" | "ch2", link: number, ch1On: boolean, ch2On: boolean) => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: link, on: ch1On };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, on: ch2On };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: (c) => {
+        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 7 } as const;
+    const order = first === "ch1" ? ["ch1", "ch2"] : ["ch2", "ch1"];
+    engine.setMappings(order.map((ch) => ({ control: controlId(ch, "chOn"), addr, mode: "absolute" }) as const));
+    engine.onMessage([0xb0, 7, 127]);
+    return { ch1: plan.nodeParams.ch1?.on, ch2: plan.nodeParams.ch2?.on };
+  };
+
+  it("BAL: CH ON is one value, so the learn order cannot pick it", () => {
+    const back = deserialize(
+      serialize({
+        ...plan,
+        nodeParams: {
+          ...plan.nodeParams,
+          ch1: { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_BAL, on: true },
+          ch2: { ...plan.nodeParams.ch2, on: false },
+        },
+      }),
+    );
+    // Reachable, like the insert-FX pair: nothing makes the two agree before a press arrives.
+    expect([back.nodeParams.ch1?.on, back.nodeParams.ch2?.on]).toEqual([true, false]);
+    expect(planProblems(model, back)).toEqual([]);
+
+    const a = press("ch1", PAN_BAL_BAL, true, false);
+    const b = press("ch2", PAN_BAL_BAL, true, false);
+    expect(b, "the learn order decided the outcome").toEqual(a);
+    expect(a.ch1, "the pair agrees afterwards").toBe(a.ch2);
+    expect(a.ch1, "the primary's value is the one that moved").toBe(false);
+  });
+
+  // The negative condition, and the reason the declaration cannot simply be "a linked pair":
+  // PAN keeps each channel's own CH ON, so these are two values and each flips its own.
+  it("PAN: CH ON is each channel's own, and stays two values", () => {
+    const a = press("ch1", PAN_BAL_PAN, true, false);
+    expect(a).toEqual({ ch1: false, ch2: true });
+    expect(press("ch2", PAN_BAL_PAN, true, false), "and the order still decides nothing").toEqual(a);
+  });
+});
+
+// `button` is deliberately not ganged — two controls behind one button may want edge and state —
+// so a gang can hold a member that IGNORES a message beside one that acts on it. The member that
+// ignored it still holds its group's seat: dropped before the grouping, its partner spoke for the
+// pair and a release the primary refuses turned the pair off.
+describe("a mirrored gang whose members read the press differently", () => {
+  it("lets the primary's silence stand for the pair", () => {
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      stereoLink: true,
+      panBal: PAN_BAL_PAN,
+      insertFx: INSERT_FX_OPTIONS[1].value,
+      insertFxOn: true,
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value, insertFxOn: true };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: (c) => {
+        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 7 } as const;
+    engine.setMappings([
+      { control: controlId("ch1", "insertFxOn"), addr, mode: "absolute", button: "edge" },
+      { control: controlId("ch2", "insertFxOn"), addr, mode: "absolute", button: "state" },
+    ]);
+
+    // A release: edge ignores anything under 64, state would read it as off.
+    engine.onMessage([0xb0, 7, 0]);
+    expect([plan.nodeParams.ch1?.insertFxOn, plan.nodeParams.ch2?.insertFxOn], "the release changed nothing").toEqual([
+      true,
+      true,
+    ]);
+    // The positive control: the same gang DOES act on a press, so the case above is the release
+    // being ignored rather than the gang being inert.
+    engine.onMessage([0xb0, 7, 127]);
+    expect([plan.nodeParams.ch1?.insertFxOn, plan.nodeParams.ch2?.insertFxOn], "…and a press does").toEqual([
+      false,
+      false,
+    ]);
+  });
+});

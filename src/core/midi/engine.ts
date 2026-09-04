@@ -72,6 +72,13 @@ interface PickupState {
 /** One mapping's decided edit: what its control read before the message and what it is to be
  *  set to. A gang decides every member's before this way, then writes them — applying one can
  *  move another's control through the mirror the apply hook runs. */
+/** One member's resolved control and what it decided to do to it, if anything. */
+interface Attempt {
+  mapping: MidiMapping;
+  control: BoundControl;
+  decision: Decision | null;
+}
+
 interface Decision {
   mapping: MidiMapping;
   control: BoundControl;
@@ -246,8 +253,8 @@ export class MidiEngine {
     // Common case: a single mapping, no gang — apply it directly.
     if (matched.length === 1) {
       if (!this.dropEcho(matched[0], ev)) {
-        const only = this.decide(matched[0], ev);
-        if (only) this.commit(only);
+        const only = this.attempt(matched[0], ev);
+        if (only?.decision) this.commit(only.decision);
       }
       return;
     }
@@ -265,37 +272,40 @@ export class MidiEngine {
     // value this same message produced. Both faces ganged to one CC then cancelled out —
     // the first flipped the pair off, the second read the mirrored off and flipped it back,
     // and one press left the pair exactly where it started.
-    const decided = matched
+    // Every member is RESOLVED and decided first, and a member that decided to do nothing keeps
+    // its seat: `decide` answers null both for "this control is not in this plan" and for "this
+    // press is not for me" (an edge toggle's release), and only the first of those may let another
+    // member speak for the group.
+    const attempts = matched
       .filter((mapping) => !echoed.has(addrKey(mapping.addr)))
-      .map((mapping) => this.decide(mapping, ev))
-      .filter((d): d is Decision => d !== null);
-    // Members a MIRROR keeps equal are one decision, not several. A mirror settles on whichever
+      .map((mapping) => this.attempt(mapping, ev))
+      .filter((a): a is Attempt => a !== null);
+    // Members a MIRROR keeps equal are ONE decision, not several. A mirror settles on whichever
     // member was written last, so writing each in turn leaves a pair that started at different
     // values wherever the learn order put it — and a plan can hold such a pair, saved and loaded
-    // without complaint. The one kept is the pair PRIMARY where the gang holds it, so the value
-    // that survives is decided by the pair rather than by the order two assignments were made in;
+    // without complaint. The seat goes to the pair PRIMARY where the gang holds it, so what
+    // survives is decided by the pair rather than by the order two assignments were made in;
     // dropping the rest costs nothing, since the mirror writes them anyway.
-    const byMirror = new Map<string, Decision>();
-    const decisions: Decision[] = [];
-    for (const d of decided) {
-      const key = d.control.mirrorId;
-      if (key === undefined) {
-        decisions.push(d);
-        continue;
-      }
-      const held = byMirror.get(key);
+    //
+    // Keyed by `mirrorId ?? id`, the same normalisation the lock ordering matches on: the primary
+    // answers to its own id, and its partner answers to the primary's. A control nothing mirrors
+    // is a group of one and behaves as it always did.
+    const groups = new Map<string, Attempt>();
+    for (const a of attempts) {
+      const key = a.control.mirrorId ?? a.control.id;
+      const held = groups.get(key);
       if (held === undefined) {
-        byMirror.set(key, d);
-        decisions.push(d);
+        groups.set(key, a);
         continue;
       }
-      // The primary wins the seat wherever it is in the gang; otherwise the first one keeps it.
-      if (d.control.id === key && held.control.id !== key) {
-        byMirror.set(key, d);
-        decisions[decisions.indexOf(held)] = d;
-      }
-      this.hooks.trace?.(`mirror ${d.mapping.control} -> ${key}`);
+      this.hooks.trace?.(`mirror ${a.mapping.control} -> ${key}`);
+      // The primary takes the seat wherever it sits in the gang; otherwise the first one keeps it.
+      if (a.control.id === key && held.control.id !== key) groups.set(key, a);
     }
+    // …and only NOW are the members that decided nothing dropped. Filtered before the grouping,
+    // a primary that ignored the press left its partner's decision to drive the pair — which is
+    // reachable, since a gang may mix edge and state deliberately (`button` is not ganged).
+    const decisions = [...groups.values()].map((a) => a.decision).filter((d): d is Decision => d !== null);
     // …and a member the lock refuses is tried again once the rest have written, because the
     // lock may be another member's to release: the EQ 1-knob computes the four bands while it
     // is on, so a gang told to switch everything off cannot write a band until the knob in the
@@ -391,9 +401,11 @@ export class MidiEngine {
     return true;
   }
 
-  /** What one mapping WOULD do to its control, read before anything is written. Separate
-   *  from the write because a gang's members are decided together: see `onMessage`. */
-  private decide(mapping: MidiMapping, ev: MidiEvent): Decision | null {
+  /** What one mapping WOULD do to its control, read before anything is written. Separate from
+   *  the write because a gang's members are decided together: see `onMessage`. Answers the
+   *  CONTROL as well as the decision, so a member that resolved and chose to do nothing can still
+   *  hold its group's seat — null here means the mapping named nothing this plan carries. */
+  private attempt(mapping: MidiMapping, ev: MidiEvent): Attempt | null {
     const control = this.hooks.resolve(mapping.control);
     if (!control) return null; // stale mapping (other model) — leave it inert
     const key = addrKey(mapping.addr); // a mapping only ever matches via its own address
@@ -412,9 +424,9 @@ export class MidiEngine {
       : this.continuousTarget(mapping, key, ev, before, isHead);
     if (target === null) {
       this.hooks.trace?.(`ignore ${mapping.control}`); // release / same state / pickup hold
-      return null;
+      return { mapping, control, decision: null };
     }
-    return { mapping, control, key, isHead, before, target };
+    return { mapping, control, decision: { mapping, control, key, isHead, before, target } };
   }
 
   /** Write one decided edit. False when the control refused it — which a gang retries, since

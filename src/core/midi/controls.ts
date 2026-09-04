@@ -365,15 +365,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
    *  which is what lets one spelling serve the processors that mirror and those that do not. */
   const lockNode = (nodeId: string): string =>
     isBalLinkedPair(model, plan, nodeId) ? (pairPrimary(model, nodeId) ?? nodeId) : nodeId;
-  /** The id a control answers to when a mirror makes it the same value as its partner's, or
-   *  undefined when nothing mirrors it. `insertFx` is the one thing PAN carries across as well:
-   *  a linked pair holds ONE insert effect between them, on the unit and here. */
-  const mirroredAs = (param: ControlParam, scope: string | undefined, insertFx: boolean): string | undefined => {
-    const primary = pairPrimary(model, id);
-    if (primary === null) return undefined;
-    const mirrored = insertFx ? isStereoLinkedPair(model, plan, id) : isBalLinkedPair(model, plan, id);
-    return mirrored ? controlId(primary, param, scope) : undefined;
-  };
   const conn = (toId: string): PlanConnection | undefined => sendConnection(plan, id, toId);
 
   // A continuous control persisted on a send connection's params (level / pan);
@@ -853,7 +844,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param: "insertFxOn",
       kind: "toggle",
-      mirrorId: mirroredAs("insertFxOn", undefined, true),
       get: () =>
         rateLocked() || !insertFxEngaged({ insertFx: insFxSel, insertFxOn: plan.nodeParams[id]?.insertFxOn }) ? 0 : 1,
       set: (v) => {
@@ -908,7 +898,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           scope,
           kind: "toggle",
           governedBy,
-          mirrorId: mirroredAs("insfx", scope, true),
           get: () => (cur() ? 1 : 0),
           set: (v) => {
             if (lockedNow()) return false;
@@ -929,7 +918,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         scope,
         kind: "continuous",
         governedBy,
-        mirrorId: mirroredAs("insfx", scope, true),
         get: () => codec.get(cur()),
         set: (v) => {
           if (lockedNow()) return false;
@@ -1118,5 +1106,22 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   // The tuning screens' parameters come last, so the console's own controls keep
   // their order in the assignment list and in `listControls`.
   pushDynamics();
+  // The mirror identity, stamped ONCE over the finished list rather than at each site that
+  // builds a control. What a mirror covers is a property of the NODE and the link mode, not of
+  // any one parameter, and put at the sites it was the insert effect's alone while
+  // `mirrorBalPair` was copying the whole node params and every send — so a BAL pair's CH ON,
+  // its sends and everything else stayed several decisions and the learn order picked the value.
+  //
+  // BAL replaces the partner's node params entirely, so every control on the pair is one value.
+  // PAN keeps each channel's own, EXCEPT the insert effect: a linked pair holds one instance
+  // between them, on the unit and here (`mirrorLinkedInsertFx` runs in both modes).
+  const primary = pairPrimary(model, id);
+  if (primary !== null && primary !== id && isStereoLinkedPair(model, plan, id)) {
+    const bal = isBalLinkedPair(model, plan, id);
+    for (const c of out) {
+      if (!bal && c.param !== "insfx" && c.param !== "insertFxOn") continue;
+      c.mirrorId = controlId(primary, c.param, c.scope);
+    }
+  }
   return out;
 }

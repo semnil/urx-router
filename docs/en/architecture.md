@@ -172,9 +172,13 @@ carries a one-line map of the same directories and points here.
     1-knob taking values over does not arrive first; and it retries what a lock refused, which is how the
     same order serves a lock being released. What that settles is narrow and worth stating as such: where one member's write
     moves another's control, the learn order does not decide which of them wins. Members a MIRROR keeps equal are ONE
-    decision rather than several, taken at the pair primary — written in turn they were two, and a mirror
+    decision rather than several, taken at the pair primary — in BAL that is every control on the
+    pair, since the mirror replaces the partner's node params and every send, while PAN carries
+    across the insert effect alone — written in turn they were two, and a mirror
     settles on whichever went last, so a pair that starts at different values (a plan can hold one, and it
-    loads without complaint) ended wherever the learn order put it. What the order still decides is PICKUP,
+    loads without complaint) ended wherever the learn order put it. A member that decided to do NOTHING keeps its group's seat, since a
+    gang may mix edge and state deliberately and a release one member ignores is not the other's to
+    act on. What the order still decides is PICKUP,
     and that is the head's own design rather than an oversight: engagement is the head's to own, so a pickup
     gang whose members sit at different values crosses over on the head's value
   - `src/core/control/` — live device control (vd protocol). Writes and Live sync are always enabled on
