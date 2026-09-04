@@ -3365,9 +3365,16 @@ any more. A plan that has to keep the unit's effect carries its values: fetch th
 
 What the write costs there is irreversible. An EFFECT TYPE write refills the engine array with that
 type's defaults, and selecting the old type back does not bring the old values with it. So the decision
-is put in front of the operator instead of being taken by a document's silence: `app/unauthored-writes.ts`
-reports every strip whose changing addresses no authored key asks for, and the write confirm names them.
-`plan_tool.py` says the same thing a step earlier, to the author of a generated plan.
+is put in front of the operator instead of being taken by a document's silence:
+`app/unauthored-writes.ts` reports the strips a write moves at addresses whose VALUE an
+unauthored key decides, and the write confirm names them. It asks the emit's values rather than
+its shape — the plan is re-emitted with the unauthored keys moved off their values, and an
+address whose command carries a different value is one of them. The shape answers a different
+question in both directions: `insertFx` gates its node's whole insert-FX block, so removing it
+takes an authored engine parameter's address with it, while an `fxEffect` slot is emitted with a
+fallback whether or not the plan carries it, so removing one costs no address at all though the
+write sends its value. `plan_tool.py` says the same thing a step earlier, to the author of a
+generated plan.
 
 Once the section is present the whole channel is authored — **there is no partial FX write**. The
 selector goes out whether or not the document names a type (an absent one resolves to the channel's

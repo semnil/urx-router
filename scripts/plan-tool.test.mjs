@@ -152,7 +152,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     const omitted = { ...doc({}), nodeParams: { "bus.fx1": { level: -10 } } };
     const quiet = toolWarnings(dir, omitted);
     expect(quiet).not.toContain("resets that effect's parameters");
-    expect(quiet).toContain("name no fxEffect");
+    expect(quiet).toContain("carry no usable fxEffect");
     expect(quiet, "the channel it names is the one the document left out").toContain("bus.fx1");
   });
 
@@ -278,15 +278,55 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
   it("names each selector a document leaves out", () => {
     const bare = { format: "urx-router-plan", version: 2, modelId: "URX44V", connections: [] };
     const out = toolWarnings(dir, bare);
-    expect(out).toContain("name no fxEffect");
-    expect(out).toContain("name no insertFx");
+    expect(out).toContain("carry no usable fxEffect");
+    expect(out).toContain("carry no usable insertFx");
     // The SSMCS strip is conditional: the factory comp/EQ order sends none of it, so only a
     // document that selects the order and omits the values is warned about.
-    expect(out).not.toContain("name no ssmcs");
+    expect(out).not.toContain("carry no usable ssmcs");
     const ssmcs = { ...bare, nodeParams: { ch1: { compEqType: 1 } } };
-    expect(toolWarnings(dir, ssmcs)).toContain("select the SSMCS comp/EQ order and name no ssmcs");
+    expect(toolWarnings(dir, ssmcs)).toContain("select the SSMCS comp/EQ order and carry no usable ssmcs");
     // …and a document that carries the strip is not told about it.
     const dialled = { ...bare, nodeParams: { ch1: { compEqType: 1, ssmcs: { outGain: 10 } } } };
-    expect(toolWarnings(dir, dialled)).not.toContain("name no ssmcs");
+    expect(toolWarnings(dir, dialled)).not.toContain("carry no usable ssmcs");
+  });
+
+  // Each of the three asks whether the document carries a value the app can USE. A key holding
+  // the wrong kind of thing is dropped on load and completed from the factory, which lands
+  // exactly where an absent key lands — so a rule reading the key's PRESENCE tells the author
+  // the opposite of what the write does, on the document most likely to have got it wrong.
+  it.each([
+    ["a number where the effect object goes", { "bus.fx1": { fxEffect: 5 } }, "carry no usable fxEffect", true],
+    ["an effect object the app removes", { "bus.fx1": { fxEffect: {} } }, "carry no usable fxEffect", true],
+    [
+      "an effect the document wrote",
+      { "bus.fx1": { fxEffect: { type: 0 } } },
+      "bus.fx1, bus.fx2: carry no usable fxEffect",
+      false,
+    ],
+    ["a boolean where the selector goes", { ch1: { insertFx: true } }, "ch1, ch2", true],
+    ["a selector the document wrote", { ch1: { insertFx: 1793 } }, "ch1, ch2", false],
+  ])("%s", (_name, nodeParams, needle, warned) => {
+    const out = toolWarnings(dir, {
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams,
+    });
+    expect(out.includes(needle)).toBe(warned);
+  });
+
+  // `True == 1` in Python, and the app's own comparison is `===` — so a boolean comp/EQ type
+  // falls back to the COMP-first order and sends no SSMCS at all.
+  it("does not read a boolean as the SSMCS comp/EQ order", () => {
+    const doc = (v) => ({
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch1: { compEqType: v } },
+    });
+    expect(toolWarnings(dir, doc(true))).not.toContain("carry no usable ssmcs");
+    expect(toolWarnings(dir, doc(1)), "the control: the real value is warned about").toContain("carry no usable ssmcs");
   });
 });

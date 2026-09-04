@@ -615,14 +615,14 @@ describe("renderInspector — a stored value outside its control's range", () =>
 // plan does not describe the channel, and that is recorded here rather than left to be
 // noticed. The panel reads an absent fxEffect as `{}` and draws the effect's own defaults;
 // the emit sends nothing, because the plan format's silence means "leave this channel as the
-// unit has it" (a type write is not recoverable). So these rows were DEFAULTS ON SCREEN
-// rather than a statement the plan was making.
+// unit has it" (a type write is not recoverable). That is retired: the plan is completed at
+// the LOAD now (`fillFactoryParams`), so a document that reaches the app carries these values
+// and the row and the command are one number.
 //
-// The plan is completed at the LOAD now (`fillFactoryParams`), so a document that reaches the
-// app carries these values and the row and the command are one number. This case builds its
-// plan with `emptyPlan` and never goes through that funnel, which is what keeps it a pin on
-// the EMIT: aligning the emit to the panel instead is the destructive fix — it resets a
-// unit's FX from a document that says nothing — and it was written, measured and reverted.
+// This case builds its plan with `emptyPlan` and never goes through that funnel, which is what
+// keeps it a pin on the EMIT: aligning the emit to the panel instead is the destructive fix —
+// it resets a unit's FX from a document that says nothing — and it was written, measured and
+// reverted. What replaced it is the completion plus the write confirm naming the strips.
 describe("renderInspector — an FX channel the plan does not describe", () => {
   it("sends nothing for a channel the plan does not describe", () => {
     const model = getModel("URX44V");

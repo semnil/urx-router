@@ -473,20 +473,37 @@ def node_param_warnings(plan, nodes):
             return True
         return nodes.get(node_id, {}).get("kind") == "channel" and not STEREO_CHANNEL_RE.match(node_id)
 
+    # Each of these asks whether the document carries a value the app can USE, not whether the
+    # key is present: the loader completes what it drops, so a key holding the wrong kind of
+    # thing lands in the same place as one that was never written, and an author told the
+    # opposite by its presence reads the absence of a warning as safety. `is_number` is the
+    # file's own guard for this (insert_fx_slot), and it is what keeps `true` out of the SSMCS
+    # comparison below — Python reads `True == 1` as true, while the app's own `===` does not.
+    def usable(node_id, key, kind):
+        value = written.get(node_id, {}).get(key)
+        return bool(value) and isinstance(value, dict) if kind == "map" else is_number(value)
+
     for ids, note in (
         (
-            [i for i in nodes if i.startswith("bus.fx") and not written.get(i, {}).get("fxEffect")],
-            "name no fxEffect, so the app fills in each channel's factory effect and the write sends it",
+            [i for i in nodes if i.startswith("bus.fx") and not usable(i, "fxEffect", "map")],
+            "carry no usable fxEffect, so the app fills in each channel's factory effect and the "
+            "write sends it",
         ),
         (
-            [i for i in nodes if takes_insert_fx(i) and "insertFx" not in written.get(i, {})],
-            "name no insertFx, so the app fills in the factory value (No Effect) and the write clears "
-            "whatever insert effect the unit is holding",
+            [i for i in nodes if takes_insert_fx(i) and not usable(i, "insertFx", "number")],
+            "carry no usable insertFx, so the app fills in the factory value (No Effect) and the "
+            "write clears whatever insert effect the unit is holding",
         ),
         (
-            [i for i in nodes if written.get(i, {}).get("compEqType") == COMP_EQ_SSMCS and "ssmcs" not in written.get(i, {})],
-            "select the SSMCS comp/EQ order and name no ssmcs, so the app fills in the factory strip "
-            "and the write sends it over whatever the unit has dialled in",
+            [
+                i
+                for i in nodes
+                if is_number(written.get(i, {}).get("compEqType"))
+                and written.get(i, {}).get("compEqType") == COMP_EQ_SSMCS
+                and not usable(i, "ssmcs", "map")
+            ],
+            "select the SSMCS comp/EQ order and carry no usable ssmcs, so the app fills in the "
+            "factory strip and the write sends it over whatever the unit has dialled in",
         ),
     ):
         if ids:
