@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { INSERT_FX_OPTIONS, PAN_BAL_PAN } from "../core/control/params";
 
 const mocks = vi.hoisted(() => ({
   tauri: true,
@@ -253,6 +254,41 @@ describe("MidiControl", () => {
     mocks.inputReceiver!([0xb0, 7, 0]);
     expect(hooks.onApplied).toHaveBeenCalledOnce();
     expect(hooks.onStatus).toHaveBeenCalledWith("busy");
+  });
+
+  // A linked stereo pair holds ONE insert effect between them — one device slot — so an edit
+  // to either member has to reach the other. The console's own funnel mirrors twice, and this
+  // one mirrored only the BAL way, which is a NO-OP in PAN mode: the plan then held two
+  // answers for one effect and the next flush emitted both, one per instance.
+  //
+  // Asked in PAN deliberately: in BAL the first mirror already copies the pair, so the case
+  // would pass with the second one absent.
+  it("mirrors an insert-FX edit onto a PAN-linked partner", async () => {
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({ models: { URX44V: [{ ...MAPPING, control: "ch1/insertFxOn" }] } }),
+    );
+    const { hooks, plan } = install();
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      stereoLink: true,
+      panBal: PAN_BAL_PAN,
+      insertFx: INSERT_FX_OPTIONS[1].value,
+      insertFxOn: true,
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value, insertFxOn: true };
+    await attached();
+    dispatch({ type: "ready" });
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+
+    // The edge default: one press at or above 64 flips it.
+    mocks.inputReceiver!([0xb0, 7, 127]);
+    expect(hooks.onApplied).toHaveBeenCalledOnce();
+    expect(plan.nodeParams.ch1?.insertFxOn, "the member the mapping names").toBe(false);
+    expect(plan.nodeParams.ch2?.insertFxOn, "and its partner, which shares the effect").toBe(false);
+    // The funnel reports the partner moved, which is what earns the partner's repaint.
+    expect(vi.mocked(hooks.onApplied).mock.calls.at(-1)?.[1], "reported as mirrored").toBe(true);
   });
 
   // The bound-control memo is the one holder of a plan reference here — every other

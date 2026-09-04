@@ -43,7 +43,7 @@ import {
   type MidiMapping,
 } from "../core/midi/mapping";
 import { midiProbe, startMidiTrace } from "./midi-probe";
-import { mirrorBalPair } from "../core/routing";
+import { mirrorBalPair, mirrorLinkedInsertFx } from "../core/routing";
 import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
@@ -180,10 +180,18 @@ export class MidiControl {
       // Once per gated window — the engine decides that, so this is a plain status write.
       refused: (reason) => hooks.onStatus(reason),
       applied: (control) => {
-        // Same funnel as a console edit: mirror onto a BAL-linked partner, then
-        // let the app flag dirty / schedule live sync / repaint.
-        const mirrored = mirrorBalPair(hooks.getModel(), hooks.getPlan(), control.node);
-        hooks.onApplied(control, mirrored);
+        // Same funnel as a console edit, and BOTH of its mirrors. The BAL one is a no-op in
+        // PAN mode, while an insert effect is shared by a linked pair in EITHER mode — one
+        // effect, one device slot — so a write mirrored only the first way splits the pair:
+        // the plan holds two answers and the next flush emits both, one per instance.
+        const model = hooks.getModel();
+        const plan = hooks.getPlan();
+        const balMirrored = mirrorBalPair(model, plan, control.node);
+        // The insert-FX half runs for every control, not only the new bypass: the effect's
+        // own parameter mappings write the same shared values and were splitting the pair
+        // the same way.
+        const insFxMirrored = mirrorLinkedInsertFx(model, plan, control.node);
+        hooks.onApplied(control, balMirrored || insFxMirrored);
         this.scheduleFeedback();
       },
       send: (bytes) => {
