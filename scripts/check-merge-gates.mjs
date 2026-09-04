@@ -634,28 +634,48 @@ function checkPreconditionChains(workflows) {
   }
 }
 
-// A workflow that reads the pull request BODY has to run when the body changes, and by
-// default it does not: `pull_request:` with no `types:` is opened / synchronize / reopened,
-// none of which a body edit is. Without `edited` the verdict taken when the pull request
-// opened stands over whatever the body says afterwards — a body corrected after a failure
-// produces no new run, and a body edited into a violation keeps the green it already has.
+// What a pull request's own fields change under, which is NOT one event. `edited` carries
+// the body and the title; a label added or removed is `labeled` / `unlabeled` and raises no
+// `edited` at all. A workflow subscribing to `edited` alone therefore re-runs for every
+// change to a labelled pull request except the one it reads.
+const PR_FIELD_EVENTS = {
+  body: ["edited"],
+  title: ["edited"],
+  labels: ["labeled", "unlabeled"],
+};
+
+// A workflow that reads one of those fields has to run when that field changes, and by
+// default it does not: `pull_request:` with no `types:` is opened / synchronize /
+// reopened, none of which any of them is. Without the right type the verdict taken when
+// the pull request opened stands over whatever the field says afterwards — a body
+// corrected after a failure produces no new run, and a body edited into a violation keeps
+// the green it already has.
 //
 // Keyed on the CONSUMPTION rather than on a workflow's name, so the next check that reads
-// the body inherits it. Reading `github.event.pull_request.*` at all is the trigger for the
-// rule: the title and the labels move under the same event, and nothing else about a pull
-// request changes without one of the default types.
-function checkBodyConsumers(workflows) {
+// one of these inherits it. EVERY reference is collected rather than the first: one
+// workflow can read the body in one step and the labels in another, and what those two
+// need are different sets.
+function checkPullRequestFieldConsumers(workflows) {
+  const fieldPattern = new RegExp(
+    `github\\.event\\.pull_request\\.(${Object.keys(PR_FIELD_EVENTS).join("|")})\\b`,
+    "g",
+  );
   for (const workflow of workflows) {
     if (!workflow.pullRequest || !workflow.text) continue;
-    const reads = /github\.event\.pull_request\.(body|title|labels)\b/.exec(workflow.text);
-    if (!reads) continue;
-    if (listOf(workflow.pullRequest.children?.get("types")).includes("edited")) continue;
-    finding(
-      workflow.path,
-      `reads \`github.event.pull_request.${reads[1]}\`, which changes under the \`edited\` event — but ` +
-        "`on.pull_request` does not subscribe to it, so the verdict from the open stands however the body is " +
-        "changed afterwards. Write `types: [opened, synchronize, reopened, edited]`",
-    );
+    const fields = [...new Set([...workflow.text.matchAll(fieldPattern)].map((m) => m[1]))].sort();
+    if (!fields.length) continue;
+    const types = listOf(workflow.pullRequest.children?.get("types"));
+    for (const field of fields) {
+      const missing = PR_FIELD_EVENTS[field].filter((type) => !types.includes(type));
+      if (!missing.length) continue;
+      finding(
+        workflow.path,
+        `reads \`github.event.pull_request.${field}\`, which changes under ` +
+          `${PR_FIELD_EVENTS[field].join(" / ")} — but \`on.pull_request.types\` is missing ` +
+          `${missing.join(", ")}, so the verdict from the open stands however that field is changed afterwards. ` +
+          `Add it beside the defaults (\`types: [opened, synchronize, reopened, ${missing.join(", ")}]\`)`,
+      );
+    }
   }
 }
 
@@ -928,7 +948,7 @@ export function inspect({ workflowSources, manifestSource, ruleset = null }) {
   const workflows = readWorkflows(workflowSources);
   const seen = checkWorkflows(workflows, required);
   checkPreconditionChains(workflows);
-  checkBodyConsumers(workflows);
+  checkPullRequestFieldConsumers(workflows);
   const notes = ruleset ? compareRulesets(ruleset, required, integrationId) : [];
   return { findings: findings.slice(), required, workflows, seen, notes };
 }
