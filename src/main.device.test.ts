@@ -2388,6 +2388,71 @@ describe("a value the unit holds and the app cannot write", () => {
     expect(PARAMS.INSERT_FX.sideEffect).toBe("converge");
   };
 
+  // A cancel taken in a RETRY throws out of that attempt, and the line the neutral cancel
+  // handler would write says nothing about what the attempt before it took back. The count is
+  // carried across attempts for that: each attempt adopts different keys, since a key the plan
+  // has already taken is no longer a problem the next one reports.
+  it("reports what an earlier attempt took back when a retry is cancelled", SLOW, async () => {
+    // The retry is ACCEPTED here — the pair above decline it — and the cancel lands in the
+    // attempt it starts.
+    let writing = false;
+    let retrying = false;
+    const base = deviceCommands(
+      {
+        ...SAVES,
+        "plugin:dialog|message": (a: Record<string, unknown>) => {
+          if (a.buttons === "OkCancel" && writing && a.message !== undefined) {
+            // Every confirm after the write's own is the retry offer, which is answered so a
+            // second attempt starts at all.
+            if (String(a.message).includes(t().confirm.writeRetry(0, 0).split("0")[0]!)) retrying = true;
+          }
+          return "Ok";
+        },
+      },
+      unitHoldingLowLpf(),
+    );
+    const set = base.vd_set as (a: Record<string, unknown>) => void;
+    const get = base.vd_get as (a: Record<string, unknown>) => number;
+    const writes = new Map<string, number>();
+    const shell = (await bootApp({
+      tauri: {
+        ...base,
+        vd_get: (a: Record<string, unknown>) => {
+          const value = get(a);
+          // The first read of the retry: its diff is where the cancel lands, and that throws
+          // out of the attempt rather than returning a line of its own.
+          if (retrying) {
+            retrying = false;
+            $("btn-write").click();
+          }
+          return value;
+        },
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId !== PARAMS.INSERT_FX.id) return set(a);
+          const key = `${a.paramId}/${a.x}/${a.y}`;
+          const n = (writes.get(key) ?? 0) + 1;
+          writes.set(key, n);
+          // Accepted and not kept, then refused — which stops attempt 1 with commands behind
+          // it unsent, so the retry is offered at all.
+          if (n > 1) throw new Error(`broker-rejected: ${a.paramId}:${a.x}:${a.y}`);
+          return null;
+        },
+      },
+    }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    writing = true;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // The positive controls: attempt 1 stopped (so a retry was offered) and it took the value
+    // back (so there is a count for the cancel to carry).
+    expect(writes.size).toBeGreaterThan(0);
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled + ` — ${t().status.paramsBounded(1)}`));
+  });
+
   it("takes what earlier rounds confirmed when a later round's send is REFUSED", SLOW, async () => {
     // `broker-rejected` is the shell's own message for an answer that DECLINED the write: it
     // reached the broker and was turned down, so nothing moved — not this address, which round

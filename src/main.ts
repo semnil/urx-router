@@ -2583,13 +2583,15 @@ async function offerErrorReport(report: ErrorReport, prompt?: string, label?: st
   if (report && (await confirmDialog(prompt ?? t().confirm.deviceErrorExport))) {
     // A failed report write must surface like a failed plan save — a silent
     // rejection would read as a saved report.
-    // Called after withDevice returned, so the status line holds that action's OUTCOME rather
-    // than a progress message — and a failed save would otherwise take it down with the
-    // clearing, leaving a dialog about the report where the action's own verdict was.
-    const outcome = statusbar.textContent ?? "";
     try {
       await saveTextDocument(report.filename, report.markdown, { ext: "md", label: label ?? t().filter.errorReport });
     } catch (err) {
+      // Called after withDevice returned, so the line holds that action's OUTCOME rather than
+      // a progress message, and a failed save would take it down with the clearing — leaving a
+      // dialog about the report where the action's own verdict was. Read HERE and not before
+      // the save: `saveTextDocument` opens a native dialog first, so the wait is the
+      // operator's own and a line written across it is the newer one.
+      const outcome = statusbar.textContent ?? "";
       showError(t().status.saveError(errorText(err)));
       if (outcome) setStatus(outcome);
     }
@@ -3045,6 +3047,7 @@ if (!DEMO) {
               // this runs on the rejection's own microtask, so no announcement can land
               // between the loop stopping and the join.
               const cancelTaken = adoptConfirmedWrites(confirmedAddrs(ledger));
+              adopted += cancelTaken;
               setStatus(t().status.canceled + (cancelTaken ? ` — ${t().status.paramsBounded(cancelTaken)}` : ""));
               return null;
             }
@@ -3055,6 +3058,7 @@ if (!DEMO) {
             // below would join one moment's addresses to another moment's plan. `sendNames` is
             // one such await, on the clean path.
             const takenBack = adoptConfirmedWrites(confirmedAddrs(ledger));
+            adopted += takenBack;
             const skipped = outcomes.filter((o) => o.skipped).length;
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
@@ -3112,16 +3116,26 @@ if (!DEMO) {
           // A stopped write leaves the device holding part of what was confirmed.
           // Offer to run it again rather than reporting a breakdown the user cannot
           // act on: the retry re-diffs, so what already landed drops out by itself.
-          // Whether the write ENDED — every path that returns writes an outcome line, and a
-          // path that throws leaves whatever progress message was on screen. The recorder
-          // tail below restores a line only when there is an outcome to restore.
+          // Whether the write ENDED — every path that returns writes an outcome line, and so
+          // does the cancel arm below. What is left is a throw this does not answer, which
+          // leaves whatever progress message was on screen; the recorder tail restores a line
+          // only when there is an outcome to restore.
           let wroteOutcome = false;
+          let adopted = 0;
           try {
             let stop = await attemptWrite(true);
             wroteOutcome = true;
             while (stop && (await confirmDialog(t().confirm.writeRetry(stop.sent, stop.notSent)))) {
               stop = await attemptWrite(false);
             }
+          } catch (err) {
+            if (!isAbortError(err)) throw err;
+            // A cancel taken in a LATER attempt throws out of it, and the neutral line
+            // withDevice would write for that says nothing about what an earlier attempt took
+            // back. Counted across attempts because each one adopts different keys: a key the
+            // plan has already taken is no longer a problem the next attempt reports.
+            setStatus(t().status.canceled + (adopted ? ` — ${t().status.paramsBounded(adopted)}` : ""));
+            wroteOutcome = true;
           } finally {
             // INSIDE the action, because withDevice awaits its own vdDisconnect on the way
             // out: a read placed after it is issued with no connection installed and the
