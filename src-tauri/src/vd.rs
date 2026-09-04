@@ -1447,6 +1447,26 @@ mod imp {
         Some(String::new())
     }
 
+    /// What a write's reply says about the write.
+    ///
+    /// Separate from the wait loop so it can be asked directly. Only a `response_code` that
+    /// is there and is an integer says anything: 200 is an acceptance and any other value a
+    /// refusal, while a reply carrying no usable code at all leaves the write's fate unknown
+    /// — the request went out before this reply was awaited, so it may have landed. Read
+    /// through `unwrap_or(0)` the last case reported a refusal, and the frontend keeps a
+    /// value across a refusal on the grounds that nothing moved.
+    fn write_verdict(vdp: &Value, param_id: u32, x: i64, y: i64) -> Result<(), String> {
+        match vdp.pointer("/data/response_code").and_then(Value::as_i64) {
+            Some(200) => Ok(()),
+            Some(code) => Err(format!(
+                "broker-rejected: {param_id}:{x}:{y} (response_code {code})"
+            )),
+            None => Err(format!(
+                "broker-bad-response: no integer response_code at {param_id}:{x}:{y}"
+            )),
+        }
+    }
+
     fn do_set(
         link: &mut Link,
         subs: &mut Subs,
@@ -1477,17 +1497,7 @@ mod imp {
             let Some(vdp) = reply_for(subs, &msg, &base, verb) else {
                 continue;
             };
-            let code = vdp
-                .pointer("/data/response_code")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            return if code == 200 {
-                Ok(())
-            } else {
-                Err(format!(
-                    "broker-rejected: {param_id}:{x}:{y} (response_code {code})"
-                ))
-            };
+            return write_verdict(&vdp, param_id, x, y);
         }
         drain_late_reply(link, subs, &base, verb);
         Err(format!("broker-timeout: write at {param_id}:{x}:{y}"))
@@ -1956,7 +1966,7 @@ mod imp {
         // batch must flush on the pump cadence. Plus reply_for, which is where a
         // frame absorb declined lands — the two together decide whether a notify
         // can be mistaken for the answer to a command.
-        use super::{reply_for, Subs, DRAIN_QUIET, PUMP_BUDGET, READ_TIMEOUT};
+        use super::{reply_for, write_verdict, Subs, DRAIN_QUIET, PUMP_BUDGET, READ_TIMEOUT};
         use serde_json::{json, Value};
         use std::sync::{Arc, Mutex};
         use std::time::Instant;
@@ -2230,14 +2240,55 @@ mod imp {
             json!({ "vdp": { "method": method, "uri": uri, "data": data } })
         }
 
+        /// What a write's reply is ALLOWED to mean. The shell sends before it waits, so only
+        /// a response_code that is present and an integer says anything about the write:
+        /// 200 accepted it, another value declined it, and anything else leaves it on the
+        /// wire with its fate unknown. The distinction is load-bearing at the other end —
+        /// the frontend keeps a confirmed value across a REFUSAL on the grounds that nothing
+        /// moved — and read through `unwrap_or(0)` every reply with no usable code was
+        /// handed to it as exactly that. Asked through `reply_for`, the composition the wait
+        /// loop performs, so the pointer this reads and the frame that reaches it agree.
+        #[test]
+        fn write_verdict_reads_only_a_present_integer_response_code() {
+            let base = "/vd/parameters/142:0:0";
+            let verdict = |data: Value| {
+                let mut subs = Subs::new();
+                let msg = reply("post", &format!("{base}?operation=value"), data);
+                let vdp = reply_for(&mut subs, &msg, base, "post")
+                    .expect("the reply the write is waiting for");
+                write_verdict(vdp, 142, 0, 0)
+            };
+
+            assert!(verdict(json!({ "response_code": 200 })).is_ok());
+
+            let declined = verdict(json!({ "response_code": 400 })).unwrap_err();
+            assert!(
+                declined.starts_with("broker-rejected:"),
+                "a code that is not 200 is the one answer that declined it: {declined}"
+            );
+
+            // The three the frontend must not be told are refusals.
+            for data in [
+                json!({}),
+                json!({ "response_code": "200" }),
+                json!({ "response_code": 200.5 }),
+            ] {
+                let err = verdict(data.clone()).unwrap_err();
+                assert!(
+                    err.starts_with("broker-bad-response:"),
+                    "no usable response_code in {data}, so the write's fate is unknown: {err}"
+                );
+            }
+        }
+
         /// Every notify reaches every connected client, so one for the address a
         /// command is waiting on arrives whenever anything else touches the unit —
         /// which is the case the vdp port exists to support. `absorb` consumes it
         /// only while the matching channel is subscribed, so with Live sync off
         /// (a Fetch, a Write, the self-test) nothing but the verb keeps it out of
         /// the await loop. A get would return the pushed value as the read; a post
-        /// finds no response_code, reads it as 0, and reports a landed write as
-        /// refused — aborting the whole write, per the device-link failure rule.
+        /// finds no response_code and reports a landed write as an answer it could not
+        /// read — aborting the whole write, per the device-link failure rule.
         #[test]
         fn reply_for_refuses_a_notify_for_the_address_in_flight() {
             // No channels: the state every command outside Live sync runs in.
