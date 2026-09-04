@@ -36,7 +36,7 @@ import {
   type PatchTouch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
-import { applyParamRange, isRefusal, needsDecision, paramRangeProblems, planProblems } from "./core/plan-validate";
+import { applyParamRange, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
@@ -158,7 +158,8 @@ import {
   type CommandDiff,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
-import { collisionOwners, paramRangeAddrs } from "./core/control/translate";
+import { collisionOwners } from "./core/control/translate";
+import { confirmedAdoptions } from "./app/adopt-writes";
 import type { SharedOwners } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
@@ -368,13 +369,17 @@ const live = DEMO
       getModel: () => getModel(modelId),
       getPlan: () => plan,
       onError: (message) => stopLiveOnError(errorText(message)),
-      onSent: (n) => setStatus(t().status.liveSynced(n)),
-      // Fired from inside the converge with nothing awaited in between, so the addresses and
-      // the plan they are joined to are the same instant's. Its own count goes on the line the
-      // flush is about to write rather than replacing it.
-      onConfirmed: (confirmed) => {
-        const taken = adoptConfirmedWrites(confirmed);
-        if (taken) setStatus(t().status.paramsBounded(taken));
+      // The adoption's own count rides on this line rather than writing one of its own: the
+      // converge that produces it runs INSIDE the flush, so a line written there is overwritten
+      // by this one a moment later — the status bar is last-writer-wins, and a converge always
+      // implies something was sent, so this always follows.
+      onSent: (n) => {
+        const taken = liveAdopted;
+        liveAdopted = 0;
+        setStatus(t().status.liveSynced(n) + (taken ? ` — ${t().status.paramsBounded(taken)}` : ""));
+      },
+      onConfirmed: (confirmed, sent) => {
+        liveAdopted += adoptConfirmedWrites(confirmed, sent);
       },
       onCollapsed: (owners) => setStatus(sharedSettingText(owners)),
       // One bidirectional scope for the session: the same filter shapes the
@@ -537,10 +542,10 @@ const followDirtyNodes = new Set<string>();
 function authorFromDevice(node: string, place: () => boolean, kind: WriteSource = "follow-direct"): boolean {
   const before = clonePlanState(plan);
   if (!place()) return false;
-  // The trace kind is the caller's, because the harness classifies authorship by it and the
-  // callers are not one writer: a follow is a notify landing, while the write-adoption is the
-  // device-action funnel writing back what a write confirmed. Sharing one kind made a trace
-  // unable to tell them apart, and invariant 13 reads that field.
+  // The trace kind is the caller's, because the callers are not one writer: a follow is a
+  // notify landing, while the write-adoption is the device-action funnel writing back what a
+  // write confirmed. Both are device-side writers, so no invariant's verdict turns on the
+  // split — what it buys is a ledger a person can read without guessing which one wrote.
   traceProbe?.sample(kind);
   followDirtyNodes.add(node);
   planHistory?.absorb(diffPlans(before, plan));
@@ -548,33 +553,19 @@ function authorFromDevice(node: string, place: () => boolean, kind: WriteSource 
 }
 /** After a write the device confirmed, the plan takes the values that were actually sent.
  *
- *  `translate.ts` normalises a raw this app cannot write — outside a slider's window, off a
- *  select's menu, fractional — so from the moment such a write lands the plan names a setting
- *  the unit is not at, and `comparePlan` cannot report it: it compares the normalised value
- *  too and finds the device agreeing. The load path repairs a document, so what reaches this is
- *  a DEVICE read: the unit holds a raw its own encoder stops short of, because an earlier build
- *  could write one and the wire does not stop where the encoder does.
- *
- *  Keyed on the ADDRESSES the device confirmed, not on the write having succeeded. The two come
- *  apart exactly where this runs: a live session whose snapshot already agrees sends nothing, so
- *  the flush that succeeds is one the stranded address was never in — an earlier version keyed
- *  on success and adopted values no write had touched, which an unrelated fader move reproduced.
+ *  Which values those are is `confirmedAdoptions` (`app/adopt-writes.ts`), which needs the plan
+ *  the converge RAN AGAINST as well as the live one — the live flush clones before its await,
+ *  and an address is a different key under a different effect type. Keyed on the ADDRESSES the
+ *  device confirmed rather than on the write having succeeded: the two come apart exactly where
+ *  this runs, since a session whose snapshot already agrees sends nothing, so a flush can
+ *  succeed without the address in question being in it at all.
  *
  *  Authored FROM the device rather than pushed as an edit, through the seat a device-side
  *  recompute already takes: the value is the write path's rather than the operator's, and an
  *  undo that put the unwritable raw back would only have it normalised again on the next write.
  *  Returns how many the plan took, so a caller can say so beside its own outcome. */
-function adoptConfirmedWrites(confirmed: ReadonlySet<number>): number {
-  if (!confirmed.size) return 0;
-  const problems = paramRangeProblems(plan);
-  const addrs = paramRangeAddrs(getModel(modelId), plan, problems);
-  // BOUND only. A drop removes the key, and the load path's own split says why that is a
-  // different sentence — "now read as the nearest value it can send" is false of a value that
-  // was discarded. No input reaching here produces one today: the load path repairs every
-  // document, so what is left is a device read, and a device read yields finite numbers. The
-  // filter is kept because that is a property of `readback.ts` rather than a guarantee, and
-  // what it would otherwise cost is a count reported under the wrong sentence.
-  const mine = problems.filter((p, i) => p.action === "bound" && addrs[i] !== undefined && confirmed.has(addrs[i]!));
+function adoptConfirmedWrites(confirmed: ReadonlySet<number>, sent: Plan = plan): number {
+  const mine = confirmedAdoptions(getModel(modelId), sent, plan, confirmed);
   if (!mine.length) return 0;
   let taken = 0;
   for (const node of new Set(mine.map((b) => b.node))) {
@@ -584,6 +575,8 @@ function adoptConfirmedWrites(confirmed: ReadonlySet<number>): number {
   if (taken) requestReflect();
   return taken;
 }
+// What the live flush's converge took back, waiting for the line `onSent` writes.
+let liveAdopted = 0;
 let followFull = false;
 // How many keys the follow reads behind the pending reflect actually authored. A COUNT
 // rather than a flag because the reflect is coalesced at ~20 Hz, so several reads can

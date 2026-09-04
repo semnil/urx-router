@@ -480,7 +480,9 @@ flowchart TD
   終わるからである / `flow-latch.ts` は 2 つの再入ガードとその違い。`singleFlight` は 1 つのハンドラに対する
   沈黙の連打ガードで、`FileFlowLatch` は全プラン / 設定の入口で共有され、デバイス読み出しによる拒否は
   **報告**し (操作者のクリックが未応答に終わった)、2 つ目のファイルフローには沈黙する
-  (自分のダイアログが既に画面にある)
+  (自分のダイアログが既に画面にある) / `adopt-writes.ts` は確定した書込からプランが取り戻してよい値を決める。
+  converge が**送ったプラン**と現物のプランの両方を取る — ライブの flush は自分の await の前にクローンし、
+  1 つのアドレスはエフェクトタイプ次第で別のキーを指すためである
 
 - `src-tauri/` — Rust シェル。webview のホスト + tauri-plugin-dialog + ファイル IO コマンド
   (`read_text_file` / `read_binary_file` / `write_text_file` / `write_binary_file`。`third_party_licenses` は
@@ -3032,7 +3034,7 @@ emit が送るアドレスとの接合である。カタログから組み直す
 次の書込で再び正規化されるだけだからである。
 
 **適用範囲: FX チャンネルのエフェクトのみ。** 前提は emit が正規化するあらゆる箇所で成り立つ —
-`translate.ts` の `boundRaw` 19 サイト・`boundEnum` 11 サイトに対し、FX はそのうち 2 つである — そして
+`translate.ts` の `boundRaw` 18 サイト・`boundEnum` 10 サイトに対し、FX はそのうち 2 つである — そして
 到達しうる兄弟は Insert FX で、エンジンスロットは emit で丸められる一方 `readback.ts` は実機の raw を
 そのまま格納する。**そちらはここでは手を付けていない**: 同じ形で乖離し、`comparePlan` も同じように
 見られない。機構を `paramRangeProblems` の走査に揃えて限定するのは、その走査自体を限定しているのと同じ

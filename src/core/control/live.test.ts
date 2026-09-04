@@ -152,6 +152,36 @@ function setCh1CompEqType(plan: Plan, type: number): void {
 }
 
 describe("LiveSync sideEffect converge", () => {
+  // What the converge hands its caller alongside the addresses it confirmed. The addresses come
+  // from the plan the loop SENT, which is a clone taken before its own await — an edit landing
+  // in that window is exactly what the case below asserts survives — so a caller resolving them
+  // against the live plan would be joining one moment's addresses to another moment's keys.
+  it("hands the confirmed addresses over with the plan they came from", async () => {
+    const plan = basePlan();
+    const seen: Array<{ addrs: ReadonlySet<number>; sent: Plan }> = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      onConfirmed: (addrs, sent) => void seen.push({ addrs, sent }),
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(seen, "a sideEffect param converges, so the hook fires").toHaveLength(1);
+    // Not the live plan — the clone. Handed the live one, every address would be read against
+    // whatever the plan holds by the time the caller uses them.
+    expect(seen[0]!.sent).not.toBe(plan);
+    // What the set CONTAINS is the device flow's question (main.device.test.ts) — this mock's
+    // converge re-reads a device that already agrees, so it sends nothing and confirms nothing.
+    expect(seen[0]!.addrs).toBeInstanceOf(Set);
+  });
+
   it("goes back to waiting for quiet while flushes are converging", async () => {
     // A converge re-reads the whole write scope and settles between rounds, so
     // flushing once per window would chain converge rounds for as long as the drag

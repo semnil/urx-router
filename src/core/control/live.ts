@@ -83,12 +83,13 @@ export interface LiveSyncHooks {
   /** A flush sent `count` writes — for an optional, quiet "→ device" status. */
   onSent: (count: number) => void;
   /** A converge in this flush read these addresses back and found the device at the plan's
-   *  value. Fired from the converge itself rather than beside `onSent`, with nothing awaited
-   *  in between, because a caller acting on it maps addresses to plan keys and the plan moves:
-   *  an edit or a device notify landing in that window would have it join one flush's addresses
-   *  to another plan's keys. Absent when no converge ran — a direct write is acknowledged and
-   *  not re-read, and an acknowledgement says the unit accepted a write, not that it kept it. */
-  onConfirmed?: (confirmed: ReadonlySet<number>) => void;
+   *  value, together with THE PLAN THOSE ADDRESSES CAME FROM. Both, because a caller acting on
+   *  it maps addresses to plan keys and one address is a different key under a different effect
+   *  type: the converge runs against a clone taken before its own await, so resolving that join
+   *  against the live plan answers with whatever type is selected by the time the answer is
+   *  used. Absent when no converge ran — a direct write is acknowledged and not re-read, and an
+   *  acknowledgement says the unit accepted a write, not that it kept it. */
+  onConfirmed?: (confirmed: ReadonlySet<number>, sent: Plan) => void;
   /** Two or more plan owners resolved to one device address and the emitted set
    *  kept the last; the rest carried a different value and were dropped. Reported
    *  once per distinct owner set, not once per flush. */
@@ -908,8 +909,8 @@ export class LiveSync {
           // teardown that names nothing.
           throw new Error(failed?.error || r.readErrors[0] || "converge failed");
         }
-        // Immediately, with nothing awaited between the converge and the caller: see onConfirmed.
-        this.hooks.onConfirmed?.(confirmedAddrs(r));
+        // `converged` is what the loop sent and read back, so it is what the addresses mean.
+        this.hooks.onConfirmed?.(confirmedAddrs(r), converged);
         this.capture(converged, since);
       }
       // A refetch after the converge, if both happened: converge rebuilds the snapshot

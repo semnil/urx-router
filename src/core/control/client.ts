@@ -327,9 +327,10 @@ export interface ConvergeResult {
   /** The commands behind them (see DiffResult.unread), so a caller can decide per
    *  address rather than per message. */
   unread: VdCommand[];
-  /** What the LAST diff this loop performed actually read. Empty when it performed none —
-   *  a round that broke on a send failure re-reads nothing, and neither does a loop that
-   *  never entered one. `confirmedAddrs` intersects with it, so an address the loop never
+  /** What the LAST diff this loop performed actually read. A round that broke on a send
+   *  failure re-reads nothing and reports none; a loop given `initialDiffs` that enters no
+   *  round performed no diff at all and reports none either, while one that seeded its own
+   *  reports that seed's. `confirmedAddrs` intersects with it, so an address the loop never
    *  asked about is not confirmed by having been sent. */
   readAddrs: Set<number>;
 }

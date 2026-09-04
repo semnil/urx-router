@@ -1910,6 +1910,10 @@ describe("a value the unit holds and the app cannot write", () => {
     sel.dispatchEvent(new Event("change", { bubbles: true }));
 
     await vi.waitFor(() => expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {})), { timeout: 20_000 });
+    // …and the operator is told. The converge that takes the value runs INSIDE the flush, so a
+    // line written there is overwritten by the flush's own a moment later — the count has to
+    // ride on that line rather than write one of its own.
+    expect(statusText()).toContain(t().status.paramsBounded(1));
   });
 
   // The reproduction the first version of this failed. An edit somewhere else flushes, the

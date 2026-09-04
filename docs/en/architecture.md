@@ -511,7 +511,9 @@ carries a one-line map of the same directories and points here.
   re-entry guards and the difference between them — `singleFlight` is a silent rapid-repeat guard on one
   handler, while `FileFlowLatch` is shared across every plan / settings entry point and **reports** a
   refusal caused by a device read (the operator's click went unanswered) while staying silent for a second
-  file flow (its own dialog is already on screen)
+  file flow (its own dialog is already on screen) / `adopt-writes.ts` which values a confirmed write lets the
+  plan take back — it takes the plan the converge SENT as well as the live one, since the live flush clones
+  before its await and one address is a different key under a different effect type
 
 - `src-tauri/` — Rust shell. Webview host + tauri-plugin-dialog + file IO commands
   (`read_text_file`/`read_binary_file`/`write_text_file`/`write_binary_file`; `third_party_licenses` reads
@@ -3359,7 +3361,7 @@ takes, rather than pushed as an edit: it is the write path's value rather than t
 that put the unwritable raw back would only have it normalised again on the next write.
 
 **SCOPE: the FX channel effect, and nothing else.** The premise holds wherever the emit normalises —
-`translate.ts` has nineteen `boundRaw` and eleven `boundEnum` call sites against the two FX ones — and the
+`translate.ts` has eighteen `boundRaw` and ten `boundEnum` call sites against the two FX ones — and the
 reachable sibling is insert FX, whose engine slots are bounded at the emit while `readback.ts` stores the
 unit's raw verbatim. That case is untouched here: it diverges the same way and `comparePlan` sees it no
 better. The mechanism is bounded to `paramRangeProblems`' own walk for the same reason that walk is
