@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { getModel } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
-import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
+import { deserialize, ensureFixedConnections, LEVEL_OFF_DB, serialize } from "../plan";
 import { ref } from "../../models/types";
 import { COMP_EQ_SSMCS, EQ_TYPE_PASS, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../control/params";
 import { planToCommands } from "../control/translate";
@@ -19,6 +19,7 @@ import {
 } from "./controls";
 import { MidiEngine } from "./engine";
 import { mirrorBalPair, mirrorLinkedInsertFx } from "../routing";
+import { planProblems } from "../plan-validate";
 import {
   COMPANDER_H,
   COMPANDER_S,
@@ -1079,5 +1080,231 @@ describe("a governor across a BAL-linked pair", () => {
       expect(after.ch1Low, `${governor}: and the band took the press first`).toBe(true);
       expect(after.ch2Low, `${governor}: on both members, which the mirror carries`).toBe(true);
     }
+  });
+});
+
+// Members a MIRROR keeps equal are ONE value, so a gang holding both is one decision. Written in
+// turn they were two, and a mirror settles on whichever went last: a pair that starts at different
+// values then ends wherever the learn order put it. Such a plan is reachable — it saves and loads
+// with nothing reported — so the pair has to decide, not the order two assignments were made in.
+describe("a gang holding both members of a mirrored pair", () => {
+  const ON = (ch: string): string => controlId(ch, "insertFxOn");
+
+  const press = (first: "ch1" | "ch2", ch1On: boolean, ch2On: boolean): Record<string, unknown> => {
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      stereoLink: true,
+      panBal: PAN_BAL_PAN,
+      insertFx: INSERT_FX_OPTIONS[1].value,
+      insertFxOn: ch1On,
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value, insertFxOn: ch2On };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: (c) => {
+        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 7 } as const;
+    const order = first === "ch1" ? ["ch1", "ch2"] : ["ch2", "ch1"];
+    engine.setMappings(order.map((ch) => ({ control: ON(ch), addr, mode: "absolute" }) as const));
+    engine.onMessage([0xb0, 7, 127]);
+    return { ch1: plan.nodeParams.ch1?.insertFxOn, ch2: plan.nodeParams.ch2?.insertFxOn };
+  };
+
+  // The reachable state this exists for: a plan holding the two disagreeing survives a round trip
+  // with nothing reported, so nothing upstream makes them equal before a press arrives.
+  it("is a state a plan can hold", () => {
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      stereoLink: true,
+      panBal: PAN_BAL_PAN,
+      insertFx: INSERT_FX_OPTIONS[1].value,
+      insertFxOn: true,
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value, insertFxOn: false };
+    const back = deserialize(serialize(plan));
+    expect([back.nodeParams.ch1?.insertFxOn, back.nodeParams.ch2?.insertFxOn]).toEqual([true, false]);
+    expect(planProblems(model, back)).toEqual([]);
+  });
+
+  it.each([
+    ["disagreeing, primary on", true, false],
+    ["disagreeing, primary off", false, true],
+    ["agreeing", true, true],
+  ])("lands the same way from either learn order — %s", (_label, ch1On, ch2On) => {
+    const a = press("ch1", ch1On, ch2On);
+    const b = press("ch2", ch1On, ch2On);
+    expect(b, "the learn order decided the outcome").toEqual(a);
+    // Both members end equal, which is what the mirror means — and the positive control, since
+    // two orders agreeing on a SPLIT pair would satisfy the line above.
+    expect(a.ch1, "the pair agrees afterwards").toBe(a.ch2);
+    // …and the value is the PAIR's: the primary's own before-value is what flips.
+    expect(a.ch1, "the primary's value is the one that moved").toBe(!ch1On);
+  });
+});
+
+// What a mirror covers is a property of the NODE and the link mode, not of one parameter. BAL
+// replaces the partner's whole node params and every send, so a BAL pair's CH ON is one value the
+// same way its insert effect is — declared per parameter it was the insert effect's alone.
+describe("what a mirrored pair covers, by link mode", () => {
+  const press = (first: "ch1" | "ch2", link: number, ch1On: boolean, ch2On: boolean) => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: link, on: ch1On };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, on: ch2On };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: (c) => {
+        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 7 } as const;
+    const order = first === "ch1" ? ["ch1", "ch2"] : ["ch2", "ch1"];
+    engine.setMappings(order.map((ch) => ({ control: controlId(ch, "chOn"), addr, mode: "absolute" }) as const));
+    engine.onMessage([0xb0, 7, 127]);
+    return { ch1: plan.nodeParams.ch1?.on, ch2: plan.nodeParams.ch2?.on };
+  };
+
+  it("BAL: CH ON is one value, so the learn order cannot pick it", () => {
+    const back = deserialize(
+      serialize({
+        ...plan,
+        nodeParams: {
+          ...plan.nodeParams,
+          ch1: { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_BAL, on: true },
+          ch2: { ...plan.nodeParams.ch2, on: false },
+        },
+      }),
+    );
+    // Reachable, like the insert-FX pair: nothing makes the two agree before a press arrives.
+    expect([back.nodeParams.ch1?.on, back.nodeParams.ch2?.on]).toEqual([true, false]);
+    expect(planProblems(model, back)).toEqual([]);
+
+    const a = press("ch1", PAN_BAL_BAL, true, false);
+    const b = press("ch2", PAN_BAL_BAL, true, false);
+    expect(b, "the learn order decided the outcome").toEqual(a);
+    expect(a.ch1, "the pair agrees afterwards").toBe(a.ch2);
+    expect(a.ch1, "the primary's value is the one that moved").toBe(false);
+  });
+
+  // The negative condition, and the reason the declaration cannot simply be "a linked pair":
+  // PAN keeps each channel's own CH ON, so these are two values and each flips its own.
+  it("PAN: CH ON is each channel's own, and stays two values", () => {
+    const a = press("ch1", PAN_BAL_PAN, true, false);
+    expect(a).toEqual({ ch1: false, ch2: true });
+    expect(press("ch2", PAN_BAL_PAN, true, false), "and the order still decides nothing").toEqual(a);
+  });
+});
+
+// `button` is deliberately not ganged — two controls behind one button may want edge and state —
+// so a gang can hold a member that IGNORES a message beside one that acts on it. The member that
+// ignored it still holds its group's seat: dropped before the grouping, its partner spoke for the
+// pair and a release the primary refuses turned the pair off.
+describe("a mirrored gang whose members read the press differently", () => {
+  it("lets the primary's silence stand for the pair", () => {
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      stereoLink: true,
+      panBal: PAN_BAL_PAN,
+      insertFx: INSERT_FX_OPTIONS[1].value,
+      insertFxOn: true,
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value, insertFxOn: true };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: (c) => {
+        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 7 } as const;
+    engine.setMappings([
+      { control: controlId("ch1", "insertFxOn"), addr, mode: "absolute", button: "edge" },
+      { control: controlId("ch2", "insertFxOn"), addr, mode: "absolute", button: "state" },
+    ]);
+
+    // A release: edge ignores anything under 64, state would read it as off.
+    engine.onMessage([0xb0, 7, 0]);
+    expect([plan.nodeParams.ch1?.insertFxOn, plan.nodeParams.ch2?.insertFxOn], "the release changed nothing").toEqual([
+      true,
+      true,
+    ]);
+    // The positive control: the same gang DOES act on a press, so the case above is the release
+    // being ignored rather than the gang being inert.
+    engine.onMessage([0xb0, 7, 127]);
+    expect([plan.nodeParams.ch1?.insertFxOn, plan.nodeParams.ch2?.insertFxOn], "…and a press does").toEqual([
+      false,
+      false,
+    ]);
+  });
+});
+
+// One incoming CC matches TWO addresses — its own and the 14-bit pair it could be the MSB of — so
+// a message can reach two gangs at once, and a gang is the members sharing ONE address. Collapsed
+// across that boundary, a member on the other address decided for this one.
+describe("a mirrored pair bound to two different addresses", () => {
+  it("does not let a 14-bit binding speak for the plain CC beside it", () => {
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      stereoLink: true,
+      panBal: PAN_BAL_PAN,
+      insertFx: INSERT_FX_OPTIONS[1].value,
+      insertFxOn: true,
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value, insertFxOn: true };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: (c) => {
+        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    // The pair primary takes the 14-bit address, which a toggle binds to inertly by design; the
+    // secondary takes the plain CC the same controller carries.
+    engine.setMappings([
+      {
+        control: controlId("ch1", "insertFxOn"),
+        addr: { type: "cc14", channel: 0, controller: 7 },
+        mode: "absolute",
+        button: "state",
+      },
+      {
+        control: controlId("ch2", "insertFxOn"),
+        addr: { type: "cc", channel: 0, controller: 7 },
+        mode: "absolute",
+        button: "state",
+      },
+    ]);
+
+    engine.onMessage([0xb0, 7, 0]);
+    expect(
+      [plan.nodeParams.ch1?.insertFxOn, plan.nodeParams.ch2?.insertFxOn],
+      "the plain CC's binding acted, and the mirror carried it",
+    ).toEqual([false, false]);
   });
 });

@@ -163,8 +163,24 @@ carries a one-line map of the same directories and points here.
     reported to the status line once per gated window rather than once per message; MIDI-learn state
     machine, feedback (diff against a sent cache + 300 ms echo suppression while receiving + a one-shot
     receive-side echo guard for toggles); several mappings sharing one address form a gang (`byKey`) — one
-    physical control drives every member (incoming messages fan out to all), while the first-learned list
-    head owns feedback/echo/pickup
+    physical control drives every member (incoming messages fan out to all), while the gang's HEAD owns
+    feedback/echo/pickup (`headOf`: the first learned member the current plan can resolve, not simply the
+    first learned one, so a mapping for a processor this node no longer holds does not take the role and
+    silence the rest). A gang decides every member's target from the state BEFORE the message
+    and only then writes them, because applying one member can move another's control (a linked pair's
+    mirror); it writes a control its catalogue entry says is GOVERNED by another before that other one, so a
+    1-knob taking values over does not arrive first; and it retries what a lock refused, which is how the
+    same order serves a lock being released. What that settles is narrow and worth stating as such: where one member's write
+    moves another's control, the learn order does not decide which of them wins. Members a MIRROR keeps equal are ONE
+    decision rather than several, taken at the pair primary — in BAL that is every control on the
+    pair, since the mirror replaces the partner's node params and every send, while PAN carries
+    across the insert effect alone — written in turn they were two, and a mirror
+    settles on whichever went last, so a pair that starts at different values (a plan can hold one, and it
+    loads without complaint) ended wherever the learn order put it. A member that decided to do NOTHING keeps its group's seat, since a
+    gang may mix edge and state deliberately and a release one member ignores is not the other's to
+    act on. What the order still decides is PICKUP,
+    and that is the head's own design rather than an oversight: engagement is the head's to own, so a pickup
+    gang whose members sit at different values crosses over on the head's value
   - `src/core/control/` — live device control (vd protocol). Writes and Live sync are always enabled on
     desktop; only the round-trip diagnostics in `selftest.ts` require an `--experimental` launch
     - `vd.ts` value encoding / `translate.ts` plan→commands (**one device address yields exactly one
@@ -1872,21 +1888,29 @@ exists to prevent. And a rejection leaves the registration by exception, so it n
 generation guard: `refresh`'s catch compares the generation it started with before it stops anything, or a refusal
 arriving after its session ended stops the live one instead, with nothing to restart it.
 
-**Two read-only addresses join for the same reason**, and the name path is their precedent rather than a
+**Three follow-only cases join for the same reason**, and the name path is their precedent rather than a
 coincidence: an address the app only READS was in no registration, so the unit's announcement reached nobody and
-the value caught up only at the next full read. Both were measured announcing a front-panel change on a URX44V
+the value caught up only at the next full read. The first two were measured announcing a front-panel change on a URX44V
 (2026-08-11, System V1.3.1.0), which is what separates them from the addresses that genuinely stay silent — D.Gain
 and the FX / insert-FX engine arrays emit nothing when the panel moves them, and for those a registration would be
 useless for that purpose. **A device-side RECOMPUTE is a different trigger and does announce**: writing an FX
 delay's Sync, Note or BPM makes the unit recalculate the delay time from BPM and the note value and notify the
 array address it wrote. So the silence is about the front panel, not about the address.
 
-| Address | Why the app never writes it | Which node's scoped read repairs it |
+| Address | When and why the app does not write it | Which node's scoped read repairs it |
 | --- | --- | --- |
 | CH → FX send tap (193 / 197 / 320 / 324) | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
 | microSD Rec Track Count (839) | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node 839 lands on, and the only address that read touches |
+| the FX delay time the unit computes (681 / 685, slot 6) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
 
-Both are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
+The third is not a read-only ADDRESS at all, which is why the heading above says cases. Slot 6 is written like
+any other parameter while the operator owns the delay time; it moves to this list only while tempo Sync is on,
+and back out when Sync goes off. So it takes the PLAN as well as the model — whether slot 6 is present here is a
+function of the effect type and of the Sync switch — and its pair is a SUPPRESSION rather than an unwritable
+address. The other two are addresses the app could never write; this one is written whenever the unit is not the
+one deriving it, which is what makes the emitted set and this one exact complements.
+
+All three are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
 registration and the write suppression cannot drift apart; `live.ts` consumes that list the same way it consumes
 `planToCommands`, **including its write scope**. That scope is not symmetry for its own sake: under *Scene only* a
 whole-device read puts the plan's scene-external values back after reading (`applyDeviceStateScoped` →

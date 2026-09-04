@@ -56,7 +56,7 @@ import {
   EQ_TYPE_SHELVING,
   insertFxEngaged,
 } from "../control/params";
-import { isBalLinkedPair, mixSendLocks, pairPrimary } from "../routing";
+import { isBalLinkedPair, isStereoLinkedPair, mixSendLocks, pairPrimary } from "../routing";
 import {
   insertFxFamilyOf,
   insertFxLockedSlots,
@@ -213,6 +213,20 @@ export interface ControlDesc {
    * outputs, which are not pairs.
    */
   lockId?: string;
+  /**
+   * The control this one is the SAME VALUE as, when a mirror keeps the two equal — the pair
+   * primary's. Only the SECONDARY carries it; the primary answers to its own id, which is what
+   * makes the two meet without a second field naming the primary from itself. A gang holding
+   * both collapses them to one decision rather than writing each in turn: a mirror settles on
+   * whichever was written LAST, and members that start at different values would otherwise end
+   * wherever the learn order put them. Carrying no `mirrorId` is therefore how a member says it
+   * IS the primary, which is how the seat is decided.
+   *
+   * What a mirror covers differs by mode. BAL replaces the partner's node params entirely, so
+   * every control on the pair is one; PAN keeps each channel's own everything EXCEPT the insert
+   * effect, which the unit holds as one instance for the pair.
+   */
+  mirrorId?: string;
 }
 
 /** A control bound to a concrete plan: normalized read/write access. */
@@ -1094,5 +1108,22 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   // The tuning screens' parameters come last, so the console's own controls keep
   // their order in the assignment list and in `listControls`.
   pushDynamics();
+  // The mirror identity, stamped ONCE over the finished list rather than at each site that
+  // builds a control. What a mirror covers is a property of the NODE and the link mode, not of
+  // any one parameter, and put at the sites it was the insert effect's alone while
+  // `mirrorBalPair` was copying the whole node params and every send — so a BAL pair's CH ON,
+  // its sends and everything else stayed several decisions and the learn order picked the value.
+  //
+  // BAL replaces the partner's node params entirely, so every control on the pair is one value.
+  // PAN keeps each channel's own, EXCEPT the insert effect: a linked pair holds one instance
+  // between them, on the unit and here (`mirrorLinkedInsertFx` runs in both modes).
+  const primary = pairPrimary(model, id);
+  if (primary !== null && primary !== id && isStereoLinkedPair(model, plan, id)) {
+    const bal = isBalLinkedPair(model, plan, id);
+    for (const c of out) {
+      if (!bal && c.param !== "insfx" && c.param !== "insertFxOn") continue;
+      c.mirrorId = controlId(primary, c.param, c.scope);
+    }
+  }
   return out;
 }
