@@ -164,7 +164,12 @@ carries a one-line map of the same directories and points here.
     machine, feedback (diff against a sent cache + 300 ms echo suppression while receiving + a one-shot
     receive-side echo guard for toggles); several mappings sharing one address form a gang (`byKey`) — one
     physical control drives every member (incoming messages fan out to all), while the first-learned list
-    head owns feedback/echo/pickup
+    head owns feedback/echo/pickup. A gang decides every member's target from the state BEFORE the message
+    and only then writes them, because applying one member can move another's control (a linked pair's
+    mirror); it writes a control its catalogue entry says is GOVERNED by another before that other one, so a
+    1-knob taking values over does not arrive first; and it retries what a lock refused, which is how the
+    same order serves a lock being released. The result cannot depend on the order the mappings were
+    learned in — that is the order two assignments happened to be made in, and nothing a press means
   - `src/core/control/` — live device control (vd protocol). Writes and Live sync are always enabled on
     desktop; only the round-trip diagnostics in `selftest.ts` require an `--experimental` launch
     - `vd.ts` value encoding / `translate.ts` plan→commands (**one device address yields exactly one
@@ -1872,7 +1877,7 @@ exists to prevent. And a rejection leaves the registration by exception, so it n
 generation guard: `refresh`'s catch compares the generation it started with before it stops anything, or a refusal
 arriving after its session ended stops the live one instead, with nothing to restart it.
 
-**Two read-only addresses join for the same reason**, and the name path is their precedent rather than a
+**Three read-only addresses join for the same reason**, and the name path is their precedent rather than a
 coincidence: an address the app only READS was in no registration, so the unit's announcement reached nobody and
 the value caught up only at the next full read. Both were measured announcing a front-panel change on a URX44V
 (2026-08-11, System V1.3.1.0), which is what separates them from the addresses that genuinely stay silent — D.Gain
@@ -1885,8 +1890,15 @@ array address it wrote. So the silence is about the front panel, not about the a
 | --- | --- | --- |
 | CH → FX send tap (193 / 197 / 320 / 324) | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
 | microSD Rec Track Count (839) | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node 839 lands on, and the only address that read touches |
+| the FX delay time the unit computes (681 / 685, slot 6) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
 
-Both are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
+The third is the one that takes the PLAN as well as the model: which slot it is, and whether there is one at
+all, is a function of the effect type and of the Sync switch, so it appears and disappears with them. It is also
+the pair to a suppression rather than to an unwritable address — the other two are addresses the app could never
+write, while this one is written whenever the unit is not the one deriving it, and the two lists are exact
+complements.
+
+All three are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
 registration and the write suppression cannot drift apart; `live.ts` consumes that list the same way it consumes
 `planToCommands`, **including its write scope**. That scope is not symmetry for its own sake: under *Scene only* a
 whole-device read puts the plan's scene-external values back after reading (`applyDeviceStateScoped` →
