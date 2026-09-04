@@ -744,13 +744,8 @@ describe("a gang whose first member unlocks another", () => {
     };
   };
 
-  // BOTH learn orders. The order decides which member commits first, and only one of them
-  // ever worked: with the band learned first there was nothing to write to when its turn came,
-  // and nothing came back for it afterwards.
-  it.each([
-    [[ONE, LOW], "the knob learned first"],
-    [[LOW, ONE], "the band learned first"],
-  ])("switches the whole gang off, %s", (order) => {
+  /** Drive one press through the real engine and report what the plan ended up holding. */
+  const press = (order: readonly string[], button: "edge" | "state", value: number) => {
     knobOnBandStored();
     // The premise the case rests on, stated rather than assumed: the knob is on, and the band
     // READS off while holding an on of its own. Without this a run where the seed did not take
@@ -770,13 +765,46 @@ describe("a gang whose first member unlocks another", () => {
       now: () => 0,
     });
     const addr = { type: "cc", channel: 0, controller: 9 } as const;
-    engine.setMappings(order.map((control) => ({ control, addr, mode: "absolute", button: "state" }) as const));
-    engine.onMessage([0xb0, 9, 0]);
+    engine.setMappings(order.map((control) => ({ control, addr, mode: "absolute", button }) as const));
+    engine.onMessage([0xb0, 9, value]);
+    return { oneKnob: plan.nodeParams.ch1?.eqOneKnob?.on, low: plan.nodeParams.ch1?.eqBands?.[0]?.on };
+  };
 
-    expect(plan.nodeParams.ch1?.eqOneKnob?.on, "the knob went off").toBe(false);
+  // BOTH learn orders. The order decides which member commits first, and only one of them ever
+  // worked: with the band learned first there was nothing to write to when its turn came, and
+  // nothing came back for it afterwards.
+  it.each([
+    [[ONE, LOW], "the knob learned first"],
+    [[LOW, ONE], "the band learned first"],
+  ])("switches the whole gang off, %s", (order) => {
+    const after = press(order, "state", 0);
+    expect(after.oneKnob, "the knob went off").toBe(false);
     // …and so did the band. Left behind, it comes back the moment the knob releases it — the
     // operator switched one physical control off and an EQ band arrived on.
-    expect(plan.nodeParams.ch1?.eqBands?.[0]?.on, "and the band it was hiding").toBe(false);
+    expect(after.low, "and the band it was hiding").toBe(false);
+  });
+
+  // The learn order must not decide the OUTCOME, in either button mode. It is the order two
+  // assignments happened to be made in — nothing the operator can see at the moment of a press,
+  // and nothing the press means. Edge is where it showed: its target is a flip of what the
+  // control reads, so a member re-decided after the release flipped a value the operator was
+  // never shown, while the one that got in first flipped the value they were.
+  it.each([
+    ["edge", 127],
+    ["state", 0],
+  ] as const)("lands on the same values from either learn order, in %s mode", (button, value) => {
+    const knobFirst = press([ONE, LOW], button, value);
+    const bandFirst = press([LOW, ONE], button, value);
+    expect(knobFirst).toEqual(bandFirst);
+  });
+
+  // …and what edge lands ON, so the case above cannot be satisfied by both orders agreeing on
+  // the wrong thing. A locked band READS off, and a flip of what the operator was shown turns
+  // it on — the knob goes off in the same press, which is what makes that value reachable.
+  it("flips an edge gang from what the screen was showing", () => {
+    const after = press([ONE, LOW], "edge", 127);
+    expect(after.oneKnob, "the knob was on and flips off").toBe(false);
+    expect(after.low, "the band read off and flips on").toBe(true);
   });
 });
 

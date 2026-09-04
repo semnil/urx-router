@@ -274,17 +274,16 @@ export class MidiEngine {
     // is on, so a gang told to switch everything off cannot write a band until the knob in the
     // same gang has gone off, and in the order that learns the band FIRST nothing ever did.
     // Bounded by the member count, and stops as soon as a pass writes nothing.
+    //
+    // The DECISION is what is retried, not the deciding. Re-deciding would read the control
+    // again, and for an edge toggle the target is a flip of what it reads — so the two learn
+    // orders parted company, one flipping the value the operator was shown and the other
+    // flipping the one the release had just put there. Retrying the decision also keeps the
+    // 14-bit assembly and the pickup engagement to the one pass that owns them.
     let pending = decisions.filter((d) => !this.commit(d));
     for (let pass = 0; pass < matched.length && pending.length > 0; pass++) {
-      const again: Decision[] = [];
-      let wrote = false;
-      for (const d of pending) {
-        const fresh = this.redecide(d, ev);
-        if (fresh === null) continue; // nothing left to write once it could be read
-        if (this.commit(fresh)) wrote = true;
-        else again.push(fresh);
-      }
-      if (!wrote) break;
+      const again = pending.filter((d) => !this.commit(d));
+      if (again.length === pending.length) break;
       pending = again;
     }
   }
@@ -402,18 +401,6 @@ export class MidiEngine {
     this.hooks.trace?.(`apply ${mapping.control} ${before} -> ${after}`);
     if (after !== before) this.hooks.applied(control);
     return true;
-  }
-
-  /** A member the lock refused, made ready to try again once the rest have committed. A
-   *  TOGGLE is decided afresh: its target is a function of the value it could not read while
-   *  locked. Anything else keeps the target it already has, which the incoming value alone
-   *  decides — and re-deciding one would re-run the 14-bit assembly and the pickup engagement
-   *  that deciding already did. */
-  private redecide(d: Decision, ev: MidiEvent): Decision | null {
-    if (d.control.kind !== "toggle") return d;
-    const before = d.control.get();
-    const target = this.toggleTarget(d.mapping, ev, before);
-    return target === null ? null : { ...d, before, target };
   }
 
   // Toggles: "edge" (default) flips on each on-value — a note-on, or a CC ≥ 64;
