@@ -58,7 +58,7 @@ import {
   insertFxSlotVal,
   reKeyInsertFxParams,
 } from "../control/insert-fx-effect";
-import { channelEqUnavailable, nodeRateDisabled } from "../constraints";
+import { channelEqUnavailable, insertFxMenu, insertFxRateLock, nodeRateDisabled } from "../constraints";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../control/vd";
 
 /** The STEREO master — every channel's / FX channel's fixed main send target. */
@@ -749,13 +749,24 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     // The face's own switch. It writes the bypass and nothing else — selection belongs to the
     // popover — so it takes a param of its own rather than a slot scope: `insfx` names a raw
     // engine slot under a family, and this is neither.
+    // The rate lock the HELD effect carries, asked NOW rather than when the mapping was made
+    // — the same shape the slot locks beside this take, for the same reason: a mapping
+    // outlives the state that locked what it names. Above its ceiling the strip draws this
+    // face OFF and refuses the press, so a write arriving here would be an edit the operator
+    // is being told is impossible, and the feedback LED would report the stored value against
+    // an OFF face. Resolved lazily: the menu is a per-node walk and listing runs on every
+    // feedback pass, while a press is one gesture.
+    const rateLocked = (): boolean =>
+      insertFxRateLock(insertFxMenu(model, plan, id), effectiveInsertFx(model, plan, id)).locked;
     out.push({
       id: controlId(id, "insertFxOn"),
       node: id,
       param: "insertFxOn",
       kind: "toggle",
-      get: () => (insertFxEngaged({ insertFx: insFxSel, insertFxOn: plan.nodeParams[id]?.insertFxOn }) ? 1 : 0),
+      get: () =>
+        rateLocked() || !insertFxEngaged({ insertFx: insFxSel, insertFxOn: plan.nodeParams[id]?.insertFxOn }) ? 0 : 1,
       set: (v) => {
+        if (rateLocked()) return false;
         np().insertFxOn = v >= 0.5;
         return true;
       },

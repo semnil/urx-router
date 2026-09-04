@@ -759,6 +759,36 @@ describe("the insert effect's bypass", () => {
     expect(bindControl(model, plan, id)!.get(), "…and back").toBe(1);
   });
 
+  // The rate lock, at each effect's own ceiling and one step past it. Above it the strip draws
+  // this face OFF and refuses the press, so the catalogue has to answer the same way — a
+  // mapping outlives the rate it was made at, and the LED would otherwise report the stored
+  // value against a face that reads OFF.
+  it.each([
+    [512, "Pitch Fix", 48000, 96000],
+    [256, "Clean", 96000, 176400],
+  ] as const)("refuses %i (%s) above its ceiling, and takes it at the ceiling", (sel, _label, ceiling, above) => {
+    hold(sel);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFxOn: true };
+
+    // AT the ceiling the control is the operator's, which is the positive control: without it
+    // a catalogue that refused at every rate would satisfy the half below.
+    plan.sampleRate = ceiling;
+    expect(bindControl(model, plan, id)!.get(), `${ceiling}: reads the stored value`).toBe(1);
+    expect(bindControl(model, plan, id)!.set(0), `${ceiling}: takes the write`).toBe(true);
+    expect(plan.nodeParams.ch1?.insertFxOn).toBe(false);
+
+    // …and one step past it the face is drawn OFF and inoperable.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFxOn: true };
+    plan.sampleRate = above;
+    // The mapping stays RESOLVABLE on purpose: it survives the rate going back, and a control
+    // that vanished would take its assignment with it.
+    const locked = bindControl(model, plan, id);
+    expect(locked, `${above}: still bound`).not.toBeNull();
+    expect(locked!.get(), `${above}: reads OFF, as the face is drawn`).toBe(0);
+    expect(locked!.set(0), `${above}: refuses the write`).toBe(false);
+    expect(plan.nodeParams.ch1?.insertFxOn, `${above}: and the plan is untouched`).toBe(true);
+  });
+
   it("writes the bypass and nothing else", () => {
     hold(INSERT_FX_OPTIONS[1].value);
     const before = { ...plan.nodeParams.ch1 };
