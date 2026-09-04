@@ -265,10 +265,37 @@ export class MidiEngine {
     // value this same message produced. Both faces ganged to one CC then cancelled out —
     // the first flipped the pair off, the second read the mirrored off and flipped it back,
     // and one press left the pair exactly where it started.
-    const decisions = matched
+    const decided = matched
       .filter((mapping) => !echoed.has(addrKey(mapping.addr)))
       .map((mapping) => this.decide(mapping, ev))
       .filter((d): d is Decision => d !== null);
+    // Members a MIRROR keeps equal are one decision, not several. A mirror settles on whichever
+    // member was written last, so writing each in turn leaves a pair that started at different
+    // values wherever the learn order put it — and a plan can hold such a pair, saved and loaded
+    // without complaint. The one kept is the pair PRIMARY where the gang holds it, so the value
+    // that survives is decided by the pair rather than by the order two assignments were made in;
+    // dropping the rest costs nothing, since the mirror writes them anyway.
+    const byMirror = new Map<string, Decision>();
+    const decisions: Decision[] = [];
+    for (const d of decided) {
+      const key = d.control.mirrorId;
+      if (key === undefined) {
+        decisions.push(d);
+        continue;
+      }
+      const held = byMirror.get(key);
+      if (held === undefined) {
+        byMirror.set(key, d);
+        decisions.push(d);
+        continue;
+      }
+      // The primary wins the seat wherever it is in the gang; otherwise the first one keeps it.
+      if (d.control.id === key && held.control.id !== key) {
+        byMirror.set(key, d);
+        decisions[decisions.indexOf(held)] = d;
+      }
+      this.hooks.trace?.(`mirror ${d.mapping.control} -> ${key}`);
+    }
     // …and a member the lock refuses is tried again once the rest have written, because the
     // lock may be another member's to release: the EQ 1-knob computes the four bands while it
     // is on, so a gang told to switch everything off cannot write a band until the knob in the

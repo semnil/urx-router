@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { getModel } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
-import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
+import { deserialize, ensureFixedConnections, LEVEL_OFF_DB, serialize } from "../plan";
 import { ref } from "../../models/types";
 import { COMP_EQ_SSMCS, EQ_TYPE_PASS, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../control/params";
 import { planToCommands } from "../control/translate";
@@ -19,6 +19,7 @@ import {
 } from "./controls";
 import { MidiEngine } from "./engine";
 import { mirrorBalPair, mirrorLinkedInsertFx } from "../routing";
+import { planProblems } from "../plan-validate";
 import {
   COMPANDER_H,
   COMPANDER_S,
@@ -1079,5 +1080,73 @@ describe("a governor across a BAL-linked pair", () => {
       expect(after.ch1Low, `${governor}: and the band took the press first`).toBe(true);
       expect(after.ch2Low, `${governor}: on both members, which the mirror carries`).toBe(true);
     }
+  });
+});
+
+// Members a MIRROR keeps equal are ONE value, so a gang holding both is one decision. Written in
+// turn they were two, and a mirror settles on whichever went last: a pair that starts at different
+// values then ends wherever the learn order put it. Such a plan is reachable — it saves and loads
+// with nothing reported — so the pair has to decide, not the order two assignments were made in.
+describe("a gang holding both members of a mirrored pair", () => {
+  const ON = (ch: string): string => controlId(ch, "insertFxOn");
+
+  const press = (first: "ch1" | "ch2", ch1On: boolean, ch2On: boolean): Record<string, unknown> => {
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      stereoLink: true,
+      panBal: PAN_BAL_PAN,
+      insertFx: INSERT_FX_OPTIONS[1].value,
+      insertFxOn: ch1On,
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value, insertFxOn: ch2On };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: (c) => {
+        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 7 } as const;
+    const order = first === "ch1" ? ["ch1", "ch2"] : ["ch2", "ch1"];
+    engine.setMappings(order.map((ch) => ({ control: ON(ch), addr, mode: "absolute" }) as const));
+    engine.onMessage([0xb0, 7, 127]);
+    return { ch1: plan.nodeParams.ch1?.insertFxOn, ch2: plan.nodeParams.ch2?.insertFxOn };
+  };
+
+  // The reachable state this exists for: a plan holding the two disagreeing survives a round trip
+  // with nothing reported, so nothing upstream makes them equal before a press arrives.
+  it("is a state a plan can hold", () => {
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      stereoLink: true,
+      panBal: PAN_BAL_PAN,
+      insertFx: INSERT_FX_OPTIONS[1].value,
+      insertFxOn: true,
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value, insertFxOn: false };
+    const back = deserialize(serialize(plan));
+    expect([back.nodeParams.ch1?.insertFxOn, back.nodeParams.ch2?.insertFxOn]).toEqual([true, false]);
+    expect(planProblems(model, back)).toEqual([]);
+  });
+
+  it.each([
+    ["disagreeing, primary on", true, false],
+    ["disagreeing, primary off", false, true],
+    ["agreeing", true, true],
+  ])("lands the same way from either learn order — %s", (_label, ch1On, ch2On) => {
+    const a = press("ch1", ch1On, ch2On);
+    const b = press("ch2", ch1On, ch2On);
+    expect(b, "the learn order decided the outcome").toEqual(a);
+    // Both members end equal, which is what the mirror means — and the positive control, since
+    // two orders agreeing on a SPLIT pair would satisfy the line above.
+    expect(a.ch1, "the pair agrees afterwards").toBe(a.ch2);
+    // …and the value is the PAIR's: the primary's own before-value is what flips.
+    expect(a.ch1, "the primary's value is the one that moved").toBe(!ch1On);
   });
 });

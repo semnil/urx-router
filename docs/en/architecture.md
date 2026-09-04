@@ -171,13 +171,12 @@ carries a one-line map of the same directories and points here.
     mirror); it writes a control its catalogue entry says is GOVERNED by another before that other one, so a
     1-knob taking values over does not arrive first; and it retries what a lock refused, which is how the
     same order serves a lock being released. What that settles is narrow and worth stating as such: where one member's write
-    moves another's control, the learn order does not decide which of them wins. It does not make a gang
-    order-free in general, and two exceptions are the head's own design rather than an oversight — pickup
-    engagement is the head's to own, so a pickup gang whose members sit at different values crosses over on
-    the head's value and the learn order decides which value that is; and a gang whose members MIRROR each
-    other settles on the last one written, so members that start at different values (a linked pair loaded
-    from a plan that has them disagreeing, which loads without complaint) end at whichever the learn order
-    put last. The ordering above is about who writes before whom, not about making disagreeing members agree
+    moves another's control, the learn order does not decide which of them wins. Members a MIRROR keeps equal are ONE
+    decision rather than several, taken at the pair primary — written in turn they were two, and a mirror
+    settles on whichever went last, so a pair that starts at different values (a plan can hold one, and it
+    loads without complaint) ended wherever the learn order put it. What the order still decides is PICKUP,
+    and that is the head's own design rather than an oversight: engagement is the head's to own, so a pickup
+    gang whose members sit at different values crosses over on the head's value
   - `src/core/control/` — live device control (vd protocol). Writes and Live sync are always enabled on
     desktop; only the round-trip diagnostics in `selftest.ts` require an `--experimental` launch
     - `vd.ts` value encoding / `translate.ts` plan→commands (**one device address yields exactly one

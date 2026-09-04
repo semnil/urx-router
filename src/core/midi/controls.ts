@@ -56,7 +56,7 @@ import {
   EQ_TYPE_SHELVING,
   insertFxEngaged,
 } from "../control/params";
-import { isBalLinkedPair, mixSendLocks, pairPrimary } from "../routing";
+import { isBalLinkedPair, isStereoLinkedPair, mixSendLocks, pairPrimary } from "../routing";
 import {
   insertFxFamilyOf,
   insertFxLockedSlots,
@@ -213,6 +213,18 @@ export interface ControlDesc {
    * outputs, which are not pairs.
    */
   lockId?: string;
+  /**
+   * The control this one is the SAME VALUE as, when a mirror keeps the two equal — the pair
+   * primary's, for a control on the secondary. Both members of a mirrored pair carry it, so a
+   * gang holding both collapses them to one decision rather than writing each in turn: a
+   * mirror settles on whichever was written LAST, and members that start at different values
+   * would otherwise end wherever the learn order put them.
+   *
+   * What a mirror covers differs by mode. BAL replaces the partner's node params entirely, so
+   * every control on the pair is one; PAN keeps each channel's own everything EXCEPT the insert
+   * effect, which the unit holds as one instance for the pair.
+   */
+  mirrorId?: string;
 }
 
 /** A control bound to a concrete plan: normalized read/write access. */
@@ -353,6 +365,15 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
    *  which is what lets one spelling serve the processors that mirror and those that do not. */
   const lockNode = (nodeId: string): string =>
     isBalLinkedPair(model, plan, nodeId) ? (pairPrimary(model, nodeId) ?? nodeId) : nodeId;
+  /** The id a control answers to when a mirror makes it the same value as its partner's, or
+   *  undefined when nothing mirrors it. `insertFx` is the one thing PAN carries across as well:
+   *  a linked pair holds ONE insert effect between them, on the unit and here. */
+  const mirroredAs = (param: ControlParam, scope: string | undefined, insertFx: boolean): string | undefined => {
+    const primary = pairPrimary(model, id);
+    if (primary === null) return undefined;
+    const mirrored = insertFx ? isStereoLinkedPair(model, plan, id) : isBalLinkedPair(model, plan, id);
+    return mirrored ? controlId(primary, param, scope) : undefined;
+  };
   const conn = (toId: string): PlanConnection | undefined => sendConnection(plan, id, toId);
 
   // A continuous control persisted on a send connection's params (level / pan);
@@ -832,6 +853,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param: "insertFxOn",
       kind: "toggle",
+      mirrorId: mirroredAs("insertFxOn", undefined, true),
       get: () =>
         rateLocked() || !insertFxEngaged({ insertFx: insFxSel, insertFxOn: plan.nodeParams[id]?.insertFxOn }) ? 0 : 1,
       set: (v) => {
@@ -886,6 +908,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           scope,
           kind: "toggle",
           governedBy,
+          mirrorId: mirroredAs("insfx", scope, true),
           get: () => (cur() ? 1 : 0),
           set: (v) => {
             if (lockedNow()) return false;
@@ -906,6 +929,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         scope,
         kind: "continuous",
         governedBy,
+        mirrorId: mirroredAs("insfx", scope, true),
         get: () => codec.get(cur()),
         set: (v) => {
           if (lockedNow()) return false;
