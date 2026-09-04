@@ -69,16 +69,18 @@ interface PickupState {
   lastIn: number | null;
 }
 
-/** One mapping's decided edit: what its control read before the message and what it is to be
- *  set to. A gang decides every member's before this way, then writes them — applying one can
- *  move another's control through the mirror the apply hook runs. */
-/** One member's resolved control and what it decided to do to it, if anything. */
+/** One member's resolved control and what it decided to do to it, if anything. A null decision
+ *  is a member that resolved and chose to act on nothing — kept apart from a mapping that named
+ *  nothing this plan carries, because only the second may let another member speak for it. */
 interface Attempt {
   mapping: MidiMapping;
   control: BoundControl;
   decision: Decision | null;
 }
 
+/** One mapping's decided edit: what its control read before the message and what it is to be
+ *  set to. A gang decides every member's before this way, then writes them — applying one can
+ *  move another's control through the mirror the apply hook runs. */
 interface Decision {
   mapping: MidiMapping;
   control: BoundControl;
