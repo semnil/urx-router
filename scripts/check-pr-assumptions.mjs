@@ -14,31 +14,36 @@
 // silence. Whether a tag is TRUE is a judgement, the same way the message catalog's
 // dev/fixed/tr markers are: this asks that one was made.
 //
-// Narrow on purpose. It reads the field only when the box is ticked, and "none" is the
-// other answer the template already offers. A body with no such line at all — an
-// external contributor writing their own — is not this check's business.
+// Narrow on purpose. What it reads is what someone WROTE — the items under the field, and
+// an answer separated from the label by a colon — and not the tick beside it, which is
+// independent of them. "none" is the answer the template already offers, an untouched
+// template lists nothing, and a body carrying no such field at all — an external
+// contributor writing their own — is not this check's business.
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 /** The three external dependencies an observation can have. */
 const TAGS = ["[hardware]", "[operator]", "[other-checkout]"];
 
-/** The field's own label, matched from its start so the trailing guidance can change. */
-const LABEL = /^- \[([ xX])\]\s*Assumptions this PR rests on/;
+/** The field's own label, matched from its start so the trailing guidance can change.
+ *  The tick is matched but NOT consulted: what someone wrote and whether they ticked the
+ *  box beside it are independent, and reading the tick as the question let a field listing
+ *  an untagged item pass on a box nobody had ticked. */
+const LABEL = /^- \[[ xX]\]\s*Assumptions this PR rests on/;
 
 /** An answer that claims nothing. */
 const EMPTY = /^(none|none\.|無し|なし)$/i;
 
 /**
- * The assumption items a body lists, or null when it makes no claim at all — no field,
- * or the box left unticked. An item is a nested list entry under the field; a field
- * answered inline carries its answer as one item.
+ * The assumption items a body lists, or null when the field is absent altogether. An item
+ * is a nested list entry under the field; a field answered on its own line carries that
+ * answer as one item, which is what the trailing colon separates from the label. The
+ * template's own line ends without one, so an untouched template lists nothing.
  */
 export function assumptionItems(body) {
   const lines = body.split(/\r?\n/);
   const at = lines.findIndex((l) => LABEL.test(l));
   if (at < 0) return null;
-  if (lines[at].match(LABEL)[1] === " ") return null;
 
   // The block runs to the next top-level list item or heading: the field is the last
   // entry of its list, so its continuation is everything indented under it.
@@ -68,16 +73,12 @@ export function assumptionItems(body) {
   }
   if (current !== null) items.push(current);
 
-  if (!items.length) {
-    // Answered inline on the label's own line, or on the lines under it.
-    const inline = lines[at]
-      .replace(LABEL, "")
-      .replace(/^[^:]*:\s*/, "")
-      .trim();
-    const tail = block.join(" ").trim();
-    const one = [inline, tail].filter(Boolean).join(" ").trim();
-    if (one) items.push(one);
-  }
+  // An answer written on the label's own line, which a COLON separates from the label.
+  // Taken from anything after the label instead, the template's own trailing wording read
+  // as an answer and an untouched template was a finding.
+  const colon = lines[at].indexOf(":");
+  const inline = colon < 0 ? "" : lines[at].slice(colon + 1).trim();
+  if (inline) items.unshift(inline);
   return items;
 }
 

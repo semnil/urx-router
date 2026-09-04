@@ -12,6 +12,7 @@
 // is the whole of what that workflow reads.
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { untagged } from "./check-pr-assumptions.mjs";
 
@@ -37,9 +38,21 @@ const run = (text) =>
   spawnSync(process.execPath, [SCRIPT], { encoding: "utf8", env: { ...process.env, PR_BODY: text } });
 
 describe("what the field may hold", () => {
-  it("passes an unticked box, which claims nothing", () => {
-    const text = body('- [ ] Assumptions this PR rests on are listed here, each with what would settle it — or "none"');
-    expect(untagged(text)).toEqual([]);
+  it("passes a box with nothing written under it, ticked or not", () => {
+    for (const tick of [" ", "x"]) {
+      const text = body(
+        `- [${tick}] Assumptions this PR rests on are listed here, each with what would settle it — or "none"`,
+      );
+      expect(untagged(text)).toEqual([]);
+    }
+  });
+
+  // The shipped template, verbatim. It is the one body every pull request starts from, so
+  // a rule that fires on it fires on everything.
+  it("passes the template as it ships", () => {
+    const template = readFileSync(new URL("../.github/PULL_REQUEST_TEMPLATE.md", import.meta.url), "utf8");
+    expect(untagged(template)).toEqual([]);
+    expect(run(template).status).toBe(0);
   });
 
   it('passes "none", the answer the template offers', () => {
@@ -90,6 +103,17 @@ describe("what it refuses", () => {
         "  - a third that does not either.",
     );
     expect(untagged(text)).toHaveLength(2);
+  });
+
+  // The tick and what was written beside it are independent. Read as the question, an
+  // unticked box hid every item under it — which is the shape a body has when someone
+  // wrote the answer and did not tick, and the answer is what the check is about.
+  it("refuses an untagged item under a box nobody ticked", () => {
+    const text = body(
+      "- [ ] Assumptions this PR rests on are listed here:\n" + "  - the teardown window is still an unmeasured guess.",
+    );
+    expect(untagged(text)).toHaveLength(1);
+    expect(run(text).status).toBe(1);
   });
 
   it("refuses an answer written inline rather than as a list", () => {
