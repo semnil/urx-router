@@ -290,7 +290,8 @@ export class MidiEngine {
     // dropping the rest costs nothing, since the mirror writes them anyway.
     //
     // Keyed by the ADDRESS as well as by `mirrorId ?? id`. One incoming CC matches two addresses —
-    // its own and the 14-bit pair it could be the MSB of (`matches`) — so `matched` can hold two
+    // its own and the 14-bit pair it belongs to as either half (`matches` folds an LSB back onto
+    // its MSB, so 7 and 39 both reach the pair 7/39) — so `matched` can hold two
     // gangs at once, and a gang is the members sharing ONE address. Collapsed across that boundary,
     // a member on the other address decided for this one: a 14-bit binding on a toggle is inert by
     // design, and as the pair primary it silenced the plain CC that was bound beside it.
