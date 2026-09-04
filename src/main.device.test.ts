@@ -211,6 +211,27 @@ function dialogs(shell: TauriShell): Array<{ message?: string; kind?: string; bu
 }
 
 /** The messages of the dialogs that ASKED (OK / Cancel), in order. */
+/** The strips a write confirm's unauthored-write note names, as ITEMS.
+ *
+ *  Split rather than searched: the names are a comma-separated run and several of this
+ *  model's labels are prefixes of others ("CH 1" of "CH 11/12", "FX 1" of nothing), so a
+ *  `toContain` on a label answers yes for a note that never mentioned it. Empty when the
+ *  message carries no note at all, which is the other thing these cases assert. */
+function stripsNamed(message: string): string[] {
+  const [head, tail] = t().confirm.unauthoredWrite("\u0000").split("\u0000");
+  const at = message.indexOf(head);
+  if (at < 0) return [];
+  // The note is one paragraph and the question is the next, so the run ends at the break —
+  // the message puts nothing after the names, so a split on the placeholder's own tail would
+  // take the question into the last item.
+  const rest = message.slice(at + head.length).split("\n\n")[0];
+  const end = tail ? rest.indexOf(tail) : -1;
+  return (end < 0 ? rest : rest.slice(0, end))
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
+}
+
 const confirms = (shell: TauriShell): string[] =>
   dialogs(shell)
     .filter((d) => d.buttons === "OkCancel")
@@ -1887,15 +1908,20 @@ describe("Write to device", () => {
   // the confirm outright used to leave the whole suite green.
   it("asks how many changes it is about to write, and sends nothing when that is declined", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(false, 48_000) }, false);
-    // A message that reconstructs to itself under `confirm.write` IS the write confirm.
-    // Waiting on "some confirm appeared" is not enough: with the confirm gone the write
-    // runs on, fails to converge and offers to save a failure report — which is an
+    // A message whose LAST paragraph reconstructs to itself under `confirm.write` IS the write
+    // confirm. Waiting on "some confirm appeared" is not enough: with the confirm gone the
+    // write runs on, fails to converge and offers to save a failure report — which is an
     // OkCancel dialog too, so the wait would be satisfied by the very regression the case
     // exists to catch, and the failure would name a NaN instead of a missing dialog.
+    // The last paragraph rather than the whole message, because the dialog carries what else
+    // it has to say about this write ahead of the question — a shared-address owner, and the
+    // strips whose values nobody chose, which a plan the app itself seeded has throughout.
+    const question = (m: string): string => m.slice(m.lastIndexOf("\n\n") + 2);
     const written = (): string | undefined =>
       confirms(shell).find((m) => {
-        const n = Number(/\d+/.exec(m)?.[0]);
-        return Number.isFinite(n) && m === t().confirm.write(n);
+        const q = question(m);
+        const n = Number(/\d+/.exec(q)?.[0]);
+        return Number.isFinite(n) && q === t().confirm.write(n);
       });
     $("btn-write").click();
     await vi.waitFor(() => expect(written()).toBeDefined(), { timeout: 10_000 });
@@ -1905,7 +1931,7 @@ describe("Write to device", () => {
     // rather than a substring. What that cannot pin is the number itself — the expectation
     // is built from the same digits — so a `total` that dropped one of its two terms would
     // still render a well-formed frame.
-    const n = Number(/\d+/.exec(written()!)?.[0]);
+    const n = Number(/\d+/.exec(question(written()!))?.[0]);
     expect(n).toBeGreaterThan(10);
     // And exactly one confirm: the decline has to end the flow rather than lead to another
     // question.
@@ -2026,7 +2052,7 @@ describe("Write to device", () => {
     // The contract this case exists for: the fill sends the factory effect, and the confirm
     // said so first, naming the strip the operator never described.
     expect(fxWrites(quiet).length).toBeGreaterThan(0);
-    const warned = confirms(quiet).filter((m) => m.includes(fxLabel("bus.fx1")));
+    const warned = confirms(quiet).filter((m) => stripsNamed(m).includes(fxLabel("bus.fx1")));
     expect(warned).toHaveLength(1);
     expect(warned[0]).toContain(
       t()
@@ -2045,7 +2071,7 @@ describe("Write to device", () => {
     for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
     const told = await runWrite(described);
     expect(told.count("vd_set"), "the positive control").toBeGreaterThan(0);
-    expect(confirms(told).filter((m) => m.includes(fxLabel("bus.fx1")))).toEqual([]);
+    expect(confirms(told).filter((m) => stripsNamed(m).includes(fxLabel("bus.fx1")))).toEqual([]);
   });
 
   // The other half of the same mark: a write takes the plan's values AS the unit's only once
@@ -2083,10 +2109,12 @@ describe("Write to device", () => {
     await invoked(shell, "vd_disconnect", 2);
     const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
     expect(asked, "the positive control: both attempts asked").toHaveLength(2);
-    // The note ran on both — the fill left plenty for it to name…
-    expect(asked.every((m) => m.includes(label("ch1")))).toBe(true);
+    // The note ran on both — reconstructed from its own message rather than from a label,
+    // since `fullLabel("ch1")` is "CH 1" and three of this model's labels contain that string.
+    const noteMark = t().confirm.unauthoredWrite("").replace(/\s*$/, "");
+    expect(asked.every((m) => m.includes(noteMark))).toBe(true);
     // …and named neither FX channel either time, because the document named those.
-    expect(asked.filter((m) => m.includes(label("bus.fx1")))).toEqual([]);
+    expect(asked.filter((m) => stripsNamed(m).includes(label("bus.fx1")))).toEqual([]);
   });
 
   // A parameter whose current value could not be read is one the write has no diff for,

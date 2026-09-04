@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from ".";
 import { defaultPlan, fillFactoryParams } from "./initial-state";
-import { deserialize, serialize } from "../core/plan";
+import { deserialize, emptyPlan, isPlainRecord, serialize } from "../core/plan";
+import type { NodeParams } from "../core/plan";
 import { clonePlanState, nodeParamContestPath } from "../core/plan-history";
 import { planToCommands } from "../core/control/translate";
 
@@ -88,4 +89,43 @@ describe("fillFactoryParams", () => {
     fillFactoryParams("URX44V", plan);
     expect(plan.nodeParams["ch1"]?.eqBands?.[4]).toEqual({ gain: 9 });
   });
+});
+
+// A document may write a scalar where the factory holds a group — the load-time sanitiser
+// passes it, since what it drops is a non-finite LEAF rather than a leaf standing where a
+// record belongs. Left there, the whole group stays absent from the emit and the panel draws
+// defaults for a block the write does not send, which is the divergence this fill removes.
+describe("a document that wrote a scalar where a group belongs", () => {
+  it("completes the group the factory carries there", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams.ch1 = { gate: 5 } as unknown as NodeParams;
+    fillFactoryParams("URX44V", plan);
+    const gate = plan.nodeParams.ch1?.gate;
+    expect(isPlainRecord(gate), "the scalar was replaced by the factory's group").toBe(true);
+    expect(typeof gate?.threshold).toBe("number");
+    // …and the completion is recorded as the fill's, not as something the document wrote.
+    expect(plan.paramSource?.get(nodeParamContestPath("ch1", "gate.threshold"))).toBe("default");
+  });
+
+  // The control: a group the document wrote properly is still the document's, untouched.
+  it("leaves a group the document wrote", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams.ch1 = { gate: { threshold: -33 } } as NodeParams;
+    fillFactoryParams("URX44V", plan);
+    expect(plan.nodeParams.ch1?.gate?.threshold).toBe(-33);
+    expect(plan.paramSource?.get(nodeParamContestPath("ch1", "gate.threshold"))).toBe("load");
+  });
+});
+
+// The fill runs once per load today, but a second run over its own output would read every
+// value it supplied as one the document wrote — which is the answer the write confirm asks
+// for, so the whole warning would fall silent.
+it("does not read its own completions as the document's", () => {
+  const plan = emptyPlan("URX44V");
+  plan.nodeParams.ch1 = { gain: -20 };
+  fillFactoryParams("URX44V", plan);
+  const before = new Map(plan.paramSource!);
+  fillFactoryParams("URX44V", plan);
+  expect(plan.paramSource!.size).toBe(before.size);
+  for (const [name, from] of before) expect(plan.paramSource!.get(name), name).toBe(from);
 });

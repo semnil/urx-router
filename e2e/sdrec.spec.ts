@@ -118,14 +118,21 @@ test("Track Count is locked and stays visibly dimmed while a live session holds 
 test("a document that names no parameters shows the model's factory Track Count", async ({ page }) => {
   const sparse = {
     format: "urx-router-plan",
-    version: 1,
+    version: 2,
     modelId: "URX44V",
     connections: [],
   };
+  // The premise, asserted rather than assumed: this document is what is on screen. Every other
+  // line below holds on the factory board `beforeEach` already navigated to, so a link the app
+  // refused would leave the case green while measuring nothing. The wire count separates them
+  // — a document naming no connections still draws the FIXED sends, so the discriminator is
+  // fewer wires than the factory board rather than none, and it is measured in this same run
+  // rather than written down.
+  const factoryWires = await page.locator(".wire-hit").count();
+  expect(factoryWires).toBeGreaterThan(0);
   await page.goto(`/?plan=${planParamZ(sparse)}`);
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
-  // The premise: this document carries no nodeParams at all, so every value on screen is
-  // one the loader supplied.
+  await expect.poll(() => page.locator(".wire-hit").count()).toBeLessThan(factoryWires);
   await expect(node(page, "out.sdrec")).toBeVisible();
 
   await node(page, "out.sdrec").click();

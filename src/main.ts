@@ -165,7 +165,11 @@ import { askRateChoice } from "./ui/rate-choice";
 import { cmdAddr, collisionOwners } from "./core/control/translate";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
-import { markParamSource as markSource, markPlanFromDevice as markAllFromDevice } from "./app/param-source";
+import {
+  markParamSource as markSource,
+  markPlanFromDevice as markAllFromDevice,
+  sentParamNames,
+} from "./app/param-source";
 import type { SharedOwners, WriteScope } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
@@ -1287,9 +1291,6 @@ function hasRecorder(reported: string): boolean {
 
 function planReadFromDevice(): void {
   planValuesChanged();
-  // Every value in a node the read reached is the unit's, so the confirm has nothing to warn
-  // about there. A node it could not answer for is `unreadNodes`, and those keep what they had.
-  markAllFromDevice(plan, (nodeId) => plan.unreadNodes?.has(nodeId) === true);
   // No full re-send here. This funnel is reached by a cancelled fetch and a partly
   // applied read as well as by a settled one — all three deliberately, since each may
   // have applied device values the history has to re-baseline. What none of them
@@ -2015,7 +2016,8 @@ function loadFromText(text: string, path?: string): boolean | null {
     // settings; keep the current plan's values for them — the same semantic as a
     // scene recall on the unit. Only within the same model: another model's
     // monitor / patch wiring would not validate on this one.
-    if (doc.sceneScoped && next.modelId === plan.modelId) applySceneExternal(next, captureSceneExternal(plan));
+    const carriedScene = doc.sceneScoped && next.modelId === plan.modelId;
+    if (carriedScene) applySceneExternal(next, captureSceneExternal(plan));
     // Surface every violation as a copyable report. A device readback runs neither
     // check — the unit is the authority for what it is actually running — which is
     // what splits the two classes: illegal routing is a plan this app cannot
@@ -2043,6 +2045,15 @@ function loadFromText(text: string, path?: string): boolean | null {
     // than left for the emit to skip. The DEVICE paths do not come through here: a fetch
     // fills from the unit, and a node it could not read stays absent on purpose.
     fillFactoryParams(next.modelId, next);
+    // …and the values a scene-scoped document did not carry are not the document's either:
+    // they were copied off the plan on screen a few lines above, so their provenance is that
+    // plan's. Left as the fill leaves them they would read as "the document wrote this",
+    // which exempts the monitor, phones and oscillator from the write confirm's warning.
+    if (carriedScene) {
+      for (const name of sceneExternalParamNames(next)) {
+        markSource(next, [name], plan.paramSource?.get(name) ?? "default");
+      }
+    }
     const finishLoad = (): boolean => {
       // Refused (a device read holds the plan): loadPlan said so, and the caller must
       // not go on to remember a recent path and announce a document that never opened.
@@ -3142,13 +3153,15 @@ if (!DEMO) {
               saveReport(failed, residual, convergeErrors);
             }
             if (!skipped) {
-              // A write that converged with nothing failing puts the plan's values on the unit,
-              // so the next confirm has nothing left to warn about — until the unit moves one.
-              // A scene-scoped write reached less than the plan, and `sceneExternalParamNames`
-              // is where it stopped.
+              // A write that converged with nothing failing puts the plan's values on the unit
+              // — but only the values it SENT. The emit skips a key for reasons the scene
+              // boundary knows nothing about (the 4-band PEQ under EQ 1-knob, `ssmcs` outside
+              // the SSMCS comp/EQ order), so the keys are taken from the emit rather than by
+              // walking the plan: one marked as the unit's on the strength of a write that
+              // skipped it makes the next confirm name a value the operator set themselves.
               if (!failed.length && !residual.length && !convergeErrors.length) {
-                const untouched = scope === "scene" ? sceneExternalParamNames(plan) : null;
-                markAllFromDevice(plan, (_node, name) => untouched?.has(name) === true);
+                const sent = sentParamNames(getModel(modelId), plan, scope);
+                markAllFromDevice(plan, (_node, name) => !sent.has(name));
               }
               setStatus(
                 (failed.length

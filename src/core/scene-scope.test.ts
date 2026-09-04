@@ -270,6 +270,17 @@ describe("sceneExternalParamNames", () => {
     }
     expect(checked, "the positive control: some named key does send under the full scope").toBeGreaterThan(0);
 
+    // The one entry the differential above cannot reach: Track Count is read-only, so it
+    // emits nothing under either scope and the loop skips it. It is still a key a scene
+    // recall leaves alone, and it is the function's only conditional — asserted here, or
+    // deleting that arm changes no test in the tree.
+    const tracks = nodeParamContestPath("out.sdrec", "sdRecTrackCount");
+    expect(plan.nodeParams["out.sdrec"]?.sdRecTrackCount, "the premise").toBeGreaterThan(0);
+    expect(names.has(tracks)).toBe(true);
+    // …and the arm's other side: a plan not carrying it does not name it.
+    const noTracks = { ...plan, nodeParams: { ...plan.nodeParams, "out.sdrec": {} } };
+    expect(sceneExternalParamNames(noTracks).has(tracks)).toBe(false);
+
     // …and the reverse, on a key it does not name: a channel's head-amp gain is sent under
     // both scopes, so the set is a boundary rather than everything it happened to walk.
     const gain = without(plan, "ch1", "gain");

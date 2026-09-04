@@ -70,7 +70,13 @@ export function fillFactoryParams(modelId: ModelId, plan: Plan): void {
   // the document. Done as its own walk rather than inside the merge, since a key the
   // factory does not carry is never visited by it.
   for (const [nodeId, carried] of Object.entries(plan.nodeParams)) {
-    walkParamLeaves(carried, (path) => source.set(nodeParamContestPath(nodeId, path), "load"));
+    walkParamLeaves(carried, (path) => {
+      // Only where nothing has recorded it. A second fill over the same plan would otherwise
+      // read its own completions as the document's, and the write confirm — which asks
+      // exactly this question — would fall silent about every one of them.
+      const name = nodeParamContestPath(nodeId, path);
+      if (!source.has(name)) source.set(name, "load");
+    });
   }
   for (const [nodeId, factory] of Object.entries(INITIAL[modelId].nodeParams)) {
     plan.nodeParams[nodeId] = mergeUnder(plan.nodeParams[nodeId], factory, (path) =>
@@ -94,6 +100,14 @@ function mergeUnder(carried: unknown, factory: unknown, filled: (path: string) =
       out[key] = mergeUnder(carried[key], value, filled, [...path, key]);
     }
     return out;
+  }
+  // A scalar where the factory holds a group is not an occupied group: the load-time
+  // sanitiser passes it (it drops a non-finite LEAF, not a leaf standing where a record
+  // belongs), and leaving it there keeps the whole group absent from the emit — the panel
+  // drawing defaults for a block the write does not send, which is what this fill removes.
+  if (isPlainRecord(factory) || Array.isArray(factory)) {
+    walkParamLeaves(factory, (leaf) => filled(path.length ? [...path, leaf].join(".") : leaf));
+    return structuredClone(factory);
   }
   return carried;
 }
