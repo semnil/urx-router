@@ -2032,13 +2032,12 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   }
 
   // FX-channel effects: EFFECT TYPE + parameter array for each FX channel the plan
-  // DESCRIBES. An absent fxEffect writes nothing, and that silence is the plan
-  // format's way of saying "leave this channel as the unit has it" — the skill's
-  // plan-schema.md and SKILL.md both instruct an author to omit the section when the
-  // user did not ask to change the effect. Emitting defaults for it instead resets a
-  // unit's FX from a document that says nothing, and the EFFECT TYPE write is not
-  // recoverable: it refills the engine array with that type's defaults, and selecting
-  // the old type back does not bring the old values with it.
+  // DESCRIBES. An absent fxEffect writes nothing — and the load path never leaves one
+  // absent, since `fillFactoryParams` completes a document from the model's factory
+  // values, so what reaches here without one is a plan no loader touched. The EFFECT
+  // TYPE write is not recoverable: it refills the engine array with that type's
+  // defaults, and selecting the old type back does not bring the old values with it,
+  // which is what the write confirm names the affected strips for.
   // Once the section IS present the whole channel is authored, selector included: the
   // array is absolute state, and a type write would refill the slots the plan left out
   // anyway. There is no partial FX write.

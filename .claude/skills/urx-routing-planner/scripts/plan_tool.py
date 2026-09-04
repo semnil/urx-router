@@ -311,6 +311,8 @@ INSERT_FX_SLOTS = {
 OUTPUT_INSERT_FX_SLOTS = {1792: "output dynamics", 1793: "output dynamics", 1794: "output dynamics"}
 OUTPUT_INSERT_FX_NODES = ("bus.stereo", "bus.mix1", "bus.mix2")
 STEREO_CHANNEL_RE = re.compile(r"^ch_\d+_\d+$")
+# The comp/EQ order that routes a channel through the SSMCS strip (params.ts COMP_EQ_SSMCS).
+COMP_EQ_SSMCS = 1
 
 
 def insert_fx_slot(node_id, params, nodes):
@@ -353,7 +355,8 @@ def fx_effect_warnings(node_id, fx, out):
             (
                 f"{node_id}.fxEffect",
                 "an empty effect object carries nothing and the app removes the key, "
-                "so the channel is left as the unit has it rather than written with defaults",
+                "which lands where omitting the section lands — the channel's factory effect, "
+                "supplied by the loader and sent by the write",
             )
         )
         return
@@ -436,11 +439,13 @@ def node_param_warnings(plan, nodes):
         # The section's PRESENCE, not the `type` key: the selector is emitted whether or not
         # the document names a type (an absent one resolves to the channel's factory type),
         # and every parameter slot goes with it. There is no partial FX write, so a plan
-        # carrying `{"level": 80}` resets the effect exactly as one naming a type does — and
-        # so the ONLY way to keep the unit's effect is to leave the whole section out. That
-        # sentence has to be in this line rather than beside it: paired with the raw-values
-        # advice it used to draw, an author was told to omit `fxEffect.params`, which keeps
-        # the section, writes the selector, and resets what they meant to preserve.
+        # carrying `{"level": 80}` resets the effect exactly as one naming a type does. Leaving
+        # the whole section out does not keep the unit's effect either — the app completes a
+        # document from the model's factory values and sends that — so the only plan that keeps
+        # it is one carrying the unit's own values, which is what this line has to say. Paired
+        # with the raw-values advice it used to draw, an author was told to omit
+        # `fxEffect.params`, which keeps the section, writes the selector, and resets what they
+        # meant to preserve.
         if isinstance(params.get("fxEffect"), dict) and params["fxEffect"]:
             named = "type" in params["fxEffect"]
             out.append(
@@ -453,20 +458,42 @@ def node_param_warnings(plan, nodes):
         for key, note in RAW_PARAM_KEYS.items():
             if key in params:
                 out.append(f"node {node_id}: {note} — {RAW_ADVICE}")
-    # The same irreversible write, reached from the other side. A document that says nothing
-    # about an FX channel is completed from the model's factory values, so the selector goes
-    # out and the effect on the unit is replaced. Silence used to be the way to leave a channel
-    # alone; it is not one any more, and an author who is not told reads the absence as safety.
-    written = {
-        i: p.get("fxEffect") for i, p in (node_params or {}).items() if isinstance(p, dict)
-    }
-    silent = [i for i in nodes if i.startswith("bus.fx") and not isinstance(written.get(i), dict)]
-    if silent:
-        out.append(
-            f"FX: {', '.join(silent)} name no fxEffect, so the app fills in each channel's factory "
-            "effect and the write sends it — whatever the unit holds there is replaced. To keep the "
-            "unit's effects, carry their values in the plan (fetch the plan back from the unit)"
-        )
+    # The same irreversible writes, reached from the other side. A document that says nothing
+    # about a selector is completed from the model's factory values, so the selector goes out
+    # and what the unit holds is replaced. Silence used to be the way to leave a channel alone;
+    # it is not one any more, and an author who is not told reads the absence as safety. Three
+    # keys carry that: an FX channel's effect, an insert-FX selector (whose factory value is No
+    # Effect, so an omitted one CLEARS the unit's insert effect), and an SSMCS strip — the last
+    # only where the document itself puts the channel in that comp/EQ order, since the factory
+    # order sends no SSMCS at all.
+    written = {i: p for i, p in (node_params or {}).items() if isinstance(p, dict)}
+
+    def takes_insert_fx(node_id):
+        if node_id in OUTPUT_INSERT_FX_NODES:
+            return True
+        return nodes.get(node_id, {}).get("kind") == "channel" and not STEREO_CHANNEL_RE.match(node_id)
+
+    for ids, note in (
+        (
+            [i for i in nodes if i.startswith("bus.fx") and not written.get(i, {}).get("fxEffect")],
+            "name no fxEffect, so the app fills in each channel's factory effect and the write sends it",
+        ),
+        (
+            [i for i in nodes if takes_insert_fx(i) and "insertFx" not in written.get(i, {})],
+            "name no insertFx, so the app fills in the factory value (No Effect) and the write clears "
+            "whatever insert effect the unit is holding",
+        ),
+        (
+            [i for i in nodes if written.get(i, {}).get("compEqType") == COMP_EQ_SSMCS and "ssmcs" not in written.get(i, {})],
+            "select the SSMCS comp/EQ order and name no ssmcs, so the app fills in the factory strip "
+            "and the write sends it over whatever the unit has dialled in",
+        ),
+    ):
+        if ids:
+            out.append(
+                f"{', '.join(ids)}: {note} — whatever the unit holds there is replaced. To keep the "
+                "unit's values, carry them in the plan (fetch the plan back from the unit)"
+            )
     for slot, ids in slot_holders.items():
         if len(ids) > 1:
             out.append(

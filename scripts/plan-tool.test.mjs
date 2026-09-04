@@ -67,13 +67,33 @@ const toolPaths = (dir, plan) => {
     .map((l) => l.slice("WARNING: node param ".length).split(":")[0]);
 };
 
-/** Whether the app's load leaves this node's fxEffect as the document wrote it. */
-const appChanges = async (plan) => {
+/** The app's own load. THREE stages: deserialize, the load-time repair, and the fill that
+ *  completes a document from the model's factory values. The last is optional here because
+ *  the two questions below are different — `appChanges` asks what the document's own values
+ *  survive, and the fill answers about the ones it did not write. */
+const appLoad = async (plan, fill) => {
   const { deserializeDocument } = await import("../src/core/plan.ts");
   const { paramRangeProblems, applyParamRange } = await import("../src/core/plan-validate.ts");
+  const { fillFactoryParams } = await import("../src/models/initial-state.ts");
   const loaded = deserializeDocument(JSON.stringify(plan)).plan;
   applyParamRange(loaded, paramRangeProblems(loaded));
+  if (fill) fillFactoryParams(loaded.modelId, loaded);
+  return loaded;
+};
+
+/** Whether the app's load leaves this node's fxEffect as the document wrote it. */
+const appChanges = async (plan) => {
+  const loaded = await appLoad(plan, false);
   return JSON.stringify(loaded.nodeParams[NODE]?.fxEffect) !== JSON.stringify(plan.nodeParams[NODE].fxEffect);
+};
+
+/** Every leaf of `value`, by dotted path — the granularity the comparison below needs. */
+const leavesOf = (value, path = [], out = new Map()) => {
+  if (Array.isArray(value)) value.forEach((v, i) => leavesOf(v, [...path, String(i)], out));
+  else if (value && typeof value === "object")
+    for (const [k, v] of Object.entries(value)) leavesOf(v, [...path, k], out);
+  else if (path.length) out.set(path.join("."), value);
+  return out;
 };
 
 // Rev-X Hall's own LPF starts well above 0, and no channel offers type 12345 — the two the
@@ -230,5 +250,43 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       "a number outside its parameter's window",
       "a type no channel offers",
     ]);
+  });
+
+  // The third stage the answers above rest on. `appChanges` asks what the SANITISER does to a
+  // document's own values, which is only the tool's claim while the fill leaves those alone —
+  // it completes absences, and a fill that altered a written value would make every verdict in
+  // the table above describe a load the app no longer performs.
+  it("completes a document without altering what it wrote", async () => {
+    for (const [name, fx] of CASES.map(([n, f]) => [n, f])) {
+      const plan = doc(fx);
+      const two = (await appLoad(plan, false)).nodeParams[NODE]?.fxEffect;
+      const three = (await appLoad(plan, true)).nodeParams[NODE]?.fxEffect;
+      const after = leavesOf(three);
+      for (const [path, value] of leavesOf(two)) expect(after.get(path), `${name} · ${path}`).toEqual(value);
+    }
+    // The positive control: the fill does add. Without it the loop above passes on two
+    // identical objects and states nothing about a stage that ran.
+    const plan = doc({ type: 0 });
+    expect(leavesOf((await appLoad(plan, true)).nodeParams[NODE]?.fxEffect).size).toBeGreaterThan(
+      leavesOf((await appLoad(plan, false)).nodeParams[NODE]?.fxEffect).size,
+    );
+  });
+
+  // What the fill costs, said to the author before they hand the plan over. Silence used to be
+  // how a plan preserved a channel; a document that names none of these three now writes the
+  // factory value over whatever the unit holds, and the insert-FX one CLEARS the effect.
+  it("names each selector a document leaves out", () => {
+    const bare = { format: "urx-router-plan", version: 2, modelId: "URX44V", connections: [] };
+    const out = toolWarnings(dir, bare);
+    expect(out).toContain("name no fxEffect");
+    expect(out).toContain("name no insertFx");
+    // The SSMCS strip is conditional: the factory comp/EQ order sends none of it, so only a
+    // document that selects the order and omits the values is warned about.
+    expect(out).not.toContain("name no ssmcs");
+    const ssmcs = { ...bare, nodeParams: { ch1: { compEqType: 1 } } };
+    expect(toolWarnings(dir, ssmcs)).toContain("select the SSMCS comp/EQ order and name no ssmcs");
+    // …and a document that carries the strip is not told about it.
+    const dialled = { ...bare, nodeParams: { ch1: { compEqType: 1, ssmcs: { outGain: 10 } } } };
+    expect(toolWarnings(dir, dialled)).not.toContain("name no ssmcs");
   });
 });
