@@ -217,6 +217,12 @@ const confirms = (shell: TauriShell): string[] =>
     .map((d) => d.message ?? "");
 
 /** The messages of the dialogs that REPORTED a failure, in order. */
+// param 839 counts stereo PAIRS, so 8 is 16 tracks — the full recorder. The seed table keys on
+// the stub's own address form, "id/x/y"; the invoke arguments spell the same address with
+// colons. Two blocks drive this address — the rate's own cases and the adoption's — so one seat.
+const TRACK_COUNT_SEED = "839/0/0";
+const TRACK_COUNT_ADDR = "839:0:0";
+
 const errors = (shell: TauriShell): string[] =>
   dialogs(shell)
     .filter((d) => d.kind === "error")
@@ -1626,11 +1632,6 @@ describe("Write to device", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
-  // param 839 counts stereo PAIRS, so 8 is 16 tracks — the full recorder. The seed table
-  // keys on the stub's own address form, "id/x/y".
-  const TRACK_COUNT_SEED = "839/0/0";
-  const TRACK_COUNT_ADDR = "839:0:0";
-
   /** Put the plan on `rate` through the picker, the way the operator does. */
   const chooseRate = (rate: number): void => {
     const picker = $<HTMLSelectElement>("rate-picker");
@@ -2186,6 +2187,60 @@ describe("a value the unit holds and the app cannot write", () => {
     // name the same setting from here on.
     expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
     expect(statusText()).toContain(t().status.paramsBounded(1));
+  });
+
+  // The recorder tail runs in a FINALLY, after the write has written its outcome. A read that
+  // fails there raises a dialog through `showError`, which clears the status — right for a
+  // stale "Connecting…" behind a dialog, wrong for the line that says the plan changed. The
+  // dialog names the recorder read; nothing else names the values the write took back.
+  //
+  // Both halves are driven, because "the line is there" passes on its own whenever the tail
+  // does not run at all: the rate has to land (which arms the tail) AND the cancel has to fall
+  // inside the converge's re-read (which is what leaves something to take back).
+  it("keeps the line that says the plan changed when the recorder re-read fails", SLOW, async () => {
+    const withRecorderRead = async (failRead: boolean): Promise<TauriShell> => {
+      const seed = unitHoldingLowLpf();
+      seed[TRACK_COUNT_SEED] = 8;
+      const table = deviceCommands({ "plugin:dialog|message": "Ok" }, seed);
+      const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+      const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+      let written = false;
+      table.vd_set = (a: Record<string, unknown>) => {
+        written = true;
+        return baseSet(a);
+      };
+      table.vd_get = (a: Record<string, unknown>) => {
+        if (failRead && written && Number(a.paramId) === 839) throw new Error("device-lost");
+        const value = baseGet(a);
+        // Cancel during the converge's re-read, once this address has answered: the rate went
+        // out earlier in the same round, so the recorder tail is armed by the time it lands.
+        if (written && Number(a.paramId) === 685 && Number(a.y) === lpf.slot) $("btn-write").click();
+        return value;
+      };
+      const shell = (await bootApp({ tauri: table }))!;
+      $("btn-fetch").click();
+      await invoked(shell, "vd_disconnect");
+      const picker = $<HTMLSelectElement>("rate-picker");
+      picker.value = "96000";
+      picker.dispatchEvent(new Event("change"));
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect", 2);
+      return shell;
+    };
+    const line = t().status.canceled + ` — ${t().status.paramsBounded(1)}`;
+
+    // The control: with the re-read answering, the cancel line carries the count.
+    await withRecorderRead(false);
+    await vi.waitFor(() => expect(statusText()).toBe(line));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+
+    // And with it failing, which is the half that lost the line.
+    const shell = await withRecorderRead(true);
+    await vi.waitFor(() => expect(statusText()).toBe(line));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    // The dialog is still raised — the read failure is news of its own, not something the
+    // restored line stands in for.
+    expect(errors(shell)).toContain(t().error.trackCountReread(t().error.shell.deviceLost));
   });
 
   it("takes what the device confirmed before a cancel, and says so", SLOW, async () => {

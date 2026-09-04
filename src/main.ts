@@ -3107,6 +3107,13 @@ if (!DEMO) {
             // moved the unit, and the recorder still needs re-reading.
             if (trackCountMayHaveDropped) {
               trackCountMayHaveDropped = false;
+              // The line the write ended on. `showError` below clears the status, which is
+              // right for a stale "Connecting…" sitting behind a dialog and wrong for this:
+              // it is the write's own outcome, and a write that took values back says so
+              // there and nowhere else — the dialog names the recorder read, a different
+              // failure. Taken here, after every path through the write has written its
+              // line and before this tail writes anything of its own.
+              const outcome = statusbar.textContent ?? "";
               const merged = await followRead("track count after a rate change", (into, signal) =>
                 applyNodeState(getModel(modelId), into, new Set([SDREC_NODE_ID]), signal, undefined, true),
               );
@@ -3134,6 +3141,7 @@ if (!DEMO) {
                   assertReadComplete(merged, "track count read issues:");
                 } catch (err) {
                   showError(t().error.trackCountReread(errorText(err)));
+                  if (outcome) setStatus(outcome);
                 }
               }
             }
