@@ -2,6 +2,7 @@ import { test, expect, type Page } from "./fixtures";
 import { LIVE_COMMANDS, stubTauriDevice } from "./tauri-stub";
 import { selectWire } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
+import { planParamZ } from "./plan-param";
 
 // microSD Rec track-pair slots hang in a chain under the SD Rec header; Track Count
 // (read-only on the device) gates how many are shown. Uses the default factory
@@ -107,4 +108,28 @@ test("Track Count is locked and stays visibly dimmed while a live session holds 
   });
   expect(locked.opacity).toBeLessThan(unaided);
   expect(locked.cursor).toBe("not-allowed");
+});
+
+// What a document that says nothing now shows. The loader completes a plan from the model's
+// factory values, so an omitted key is the unit's own default on screen AND on the wire —
+// the panel and the write can no longer disagree about it. Track Count is the row where the
+// two used to differ: the inspector drew its own stand-in (8) while the model's factory value
+// is 16, so a sparse document showed half the recorder.
+test("a document that names no parameters shows the model's factory Track Count", async ({ page }) => {
+  const sparse = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+  };
+  await page.goto(`/?plan=${planParamZ(sparse)}`);
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  // The premise: this document carries no nodeParams at all, so every value on screen is
+  // one the loader supplied.
+  await expect(node(page, "out.sdrec")).toBeVisible();
+
+  await node(page, "out.sdrec").click();
+  await expect(trackCount(page)).toHaveValue("16");
+  // …and the graph agrees with the panel: 16 tracks is all 8 pairs.
+  await expect(node(page, "out.sdrec.t8")).toBeVisible();
 });

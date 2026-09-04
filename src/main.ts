@@ -1,7 +1,7 @@
 import "./style.css";
 
 import { MODEL_IDS, getModel } from "./models";
-import { defaultPlan } from "./models/initial-state";
+import { defaultPlan, fillFactoryParams } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
 import {
@@ -25,7 +25,7 @@ import {
   setPlanSampleRate,
   SSMCS_INITIAL,
 } from "./core/plan";
-import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
+import { applySceneExternal, captureSceneExternal, sceneExternalParamNames } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import {
@@ -34,6 +34,7 @@ import {
   nodeParamContestPath,
   PlanWriteWitness,
   type PatchTouch,
+  patchContestNames,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import { applyParamRange, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
@@ -161,9 +162,11 @@ import {
   type ConvergeResult,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
-import { collisionOwners } from "./core/control/translate";
+import { cmdAddr, collisionOwners } from "./core/control/translate";
 import { confirmedAdoptions } from "./app/adopt-writes";
-import type { SharedOwners } from "./core/control/translate";
+import { unauthoredWriteNodes } from "./app/unauthored-writes";
+import { markParamSource as markSource, markPlanFromDevice as markAllFromDevice } from "./app/param-source";
+import type { SharedOwners, WriteScope } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
 import { version } from "../package.json";
@@ -323,6 +326,16 @@ function sharedSettingText(owners: SharedOwners[]): string {
   const first = owners[0];
   const more = owners.reduce((n, o) => n + o.dropped.length, 0) - 1;
   return t().status.sharedSetting(graph.labelOf(first.dropped[0]), graph.labelOf(first.kept ?? ""), more);
+}
+/** The confirm's line about what the write changes beyond what the operator authored, or "".
+ *
+ *  Every strip by name, not the first few and a count: the list is bounded by the model, and a
+ *  name is the only part of this the operator can act on — a count tells them something is
+ *  wrong somewhere and leaves them the whole board to look through. */
+function unauthoredNoteFor(changing: ReadonlySet<number>, scope: WriteScope): string {
+  const nodes = unauthoredWriteNodes(getModel(modelId), plan, scope, changing);
+  if (!nodes.length) return "";
+  return t().confirm.unauthoredWrite(nodes.map((id) => graph.labelOf(id)).join(", "));
 }
 // The link ledger — what a session asks of the Device Center broker, and what the
 // broker fails to answer (core/control/link-stats.ts says why these values and not
@@ -577,13 +590,17 @@ const followDirtyNodes = new Set<string>();
 function authorFromDevice(node: string, place: () => boolean, kind: WriteSource = "follow-direct"): boolean {
   const before = clonePlanState(plan);
   if (!place()) return false;
+  const moved = diffPlans(before, plan);
+  // The unit is where these values came from, so they are not something to warn the operator
+  // about before a write: the write is what agrees with them.
+  markSource(plan, patchContestNames(moved), "device");
   // The trace kind is the caller's, because the callers are not one writer: a follow is a
   // notify landing, while the write-adoption is the device-action funnel writing back what a
   // write confirmed. Both are device-side writers, so no invariant's verdict turns on the
   // split — what it buys is a ledger a person can read without guessing which one wrote.
   traceProbe?.sample(kind);
   followDirtyNodes.add(node);
-  planHistory?.absorb(diffPlans(before, plan));
+  planHistory?.absorb(moved);
   return true;
 }
 /** After a write the device confirmed, the plan takes the values that were actually sent.
@@ -1270,6 +1287,9 @@ function hasRecorder(reported: string): boolean {
 
 function planReadFromDevice(): void {
   planValuesChanged();
+  // Every value in a node the read reached is the unit's, so the confirm has nothing to warn
+  // about there. A node it could not answer for is `unreadNodes`, and those keep what they had.
+  markAllFromDevice(plan, (nodeId) => plan.unreadNodes?.has(nodeId) === true);
   // No full re-send here. This funnel is reached by a cancelled fetch and a partly
   // applied read as well as by a settled one — all three deliberately, since each may
   // have applied device values the history has to re-baseline. What none of them
@@ -2016,6 +2036,13 @@ function loadFromText(text: string, path?: string): boolean | null {
     // because the plan the operator is deciding about is this one.
     const ranged = problems.filter((p) => p.reason === "paramRange");
     applyParamRange(next, ranged);
+    // …and then completed from the model's factory values. A document carries only what
+    // someone wrote in it, and what it omits is a key the panel draws a default for and the
+    // write does not send — one channel on screen, another on the wire. Run here, after the
+    // repair, so a value the funnel discarded is completed like any other absent one rather
+    // than left for the emit to skip. The DEVICE paths do not come through here: a fetch
+    // fills from the unit, and a node it could not read stays absent on purpose.
+    fillFactoryParams(next.modelId, next);
     const finishLoad = (): boolean => {
       // Refused (a device read holds the plan): loadPlan said so, and the caller must
       // not go on to remember a recent path and announce a document that never opened.
@@ -2427,6 +2454,7 @@ planHistory = new PlanHistory({
   reflect: (touch) => reflectHistory(touch),
   labelOf: (id) => graph.labelOf(id),
   onStatus: (msg) => setStatus(msg),
+  onAuthored: (names) => markSource(plan, names, "manual"),
   // A device read merges into `plan` across many awaits and re-bases the live snapshot
   // from its own copy, and a file flow can replace the plan outright: patching under
   // either acts on a premise that is still moving. Every read that RE-AUTHORS the plan
@@ -3018,12 +3046,19 @@ if (!DEMO) {
               );
               return null;
             }
-            if (
-              confirmFirst &&
-              !(await confirmDialog(
-                sharedNote ? `${sharedNote}\n\n${t().confirm.write(total)}` : t().confirm.write(total),
-              ))
-            ) {
+            // What the operator never chose, from the addresses that will actually move. The
+            // plan is dense, so a write carries keys nobody set; naming the strips is what makes
+            // that a decision rather than a surprise. Built inside the ask, since a retry is the
+            // same decision being carried out rather than taken again.
+            const ask = (): string =>
+              [
+                sharedNote,
+                unauthoredNoteFor(new Set(diffs.map((d) => cmdAddr(d.command))), scope),
+                t().confirm.write(total),
+              ]
+                .filter(Boolean)
+                .join("\n\n");
+            if (confirmFirst && !(await confirmDialog(ask()))) {
               setStatus(t().status.canceled + adoptedNote());
               return null;
             }
@@ -3107,6 +3142,14 @@ if (!DEMO) {
               saveReport(failed, residual, convergeErrors);
             }
             if (!skipped) {
+              // A write that converged with nothing failing puts the plan's values on the unit,
+              // so the next confirm has nothing left to warn about — until the unit moves one.
+              // A scene-scoped write reached less than the plan, and `sceneExternalParamNames`
+              // is where it stopped.
+              if (!failed.length && !residual.length && !convergeErrors.length) {
+                const untouched = scope === "scene" ? sceneExternalParamNames(plan) : null;
+                markAllFromDevice(plan, (_node, name) => untouched?.has(name) === true);
+              }
               setStatus(
                 (failed.length
                   ? t().status.writePartial(total - failed.length, failed.length)

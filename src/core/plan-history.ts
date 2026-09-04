@@ -19,7 +19,7 @@
 // Entries within one patch are independent by construction (one per field + key),
 // so apply order does not matter and inverting only swaps each entry's direction.
 
-import type { NodePos, Plan, PlanConnection } from "./plan";
+import { isPlainRecord, type NodePos, type Plan, type PlanConnection } from "./plan";
 import { parseRef } from "../models/types";
 
 /** How one Plan field takes part in a patch. Documentation and a tsc trip-wire:
@@ -39,7 +39,7 @@ type Strategy =
   /** The connection array, keyed by (from, to). */
   | "wires";
 
-export const HISTORY_FIELDS: { [K in Exclude<keyof Plan, "unreadNodes">]: Strategy } = {
+export const HISTORY_FIELDS: { [K in Exclude<keyof Plan, TransientField>]: Strategy } = {
   modelId: "document",
   sampleRate: "scalar",
   positions: "recordSlot",
@@ -130,12 +130,18 @@ function wireNodes(key: string): string[] {
     .map((ref) => parseRef(ref).nodeId);
 }
 
+/** The Plan fields that are not undoable state: transient provenance, never serialized,
+ *  and re-established by the funnel that writes rather than restored by a patch. Named
+ *  once so the differ, its contract test and the clone above cannot disagree about which
+ *  fields they are. */
+export type TransientField = "unreadNodes" | "paramSource";
+
 /** A clone of the plan's undoable state — everything except the transient device
  *  provenance, which is a Set, is never serialized, and only ever enters the plan
  *  through a readback rather than an edit. Rest-spread rather than a field list,
  *  so a field added to Plan reaches the baseline even before it reaches the differ. */
 export function clonePlanState(plan: Plan): Plan {
-  const { unreadNodes: _provenance, ...state } = plan;
+  const { unreadNodes: _unread, paramSource: _source, ...state } = plan;
   return structuredClone(state) as Plan;
 }
 
@@ -641,6 +647,22 @@ export function nodeParamContestKey(nodeId: string, param: string, sub?: string)
  *  rest, so naming the group claims the siblings too and a device read in flight loses
  *  its answer for all of them. Measured: with the group named, a device's OSC frequency
  *  read during an OSC ON toggle was dropped whole; with the field named, it landed. */
+/** Every leaf of a parameter record, by the dotted path {@link nodeParamContestPath} takes
+ *  — array indices included, since the differ names one as a path segment too. Callers that
+ *  record something PER PARAMETER (where a value came from) need the same granularity and
+ *  the same spelling as the differ, or the two cannot be joined. */
+export function walkParamLeaves(value: unknown, at: (path: string) => void, path: string[] = []): void {
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => walkParamLeaves(v, at, [...path, String(i)]));
+    return;
+  }
+  if (isPlainRecord(value)) {
+    for (const [key, v] of Object.entries(value)) walkParamLeaves(v, at, [...path, key]);
+    return;
+  }
+  if (path.length) at(path.join("."));
+}
+
 export function nodeParamContestPath(nodeId: string, path: string): string {
   return contestName("nodeParams", nodeId, ...path.split("."));
 }

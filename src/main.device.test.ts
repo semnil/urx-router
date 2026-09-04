@@ -1980,20 +1980,18 @@ describe("Write to device", () => {
     expect(statusText()).toContain(t().status.writeNoChanges);
   });
 
-  // The plan format's silence, held at the only place it can actually be measured: the
-  // commands that reach a unit. The skill instructs a plan author to omit `fxEffect` when the
-  // user did not ask to change the effect, and promises the unit keeps its FX. Emitting
-  // defaults for an undescribed channel instead resets it from a document that says nothing —
-  // and the EFFECT TYPE write is not recoverable, since it refills the engine array with that
-  // type's defaults. This was written that way, measured, and reverted; the case is what stops
-  // the next attempt at "make the panel and the wire agree" from agreeing in this direction.
-  it("writes no FX address for a plan that omits the effect, leaving the unit's own settings", SLOW, async () => {
+  // The plan format's silence, held at the only place it can actually be measured: what
+  // reaches a unit, and what the operator is told before it does. A document that says
+  // nothing about the FX channels is completed from the model's factory values, so the write
+  // DOES send the selector — and that write is not recoverable, since it refills the engine
+  // array with the type's defaults. What stands in front of it is the confirm: it names the
+  // strips whose values nobody chose, so writing them is a decision rather than a surprise.
+  // The pair below is what makes that a real question — the same plan, described and not.
+  it("names the strips a document never described, and stays quiet about the ones it did", SLOW, async () => {
     const { emptyPlan, serialize } = await import("./core/plan");
-    // A plan with something to write and NOTHING about either FX channel.
-    const plan = emptyPlan("URX44V");
-    plan.nodeParams["ch1"] = { level: -10 };
-    expect(plan.nodeParams["bus.fx1"]?.fxEffect, "the premise").toBeUndefined();
-    expect(plan.nodeParams["bus.fx2"]?.fxEffect, "the premise").toBeUndefined();
+    const { getModel } = await import("./models");
+    const { fullLabel } = await import("./models/types");
+    const fxLabel = (id: string): string => fullLabel(getModel("URX44V").nodes.find((n) => n.id === id)!);
 
     // The unit is holding FX settings of its own, on both channels' selector and array.
     const FX = new Set([679, 681, 683, 685]);
@@ -2001,22 +1999,94 @@ describe("Write to device", () => {
       FX.has(a.paramId as number) ? 4242 : clockReads(false, 48_000)(a);
     // The legacy UNCOMPRESSED link shape, which the codec still decodes: jsdom here has no
     // Blob.stream for the compressed one, and the plan is what this case is about.
-    const link = Buffer.from(serialize(plan), "utf8").toString("base64url");
+    const linkFor = (plan: ReturnType<typeof emptyPlan>): string =>
+      encodeURIComponent(Buffer.from(serialize(plan), "utf8").toString("base64url"));
+    const runWrite = async (plan: ReturnType<typeof emptyPlan>): Promise<TauriShell> => {
+      const shell = (await bootApp({
+        url: `/?plan=${linkFor(plan)}`,
+        tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: custom }),
+      }))!;
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      return shell;
+    };
+    const fxWrites = (shell: TauriShell): Array<Record<string, unknown>> =>
+      shell.invokes
+        .map((cmd, i) => (cmd === "vd_set" ? shell.args[i] : undefined))
+        .filter((a): a is Record<string, unknown> => !!a && FX.has(a.paramId as number));
+
+    // A plan with something to write and NOTHING about either FX channel.
+    const silent = emptyPlan("URX44V");
+    silent.nodeParams["ch1"] = { level: -10 };
+    expect(silent.nodeParams["bus.fx1"]?.fxEffect, "the premise").toBeUndefined();
+    const quiet = await runWrite(silent);
+    // The positive control: the write ran and sent something, so what is asserted about the
+    // dialog is asserted about a write that reached the device.
+    expect(quiet.count("vd_set")).toBeGreaterThan(0);
+    // The contract this case exists for: the fill sends the factory effect, and the confirm
+    // said so first, naming the strip the operator never described.
+    expect(fxWrites(quiet).length).toBeGreaterThan(0);
+    const warned = confirms(quiet).filter((m) => m.includes(fxLabel("bus.fx1")));
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain(
+      t()
+        .confirm.write(1)
+        .replace(/^[\s\S]*?\?\s*/, ""),
+    );
+
+    // The other half, which is what stops "always warn" from passing: the same two strips,
+    // described by the document, are the operator's own values and are not warned about.
+    const { defaultPlan } = await import("./models/initial-state");
+    const factory = defaultPlan("URX44V");
+    const described = emptyPlan("URX44V");
+    described.nodeParams["ch1"] = { level: -10 };
+    // The factory values, but WRITTEN IN the document: same numbers on the wire, different
+    // provenance — which is the whole distinction the note is drawn from.
+    for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    const told = await runWrite(described);
+    expect(told.count("vd_set"), "the positive control").toBeGreaterThan(0);
+    expect(confirms(told).filter((m) => m.includes(fxLabel("bus.fx1")))).toEqual([]);
+  });
+
+  // The other half of the same mark: a write takes the plan's values AS the unit's only once
+  // it has landed in full. Taken on a write that did not converge, it would relabel the keys
+  // the DOCUMENT named — which are exempt from the warning because someone wrote them — as
+  // the unit's, and the next attempt would then warn about values the operator chose.
+  it("does not relabel a document's own values as the unit's when the write did not land", SLOW, async () => {
+    const { emptyPlan, serialize } = await import("./core/plan");
+    const { getModel } = await import("./models");
+    const { fullLabel } = await import("./models/types");
+    const { defaultPlan } = await import("./models/initial-state");
+    const label = (id: string): string => fullLabel(getModel("URX44V").nodes.find((n) => n.id === id)!);
+
+    const factory = defaultPlan("URX44V");
+    const described = emptyPlan("URX44V");
+    described.nodeParams["ch1"] = { level: -10 };
+    // The FX channels are what the document names; everything else is left to the fill.
+    for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    const link = encodeURIComponent(Buffer.from(serialize(described), "utf8").toString("base64url"));
+    // Reads that never reflect a write: every address answers its clock value or 0, so the
+    // converge runs out with a residual and the write is not a landing.
     const shell = (await bootApp({
-      url: `/?plan=${encodeURIComponent(link)}`,
-      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: custom }),
+      url: `/?plan=${link}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: clockReads(false, 48_000) }),
     }))!;
 
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
-    // The positive control: the write ran and sent something, so the absence below is an
-    // absence of FX writes rather than of writes.
-    expect(shell.count("vd_set")).toBeGreaterThan(0);
+    // The count is read out of the line and put back, so the premise pins the whole frame
+    // rather than a substring of it.
+    const stuck = Number(/\d+/.exec(statusText())?.[0]);
+    expect(statusText(), "the premise: this write did not converge").toBe(t().status.writeResidual(stuck));
 
-    const fxWrites = shell.invokes
-      .map((cmd, i) => (cmd === "vd_set" ? shell.args[i] : undefined))
-      .filter((a): a is Record<string, unknown> => !!a && FX.has(a.paramId as number));
-    expect(fxWrites).toEqual([]);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the positive control: both attempts asked").toHaveLength(2);
+    // The note ran on both — the fill left plenty for it to name…
+    expect(asked.every((m) => m.includes(label("ch1")))).toBe(true);
+    // …and named neither FX channel either time, because the document named those.
+    expect(asked.filter((m) => m.includes(label("bus.fx1")))).toEqual([]);
   });
 
   // A parameter whose current value could not be read is one the write has no diff for,

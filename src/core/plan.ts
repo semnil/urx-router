@@ -358,7 +358,23 @@ export interface Plan {
    * UI as not read from the device.
    */
   unreadNodes?: Set<string>;
+  /**
+   * Where each parameter's value came from, keyed the way the differ names one
+   * (plan-history's contest path, down to the leaf).
+   *
+   * Transient, never serialized: the document carries STATE, not a record of who set
+   * what. A saved plan therefore comes back "load" / "default", and a value the unit has
+   * moved since is warned about again — which is what the operator would want told.
+   *
+   *   load    — the document carried this value
+   *   default — the loader completed it from the model's factory values
+   *   manual  — an edit funnel wrote it (a gesture, MIDI, an undo: touched is touched)
+   *   device  — read from the unit, or confirmed written to it
+   */
+  paramSource?: Map<string, ParamSource>;
 }
+
+export type ParamSource = "load" | "default" | "manual" | "device";
 
 export const PLAN_FORMAT = "urx-router-plan";
 // 2: every place one stored value could be read under a law it was not written under
