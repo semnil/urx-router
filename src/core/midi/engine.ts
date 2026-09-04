@@ -69,6 +69,18 @@ interface PickupState {
   lastIn: number | null;
 }
 
+/** One mapping's decided edit: what its control read before the message and what it is to be
+ *  set to. A gang decides every member's before this way, then writes them — applying one can
+ *  move another's control through the mirror the apply hook runs. */
+interface Decision {
+  mapping: MidiMapping;
+  control: BoundControl;
+  key: string;
+  isHead: boolean;
+  before: number;
+  target: number;
+}
+
 export class MidiEngine {
   private mappings: MidiMapping[] = [];
   private byKey = new Map<string, MidiMapping[]>();
@@ -233,7 +245,10 @@ export class MidiEngine {
     this.gated = false;
     // Common case: a single mapping, no gang — apply it directly.
     if (matched.length === 1) {
-      if (!this.dropEcho(matched[0], ev)) this.apply(matched[0], ev);
+      if (!this.dropEcho(matched[0], ev)) {
+        const only = this.decide(matched[0], ev);
+        if (only) this.commit(only);
+      }
       return;
     }
     // Gang: the echo guard is owned per address by the list head, so a whole gang
@@ -243,9 +258,18 @@ export class MidiEngine {
     for (const mapping of matched) {
       if (this.dropEcho(mapping, ev)) echoed.add(addrKey(mapping.addr));
     }
-    for (const mapping of matched) {
-      if (!echoed.has(addrKey(mapping.addr))) this.apply(mapping, ev);
-    }
+    // Every member's target is decided from the state BEFORE this message, and only then
+    // are any of them written. Applying one member can move ANOTHER member's control:
+    // a linked stereo pair holds one insert effect between them, so the funnel mirrors an
+    // edit onto the partner, and a target computed after that mirror is computed against a
+    // value this same message produced. Both faces ganged to one CC then cancelled out —
+    // the first flipped the pair off, the second read the mirrored off and flipped it back,
+    // and one press left the pair exactly where it started.
+    const decisions = matched
+      .filter((mapping) => !echoed.has(addrKey(mapping.addr)))
+      .map((mapping) => this.decide(mapping, ev))
+      .filter((d): d is Decision => d !== null);
+    for (const d of decisions) this.commit(d);
   }
 
   // One report per gated window, on the first message that would actually have
@@ -306,9 +330,11 @@ export class MidiEngine {
     return true;
   }
 
-  private apply(mapping: MidiMapping, ev: MidiEvent): void {
+  /** What one mapping WOULD do to its control, read before anything is written. Separate
+   *  from the write because a gang's members are decided together: see `onMessage`. */
+  private decide(mapping: MidiMapping, ev: MidiEvent): Decision | null {
     const control = this.hooks.resolve(mapping.control);
-    if (!control) return; // stale mapping (other model) — leave it inert
+    if (!control) return null; // stale mapping (other model) — leave it inert
     const key = addrKey(mapping.addr); // a mapping only ever matches via its own address
     const toggle = control.kind === "toggle";
     // Receive bookkeeping defers the next OUTGOING pass for continuous controls
@@ -325,8 +351,12 @@ export class MidiEngine {
       : this.continuousTarget(mapping, key, ev, before, isHead);
     if (target === null) {
       this.hooks.trace?.(`ignore ${mapping.control}`); // release / same state / pickup hold
-      return;
+      return null;
     }
+    return { mapping, control, key, isHead, before, target };
+  }
+
+  private commit({ mapping, control, key, isHead, before, target }: Decision): void {
     if (!control.set(target)) {
       this.hooks.trace?.(`drop locked ${mapping.control}`);
       return; // device-locked — swallowed
