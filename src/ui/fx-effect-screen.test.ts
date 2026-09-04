@@ -301,12 +301,25 @@ describe("operating the rows a delay adds to the face", () => {
     expect(h.patches.at(-1)?.written).toContain("fxEffect.params.sync");
   });
 
-  it("writes a chosen Note value through to the plan", () => {
+  it("writes a chosen Note value through to the plan, from the state that can reach it", () => {
     const h = openDelay();
     const params = (): Record<string, number> | undefined => h.plan.nodeParams["bus.fx2"]?.fxEffect?.params;
-    const before = params()?.note ?? 9;
-    const select = row(h, t().inspector.fxEffect.params.note).querySelector<HTMLSelectElement>("select");
+    const noteLabel = t().inspector.fxEffect.params.note;
+    // With Sync OFF the unit does not read the note value, so the row ships LOCKED and its
+    // select is `disabled`. Dispatching at it there writes the plan — `disabled` stops a
+    // person, not a dispatched event — so a case that starts here asserts a write down a path
+    // the operator cannot take, and leaves the one they do take unmeasured.
+    expect(params()?.sync ?? 0, "the factory state, where the row is not the operator's").toBe(0);
+    expect(row(h, noteLabel).querySelector<HTMLSelectElement>("select")?.disabled).toBe(true);
+
+    // The real route: switch Sync on, which rebuilds the face with the ownership swapped.
+    row(h, t().inspector.fxEffect.params.sync).querySelector<HTMLButtonElement>(".prefs-switch")!.click();
+    // Re-fetched AFTER the rebuild — the row a locator held before it is a row that is gone.
+    const select = row(h, noteLabel).querySelector<HTMLSelectElement>("select");
     if (!select) throw new Error("the Note row carries no select");
+    expect(select.disabled, "the rebuild handed the row back to the operator").toBe(false);
+
+    const before = params()?.note ?? 9;
     // Any option but the one it is on, so the case cannot pass on a no-op write.
     const other = [...select.options].map((o) => Number(o.value)).find((v) => v !== before);
     expect(other, "the Note row offers more than one value").toBeDefined();
