@@ -3354,10 +3354,20 @@ sent, which reported it confirmed. The ledger is kept CURRENT rather than rebuil
 round: every read writes it as it goes, and every send that LANDS takes the address it just overwrote
 back out — every address, when what landed is a `sideEffect` head, since which values such a write moves
 is what this loop settles by re-reading rather than something the catalogue enumerates. What invalidates
-is the ACKNOWLEDGEMENT and not the round: a command the device refused moved nothing, and neither did one
+is the send RESOLVING and not the round: a command the broker declined moved nothing, and neither did one
 a cancel stopped before it went out, so what an earlier read established about every other address still
 holds. Invalidating on the round being PLANNED instead discarded a confirmed value every time a later
-round's side-effect head was refused. Two paths rest on that. A **cancel** throws out of the loop with no
+round's side-effect head was refused.
+
+**Only an explicit refusal says a write did not land.** `vd.rs`'s `do_set` SENDS and then waits, so by
+the time anything can go wrong with the answer the request is already on the wire. `SendOutcome.result`
+carries the three-way: `accepted` (the broker answered 200), `refused` (it answered with another code —
+the one failure that says the write was turned down), and `unknown` (no answer came, or the link failed
+while waiting for one — a timeout, a device-lost push mid-write, a closed link). An `unknown` invalidates
+exactly as an acceptance does, a side-effect head's taking every address with it, because the write may
+have landed and its resets with it. The test is a single opt-out on the refusal's own code rather than a
+list of the failures that are not it, so a code raised tomorrow leaves the write's fate unknown rather
+than being trusted by omission. Two paths rest on that. A **cancel** throws out of the loop with no
 result to read, so the write flow holds the ledger itself, takes what the unit had confirmed before it,
 and reports the count on the canceled line; and a round whose **send fails** re-reads nothing, which says
 nothing about the addresses no acknowledgement in it moved — what an earlier round confirmed stays. The
