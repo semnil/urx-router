@@ -151,13 +151,17 @@ import {
   readClockState,
   readFollowUsb,
   readTrackCount,
+  confirmedAddrs,
+  newConfirmLedger,
   sendConverging,
   sendNames,
   setFollowUsb,
   type CommandDiff,
+  type ConvergeResult,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
 import { collisionOwners } from "./core/control/translate";
+import { confirmedAdoptions } from "./app/adopt-writes";
 import type { SharedOwners } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
@@ -399,7 +403,18 @@ const live = DEMO
       getModel: () => getModel(modelId),
       getPlan: () => plan,
       onError: (message) => stopLiveOnError(errorText(message)),
-      onSent: (n) => setStatus(t().status.liveSynced(n)),
+      // The adoption's own count rides on this line rather than writing one of its own: the
+      // converge that produces it runs INSIDE the flush, so a line written there is overwritten
+      // by this one a moment later — the status bar is last-writer-wins, and a converge always
+      // implies something was sent, so this always follows.
+      onSent: (n) => {
+        const taken = liveAdopted;
+        liveAdopted = 0;
+        setStatus(t().status.liveSynced(n) + (taken ? ` — ${t().status.paramsBounded(taken)}` : ""));
+      },
+      onConfirmed: (confirmed, sent) => {
+        liveAdopted += adoptConfirmedWrites(confirmed, sent);
+      },
       onCollapsed: (owners) => setStatus(sharedSettingText(owners)),
       // One bidirectional scope for the session: the same filter shapes the
       // snapshot, the flush, and the follow notify registration.
@@ -536,12 +551,14 @@ let inspectorDeferred = false;
 const followDirtyNodes = new Set<string>();
 /**
  * The one ritual for "the device authored this into the plan", shared by the two
- * direct-follow hooks (a numeric scalar and a rename). `place` performs the
- * mutation and answers whether it landed.
+ * direct-follow hooks (a numeric scalar and a rename) and by the write-adoption, which is
+ * not a follow at all — no notify arrives, the write path is writing back what a converge
+ * confirmed — and passes its own `kind` for that reason. `place` performs the mutation and
+ * answers whether it landed.
  *
  * The device authored these keys, so the history takes exactly them into its
- * baseline — the per-key rule the refetch path runs on, at the one other site that
- * writes device values into the plan outside a readback. A whole-plan `rebase()`
+ * baseline — the per-key rule the refetch path runs on, which is what the other sites that
+ * write device values into the plan outside a readback run on too. A whole-plan `rebase()`
  * here dropped the entry an app gesture had open, which made an edit taken while the
  * unit was being touched silently un-undoable AND spent the entry beneath it on the
  * Ctrl+Z that should have taken it back.
@@ -556,14 +573,44 @@ const followDirtyNodes = new Set<string>();
  * the record of what re-opening it costs, so a second copy kept in step by hand is
  * the shape that goes wrong quietly.
  */
-function authorFromDevice(node: string, place: () => boolean): boolean {
+function authorFromDevice(node: string, place: () => boolean, kind: WriteSource = "follow-direct"): boolean {
   const before = clonePlanState(plan);
   if (!place()) return false;
-  traceProbe?.sample("follow-direct");
+  // The trace kind is the caller's, because the callers are not one writer: a follow is a
+  // notify landing, while the write-adoption is the device-action funnel writing back what a
+  // write confirmed. Both are device-side writers, so no invariant's verdict turns on the
+  // split — what it buys is a ledger a person can read without guessing which one wrote.
+  traceProbe?.sample(kind);
   followDirtyNodes.add(node);
   planHistory?.absorb(diffPlans(before, plan));
   return true;
 }
+/** After a write the device confirmed, the plan takes the values that were actually sent.
+ *
+ *  Which values those are is `confirmedAdoptions` (`app/adopt-writes.ts`), which needs the plan
+ *  the converge RAN AGAINST as well as the live one — the live flush clones before its await,
+ *  and an address is a different key under a different effect type. Keyed on the ADDRESSES the
+ *  device confirmed rather than on the write having succeeded: the two come apart exactly where
+ *  this runs, since a session whose snapshot already agrees sends nothing, so a flush can
+ *  succeed without the address in question being in it at all.
+ *
+ *  Authored FROM the device rather than pushed as an edit, through the seat a device-side
+ *  recompute already takes: the value is the write path's rather than the operator's, and an
+ *  undo that put the unwritable raw back would only have it normalised again on the next write.
+ *  Returns how many the plan took, so a caller can say so beside its own outcome. */
+function adoptConfirmedWrites(confirmed: ReadonlySet<number>, sent: Plan = plan): number {
+  const mine = confirmedAdoptions(getModel(modelId), sent, plan, confirmed);
+  if (!mine.length) return 0;
+  let taken = 0;
+  for (const node of new Set(mine.map((b) => b.node))) {
+    const forNode = mine.filter((b) => b.node === node);
+    if (authorFromDevice(node, () => (applyParamRange(plan, forNode), true), "device-action")) taken += forNode.length;
+  }
+  if (taken) requestReflect();
+  return taken;
+}
+// What the live flush's converge took back, waiting for the line `onSent` writes.
+let liveAdopted = 0;
 let followFull = false;
 // How many keys the follow reads behind the pending reflect actually authored. A COUNT
 // rather than a flag because the reflect is coalesced at ~20 Hz, so several reads can
@@ -1206,7 +1253,8 @@ function planValuesChanged(): void {
 // operator's own move on the hardware. The follow-side writers do NOT come through here
 // — each settles the history at its own site, where what the device authored is known:
 // a notify's own keys (applyDirect → absorb), a refetch's patch (refetchNodes →
-// absorb), a reconcile's reset (reflectFollow's full branch).
+// absorb), a reconcile's reset (reflectFollow's full branch), and the write-adoption's
+// confirmed keys (adoptConfirmedWrites → absorb).
 /** Whether the model has the microSD recorder at all. URX22 does not, so nothing about
  *  Track Count — a menu entry, a ceiling, a warning — belongs on it. Spelled once so the
  *  three sites that ask cannot drift apart.
@@ -2457,6 +2505,13 @@ function connectFailureStatus(err: unknown, onError: (message: string) => string
   return standalone ? errorText(err) : onError(errorText(err));
 }
 
+/** A cancel (throwIfAborted) surfaces as an AbortError. Read by NAME rather than by class:
+ *  `instanceof DOMException` answers false for an error raised in another realm, and one
+ *  reported as a device failure sends the operator after a write that never failed. */
+function isAbortError(err: unknown): boolean {
+  return (err as { name?: unknown } | null)?.name === "AbortError";
+}
+
 // Connect, run an action with the connected device, then always disconnect. The
 // connect doubles as a pre-check: callers that would discard work put their
 // confirm inside `action`, so a no-device state surfaces a clear message without
@@ -2481,9 +2536,9 @@ async function withDevice(
       await vdDisconnect(device.epoch);
     }
   } catch (err) {
-    // A cancel (throwIfAborted) surfaces as an AbortError DOMException; show the
-    // neutral "canceled" status rather than wrapping it as an action failure.
-    if (err instanceof DOMException && err.name === "AbortError") setStatus(t().status.canceled);
+    // A cancel surfaces as an AbortError; show the neutral "canceled" status rather than
+    // wrapping it as an action failure.
+    if (isAbortError(err)) setStatus(t().status.canceled);
     else showError(connectFailureStatus(err, onError));
   } finally {
     releaseDeviceLink(holder);
@@ -2945,24 +3000,49 @@ if (!DEMO) {
               setStatus(t().status.canceled);
               return null;
             }
-            const {
-              outcomes,
-              residual,
-              readErrors: convergeErrors,
-            } = await sendConverging(getModel(modelId), plan, {
-              initialDiffs: diffs,
-              signal,
-              scope,
-              // Armed the moment the rate LANDS, not from the returned outcomes: an abort
-              // between two sends throws out of the send loop and takes those outcomes
-              // with it, so a rate that reached the unit would go unrecorded and the
-              // recorder would never be re-read.
-              onSent: (o) => {
-                if (pendingTrackCost !== null && o.ok && o.command.name === "SAMPLE_RATE") {
-                  trackCountMayHaveDropped = true;
-                }
-              },
-            });
+            // Held here rather than read off the result, for the same reason `onSent` below
+            // exists: a cancel throws out of the loop and there is no result to read. What the
+            // unit confirmed before the cancel is in here, and taking it is the only chance —
+            // the address stops differing the moment the write lands, so no later write
+            // produces a diff that would offer it again.
+            const ledger = newConfirmLedger();
+            let convergeResult: ConvergeResult;
+            try {
+              convergeResult = await sendConverging(getModel(modelId), plan, {
+                initialDiffs: diffs,
+                signal,
+                scope,
+                ledger,
+                // Armed the moment the rate RESOLVES, not from the returned outcomes: an
+                // abort between two sends throws out of the send loop and takes those
+                // outcomes with it, so a rate that reached the unit would go unrecorded and
+                // the recorder would never be re-read. Everything but an explicit refusal
+                // arms it: the shell sends before it waits, so a write whose answer never
+                // came may have landed and taken the Track Count down with it, and the
+                // recorder would then be left showing a count the unit no longer has.
+                onSent: (o) => {
+                  if (pendingTrackCost !== null && o.result !== "refused" && o.command.name === "SAMPLE_RATE") {
+                    trackCountMayHaveDropped = true;
+                  }
+                },
+              });
+            } catch (err) {
+              if (!isAbortError(err)) throw err;
+              // Reported here rather than left to withDevice's neutral line, because the plan
+              // may have changed on the way out. The same join window as the clean path below:
+              // this runs on the rejection's own microtask, so no announcement can land
+              // between the loop stopping and the join.
+              const cancelTaken = adoptConfirmedWrites(confirmedAddrs(ledger));
+              setStatus(t().status.canceled + (cancelTaken ? ` — ${t().status.paramsBounded(cancelTaken)}` : ""));
+              return null;
+            }
+            const { outcomes, residual, readErrors: convergeErrors } = convergeResult;
+            // Here, with nothing awaited between the converge and this line: the adoption joins
+            // the confirmed ADDRESSES to plan KEYS, and one address is a different key under a
+            // different effect type, so a front-panel type change announced during the awaits
+            // below would join one moment's addresses to another moment's plan. `sendNames` is
+            // one such await, on the clean path.
+            const takenBack = adoptConfirmedWrites(confirmedAddrs(ledger));
             const skipped = outcomes.filter((o) => o.skipped).length;
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
@@ -2987,13 +3067,17 @@ if (!DEMO) {
             if (failed.length || residual.length || convergeErrors.length) {
               saveReport(failed, residual, convergeErrors);
             }
+            // On every outcome, not only the clean one: a write that stopped can still have
+            // landed and read back the address the plan takes its value from, and a line that
+            // reported only the stop would leave a changed plan unmentioned.
+            const note = takenBack ? ` — ${t().status.paramsBounded(takenBack)}` : "";
             if (!skipped) {
               setStatus(
-                failed.length
+                (failed.length
                   ? t().status.writePartial(total - failed.length, failed.length)
                   : residual.length
                     ? t().status.writeResidual(residual.length)
-                    : t().status.written(total),
+                    : t().status.written(total)) + note,
               );
               return null;
             }
@@ -3003,7 +3087,7 @@ if (!DEMO) {
             // all not-sent too.
             const sent = outcomes.filter((o) => o.ok).length;
             const notSent = skipped + nameWrites.length;
-            setStatus(t().status.writeStopped(sent, notSent));
+            setStatus(t().status.writeStopped(sent, notSent) + note);
             return { sent, notSent };
           };
 

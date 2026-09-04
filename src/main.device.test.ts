@@ -27,7 +27,7 @@ import {
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
 import { attackToVd, eqFreqToVd } from "./core/control/vd";
-import { formatHz } from "./core/control/fx-effect";
+import { formatHz, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { PARAMS } from "./core/control/params";
@@ -103,8 +103,12 @@ const bootDevice = async (
   /** Addresses the unit already holds a value for. Needed for anything the app only READS:
    *  the table answers an unwritten address 0, and 0 is a legal value there. */
   seed: Record<string, number> = {},
+  /** Addresses the unit accepts a write to and does not keep (main.test-util.ts). */
+  ignoreWrite?: (a: Record<string, unknown>) => boolean,
 ): Promise<TauriShell> =>
-  (await bootApp({ tauri: deviceCommands({ ...(agree ? { "plugin:dialog|message": "Ok" } : {}), ...over }, seed) }))!;
+  (await bootApp({
+    tauri: deviceCommands({ ...(agree ? { "plugin:dialog|message": "Ok" } : {}), ...over }, seed, ignoreWrite),
+  }))!;
 
 /**
  * Wait until `cmd` has been invoked `n` times. The device flows here write the status
@@ -1719,13 +1723,62 @@ describe("Write to device", () => {
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
 
+    expect(readAfterLastWrite(shell)).toBe(true);
+  });
+
+  /** Was the recorder's Track Count read AFTER something was written? The only reading that
+   *  separates the epilogue from the write's own diff, which reads the same address before
+   *  anything goes out — so counting reads of it passes whether or not the epilogue runs. */
+  const readAfterLastWrite = (shell: TauriShell): boolean => {
     const lastSet = shell.invokes.lastIndexOf("vd_set");
-    const readAfter = shell.invokes.some((cmd, i) => {
+    expect(lastSet).toBeGreaterThan(-1);
+    return shell.invokes.some((cmd, i) => {
       if (i <= lastSet || cmd !== "vd_get") return false;
       const a = shell.args[i] ?? {};
       return `${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR;
     });
-    expect(readAfter).toBe(true);
+  };
+
+  /** A rate write the device answers with `fail`, with the retry a STOPPED write offers
+   *  declined — a stub that agrees to everything retries the same failure for ever.
+   *  Declined by whether anything has been SENT rather than by counting: the reclock confirm
+   *  and the write's own both come before the first command goes out, and the retry is the
+   *  only one that can follow it. */
+  const rateWriteAnswered = async (fail: string): Promise<TauriShell> => {
+    let sent = false;
+    const shell = await bootDevice(
+      {
+        "plugin:dialog|message": (a: Record<string, unknown>) => (a.buttons === "OkCancel" && sent ? "Cancel" : "Ok"),
+      },
+      true,
+      { [TRACK_COUNT_SEED]: 8 },
+    );
+    chooseRate(96_000);
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      sent = true;
+      if (Number(a.paramId) === PARAMS.SAMPLE_RATE.id) throw new Error(`${fail}: ${a.paramId}:${a.x}:${a.y}`);
+      return null;
+    });
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    return shell;
+  };
+
+  // The shell SENDS before it waits (`vd.rs`, do_set), so an answer that never came leaves
+  // the rate on the wire: it may have landed and taken the Track Count down with it. Armed
+  // on an acknowledgement alone, the recorder went on showing a count the unit no longer has
+  // and nothing on screen said so.
+  it("re-reads the recorder when the rate write's answer never came", SLOW, async () => {
+    const shell = await rateWriteAnswered("broker-timeout");
+    expect(readAfterLastWrite(shell)).toBe(true);
+  });
+
+  // The control that keeps the case above honest: an answer that DECLINED the rate is the
+  // one failure that says it did not land, so there is nothing for the recorder to have lost
+  // and the epilogue's read would be a round trip nothing asked for.
+  it("re-reads nothing when the rate write was refused", SLOW, async () => {
+    const shell = await rateWriteAnswered("broker-rejected");
+    expect(readAfterLastWrite(shell)).toBe(false);
   });
 
   // The unit does the lowering itself, so the plan is stale the moment the write lands.
@@ -1737,17 +1790,7 @@ describe("Write to device", () => {
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
     expect(shell.count("vd_set")).toBeGreaterThan(10);
-    // AFTER the last write, which is the only reading that separates this from the write's
-    // own diff: the diff reads 839 too, so counting reads of the address passes whether or
-    // not the epilogue runs at all.
-    const lastSet = shell.invokes.lastIndexOf("vd_set");
-    expect(lastSet).toBeGreaterThan(-1);
-    const readAfterWrite = shell.invokes.some((cmd, i) => {
-      if (i <= lastSet || cmd !== "vd_get") return false;
-      const a = shell.args[i] ?? {};
-      return `${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR;
-    });
-    expect(readAfterWrite).toBe(true);
+    expect(readAfterLastWrite(shell)).toBe(true);
   });
 
   /** A device table whose recorder re-read the case drives itself. The write's own
@@ -2081,6 +2124,339 @@ describe("Write to device", () => {
 // Offered after the disconnect rather than during it (why, in `offerErrorReport`'s own
 // comment in main.ts). The write's read-failure case above covers the arm where the offer
 // is taken and a file appears; these are the two that leave nothing behind.
+// A raw the unit holds and this app cannot write. The load path repairs a document, so the way
+// one reaches the plan is a DEVICE read: the unit's own encoder stops where the window does,
+// but the wire does not, and an earlier build of this app could put one there.
+//
+// What the plan may take from a write is keyed on the ADDRESSES the device confirmed, not on
+// the write having succeeded — the last case is why. A live session whose snapshot already
+// agrees sends nothing, so an unrelated edit produces a successful flush that never carried
+// this address, and an earlier version of this adopted on that flush.
+describe("a value the unit holds and the app cannot write", () => {
+  const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+  const BELOW = lpf.rawMin! - 1;
+  // BOTH channels' slots are seeded, from the catalogue rather than by hand: an address the
+  // table has not been told about reads 0, and 0 is outside several of these windows too, so
+  // a partial seed would move the count this case asserts for a reason it is not about.
+  const unitHoldingLowLpf = (): Record<string, number> => {
+    const seed: Record<string, number> = { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
+    for (const [typeId, arrId, type] of [
+      [679, 681, 0],
+      [683, 685, 1024],
+    ] as const) {
+      seed[`${typeId}/0/0`] = type;
+      for (const d of fxParams(type)) seed[`${arrId}/0/${d.slot}`] = d.def;
+    }
+    seed[`685/0/${lpf.slot}`] = BELOW;
+    return seed;
+  };
+  // Read off the surface rather than out of module state: what the operator sees IS the
+  // question. The effect's parameters are drawn by the FX EFFECT tuning screen, so the node is
+  // selected, its launcher pressed, the readout taken and the screen closed again — reopened
+  // per reading so each one is a fresh draw of the plan as it stands.
+  const withFxScreen = <T>(nodeId: string, use: (box: HTMLElement) => T): T => {
+    $("graph-host")
+      .querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    $<HTMLButtonElement>("btn-fx-screen").click();
+    const box = $("dyn-screen-box");
+    const out = use(box);
+    box.querySelector<HTMLButtonElement>(".consent-actions button")!.click();
+    return out;
+  };
+  const shownFx = (nodeId: string, planKey: string): string =>
+    withFxScreen(nodeId, (box) => box.querySelector<HTMLElement>(`[data-dyn-val="fx:${planKey}"]`)?.textContent ?? "");
+  const shownLpf = (): string => shownFx("bus.fx2", "delayLpf");
+  /** The screen's Mix slider, which is where an ordinary operator edit to an FX channel is
+   *  made now. Read and written through the same open, since the controls draw a captured
+   *  snapshot and a handle kept across a write would be answering for the plan as it was. */
+  const fxLevel = (nodeId: string): HTMLInputElement =>
+    withFxScreen(nodeId, (box) => box.querySelector<HTMLInputElement>('input[data-dyn="fx:level"]')!);
+
+  it("reads it verbatim, then takes the sent value once the device has confirmed it", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    // The read is verbatim: what the unit holds, not what the app could write.
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // …and the write's own value is what the plan ends up holding, so the panel and the unit
+    // name the same setting from here on.
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    expect(statusText()).toContain(t().status.paramsBounded(1));
+  });
+
+  it("takes what the device confirmed before a cancel, and says so", SLOW, async () => {
+    // The cancel lands during the converge's re-read, after this address has answered with the
+    // value the write sent. The loop throws and there is no result to read the confirmation
+    // off — and this write was the plan's only chance at it, since the value that landed is
+    // what stops the address differing: every later diff finds the unit already agreeing.
+    const base = deviceCommands({ "plugin:dialog|message": "Ok" }, unitHoldingLowLpf());
+    const get = base.vd_get as (a: Record<string, unknown>) => number;
+    const set = base.vd_set as (a: Record<string, unknown>) => void;
+    let writes = 0;
+    const shell = (await bootApp({
+      tauri: {
+        ...base,
+        vd_set: (a: Record<string, unknown>) => {
+          writes++;
+          return set(a);
+        },
+        vd_get: (a: Record<string, unknown>) => {
+          const value = get(a);
+          // A second press is what cancels an in-flight write. Only after a write has gone out,
+          // so the diff that builds the confirm prompt runs to the end.
+          if (writes > 0 && a.paramId === 685 && a.y === lpf.slot) $("btn-write").click();
+          return value;
+        },
+      },
+    }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // The positive control: the write reached the unit and the cancel reached the flow. Without
+    // both, "the plan took the value" would be a statement about a write that never ran.
+    expect(writes).toBeGreaterThan(0);
+    // The line is written in the handler that catches the abort, which runs AFTER the
+    // connection is released — so the disconnect this case waited on does not imply it yet.
+    await vi.waitFor(() => expect(statusText()).toContain(t().status.canceled));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    expect(statusText()).toContain(t().status.paramsBounded(1));
+  });
+
+  /** The insert-FX selector accepts its write and does not keep it, so a second round goes
+   *  out, and that one fails with `fail` — which stops the loop before it can re-read. */
+  const writeStoppedBySelector = async (fail: string): Promise<void> => {
+    //
+    // SAVES because a write that fails offers its report — an unstubbed save dialog rejects,
+    // and the flow then reports a device failure instead of the partial write it had. The
+    // write's own confirm is answered and the retry a STOPPED write offers is declined, or a
+    // stub that agrees to everything retries the same refusal for ever; counted from the click
+    // rather than from the run, since the fetch below raises a confirm of its own.
+    let writing = false;
+    let confirms = 0;
+    const base = deviceCommands(
+      {
+        ...SAVES,
+        "plugin:dialog|message": (a: Record<string, unknown>) =>
+          a.buttons === "OkCancel" && writing && ++confirms > 1 ? "Cancel" : "Ok",
+      },
+      unitHoldingLowLpf(),
+    );
+    const set = base.vd_set as (a: Record<string, unknown>) => void;
+    // EVERY insert-FX selector, and counted per ADDRESS. Refusing one of the family would let
+    // an earlier selector's acknowledgement clear the ledger, which is the other case and would
+    // let this one pass without measuring its own; counting across the family instead refuses
+    // the second selector of round 1, and the round the confirmations come from never happens.
+    const writes = new Map<string, number>();
+    let refusals = 0;
+    const shell = (await bootApp({
+      tauri: {
+        ...base,
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId !== PARAMS.INSERT_FX.id) return set(a);
+          const key = `${a.paramId}/${a.x}/${a.y}`;
+          const n = (writes.get(key) ?? 0) + 1;
+          writes.set(key, n);
+          // Accepted and not kept the first time, so it is still differing when the re-read
+          // comes round; answered the second, which is what stops the loop. The MESSAGE is the
+          // point: `vd.rs` sends before it waits, so only its own refusal code says the write
+          // did not land, and a bare failure would be the other case.
+          if (n > 1) {
+            refusals++;
+            throw new Error(`${fail}: ${a.paramId}:${a.x}:${a.y}`);
+          }
+          return null;
+        },
+      },
+    }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    writing = true;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // The positive control: without a second send there is no failing round, and the pair below
+    // would be asserting the ordinary clean-write path under another name.
+    expect(refusals).toBeGreaterThan(0);
+    // …and the premise that makes this the side-effect case: what failed is a head, whose
+    // acknowledgement — and whose unknown answer — empties the ledger.
+    expect(PARAMS.INSERT_FX.sideEffect).toBe("converge");
+  };
+
+  it("takes what earlier rounds confirmed when a later round's send is REFUSED", SLOW, async () => {
+    // `broker-rejected` is the shell's own message for an answer that DECLINED the write: it
+    // reached the broker and was turned down, so nothing moved — not this address, which round
+    // 1 sent and read back, and not the values a head of this kind resets. And there is no
+    // later write that would offer it again.
+    await writeStoppedBySelector("broker-rejected");
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    expect(statusText()).toContain(t().status.paramsBounded(1));
+  });
+
+  it("takes nothing when the answer to a later round's send never came", SLOW, async () => {
+    // The same arrangement, failing the way a lost link fails. `vd.rs` SENDS before it waits,
+    // so the selector may have landed and reset this address on its way out; the plan may take
+    // nothing from a write it cannot vouch for.
+    await writeStoppedBySelector("device-lost");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+    expect(statusText()).not.toContain(t().status.paramsBounded(1));
+  });
+
+  it("takes nothing from a write the device did not keep", SLOW, async () => {
+    // The one address under test accepts the write and does not hold it. The converge cannot
+    // close on it, the write reports a residual, and the unit's value for that address is then
+    // not what was sent — which is the whole reason nothing may be taken from it.
+    const shell = await bootDevice(SAVES, true, unitHoldingLowLpf(), (a) => a.paramId === 685 && a.y === lpf.slot);
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    const sets = shell.count("vd_set");
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // The positive control. Without it the case passes on a write that never happened — with
+    // `total === 0` forced, it goes green in a tenth of the time and asserts nothing.
+    expect(shell.count("vd_set")).toBeGreaterThan(sets);
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+    expect(statusText()).not.toContain(t().status.paramsBounded(1));
+  });
+
+  // Two nodes and two keys on one of them. Every flow case above carries exactly one problem,
+  // so neither the per-node loop nor the count is pinned by them: adopting one channel and
+  // leaving the other stranded, or reporting 1 where 3 were taken, both pass.
+  it("takes every confirmed value, across keys and across channels", SLOW, async () => {
+    const hpf = fxParams(1024).find((d) => d.key === "delayHpf")!;
+    const revxLpf = fxParams(0).find((d) => d.key === "revxLpf")!;
+    const seed = unitHoldingLowLpf();
+    seed[`685/0/${hpf.slot}`] = hpf.rawMin! - 1;
+    seed[`681/0/${revxLpf.slot}`] = revxLpf.rawMin! - 1;
+    const shell = await bootDevice({}, true, seed);
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(statusText()).toContain(t().status.paramsBounded(3));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    // …and the OTHER channel, which a loop over one node would have left where it was.
+    expect(shownFx("bus.fx1", "revxLpf")).toBe(revxLpf.format!(revxLpf.rawMin!, {}));
+  });
+
+  // The adoption lands in the history BASELINE rather than as an entry, so an undo taken after
+  // it spends the operator's own edit and leaves the adopted value standing. Nothing pinned
+  // that: skipping the absorb entirely left all four cases above green.
+  it("survives an undo, which spends the operator's edit instead", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+
+    // An ordinary app edit first, so the undo has something of the operator's to spend.
+    const before = fxLevel("bus.fx2").value;
+    withFxScreen("bus.fx2", (box) => {
+      const level = box.querySelector<HTMLInputElement>('input[data-dyn="fx:level"]')!;
+      // To an END of its own range rather than by a fixed step: the seeded unit leaves this
+      // control at its minimum, and a step DOWN from there is clamped back to where it was —
+      // an edit that never happened, which the undo below then has nothing to spend.
+      level.value = level.value === level.max ? level.min : level.max;
+      level.dispatchEvent(new Event("input", { bubbles: true }));
+      level.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(fxLevel("bus.fx2").value).not.toBe(before);
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+
+    // The chord goes to the focused range input otherwise (ui/history.ts routes it there).
+    (document.activeElement as HTMLElement | null)?.blur();
+    shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID);
+    await vi.waitFor(() => expect(fxLevel("bus.fx2").value).toBe(before), { timeout: 10_000 });
+    // …and the adopted value is still there: the undo did not hand the unwritable raw back.
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
+
+  it("takes it from a live flush that carried the address", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    // A session on its own sends nothing, and NOT because the snapshot carries the unwritable
+    // raw: `capture` fills it from `planToCommands`, so it holds the NORMALISED value while the
+    // unit holds the raw. Nothing is sent because plan-normalised equals snapshot-normalised.
+    // What sends this address is an edit that rewrites the array, and the EFFECT TYPE menu is
+    // the one that does: it carries every slot of the new type out, the LPF among them, and the
+    // LPF is a key both delay types share.
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+    sel.value = "1025";
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {})), { timeout: 20_000 });
+    // …and the operator is told. The converge that takes the value runs INSIDE the flush, so a
+    // line written there is overwritten by the flush's own a moment later — the count has to
+    // ride on that line rather than write one of its own.
+    expect(statusText()).toContain(t().status.paramsBounded(1));
+  });
+
+  // The reproduction the first version of this failed. An edit somewhere else flushes, the
+  // flush succeeds, and this address is not in it — the snapshot holds the normalised value the
+  // emit produces, so there is no diff to send. Keyed on the run's success rather than on the
+  // addresses it carried, the plan took a value nothing had written.
+  it("takes nothing from a live flush that did not carry the address", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    // An unrelated control on an unrelated node, driven the way the operator drives it.
+    const sets = shell.count("vd_set");
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.stereo"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    const fader = paramRow(t().inspector.level).querySelector<HTMLInputElement>("input[type=range]")!;
+    fader.value = String(Number(fader.value) - 3);
+    fader.dispatchEvent(new Event("input", { bubbles: true }));
+    fader.dispatchEvent(new Event("change", { bubbles: true }));
+
+    // The flush happened — without this the case would pass on nothing having been sent at all.
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(sets), { timeout: 20_000 });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+  });
+
+  // …and the same, with a flush whose converge DID confirm a set — just not this address. The
+  // case above cannot separate "the set does not carry it" from "there is no set", because a
+  // plain fader flush runs no converge and the set is empty. An effect-type change on the OTHER
+  // channel converges its own slots and leaves this one alone.
+  it("takes nothing from a flush whose confirmed addresses are another channel's", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    const sets = shell.count("vd_set");
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.fx1"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+    sel.value = "1";
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(sets), { timeout: 20_000 });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+  });
+});
+
 describe("the failure report a device action offers", () => {
   /** A write that cancels on its first diff read, which is the cheapest way to a report. */
   const failingWrite = async (over: Record<string, unknown>): Promise<TauriShell> => {

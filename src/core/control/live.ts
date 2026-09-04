@@ -24,7 +24,7 @@ import {
   planToNameWrites,
 } from "./translate";
 import type { SharedOwners, NameWrite, VdCommand, WriteScope } from "./translate";
-import { reachedAndFailed, sendConverging } from "./client";
+import { confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 
@@ -82,6 +82,14 @@ export interface LiveSyncHooks {
   onError: (message: string) => void;
   /** A flush sent `count` writes — for an optional, quiet "→ device" status. */
   onSent: (count: number) => void;
+  /** A converge in this flush read these addresses back and found the device at the plan's
+   *  value, together with THE PLAN THOSE ADDRESSES CAME FROM. Both, because a caller acting on
+   *  it maps addresses to plan keys and one address is a different key under a different effect
+   *  type: the converge runs against a clone taken before its own await, so resolving that join
+   *  against the live plan answers with whatever type is selected by the time the answer is
+   *  used. Absent when no converge ran — a direct write is acknowledged and not re-read, and an
+   *  acknowledgement says the unit accepted a write, not that it kept it. */
+  onConfirmed?: (confirmed: ReadonlySet<number>, sent: Plan) => void;
   /** Two or more plan owners resolved to one device address and the emitted set
    *  kept the last; the rest carried a different value and were dropped. Reported
    *  once per distinct owner set, not once per flush. */
@@ -889,6 +897,12 @@ export class LiveSync {
         // session is gone there is nobody left to report a failed converge to, and the
         // capture below would write a dead plan's values into a rebuilt snapshot.
         if (this.sessionGen !== gen) return;
+        // `converged` is what the loop sent and read back, so it is what the addresses mean.
+        // Ahead of the failure check, because a round that failed leaves every earlier round's
+        // confirmations standing and this is the last chance the plan has to take them: the
+        // address stops differing the moment the write lands, so no later flush produces a
+        // diff that would offer it again.
+        this.hooks.onConfirmed?.(confirmedAddrs(r.ledger), converged);
         // sendConverging reports per-command failures instead of rejecting, so a
         // failed write here would otherwise be swallowed — and captureSnapshot
         // would then record the plan as device truth, leaving those parameters

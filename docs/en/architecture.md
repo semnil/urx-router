@@ -523,7 +523,9 @@ carries a one-line map of the same directories and points here.
   re-entry guards and the difference between them — `singleFlight` is a silent rapid-repeat guard on one
   handler, while `FileFlowLatch` is shared across every plan / settings entry point and **reports** a
   refusal caused by a device read (the operator's click went unanswered) while staying silent for a second
-  file flow (its own dialog is already on screen)
+  file flow (its own dialog is already on screen) / `adopt-writes.ts` which values a confirmed write lets the
+  plan take back — it takes the plan the converge SENT as well as the live one, since the live flush clones
+  before its await and one address is a different key under a different effect type
 
 - `src-tauri/` — Rust shell. Webview host + tauri-plugin-dialog + file IO commands
   (`read_text_file`/`read_binary_file`/`write_text_file`/`write_binary_file`; `third_party_licenses` reads
@@ -2338,7 +2340,10 @@ element under that button, since adopting the device's rate costs nothing and th
 arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
 can read. **URX22 has no recorder and is silent throughout.** Afterwards the write's own epilogue re-reads the
 recorder node: the unit does the lowering itself, and whether it announces one has not been measured here, so the
-plan is refreshed rather than left waiting for a notify that may never come.
+plan is refreshed rather than left waiting for a notify that may never come. The epilogue is armed from the rate
+send as it RESOLVES — everything but an explicit refusal, since the shell sends before it waits and a write whose
+answer never came may have landed and taken the count down with it — rather than from the outcomes the call
+returns, which a cancel between two sends throws away.
 A failed read cancels the write, per the rule above: the rate decides which parameters the write may even contain.
 
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen
@@ -3351,6 +3356,66 @@ about FX.
 Every plan the app itself authors carries an `fxEffect` on both channels — the shipped default plans do
 (all three models), and a device readback writes one — so what this reaches is a document authored
 elsewhere: a `?plan=` payload from a generator, or a hand edit.
+
+### Taking back a value the write path normalised
+
+A normalised write leaves the plan naming a setting the unit is not at: the write path sends the value
+the control admits, the unit takes it, and the plan still holds the raw it was given. `comparePlan`
+cannot report the difference, because it compares the normalised value too and finds the device agreeing.
+The load path repairs a document, so the way one arrives is a DEVICE read — the unit's own encoder stops
+where the window does, but the wire does not, and an earlier build of this app could put a raw there.
+
+After a write, the plan takes those values back. What decides it is the set of ADDRESSES the device
+confirmed, not whether the write succeeded, and the two come apart exactly here: a live session whose
+snapshot already agrees with the unit sends nothing, so a flush can succeed without carrying the address
+in question at all. A first version keyed on the run's success and adopted values no write had touched —
+an unrelated fader move was enough to reproduce it.
+
+`confirmedAddrs` (`control/client.ts`) is that set, read off the converge's own **ledger**: an address is
+in it when a send was acknowledged AND a read has since found the device holding the plan's value. Having
+been READ is the load-bearing half — subtracting the read failures is not enough, because a diff stops at
+its first one and leaves every later address unasked, in neither the differences nor the failures and
+sent, which reported it confirmed. The ledger is kept CURRENT rather than rebuilt at the end of each
+round: every read writes it as it goes, and every send that LANDS takes the address it just overwrote
+back out — every address, when what landed is a `sideEffect` head, since which values such a write moves
+is what this loop settles by re-reading rather than something the catalogue enumerates. What invalidates
+is the send RESOLVING and not the round: a command the broker declined moved nothing, and neither did one
+a cancel stopped before it went out, so what an earlier read established about every other address still
+holds. Invalidating on the round being PLANNED instead discarded a confirmed value every time a later
+round's side-effect head was refused.
+
+**Only an explicit refusal says a write did not land.** `vd.rs`'s `do_set` SENDS and then waits, so by
+the time anything can go wrong with the answer the request is already on the wire. `SendOutcome.result`
+carries the three-way: `accepted` (the broker answered 200), `refused` (it answered with another code —
+the one failure that says the write was turned down), and `unknown` (no answer came, the link failed
+while waiting for one, or the answer carried no usable code at all — a timeout, a device-lost push
+mid-write, a closed link, a malformed reply). An `unknown` invalidates
+exactly as an acceptance does, a side-effect head's taking every address with it, because the write may
+have landed and its resets with it. The test is a single opt-out on the refusal's own code rather than a
+list of the failures that are not it, so a code raised tomorrow leaves the write's fate unknown rather
+than being trusted by omission. Two paths rest on that. A **cancel** throws out of the loop with no
+result to read, so the write flow holds the ledger itself, takes what the unit had confirmed before it,
+and reports the count on the canceled line; and a round whose **send fails** re-reads nothing, which says
+nothing about the addresses no acknowledgement in it moved — what an earlier round confirmed stays. The
+count rides on whatever line that write ends up writing, the stopped one included. Both matter because the
+opportunity does not come round again: the value that landed is what stops the address differing, so
+every later diff finds the unit already agreeing and never sends it. A DIRECT live write is deliberately
+outside the set: an acknowledgement says the unit accepted a write, not that it kept it, and an address
+no converge covered simply waits for one that does. `paramRangeAddrs` (`control/translate.ts`)
+is the join between the loader's report, which names a node and a key, and the address the emit sends it
+to; it reads the emit's own output rather than rebuilding the addressing, so a change to how an FX slot
+is addressed cannot leave it answering the old one.
+
+The value is authored FROM the device (`authorFromDevice`), the seat a device-side recompute already
+takes, rather than pushed as an edit: it is the write path's value rather than the operator's, and an undo
+that put the unwritable raw back would only have it normalised again on the next write.
+
+**SCOPE: the FX channel effect, and nothing else.** The premise holds wherever the emit normalises —
+`translate.ts` has eighteen `boundRaw` and ten `boundEnum` call sites against the two FX ones — and the
+reachable sibling is insert FX, whose engine slots are bounded at the emit while `readback.ts` stores the
+unit's raw verbatim. That case is untouched here: it diverges the same way and `comparePlan` sees it no
+better. The mechanism is bounded to `paramRangeProblems`' own walk for the same reason that walk is
+(`plan-validate.ts`'s SCOPE note): the FX catalogue is the family whose windows have actually moved.
 
 One value is **rewritten** rather than dropped in the DESERIALIZER, and it is the only one there — the
 loader rewrites a second class one layer later, after validation, where an FX value outside what the app can
