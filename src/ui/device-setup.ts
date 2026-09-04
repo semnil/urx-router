@@ -82,6 +82,7 @@ export class DeviceSetupPanel {
   /** An apply or a discard confirm is in flight: every dismissal path waits. */
   private busy = false;
   private readonly dismiss = wireDismiss({
+    scrim: () => this.scrim,
     keep: (target) => target !== this.scrim,
     inert: () => this.busy,
     close: () => void this.requestClose(),

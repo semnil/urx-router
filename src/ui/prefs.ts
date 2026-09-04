@@ -87,6 +87,7 @@ export class PrefsPanel {
   // press that starts on the scrim itself dismisses, so a drag that starts
   // inside the box and ends on the scrim must not close.
   private readonly dismiss = wireDismiss({
+    scrim: () => this.scrim,
     keep: (target) => target !== this.scrim,
     close: () => this.requestClose(),
   });

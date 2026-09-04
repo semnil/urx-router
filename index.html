@@ -350,6 +350,25 @@
            the current language, live-sync lock, and stored preference values. -->
       <div id="prefs-box" class="consent-box prefs-box"></div>
     </div>
+    <!-- Where an error goes when its dialog could not be raised at all (ui/error-box.ts).
+         The status line cannot hold it: it is one transient slot, and the next thing the app
+         reports would take the failure with it. -->
+    <div
+      id="error-box-modal"
+      class="consent-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="error-box-title"
+      hidden
+    >
+      <div class="consent-box">
+        <h2 id="error-box-title"></h2>
+        <div id="error-box-body" class="consent-body"></div>
+        <div class="consent-actions">
+          <button id="error-box-close" type="button" class="consent-btn-secondary"></button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

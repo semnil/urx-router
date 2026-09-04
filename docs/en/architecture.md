@@ -400,7 +400,12 @@ carries a one-line map of the same directories and points here.
   `localStorage`, declining exits the app; desktop only) / `load-report.ts` copyable report modal for plan
   load failures (`?plan=` decode failures, routing validation failures) / `rate-choice.ts` three-way modal
   for the write path's sample-rate settle (write at the device's rate / turn Follow USB off and write the
-  plan's / cancel) / `licenses.ts` third-party license modal (parses the bundled cargo-about page with
+  plan's / cancel) / `error-box.ts` where a failure goes when the dialog it was routed to could not be
+  raised at all — the shell's own dialog command can reject, and the status line cannot hold it (one
+  transient slot, holding what the run achieved and taken by whatever the app reports next). Messages
+  QUEUE, since a shell that cannot raise one dialog is unlikely to raise the next, and it sits on a rung
+  of its own ABOVE the decision gates: the failure arrived while something else was open, so a shared rung
+  would put it behind that (style.css, the overlay ladder) / `licenses.ts` third-party license modal (parses the bundled cargo-about page with
   DOMParser and renders it as app DOM — a collapsed family index whose header rows unfold their license
   texts, text nodes only, released on close; no iframe, since WKWebView subframe scrollbars are a separate
   broken code path; File menu, desktop only) / `midi.ts` MIDI orchestration (Device menu → opens the MIDI
@@ -2298,7 +2303,18 @@ Errors are surfaced by meaning. An **operation that did not complete** (a failed
 fetch, write, self-test, connect, or live-sync start, plus a link drop during live sync) is shown as a
 **modal** so it cannot be missed
 (`errorDialog` → `showError`, which clears the status line first so a stale "Connecting…" does not linger behind
-it). **Routine progress, info, cancellation, and partial successes** stay on the status line at the bottom. A live
+it). **Routine progress, info, cancellation, and partial successes** stay on the status line at the bottom. Two sites take that
+clearing back, and what they have in common is the rule: a dialog raised AFTER an action has written its outcome
+would clear a line that is not stale — an action that changed the plan says so on it and nowhere else, while the
+dialog names something else. The write's recorder re-read is one (it runs in a `finally`, after the write's own
+line), the offer to save a failure report the other (it runs after `withDevice` returned). Each reads the line at
+the moment the dialog goes up rather than earlier, so a refusal written in between — an undo declined because a
+device read holds the history — is what comes back; and the write's does it only where the write ENDED — every path that
+returns writes a line and a cancel is answered with one, so what is left is a throw nothing answered, which
+leaves a progress message, and that is what the clearing is for. **A dialog that cannot be raised at all** —
+the shell's own command can reject — puts its message in `ui/error-box.ts` instead, a queued box on its own rung
+above the decision gates: the status line is one transient slot, so a failure written there is taken by whatever
+the app reports next, and the two have to be readable at once. A live
 runtime error can arrive from several sources at once (live / follow / link watch), so they funnel through
 `stopLiveOnError`, which uses the `liveSessionUp` flag to drop the connection and show the dialog exactly once — the
 second and later calls return early because `deactivateLive` clears that flag synchronously.

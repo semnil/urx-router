@@ -71,6 +71,7 @@ import { installEditMenu } from "./ui/edit-menu";
 import { PlanHistory } from "./ui/history";
 import { installKeyProbe } from "./ui/keyprobe";
 import { showLoadReport } from "./ui/load-report";
+import { showErrorBox } from "./ui/error-box";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
 import { DynScreen } from "./ui/dyn-screen";
@@ -1582,9 +1583,19 @@ function setStatus(msg: string): void {
 // Surface an operation that did not complete as a modal, so it is not missed the
 // way a transient status line can be. Clears the status line first so a stale
 // progress message (e.g. "Connecting…") does not linger behind the dialog.
-function showError(message: string): void {
-  setStatus("");
-  void errorDialog(message);
+function showError(message: string, keep = ""): void {
+  // Cleared by default so a stale "Connecting…" does not sit behind the dialog. `keep` is for
+  // a caller raising this AFTER its action wrote an outcome: that line is not stale, it says
+  // what the dialog does not, and the two are about different things.
+  setStatus(keep);
+  // Not `void`: a dialog that cannot be raised would otherwise leave the failure it carries on
+  // no surface at all. It goes to a box of its own rather than to the status line, which is
+  // one transient slot — the line is holding what the run achieved, and whatever the app
+  // reports next would take the failure with it.
+  errorDialog(message).catch((err: unknown) => {
+    console.error("error dialog failed:", message, err);
+    showErrorBox(message);
+  });
 }
 
 // A one-shot click handler, with the failure surface every one of them reports
@@ -2582,7 +2593,12 @@ async function offerErrorReport(report: ErrorReport, prompt?: string, label?: st
     try {
       await saveTextDocument(report.filename, report.markdown, { ext: "md", label: label ?? t().filter.errorReport });
     } catch (err) {
-      showError(t().status.saveError(errorText(err)));
+      // Called after withDevice returned, so the line holds that action's OUTCOME rather than
+      // a progress message, and a failed save would take it down with the clearing — leaving a
+      // dialog about the report where the action's own verdict was. Read HERE and not before
+      // the save: `saveTextDocument` opens a native dialog first, so the wait is the
+      // operator's own and a line written across it is the newer one.
+      showError(t().status.saveError(errorText(err)), statusbar.textContent ?? "");
     }
   }
 }
@@ -2809,7 +2825,10 @@ if (!DEMO) {
     let count: number;
     try {
       count = await readTrackCount();
-    } catch {
+    } catch (err) {
+      // The caller warns without numbers on this; the reason it could not be read reaches
+      // nothing else, so it goes to the console rather than nowhere.
+      console.warn("track count unread:", err);
       return "unknown";
     }
     return trackCountDrop(count, nextRate);
@@ -2850,8 +2869,8 @@ if (!DEMO) {
     // has to be in front of the decision, not in the release notes. Read from the DEVICE
     // rather than taken from the plan: an offline plan's count is whatever was last
     // authored, and warning from that would both miss real drops and invent false ones.
-    // A read that fails leaves `null`, and the caller then warns without naming numbers
-    // rather than staying silent.
+    // A read that fails leaves `"unknown"`, and the caller then warns without naming numbers
+    // rather than staying silent; `null` is the model having no recorder at all.
     const trackCost = await trackCountCost(plan.sampleRate);
     if (action === "confirmReclock") {
       // The device will take the rate and hold it. Re-clocking interrupts audio and
@@ -2961,13 +2980,19 @@ if (!DEMO) {
               markdown: formatWriteReport(device.model, failed, residual, reads),
             };
           };
+          // What the whole write operation has taken back, across attempts. Per ATTEMPT it would go
+          // missing the moment a retry succeeds: the plan has already taken the key, so the next
+          // attempt's diff no longer reports it and its own count is 0 — while the plan is holding
+          // the value the count is about.
+          let adopted = 0;
+          const adoptedNote = (): string => (adopted ? ` — ${t().status.paramsBounded(adopted)}` : "");
           const attemptWrite = async (confirmFirst: boolean): Promise<{ sent: number; notSent: number } | null> => {
             // A read failure leaves those parameters' device values unknown, so the
             // write stops on the first one — the rest of the sweep would only be
             // establishing values for a write that is already canceled.
             const { diffs, errors } = await diffPlan(getModel(modelId), plan, { signal, stopOnError: true, scope });
             if (errors.length) {
-              setStatus(t().status.writeReadFailed(errors.length));
+              setStatus(t().status.writeReadFailed(errors.length) + adoptedNote());
               saveReport([], [], errors);
               return null;
             }
@@ -2976,7 +3001,7 @@ if (!DEMO) {
             signal.throwIfAborted();
             const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
             if (nameErrors.length) {
-              setStatus(t().status.writeReadFailed(nameErrors.length));
+              setStatus(t().status.writeReadFailed(nameErrors.length) + adoptedNote());
               saveReport([], [], nameErrors);
               return null;
             }
@@ -2988,7 +3013,9 @@ if (!DEMO) {
             const owners = collisionOwners(dryRun(getModel(modelId), plan));
             const sharedNote = owners.length ? sharedSettingText(owners) : "";
             if (total === 0) {
-              setStatus(sharedNote ? `${t().status.writeNoChanges} ${sharedNote}` : t().status.writeNoChanges);
+              setStatus(
+                (sharedNote ? `${t().status.writeNoChanges} ${sharedNote}` : t().status.writeNoChanges) + adoptedNote(),
+              );
               return null;
             }
             if (
@@ -2997,7 +3024,7 @@ if (!DEMO) {
                 sharedNote ? `${sharedNote}\n\n${t().confirm.write(total)}` : t().confirm.write(total),
               ))
             ) {
-              setStatus(t().status.canceled);
+              setStatus(t().status.canceled + adoptedNote());
               return null;
             }
             // Held here rather than read off the result, for the same reason `onSent` below
@@ -3033,7 +3060,8 @@ if (!DEMO) {
               // this runs on the rejection's own microtask, so no announcement can land
               // between the loop stopping and the join.
               const cancelTaken = adoptConfirmedWrites(confirmedAddrs(ledger));
-              setStatus(t().status.canceled + (cancelTaken ? ` — ${t().status.paramsBounded(cancelTaken)}` : ""));
+              adopted += cancelTaken;
+              setStatus(t().status.canceled + adoptedNote());
               return null;
             }
             const { outcomes, residual, readErrors: convergeErrors } = convergeResult;
@@ -3043,14 +3071,25 @@ if (!DEMO) {
             // below would join one moment's addresses to another moment's plan. `sendNames` is
             // one such await, on the clean path.
             const takenBack = adoptConfirmedWrites(confirmedAddrs(ledger));
+            adopted += takenBack;
             const skipped = outcomes.filter((o) => o.skipped).length;
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
               .map((o) => ({ name: o.command.name, error: o.error }));
+            // On every outcome, not only the clean one: a write that stopped can still have
+            // landed and read back the address the plan takes its value from, and a line that
+            // reported only the stop would leave a changed plan unmentioned.
+            const note = adoptedNote();
             // Names only go out once the numeric phase reached the device intact —
             // a stopped or unreadable numeric phase means the link already failed.
             if (!failed.length && !skipped && !convergeErrors.length) {
-              signal.throwIfAborted();
+              // Reported here rather than thrown, for the reason the converge's own cancel is:
+              // the adoption above has already changed the plan, and a bare "Canceled" from
+              // withDevice would leave that unsaid.
+              if (signal.aborted) {
+                setStatus(t().status.canceled + note);
+                return null;
+              }
               const nameOutcomes = await sendNames(nameWrites);
               // Normalize the two outcome shapes (numeric command vs string name write)
               // to {name, error} so the count and the saved report share one list.
@@ -3067,10 +3106,6 @@ if (!DEMO) {
             if (failed.length || residual.length || convergeErrors.length) {
               saveReport(failed, residual, convergeErrors);
             }
-            // On every outcome, not only the clean one: a write that stopped can still have
-            // landed and read back the address the plan takes its value from, and a line that
-            // reported only the stop would leave a changed plan unmentioned.
-            const note = takenBack ? ` — ${t().status.paramsBounded(takenBack)}` : "";
             if (!skipped) {
               setStatus(
                 (failed.length
@@ -3094,11 +3129,25 @@ if (!DEMO) {
           // A stopped write leaves the device holding part of what was confirmed.
           // Offer to run it again rather than reporting a breakdown the user cannot
           // act on: the retry re-diffs, so what already landed drops out by itself.
+          // Whether the write ENDED — every path that returns writes an outcome line, and so
+          // does the cancel arm below. What is left is a throw this does not answer, which
+          // leaves whatever progress message was on screen; the recorder tail restores a line
+          // only when there is an outcome to restore.
+          let wroteOutcome = false;
           try {
             let stop = await attemptWrite(true);
+            wroteOutcome = true;
             while (stop && (await confirmDialog(t().confirm.writeRetry(stop.sent, stop.notSent)))) {
               stop = await attemptWrite(false);
             }
+          } catch (err) {
+            if (!isAbortError(err)) throw err;
+            // A cancel taken in a LATER attempt throws out of it, and the neutral line
+            // withDevice would write for that says nothing about what an earlier attempt took
+            // back. Counted across attempts because each one adopts different keys: a key the
+            // plan has already taken is no longer a problem the next attempt reports.
+            setStatus(t().status.canceled + adoptedNote());
+            wroteOutcome = true;
           } finally {
             // INSIDE the action, because withDevice awaits its own vdDisconnect on the way
             // out: a read placed after it is issued with no connection installed and the
@@ -3133,7 +3182,18 @@ if (!DEMO) {
                 try {
                   assertReadComplete(merged, "track count read issues:");
                 } catch (err) {
-                  showError(t().error.trackCountReread(errorText(err)));
+                  // `showError` clears the status, which is right for a stale "Connecting…"
+                  // sitting behind a dialog and wrong for a line the write ended on: a write
+                  // that took values back says so there and nowhere else, while the dialog
+                  // names the recorder read. Read HERE rather than before the read above,
+                  // which takes seconds: a refusal written while it ran (an undo declined
+                  // because a device read holds the history) is the newer line and the one
+                  // to keep. And only where the write ENDED — a throw leaves a progress
+                  // message, which is exactly what the clearing is for.
+                  showError(
+                    t().error.trackCountReread(errorText(err)),
+                    wroteOutcome ? (statusbar.textContent ?? "") : "",
+                  );
                 }
               }
             }

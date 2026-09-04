@@ -109,7 +109,7 @@ export function showLicenses(html: string): void {
   };
   // Informational, nothing to confirm: a press outside the box or Escape
   // dismisses, like the Preferences modal.
-  const dismiss = wireDismiss({ keep: (target) => target !== scrim, close: onClose });
+  const dismiss = wireDismiss({ scrim: () => scrim, keep: (target) => target !== scrim, close: onClose });
   dismiss.attach();
   close.addEventListener("click", onClose);
 }

@@ -1048,6 +1048,12 @@ export const en = {
     copied: tr("Link ledger copied to the clipboard"),
     copyFailed: tr("Couldn't copy to the clipboard — read the ledger from the panel"),
   },
+  errorBox: {
+    // The box an error takes when its dialog could not be raised. Plural: it queues, since a
+    // shell that cannot raise one dialog is unlikely to raise the next.
+    title: tr("Errors"),
+    close: tr("Close"),
+  },
   licenses: {
     title: tr("Third-party licenses"),
     close: tr("Close"),
@@ -1129,7 +1135,7 @@ export const en = {
   },
   error: {
     trackCountReread: (message: string): string =>
-      `The settings were written, but the microSD recorder's Track Count could not be read back afterwards: ${message}. The unit lowers it by itself when the rate cannot carry it, so what the panel shows may be the value from before the change — read the device to find out.`,
+      `A sample rate write went out, but the microSD recorder's Track Count could not be read back afterwards: ${message}. The unit lowers it by itself when the rate cannot carry it, so what the panel shows may be the value from before the change — read the device to find out.`,
     deviceSetupRead: (message: string): string => `Could not read the device's settings: ${message}`,
     deviceSetupWrite: (message: string): string => `Could not apply the settings: ${message}`,
     noRule: tr("This route cannot be connected"),

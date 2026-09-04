@@ -216,6 +216,21 @@ const confirms = (shell: TauriShell): string[] =>
     .filter((d) => d.buttons === "OkCancel")
     .map((d) => d.message ?? "");
 
+// param 839 counts stereo PAIRS, so 8 is 16 tracks — the full recorder. The seed table keys on
+// the stub's own address form, "id/x/y"; the invoke arguments spell the same address with
+// colons. Two describes drive the recorder — the rate's own cases and the adoption's — so
+// one seat rather than a literal in each.
+/** Put the plan on `rate` through the picker, the way the operator does. Two describes drive
+ *  it — the rate's own cases and the adoption's. */
+const chooseRate = (rate: number): void => {
+  const picker = $<HTMLSelectElement>("rate-picker");
+  picker.value = String(rate);
+  picker.dispatchEvent(new Event("change"));
+};
+
+const TRACK_COUNT_SEED = "839/0/0";
+const TRACK_COUNT_ADDR = "839:0:0";
+
 /** The messages of the dialogs that REPORTED a failure, in order. */
 const errors = (shell: TauriShell): string[] =>
   dialogs(shell)
@@ -1626,18 +1641,6 @@ describe("Write to device", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
-  // param 839 counts stereo PAIRS, so 8 is 16 tracks — the full recorder. The seed table
-  // keys on the stub's own address form, "id/x/y".
-  const TRACK_COUNT_SEED = "839/0/0";
-  const TRACK_COUNT_ADDR = "839:0:0";
-
-  /** Put the plan on `rate` through the picker, the way the operator does. */
-  const chooseRate = (rate: number): void => {
-    const picker = $<HTMLSelectElement>("rate-picker");
-    picker.value = String(rate);
-    picker.dispatchEvent(new Event("change"));
-  };
-
   // The unit lowers its own Track Count to fit a rate it cannot carry and nothing the app
   // can write raises it again, so this is the one rate side effect that has to be in front
   // of the decision. 16 tracks at 96 kHz becomes 8.
@@ -1828,6 +1831,9 @@ describe("Write to device", () => {
     // failed before sending anything, which is the state the message denies.
     expect(shell.count("vd_set")).toBeGreaterThan(10);
     expect(errors(shell)).toContain(t().error.trackCountReread(t().error.shell.deviceLost));
+    // The write's own verdict survives the dialog. This is the OTHER outcome reaching the
+    // same tail — restoring only the cancelled line passes every case but this one.
+    expect(countFor(statusText(), t().status.written)).toBeGreaterThan(0);
   });
 
   // What the re-read does to the undo history. The tail spells it absorb(), not rebase():
@@ -2188,6 +2194,99 @@ describe("a value the unit holds and the app cannot write", () => {
     expect(statusText()).toContain(t().status.paramsBounded(1));
   });
 
+  // The recorder tail runs in a FINALLY, after the write has written its outcome. A read that
+  // fails there raises a dialog through `showError`, which clears the status — right for a
+  // stale "Connecting…" behind a dialog, wrong for the line that says the plan changed. The
+  // dialog names the recorder read; nothing else names the values the write took back.
+  //
+  // Both halves are driven, because "the line is there" passes on its own whenever the tail
+  // does not run at all: the rate has to land (which arms the tail) AND the cancel has to fall
+  // inside the converge's re-read (which is what leaves something to take back).
+  // The numeric phase can finish and the cancel still land — between the converge returning
+  // and the name writes. The adoption has already changed the plan by then, so leaving that
+  // gate to throw hands `withDevice` a bare "Canceled" and the count goes unsaid, which is
+  // the same silence this whole block exists to close.
+  it("reports what a cancel between the numeric phase and the names took back", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" }, unitHoldingLowLpf());
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+    // The address the confirm diff reads LAST, taken from that diff rather than named here:
+    // it is the emit's own last command, and a name would go stale the day the emit grows one.
+    const readSoFar: string[] = [];
+    let lastOfDiff = "";
+    table.vd_set = (a: Record<string, unknown>) => {
+      if (!lastOfDiff) lastOfDiff = readSoFar[readSoFar.length - 1] ?? "";
+      return baseSet(a);
+    };
+    table.vd_get = (a: Record<string, unknown>) => {
+      const key = `${a.paramId}:${a.x}:${a.y}`;
+      if (!lastOfDiff) readSoFar.push(key);
+      const value = baseGet(a);
+      // Answered, so the converge's re-read leaves its loop with nothing residual — the store
+      // keeps every write — and the next thing the flow reaches is the gate before the names.
+      if (lastOfDiff && key === lastOfDiff) $("btn-write").click();
+      return value;
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // The positive control: without a write there is no converge to finish, and the case would
+    // be measuring a cancel taken before anything went out.
+    expect(shell.count("vd_set")).toBeGreaterThan(10);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled + ` — ${t().status.paramsBounded(1)}`));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
+
+  it("keeps the line that says the plan changed when the recorder re-read fails", SLOW, async () => {
+    const withRecorderRead = async (failRead: boolean): Promise<TauriShell> => {
+      const seed = unitHoldingLowLpf();
+      seed[TRACK_COUNT_SEED] = 8;
+      const table = deviceCommands({ "plugin:dialog|message": "Ok" }, seed);
+      const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+      const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+      let written = false;
+      table.vd_set = (a: Record<string, unknown>) => {
+        written = true;
+        return baseSet(a);
+      };
+      table.vd_get = (a: Record<string, unknown>) => {
+        if (failRead && written && `${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR) throw new Error("device-lost");
+        const value = baseGet(a);
+        // Cancel during the converge's re-read, once this address has answered: the rate went
+        // out earlier in the same round, so the recorder tail is armed by the time it lands.
+        if (written && Number(a.paramId) === 685 && Number(a.y) === lpf.slot) $("btn-write").click();
+        return value;
+      };
+      const shell = (await bootApp({ tauri: table }))!;
+      $("btn-fetch").click();
+      await invoked(shell, "vd_disconnect");
+      const picker = $<HTMLSelectElement>("rate-picker");
+      picker.value = "96000";
+      picker.dispatchEvent(new Event("change"));
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect", 2);
+      return shell;
+    };
+    const line = t().status.canceled + ` — ${t().status.paramsBounded(1)}`;
+
+    // The control: with the re-read answering, the cancel line carries the count.
+    await withRecorderRead(false);
+    await vi.waitFor(() => expect(statusText()).toBe(line));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+
+    // And with it failing, which is the half that lost the line.
+    const shell = await withRecorderRead(true);
+    await vi.waitFor(() => expect(statusText()).toBe(line));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    // The dialog is still raised — the read failure is news of its own, not something the
+    // restored line stands in for.
+    expect(errors(shell)).toContain(t().error.trackCountReread(t().error.shell.deviceLost));
+  });
+
   it("takes what the device confirmed before a cancel, and says so", SLOW, async () => {
     // The cancel lands during the converge's re-read, after this address has answered with the
     // value the write sent. The loop throws and there is no result to read the confirmation
@@ -2289,6 +2388,228 @@ describe("a value the unit holds and the app cannot write", () => {
     // acknowledgement — and whose unknown answer — empties the ledger.
     expect(PARAMS.INSERT_FX.sideEffect).toBe("converge");
   };
+
+  // A cancel taken in a RETRY throws out of that attempt, and the line the neutral cancel
+  // handler would write says nothing about what the attempt before it took back. The count is
+  // carried across attempts for that: each attempt adopts different keys, since a key the plan
+  // has already taken is no longer a problem the next one reports.
+  /** What a retry offer says, whatever numbers it carries — the confirm has to be told apart
+   *  from the write's own, and the stub sees only the message. */
+  const RETRY_PHRASE = t().confirm.writeRetry(0, 0).split("0")[0]!;
+
+  /**
+   * A write whose FIRST attempt takes a value back and then stops, with the retry accepted —
+   * the transition where a per-attempt count goes missing, since the plan has already taken
+   * the key and the next attempt's diff no longer reports it.
+   *
+   * `insertFx(n)` decides what the nth write to an insert-FX selector does: dropping one and
+   * refusing the next is what stops attempt 1 with commands behind it unsent. `onRead` sees
+   * every read, with the attempt it belongs to, which is where a case puts its cancel.
+   */
+  const retryAfterStop = async (
+    insertFx: (n: number, attempt: number) => "drop" | "refuse" | "keep",
+    onRead?: (attempt: number, wroteThisAttempt: boolean) => void,
+    retries = 1,
+  ): Promise<TauriShell> => {
+    let writing = false;
+    let attempt = 1;
+    let offers = 0;
+    let wroteThisAttempt = false;
+    const base = deviceCommands(
+      {
+        ...SAVES,
+        "plugin:dialog|message": (a: Record<string, unknown>) => {
+          const retry = a.buttons === "OkCancel" && writing && String(a.message ?? "").includes(RETRY_PHRASE);
+          if (!retry) return "Ok";
+          if (++offers > retries) return "Cancel";
+          attempt++;
+          wroteThisAttempt = false;
+          return "Ok";
+        },
+      },
+      unitHoldingLowLpf(),
+    );
+    const set = base.vd_set as (a: Record<string, unknown>) => void;
+    const get = base.vd_get as (a: Record<string, unknown>) => number;
+    const writes = new Map<string, number>();
+    const shell = (await bootApp({
+      tauri: {
+        ...base,
+        vd_get: (a: Record<string, unknown>) => {
+          const value = get(a);
+          onRead?.(attempt, wroteThisAttempt);
+          return value;
+        },
+        vd_set: (a: Record<string, unknown>) => {
+          wroteThisAttempt = true;
+          if (a.paramId !== PARAMS.INSERT_FX.id) return set(a);
+          const key = `${a.paramId}/${a.x}/${a.y}`;
+          const n = (writes.get(key) ?? 0) + 1;
+          writes.set(key, n);
+          const what = insertFx(n, attempt);
+          if (what === "refuse") throw new Error(`broker-rejected: ${a.paramId}:${a.x}:${a.y}`);
+          return what === "keep" ? set(a) : null;
+        },
+      },
+    }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    writing = true;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // The positive control every case shares: attempt 1 stopped, so a retry was offered and
+    // taken. The other — that the plan took the value back — is asserted per case AFTER its
+    // status assertion, since reading the panel selects a node and that writes the line.
+    expect(offers).toBeGreaterThan(0);
+    return shell;
+  };
+
+  const BOUNDED_ONE = ` — ${t().status.paramsBounded(1)}`;
+
+  // The dialog is where an error message is routed, and it can fail to be raised at all — the
+  // shell's own command can reject. The status line is then the only surface left, and it has
+  // just been cleared for the dialog: the operator would be looking at a run that says nothing
+  // failed. Driven at the site that also KEEPS a line, so both halves have to survive.
+  it("puts the error on the line when the dialog cannot be raised", SLOW, async () => {
+    const seed = unitHoldingLowLpf();
+    seed[TRACK_COUNT_SEED] = 8;
+    const table = deviceCommands(
+      {
+        // Confirms still answer; only the error modal fails, which is the shape a broken
+        // dialog plugin takes — a stub that rejected both would stop the write at its confirm.
+        "plugin:dialog|message": (a: Record<string, unknown>) => {
+          if (a.kind === "error") throw new Error("no dialog");
+          return "Ok";
+        },
+      },
+      seed,
+    );
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+    let written = false;
+    table.vd_set = (a: Record<string, unknown>) => {
+      written = true;
+      return baseSet(a);
+    };
+    table.vd_get = (a: Record<string, unknown>) => {
+      if (written && `${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR) throw new Error("device-lost");
+      return baseGet(a);
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+    chooseRate(96_000);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    // The positive control: the write went out, so the recorder tail ran and its read failed.
+    expect(shell.count("vd_set")).toBeGreaterThan(10);
+    const message = t().error.trackCountReread(t().error.shell.deviceLost);
+    // The failure in a box of its own, and the line still saying what the write achieved.
+    await vi.waitFor(() => expect($("error-box-modal").hidden).toBe(false));
+    expect($("error-box-body").textContent).toBe(message);
+    expect(countFor(statusText(), t().status.written)).toBeGreaterThan(0);
+  });
+
+  // …and it must not do that over a NEWER line. The dialog's rejection arrives whenever the
+  // shell gets round to it, and by then the operator may have been told something else — the
+  // failure it carries is already logged, while the line on screen is what they are reading.
+  it("leaves a line written after the dialog failed alone", SLOW, async () => {
+    const seed = unitHoldingLowLpf();
+    seed[TRACK_COUNT_SEED] = 8;
+    let refuseDialog = (): void => {};
+    const table = deviceCommands(
+      {
+        // Held open, so the case decides WHEN the rejection lands rather than racing it.
+        "plugin:dialog|message": (a: Record<string, unknown>) =>
+          a.kind === "error" ? new Promise((_, reject) => (refuseDialog = () => reject(new Error("no dialog")))) : "Ok",
+      },
+      seed,
+    );
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+    let written = false;
+    table.vd_set = (a: Record<string, unknown>) => {
+      written = true;
+      return baseSet(a);
+    };
+    table.vd_get = (a: Record<string, unknown>) => {
+      if (written && `${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR) throw new Error("device-lost");
+      return baseGet(a);
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+    chooseRate(96_000);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shell.count("vd_set")).toBeGreaterThan(10);
+
+    // Something newer on the line — holding a node traces its signal path and reports it —
+    // and only then does the dialog give up. Waited for by the line CHANGING rather than by
+    // the hold's own duration, so the case does not restate a constant the view owns.
+    const before = statusText();
+    $("graph-host")
+      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
+      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    await vi.waitFor(() => expect(statusText()).not.toBe(before), { timeout: 10_000 });
+    const newer = statusText();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      refuseDialog();
+      await vi.waitFor(() => expect(logged).toHaveBeenCalled());
+      // Both readable at once, which is the whole reason the failure does not go to the line:
+      // the newer thing the operator was told stands, and the failure is in a box of its own.
+      expect(statusText()).toBe(newer);
+      expect($("error-box-modal").hidden).toBe(false);
+      expect($("error-box-body").textContent).toContain(t().error.shell.deviceLost);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  // Dropped once, refused once, kept after: attempt 1 stops, attempt 2 converges. This is the
+  // transition a per-attempt count cannot survive — attempt 2 takes nothing back, because the
+  // plan already holds what attempt 1 took.
+  it("still reports what an earlier attempt took back once a retry succeeds", SLOW, async () => {
+    await retryAfterStop((n, attempt) => (attempt > 1 ? "keep" : n === 1 ? "drop" : "refuse"));
+    await vi.waitFor(() => expect(statusText().endsWith(BOUNDED_ONE)).toBe(true));
+    expect(countFor(statusText().replace(BOUNDED_ONE, ""), t().status.written)).toBeGreaterThan(0);
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
+
+  // …and once it stops again. The second stop reports its own outcome; the count is the
+  // operation's, not that attempt's.
+  it("still reports it when the retry stops as well", SLOW, async () => {
+    await retryAfterStop((n) => (n === 1 ? "drop" : "refuse"));
+    await vi.waitFor(() => expect(statusText().endsWith(BOUNDED_ONE)).toBe(true));
+    expect(statusText().startsWith(t().status.writeStopped(0, 0).split("0")[0]!)).toBe(true);
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
+
+  // A cancel inside the retry's CONVERGE — after it has sent something, so the loop is past
+  // its seed — which the converge answers with its own line rather than throwing.
+  it("still reports it when the retry is cancelled inside its converge", SLOW, async () => {
+    await retryAfterStop(
+      (n, attempt) => (attempt > 1 ? "keep" : n === 1 ? "drop" : "refuse"),
+      (attempt, wroteThisAttempt) => {
+        if (attempt > 1 && wroteThisAttempt) $("btn-write").click();
+      },
+    );
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled + BOUNDED_ONE));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
+
+  // A cancel in a RETRY that throws out of the attempt — its diff, before anything is sent —
+  // which the retry loop answers rather than leaving to the neutral handler.
+  it("reports what an earlier attempt took back when a retry is cancelled", SLOW, async () => {
+    await retryAfterStop(
+      (n, attempt) => (attempt > 1 ? "keep" : n === 1 ? "drop" : "refuse"),
+      (attempt, wroteThisAttempt) => {
+        if (attempt > 1 && !wroteThisAttempt) $("btn-write").click();
+      },
+    );
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled + BOUNDED_ONE));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
 
   it("takes what earlier rounds confirmed when a later round's send is REFUSED", SLOW, async () => {
     // `broker-rejected` is the shell's own message for an answer that DECLINED the write: it
@@ -2489,6 +2810,10 @@ describe("the failure report a device action offers", () => {
     });
     await vi.waitFor(() => expect(errors(shell)).toContain(t().status.saveError("disk-full")), { timeout: 10_000 });
     expect(shell.count("write_text_file")).toBe(0);
+    // …and the write's own verdict stands behind that dialog, the way it does on the decline
+    // path above. The offer runs after withDevice returned, so what showError would clear here
+    // is an outcome rather than a progress message.
+    expect(statusText()).toBe(t().status.writeReadFailed(1));
   });
 });
 
