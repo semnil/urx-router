@@ -215,10 +215,12 @@ export interface ControlDesc {
   lockId?: string;
   /**
    * The control this one is the SAME VALUE as, when a mirror keeps the two equal — the pair
-   * primary's, for a control on the secondary. Both members of a mirrored pair carry it, so a
-   * gang holding both collapses them to one decision rather than writing each in turn: a
-   * mirror settles on whichever was written LAST, and members that start at different values
-   * would otherwise end wherever the learn order put them.
+   * primary's. Only the SECONDARY carries it; the primary answers to its own id, which is what
+   * makes the two meet without a second field naming the primary from itself. A gang holding
+   * both collapses them to one decision rather than writing each in turn: a mirror settles on
+   * whichever was written LAST, and members that start at different values would otherwise end
+   * wherever the learn order put them. Carrying no `mirrorId` is therefore how a member says it
+   * IS the primary, which is how the seat is decided.
    *
    * What a mirror covers differs by mode. BAL replaces the partner's node params entirely, so
    * every control on the pair is one; PAN keeps each channel's own everything EXCEPT the insert

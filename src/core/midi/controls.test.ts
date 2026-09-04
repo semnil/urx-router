@@ -1257,3 +1257,54 @@ describe("a mirrored gang whose members read the press differently", () => {
     ]);
   });
 });
+
+// One incoming CC matches TWO addresses — its own and the 14-bit pair it could be the MSB of — so
+// a message can reach two gangs at once, and a gang is the members sharing ONE address. Collapsed
+// across that boundary, a member on the other address decided for this one.
+describe("a mirrored pair bound to two different addresses", () => {
+  it("does not let a 14-bit binding speak for the plain CC beside it", () => {
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      stereoLink: true,
+      panBal: PAN_BAL_PAN,
+      insertFx: INSERT_FX_OPTIONS[1].value,
+      insertFxOn: true,
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value, insertFxOn: true };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: (c) => {
+        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    // The pair primary takes the 14-bit address, which a toggle binds to inertly by design; the
+    // secondary takes the plain CC the same controller carries.
+    engine.setMappings([
+      {
+        control: controlId("ch1", "insertFxOn"),
+        addr: { type: "cc14", channel: 0, controller: 7 },
+        mode: "absolute",
+        button: "state",
+      },
+      {
+        control: controlId("ch2", "insertFxOn"),
+        addr: { type: "cc", channel: 0, controller: 7 },
+        mode: "absolute",
+        button: "state",
+      },
+    ]);
+
+    engine.onMessage([0xb0, 7, 0]);
+    expect(
+      [plan.nodeParams.ch1?.insertFxOn, plan.nodeParams.ch2?.insertFxOn],
+      "the plain CC's binding acted, and the mirror carried it",
+    ).toEqual([false, false]);
+  });
+});

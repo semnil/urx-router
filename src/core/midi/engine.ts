@@ -287,20 +287,27 @@ export class MidiEngine {
     // survives is decided by the pair rather than by the order two assignments were made in;
     // dropping the rest costs nothing, since the mirror writes them anyway.
     //
-    // Keyed by `mirrorId ?? id`, the same normalisation the lock ordering matches on: the primary
-    // answers to its own id, and its partner answers to the primary's. A control nothing mirrors
-    // is a group of one and behaves as it always did.
+    // Keyed by the ADDRESS as well as by `mirrorId ?? id`. One incoming CC matches two addresses —
+    // its own and the 14-bit pair it could be the MSB of (`matches`) — so `matched` can hold two
+    // gangs at once, and a gang is the members sharing ONE address. Collapsed across that boundary,
+    // a member on the other address decided for this one: a 14-bit binding on a toggle is inert by
+    // design, and as the pair primary it silenced the plain CC that was bound beside it.
+    //
+    // The rest of the key is the normalisation the lock ordering matches on: the primary answers to
+    // its own id, its partner to the primary's, and a control nothing mirrors is a group of one.
     const groups = new Map<string, Attempt>();
     for (const a of attempts) {
-      const key = a.control.mirrorId ?? a.control.id;
+      const key = `${addrKey(a.mapping.addr)}\u0000${a.control.mirrorId ?? a.control.id}`;
       const held = groups.get(key);
       if (held === undefined) {
         groups.set(key, a);
         continue;
       }
-      this.hooks.trace?.(`mirror ${a.mapping.control} -> ${key}`);
+      this.hooks.trace?.(`mirror ${a.mapping.control} -> ${a.control.mirrorId ?? a.control.id}`);
       // The primary takes the seat wherever it sits in the gang; otherwise the first one keeps it.
-      if (a.control.id === key && held.control.id !== key) groups.set(key, a);
+      // A primary is the member whose own id is what its group is keyed by — the secondary is the
+      // one that carries a `mirrorId`, and the primary carries none.
+      if (a.control.mirrorId === undefined && held.control.mirrorId !== undefined) groups.set(key, a);
     }
     // …and only NOW are the members that decided nothing dropped. Filtered before the grouping,
     // a primary that ignored the press left its partner's decision to drive the pair — which is
