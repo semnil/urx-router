@@ -174,6 +174,27 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
   return { diffs, errors, unread };
 }
 
+/**
+ * What became of one command, as far as the link can say.
+ *
+ * The three-way matters because the shell SENDS before it waits (`vd.rs`, `do_set`): the
+ * request is already on the wire by the time anything can go wrong with the answer.
+ *
+ *  - "accepted": the broker answered 200. The write landed.
+ *  - "refused":  the broker answered with a code that is not 200. It reached the broker and
+ *                was declined, so nothing moved — the one failure that says so.
+ *  - "unknown":  no answer came, or the link failed while waiting for one (a timeout, a
+ *                device-lost push mid-write, a closed link). The write may have landed and
+ *                its side effects with it.
+ *  - "skipped":  the loop stopped before this command was tried, so the device never saw it.
+ */
+export type SendResult = "accepted" | "refused" | "unknown" | "skipped";
+
+/** The one code the shell raises for an answer that DECLINED the write. Everything else it can
+ *  raise — and anything it raises tomorrow — leaves the write's fate unknown, so the test is a
+ *  single opt-out rather than a list of the failures that are not this one. */
+const REFUSED_PREFIX = "broker-rejected:";
+
 export interface SendOutcome {
   command: VdCommand;
   ok: boolean;
@@ -181,7 +202,20 @@ export interface SendOutcome {
   /** True when the loop stopped before this command was tried, so the device
    *  never saw it. Distinct from ok:false, which did reach the device and fail. */
   skipped?: boolean;
+  /** What became of it (see SendResult). `ok` and `skipped` are this field's two boolean
+   *  faces and are written from it here, so no reader can be told two different things. */
+  result: SendResult;
 }
+
+const outcomeOf = (command: VdCommand, result: SendResult, error?: string): SendOutcome => ({
+  command,
+  result,
+  ok: result === "accepted",
+  // Present only where it is true, which is what `skipped?: boolean` says and what every
+  // reader of a whole outcome compares against.
+  ...(result === "skipped" ? { skipped: true } : {}),
+  ...(error === undefined ? {} : { error }),
+});
 
 /**
  * Send commands to the connected device, in order, stopping at the first
@@ -196,32 +230,37 @@ export interface SendOutcome {
 export async function sendCommands(
   commands: VdCommand[],
   signal?: AbortSignal,
-  /** Told about each send AS IT LANDS. The returned array is not a substitute: an abort
-   *  is detected at the top of the next iteration and THROWS, so every outcome collected
-   *  so far is lost and a caller that only reads the return value cannot know which
-   *  commands the unit actually took. A caller acting on one send in particular — the
-   *  sample rate, whose arrival is what makes the recorder's Track Count worth
-   *  re-reading — has to be told here. */
+  /** Told about each send that RESOLVED, accepted or not, before this call returns. The
+   *  returned array is not a substitute: an abort is detected at the top of the next
+   *  iteration and THROWS, so every outcome collected so far is lost and a caller that only
+   *  reads the return value cannot know which commands the unit actually took. A caller
+   *  acting on one send in particular — the sample rate, whose arrival is what makes the
+   *  recorder's Track Count worth re-reading — has to be told here, and so does one deciding
+   *  what a write it cannot vouch for leaves standing. The commands after the stop are not
+   *  reported here: nothing was sent for them. */
   onSent?: (outcome: SendOutcome) => void,
 ): Promise<SendOutcome[]> {
   const outcomes: SendOutcome[] = [];
   for (const command of commands) {
     signal?.throwIfAborted();
+    let outcome: SendOutcome;
     try {
       await vdSet(command.paramId, command.x, command.y, command.vdValue);
-      outcomes.push({ command, ok: true });
-      onSent?.(outcomes[outcomes.length - 1]);
+      outcome = outcomeOf(command, "accepted");
     } catch (e) {
-      outcomes.push({ command, ok: false, error: e instanceof Error ? e.message : String(e) });
-      break;
+      const error = e instanceof Error ? e.message : String(e);
+      outcome = outcomeOf(command, error.startsWith(REFUSED_PREFIX) ? "refused" : "unknown", error);
     }
+    outcomes.push(outcome);
+    onSent?.(outcome);
+    if (!outcome.ok) break;
   }
   // Everything past the stop was never attempted.
-  for (const command of commands.slice(outcomes.length)) outcomes.push({ command, ok: false, skipped: true });
+  for (const command of commands.slice(outcomes.length)) outcomes.push(outcomeOf(command, "skipped"));
   return outcomes;
 }
 
-/** A command the device saw and refused, as opposed to one the loop never tried.
+/** A command the device saw and did not accept, as opposed to one the loop never tried.
  *  Both are ok:false, so every reader of an outcome list needs the distinction. */
 export const reachedAndFailed = (o: SendOutcome): boolean => !o.ok && !o.skipped;
 
@@ -521,17 +560,18 @@ export async function sendConverging(
     const startedAt = Date.now();
     const sending = roundCommands(model, plan, scope, emit, residual, exclude);
     const sent = await sendCommands(sending, signal, (o) => {
-      if (o.ok) {
-        const addr = cmdAddr(o.command);
-        ledger.acked.add(addr);
-        // Invalidated as each write LANDS, not when the round is planned: a command the device
-        // refused moved nothing, and neither did one a cancel stopped before it went out, so
-        // what an earlier read established about every other address still holds. A
-        // side-effect head resets addresses the catalogue does not enumerate, so ITS ack takes
-        // every address out rather than its own.
-        if (SIDE_EFFECT_PARAMS.has(o.command.name)) matched.clear();
-        else matched.delete(addr);
-      }
+      const addr = cmdAddr(o.command);
+      if (o.result === "accepted") ledger.acked.add(addr);
+      // Invalidated as each write RESOLVES, not when the round is planned: a command the
+      // device declined moved nothing, and neither did one a cancel stopped before it went
+      // out, so what an earlier read established about every other address still holds. An
+      // explicit refusal is the only failure that says that — everything else leaves the write
+      // on the wire with its fate unknown, so it invalidates exactly as an acceptance does. A
+      // side-effect head resets addresses the catalogue does not enumerate, so it takes every
+      // address out rather than its own.
+      if (o.result === "refused") return void onSent?.(o);
+      if (SIDE_EFFECT_PARAMS.has(o.command.name)) matched.clear();
+      else matched.delete(addr);
       onSent?.(o);
     });
     outcomes.push(...sent);

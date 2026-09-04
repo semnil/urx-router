@@ -862,14 +862,21 @@ describe("confirmedAddrs", () => {
     return cmd;
   };
 
+  /** The shell's own message for an answer that DECLINED a write, as `vd.rs` spells it. A
+   *  bare "nak" is a failure whose fate is UNKNOWN, which is a different case and the one a
+   *  stand-in silently turned every refusal into. */
+  const refusal = (cmd: VdCommand): Error =>
+    new Error(`broker-rejected: ${cmd.paramId}:${cmd.x}:${cmd.y} (response_code 400)`);
+
   /** A device that drops every write to `cmd`'s address — so it is still differing when the
-   *  round's re-read comes round — and then REFUSES the second one, stopping the loop. */
-  const stubborn = (cmd: VdCommand): void => {
+   *  round's re-read comes round — and then answers the second one with `fail`, stopping the
+   *  loop. */
+  const stubborn = (cmd: VdCommand, fail: (c: VdCommand) => Error = refusal): void => {
     const table = device();
     let sets = 0;
     vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
       if (id === cmd.paramId && x === cmd.x && y === cmd.y) {
-        return ++sets > 1 ? Promise.reject(new Error("nak")) : Promise.resolve();
+        return ++sets > 1 ? Promise.reject(fail(cmd)) : Promise.resolve();
       }
       table.set(`${id}:${x}:${y}`, v);
       return Promise.resolve();
@@ -997,6 +1004,63 @@ describe("confirmedAddrs", () => {
     expect(r.rounds).toBe(2);
     expect(failedAt(r, stuck)).toBe(true);
     expect(confirmedAddrs(r.ledger).has(cmdAddr(kept))).toBe(true);
+  });
+
+  it("vouches for nothing when a side-effect head's answer never came", async () => {
+    // The shell SENDS before it waits (`vd.rs`, do_set), so a timeout, a device-lost push
+    // mid-write or a closed link leaves the request on the wire with its fate unknown — the
+    // head may have landed and reset the very address an earlier round confirmed. Only an
+    // explicit refusal says otherwise, and treating the two alike adopted a value the unit no
+    // longer held.
+    const plan = defaultPlan("URX44V");
+    const stuck = headCmds(plan)[0]!;
+    const kept = otherThan(plan, stuck);
+    stubborn(stuck, (c) => new Error(`device-lost: ${c.paramId}:${c.x}:${c.y}`));
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+    expect(r.rounds).toBe(2);
+    expect(r.outcomes.some((o) => o.result === "unknown" && cmdAddr(o.command) === cmdAddr(stuck))).toBe(true);
+    // The case above is the control: the SAME arrangement with an explicit refusal keeps it.
+    expect(confirmedAddrs(r.ledger).has(cmdAddr(kept))).toBe(false);
+  });
+
+  it("keeps the addresses an ordinary command's unknown answer cannot have moved", async () => {
+    // The other half: a write whose fate is unknown invalidates what IT would have written,
+    // and an ordinary parameter moves nothing else — so a round that ends this way is not a
+    // reason to discard every other address.
+    const plan = defaultPlan("URX44V");
+    const stuck = cmdFor(plan, "CH_ON");
+    const kept = otherThan(plan, stuck);
+    stubborn(stuck, (c) => new Error(`broker-timeout: write at ${c.paramId}:${c.x}:${c.y}`));
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+    expect(r.rounds).toBe(2);
+    expect(r.outcomes.some((o) => o.result === "unknown" && cmdAddr(o.command) === cmdAddr(stuck))).toBe(true);
+    const confirmed = confirmedAddrs(r.ledger);
+    expect(confirmed.has(cmdAddr(stuck))).toBe(false);
+    expect(confirmed.has(cmdAddr(kept))).toBe(true);
+  });
+
+  it("reads the shell's own codes for what a failure says about the write", async () => {
+    // What separates the two is the code the shell raises, so the classification is asked of
+    // the messages `vd.rs` actually writes rather than of a stand-in. Anything it does not
+    // spell as a refusal — including a message carrying no code at all — leaves the write on
+    // the wire, which is the direction a new code has to fail in.
+    const cmd = planToCommands(model, dirty())[0]!;
+    const codes: Array<[string, string]> = [
+      [`broker-rejected: ${cmd.paramId}:${cmd.x}:${cmd.y} (response_code 400)`, "refused"],
+      [`broker-timeout: write at ${cmd.paramId}:${cmd.x}:${cmd.y}`, "unknown"],
+      ["device-lost: sync_status offline", "unknown"],
+      ["broker-closed", "unknown"],
+      ["control-worker-gone", "unknown"],
+      ["something nobody has written yet", "unknown"],
+    ];
+    for (const [message, want] of codes) {
+      vi.mocked(vdSet).mockRejectedValue(new Error(message));
+      const [outcome] = await sendCommands([cmd]);
+      expect(outcome!.result, message).toBe(want);
+      expect(outcome!.ok, message).toBe(false);
+    }
+    vi.mocked(vdSet).mockResolvedValue(undefined);
+    expect((await sendCommands([cmd]))[0]!.result).toBe("accepted");
   });
 
   it("drops everything once a side-effect head LANDS", async () => {

@@ -2166,12 +2166,9 @@ describe("a value the unit holds and the app cannot write", () => {
     expect(statusText()).toContain(t().status.paramsBounded(1));
   });
 
-  it("takes what earlier rounds confirmed when a later round's send is REFUSED", SLOW, async () => {
-    // An insert-FX selector accepts its write and does not keep it, so a second round goes out,
-    // and that one is refused — which stops the loop before it can re-read. A refused write
-    // moved nothing, not even the values a head of this kind resets, so it says nothing about
-    // this address, which round 1 sent and read back; and there is no later write that would
-    // offer it again.
+  /** The insert-FX selector accepts its write and does not keep it, so a second round goes
+   *  out, and that one fails with `fail` — which stops the loop before it can re-read. */
+  const writeStoppedBySelector = async (fail: string): Promise<void> => {
     //
     // SAVES because a write that fails offers its report — an unstubbed save dialog rejects,
     // and the flow then reports a device failure instead of the partial write it had. The
@@ -2204,10 +2201,12 @@ describe("a value the unit holds and the app cannot write", () => {
           const n = (writes.get(key) ?? 0) + 1;
           writes.set(key, n);
           // Accepted and not kept the first time, so it is still differing when the re-read
-          // comes round; refused the second, which is what stops the loop.
+          // comes round; answered the second, which is what stops the loop. The MESSAGE is the
+          // point: `vd.rs` sends before it waits, so only its own refusal code says the write
+          // did not land, and a bare failure would be the other case.
           if (n > 1) {
             refusals++;
-            throw new Error("nak");
+            throw new Error(`${fail}: ${a.paramId}:${a.x}:${a.y}`);
           }
           return null;
         },
@@ -2220,14 +2219,31 @@ describe("a value the unit holds and the app cannot write", () => {
     writing = true;
     $("btn-write").click();
     await invoked(shell, "vd_disconnect", 2);
-    // The positive control: without a second send there is no failing round, and the case would
-    // be asserting the ordinary clean-write path under another name.
+    // The positive control: without a second send there is no failing round, and the pair below
+    // would be asserting the ordinary clean-write path under another name.
     expect(refusals).toBeGreaterThan(0);
-    // …and the premise that makes it this case rather than the ordinary one: what was refused
-    // is a head, whose ACKNOWLEDGEMENT would have emptied the ledger.
+    // …and the premise that makes this the side-effect case: what failed is a head, whose
+    // acknowledgement — and whose unknown answer — empties the ledger.
     expect(PARAMS.INSERT_FX.sideEffect).toBe("converge");
+  };
+
+  it("takes what earlier rounds confirmed when a later round's send is REFUSED", SLOW, async () => {
+    // `broker-rejected` is the shell's own message for an answer that DECLINED the write: it
+    // reached the broker and was turned down, so nothing moved — not this address, which round
+    // 1 sent and read back, and not the values a head of this kind resets. And there is no
+    // later write that would offer it again.
+    await writeStoppedBySelector("broker-rejected");
     expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
     expect(statusText()).toContain(t().status.paramsBounded(1));
+  });
+
+  it("takes nothing when the answer to a later round's send never came", SLOW, async () => {
+    // The same arrangement, failing the way a lost link fails. `vd.rs` SENDS before it waits,
+    // so the selector may have landed and reset this address on its way out; the plan may take
+    // nothing from a write it cannot vouch for.
+    await writeStoppedBySelector("device-lost");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+    expect(statusText()).not.toContain(t().status.paramsBounded(1));
   });
 
   it("takes nothing from a write the device did not keep", SLOW, async () => {
