@@ -2280,8 +2280,9 @@ export interface FollowOnlyAddr {
  * does not carry them and they would be in no notify registration. Registering them is
  * what lets a front-panel change reach the plan instead of waiting for the next full
  * read. Both families were measured announcing a change on a URX44V (2026-08-11, System
- * V1.3.1.0); the addresses that genuinely stay silent (D.Gain, the FX / insert-FX engine
- * arrays) are not here, because a registration would do nothing for them.
+ * V1.3.1.0); the addresses that stay silent when the front panel moves them (D.Gain, the
+ * insert-FX engine array, and every FX array slot but the one below) are not here, because
+ * a registration would do nothing for them.
  *
  * This lives beside `planToCommands` on purpose: the tap half is the exact complement of
  * the `sendTapWritable` test that suppresses the write there, and the two were written as
@@ -2295,7 +2296,7 @@ export interface FollowOnlyAddr {
  * hold — the notify-driven read and the full read would disagree about the same value
  * under the same preference. Track Count is `sceneExternal`; the send taps are not.
  */
-export function planToFollowOnlyAddrs(model: DeviceModel, scope: WriteScope = "all"): FollowOnlyAddr[] {
+export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: WriteScope = "all"): FollowOnlyAddr[] {
   const out: FollowOnlyAddr[] = [];
   // CH → FX send taps: the broker publishes max_value 0 on 193/197/320/324, so PRE is
   // unwritable and the emit loop above skips SEND_TAP for them. Same source filter as
@@ -2316,6 +2317,26 @@ export function planToFollowOnlyAddrs(model: DeviceModel, scope: WriteScope = "a
   // node params, which is the node whose scoped read repairs it.
   if (model.nodes.some((n) => n.id === "out.sdrec")) {
     out.push({ param: PARAMS.SD_REC_TRACK_COUNT.id, x: 0, y: 0, name: "SD_REC_TRACK_COUNT", node: "out.sdrec" });
+  }
+  // The FX slots the unit is computing right now. `pushFxEffectCommands` leaves a `computed`
+  // slot out of what it sends, and the registration the live layer builds is the emitted set
+  // — so without this entry the address is subscribed by nobody while the unit is the one
+  // moving it. The unit ANNOUNCES each recompute there, so the value would be announced into
+  // silence: the plan would keep the number it had, the screen would print it under a tag
+  // saying the value is the unit's, and the writer would send it back the moment Sync went
+  // off. Plan-dependent, unlike everything above it — which slot this is, and whether there
+  // is one at all, is a function of the effect type and of the Sync switch.
+  for (const node of model.nodes) {
+    const fxIndex = fxChannelIndex(node.id);
+    if (fxIndex === null) continue;
+    const fx = plan.nodeParams[node.id]?.fxEffect;
+    const type = resolveFxEffectType(fxIndex, fx?.type);
+    const owners = fxRowOwners(type, fx?.params);
+    if (!owners.size) continue;
+    for (const desc of fxParams(type)) {
+      if (owners.get(desc.key) !== "computed") continue;
+      out.push({ param: FX_EFFECT_ARRAY_PARAM[fxIndex], x: 0, y: desc.slot, name: "FX_EFFECT_PARAM", node: node.id });
+    }
   }
   if (scope === "all") return out;
   return out.filter((f) => (PARAMS[f.name] as ParamSpec).sceneExternal !== true);

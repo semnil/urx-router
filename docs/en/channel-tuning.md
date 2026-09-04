@@ -1428,14 +1428,24 @@ the NOTE that goes unread — the effect guide conditions it on tempo sync being
 locked and tagged instead. BPM is neither: the guide puts no condition on it.
 
 The cost is that a note value cannot be chosen before Sync is switched on; switching Sync on first is
-the one extra gesture. `fxRowOwners` is the one list **three** surfaces read — this screen locks and
-tags the row, the MIDI catalogue declines a write to it, and `pushFxEffectCommands` leaves it out of
-what it sends — so a mapping cannot drive a row the screen says is not the operator's, and neither can
-a Device-menu write. The writer's share is the one that is not merely tidy: **the unit accepts a write
-to that slot while Sync is on and keeps it**, so re-sending the plan's copy takes the delay time off
-the note value and leaves Sync switched on with nothing driving it, until the operator next touches
-the BPM or the note. The note value is the other half of the list and is NOT withheld — the unit
-stores it while it is not reading it, and the app is still its author.
+the one extra gesture. `fxRowOwners` is the one list **four** surfaces read — this screen locks and
+tags the row, the MIDI catalogue declines a write to it, `pushFxEffectCommands` leaves it out of what
+it sends, and `planToFollowOnlyAddrs` puts that same slot back as an address the app only READS — so a
+mapping cannot drive a row the screen says is not the operator's, and neither can a Device-menu write.
+The writer's share is the one that is not merely tidy: **the unit accepts a write to that slot while
+Sync is on and keeps it**, so re-sending the plan's copy takes the delay time off the note value and
+leaves Sync switched on with nothing driving it, until the operator next touches the BPM or the note.
+
+The fourth is the other half of the third, and it is not symmetry. Live sync registers for notifies on
+**the addresses it emits**, so withholding the write also unsubscribes the address — and the unit
+announces every delay time it computes there, for a BPM change and for a note change alike. Registered
+by neither list, that announcement reaches nobody: the plan keeps the number it had, this screen prints
+it under a tag saying the value is the unit's, and the writer sends it back the moment Sync goes off.
+The two lists are therefore exact complements — written and unheard while the operator owns the value,
+unwritten and followed while the unit does.
+
+The note value is the other half of the ownership list and is NOT withheld — the unit stores it while
+it is not reading it, and the app is still its author.
 
 ### The value keys name the plan key, not a slot
 

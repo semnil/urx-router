@@ -31,7 +31,7 @@ import {
   type FxFamily,
   type FxParamDesc,
 } from "./fx-effect";
-import { planToCommands } from "./translate";
+import { planToCommands, planToFollowOnlyAddrs } from "./translate";
 
 describe("fx-effect encodings (live calibration anchors)", () => {
   // Every filter frequency read off the unit's own screen, and the law has to reproduce each
@@ -699,5 +699,51 @@ describe("what the writer sends while tempo Sync is on", () => {
 
   it("sends it again once Sync is off", () => {
     expect(arrSlots(held(0)), "the positive control").toContain(6);
+  });
+
+  // …and the slot it stops SENDING is the slot it starts LISTENING to. The live layer builds
+  // its notify registration out of the emitted set, so suppressing the write is also what
+  // unsubscribes the address — and the unit announces every value it computes there. In
+  // neither list, the recompute is announced to nobody: the plan keeps the number it had, the
+  // screen prints it under a tag saying the value is the unit's, and the writer sends it back
+  // the moment Sync goes off.
+  //
+  // Asked of both channels and both delay types, since each pairs a different array id with a
+  // plan key of its own, and asked in BOTH Sync states — the two lists have to be exact
+  // complements, or the address is either written while the unit owns it or unheard while it
+  // does not.
+  it.each([
+    ["bus.fx1", 1024, 681, "delay"],
+    ["bus.fx1", 1025, 681, "pingPongDelay"],
+    ["bus.fx2", 1024, 685, "delay"],
+    ["bus.fx2", 1025, 685, "pingPongDelay"],
+  ] as const)("follows the computed delay time on %s, type %i", (node, type, arr, key) => {
+    const model = getModel("URX44V");
+    const planFor = (sync: number): Plan => {
+      const p = emptyPlan("URX44V");
+      p.nodeParams[node] = { fxEffect: { type, params: { [key]: 5000, sync, bpm: 120, note: 9 } } };
+      return p;
+    };
+    const emits = (sync: number): boolean =>
+      planToCommands(model, planFor(sync)).some((c) => c.paramId === arr && c.y === 6);
+    const follows = (sync: number): boolean =>
+      planToFollowOnlyAddrs(model, planFor(sync)).some((f) => f.param === arr && f.x === 0 && f.y === 6);
+
+    expect(emits(1), "Sync on: not written").toBe(false);
+    expect(follows(1), "Sync on: registered as a read-only follow").toBe(true);
+    // The complement, which is what makes the pair a handover rather than two independent
+    // opinions: with Sync off the app is the author again and has nothing to listen for.
+    expect(emits(0), "Sync off: written").toBe(true);
+    expect(follows(0), "Sync off: not a follow-only address").toBe(false);
+  });
+
+  // The follow entry has to name the node whose scoped read repairs it, or the notify is
+  // indexed to nothing and the value it announced is dropped.
+  it("indexes the followed slot to the FX channel that owns it", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delay: 5000, sync: 1, bpm: 120, note: 9 } } };
+    const hit = planToFollowOnlyAddrs(getModel("URX44V"), plan).find((f) => f.param === 685 && f.y === 6);
+    expect(hit?.node).toBe("bus.fx2");
+    expect(hit?.name).toBe("FX_EFFECT_PARAM");
   });
 });
