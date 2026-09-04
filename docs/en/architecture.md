@@ -3346,12 +3346,26 @@ snapshot already agrees with the unit sends nothing, so a flush can succeed with
 in question at all. A first version keyed on the run's success and adopted values no write had touched —
 an unrelated fader move was enough to reproduce it.
 
-`confirmedAddrs` (`control/client.ts`) is that set: sent and acknowledged, INTERSECTED with what the
-converge's last diff actually read, then minus what that diff found still differing. The intersection is
-the load-bearing half — subtracting the read failures is not enough, because the diff stops at its first
-one and leaves every later address unasked, in neither list and sent, which reported it confirmed. A
-DIRECT live write is deliberately outside the set: an acknowledgement says the unit accepted a write, not
-that it kept it, and an address no converge covered simply waits for one that does. `paramRangeAddrs` (`control/translate.ts`)
+`confirmedAddrs` (`control/client.ts`) is that set, read off the converge's own **ledger**: an address is
+in it when a send was acknowledged AND a read has since found the device holding the plan's value. Having
+been READ is the load-bearing half — subtracting the read failures is not enough, because a diff stops at
+its first one and leaves every later address unasked, in neither the differences nor the failures and
+sent, which reported it confirmed. The ledger is kept CURRENT rather than rebuilt at the end of each
+round: every read writes it as it goes, and every send that LANDS takes the address it just overwrote
+back out — every address, when what landed is a `sideEffect` head, since which values such a write moves
+is what this loop settles by re-reading rather than something the catalogue enumerates. What invalidates
+is the ACKNOWLEDGEMENT and not the round: a command the device refused moved nothing, and neither did one
+a cancel stopped before it went out, so what an earlier read established about every other address still
+holds. Invalidating on the round being PLANNED instead discarded a confirmed value every time a later
+round's side-effect head was refused. Two paths rest on that. A **cancel** throws out of the loop with no
+result to read, so the write flow holds the ledger itself, takes what the unit had confirmed before it,
+and reports the count on the canceled line; and a round whose **send fails** re-reads nothing, which says
+nothing about the addresses no acknowledgement in it moved — what an earlier round confirmed stays. The
+count rides on whatever line that write ends up writing, the stopped one included. Both matter because the
+opportunity does not come round again: the value that landed is what stops the address differing, so
+every later diff finds the unit already agreeing and never sends it. A DIRECT live write is deliberately
+outside the set: an acknowledgement says the unit accepted a write, not that it kept it, and an address
+no converge covered simply waits for one that does. `paramRangeAddrs` (`control/translate.ts`)
 is the join between the loader's report, which names a node and a key, and the address the emit sends it
 to; it reads the emit's own output rather than rebuilding the addressing, so a change to how an FX slot
 is addressed cannot leave it answering the old one.
