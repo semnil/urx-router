@@ -289,6 +289,7 @@ export const en = {
       hpf: dev("HPF"),
       hiZ: dev("Hi-Z"),
       duckerOn: dev("DUCKER"),
+      insertFxOn: dev("INS FX"),
       // The channel tuning screens' parameters. The scope beside them says which
       // processor they belong to, so these are the knob names alone.
       threshold: dev("Threshold"),

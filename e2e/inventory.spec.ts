@@ -8,7 +8,7 @@ import { listControls } from "../src/core/midi/controls";
 import { getModel } from "../src/models";
 import { defaultPlan } from "../src/models/initial-state";
 import { selectWire } from "./graph-helpers";
-import { COMP_EQ_SSMCS } from "../src/core/control/params";
+import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS } from "../src/core/control/params";
 import { chooseOption } from "./choose-option";
 import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
 
@@ -946,6 +946,9 @@ function everyControlMapping(): Array<Record<string, unknown>> {
   // a default plan carries no SSMCS channel, and switching every mono channel would
   // take COMP and the 4-band EQ out instead.
   plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+  // …and ONE channel HOLDING an insert effect, for the same reason: with none held there is
+  // no insert to switch, so the bypass is in no list and its label is printed nowhere.
+  plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value };
   const controls = listControls(model, plan);
   return controls.map((c, i) => ({
     control: c.id,

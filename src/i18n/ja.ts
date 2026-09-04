@@ -212,6 +212,7 @@ export const ja: Messages = {
       hpf: "HPF",
       hiZ: "Hi-Z",
       duckerOn: "DUCKER",
+      insertFxOn: "INS FX",
       threshold: "Threshold",
       range: "Range",
       attack: "Attack",

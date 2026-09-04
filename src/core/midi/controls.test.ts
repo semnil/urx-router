@@ -4,9 +4,21 @@ import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
 import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
 import { ref } from "../../models/types";
-import { COMP_EQ_SSMCS, EQ_TYPE_PASS } from "../control/params";
+import { COMP_EQ_SSMCS, EQ_TYPE_PASS, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../control/params";
 import { planToCommands } from "../control/translate";
-import { bindControl, controlId, listControls, parseControlId } from "./controls";
+import {
+  bindControl,
+  controlId,
+  listControls,
+  parseControlId,
+  COMP_SCOPE,
+  EQ_SCOPE,
+  eqBandScope,
+  FX_SCOPE,
+  INSFX_SCOPE,
+} from "./controls";
+import { MidiEngine } from "./engine";
+import { mirrorBalPair, mirrorLinkedInsertFx } from "../routing";
 import {
   COMPANDER_H,
   COMPANDER_S,
@@ -722,5 +734,350 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(push(mute, 1), "mute at 48 kHz").toBe(true);
     expect(send().params?.level).not.toBe(-10);
     expect(send().params?.on).toBe(false);
+  });
+});
+
+// A gang whose members do not merely share an address but share a LOCK: the EQ 1-knob computes
+// the four bands while it is on, so a band cannot be written until the knob is off — and the
+// knob is in the same gang. Driven through the real engine and the real catalogue, because what
+// is being asked is an interaction between the two.
+describe("a gang whose first member unlocks another", () => {
+  const ONE = controlId("ch1", "oneKnob", EQ_SCOPE);
+  const LOW = controlId("ch1", "bandOn", eqBandScope(0));
+
+  const knobOnBandStored = (knobOn = true, bandOn = true): void => {
+    const bands = (plan.nodeParams.ch1?.eqBands ?? []).slice();
+    bands[0] = { ...bands[0], on: bandOn };
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      eqOneKnob: { ...plan.nodeParams.ch1?.eqOneKnob, on: knobOn },
+      eqBands: bands,
+    };
+  };
+
+  /** Drive one press through the real engine and report what the plan ended up holding. */
+  const press = (order: readonly string[], button: "edge" | "state", value: number, knobOn = true, bandOn = true) => {
+    knobOnBandStored(knobOn, bandOn);
+    // The premise, stated rather than assumed: the knob reads as it was seeded, and the band
+    // READS off exactly when the knob owns it. Without this a run where the seed did not take
+    // proves nothing — with the knob off the band would read off because it IS off.
+    expect(bindControl(model, plan, ONE)!.get(), "the knob is where the case put it").toBe(knobOn ? 1 : 0);
+    expect(bindControl(model, plan, LOW)!.get(), "the band reads off only while the knob owns it").toBe(
+      knobOn ? 0 : bandOn ? 1 : 0,
+    );
+    expect(plan.nodeParams.ch1?.eqBands?.[0]?.on, "…whatever it is holding").toBe(bandOn);
+
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: () => {},
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 9 } as const;
+    engine.setMappings(order.map((control) => ({ control, addr, mode: "absolute", button }) as const));
+    engine.onMessage([0xb0, 9, value]);
+    return { oneKnob: plan.nodeParams.ch1?.eqOneKnob?.on, low: plan.nodeParams.ch1?.eqBands?.[0]?.on };
+  };
+
+  // BOTH learn orders. The order decides which member commits first, and only one of them ever
+  // worked: with the band learned first there was nothing to write to when its turn came, and
+  // nothing came back for it afterwards.
+  it.each([
+    [[ONE, LOW], "the knob learned first"],
+    [[LOW, ONE], "the band learned first"],
+  ])("switches the whole gang off, %s", (order) => {
+    const after = press(order, "state", 0);
+    expect(after.oneKnob, "the knob went off").toBe(false);
+    // …and so did the band. Left behind, it comes back the moment the knob releases it — the
+    // operator switched one physical control off and an EQ band arrived on.
+    expect(after.low, "and the band it was hiding").toBe(false);
+  });
+
+  // The learn order must not decide the OUTCOME, in either button mode. It is the order two
+  // assignments happened to be made in — nothing the operator can see at the moment of a press,
+  // and nothing the press means. Edge is where it showed: its target is a flip of what the
+  // control reads, so a member re-decided after the release flipped a value the operator was
+  // never shown, while the one that got in first flipped the value they were.
+  it.each([
+    ["edge", 127],
+    ["state", 0],
+  ] as const)("lands on the same values from either learn order, in %s mode", (button, value) => {
+    const knobFirst = press([ONE, LOW], button, value);
+    const bandFirst = press([LOW, ONE], button, value);
+    expect(knobFirst).toEqual(bandFirst);
+  });
+
+  // …and what edge lands ON, so the case above cannot be satisfied by both orders agreeing on
+  // the wrong thing. A locked band READS off, and a flip of what the operator was shown turns
+  // it on — the knob goes off in the same press, which is what makes that value reachable.
+  it("flips an edge gang from what the screen was showing", () => {
+    const after = press([ONE, LOW], "edge", 127);
+    expect(after.oneKnob, "the knob was on and flips off").toBe(false);
+    expect(after.low, "the band read off and flips on").toBe(true);
+  });
+
+  // The whole table: the lock going ON as well as coming off, both button modes, both learn
+  // orders. The direction that ADDS the lock is the one the retry cannot save — the governed
+  // value has to be written before the governor takes it, and after that there is nothing to
+  // write to and no way back.
+  it.each([
+    ["the lock coming off", true, true],
+    ["the lock going on", false, false],
+  ] as const)("%s lands the same way from either learn order, in either mode", (_label, knobOn, bandOn) => {
+    for (const [button, value] of [
+      ["edge", 127],
+      ["state", knobOn ? 0 : 127],
+    ] as const) {
+      const knobFirst = press([ONE, LOW], button, value, knobOn, bandOn);
+      const bandFirst = press([LOW, ONE], button, value, knobOn, bandOn);
+      expect(bandFirst, `${button}: the learn order decided the outcome`).toEqual(knobFirst);
+      // The knob moved in both, which is the positive control: two orders agreeing that
+      // NOTHING happened would satisfy the line above.
+      expect(knobFirst.oneKnob, `${button}: the knob moved`).toBe(!knobOn);
+    }
+  });
+
+  // …and what the locking direction lands on. The band is writable when the press arrives and
+  // the knob is about to take it, so the band's own value has to be written first — left to
+  // the order the assignments were made in, it was written or lost by luck.
+  it("writes a band the knob is about to take over", () => {
+    const after = press([ONE, LOW], "state", 127, false, false);
+    expect(after.oneKnob, "the knob went on").toBe(true);
+    expect(after.low, "and the band took the press before it was locked").toBe(true);
+  });
+});
+
+// The insert effect's BYPASS. It is the face on the CONSOLE strip rather than a row on the
+// tuning screen, and it is a flag of the node's own rather than a slot of the engine array —
+// so it takes a param of its own, the shape `gateOn` / `compOn` / `eqOn` take.
+describe("the insert effect's bypass", () => {
+  const id = controlId("ch1", "insertFxOn");
+  const hold = (sel: number): void => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: sel };
+  };
+
+  it("is offered only while the node holds an effect", () => {
+    // The factory plan holds none, and there is then no insert to switch: the strip draws an
+    // opener where the face would be, so a control offered here would be one the operator has
+    // no way to see.
+    expect(listControls(model, plan).some((c) => c.id === id)).toBe(false);
+    expect(bindControl(model, plan, id)).toBeNull();
+    hold(INSERT_FX_OPTIONS[1].value);
+    expect(listControls(model, plan).some((c) => c.id === id)).toBe(true);
+    expect(bindControl(model, plan, id)).not.toBeNull();
+  });
+
+  it("reads engaged for a held effect with no stored flag, and follows the bypass", () => {
+    hold(INSERT_FX_OPTIONS[1].value);
+    // ABSENT means engaged — what the unit does on a selector write, and the same predicate
+    // the strip's face is drawn from rather than a second reading of the field. The factory
+    // plan carries the flag as `false`, so the state has to be built rather than assumed.
+    delete plan.nodeParams.ch1!.insertFxOn;
+    expect(plan.nodeParams.ch1?.insertFxOn, "the state this case reads from").toBeUndefined();
+    expect(bindControl(model, plan, id)!.get(), "absent = engaged").toBe(1);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFxOn: false };
+    expect(bindControl(model, plan, id)!.get(), "and a stored bypass reads as off").toBe(0);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFxOn: true };
+    expect(bindControl(model, plan, id)!.get(), "…and back").toBe(1);
+  });
+
+  // The rate lock, at each effect's own ceiling and one step past it. Above it the strip draws
+  // this face OFF and refuses the press, so the catalogue has to answer the same way — a
+  // mapping outlives the rate it was made at, and the LED would otherwise report the stored
+  // value against a face that reads OFF.
+  it.each([
+    [512, "Pitch Fix", 48000, 96000],
+    [256, "Clean", 96000, 176400],
+  ] as const)("refuses %i (%s) above its ceiling, and takes it at the ceiling", (sel, _label, ceiling, above) => {
+    hold(sel);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFxOn: true };
+
+    // AT the ceiling the control is the operator's, which is the positive control: without it
+    // a catalogue that refused at every rate would satisfy the half below.
+    plan.sampleRate = ceiling;
+    expect(bindControl(model, plan, id)!.get(), `${ceiling}: reads the stored value`).toBe(1);
+    expect(bindControl(model, plan, id)!.set(0), `${ceiling}: takes the write`).toBe(true);
+    expect(plan.nodeParams.ch1?.insertFxOn).toBe(false);
+
+    // …and one step past it the face is drawn OFF and inoperable.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFxOn: true };
+    plan.sampleRate = above;
+    // The mapping stays RESOLVABLE on purpose: it survives the rate going back, and a control
+    // that vanished would take its assignment with it.
+    const locked = bindControl(model, plan, id);
+    expect(locked, `${above}: still bound`).not.toBeNull();
+    expect(locked!.get(), `${above}: reads OFF, as the face is drawn`).toBe(0);
+    expect(locked!.set(0), `${above}: refuses the write`).toBe(false);
+    expect(plan.nodeParams.ch1?.insertFxOn, `${above}: and the plan is untouched`).toBe(true);
+  });
+
+  it("writes the bypass and nothing else", () => {
+    hold(INSERT_FX_OPTIONS[1].value);
+    const before = { ...plan.nodeParams.ch1 };
+    expect(bindControl(model, plan, id)!.set(0)).toBe(true);
+    expect(plan.nodeParams.ch1?.insertFxOn).toBe(false);
+    expect(bindControl(model, plan, id)!.set(1)).toBe(true);
+    expect(plan.nodeParams.ch1?.insertFxOn).toBe(true);
+    // The selection is the popover's, not this control's: a press that also released or
+    // changed the effect would be the defect the face's own comment names.
+    const moved = [...new Set([...Object.keys(before), ...Object.keys(plan.nodeParams.ch1 ?? {})])].filter(
+      (k) => (before as Record<string, unknown>)[k] !== (plan.nodeParams.ch1 as Record<string, unknown>)[k],
+    );
+    expect(moved).toEqual(["insertFxOn"]);
+  });
+});
+
+// The dependency the gang orders itself by, declared across every processor that has one. It
+// is a control ID, so a typo or a renamed scope leaves it naming nothing — and a governor that
+// resolves to no control silently puts the ordering back to the one the mappings happened to
+// be learned in, which is the defect it exists to remove.
+describe("the lock dependencies the catalogue declares", () => {
+  const listFor = (seed: (p: Plan) => void): ReturnType<typeof listControls> => {
+    seed(plan);
+    return listControls(model, plan);
+  };
+
+  it("names a governor that exists, wherever one is named", () => {
+    const seeded = listFor((p) => {
+      p.nodeParams.ch1 = { ...p.nodeParams.ch1, insertFx: 512 };
+      p.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { sync: 1, bpm: 120, note: 9, delay: 5000 } } };
+    });
+    const ids = new Set(seeded.map((c) => c.id));
+    const named = seeded.filter((c) => c.governedBy !== undefined);
+    // The positive control: a run that declared none would satisfy the loop below.
+    expect(named.length, "the catalogue declares dependencies at all").toBeGreaterThan(0);
+    expect(named.filter((c) => !ids.has(c.governedBy!)).map((c) => `${c.id} -> ${c.governedBy}`)).toEqual([]);
+    // …and nothing waits for itself, which would be a control that is never written.
+    expect(named.filter((c) => c.governedBy === c.id).map((c) => c.id)).toEqual([]);
+  });
+
+  // One per family that HAS a governor among its controls, so a processor that loses its
+  // declaration is red here rather than only in whichever gang someone happens to build.
+  //
+  // Pitch Fix is deliberately not among them. Its MIDI Control decides which of its slots the
+  // unit drives, exactly as the 1-knobs do, but it is a writable slot with no parameter row —
+  // no mapping can name it, so it can be in no gang and there is nothing for its slots to wait
+  // for. The case above is what holds that: a declaration pointing at it would name a control
+  // that does not exist, and the ordering would silently go back to the learn order.
+  it.each([
+    ["EQ", (p: Plan) => void p, `ch1/bandOn@${eqBandScope(0)}`, controlId("ch1", "oneKnob", EQ_SCOPE)],
+    ["COMP", (p: Plan) => void p, "ch1/threshold@comp", controlId("ch1", "oneKnob", COMP_SCOPE)],
+    [
+      "the multi-band compressor",
+      (p: Plan) => {
+        p.nodeParams["bus.mix1"] = { insertFx: 1792 };
+      },
+      `bus.mix1/insfx@${INSFX_SCOPE}.mbc.${MBC_ONE_KNOB.level.slot}`,
+      controlId("bus.mix1", "insfx", `${INSFX_SCOPE}.mbc.${MBC_ONE_KNOB.on.slot}`),
+    ],
+    [
+      "FX Sync",
+      (p: Plan) => {
+        p.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { sync: 1, bpm: 120, note: 9, delay: 5000 } } };
+      },
+      `bus.fx2/fx@${FX_SCOPE}.delay`,
+      controlId("bus.fx2", "fx", `${FX_SCOPE}.sync`),
+    ],
+  ])("%s names the control that governs it", (_family, seed, dependent, governor) => {
+    const found = listFor(seed).find((c) => c.id === dependent);
+    if (!found) throw new Error(`${dependent} is not in the catalogue — the case addresses nothing`);
+    expect(found.governedBy).toBe(governor);
+  });
+});
+
+// The governor and the governed need not be the same channel. A BAL-linked pair mirrors its
+// whole node params, so its two 1-knobs are ONE governor: a gang holding CH 1's band and CH 2's
+// knob has to be ordered against both, and keyed by control id alone it was not.
+//
+// PAN and an unlinked pair are the negative conditions: there the two channels keep their own EQ
+// and COMP, so CH 2's knob governs nothing of CH 1's and the learn order has nothing to decide.
+// They pin the OUTCOME rather than the key — normalising in PAN as well is a mutation these do
+// not catch, and cannot: the insert effect is the only thing PAN mirrors, and no family a linked
+// CH pair can hold has a driver among its controls, so there is no relation there to key wrongly.
+describe("a governor across a BAL-linked pair", () => {
+  const knobOf = (ch: string): string => controlId(ch, "oneKnob", EQ_SCOPE);
+  const lowOf = (ch: string): string => controlId(ch, "bandOn", eqBandScope(0));
+
+  const press = (
+    order: readonly string[],
+    button: "edge" | "state",
+    value: number,
+    link: number | null,
+    knobOn: boolean,
+  ): Record<string, boolean | undefined> => {
+    for (const ch of ["ch1", "ch2"]) {
+      const bands = (plan.nodeParams[ch]?.eqBands ?? []).slice();
+      bands[0] = { ...bands[0], on: knobOn };
+      plan.nodeParams[ch] = {
+        ...plan.nodeParams[ch],
+        eqOneKnob: { ...plan.nodeParams[ch]?.eqOneKnob, on: knobOn },
+        eqBands: bands,
+      };
+    }
+    if (link !== null) plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: link };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      // The funnel's own mirrors, which are what make the pair one governor.
+      applied: (c) => {
+        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 9 } as const;
+    engine.setMappings(order.map((control) => ({ control, addr, mode: "absolute", button }) as const));
+    engine.onMessage([0xb0, 9, value]);
+    return {
+      ch1Knob: plan.nodeParams.ch1?.eqOneKnob?.on,
+      ch1Low: plan.nodeParams.ch1?.eqBands?.[0]?.on,
+      ch2Knob: plan.nodeParams.ch2?.eqOneKnob?.on,
+      ch2Low: plan.nodeParams.ch2?.eqBands?.[0]?.on,
+    };
+  };
+
+  // governor channel x governed channel x learn order x lock direction x button mode, against
+  // each link state. The outcome may differ BETWEEN link states — that is what linking means —
+  // so what each row asserts is that the learn order does not decide it.
+  it.each([
+    ["BAL", PAN_BAL_BAL],
+    ["PAN", PAN_BAL_PAN],
+    ["unlinked", null],
+  ])("does not let the learn order decide the outcome, %s", (_label, link) => {
+    for (const governor of ["ch1", "ch2"])
+      for (const governed of ["ch1", "ch2"])
+        for (const [button, onValue, offValue] of [
+          ["edge", 127, 127],
+          ["state", 127, 0],
+        ] as const)
+          for (const knobOn of [false, true]) {
+            const value = knobOn ? offValue : onValue;
+            const a = press([lowOf(governed), knobOf(governor)], button, value, link, knobOn);
+            const b = press([knobOf(governor), lowOf(governed)], button, value, link, knobOn);
+            expect(b, `${button} governor=${governor} governed=${governed} knobOn=${knobOn}`).toEqual(a);
+            // The positive control: the knob really moved, so two orders agreeing that nothing
+            // happened cannot satisfy the line above.
+            expect(a[`${governor}Knob`], `${button}: the knob moved`).toBe(!knobOn);
+          }
+  });
+
+  // …and what BAL lands on, since agreement alone is satisfied by both orders being wrong. The
+  // band is writable when the press arrives and the knob is about to take it over, so its value
+  // is written first — and the mirror carries it to the partner.
+  it("writes the band before the pair's knob takes it, from either channel", () => {
+    for (const governor of ["ch1", "ch2"]) {
+      const after = press([knobOf(governor), lowOf("ch1")], "state", 127, PAN_BAL_BAL, false);
+      expect(after.ch1Knob, `${governor}: the pair's knob went on`).toBe(true);
+      expect(after.ch1Low, `${governor}: and the band took the press first`).toBe(true);
+      expect(after.ch2Low, `${governor}: on both members, which the mirror carries`).toBe(true);
+    }
   });
 });

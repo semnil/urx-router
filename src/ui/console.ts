@@ -2613,7 +2613,7 @@ export class Console {
             // Selection belongs to the popover and the bypass to this face, so the face
             // writes the bypass alone and the strip it sits on is the only thing that
             // changes. Nothing else shows the value, so there is nothing to keep in step.
-            { cls: IFX_FACE_CLS, keys: ["insertFxOn"] },
+            { cls: IFX_FACE_CLS, keys: ["insertFxOn"], midiId: controlId(m.id, "insertFxOn") },
           ),
         );
       // Dropped where the popover behind it can do NOTHING: a strip holding nothing at a

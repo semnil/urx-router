@@ -6,6 +6,10 @@ import { fake, type Fake } from "./fake-control.test-util";
 
 let controls: Map<string, Fake>;
 let applied: string[];
+/** What applying one control does to OTHERS. The real funnel mirrors an edit onto a linked
+ *  partner, and that partner may itself be a member of the same gang — which is the state a
+ *  later member would read if targets were decided one at a time. Null unless a case sets it. */
+let onApplied: ((id: string) => void) | null;
 let sent: number[][];
 let learned: MidiAddr[];
 let pendingCount: number;
@@ -17,6 +21,7 @@ let engine: MidiEngine;
 beforeEach(() => {
   controls = new Map();
   applied = [];
+  onApplied = null;
   sent = [];
   learned = [];
   pendingCount = 0;
@@ -25,7 +30,10 @@ beforeEach(() => {
   refusals = [];
   engine = new MidiEngine({
     resolve: (id) => controls.get(id) ?? null,
-    applied: (c) => applied.push(c.id),
+    applied: (c) => {
+      applied.push(c.id);
+      onApplied?.(c.id);
+    },
     gate: () => gateReason,
     refused: (reason) => refusals.push(reason),
     send: (bytes) => sent.push(bytes),
@@ -710,6 +718,41 @@ describe("gang (several controls on one address)", () => {
     // divergent value (1.0) must not emit a second, fighting message.
     engine.feedback();
     expect(sent).toEqual([encodeCc(0, 7, 64)]);
+  });
+
+  // Applying one member can move ANOTHER member's control — a linked stereo pair shares one
+  // insert effect, and the apply hook mirrors the edit onto the partner. Decided one at a
+  // time, the second member read the value the first had just produced and undid it: one
+  // press left the pair exactly where it started, and a second press did the same.
+  it("decides every ganged member from the state before the message, not after a mirror", () => {
+    const a = fake("ch1/insertFxOn", "toggle");
+    const b = fake("ch2/insertFxOn", "toggle");
+    controls.set(a.id, a);
+    controls.set(b.id, b);
+    a.set(1);
+    b.set(1);
+    // The mirror the funnel runs: whichever member was applied, the partner takes its value.
+    onApplied = (id) => {
+      const src = controls.get(id)!;
+      (id === a.id ? b : a).set(src.get());
+    };
+    const addr: MidiAddr = { type: "cc", channel: 0, controller: 7 };
+    map(a.id, addr);
+    map(b.id, addr);
+
+    // Edge is the default: one press at or above 64 flips. Both members are asked to flip
+    // the same pair, so the pair ends OFF — not back where it started.
+    engine.onMessage(encodeCc(0, 7, 127));
+    expect([a.get(), b.get()], "one press turns the pair off").toEqual([0, 0]);
+    // ONCE, not once per member. The mirror had already moved the partner by the time the
+    // second member wrote, so that write changed nothing — and `applied` is what schedules the
+    // repaint, the dirty flag and the live-sync flush, none of which is owed twice for one edit.
+    expect(applied, "one edit, reported once").toEqual([a.id]);
+
+    // …and the next press brings it back, which is what says the first was a flip rather
+    // than a value the mirror happened to settle on.
+    engine.onMessage(encodeCc(0, 7, 127));
+    expect([a.get(), b.get()], "the next press turns it back on").toEqual([1, 1]);
   });
 
   it("drops a toggle feedback echo for the whole gang, not just the head", () => {

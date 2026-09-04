@@ -69,6 +69,18 @@ interface PickupState {
   lastIn: number | null;
 }
 
+/** One mapping's decided edit: what its control read before the message and what it is to be
+ *  set to. A gang decides every member's before this way, then writes them — applying one can
+ *  move another's control through the mirror the apply hook runs. */
+interface Decision {
+  mapping: MidiMapping;
+  control: BoundControl;
+  key: string;
+  isHead: boolean;
+  before: number;
+  target: number;
+}
+
 export class MidiEngine {
   private mappings: MidiMapping[] = [];
   private byKey = new Map<string, MidiMapping[]>();
@@ -233,7 +245,10 @@ export class MidiEngine {
     this.gated = false;
     // Common case: a single mapping, no gang — apply it directly.
     if (matched.length === 1) {
-      if (!this.dropEcho(matched[0], ev)) this.apply(matched[0], ev);
+      if (!this.dropEcho(matched[0], ev)) {
+        const only = this.decide(matched[0], ev);
+        if (only) this.commit(only);
+      }
       return;
     }
     // Gang: the echo guard is owned per address by the list head, so a whole gang
@@ -243,8 +258,51 @@ export class MidiEngine {
     for (const mapping of matched) {
       if (this.dropEcho(mapping, ev)) echoed.add(addrKey(mapping.addr));
     }
-    for (const mapping of matched) {
-      if (!echoed.has(addrKey(mapping.addr))) this.apply(mapping, ev);
+    // Every member's target is decided from the state BEFORE this message, and only then
+    // are any of them written. Applying one member can move ANOTHER member's control:
+    // a linked stereo pair holds one insert effect between them, so the funnel mirrors an
+    // edit onto the partner, and a target computed after that mirror is computed against a
+    // value this same message produced. Both faces ganged to one CC then cancelled out —
+    // the first flipped the pair off, the second read the mirrored off and flipped it back,
+    // and one press left the pair exactly where it started.
+    const decisions = matched
+      .filter((mapping) => !echoed.has(addrKey(mapping.addr)))
+      .map((mapping) => this.decide(mapping, ev))
+      .filter((d): d is Decision => d !== null);
+    // …and a member the lock refuses is tried again once the rest have written, because the
+    // lock may be another member's to release: the EQ 1-knob computes the four bands while it
+    // is on, so a gang told to switch everything off cannot write a band until the knob in the
+    // same gang has gone off, and in the order that learns the band FIRST nothing ever did.
+    // Bounded by the member count, and stops as soon as a pass writes nothing.
+    //
+    // A GOVERNED member is written before the one that governs it — a 1-knob over the values it
+    // computes, a Sync switch over the time it derives. Which way a write moves the lock is not
+    // asked, because it does not have to be: on the way INTO a lock the governed value is
+    // written while it still can be, and on the way out of one the retry below lands it once
+    // the governor has let go. Asked instead, the answer would have to be predicted from a
+    // value nothing has written yet, and it differs per control — a 1-knob locks the bands
+    // while it is on and its own level while it is off.
+    //
+    // Two buckets rather than a sort: no control here governs another that governs a third,
+    // and a chain deeper than one is carried by the retry anyway.
+    const governors = new Set(
+      decisions.map((d) => d.control.governedBy).filter((gid): gid is string => gid !== undefined),
+    );
+    // Matched on the control's LOCK identity, which is its own id except where the catalogue
+    // normalises it: a BAL-linked pair mirrors its whole node params, so its two 1-knobs are
+    // one governor and a gang naming either has to be ordered against the values on both.
+    const governs = (d: Decision): boolean => governors.has(d.control.lockId ?? d.control.id);
+    const ordered = [...decisions.filter((d) => !governs(d)), ...decisions.filter(governs)];
+    // The DECISION is what is retried, not the deciding. Re-deciding would read the control
+    // again, and for an edge toggle the target is a flip of what it reads — so the two learn
+    // orders parted company, one flipping the value the operator was shown and the other
+    // flipping the one the release had just put there. Retrying the decision also keeps the
+    // 14-bit assembly and the pickup engagement to the one pass that owns them.
+    let pending = ordered.filter((d) => !this.commit(d));
+    for (let pass = 0; pass < matched.length && pending.length > 0; pass++) {
+      const again = pending.filter((d) => !this.commit(d));
+      if (again.length === pending.length) break;
+      pending = again;
     }
   }
 
@@ -306,9 +364,11 @@ export class MidiEngine {
     return true;
   }
 
-  private apply(mapping: MidiMapping, ev: MidiEvent): void {
+  /** What one mapping WOULD do to its control, read before anything is written. Separate
+   *  from the write because a gang's members are decided together: see `onMessage`. */
+  private decide(mapping: MidiMapping, ev: MidiEvent): Decision | null {
     const control = this.hooks.resolve(mapping.control);
-    if (!control) return; // stale mapping (other model) — leave it inert
+    if (!control) return null; // stale mapping (other model) — leave it inert
     const key = addrKey(mapping.addr); // a mapping only ever matches via its own address
     const toggle = control.kind === "toggle";
     // Receive bookkeeping defers the next OUTGOING pass for continuous controls
@@ -325,11 +385,23 @@ export class MidiEngine {
       : this.continuousTarget(mapping, key, ev, before, isHead);
     if (target === null) {
       this.hooks.trace?.(`ignore ${mapping.control}`); // release / same state / pickup hold
-      return;
+      return null;
     }
+    return { mapping, control, key, isHead, before, target };
+  }
+
+  /** Write one decided edit. False when the control refused it — which a gang retries, since
+   *  the lock may belong to a member of this same message.
+   *
+   *  The value is read AGAIN here rather than taken from the decision: between deciding and
+   *  writing, another member may have moved this control (the funnel mirrors an insert-FX edit
+   *  onto a linked partner) or released the lock that was hiding its value. What `applied`
+   *  reports has to be the difference this write actually made. */
+  private commit({ mapping, control, key, isHead, target }: Decision): boolean {
+    const before = control.get();
     if (!control.set(target)) {
       this.hooks.trace?.(`drop locked ${mapping.control}`);
-      return; // device-locked — swallowed
+      return false; // device-locked — swallowed, or retried by a gang
     }
     const after = control.get();
     // The controller already shows what it sent: remember the applied value as
@@ -346,6 +418,7 @@ export class MidiEngine {
     }
     this.hooks.trace?.(`apply ${mapping.control} ${before} -> ${after}`);
     if (after !== before) this.hooks.applied(control);
+    return true;
   }
 
   // Toggles: "edge" (default) flips on each on-value — a note-on, or a CC ≥ 64;
@@ -363,10 +436,12 @@ export class MidiEngine {
     // has no discrete press, and a cc14 arrives as two 7-bit halves that would each
     // flip it (≥ 64) — leave both misbindings inert, like the pitchbend one.
     if (mapping.addr.type === "pitchbend" || mapping.addr.type === "cc14") return null;
-    if (mapping.button === "state") {
-      const target = ev.type === "note" ? (ev.on ? 1 : 0) : ev.value >= 64 ? 1 : 0;
-      return target === current ? null : target;
-    }
+    // No same-state shortcut: the value read here may not be the value that is there when the
+    // write lands. A control LOCKED by another member of this same message reads as off while
+    // holding something else, so dropping the decision on "it already matches" left the state
+    // it was hiding in place — and a lock released a moment later put it back on screen.
+    // `commit` is what decides nothing happened, by comparing what it read to what it wrote.
+    if (mapping.button === "state") return ev.type === "note" ? (ev.on ? 1 : 0) : ev.value >= 64 ? 1 : 0;
     const on = ev.type === "note" ? ev.on : ev.value >= 64;
     return on ? (current >= 0.5 ? 0 : 1) : null;
   }

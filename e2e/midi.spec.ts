@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { planParamZ } from "./plan-param";
 import { LIVE_COMMANDS } from "./tauri-stub";
 import { pickBand } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
@@ -1276,4 +1277,38 @@ test("the FX strip's EFFECT face arms, and its assignment reads as words", async
     .click();
   await expect(win.locator(".mw-hint")).toContainText("FX 1 · FX EFFECT · Mix");
   await box.locator(".consent-btn-secondary").click();
+});
+
+test("the INS FX face arms, and its assignment names the strip and the insert", async ({ page }) => {
+  // The other face in that row, and the last chip the CONSOLE drew without a control id. It
+  // needs a strip HOLDING an effect: with none there is no insert to switch, so the strip
+  // draws an opener where the face would be and the catalogue offers nothing.
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch1: { insertFx: 512, insertFxOn: true } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await page.click("#btn-view-console");
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+
+  await strip(page, "CH 1").locator(".con-ifxface").click();
+  await expect(win.locator(".mw-hint")).toContainText("CH 1 · INS FX");
+  await sendMidi(page, [0xb0, 42, 127]);
+  await expect(mapRow(win, "ch1/insertFxOn").locator(".mw-ctl")).toHaveText("CH 1 · INS FX");
+
+  // …and it drives the value it names. A toggle takes the EDGE behaviour by default, so each
+  // value at or above 64 FLIPS it and anything below is not a state to take but a release the
+  // engine ignores — which is why the presses below are all 127 and there is no 0 among them.
+  await setLearn(page, win, false);
+  const face = strip(page, "CH 1").locator(".con-ifxface");
+  await expect(face, "the seeded state the flips are counted from").toHaveAttribute("aria-pressed", "true");
+  await sendMidi(page, [0xb0, 42, 127]);
+  await expect(face, "one press bypasses it").toHaveAttribute("aria-pressed", "false");
+  await sendMidi(page, [0xb0, 42, 127]);
+  await expect(face, "and the next brings it back").toHaveAttribute("aria-pressed", "true");
 });

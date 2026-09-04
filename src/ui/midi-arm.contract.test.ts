@@ -130,6 +130,34 @@ describe("arming surfaces against the control catalog", () => {
   // still agree. That is the shape the FX strip's EFFECT face had: a toggle the CONSOLE
   // draws, in the row where every other face arms, offering nothing. It has to be named to
   // be seen, which is what this does.
+  // The same shape on the other face in that row, and the same reason it has to be named: a
+  // chip carrying no id is absent from both sides of the marked-versus-armed comparison, so
+  // the counts agree and nothing is red. This one needs a plan HOLDING an effect — with none
+  // the strip draws an opener where the face would be, and there is no bypass to switch.
+  it("marks and binds the INS FX face by name, and only while an effect is held", () => {
+    const armed: string[] = [];
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    ch = consoleHost({ modelId: "URX44V", plan, midi: learnHooks(armed) });
+    const face = ch.strip("ch1").root.querySelector<HTMLElement>(".con-ifxface");
+    if (!face) throw new Error(".con-ifxface is missing — the strip draws no INS FX chip");
+    expect(face.classList.contains("midi-target"), "the INS FX face offers itself").toBe(true);
+    face.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(armed, "and arms exactly one id").toEqual(["ch1/insertFxOn"]);
+    expect(bindControl(ch.model, ch.plan, armed[0]), "which the catalog binds").toBeTruthy();
+
+    // The other half: a strip holding NOTHING draws the vacant chip, which opens the popover
+    // rather than switching anything, and offers no id at all. Marked here would be a ring on
+    // a control that reaches nothing — the defect this file exists for, the other way round.
+    ch.restore();
+    const empty: string[] = [];
+    ch = consoleHost({ modelId: "URX44V", midi: learnHooks(empty) });
+    const vacant = ch.strip("ch1").root.querySelector<HTMLElement>(".con-ifxface");
+    expect(vacant?.classList.contains("vacant"), "the factory strip holds none").toBe(true);
+    expect(vacant?.classList.contains("midi-target"), "so it offers nothing").toBe(false);
+    expect(bindControl(ch.model, ch.plan, "ch1/insertFxOn"), "and the catalog has no such id").toBeNull();
+  });
+
   it("marks and binds the FX strip's EFFECT face by name", () => {
     const armed: string[] = [];
     ch = consoleHost({ modelId: "URX44V", midi: learnHooks(armed) });
