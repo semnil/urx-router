@@ -53,3 +53,13 @@ jobs:
       # ledger beside the script holds a per-file ceiling for the backlog that predates the
       # rule, so this job is red only for a NEW one. Zero-dep, like its neighbours.
       - run: node scripts/check-comment-provenance.mjs
+      # The assumptions field, held to what it is for. An item naming none of the three
+      # external dependencies is an observation this side could take, and the body stops
+      # being visible the moment it merges — so the field has to be answered rather than
+      # used to defer. Only on a pull request, since a push carries no body, and the body
+      # reaches the script through the environment rather than the command line: it is
+      # text a contributor wrote, and a `run:` interpolating it would run it.
+      - if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/check-pr-assumptions.mjs

@@ -26,6 +26,7 @@
     "check:md": "node scripts/check-md-tables.mjs",
     "check:assets": "node scripts/check-assets-index.mjs",
     "check:comments": "node scripts/check-comment-provenance.mjs",
+    "check:pr-assumptions": "node scripts/check-pr-assumptions.mjs",
     "check:gates": "node scripts/check-merge-gates.mjs",
     "check:skips": "node scripts/check-race-skips.mjs",
     "check:platform": "node scripts/check-macho-platform.mjs",
