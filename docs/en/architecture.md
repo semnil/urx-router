@@ -2321,7 +2321,10 @@ element under that button, since adopting the device's rate costs nothing and th
 arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
 can read. **URX22 has no recorder and is silent throughout.** Afterwards the write's own epilogue re-reads the
 recorder node: the unit does the lowering itself, and whether it announces one has not been measured here, so the
-plan is refreshed rather than left waiting for a notify that may never come.
+plan is refreshed rather than left waiting for a notify that may never come. The epilogue is armed from the rate
+send as it RESOLVES — everything but an explicit refusal, since the shell sends before it waits and a write whose
+answer never came may have landed and taken the count down with it — rather than from the outcomes the call
+returns, which a cancel between two sends throws away.
 A failed read cancels the write, per the rule above: the rate decides which parameters the write may even contain.
 
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen
@@ -3362,8 +3365,9 @@ round's side-effect head was refused.
 **Only an explicit refusal says a write did not land.** `vd.rs`'s `do_set` SENDS and then waits, so by
 the time anything can go wrong with the answer the request is already on the wire. `SendOutcome.result`
 carries the three-way: `accepted` (the broker answered 200), `refused` (it answered with another code —
-the one failure that says the write was turned down), and `unknown` (no answer came, or the link failed
-while waiting for one — a timeout, a device-lost push mid-write, a closed link). An `unknown` invalidates
+the one failure that says the write was turned down), and `unknown` (no answer came, the link failed
+while waiting for one, or the answer carried no usable code at all — a timeout, a device-lost push
+mid-write, a closed link, a malformed reply). An `unknown` invalidates
 exactly as an acceptance does, a side-effect head's taking every address with it, because the write may
 have landed and its resets with it. The test is a single opt-out on the refusal's own code rather than a
 list of the failures that are not it, so a code raised tomorrow leaves the write's fate unknown rather
