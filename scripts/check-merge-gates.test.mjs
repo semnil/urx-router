@@ -497,6 +497,42 @@ if (!rubyAvailable) {
 // no pull-request trigger at all — which is the case that produced it. `if:` is written as a
 // folded block scalar, also on purpose: a node's VALUE for `if: >-` is the indicator alone,
 // so a rule that read the value would find no terms in the very shape that produced this.
+// A workflow that reads the pull request body is deciding on text that can change without
+// a commit. GitHub's default types for `pull_request:` do not include the event that
+// change raises, so the rule is about the CONSUMPTION rather than about any one workflow —
+// the next check that reads the body inherits it.
+describe("a workflow that reads the pull request body", () => {
+  const READS_BODY = HEALTHY.replace(
+    "      - run: echo work\n",
+    "      - env:\n          PR_BODY: ${{ github.event.pull_request.body }}\n        run: node scripts/check.mjs\n",
+  );
+
+  it("is refused when `on.pull_request` does not subscribe to `edited`", () => {
+    expect(findingsOf(READS_BODY).join("\n")).toContain("edited");
+  });
+
+  it("passes once it does — the same workflow, one line apart", () => {
+    const fixed = READS_BODY.replace(
+      "  pull_request:\n",
+      "  pull_request:\n    types: [opened, synchronize, reopened, edited]\n",
+    );
+    expect(findingsOf(fixed)).toEqual([]);
+  });
+
+  // The rule must not fire on every workflow that lacks `types:`, which is all of them:
+  // what makes the subscription necessary is reading something the event carries.
+  it("says nothing about a workflow that reads no part of the pull request", () => {
+    expect(findingsOf(HEALTHY)).toEqual([]);
+  });
+
+  it("covers the title and the labels too, which move under the same event", () => {
+    for (const field of ["title", "labels"]) {
+      const text = READS_BODY.replace("pull_request.body", `pull_request.${field}`);
+      expect(findingsOf(text).join("\n")).toContain("edited");
+    }
+  });
+});
+
 describe("a precondition declared by a consumer", () => {
   const chain = (draftNeeds, bundleIf) => `name: R
 on:

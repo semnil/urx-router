@@ -365,7 +365,7 @@ function readWorkflows(sources) {
     const jobsNode = root.children.get("jobs");
     if (!on || !jobsNode || jobsNode.children.size === 0) {
       finding(path, "could not be read as `on:` + `jobs:` — the checker below cannot speak for this file");
-      return { path, pullRequest: null, jobs: new Map() };
+      return { path, text, pullRequest: null, jobs: new Map() };
     }
     // `on: [push, pull_request]` carries no place to hang a filter, so it is legal — but
     // this reader would take it for "no pull-request trigger" and pass the file over in
@@ -390,7 +390,7 @@ function readWorkflows(sources) {
           "so this checker can see them — a filter it cannot see is one it will report as absent",
       );
     }
-    return { path, root, pullRequest, jobs: jobsNode.children };
+    return { path, text, root, pullRequest, jobs: jobsNode.children };
   });
 }
 
@@ -631,6 +631,31 @@ function checkPreconditionChains(workflows) {
         }
       }
     }
+  }
+}
+
+// A workflow that reads the pull request BODY has to run when the body changes, and by
+// default it does not: `pull_request:` with no `types:` is opened / synchronize / reopened,
+// none of which a body edit is. Without `edited` the verdict taken when the pull request
+// opened stands over whatever the body says afterwards — a body corrected after a failure
+// produces no new run, and a body edited into a violation keeps the green it already has.
+//
+// Keyed on the CONSUMPTION rather than on a workflow's name, so the next check that reads
+// the body inherits it. Reading `github.event.pull_request.*` at all is the trigger for the
+// rule: the title and the labels move under the same event, and nothing else about a pull
+// request changes without one of the default types.
+function checkBodyConsumers(workflows) {
+  for (const workflow of workflows) {
+    if (!workflow.pullRequest || !workflow.text) continue;
+    const reads = /github\.event\.pull_request\.(body|title|labels)\b/.exec(workflow.text);
+    if (!reads) continue;
+    if (listOf(workflow.pullRequest.children?.get("types")).includes("edited")) continue;
+    finding(
+      workflow.path,
+      `reads \`github.event.pull_request.${reads[1]}\`, which changes under the \`edited\` event — but ` +
+        "`on.pull_request` does not subscribe to it, so the verdict from the open stands however the body is " +
+        "changed afterwards. Write `types: [opened, synchronize, reopened, edited]`",
+    );
   }
 }
 
@@ -903,6 +928,7 @@ export function inspect({ workflowSources, manifestSource, ruleset = null }) {
   const workflows = readWorkflows(workflowSources);
   const seen = checkWorkflows(workflows, required);
   checkPreconditionChains(workflows);
+  checkBodyConsumers(workflows);
   const notes = ruleset ? compareRulesets(ruleset, required, integrationId) : [];
   return { findings: findings.slice(), required, workflows, seen, notes };
 }

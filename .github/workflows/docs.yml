@@ -5,14 +5,21 @@ name: Docs
 # verified instead. Runs on external PRs too, which the local Claude Code hook cannot
 # cover.
 #
-# No trigger filter, and no condition on the job: this workflow reports `docs-required`,
+# No path filter, and no condition on the job: this workflow reports `docs-required`,
 # one of the contexts the branch ruleset makes a merge condition, and a required check
 # only reports at all when its workflow runs. Filtering it to Markdown would leave every
-# code-only pull request waiting for a check that never arrives. Nothing here is
+# code-only pull request waiting for a check that never arrives. The `types:` below is the
+# opposite of such a filter — it keeps all three defaults and ADDS one, so the set of pull
+# requests this reports on does not shrink. Nothing here is
 # path-dependent anyway — both checkers read the whole tree — and the job costs seconds:
 # no pnpm install, no build.
 on:
+  # `edited` as well as the defaults, because one step here reads the pull request BODY:
+  # opened / synchronize / reopened are what `pull_request:` subscribes to on its own, and
+  # a body edit is none of them — so without this the verdict taken at the open would stand
+  # however the body changed afterwards. `pnpm check:gates` holds the general form of that.
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
