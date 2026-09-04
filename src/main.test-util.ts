@@ -140,19 +140,43 @@ export function deviceCommands(
 ): Record<string, unknown> {
   const values = new Map<string, number>(Object.entries(seed));
   const strings = new Map<string, string>();
-  return {
-    vd_connect: { model: "URX44V", label: "URX44V", firmware: SUPPORTED_SYSTEM_FIRMWARE, epoch: 1 },
-    vd_disconnect: null,
-    vd_get: (a: Record<string, unknown>) => values.get(addr(a)) ?? 0,
-    vd_get_str: (a: Record<string, unknown>) => strings.get(addr(a)) ?? "",
+  // The shell REFUSES device traffic while disconnected, which is the contract the Rust
+  // side has (`vd.rs` answers "not-connected" when no worker is installed). Answering
+  // anyway is not a harmless convenience: a read issued after the connection was released
+  // then succeeds here and fails on every real unit, and no case in this file can tell.
+  // Released BY EPOCH, the way the shell does it (`vd.rs`): a disconnect names the
+  // generation it opened, so one that has been replaced closes nothing — which is what
+  // lets an action open its own connection inside a live session and release it again
+  // without ending the session.
+  let connected = false;
+  const live = <T>(answer: () => T): T => {
+    if (!connected) throw new Error("not-connected");
+    return answer();
+  };
+  const table: Record<string, unknown> = {
+    vd_connect: { model: "URX44V", label: "URX44V", firmware: SUPPORTED_SYSTEM_FIRMWARE },
+    vd_disconnect: (a: Record<string, unknown>) => {
+      // Epoch-matched, and ONLY that: `vd_disconnect` takes a required epoch and
+      // `vd::disconnect` closes nothing unless it matches, so a connection released by an
+      // action nested inside a live session leaves the session's own one installed.
+      // Treating a missing epoch as an unconditional teardown ended sessions the shell
+      // keeps open.
+      if (a?.epoch === epoch) connected = false;
+      return null;
+    },
+    vd_get: (a: Record<string, unknown>) => live(() => values.get(addr(a)) ?? 0),
+    vd_get_str: (a: Record<string, unknown>) => live(() => strings.get(addr(a)) ?? ""),
     vd_set: (a: Record<string, unknown>) =>
-      void (ignoreWrite?.(a) ? undefined : values.set(addr(a), a.value as number)),
-    vd_set_str: (a: Record<string, unknown>) => void strings.set(addr(a), a.value as string),
-    vd_params_subscribe: null,
-    vd_params_unsubscribe: null,
-    vd_meters_subscribe: null,
-    vd_meters_unsubscribe: null,
-    vd_watch_link: null,
+      live(() => void (ignoreWrite?.(a) ? undefined : values.set(addr(a), a.value as number))),
+    vd_set_str: (a: Record<string, unknown>) => live(() => void strings.set(addr(a), a.value as string)),
+    // Refused while disconnected like the reads and writes above: each of these goes
+    // through the same `sender()` in the shell, so none of them is reachable without a
+    // connection either.
+    vd_params_subscribe: () => live(() => null),
+    vd_params_unsubscribe: () => live(() => null),
+    vd_meters_subscribe: () => live(() => null),
+    vd_meters_unsubscribe: () => live(() => null),
+    vd_watch_link: () => live(() => null),
     vd_link_stats: {
       sets: 0,
       gets: 0,
@@ -169,7 +193,33 @@ export function deviceCommands(
     "plugin:dialog|message": "Cancel",
     ...over,
   };
+  // The bookkeeping is applied AFTER `over`, so a case that says what the unit reports at
+  // connect (a model, a firmware, a throw) still gets a connection. Replacing the whole
+  // command with a plain answer drops it, and every read after such a connect is then
+  // refused by a table that is answering correctly. The epoch is the shell's to assign,
+  // so it is stamped here rather than taken from the answer.
+  const reports = table.vd_connect;
+  table.vd_connect = (a: Record<string, unknown>) => {
+    const answer = typeof reports === "function" ? (reports as (a: Record<string, unknown>) => unknown)(a) : reports;
+    connected = true;
+    return { ...(answer as Record<string, unknown>), epoch: ++epoch };
+  };
+  return table;
 }
+
+/** The shell most recently installed on the page, for a teardown that has to drain the
+ *  app still driving it. A case returns as soon as its own assertion holds, but the flow
+ *  behind it can still be unwinding — a live session's release waits for a follow read
+ *  that is hundreds of round trips long — and the next `bootApp` installs a fresh table
+ *  those calls then land in, where they read as that case's own traffic. */
+let installedShell: TauriShell | null = null;
+export const currentShell = (): TauriShell | null => installedShell;
+
+/** The connection generation, counted for the whole run rather than per table. The shell's
+ *  own counter lives in the Rust process (`vd.rs`), which a page load does not restart, and
+ *  a per-table one restarting at 1 gives an app a disconnect that MATCHES the generation of
+ *  a table it never connected to — which is the one thing the epoch exists to prevent. */
+let epoch = 0;
 
 /**
  * Install a stubbed Tauri shell on `window`. Unknown commands REJECT rather than
@@ -236,7 +286,7 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     },
   };
 
-  return {
+  installedShell = {
     invokes,
     args,
     channels,
@@ -259,6 +309,7 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
       return delivered;
     },
   };
+  return installedShell;
 }
 
 export interface BootOptions {
@@ -333,6 +384,7 @@ export function installAppGlobals(): void {
 
 /** Undo everything `installAppGlobals` and `tauriShell` put on the page. */
 export function restoreAppGlobals(): void {
+  installedShell = null;
   vi.unstubAllGlobals();
   delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   document.body.replaceChildren();

@@ -349,10 +349,12 @@ function beginLinkLedger(device: string): void {
   linkStatsView?.setSession(true);
 }
 
-/** Close the ledger and release the connection, in that order — a reading taken after
- *  the disconnect reports a session that did nothing, and the counters go to zero with
- *  the link. THE one release: every exit from a live session goes through here, so the
- *  ordering is a property of the code rather than a rule each exit re-implements.
+/** Close the ledger, then the connection, then hand the link holder back — in that
+ *  order. A reading taken after the disconnect reports a session that did nothing and the
+ *  counters go to zero with the link, and the holder is what keeps another action from
+ *  connecting over a read this is still waiting out. THE one release: every exit from a
+ *  live session goes through here, so the ordering is a property of the code rather than
+ *  a rule each exit re-implements.
  *
  *  Chained rather than awaited so callers stay synchronous where they were: the
  *  disconnect was already fire-and-forget, and its epoch guard is what makes a late one
@@ -360,7 +362,37 @@ function beginLinkLedger(device: string): void {
 function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   linkStatsView?.setSession(false);
   const ledger = linkLedger?.active ? linkLedger.end(reason) : Promise.resolve();
-  return ledger.finally(() => vdDisconnect(epoch));
+  // A follow read already in flight goes on reading over this connection: a session that
+  // merely ends lets its read finish rather than abandoning it (abandonFollowWork says
+  // why), and the link it reads over is this session's. Disconnecting under it answers its
+  // next round trip "not-connected", which stops it exactly where abandoning it would have
+  // — the document left holding a mix of device and plan values with nothing marking which
+  // is which — and reports nothing, since the session is already down and stopLiveOnError
+  // returns on that. No caller can add to the set while it is waited on: the two that can
+  // have reads in flight stop the follow layer first, and the start's own cancels are all
+  // in front of it beginning. allSettled rather than all: a ledger that rejects still has
+  // to release the link.
+  const reads = Promise.all([...followReads].map((r) => r.done));
+  return (
+    Promise.allSettled([ledger, reads])
+      .then(() => vdDisconnect(epoch))
+      // The holder goes back HERE and not in deactivateLive, because it is what stops
+      // another action from connecting: an install replaces the worker, and the read still
+      // running above has no epoch of its own — its next round trip would go to whatever is
+      // installed by then, and its epilogue would re-base and flush through the session
+      // that replaced it. Ahead of the catch rather than behind it, so a disconnect that
+      // failed cannot leave the app locked out of its own device actions: behind one that
+      // absorbs the rejection, a `finally` and a `then` do the same thing and neither says
+      // which was meant.
+      .finally(() => releaseDeviceLink("live"))
+      // …and a disconnect that could not be sent leaves the app unable to say whether the
+      // unit is still attached to a worker, which is a dialog rather than a status line.
+      // Not on a session ending in ERROR: stopLiveOnError has already raised one naming
+      // the same drop, and the disconnect failing is how a dropped link answers.
+      .catch((err) => {
+        if (reason !== "error") showError(t().status.liveError(errorText(err)));
+      })
+  );
 }
 
 const live = DEMO
@@ -724,7 +756,8 @@ function requestReflect(): void {
 // is refused rather than lost. Membership rather than a separate count, so that
 // abandonFollowWork's clear also ends the refusal — a read bound to a discarded plan
 // provably cannot touch the open one, so it must not keep undo shut.
-const followReads = new Set<AbortController>();
+type FollowRead = { abort: () => void; done: Promise<void> };
+const followReads = new Set<FollowRead>();
 // Routes the UNIT announced an insert-FX change on, appended in notify order. A read is
 // not a snapshot: its addresses are answered hundreds of milliseconds apart, so a change
 // landing inside one is caught on the addresses read after it and missed on those read
@@ -762,7 +795,7 @@ let rateSeq = 0;
 // queued reflect goes too — it names nodes in the outgoing plan and its full path resets
 // the history of whatever replaced it; loadPlan re-renders the new plan whole anyway.
 function abandonFollowWork(): void {
-  for (const c of followReads) c.abort();
+  for (const r of followReads) r.abort();
   followReads.clear();
   // The reads that would have consumed these are gone, so nothing is left to own them.
   announcedInsertFx.length = 0;
@@ -787,7 +820,13 @@ async function followRead(
   read: (into: Plan, signal: AbortSignal) => Promise<ReadbackResult>,
 ): Promise<MergedRead | null> {
   const controller = new AbortController();
-  followReads.add(controller);
+  // The `done` half is what the session's own release waits on (releaseLive).
+  let finished = (): void => {};
+  const entry: FollowRead = {
+    abort: () => controller.abort(),
+    done: new Promise<void>((resolve) => (finished = resolve)),
+  };
+  followReads.add(entry);
   const mark = announcedInsertFx.length;
   // Where this read's own share of the rate history ends. Everything after it arrived
   // WHILE the read ran, which means it belongs to the reconcile it scheduled rather than
@@ -811,7 +850,8 @@ async function followRead(
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
     return merged;
   } finally {
-    followReads.delete(controller);
+    followReads.delete(entry);
+    finished();
     if (!followReads.size) announcedInsertFx.length = 0;
     // The rate history outlives a read that established no rate of its own, and a read
     // that did takes only what was already there when it started. Both halves are about
@@ -1112,8 +1152,6 @@ function setLiveUi(on: boolean): void {
 function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   if (!liveSessionUp) return;
   liveSessionUp = false;
-  // Before setLiveUi below, which repaints the group from whoever holds the link.
-  releaseDeviceLink("live");
   midi?.probeMark("live:off");
   // Nothing keeps the plan and the unit together from here, so the output side closes
   // until the next session's readback settles.
