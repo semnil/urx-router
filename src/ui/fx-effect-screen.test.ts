@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { FX_DYN, ORDER_FOR_TEST, fxControlLabel } from "./fx-effect-screen";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxFamilyOf } from "../core/control/fx-effect";
 import { bindControl, controlId, listControls, FX_LEVEL_SCOPE, FX_ON_SCOPE, FX_SCOPE } from "../core/midi/controls";
@@ -9,6 +9,9 @@ import { diffPlans, nodeParamContestPath, patchContestNames } from "../core/plan
 import { defaultPlan } from "../models/initial-state";
 import { getModel } from "../models";
 import { setLang, t } from "../i18n";
+import { DynScreen } from "./dyn-screen";
+import { dynHost } from "./dyn-screen.test-util";
+import type { DynHost } from "./dyn-screen.test-util";
 import type { DynCtx } from "./dyn-screen";
 import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
@@ -235,10 +238,81 @@ describe("the words a MIDI assignment prints for an FX control", () => {
     setLang("en");
   });
 
+  // An assignment outlives the catalogue it was made against. A mapping saved under a key a
+  // later build no longer carries reaches the resolver as an FX scope whose key matches no
+  // descriptor of any type — and the answer has to be "I cannot name this", so the caller
+  // falls back to printing the id rather than to a label belonging to some other row.
+  it("declines an FX scope whose key no type carries", () => {
+    setLang("en");
+    expect(fxControlLabel(`${FX_SCOPE}.aKeyNoCatalogueHas`, t())).toBeNull();
+  });
+
   it("declines a scope that is not one of its own", () => {
     setLang("en");
     for (const scope of [undefined, "gate", "insfx.compander.6", "fxsomething.level"]) {
       expect(fxControlLabel(scope, t()), String(scope)).toBeNull();
     }
+  });
+});
+
+// The two rows the delay families add that are NOT knobs, operated. Everything else about
+// them is pinned already — which row the unit owns, which tag it carries, that the writer
+// and the follow registration are complements — and all of it is asked of `fxRowOwners` or
+// of the emitted commands. What nothing asked is whether pressing the controls on the FACE
+// writes the plan: a row can lock correctly, tag correctly and still be wired to nothing.
+describe("operating the rows a delay adds to the face", () => {
+  let host: DynHost | undefined;
+
+  afterEach(() => {
+    host?.restore();
+    host = undefined;
+    document.body.replaceChildren();
+  });
+
+  /** FX 2 holds Mono Delay out of the factory, so its face carries Sync, BPM and Note. */
+  const openDelay = (): DynHost => {
+    setLang("en");
+    const h = dynHost();
+    new DynScreen(h.hooks).open(FX_DYN, "bus.fx2");
+    host = h;
+    return h;
+  };
+
+  const row = (h: DynHost, label: string): HTMLElement => {
+    const hit = [...h.box.querySelectorAll<HTMLElement>(".prefs-row")].find(
+      (r) => r.querySelector(".lbl")?.textContent === label,
+    );
+    if (!hit) throw new Error(`no row labelled "${label}" on the face`);
+    return hit;
+  };
+
+  it("writes the Sync switch through to the plan", () => {
+    const h = openDelay();
+    const params = (): Record<string, number> | undefined => h.plan.nodeParams["bus.fx2"]?.fxEffect?.params;
+    expect(params()?.sync ?? 0, "the factory state this case turns ON from").toBe(0);
+    const button = row(h, t().inspector.fxEffect.params.sync).querySelector<HTMLButtonElement>(".prefs-switch");
+    if (!button) throw new Error("the Sync row carries no switch");
+    button.click();
+    expect(h.patches.at(-1)?.id).toBe("bus.fx2");
+    expect(params()?.sync, "Sync is now on in the plan").toBe(1);
+    // The write names the leaf, not the group: `patch` rebuilds the whole `fxEffect`, so a
+    // name spelled at the wrong depth matches nothing and a device read arriving in the same
+    // window silently takes the edit back.
+    expect(h.patches.at(-1)?.written).toContain("fxEffect.params.sync");
+  });
+
+  it("writes a chosen Note value through to the plan", () => {
+    const h = openDelay();
+    const params = (): Record<string, number> | undefined => h.plan.nodeParams["bus.fx2"]?.fxEffect?.params;
+    const before = params()?.note ?? 9;
+    const select = row(h, t().inspector.fxEffect.params.note).querySelector<HTMLSelectElement>("select");
+    if (!select) throw new Error("the Note row carries no select");
+    // Any option but the one it is on, so the case cannot pass on a no-op write.
+    const other = [...select.options].map((o) => Number(o.value)).find((v) => v !== before);
+    expect(other, "the Note row offers more than one value").toBeDefined();
+    select.value = String(other);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(params()?.note, "the chosen note is in the plan").toBe(other);
+    expect(h.patches.at(-1)?.written).toContain("fxEffect.params.note");
   });
 });
