@@ -288,10 +288,11 @@ export class MidiEngine {
     const governors = new Set(
       decisions.map((d) => d.control.governedBy).filter((gid): gid is string => gid !== undefined),
     );
-    const ordered = [
-      ...decisions.filter((d) => !governors.has(d.control.id)),
-      ...decisions.filter((d) => governors.has(d.control.id)),
-    ];
+    // Matched on the control's LOCK identity, which is its own id except where the catalogue
+    // normalises it: a BAL-linked pair mirrors its whole node params, so its two 1-knobs are
+    // one governor and a gang naming either has to be ordered against the values on both.
+    const governs = (d: Decision): boolean => governors.has(d.control.lockId ?? d.control.id);
+    const ordered = [...decisions.filter((d) => !governs(d)), ...decisions.filter(governs)];
     // The DECISION is what is retried, not the deciding. Re-deciding would read the control
     // again, and for an edge toggle the target is a flip of what it reads — so the two learn
     // orders parted company, one flipping the value the operator was shown and the other

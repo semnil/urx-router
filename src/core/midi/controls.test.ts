@@ -4,7 +4,7 @@ import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
 import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
 import { ref } from "../../models/types";
-import { COMP_EQ_SSMCS, EQ_TYPE_PASS, INSERT_FX_OPTIONS } from "../control/params";
+import { COMP_EQ_SSMCS, EQ_TYPE_PASS, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../control/params";
 import { planToCommands } from "../control/translate";
 import {
   bindControl,
@@ -18,6 +18,7 @@ import {
   INSFX_SCOPE,
 } from "./controls";
 import { MidiEngine } from "./engine";
+import { mirrorBalPair, mirrorLinkedInsertFx } from "../routing";
 import {
   COMPANDER_H,
   COMPANDER_S,
@@ -985,5 +986,98 @@ describe("the lock dependencies the catalogue declares", () => {
     const found = listFor(seed).find((c) => c.id === dependent);
     if (!found) throw new Error(`${dependent} is not in the catalogue — the case addresses nothing`);
     expect(found.governedBy).toBe(governor);
+  });
+});
+
+// The governor and the governed need not be the same channel. A BAL-linked pair mirrors its
+// whole node params, so its two 1-knobs are ONE governor: a gang holding CH 1's band and CH 2's
+// knob has to be ordered against both, and keyed by control id alone it was not.
+//
+// PAN and an unlinked pair are the negative conditions: there the two channels keep their own EQ
+// and COMP, so CH 2's knob governs nothing of CH 1's and the learn order has nothing to decide.
+// They pin the OUTCOME rather than the key — normalising in PAN as well is a mutation these do
+// not catch, and cannot: the insert effect is the only thing PAN mirrors, and no family a linked
+// CH pair can hold has a driver among its controls, so there is no relation there to key wrongly.
+describe("a governor across a BAL-linked pair", () => {
+  const knobOf = (ch: string): string => controlId(ch, "oneKnob", EQ_SCOPE);
+  const lowOf = (ch: string): string => controlId(ch, "bandOn", eqBandScope(0));
+
+  const press = (
+    order: readonly string[],
+    button: "edge" | "state",
+    value: number,
+    link: number | null,
+    knobOn: boolean,
+  ): Record<string, boolean | undefined> => {
+    for (const ch of ["ch1", "ch2"]) {
+      const bands = (plan.nodeParams[ch]?.eqBands ?? []).slice();
+      bands[0] = { ...bands[0], on: knobOn };
+      plan.nodeParams[ch] = {
+        ...plan.nodeParams[ch],
+        eqOneKnob: { ...plan.nodeParams[ch]?.eqOneKnob, on: knobOn },
+        eqBands: bands,
+      };
+    }
+    if (link !== null) plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: link };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      // The funnel's own mirrors, which are what make the pair one governor.
+      applied: (c) => {
+        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 9 } as const;
+    engine.setMappings(order.map((control) => ({ control, addr, mode: "absolute", button }) as const));
+    engine.onMessage([0xb0, 9, value]);
+    return {
+      ch1Knob: plan.nodeParams.ch1?.eqOneKnob?.on,
+      ch1Low: plan.nodeParams.ch1?.eqBands?.[0]?.on,
+      ch2Knob: plan.nodeParams.ch2?.eqOneKnob?.on,
+      ch2Low: plan.nodeParams.ch2?.eqBands?.[0]?.on,
+    };
+  };
+
+  // governor channel x governed channel x learn order x lock direction x button mode, against
+  // each link state. The outcome may differ BETWEEN link states — that is what linking means —
+  // so what each row asserts is that the learn order does not decide it.
+  it.each([
+    ["BAL", PAN_BAL_BAL],
+    ["PAN", PAN_BAL_PAN],
+    ["unlinked", null],
+  ])("does not let the learn order decide the outcome, %s", (_label, link) => {
+    for (const governor of ["ch1", "ch2"])
+      for (const governed of ["ch1", "ch2"])
+        for (const [button, onValue, offValue] of [
+          ["edge", 127, 127],
+          ["state", 127, 0],
+        ] as const)
+          for (const knobOn of [false, true]) {
+            const value = knobOn ? offValue : onValue;
+            const a = press([lowOf(governed), knobOf(governor)], button, value, link, knobOn);
+            const b = press([knobOf(governor), lowOf(governed)], button, value, link, knobOn);
+            expect(b, `${button} governor=${governor} governed=${governed} knobOn=${knobOn}`).toEqual(a);
+            // The positive control: the knob really moved, so two orders agreeing that nothing
+            // happened cannot satisfy the line above.
+            expect(a[`${governor}Knob`], `${button}: the knob moved`).toBe(!knobOn);
+          }
+  });
+
+  // …and what BAL lands on, since agreement alone is satisfied by both orders being wrong. The
+  // band is writable when the press arrives and the knob is about to take it over, so its value
+  // is written first — and the mirror carries it to the partner.
+  it("writes the band before the pair's knob takes it, from either channel", () => {
+    for (const governor of ["ch1", "ch2"]) {
+      const after = press([knobOf(governor), lowOf("ch1")], "state", 127, PAN_BAL_BAL, false);
+      expect(after.ch1Knob, `${governor}: the pair's knob went on`).toBe(true);
+      expect(after.ch1Low, `${governor}: and the band took the press first`).toBe(true);
+      expect(after.ch2Low, `${governor}: on both members, which the mirror carries`).toBe(true);
+    }
   });
 });

@@ -56,7 +56,7 @@ import {
   EQ_TYPE_SHELVING,
   insertFxEngaged,
 } from "../control/params";
-import { mixSendLocks } from "../routing";
+import { isBalLinkedPair, mixSendLocks, pairPrimary } from "../routing";
 import {
   insertFxFamilyOf,
   insertFxLockedSlots,
@@ -199,6 +199,20 @@ export interface ControlDesc {
    * has let go.
    */
   governedBy?: string;
+  /**
+   * This control's identity for that ordering, when it is not its own id. A BAL-linked pair
+   * mirrors its whole node params, so CH 1's 1-knob and CH 2's are ONE governor — a gang that
+   * names either has to be ordered against the values on both. Both halves normalise to the
+   * pair's primary, so they meet whichever channel each was learned on.
+   *
+   * BAL only, and asked of the plan: PAN keeps each channel's own EQ and COMP, so the knob on
+   * one governs nothing on the other. The insert effect mirrors in PAN as well, and is not an
+   * exception here — no family a linked CH pair can hold has a driver among its controls, so
+   * there is no insert-FX governor for a pair to share. Amps and companders drive nothing,
+   * Pitch Fix's MIDI Control has no parameter row, and the multi-band compressor is offered on
+   * outputs, which are not pairs.
+   */
+  lockId?: string;
 }
 
 /** A control bound to a concrete plan: normalized read/write access. */
@@ -334,6 +348,11 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   if (!node) return [];
   const out: BoundControl[] = [];
   const np = (): NodeParams => (plan.nodeParams[id] ??= {});
+  /** The node a lock relationship is keyed by: a BAL-linked pair mirrors its node params, so
+   *  its two channels lock as one and both answer with the primary. Identity everywhere else,
+   *  which is what lets one spelling serve the processors that mirror and those that do not. */
+  const lockNode = (nodeId: string): string =>
+    isBalLinkedPair(model, plan, nodeId) ? (pairPrimary(model, nodeId) ?? nodeId) : nodeId;
   const conn = (toId: string): PlanConnection | undefined => sendConnection(plan, id, toId);
 
   // A continuous control persisted on a send connection's params (level / pan);
@@ -484,6 +503,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     def: boolean,
     locked?: () => boolean,
     governedBy?: string,
+    lockId?: string,
   ): BoundControl => {
     const cur = (): Record<string, unknown> => (plan.nodeParams[id]?.[sub] ?? {}) as Record<string, unknown>;
     return {
@@ -493,6 +513,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       scope,
       kind: "toggle",
       governedBy,
+      lockId,
       get: () => (((cur()[key] as boolean | undefined) ?? def) ? 1 : 0),
       set: (v) => {
         if (locked?.()) return false;
@@ -516,7 +537,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     param: "oneKnobLevel",
     // The knob of the same scope owns it, the other way round from the values that knob
     // computes: this one is locked while the knob is OFF, and those while it is on.
-    governedBy: controlId(id, "oneKnob", scope),
+    governedBy: controlId(lockNode(id), "oneKnob", scope),
     scope,
     kind: "continuous",
     get: () => oneKnobCodec.get(read()),
@@ -622,7 +643,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         // nothing while it is off. Same rules the screen's rows render under.
         const comp = (): Record<string, unknown> => (plan.nodeParams[id]?.comp ?? {}) as Record<string, unknown>;
         const oneOn = (): boolean => comp().oneKnob === true;
-        const compKnob = controlId(id, "oneKnob", COMP_SCOPE);
+        const compKnob = controlId(lockNode(id), "oneKnob", COMP_SCOPE);
         for (const f of dyn.comp)
           out.push(
             subDyn(
@@ -634,7 +655,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
             ),
           );
         out.push(subFlag("comp", COMP_SCOPE, "autoMakeup", "autoMakeup", false, oneOn, compKnob));
-        out.push(subFlag("comp", COMP_SCOPE, "oneKnob", "oneKnob", false));
+        out.push(subFlag("comp", COMP_SCOPE, "oneKnob", "oneKnob", false, undefined, undefined, compKnob));
         out.push(
           oneKnobLevel(
             COMP_SCOPE,
@@ -665,6 +686,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       param: "oneKnob",
       scope: EQ_SCOPE,
       kind: "toggle",
+      lockId: controlId(lockNode(id), "oneKnob", EQ_SCOPE),
       get: () => (knobOn() ? 1 : 0),
       set: (v) => {
         if (rateLocked()) return false;
@@ -686,7 +708,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     );
 
     // The knob that computes all four bands while it is on. Named once for the loop below.
-    const eqKnob = controlId(id, "oneKnob", EQ_SCOPE);
+    const eqKnob = controlId(lockNode(id), "oneKnob", EQ_SCOPE);
     for (const [index] of EQ_BAND_NAMES.entries()) {
       const scope = eqBandScope(index);
       const band = (): EqBand => plan.nodeParams[id]?.eqBands?.[index] ?? {};
@@ -847,7 +869,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       const governedBy =
         driverSlot === null || driverSlot === d.slot
           ? undefined
-          : controlId(id, "insfx", `${INSFX_SCOPE}.${insFxFamily}.${driverSlot}`);
+          : controlId(lockNode(id), "insfx", `${INSFX_SCOPE}.${insFxFamily}.${driverSlot}`);
       const write = (raw: number): void => {
         // The mirrored slots Pitch Fix keeps: the device reads both, so a write that moved
         // one would be half applied. `reKeyInsertFxParams` also drops the bare slot the
@@ -953,7 +975,9 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       // nothing when it is not the one deciding, itself included.
       const syncKey = fxParams(fxType).find((x) => x.slot === DELAY_SYNC_SLOT)?.key;
       const fxGovernedBy =
-        syncKey === undefined || syncKey === d.key ? undefined : controlId(id, "fx", `${FX_SCOPE}.${syncKey}`);
+        syncKey === undefined || syncKey === d.key
+          ? undefined
+          : controlId(lockNode(id), "fx", `${FX_SCOPE}.${syncKey}`);
       if (d.control === "toggle") {
         out.push({
           id: controlId(id, "fx", scope),
