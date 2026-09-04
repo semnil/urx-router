@@ -918,10 +918,15 @@ export class DynScreen {
    * first time a formatter starts folding in a value it did not before. Rewriting every
    * readout cannot.
    *
-   * The controls are untouched on purpose. `syncValues` is the pass that also moves the
-   * sliders, and it is for a change arriving from elsewhere; this one runs INSIDE a gesture,
-   * where writing the value back into the input under the pointer is how a drag fights
-   * itself. The Inspector solves the same coupling by keeping a live sibling snapshot.
+   * The controls' POSITIONS are untouched on purpose. `syncValues` is the pass that also
+   * moves the sliders, and it is for a change arriving from elsewhere; this one runs INSIDE a
+   * gesture, where writing the value back into the input under the pointer is how a drag
+   * fights itself. The Inspector solves the same coupling by keeping a live sibling snapshot.
+   *
+   * The control's `aria-valuetext` is not a position and is rewritten with the readout, from
+   * the same string: it is the same reading, said to a reader who cannot see the card. Left
+   * behind, a screen reader moving onto the sibling afterwards announces the value the row
+   * printed BEFORE the coupled edit, which is the one state the visible panel never shows.
    */
   private syncReadouts(): void {
     const vals = this.vals();
@@ -929,7 +934,9 @@ export class DynScreen {
       const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
       if (!out) continue;
       const v = vals[f.key];
-      setLevelText(out, this.valueText(f, typeof v === "number" ? v : f.def));
+      const text = this.valueText(f, typeof v === "number" ? v : f.def);
+      setLevelText(out, text);
+      this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`)?.setAttribute("aria-valuetext", text);
     }
   }
 

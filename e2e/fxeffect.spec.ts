@@ -174,6 +174,15 @@ test("Room Size moves the Reverb Time readout on the same input", async ({ page 
   await expect(readout(page, "Room Size")).not.toHaveText("29");
   // The seconds are `base(raw) x 3^(RoomSize/31)`, so this card has to have moved too.
   await expect(readout(page, "Reverb Time")).not.toHaveText(before);
+  // …and the sibling's CONTROL says the number its card does. A reader who cannot see the
+  // card is told the value by `aria-valuetext`, and this is the one row whose number moves
+  // without its own input being touched — so it is where the two can part company, and the
+  // reading left behind is one the visible panel never showed.
+  const reverbTime = screenRow(page, "Reverb Time").locator('input[type="range"]');
+  await expect(reverbTime).toHaveAttribute("aria-valuetext", await readout(page, "Reverb Time").innerText());
+  // The row that WAS touched keeps them in step too, which is what says the sweep rewrote
+  // each row from its own value rather than putting one string on every control.
+  await expect(roomSize).toHaveAttribute("aria-valuetext", await readout(page, "Room Size").innerText());
   await closeScreen(page);
 });
 
