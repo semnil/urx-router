@@ -286,19 +286,48 @@ describe("operating the rows a delay adds to the face", () => {
     return hit;
   };
 
+  /** Every value the node's `fxEffect` holds, as one flat map — the group's own fields beside
+   *  the parameters, since a gesture can reach either. */
+  const leaves = (h: DynHost): Record<string, unknown> => {
+    const fx = h.plan.nodeParams["bus.fx2"]?.fxEffect ?? {};
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fx)) {
+      if (k === "params")
+        for (const [pk, pv] of Object.entries((v ?? {}) as Record<string, number>)) out[`params.${pk}`] = pv;
+      else out[k] = v;
+    }
+    return out;
+  };
+
+  /** Which of them a gesture moved. A press owns exactly ONE leaf, and the write witness
+   *  naming it is only half of that — the other half is that nothing else moved, which the
+   *  witness cannot say and a `toContain` cannot see. Asked over every leaf rather than over
+   *  the sibling that would hurt most: a press that quietly reset BPM, or the effect's Mix,
+   *  is the same defect and the same silence. */
+  const moved = (before: Record<string, unknown>, after: Record<string, unknown>): string[] =>
+    [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((k) => before[k] !== after[k]).sort();
+
   it("writes the Sync switch through to the plan", () => {
     const h = openDelay();
     const params = (): Record<string, number> | undefined => h.plan.nodeParams["bus.fx2"]?.fxEffect?.params;
     expect(params()?.sync ?? 0, "the factory state this case turns ON from").toBe(0);
     const button = row(h, t().inspector.fxEffect.params.sync).querySelector<HTMLButtonElement>(".prefs-switch");
     if (!button) throw new Error("the Sync row carries no switch");
+    const before = leaves(h);
     button.click();
     expect(h.patches.at(-1)?.id).toBe("bus.fx2");
     expect(params()?.sync, "Sync is now on in the plan").toBe(1);
-    // The write names the leaf, not the group: `patch` rebuilds the whole `fxEffect`, so a
-    // name spelled at the wrong depth matches nothing and a device read arriving in the same
-    // window silently takes the edit back.
-    expect(h.patches.at(-1)?.written).toContain("fxEffect.params.sync");
+    // ONE press, ONE write, and it names the leaf rather than the group: `patch` rebuilds the
+    // whole `fxEffect`, so a name spelled at the wrong depth matches nothing and a device read
+    // arriving in the same window silently takes the edit back. Exact equality rather than
+    // containment — a witness that names a leaf the gesture had no business touching is how a
+    // second write travels unseen.
+    expect(h.patches).toHaveLength(1);
+    expect(h.patches[0].written).toEqual(["fxEffect.params.sync"]);
+    // …and the plan agrees: nothing but Sync moved. With Sync ON the unit derives the delay
+    // time from the BPM and the note value, so a press that also reset either changes what the
+    // effect does — and the witness above is satisfied by naming only Sync while doing it.
+    expect(moved(before, leaves(h))).toEqual(["params.sync"]);
   });
 
   it("writes a chosen Note value through to the plan, from the state that can reach it", () => {
@@ -319,6 +348,9 @@ describe("operating the rows a delay adds to the face", () => {
     if (!select) throw new Error("the Note row carries no select");
     expect(select.disabled, "the rebuild handed the row back to the operator").toBe(false);
 
+    // The state the choice is measured FROM, taken after the Sync press so that press's own
+    // write is not read as this one's.
+    const beforeNote = leaves(h);
     const before = params()?.note ?? 9;
     // Any option but the one it is on, so the case cannot pass on a no-op write.
     const other = [...select.options].map((o) => Number(o.value)).find((v) => v !== before);
@@ -326,6 +358,11 @@ describe("operating the rows a delay adds to the face", () => {
     select.value = String(other);
     select.dispatchEvent(new Event("change", { bubbles: true }));
     expect(params()?.note, "the chosen note is in the plan").toBe(other);
-    expect(h.patches.at(-1)?.written).toContain("fxEffect.params.note");
+    // Two gestures, two writes — the Sync press and this one, and nothing between them.
+    expect(h.patches).toHaveLength(2);
+    expect(h.patches.at(-1)?.written).toEqual(["fxEffect.params.note"]);
+    // Choosing a note leaves Sync where the operator put it, and everything else alone.
+    expect(moved(beforeNote, leaves(h))).toEqual(["params.note"]);
+    expect(params()?.sync, "still the state the row was reached from").toBe(1);
   });
 });
