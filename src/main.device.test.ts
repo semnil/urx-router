@@ -2150,13 +2150,28 @@ describe("a value the unit holds and the app cannot write", () => {
     seed[`685/0/${lpf.slot}`] = BELOW;
     return seed;
   };
-  // Read off the panel rather than out of module state: what the operator sees IS the question.
-  const shownLpf = (): string => {
+  // Read off the surface rather than out of module state: what the operator sees IS the
+  // question. The effect's parameters are drawn by the FX EFFECT tuning screen, so the node is
+  // selected, its launcher pressed, the readout taken and the screen closed again — reopened
+  // per reading so each one is a fresh draw of the plan as it stands.
+  const withFxScreen = <T>(nodeId: string, use: (box: HTMLElement) => T): T => {
     $("graph-host")
-      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
+      .querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!
       .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    return paramRow(t().inspector.fxEffect.params.lpf).querySelector(".param-val")?.textContent ?? "(no row)";
+    $<HTMLButtonElement>("btn-fx-screen").click();
+    const box = $("dyn-screen-box");
+    const out = use(box);
+    box.querySelector<HTMLButtonElement>(".consent-actions button")!.click();
+    return out;
   };
+  const shownFx = (nodeId: string, planKey: string): string =>
+    withFxScreen(nodeId, (box) => box.querySelector<HTMLElement>(`[data-dyn-val="fx:${planKey}"]`)?.textContent ?? "");
+  const shownLpf = (): string => shownFx("bus.fx2", "delayLpf");
+  /** The screen's Mix slider, which is where an ordinary operator edit to an FX channel is
+   *  made now. Read and written through the same open, since the controls draw a captured
+   *  snapshot and a handle kept across a write would be answering for the plan as it was. */
+  const fxLevel = (nodeId: string): HTMLInputElement =>
+    withFxScreen(nodeId, (box) => box.querySelector<HTMLInputElement>('input[data-dyn="fx:level"]')!);
 
   it("reads it verbatim, then takes the sent value once the device has confirmed it", SLOW, async () => {
     const shell = await bootDevice({}, true, unitHoldingLowLpf());
@@ -2332,12 +2347,7 @@ describe("a value the unit holds and the app cannot write", () => {
     expect(statusText()).toContain(t().status.paramsBounded(3));
     expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
     // …and the OTHER channel, which a loop over one node would have left where it was.
-    $("graph-host")
-      .querySelector<SVGGElement>('g.node[data-id="bus.fx1"]')!
-      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    expect(paramRow(t().inspector.fxEffect.params.lpf).querySelector(".param-val")?.textContent).toBe(
-      revxLpf.format!(revxLpf.rawMin!, {}),
-    );
+    expect(shownFx("bus.fx1", "revxLpf")).toBe(revxLpf.format!(revxLpf.rawMin!, {}));
   });
 
   // The adoption lands in the history BASELINE rather than as an entry, so an undo taken after
@@ -2349,14 +2359,17 @@ describe("a value the unit holds and the app cannot write", () => {
     await invoked(shell, "vd_disconnect");
 
     // An ordinary app edit first, so the undo has something of the operator's to spend.
-    $("graph-host")
-      .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
-      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    const level = paramRow(t().inspector.fxEffect.level).querySelector<HTMLInputElement>("input[type=range]")!;
-    const before = level.value;
-    level.value = String(Number(before) - 10);
-    level.dispatchEvent(new Event("input", { bubbles: true }));
-    level.dispatchEvent(new Event("change", { bubbles: true }));
+    const before = fxLevel("bus.fx2").value;
+    withFxScreen("bus.fx2", (box) => {
+      const level = box.querySelector<HTMLInputElement>('input[data-dyn="fx:level"]')!;
+      // To an END of its own range rather than by a fixed step: the seeded unit leaves this
+      // control at its minimum, and a step DOWN from there is clamped back to where it was —
+      // an edit that never happened, which the undo below then has nothing to spend.
+      level.value = level.value === level.max ? level.min : level.max;
+      level.dispatchEvent(new Event("input", { bubbles: true }));
+      level.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(fxLevel("bus.fx2").value).not.toBe(before);
 
     $("btn-write").click();
     await invoked(shell, "vd_disconnect", 2);
@@ -2365,17 +2378,7 @@ describe("a value the unit holds and the app cannot write", () => {
     // The chord goes to the focused range input otherwise (ui/history.ts routes it there).
     (document.activeElement as HTMLElement | null)?.blur();
     shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID);
-    await vi.waitFor(
-      () => {
-        $("graph-host")
-          .querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!
-          .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-        expect(paramRow(t().inspector.fxEffect.level).querySelector<HTMLInputElement>("input[type=range]")!.value).toBe(
-          before,
-        );
-      },
-      { timeout: 10_000 },
-    );
+    await vi.waitFor(() => expect(fxLevel("bus.fx2").value).toBe(before), { timeout: 10_000 });
     // …and the adopted value is still there: the undo did not hand the unwritable raw back.
     expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
   });
