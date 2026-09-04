@@ -1533,7 +1533,13 @@ during a run.
 **So the link is held by exactly one thing at a time, named.** `deviceLinkHolder` is one of `fetch` /
 `write` / `compare` / `device-setup` / `follow-usb` / `live` / `run`; `holdDeviceLink` takes it or refuses,
 `releaseDeviceLink` gives it back and ignores a release that does not name the current holder (the same
-rule the epoch enforces on the Rust side). Every frontend path that opens a connection goes through it:
+rule the epoch enforces on the Rust side). **A live session gives it back when the LINK goes, not when the
+toggle does**: `releaseLive` waits out a follow read still doing round trips, and a read carries no epoch of
+its own — `vd::sender` hands it whatever worker is installed when it asks — so an action connecting in that
+window would replace the worker under it and its epilogue would re-base and flush through the session that
+replaced it. The holder is therefore handed back at the end of that release, and even when the disconnect
+fails, since a link that cannot be closed must not leave the app locked out of its own device actions.
+Every frontend path that opens a connection goes through it:
 `withDevice` for the seven menu actions, `activateLive` for the whole activation — **not just its connect**,
 since the starting readback runs for seconds with `liveSessionUp` still false — and the two runs, which
 call `vdConnect` from `core` and so cannot be funnelled any lower.
@@ -1541,7 +1547,8 @@ call `vdConnect` from `core` and so cannot be funnelled any lower.
 `syncDeviceActionUi` is that latch's affordance: while the link is held, every device entry greys **except
 its holder's own**, which is that holder's Cancel (fetch, write, compare, the self-test) or its stop (Live
 sync). The rate picker locks for every holder — a rate change re-clocks the unit and renegotiates the USB
-stream. The model picker locks for a live **session** only: a switch replaces the plan wholesale (which is
+stream. The model picker locks for a live **session** only, which is now the one entry that unlocks at the toggle
+rather than at the disconnect: a switch replaces the plan wholesale (which is
 why `loadPlan` ends a session), and while live the picker is the only surface naming the unit on the wire —
 the on-air tally prints the tag alone rather than repeating a model the picker already states, since a
 mismatch is refused before any read. A live *start* is deliberately not covered: the model may still change
@@ -2438,8 +2445,11 @@ socket's first read timeout: an empty read means the peer has nothing queued, an
 frame budget would spend seconds of the operator's Quit on a broker that has already gone quiet.
 
 On the app side the same is true of the connection: `releaseLive` in `main.ts` is the one release, so "read the
-ledger's final counters, then drop the link" is a property of the code rather than a rule each of the three
-exits re-implements.
+ledger's final counters, wait out a follow read still on the wire, drop the link, then hand the holder back" is
+a property of the code rather than a rule each of the three exits re-implements. The wait is what makes
+`abandonFollowWork`'s split hold at the link as well as in the plan — a session that merely ends lets its read
+finish, so the link it reads over has to outlive the session — and the holder going last is what stops another
+action connecting over that read.
 
 The app's exit is the case that needs more than telling: `lib.rs` builds the app and runs it with a
 `RunEvent::Exit` handler that calls `vd::shutdown_blocking`, which **waits** (bounded, 1.5 s) for the

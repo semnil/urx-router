@@ -365,7 +365,7 @@ function readWorkflows(sources) {
     const jobsNode = root.children.get("jobs");
     if (!on || !jobsNode || jobsNode.children.size === 0) {
       finding(path, "could not be read as `on:` + `jobs:` — the checker below cannot speak for this file");
-      return { path, pullRequest: null, jobs: new Map() };
+      return { path, text, pullRequest: null, jobs: new Map() };
     }
     // `on: [push, pull_request]` carries no place to hang a filter, so it is legal — but
     // this reader would take it for "no pull-request trigger" and pass the file over in
@@ -390,7 +390,7 @@ function readWorkflows(sources) {
           "so this checker can see them — a filter it cannot see is one it will report as absent",
       );
     }
-    return { path, root, pullRequest, jobs: jobsNode.children };
+    return { path, text, root, pullRequest, jobs: jobsNode.children };
   });
 }
 
@@ -630,6 +630,66 @@ function checkPreconditionChains(workflows) {
           );
         }
       }
+    }
+  }
+}
+
+// What a pull request's own fields change under, which is NOT one event. `edited` carries
+// the body and the title; a label added or removed is `labeled` / `unlabeled` and raises no
+// `edited` at all. A workflow subscribing to `edited` alone therefore re-runs for every
+// change to a labelled pull request except the one it reads.
+const PR_FIELD_EVENTS = {
+  body: ["edited"],
+  title: ["edited"],
+  labels: ["labeled", "unlabeled"],
+};
+
+/** One hop of an expression's access path. GitHub's expression syntax spells a property
+ *  two ways — `a.b` and `a['b']` — and they are the same access, so a rule reading only
+ *  the first is one that anyone writing the second walks straight past. */
+const hop = (name) => `(?:\\.\\s*${name}|\\[\\s*(?:'${name}'|"${name}")\\s*\\])`;
+
+// A workflow that reads one of those fields has to run when that field changes, and by
+// default it does not: `pull_request:` with no `types:` is opened / synchronize /
+// reopened, none of which any of them is. Without the right type the verdict taken when
+// the pull request opened stands over whatever the field says afterwards — a body
+// corrected after a failure produces no new run, and a body edited into a violation keeps
+// the green it already has.
+//
+// Keyed on the CONSUMPTION rather than on a workflow's name, so the next check that reads
+// one of these inherits it. EVERY reference is collected rather than the first: one
+// workflow can read the body in one step and the labels in another, and what those two
+// need are different sets. Both spellings of every hop are read — `a.b` and `a['b']` are
+// the same access in an expression and mix freely within one path — so what the rule is
+// about is REACHING the field rather than one way of writing it.
+//
+// What it does not see is a path that gets there without naming it: `toJSON(github.event)`
+// carries the body, and so does a value handed down through an output or an input. Those
+// are outside a lexical reading, and a rule firing on `github.event` whole would ask every
+// workflow for every event type.
+function checkPullRequestFieldConsumers(workflows) {
+  const names = Object.keys(PR_FIELD_EVENTS).join("|");
+  // The FIELD hop keeps a capture per spelling, since exactly one of them can match.
+  const fieldPattern = new RegExp(
+    `github\\s*${hop("event")}\\s*${hop("pull_request")}\\s*` +
+      `(?:\\.\\s*(${names})\\b|\\[\\s*(?:'(${names})'|"(${names})")\\s*\\])`,
+    "g",
+  );
+  for (const workflow of workflows) {
+    if (!workflow.pullRequest || !workflow.text) continue;
+    const fields = [...new Set([...workflow.text.matchAll(fieldPattern)].map((m) => m[1] ?? m[2] ?? m[3]))].sort();
+    if (!fields.length) continue;
+    const types = listOf(workflow.pullRequest.children?.get("types"));
+    for (const field of fields) {
+      const missing = PR_FIELD_EVENTS[field].filter((type) => !types.includes(type));
+      if (!missing.length) continue;
+      finding(
+        workflow.path,
+        `reads \`github.event.pull_request.${field}\`, which changes under ` +
+          `${PR_FIELD_EVENTS[field].join(" / ")} — but \`on.pull_request.types\` is missing ` +
+          `${missing.join(", ")}, so the verdict from the open stands however that field is changed afterwards. ` +
+          `Add it beside the defaults (\`types: [opened, synchronize, reopened, ${missing.join(", ")}]\`)`,
+      );
     }
   }
 }
@@ -903,6 +963,7 @@ export function inspect({ workflowSources, manifestSource, ruleset = null }) {
   const workflows = readWorkflows(workflowSources);
   const seen = checkWorkflows(workflows, required);
   checkPreconditionChains(workflows);
+  checkPullRequestFieldConsumers(workflows);
   const notes = ruleset ? compareRulesets(ruleset, required, integrationId) : [];
   return { findings: findings.slice(), required, workflows, seen, notes };
 }

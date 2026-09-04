@@ -497,6 +497,99 @@ if (!rubyAvailable) {
 // no pull-request trigger at all — which is the case that produced it. `if:` is written as a
 // folded block scalar, also on purpose: a node's VALUE for `if: >-` is the indicator alone,
 // so a rule that read the value would find no terms in the very shape that produced this.
+// A workflow that reads a pull request's own fields is deciding on text that can change
+// with no commit behind it. The default event types carry none of those changes, and they
+// do not all arrive under ONE type either: the body and the title move under `edited`,
+// while a label added or removed is `labeled` / `unlabeled` and raises no `edited` at all.
+// The rule is about the CONSUMPTION rather than about any one workflow, so the next check
+// that reads one of these inherits it.
+describe("a workflow that reads a pull request's own fields", () => {
+  const reading = (field) =>
+    HEALTHY.replace(
+      "      - run: echo work\n",
+      `      - env:\n          V: \${{ github.event.pull_request.${field} }}\n        run: node scripts/check.mjs\n`,
+    );
+  const withTypes = (text, types) => text.replace("  pull_request:\n", `  pull_request:\n    types: [${types}]\n`);
+  const DEFAULTS = "opened, synchronize, reopened";
+
+  it.each(["body", "title"])("refuses %s without the edited type, and passes with it", (field) => {
+    expect(findingsOf(reading(field)).join("\n")).toContain("edited");
+    expect(findingsOf(withTypes(reading(field), `${DEFAULTS}, edited`))).toEqual([]);
+  });
+
+  // The defect this pair exists for: labels do NOT move under `edited`, so a workflow
+  // reading them and subscribing to `edited` alone re-runs for every change except its own.
+  it("refuses labels subscribed only to the edited type", () => {
+    const text = withTypes(reading("labels"), `${DEFAULTS}, edited`);
+    const said = findingsOf(text).join("\n");
+    expect(said).toContain("labeled");
+    expect(said).toContain("unlabeled");
+  });
+
+  it("passes labels once both of their own types are there", () => {
+    expect(findingsOf(withTypes(reading("labels"), `${DEFAULTS}, labeled, unlabeled`))).toEqual([]);
+  });
+
+  it.each([
+    ["labeled", `${DEFAULTS}, unlabeled`],
+    ["unlabeled", `${DEFAULTS}, labeled`],
+  ])("refuses labels with %s missing, naming the one that is gone", (missing, types) => {
+    const said = findingsOf(withTypes(reading("labels"), types)).join("\n");
+    expect(said).toContain(`is missing ${missing}`);
+  });
+
+  // One workflow can read the body in one step and the labels in another, and what those
+  // two need are different sets — so the reference that comes first must not answer for
+  // the rest.
+  it("asks for each field a workflow reads, not only the first", () => {
+    const both = reading("body").replace(
+      "        run: node scripts/check.mjs\n",
+      "        run: node scripts/check.mjs\n      - env:\n          L: ${{ github.event.pull_request.labels }}\n        run: node scripts/labels.mjs\n",
+    );
+    const said = findingsOf(withTypes(both, `${DEFAULTS}, edited`)).join("\n");
+    expect(said).toContain("labels");
+    expect(said).not.toContain("`github.event.pull_request.body`");
+    expect(findingsOf(withTypes(both, `${DEFAULTS}, edited, labeled, unlabeled`))).toEqual([]);
+  });
+
+  // `a.b` and `a['b']` are the same access in an expression, and a path mixes them freely.
+  // Read as one spelling, the rule was silent on the other three — so a workflow written
+  // the index way inherited nothing, which is the contract this rule exists to carry.
+  it.each([
+    ["index, single quotes", (f) => `github.event.pull_request['${f}']`],
+    ["index, double quotes", (f) => `github.event.pull_request["${f}"]`],
+    ["mixed, on an earlier hop", (f) => `github['event'].pull_request.${f}`],
+    ["mixed, on two hops", (f) => `github.event["pull_request"].${f}`],
+  ])("reads a field written by %s", (_name, spell) => {
+    for (const field of Object.keys({ body: 0, title: 0, labels: 0 })) {
+      const text = HEALTHY.replace(
+        "      - run: echo work\n",
+        `      - env:\n          V: \${{ ${spell(field)} }}\n        run: node scripts/check.mjs\n`,
+      );
+      expect(findingsOf(text).join("\n")).toContain(field);
+    }
+  });
+
+  // And the same spelling passes once the types are right, so what the rule reads is the
+  // access rather than the punctuation around it.
+  it("passes an index-written field whose own types are subscribed", () => {
+    const text = withTypes(
+      HEALTHY.replace(
+        "      - run: echo work\n",
+        "      - env:\n          V: ${{ github.event.pull_request['labels'] }}\n        run: node scripts/check.mjs\n",
+      ),
+      `${DEFAULTS}, labeled, unlabeled`,
+    );
+    expect(findingsOf(text)).toEqual([]);
+  });
+
+  // The rule must not fire on every workflow that lacks `types:`, which is all of them:
+  // what makes the subscription necessary is reading something the event carries.
+  it("says nothing about a workflow that reads no part of the pull request", () => {
+    expect(findingsOf(HEALTHY)).toEqual([]);
+  });
+});
+
 describe("a precondition declared by a consumer", () => {
   const chain = (draftNeeds, bundleIf) => `name: R
 on:
