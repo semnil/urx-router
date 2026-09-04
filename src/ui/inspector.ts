@@ -7,7 +7,7 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
 import { clipNodeName, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
-import { formatHz, fxEffectTypes, fxParams, resolveFxEffectType } from "../core/control/fx-effect";
+import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 
 import { isFixedConnection, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import {
@@ -1242,10 +1242,6 @@ function mergeFxEffect(actions: InspectorActions, plan: Plan, nodeId: string, pa
     groupPaths("fxEffect", patch),
   );
 }
-function mergeFxParam(actions: InspectorActions, plan: Plan, nodeId: string, key: string, raw: number): void {
-  const params = plan.nodeParams[nodeId]?.fxEffect?.params ?? {};
-  mergeFxEffect(actions, plan, nodeId, { params: { ...params, [key]: raw } });
-}
 
 // FX-channel EFFECT section: the EFFECT TYPE selector, the effect ON / Mix, then
 // the type-specific parameter controls (raw sliders with a display formatter,
@@ -1262,60 +1258,18 @@ function fxEffectSection(
   // Resolved against THIS channel's menu, so the selector shows the effect the write
   // path would send rather than one the channel does not offer (translate.ts).
   const type = resolveFxEffectType(fxIndex, fx.type);
-  const descs = fxParams(type);
   const { el, body } = section(t.title, { key: "fxEffect" });
 
   body.append(
     enumSelect(t.effectType, fxEffectTypes(fxIndex), type, (v) => mergeFxEffect(actions, plan, nodeId, { type: v })),
   );
   body.append(boolToggle(t.effectOn, fx.on ?? true, (v) => mergeFxEffect(actions, plan, nodeId, { on: v })));
-  body.append(
-    rangeSlider(
-      t.level,
-      0,
-      100,
-      1,
-      fx.level ?? 100,
-      (r) => String(r),
-      (v) => mergeFxEffect(actions, plan, nodeId, { level: v }),
-    ),
-  );
-
-  // Sibling raw values, so the REV-X Reverb Time readout can fold in Room Size.
-  // Read verbatim, NOT bounded to the descriptor: a device read stores what the unit holds,
-  // and the unit can hold a raw outside this window because an earlier build of this app
-  // could write one. Showing the bound instead names a value the unit is not at, which is
-  // the reading the operator is looking at the panel for. What the next write would send is
-  // a different question from what the unit holds now, and one row cannot answer both.
-  const ctx: Record<string, number> = {};
-  for (const d of descs) ctx[d.key] = fx.params?.[d.key] ?? d.def;
-
-  for (const d of descs) {
-    const cur = ctx[d.key];
-    const label = t.params[d.label as keyof typeof t.params] ?? d.label;
-    if (d.control === "toggle") {
-      body.append(boolToggle(label, cur !== 0, (v) => mergeFxParam(actions, plan, nodeId, d.key, v ? 1 : 0)));
-    } else if (d.control === "select") {
-      body.append(enumSelect(label, d.options ?? [], cur, (v) => mergeFxParam(actions, plan, nodeId, d.key, v)));
-    } else {
-      body.append(
-        rangeSlider(
-          label,
-          d.rawMin ?? 0,
-          d.rawMax ?? 0,
-          d.rawStep ?? 1,
-          cur,
-          (r) => (d.format ? d.format(r, ctx) : String(r)),
-          (v) => {
-            // Keep the sibling snapshot live so another param's readout (e.g. the
-            // REV-X Reverb Time folding in Room Size) reflects this edit at once.
-            ctx[d.key] = v;
-            mergeFxParam(actions, plan, nodeId, d.key, v);
-          },
-        ),
-      );
-    }
-  }
+  // Mix and the type's own parameters moved to the tuning screen, for the reason stated on
+  // `dynLauncher`: they belong beside the meters either side of the effect, and a second
+  // copy here would sit at the position it was drawn at — these sliders read a captured
+  // snapshot and do not redraw when a value changes — and write that stale value back on
+  // the next drag. GATE / COMP / EQ / SSMCS / DUCKER gave theirs up for the same reason.
+  body.append(dynLauncher("fx", nodeId, actions, m));
   return el;
 }
 

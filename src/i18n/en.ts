@@ -97,6 +97,10 @@ export const en = {
     // "<strip> on/off". Announced with aria-pressed; not shown on screen.
     power: tr("on/off"),
     eq: dev("EQ"),
+    // The FX strip's processing chip. Named for what happens there rather than for the
+    // strip — the scribble above it already reads FX 1 / FX 2 — and the unit's own
+    // parameters are EFFECT TYPE and EFFECT ON.
+    effect: dev("EFFECT"),
     pre: dev("PRE"),
     // Per-strip SENDS rack: header label, the SEND PAN popover header, and the
     // hover tooltip on the PRE button (mirrors cueFull's tooltip mechanism).
@@ -688,6 +692,27 @@ export const en = {
       tapGr: dev("Ducker GR"),
       tapOut: dev("Post"),
       hint: tr("The diagonals are times, not the shape of the change. Key is one bar even in stereo: L and R, summed."),
+    },
+    // One screen for three parameter families: the title names the effect the channel holds,
+    // since the selector that picked it is on another surface. Two taps, and they are the
+    // effect's own input and output rather than a channel's.
+    fx: {
+      // The screen's own name. The unit has no FX-effect screen to copy a heading from —
+      // an FX channel's effect parameters are reached through its INS FX screen — so this
+      // is the app's name for the screen, built from the words the unit's own parameters
+      // use (EFFECT TYPE / EFFECT ON). Latin in both languages, like every screen title.
+      title: fixed("FX EFFECT"),
+      open: tr("FX Effect screen"),
+      // The two taps either side of the effect. The caption above each says which END of
+      // the effect it is; these name the tap itself, as the meter-point selector does.
+      tapIn: dev("Input"),
+      tapOut: dev("Pre Fader"),
+      bypassed: tr("Bypassed — the values are kept and edited here, but nothing they are set to reaches the signal."),
+      // While tempo Sync is on the unit computes the delay time from the BPM and the note
+      // value and announces the result, so the row reads it rather than setting it.
+      syncedTag: tr("Synced"),
+      // …and with Sync off the unit does not read the note value at all.
+      syncOffTag: tr("Sync off"),
     },
     // One screen for four effect families: the title names the effect the node holds,
     // since the selector that picked it is on another surface. Two output taps, because

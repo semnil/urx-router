@@ -62,6 +62,7 @@ export const ja: Messages = {
     // スクリブル電源 LED (ノード master on/off) の読み上げ名サフィックス。
     power: "オン/オフ",
     eq: "EQ",
+    effect: "EFFECT",
     pre: "PRE",
     sends: "SENDS",
     sendPan: "SEND PAN",
@@ -556,6 +557,15 @@ export const ja: Messages = {
       tapGr: "Ducker GR",
       tapOut: "Post",
       hint: "斜線は変化にかかる時間で、変化の形ではありません。Key はステレオでも 1 本 (L+R の和) です。",
+    },
+    fx: {
+      title: "FX EFFECT",
+      open: "FX Effect 画面",
+      tapIn: "Input",
+      tapOut: "Pre Fader",
+      bypassed: "バイパス中 — 値はここで保持・編集できますが、設定した内容は信号に届きません。",
+      syncedTag: "同期中",
+      syncOffTag: "Sync オフ",
     },
     insfx: {
       title: "INS FX",

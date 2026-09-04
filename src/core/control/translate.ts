@@ -33,6 +33,7 @@ import {
   FX_SLOT_ON,
   fxDescRawToSend,
   fxRawToSend,
+  fxRowOwners,
   resolveFxEffectType,
   fxParams,
   formatHz,
@@ -719,7 +720,7 @@ export function eqOneKnob(model: DeviceModel, nodeId: string, compEqType: number
 export interface DynField {
   /** The GateParams / CompParams / EqBand sub-field this controls, or one of the SSMCS
    *  keys the descriptor flattens its nested sub-objects onto. */
-  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey | InsertFxFieldKey;
+  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey | InsertFxFieldKey | FxFieldKey;
   /** The catalog row the numeric writer emits this value through. Absent for the SSMCS
    *  strip, whose commands are built from the plan's own nested shape
    *  (`pushSsmcsCommands`) rather than from a field table — a name here would be a
@@ -766,6 +767,24 @@ export type SsmcsFieldKey = "compDrive" | "morphing" | "outGain" | "scQ" | "scFr
  *  parked them anyway — instead of under the incoming family's slot of the same number,
  *  which is a different parameter on a different scale. */
 export type InsertFxFieldKey = `ifx:${string}:${number}`;
+
+/** An FX-channel effect value, named by the PLAN KEY it is stored under.
+ *
+ *  Not the family and the slot an insert-FX value takes. The two delay types are both
+ *  family `delay` and both put the delay time on slot 6, so that spelling would name two
+ *  different parameters with one key — they accept different RANGES, and a Mono time handed
+ *  to a Ping Pong descriptor is clamped at the unit while the plan goes on showing the value
+ *  it was set to. The catalogue's own keys already carry a family name exactly where two
+ *  families collide (`revxHpf` / `revr3Hpf` / `delayHpf`, `delay` / `pingPongDelay`) and
+ *  share one where the parameter really is one (`reverbTime` is slot 7 of both reverbs), so
+ *  they are unique and they mean the right thing. `fx:level` is the Mix, which lives at the
+ *  top of `fxEffect` rather than in its params map.
+ *
+ *  The purpose is `InsertFxFieldKey`'s: a device follow can replace the effect while a knob
+ *  is under the pointer, and the drag goes on firing at a row that is already detached —
+ *  keyed this way that write lands under the outgoing family's own name instead of under
+ *  the incoming family's parameter of the same slot. */
+export type FxFieldKey = `fx:${string}`;
 
 const SSMCS_SC_PREFIX = /^sc[A-Z]/;
 
@@ -1115,7 +1134,12 @@ function boundEnum(v: number, options: readonly { value: number }[], def: number
   return options.some((o) => o.value === v) ? v : def;
 }
 
-function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectParams): void {
+function pushFxEffectCommands(
+  out: VdCommand[],
+  fxIndex: number,
+  fx: FxEffectParams,
+  includeDeviceDriven: boolean,
+): void {
   const typeId = FX_EFFECT_TYPE_PARAM[fxIndex];
   const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
   // A type this CHANNEL's menu does not offer (hand-edited / ?plan= payload) falls
@@ -1127,7 +1151,17 @@ function pushFxEffectCommands(out: VdCommand[], fxIndex: number, fx: FxEffectPar
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx.on ?? true) ? 1 : 0));
   const level = fxRawToSend(fx.level, FX_LEVEL_DEFAULT, FX_LEVEL_MIN, FX_LEVEL_MAX);
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, level));
+  // The slot the unit is computing for itself, skipped for the reason the insert-FX loop
+  // below skips its own: while tempo Sync is on the unit derives the delay time from the BPM
+  // and the note value, and it ACCEPTS a write to that slot and holds it — so re-sending the
+  // plan's copy does not merely repeat what is there, it takes the delay time off the note
+  // value and leaves Sync on with nothing driving it. `unused` is not skipped: the unit
+  // stores the note value while it is not reading it, and the app is still its author.
+  const driven = includeDeviceDriven
+    ? new Set<string>()
+    : new Set([...fxRowOwners(type, fx.params)].filter(([, why]) => why === "computed").map(([key]) => key));
   for (const desc of fxParams(type)) {
+    if (driven.has(desc.key)) continue;
     const raw = fxDescRawToSend(desc, fx.params?.[desc.key]);
     out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", desc.slot, raw));
   }
@@ -2012,7 +2046,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     const fxY = fxChannelIndex(node.id);
     if (fxY === null) continue;
     const fx = plan.nodeParams[node.id]?.fxEffect;
-    if (fx) pushFxEffectCommands(out, fxY, fx);
+    if (fx) pushFxEffectCommands(out, fxY, fx, emit.includeDeviceDriven === true);
     own(node.id);
   }
 
@@ -2275,8 +2309,9 @@ export interface FollowOnlyAddr {
  * does not carry them and they would be in no notify registration. Registering them is
  * what lets a front-panel change reach the plan instead of waiting for the next full
  * read. Both families were measured announcing a change on a URX44V (2026-08-11, System
- * V1.3.1.0); the addresses that genuinely stay silent (D.Gain, the FX / insert-FX engine
- * arrays) are not here, because a registration would do nothing for them.
+ * V1.3.1.0); the addresses that stay silent when the front panel moves them (D.Gain, the
+ * insert-FX engine array, and every FX array slot but the one below) are not here, because
+ * a registration would do nothing for them.
  *
  * This lives beside `planToCommands` on purpose: the tap half is the exact complement of
  * the `sendTapWritable` test that suppresses the write there, and the two were written as
@@ -2290,7 +2325,7 @@ export interface FollowOnlyAddr {
  * hold — the notify-driven read and the full read would disagree about the same value
  * under the same preference. Track Count is `sceneExternal`; the send taps are not.
  */
-export function planToFollowOnlyAddrs(model: DeviceModel, scope: WriteScope = "all"): FollowOnlyAddr[] {
+export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: WriteScope = "all"): FollowOnlyAddr[] {
   const out: FollowOnlyAddr[] = [];
   // CH → FX send taps: the broker publishes max_value 0 on 193/197/320/324, so PRE is
   // unwritable and the emit loop above skips SEND_TAP for them. Same source filter as
@@ -2311,6 +2346,26 @@ export function planToFollowOnlyAddrs(model: DeviceModel, scope: WriteScope = "a
   // node params, which is the node whose scoped read repairs it.
   if (model.nodes.some((n) => n.id === "out.sdrec")) {
     out.push({ param: PARAMS.SD_REC_TRACK_COUNT.id, x: 0, y: 0, name: "SD_REC_TRACK_COUNT", node: "out.sdrec" });
+  }
+  // The FX slots the unit is computing right now. `pushFxEffectCommands` leaves a `computed`
+  // slot out of what it sends, and the registration the live layer builds is the emitted set
+  // — so without this entry the address is subscribed by nobody while the unit is the one
+  // moving it. The unit ANNOUNCES each recompute there, so the value would be announced into
+  // silence: the plan would keep the number it had, the screen would print it under a tag
+  // saying the value is the unit's, and the writer would send it back the moment Sync went
+  // off. Plan-dependent, unlike everything above it — which slot this is, and whether there
+  // is one at all, is a function of the effect type and of the Sync switch.
+  for (const node of model.nodes) {
+    const fxIndex = fxChannelIndex(node.id);
+    if (fxIndex === null) continue;
+    const fx = plan.nodeParams[node.id]?.fxEffect;
+    const type = resolveFxEffectType(fxIndex, fx?.type);
+    const owners = fxRowOwners(type, fx?.params);
+    if (!owners.size) continue;
+    for (const desc of fxParams(type)) {
+      if (owners.get(desc.key) !== "computed") continue;
+      out.push({ param: FX_EFFECT_ARRAY_PARAM[fxIndex], x: 0, y: desc.slot, name: "FX_EFFECT_PARAM", node: node.id });
+    }
   }
   if (scope === "all") return out;
   return out.filter((f) => (PARAMS[f.name] as ParamSpec).sceneExternal !== true);

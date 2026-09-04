@@ -1245,3 +1245,35 @@ test("a MIDI window that outlives a reload of the app is spoken to again", async
   );
   await expect(mapRow(win, "ch1/mute")).toBeVisible();
 });
+
+test("the FX strip's EFFECT face arms, and its assignment reads as words", async ({ page }) => {
+  // Two halves of one defect, and neither check sees the other. The catalog's contract is
+  // every toggle the CONSOLE draws, and this face drew without an id — a chip that never
+  // marks itself is absent from BOTH sides of a marked-versus-armed comparison, so the
+  // counts agree and nothing is red. And an FX scope carries the PLAN KEY, so the assignment
+  // it makes printed that key: "FX 1 · fx.reverbTime · fx", three tokens the operator has
+  // seen on no surface.
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+
+  await strip(page, "FX 1").locator(".con-fxface").click();
+  await expect(win.locator(".mw-hint")).toContainText("FX 1 · FX EFFECT · Effect");
+  await sendMidi(page, [0xb0, 41, 127]);
+  await expect(mapRow(win, "bus.fx1/fx@fx.on").locator(".mw-ctl")).toHaveText("FX 1 · FX EFFECT · Effect");
+
+  // A row of the screen itself, which is where a plan key would show: the same id syntax,
+  // resolved through the catalogue rather than printed.
+  await strip(page, "FX 1").locator(".con-fxopen").click();
+  await page.locator(".con-ifxpop .iopen").click();
+  const box = page.locator("#dyn-screen-box");
+  await expect(box).toBeVisible();
+  await box
+    .locator(".gt-knob")
+    .filter({ has: page.getByText("Mix", { exact: true }) })
+    .locator(".midi-target")
+    .first()
+    .click();
+  await expect(win.locator(".mw-hint")).toContainText("FX 1 · FX EFFECT · Mix");
+  await box.locator(".consent-btn-secondary").click();
+});

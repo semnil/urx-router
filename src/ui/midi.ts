@@ -45,6 +45,7 @@ import {
 import { midiProbe, startMidiTrace } from "./midi-probe";
 import { mirrorBalPair } from "../core/routing";
 import { insertFxControlLabel } from "./insert-fx-screen";
+import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
 import { errorCode, errorText, getLang, t } from "../i18n";
@@ -766,6 +767,12 @@ export class MidiControl {
     if (parsed.param === "insfx") {
       const insfx = insertFxControlLabel(parsed.scope, t());
       if (insfx) return `${node} · ${insfx}`;
+    }
+    // The FX channel's effect names itself the same way and for the same reason — its scope
+    // carries the plan key because the channel can change what it holds.
+    if (parsed.param === "fx") {
+      const fx = fxControlLabel(parsed.scope, t());
+      if (fx) return `${node} · ${fx}`;
     }
     const target = parsed.scope ? byId(parsed.scope) : undefined;
     const processor = parsed.scope !== undefined && target === undefined;

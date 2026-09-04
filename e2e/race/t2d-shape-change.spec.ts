@@ -95,6 +95,27 @@ const fxSection = (page: Page) =>
 const fxRow = (page: Page, label: string) =>
   fxSection(page).locator(".param", { has: page.getByText(label, { exact: true }) });
 
+// The effect's PARAMETERS live on the FX EFFECT tuning screen; the Inspector keeps the
+// EFFECT TYPE selector, the ON toggle and the launcher. So this case drives two surfaces,
+// and it cannot drive them at once: the screen is a modal and makes the Inspector inert
+// while it is open. Every phase below therefore opens it, authors, and closes it again —
+// which is also why the opens sit OUTSIDE the marked windows. The screen lays its
+// continuous values out as knob cards rather than rows, so a row locator naming only
+// `.prefs-row` would report every one of them as absent.
+const fxScreen = (page: Page) => page.locator("#dyn-screen-box");
+const screenRow = (page: Page, label: string) =>
+  fxScreen(page)
+    .locator(".gt-knob, .prefs-row")
+    .filter({ has: page.getByText(label, { exact: true }) });
+const openFxScreen = async (page: Page): Promise<void> => {
+  await fxSection(page).locator("#btn-fx-screen").click();
+  await expect(fxScreen(page)).toBeVisible();
+};
+const closeFxScreen = async (page: Page): Promise<void> => {
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+  await expect(fxScreen(page)).toBeHidden();
+};
+
 /** Writes / reads on the FX1 array, as slot numbers, inside a trace window. */
 const slotOf = (s: Span): number => Number(s.addr!.split(":")[2]);
 const isArray = (s: Span): boolean => s.addr?.startsWith(`${FX1_ARRAY}:0:`) === true;
@@ -175,10 +196,11 @@ test.describe("T2d shape-change", () => {
     // the wire rather than only in the plan. Two of them (Decay 15, Room Size 12) sit
     // on slots Mono Delay does not have; the third (Reverb Time 7) sits on a slot the
     // delay family reuses for Feedback Gain.
+    await openFxScreen(page);
     await mark(page, "author-revx");
-    await stepSlider(page, fxRow(page, "Decay"), 3);
-    await stepSlider(page, fxRow(page, "Room Size"), 3);
-    await stepSlider(page, fxRow(page, "Reverb Time"), 3);
+    await stepSlider(page, screenRow(page, "Decay"), 3);
+    await stepSlider(page, screenRow(page, "Room Size"), 3);
+    await stepSlider(page, screenRow(page, "Reverb Time"), 3);
     await settleAfter(page, "author-revx", 1200);
 
     let trace = await traceOf(page);
@@ -198,13 +220,20 @@ test.describe("T2d shape-change", () => {
     const regBefore = regKeys(regBeforeAddrs);
     const depthBefore = await depthOf(page);
     await clearLedger(page);
+    await closeFxScreen(page);
 
     // Phase 2 — the type change. FX_EFFECT_TYPE is sideEffect "converge", so the flush
     // is followed by a whole-scope read-and-resend; its read pass is what enumerates
     // the new slot family.
     await mark(page, "to-delay");
     await chooseOption(typeSel, "1024"); // Mono Delay
-    await expect(fxRow(page, "Delay")).toHaveCount(1);
+    // The barrier is the app COMMITTING the edit, not the select carrying the value:
+    // `chooseOption` writes `el.value` itself inside its own evaluate, so asserting the
+    // value back is satisfied by the helper on the first poll with nothing having been
+    // processed. The rows that used to serve as this barrier moved to the tuning screen,
+    // and the screen is closed here — the undo ledger is the observation that survives
+    // that move, and it is the one this phase is about to count anyway.
+    await expect.poll(async () => (await depthOf(page)).undo, { timeout: 5_000 }).toBeGreaterThan(depthBefore.undo);
     await settleAfter(page, "to-delay", 1500);
 
     trace = await traceOf(page);
@@ -318,6 +347,14 @@ test.describe("T2d shape-change", () => {
     expect(changeVals.get(9)).toBe(40);
     expect(changeVals.get(10)).toBe(110);
 
+    // The family really changed on the surface too, not only on the wire: the delay's own
+    // time row exists and Rev-X's Decay is gone. Asked after the window's trace was taken,
+    // so opening the screen cannot land inside it.
+    await openFxScreen(page);
+    await expect(screenRow(page, "Delay")).toHaveCount(1);
+    await expect(screenRow(page, "Decay")).toHaveCount(0);
+    await closeFxScreen(page);
+
     // One gesture, one undo entry, and the ledger names the operator as its author.
     expect(depthAfterChange.undo - depthBefore.undo).toBe(1);
     expect(ledger.filter((l) => l.source === "ui" && l.subKeys?.includes("fxEffect")).length).toBeGreaterThan(0);
@@ -325,8 +362,9 @@ test.describe("T2d shape-change", () => {
     // Phase 3 — one undo of the type change.
     await mark(page, "undo");
     await page.keyboard.press("Control+z");
+    // …and the same barrier in reverse: the entry is spent, not merely the select redrawn.
+    await expect.poll(async () => (await depthOf(page)).undo, { timeout: 5_000 }).toBe(depthBefore.undo);
     await expect(fxRow(page, "EFFECT TYPE").locator("select")).toHaveValue("0");
-    await expect(fxRow(page, "Decay")).toHaveCount(1);
     await settleAfter(page, "undo", 1500);
 
     trace = await traceOf(page);
@@ -339,6 +377,11 @@ test.describe("T2d shape-change", () => {
     const readSlotsAfterUndo = arrayReadSlots(trace, undoAt);
     const snapshot = await snapshotOf(page);
     const depthAfterUndo = await depthOf(page);
+    // Rev-X's own rows are back on the screen — the other half of "the undo restored the
+    // family", beside the wire traffic the window above measured.
+    await openFxScreen(page);
+    await expect(screenRow(page, "Decay")).toHaveCount(1);
+    await closeFxScreen(page);
 
     console.log(
       `undo emitted ${FX1_TYPE}=${undoType?.value} then array slots ` +

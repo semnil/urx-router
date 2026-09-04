@@ -125,6 +125,22 @@ describe("arming surfaces against the control catalog", () => {
     expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
   });
 
+  // The case above compares two counts, and both of them count only controls that MARKED
+  // themselves — so a chip carrying no id at all is absent from each side and the totals
+  // still agree. That is the shape the FX strip's EFFECT face had: a toggle the CONSOLE
+  // draws, in the row where every other face arms, offering nothing. It has to be named to
+  // be seen, which is what this does.
+  it("marks and binds the FX strip's EFFECT face by name", () => {
+    const armed: string[] = [];
+    ch = consoleHost({ modelId: "URX44V", midi: learnHooks(armed) });
+    const face = ch.strip("bus.fx1").root.querySelector<HTMLElement>(".con-fxface");
+    if (!face) throw new Error(".con-fxface is missing — the FX strip draws no EFFECT chip");
+    expect(face.classList.contains("midi-target"), "the EFFECT face offers itself").toBe(true);
+    face.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(armed, "and arms exactly one id").toEqual(["bus.fx1/fx@fx.on"]);
+    expect(bindControl(ch.model, ch.plan, armed[0]), "which the catalog binds").toBeTruthy();
+  });
+
   // Every registered processor, on the first node it will bind to — so a processor
   // added to dyn-registry.ts is covered the day it is registered rather than when
   // someone remembers to list it here.
@@ -167,9 +183,16 @@ describe("arming surfaces against the control catalog", () => {
       const ctxAt = (nodeId: string): DynCtx => ({ model, plan, nodeId, sel: 0, m: t() });
       const binding = model.nodes.map((n) => n.id).filter((id) => proc.bind(ctxAt(id)) !== null);
       expect(binding.length, `${kind} binds no node of URX44V`).toBeGreaterThan(0);
-      // Every node it binds for the one kind that shows a different thing on each; the
+      // Every node it binds for the two kinds that show a different thing on each; the
       // first for the rest, whose faces do not vary by node.
-      const nodeIds = kind === "insfx" ? binding : binding.slice(0, 1);
+      //
+      // `fx` is the second: its two channels hold different effects out of the factory —
+      // FX1 a Rev-X and FX2 a Mono Delay — so opening both is what puts a face carrying a
+      // toggle and a select (the delay's Sync and Note) in front of this, beside one that
+      // is knobs alone. Opening only the first covered no non-slider row at all. The third
+      // family, Rev.R3, is not reachable without seeding a type and adds no control KIND
+      // that Rev-X does not already put here: every row of both reverbs is a slider.
+      const nodeIds = kind === "insfx" || kind === "fx" ? binding : binding.slice(0, 1);
 
       /** One face's own verdict. Per face rather than per screen: the counts have to
        *  match on each, and totals let a face that marks nothing hide behind one that

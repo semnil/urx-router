@@ -1310,10 +1310,14 @@ snapshot from a device read, and writing a dead flush's value into it would pois
 device truth. A generation rather than the flag for the same reason — across a stop/start the flag reads
 the value the flush entered on.
 
-The teardown itself is unchanged, and deliberately: `releaseLive` chains the disconnect rather than
-awaiting it (`vd_disconnect` returns nothing to await), and its epoch guard is what makes a late one
-safe. The window between `end()` and the disconnect landing in Rust is therefore still open — what the
-generation closes is the app's own decision to keep sending into it.
+The teardown chains the disconnect rather than awaiting it (`vd_disconnect` returns nothing to await), and
+its epoch guard is what makes a late one safe. The window between `end()` and the disconnect landing in Rust
+is therefore open — what the generation closes is the app's own decision to keep sending into it. That window
+is no longer the ledger's flush alone: `releaseLive` waits out a follow read still doing round trips before it
+disconnects, since a session that merely ends lets its read finish and the link it reads over is the session's.
+Nothing else may connect for its duration — the link holder goes back at the end of that release rather than at
+the toggle — because a read carries no epoch and would otherwise go on over the worker an intervening action
+installed.
 
 Measured, the `drop-link-loss-mid-flush-ladder` at all three rungs: **15 / 10 / 5 escaping writes → 0 / 0
 / 0**, with 15 commands armed each time so the zeros are the guard's doing and not an empty remainder.

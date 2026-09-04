@@ -614,7 +614,7 @@ export class LiveSync {
     // *Scene only* a whole-device read puts the plan's scene-external values back
     // afterwards, so following one here would make the notify path and the full-read path
     // disagree about the same value under the same preference.
-    for (const f of planToFollowOnlyAddrs(model, scope)) {
+    for (const f of planToFollowOnlyAddrs(model, plan, scope)) {
       addrs.push([f.param, f.x, f.y]);
       const direct = (PARAMS as Record<string, ParamSpec>)[f.name].follow === "direct";
       this.index.set(addrKey(f.param, f.x, f.y), { name: f.name, node: f.node, direct });

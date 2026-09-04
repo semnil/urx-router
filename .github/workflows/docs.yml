@@ -5,14 +5,21 @@ name: Docs
 # verified instead. Runs on external PRs too, which the local Claude Code hook cannot
 # cover.
 #
-# No trigger filter, and no condition on the job: this workflow reports `docs-required`,
+# No path filter, and no condition on the job: this workflow reports `docs-required`,
 # one of the contexts the branch ruleset makes a merge condition, and a required check
 # only reports at all when its workflow runs. Filtering it to Markdown would leave every
-# code-only pull request waiting for a check that never arrives. Nothing here is
+# code-only pull request waiting for a check that never arrives. The `types:` below is the
+# opposite of such a filter — it keeps all three defaults and ADDS one, so the set of pull
+# requests this reports on does not shrink. Nothing here is
 # path-dependent anyway — both checkers read the whole tree — and the job costs seconds:
 # no pnpm install, no build.
 on:
+  # `edited` as well as the defaults, because one step here reads the pull request BODY:
+  # opened / synchronize / reopened are what `pull_request:` subscribes to on its own, and
+  # a body edit is none of them — so without this the verdict taken at the open would stand
+  # however the body changed afterwards. `pnpm check:gates` holds the general form of that.
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
@@ -53,3 +60,13 @@ jobs:
       # ledger beside the script holds a per-file ceiling for the backlog that predates the
       # rule, so this job is red only for a NEW one. Zero-dep, like its neighbours.
       - run: node scripts/check-comment-provenance.mjs
+      # The assumptions field, held to what it is for. An item naming none of the three
+      # external dependencies is an observation this side could take, and the body stops
+      # being visible the moment it merges — so the field has to be answered rather than
+      # used to defer. Only on a pull request, since a push carries no body, and the body
+      # reaches the script through the environment rather than the command line: it is
+      # text a contributor wrote, and a `run:` interpolating it would run it.
+      - if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/check-pr-assumptions.mjs

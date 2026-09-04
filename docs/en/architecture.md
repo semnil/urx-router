@@ -450,7 +450,8 @@ carries a one-line map of the same directories and points here.
   node has (`bind` → fields + meter lanes), reads and writes its own corner of the plan (`read`/`patch`),
   and arranges its display column out of the parts the host offers (`display` over `parts.lanes()` /
   `parts.plot()`). It owns the session's one meter subscription while open, so the console is told to release and
-  regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` / `dyn-ssmcs.ts` / `insert-fx-screen.ts` are the
+  regain it. `dyn-gate.ts` / `dyn-comp.ts` / `dyn-eq.ts` / `dyn-ducker.ts` / `dyn-ssmcs.ts` / `insert-fx-screen.ts` /
+  `fx-effect-screen.ts` are the
   descriptors — DUCKER is
   the one whose node is not the node it tunes, since a ducker hangs under a stereo channel keyed by a wire
   from somewhere else, so its lanes are gathered from three places instead of read off the node the screen
@@ -464,7 +465,18 @@ carries a one-line map of the same directories and points here.
   by family and slot. It shows every family the app edits at all — nothing is edited in the inspector any more,
   so a value cannot be authored on two surfaces — and a family whose state the flat catalogue does not carry
   supplies its own rows beside the catalogue's: Pitch Fix its Key, Scale and note mask, and the multi-band
-  compressor the 1-Knob pair the app reads and never writes. `dyn-chan.ts` the binding the
+  compressor the 1-Knob pair the app reads and never writes. `fx-effect-screen.ts` is the second of that kind and stands for the three parameter
+  families an FX channel's effect can take (Rev-X on FX1, Rev.R3 on FX2, the two delays on both), resolved from
+  the EFFECT TYPE the plan holds. It carries no EFFECT TYPE row for the same reason INS FX does not, and its
+  fields name the PLAN KEY rather than a family and a slot: the two delay types are one family and put their
+  time on one slot, differing only in the range they accept, so that spelling would name two parameters with
+  one key — while the catalogue's own keys already carry a family name exactly where two families collide and
+  share one where the parameter really is one. Its display is a lane rack alone: neither reverb's decay nor a
+  delay's repeats is derivable from the values (the algorithms are the unit's, and the frequency a Hi Ratio
+  acts from is not a parameter at all), so a curve there would be an invention. Its two lanes are the effect's
+  own input and output — the mono FX send sum arriving, and the stereo tap immediately after the effect and
+  before the fader — so the shared Input / Output captions are literally true on it; the channel's post-fader
+  level belongs to the CONSOLE strip, and the fader is not this screen's. `dyn-chan.ts` the binding the
   MONO IN channel-strip processors share, `dyn-plot.ts` the dB×dB transfer plot they draw, `dyn-freq-plot.ts`
   the frequency×gain plot the two EQs draw, and
   `dyn-registry.ts` the one place that knows which processors exist.
@@ -1523,7 +1535,13 @@ during a run.
 **So the link is held by exactly one thing at a time, named.** `deviceLinkHolder` is one of `fetch` /
 `write` / `compare` / `device-setup` / `follow-usb` / `live` / `run`; `holdDeviceLink` takes it or refuses,
 `releaseDeviceLink` gives it back and ignores a release that does not name the current holder (the same
-rule the epoch enforces on the Rust side). Every frontend path that opens a connection goes through it:
+rule the epoch enforces on the Rust side). **A live session gives it back when the LINK goes, not when the
+toggle does**: `releaseLive` waits out a follow read still doing round trips, and a read carries no epoch of
+its own — `vd::sender` hands it whatever worker is installed when it asks — so an action connecting in that
+window would replace the worker under it and its epilogue would re-base and flush through the session that
+replaced it. The holder is therefore handed back at the end of that release, and even when the disconnect
+fails, since a link that cannot be closed must not leave the app locked out of its own device actions.
+Every frontend path that opens a connection goes through it:
 `withDevice` for the seven menu actions, `activateLive` for the whole activation — **not just its connect**,
 since the starting readback runs for seconds with `liveSessionUp` still false — and the two runs, which
 call `vdConnect` from `core` and so cannot be funnelled any lower.
@@ -1531,7 +1549,8 @@ call `vdConnect` from `core` and so cannot be funnelled any lower.
 `syncDeviceActionUi` is that latch's affordance: while the link is held, every device entry greys **except
 its holder's own**, which is that holder's Cancel (fetch, write, compare, the self-test) or its stop (Live
 sync). The rate picker locks for every holder — a rate change re-clocks the unit and renegotiates the USB
-stream. The model picker locks for a live **session** only: a switch replaces the plan wholesale (which is
+stream. The model picker locks for a live **session** only, which is now the one entry that unlocks at the toggle
+rather than at the disconnect: a switch replaces the plan wholesale (which is
 why `loadPlan` ends a session), and while live the picker is the only surface naming the unit on the wire —
 the on-air tally prints the tag alone rather than repeating a model the picker already states, since a
 mismatch is refused before any read. A live *start* is deliberately not covered: the model may still change
@@ -2431,8 +2450,11 @@ socket's first read timeout: an empty read means the peer has nothing queued, an
 frame budget would spend seconds of the operator's Quit on a broker that has already gone quiet.
 
 On the app side the same is true of the connection: `releaseLive` in `main.ts` is the one release, so "read the
-ledger's final counters, then drop the link" is a property of the code rather than a rule each of the three
-exits re-implements.
+ledger's final counters, wait out a follow read still on the wire, drop the link, then hand the holder back" is
+a property of the code rather than a rule each of the three exits re-implements. The wait is what makes
+`abandonFollowWork`'s split hold at the link as well as in the plan — a session that merely ends lets its read
+finish, so the link it reads over has to outlive the session — and the holder going last is what stops another
+action connecting over that read.
 
 The app's exit is the case that needs more than telling: `lib.rs` builds the app and runs it with a
 `RunEvent::Exit` handler that calls `vd::shutdown_blocking`, which **waits** (bounded, 1.5 s) for the

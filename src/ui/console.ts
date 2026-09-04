@@ -40,6 +40,7 @@ import {
 } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
 import { COMP_EQ_COMP_FIRST } from "../core/control/params";
+import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 import { dynOpenLabel } from "./dyn-registry";
 import type { DynKind } from "./dyn-registry";
 import { markMidi } from "./midi-learn";
@@ -88,7 +89,7 @@ import {
 } from "../core/control/vd";
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
-import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
+import { controlId, FX_ON_SCOPE, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
 import { el, focusables, onWheelStep, popLeft, popTop, preserveFocus, scrubFloat } from "./dom";
 import { fineActive, fineTag } from "./fine";
@@ -474,9 +475,14 @@ export class Console {
   private tapPop!: HTMLElement;
   // The INS FX type popover and the strip it is open for, plus the chip it is anchored
   // to (either half of the pair opens it, so the anchor is not derivable from the id).
-  private ifxPop!: HTMLElement;
-  private ifxOpenFor: string | null = null;
-  private ifxBtn: HTMLElement | null = null;
+  /** The type popover: ONE element and one open-state for both selectors that use it —
+   *  a strip's INS FX effect and an FX channel's EFFECT TYPE. Only one can be open, and
+   *  `typePopKind` is what the reopen-after-render, the outside press and the focus
+   *  restore dispatch on, since the two hang off differently classed chips. */
+  private typePop!: HTMLElement;
+  private typePopFor: string | null = null;
+  private typePopBtn: HTMLElement | null = null;
+  private typePopKind: "insfx" | "fx" = "insfx";
   private stripsHost!: HTMLElement;
 
   constructor(
@@ -582,10 +588,12 @@ export class Console {
     // Same for the INS FX popover, and for a second reason: its list is drawn from the
     // plan the strip was just rebuilt from, so a device-side selection would otherwise
     // leave the open list naming what the strip no longer holds. Re-opening re-reads it.
-    if (this.ifxOpenFor === stripId) {
-      const chip = fresh.querySelector<HTMLElement>(".con-ifxopen");
-      if (chip) this.openInsFxPop(stripId, chip);
-      else this.closeInsFxPop();
+    if (this.typePopFor === stripId) {
+      const fx = this.typePopKind === "fx";
+      const chip = fresh.querySelector<HTMLElement>(fx ? ".con-fxopen" : ".con-ifxopen");
+      if (!chip) this.closeTypePop();
+      else if (fx) this.openFxTypePop(stripId, chip);
+      else this.openInsFxPop(stripId, chip);
     }
     restoreFocus();
   }
@@ -613,17 +621,21 @@ export class Console {
     this.host.append(this.sendPanPop);
     // INS FX type popover: same arrangement, anchored to whichever half of the strip's
     // INS FX pair was pressed.
-    this.ifxPop = el("div", "con-ifxpop");
-    this.ifxPop.hidden = true;
-    this.host.append(this.ifxPop);
+    this.typePop = el("div", "con-ifxpop");
+    this.typePop.hidden = true;
+    this.host.append(this.typePop);
     // Close any popover on an outside interaction (each trigger manages its own toggle,
     // so a press on the trigger is excluded).
     document.addEventListener("pointerdown", (e) => {
       const tgt = e.target as HTMLElement;
       if (this.tapOpenFor && !this.tapPop.contains(tgt) && !tgt.closest(".con-tap")) this.closeTapPop();
       if (this.sendPanOpenFor && !this.sendPanPop.contains(tgt) && !tgt.closest(".con-panbtn")) this.closeSendPan();
-      if (this.ifxOpenFor && !this.ifxPop.contains(tgt) && !tgt.closest(".con-ifxface, .con-ifxopen"))
-        this.closeInsFxPop();
+      if (
+        this.typePopFor &&
+        !this.typePop.contains(tgt) &&
+        !tgt.closest(".con-ifxface, .con-ifxopen, .con-fxface, .con-fxopen")
+      )
+        this.closeTypePop();
     });
     // Escape is a KEYBOARD dismissal, so the focus goes back to what opened the popover:
     // the row that had it is about to be destroyed, and without this the operator lands on
@@ -634,7 +646,7 @@ export class Console {
       if (e.key !== "Escape") return;
       if (this.sendPanOpenFor) this.closeSendPan(true);
       if (this.tapOpenFor) this.closeTapPop(true);
-      if (this.ifxOpenFor) this.closeInsFxPop(true);
+      if (this.typePopFor) this.closeTypePop(true);
     });
   }
 
@@ -864,7 +876,7 @@ export class Console {
   private closePopovers(): void {
     this.closeTapPop();
     this.closeSendPan();
-    this.closeInsFxPop();
+    this.closeTypePop();
   }
 
   private openTapPop(id: string, anchor: HTMLElement): void {
@@ -1299,7 +1311,7 @@ export class Console {
    *  Both the face and the disclosure call this, so pressing either one twice closes it
    *  — the toggle the meter badge and the PAN button already have. */
   private toggleInsFxPop(id: string, anchor: HTMLElement): void {
-    if (this.ifxOpenFor === id) this.closeInsFxPop();
+    if (this.typePopFor === id) this.closeTypePop();
     else this.openInsFxPop(id, anchor);
   }
 
@@ -1321,7 +1333,7 @@ export class Console {
     const menu = insertFxMenu(model, plan, id, this.ifxCensus ?? undefined);
     const eff = effectiveInsertFx(model, plan, id);
     const holds = insertFxSelected({ insertFx: eff });
-    this.ifxPop.replaceChildren();
+    this.typePop.replaceChildren();
 
     const ph = el("div", "ph");
     const cat = el("span", "cat");
@@ -1407,7 +1419,7 @@ export class Console {
       // A bypassed or rate-stopped effect is still an effect to tune, and the screen says
       // so under its own display. Only a strip holding nothing has nothing to open.
       this.wireActivate(open, undefined, () => {
-        this.closeInsFxPop();
+        this.closeTypePop();
         this.hooks.onOpenDynScreen?.("insfx", id);
       });
     } else {
@@ -1416,28 +1428,149 @@ export class Console {
     }
     foot.append(open);
 
-    this.ifxPop.append(ph, list, foot);
-    this.ifxPop.hidden = false;
-    this.ifxOpenFor = id;
-    this.ifxBtn = anchor;
+    this.typePop.append(ph, list, foot);
+    this.typePop.hidden = false;
+    this.typePopFor = id;
+    this.typePopKind = "insfx";
+    this.typePopBtn = anchor;
     anchor.classList.add("open");
     anchor.setAttribute("aria-expanded", "true");
-    this.placePopover(this.ifxPop, anchor, "center", 8);
+    this.placePopover(this.typePop, anchor, "center", 8);
   }
 
-  private closeInsFxPop(restore = false): void {
-    if (!this.ifxOpenFor) return;
-    const openFor = this.ifxOpenFor;
-    this.ifxOpenFor = null;
-    this.ifxPop.hidden = true;
-    this.ifxPop.replaceChildren();
-    if (this.ifxBtn) {
-      this.ifxBtn.classList.remove("open");
-      this.ifxBtn.setAttribute("aria-expanded", "false");
+  private fxTypeOpenChip(id: string): HTMLElement {
+    const chip = el("div", "con-chip con-chip-open con-fxopen");
+    // Always "▸": an FX channel always holds an effect, so this never stands for the "+"
+    // the INS FX opener shows over an empty strip.
+    chip.textContent = "▸";
+    chip.setAttribute("role", "button");
+    chip.setAttribute("aria-haspopup", "menu");
+    chip.setAttribute("aria-expanded", "false");
+    const label = t().inspector.fxEffect.effectType;
+    chip.title = label;
+    chip.setAttribute("aria-label", label);
+    this.wireActivate(chip, undefined, () => {
+      if (this.typePopFor === id && this.typePopKind === "fx") this.closeTypePop(true);
+      else this.openFxTypePop(id, chip);
+    });
+    return chip;
+  }
+
+  /**
+   * The EFFECT TYPE popover: the same element and the same three parts the INS FX one uses.
+   *
+   * Three things that list has and this one does not, all for one reason — an FX channel's
+   * selector has no "no effect" value and its engine is its own:
+   *   - no empty row, so every entry is an effect;
+   *   - no disabled row. Both channels' five types run at every rate the bus itself runs at
+   *     (the effect list gives FX1's five 176.4 / 192 kHz and FX2's five a 96 kHz ceiling,
+   *     which is the rate the FX2 bus stops at anyway), and there is no shared slot for a
+   *     second holder to take. So there is no `why` column here at all;
+   *   - the launcher is never inert, because there is always an effect to open.
+   *
+   * EFFECT ON is deliberately NOT here. The face this popover hangs off already switches it,
+   * and one value behind two faces is a question the operator has to answer before using
+   * either. The INS FX popover dropped its bypass for the same reason.
+   */
+  private openFxTypePop(id: string, anchor: HTMLElement): void {
+    this.closePopovers();
+    const plan = this.hooks.getPlan();
+    const fxIndex = FX_CHANNEL_NODE_INDEX[id];
+    const cur = resolveFxEffectType(fxIndex, plan.nodeParams[id]?.fxEffect?.type);
+    this.typePop.replaceChildren();
+
+    const ph = el("div", "ph");
+    const cat = el("span", "cat");
+    cat.textContent = t().inspector.fxEffect.effectType;
+    const who = el("span", "who");
+    who.textContent = this.toStripModel(id).label;
+    ph.append(cat, who);
+
+    const list = el("div", "ilist");
+    list.setAttribute("role", "menu");
+    for (const option of fxEffectTypes(fxIndex)) {
+      const current = option.value === cur;
+      const row = el("div", "irow" + (current ? " active" : ""));
+      row.setAttribute("role", "menuitemradio");
+      row.setAttribute("aria-checked", String(current));
+      const nm = el("span", "nm");
+      nm.textContent = option.label;
+      row.append(nm);
+      row.tabIndex = 0;
+      const pick = (): void => this.setFxType(id, option.value);
+      row.addEventListener("click", pick);
+      row.addEventListener("keydown", (e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          pick();
+        }
+      });
+      list.append(row);
+    }
+
+    const foot = el("div", "ifoot");
+    const open = el("div", "iopen");
+    open.textContent = dynOpenLabel("fx", t());
+    open.setAttribute("role", "button");
+    // A bypassed effect, and one on a bus the rate has taken away, are both still effects to
+    // tune — the screen says so under its own display — so nothing gates this.
+    this.wireActivate(open, undefined, () => {
+      this.closeTypePop();
+      this.hooks.onOpenDynScreen?.("fx", id);
+    });
+    foot.append(open);
+
+    this.typePop.append(ph, list, foot);
+    this.typePop.hidden = false;
+    this.typePopFor = id;
+    this.typePopKind = "fx";
+    this.typePopBtn = anchor;
+    anchor.classList.add("open");
+    anchor.setAttribute("aria-expanded", "true");
+    this.placePopover(this.typePop, anchor, "center", 8);
+  }
+
+  /**
+   * Write an EFFECT TYPE.
+   *
+   * The plan loses nothing across this: an FX channel keeps every family's values side by
+   * side under keys that carry the family name, so the outgoing effect's settings are still
+   * there and a type of that family finds them again. Inside one family the keys are shared,
+   * so the three Rev-X types read one another's values rather than parking their own. What the UNIT does is the opposite — it
+   * refills the engine array with the incoming type's factory values — and the writer puts
+   * the plan back over that immediately, so the two agree again.
+   *
+   * The one thing that is genuinely lost is a value the UNIT holds and the plan has never
+   * seen, because the effect arrays announce nothing when the front panel moves them. See
+   * the note in docs/{en,ja}/channel-tuning.md: reading the outgoing array into the plan
+   * before this write is what would keep it, and this is the single place that would go.
+   */
+  private setFxType(id: string, value: number): void {
+    const np = this.nodeParamsOf(id);
+    np.fxEffect = { ...np.fxEffect, type: value };
+    this.closeTypePop();
+    this.commit(id, ["fxEffect.type"]);
+    this.render();
+    // …and the screen opens on it, which is what the INS FX popover does after a selection.
+    // The two are the app's only Type axis and they are reached the same way, so a press that
+    // means the same thing on both cannot land somewhere different. An FX channel always
+    // holds an effect, so there is no state here where the screen would have nothing to show.
+    this.hooks.onOpenDynScreen?.("fx", id);
+  }
+
+  private closeTypePop(restore = false): void {
+    if (!this.typePopFor) return;
+    const openFor = this.typePopFor;
+    this.typePopFor = null;
+    this.typePop.hidden = true;
+    this.typePop.replaceChildren();
+    if (this.typePopBtn) {
+      this.typePopBtn.classList.remove("open");
+      this.typePopBtn.setAttribute("aria-expanded", "false");
       // The disclosure if the rebuilt strip still has one, the face otherwise — the
       // same order every other landing here uses.
-      this.releaseFocus(this.ifxBtn, restore, openFor, ".con-ifxopen, .con-ifxface");
-      this.ifxBtn = null;
+      this.releaseFocus(this.typePopBtn, restore, openFor, this.typePopSel.join(", "));
+      this.typePopBtn = null;
     }
   }
 
@@ -1959,7 +2092,7 @@ export class Console {
     const restorePopFocus = this.captureFocus();
     this.closeTapPop();
     this.closeSendPan();
-    this.closeInsFxPop();
+    this.closeTypePop();
     this.host.classList.toggle("midi-learn", this.hooks.midi?.learnActive() ?? false);
     // A render replaces every strip element, so the transient state those elements
     // carried goes with them: the live meters' ballistics and keyboard focus. During
@@ -2050,6 +2183,15 @@ export class Console {
    * The three popovers, each with the element it hangs off and the node it belongs to.
    * One table so the focus rules below cannot know about two of them and miss the third.
    */
+  /** The chips the type popover currently hangs off, disclosure first — the order every
+   *  landing here uses. ONE seat because two sites ask it: the focus table below and the
+   *  release in `closeTypePop`. Written out at both, only one of them was widened when the
+   *  popover began serving a second selector, and a whole-rack repaint then dropped focus to
+   *  the document body — an FX strip carries neither INS FX class. */
+  private get typePopSel(): readonly string[] {
+    return this.typePopKind === "fx" ? [".con-fxopen", ".con-fxface"] : [".con-ifxopen", ".con-ifxface"];
+  }
+
   private get popovers(): ReadonlyArray<{
     kind: "tap" | "pan" | "ifx";
     box: HTMLElement;
@@ -2059,7 +2201,7 @@ export class Console {
     return [
       { kind: "tap", box: this.tapPop, openFor: this.tapOpenFor, sel: [".con-tap"] },
       { kind: "pan", box: this.sendPanPop, openFor: this.sendPanOpenFor, sel: [".con-panbtn"] },
-      { kind: "ifx", box: this.ifxPop, openFor: this.ifxOpenFor, sel: [".con-ifxopen", ".con-ifxface"] },
+      { kind: "ifx", box: this.typePop, openFor: this.typePopFor, sel: this.typePopSel },
     ];
   }
 
@@ -2480,6 +2622,39 @@ export class Console {
       // device-wide slot it still claims is given back, and that is the state an operator
       // most needs to reach it from.
       this.appendOpener(proc, noneAtThisRate ? null : this.insFxOpenChip(m.id, holds));
+    }
+    if (this.isFxChannel(m.id)) {
+      // The same face + disclosure pair GATE / COMP / EQ / INS FX take. The face switches
+      // the effect in and out, the disclosure opens the EFFECT TYPE popover.
+      //
+      // The chip is called EFFECT and not FX: the strip's own scribble already reads FX 1 /
+      // FX 2, so a chip repeating that names nothing, and what a chip in this row names
+      // everywhere else is WHAT HAPPENS there. The unit's vocabulary is the same — its
+      // parameters are EFFECT TYPE and EFFECT ON.
+      //
+      // An FX channel has no empty state to draw: its selector has no "none" value and the
+      // factory type is a real effect, so the face is always a live switch and the
+      // disclosure always opens onto something. That is the whole of what makes this pair
+      // simpler than the INS FX one above.
+      const fxOn = (): boolean => planOf().fxEffect?.on ?? true;
+      proc.append(
+        this.buildChip(
+          m.id,
+          t().console.effect,
+          fxOn(),
+          () => {
+            const next = !fxOn();
+            const np = this.nodeParamsOf(m.id);
+            np.fxEffect = { ...np.fxEffect, on: next };
+            return next;
+          },
+          // The nested field by name, not the group: naming `fxEffect` would claim every
+          // sibling this rebuild merely copied and take the device's answer for all of them.
+          // The morphing strip's chips solved the same shape first.
+          { cls: "con-chip con-fxface", keys: ["fxEffect.on"], midiId: controlId(m.id, "fx", FX_ON_SCOPE) },
+        ),
+      );
+      this.appendOpener(proc, this.fxTypeOpenChip(m.id));
     }
     // DUCKER: the sidechain ducker hung under a stereo channel (its own node).
     // A shelved ducker drops its chip even while the parent strip stays.
@@ -3128,7 +3303,7 @@ export class Console {
     if (parked) np.insertFxParams = parked;
     np.insertFx = value;
     np.insertFxOn = value !== INSERT_FX_NONE;
-    this.closeInsFxPop();
+    this.closeTypePop();
     // Only what this edit wrote. The engine values are named when there were some to
     // park and not otherwise — naming that group on a selection that moved nothing in it
     // would take the device's answer for every slot the re-key merely copied.
