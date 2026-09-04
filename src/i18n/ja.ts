@@ -828,6 +828,10 @@ export const ja: Messages = {
     copied: "リンク台帳をクリップボードにコピーしました",
     copyFailed: "クリップボードにコピーできませんでした — パネルから読み取ってください",
   },
+  errorBox: {
+    title: "エラー",
+    close: "閉じる",
+  },
   licenses: {
     title: "サードパーティライセンス",
     close: "閉じる",

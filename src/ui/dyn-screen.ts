@@ -664,6 +664,7 @@ export class DynScreen {
   private readouts = new Map<string, { v: HTMLElement; p: HTMLElement; lastV: string; lastP: string }>();
 
   private readonly dismiss = wireDismiss({
+    scrim: () => this.scrim,
     keep: (target) => target !== this.scrim,
     close: () => this.close(),
   });

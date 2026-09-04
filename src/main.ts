@@ -71,6 +71,7 @@ import { installEditMenu } from "./ui/edit-menu";
 import { PlanHistory } from "./ui/history";
 import { installKeyProbe } from "./ui/keyprobe";
 import { showLoadReport } from "./ui/load-report";
+import { showErrorBox } from "./ui/error-box";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
 import { DynScreen } from "./ui/dyn-screen";
@@ -1577,11 +1578,7 @@ if (!isTauri()) {
 
 function setStatus(msg: string): void {
   statusbar.textContent = msg;
-  statusWrites++;
 }
-// Counts writes rather than comparing text: a fallback that asked whether the line still reads
-// what it wrote cannot tell "nothing has happened" from "something wrote the same words".
-let statusWrites = 0;
 
 // Surface an operation that did not complete as a modal, so it is not missed the
 // way a transient status line can be. Clears the status line first so a stale
@@ -1591,14 +1588,13 @@ function showError(message: string, keep = ""): void {
   // a caller raising this AFTER its action wrote an outcome: that line is not stale, it says
   // what the dialog does not, and the two are about different things.
   setStatus(keep);
-  const raisedAt = statusWrites;
   // Not `void`: a dialog that cannot be raised would otherwise leave the failure it carries on
-  // no surface at all, and the status line — blank, or holding an outcome that reads as though
-  // nothing went wrong — would be the whole of what the operator sees. Skipped where anything
-  // has written since, which is newer than a failure this already logged.
+  // no surface at all. It goes to a box of its own rather than to the status line, which is
+  // one transient slot — the line is holding what the run achieved, and whatever the app
+  // reports next would take the failure with it.
   errorDialog(message).catch((err: unknown) => {
     console.error("error dialog failed:", message, err);
-    if (statusWrites === raisedAt) setStatus(keep ? `${message} — ${keep}` : message);
+    showErrorBox(message);
   });
 }
 

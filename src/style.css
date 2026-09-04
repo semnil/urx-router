@@ -3544,7 +3544,11 @@ input[type="range"]:focus-visible,
     100  tool modals — Preferences, Device setup, channel tuning, licenses
     120  the drag & drop advert, legible over any of them (pointer-events: none)
     130  decision gates — consent, load report, rate choice. Each asks a question that
-         has to be answerable whatever else is open, so they sit above everything. */
+         has to be answerable whatever else is open, so they sit above everything.
+    140  the error box (ui/error-box.ts), which is where a failure goes when its dialog
+         could not be raised. Above the gates rather than beside the tool modals: it is
+         raised BY something going wrong under whatever is already open, and a shared rung
+         puts it behind that, since the tiebreak between equal rungs is document order. */
 /* First-run consent gate: a full-screen modal shown once on desktop before the
    app is usable (the Windows installer shows the same notice, but macOS
    drag-install and auto-updates bypass it). */
@@ -3560,6 +3564,11 @@ input[type="range"]:focus-visible,
 }
 .dropzone {
   z-index: 120;
+}
+/* Above the gates: see the ladder above. A failure it carries arrived while something else
+   was open, so a rung shared with that would hide it behind the thing it interrupts. */
+#error-box-modal {
+  z-index: 140;
 }
 .gate-scrim {
   z-index: 130;

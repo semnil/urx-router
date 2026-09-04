@@ -97,6 +97,14 @@ function topScrim(): HTMLElement | null {
   return top;
 }
 
+/** Is this element inside anything the hold has made inert? */
+function inertAncestor(el: Element): boolean {
+  for (let node: Element | null = el; node; node = node.parentElement) {
+    if (node instanceof HTMLElement && node.inert) return true;
+  }
+  return false;
+}
+
 function applyInert(): void {
   const app = document.getElementById("app");
   if (app) app.inert = inertClaims.length > 0;
@@ -107,6 +115,12 @@ function applyInert(): void {
 /** Claim the hold for one modal, and return its release. Pass the modal's own
  *  scrim so the claim knows what must stay reachable while it is on top. */
 export function holdAppInert(scrim?: HTMLElement | null): () => void {
+  // Where focus was before this claim, so releasing it puts the operator back — on the modal
+  // underneath, or on the control that opened this one. Without it a modal that focused its own
+  // button and then hid left focus on a hidden element or on BODY, and the keyboard had nowhere
+  // to go; the release below is the one point every modal passes through.
+  const focused = document.activeElement;
+  const restoreTo = focused instanceof HTMLElement && focused !== document.body ? focused : null;
   const claim: InertClaim = { scrim: scrim ?? null };
   inertClaims.push(claim);
   applyInert();
@@ -120,6 +134,12 @@ export function holdAppInert(scrim?: HTMLElement | null): () => void {
     // in the loop that would clear it.
     if (claim.scrim) claim.scrim.inert = false;
     applyInert();
+    // After the recompute, so a scrim that has just become the top one is reachable again —
+    // focusing into a still-inert element does nothing at all. The ancestors are read by
+    // PROPERTY: this file sets `.inert` rather than the attribute, browsers reflect one to the
+    // other and jsdom does not, so an attribute selector answers "not inert" for every element
+    // under test.
+    if (restoreTo?.isConnected && !inertAncestor(restoreTo)) restoreTo.focus();
   };
 }
 
@@ -132,16 +152,27 @@ export function holdAppInert(scrim?: HTMLElement | null): () => void {
 // rides its requestClose choke point, not `inert`. Shared by the Preferences and
 // Device setup modals, the licenses modal and the channel tuning screen so the
 // phase/lifecycle contract lives in one place; attach on open, detach on close.
-export function wireDismiss(opts: { keep: (target: Node) => boolean; inert?: () => boolean; close: () => void }): {
+export function wireDismiss(opts: {
+  /** The overlay's own scrim. Every wiring listens on the DOCUMENT, so without it one Escape
+   *  reaches all of them at once and closes the modal underneath along with the top one —
+   *  `holdAppInert` already marks a covered scrim inert; this is what reads it, in the one
+   *  place, rather than a guard pasted into each caller. A thunk
+   *  because a class wires this in a field initialiser, before its own scrim is assigned. */
+  scrim?: () => HTMLElement | null;
+  keep: (target: Node) => boolean;
+  inert?: () => boolean;
+  close: () => void;
+}): {
   attach: () => void;
   detach: () => void;
 } {
+  const covered = (): boolean => opts.inert?.() === true || opts.scrim?.()?.inert === true;
   const onPointer = (e: PointerEvent): void => {
-    if (opts.inert?.() || opts.keep(e.target as Node)) return;
+    if (covered() || opts.keep(e.target as Node)) return;
     opts.close();
   };
   const onKey = (e: KeyboardEvent): void => {
-    if (e.key !== "Escape" || opts.inert?.()) return;
+    if (e.key !== "Escape" || covered()) return;
     opts.close();
   };
   return {

@@ -57,6 +57,7 @@ const SURFACE_NAMES = [
   "loadReport",
   "rateChoice",
   "licenses",
+  "errorBox",
   "deviceSetup",
   "dynScreen",
   "prefs",
@@ -92,6 +93,9 @@ const SURFACES: Record<SurfaceName, Surface> = {
       // all and the shell's own error dialog carries it (main.ts, showError).
       "licenses.error": "the shell's native error dialog",
     },
+  },
+  errorBox: {
+    roots: ["errorBox"],
   },
   deviceSetup: {
     roots: ["deviceSetup"],
@@ -404,6 +408,23 @@ test("the licenses modal shows its title, the family meta and its close action",
   const inv = inventoryOf("licenses");
   await inv.take(page, "#licenses-modal");
   expectComplete("licenses", inv);
+});
+
+// Where a message goes when the dialog it was routed to could not be raised. The stub rejects
+// any command it was not taught, and `plugin:dialog|message` is deliberately not among the ones
+// this test teaches it — that IS the shape the box exists for. The licenses notice is
+// unparseable, so the File menu's own error path is what raises one.
+test("the error box shows what a dialog that could not be raised was carrying", async ({ page }) => {
+  await stubTauriBoot(page, { third_party_licenses: "<html><body></body></html>" });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-file");
+  await page.click("#btn-licenses");
+  await expect(page.locator("#error-box-modal")).toBeVisible();
+
+  const inv = inventoryOf("errorBox");
+  await inv.take(page, "#error-box-modal");
+  expectComplete("errorBox", inv);
 });
 
 test("the device setup screen shows every page, on the model that has it and the one that does not", async ({

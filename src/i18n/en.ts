@@ -1048,6 +1048,12 @@ export const en = {
     copied: tr("Link ledger copied to the clipboard"),
     copyFailed: tr("Couldn't copy to the clipboard — read the ledger from the panel"),
   },
+  errorBox: {
+    // The box an error takes when its dialog could not be raised. Plural: it queues, since a
+    // shell that cannot raise one dialog is unlikely to raise the next.
+    title: tr("Errors"),
+    close: tr("Close"),
+  },
   licenses: {
     title: tr("Third-party licenses"),
     close: tr("Close"),

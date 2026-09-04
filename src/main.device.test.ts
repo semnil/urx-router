@@ -2505,9 +2505,10 @@ describe("a value the unit holds and the app cannot write", () => {
     // The positive control: the write went out, so the recorder tail ran and its read failed.
     expect(shell.count("vd_set")).toBeGreaterThan(10);
     const message = t().error.trackCountReread(t().error.shell.deviceLost);
-    // Both halves on the one surface that is left — the failure, and what the run achieved.
-    await vi.waitFor(() => expect(statusText().startsWith(message)).toBe(true));
-    expect(countFor(statusText().slice(message.length + 3), t().status.written)).toBeGreaterThan(0);
+    // The failure in a box of its own, and the line still saying what the write achieved.
+    await vi.waitFor(() => expect($("error-box-modal").hidden).toBe(false));
+    expect($("error-box-body").textContent).toBe(message);
+    expect(countFor(statusText(), t().status.written)).toBeGreaterThan(0);
   });
 
   // …and it must not do that over a NEWER line. The dialog's rejection arrives whenever the
@@ -2551,14 +2552,15 @@ describe("a value the unit holds and the app cannot write", () => {
       .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
     await vi.waitFor(() => expect(statusText()).not.toBe(before), { timeout: 10_000 });
     const newer = statusText();
-    // Waited for through the log the handler writes FIRST, not through the dialog count: the
-    // rejection is handled on a microtask, and asserting the line without waiting for it reads
-    // the moment before the decision — green whether or not there is a guard.
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       refuseDialog();
       await vi.waitFor(() => expect(logged).toHaveBeenCalled());
+      // Both readable at once, which is the whole reason the failure does not go to the line:
+      // the newer thing the operator was told stands, and the failure is in a box of its own.
       expect(statusText()).toBe(newer);
+      expect($("error-box-modal").hidden).toBe(false);
+      expect($("error-box-body").textContent).toContain(t().error.shell.deviceLost);
     } finally {
       logged.mockRestore();
     }
