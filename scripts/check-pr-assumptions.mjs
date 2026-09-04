@@ -101,10 +101,28 @@ export function untagged(body) {
 function main() {
   const argv = process.argv.slice(2);
   const fileAt = argv.indexOf("--file");
-  const body = fileAt >= 0 ? readFileSync(argv[fileAt + 1], "utf8") : (process.env.PR_BODY ?? "");
+  if (fileAt >= 0 && !argv[fileAt + 1]) {
+    console.error("--file needs a path");
+    process.exitCode = 1;
+    return;
+  }
+  // Told NOTHING is not the same as being handed an empty body. The second is a pull
+  // request whose author wrote none, and claims nothing; the first is a run that would
+  // otherwise print a verdict having read no body at all — which is what a contributor
+  // running the command out of a document takes for an answer about the body they are
+  // about to write.
+  if (fileAt < 0 && process.env.PR_BODY === undefined) {
+    console.error(
+      "no body to read. Pass `--file <path>` with the body you are about to submit, " +
+        "or set PR_BODY — which is what the workflow does, from the pull request itself.",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const body = fileAt >= 0 ? readFileSync(argv[fileAt + 1], "utf8") : process.env.PR_BODY;
   if (!body.trim()) {
-    // A push, or a body nobody wrote. Nothing is claimed, so nothing is refused.
-    console.log("OK: no pull request body to read");
+    // A pull request whose body is empty carries no field, so it claims nothing.
+    console.log("OK: the body is empty, so it claims nothing");
     return;
   }
   const bad = untagged(body);

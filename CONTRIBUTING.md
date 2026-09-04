@@ -38,7 +38,7 @@ pnpm tauri dev     # desktop app
 | `pnpm format` | Prettier over the TypeScript sources |
 | `pnpm check:md` | Markdown table integrity |
 | `pnpm check:skips` | every permanent skip in `e2e/race` is registered against what holds its reason |
-| `pnpm check:pr-assumptions` | the assumptions field of a pull request body names what each observation needs |
+| `pnpm check:pr-assumptions -- --file <body.md>` | the assumptions field of the body in that file names what each observation needs. Run it on the body you are about to submit; on a pull request the workflow supplies the body itself, and a run given neither refuses rather than reporting on nothing |
 | `pnpm build:demo` | browser demo build (no save dialog or image export) |
 
 ## Conventions

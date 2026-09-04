@@ -12,7 +12,9 @@
 // is the whole of what that workflow reads.
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { untagged } from "./check-pr-assumptions.mjs";
 
@@ -128,8 +130,34 @@ describe("bodies it is not about", () => {
     expect(run("# Summary\n\nFixes a typo.\n").status).toBe(0);
   });
 
-  it("passes an empty body, which is what a push has", () => {
+  it("passes an empty body, which is a pull request whose author wrote none", () => {
     expect(run("").status).toBe(0);
+  });
+
+  // Being told nothing is a different state from being handed an empty body, and the
+  // command has to say so rather than print a verdict: a contributor running it out of
+  // CONTRIBUTING would otherwise read that success as an answer about the body they are
+  // about to write, and meet the check for the first time on the pull request.
+  it("refuses a run given no body at all, naming both ways to give it one", () => {
+    const bare = spawnSync(process.execPath, [SCRIPT], {
+      encoding: "utf8",
+      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "PR_BODY")),
+    });
+    expect(bare.status).toBe(1);
+    expect(bare.stderr).toContain("--file");
+    expect(bare.stderr).toContain("PR_BODY");
+  });
+
+  it("reads the body out of a file, which is how it is run by hand", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pr-body-")), "body.md");
+    writeFileSync(path, "- [x] Assumptions this PR rests on are listed here:\n  - a guess nobody measured.\n");
+    const said = spawnSync(process.execPath, [SCRIPT, "--file", path], {
+      encoding: "utf8",
+      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "PR_BODY")),
+    });
+    expect(said.status).toBe(1);
+    writeFileSync(path, "- [x] Assumptions this PR rests on are listed here:\n  - none\n");
+    expect(spawnSync(process.execPath, [SCRIPT, "--file", path], { encoding: "utf8" }).status).toBe(0);
   });
 
   // The field is the last entry of its list, so its block ends at the next heading. Without

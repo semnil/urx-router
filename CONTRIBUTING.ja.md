@@ -36,7 +36,7 @@ pnpm tauri dev     # デスクトップアプリ
 | `pnpm format` | TypeScript ソースへの Prettier 適用 |
 | `pnpm check:md` | Markdown テーブルの整合性チェック |
 | `pnpm check:skips` | `e2e/race` の恒久 skip が、その理由を保つものと結び付けて登録されているか |
-| `pnpm check:pr-assumptions` | プルリクエスト本文の assumptions 欄が、各観測に何が要るかを名乗っているか |
+| `pnpm check:pr-assumptions -- --file <body.md>` | そのファイルにある本文の assumptions 欄が、各観測に何が要るかを名乗っているか。提出しようとしている本文に対して実行する。プルリクエスト上では workflow が本文自体を渡すので指定は不要で、どちらも与えられなかった実行は「何も読まずに成功」ではなく拒否になる |
 | `pnpm build:demo` | ブラウザデモ版のビルド（保存ダイアログと画像出力を除く） |
 
 ## 規約
