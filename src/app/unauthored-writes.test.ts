@@ -116,26 +116,42 @@ describe("a leaf that gates its node's whole block", () => {
     // Everything is the unit's except the one parameter the operator dialled in.
     for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "device");
     for (const leaf of ["insertFx", `insertFxParams.${insertFxParamKey("compander", 6)}`]) {
-      plan.paramSource!.set(nodeParamContestPath("ch1", leaf), leaf === "insertFx" ? "device" : "manual");
+      plan.paramSource!.set(nodeParamContestPath("ch1", leaf), "manual");
     }
     return plan;
   };
 
-  it("does not name a strip for an address its own authored leaf asks for", () => {
-    const plan = withInsertFx();
+  const engineAddrs = (plan: Plan): Set<number> => {
     const engine = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "INSERT_FX_EFFECT");
-    expect(engine.length, "the premise: the authored parameter reaches the wire").toBeGreaterThan(0);
-    expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(engine.map(cmdAddr)))).toEqual([]);
+    expect(engine.length, "the premise: the engine array reaches the wire").toBeGreaterThan(0);
+    return new Set(engine.map(cmdAddr));
+  };
+
+  it("says nothing when both the selector and the parameter are the operator's", () => {
+    const plan = withInsertFx();
+    plan.paramSource!.set(nodeParamContestPath("ch1", "insertFx"), "manual");
+    expect(unauthoredWriteNodes(MODEL, plan, "all", engineAddrs(plan))).toEqual([]);
   });
 
-  // The control on the same fixture: with the parameter unauthored too, nothing claims the
-  // address and the strip IS named — so the case above is the join working, not the note
-  // having gone quiet.
-  it("names it once no authored leaf asks for that address", () => {
+  // The selector is its OWN address, and that is the one an unauthored selector names — the
+  // engine slot's value is still what the operator dialled in. Both go out in the same write,
+  // so a diff carrying either names the strip; the split matters because the selector is the
+  // irreversible half, refilling the array from its type's defaults.
+  it("names the strip through the selector's own address when the selector is the fill's", () => {
     const plan = withInsertFx();
-    plan.paramSource!.set(nodeParamContestPath("ch1", `insertFxParams.${insertFxParamKey("compander", 6)}`), "device");
-    const engine = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "INSERT_FX_EFFECT");
-    expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(engine.map(cmdAddr)))).toEqual(["ch1"]);
+    plan.paramSource!.set(nodeParamContestPath("ch1", "insertFx"), "default");
+    const selector = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "INSERT_FX");
+    expect(selector.length, "the premise: the selector reaches the wire").toBeGreaterThan(0);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(selector.map(cmdAddr)))).toEqual(["ch1"]);
+    // …and not through the engine slot, whose value the operator chose.
+    expect(unauthoredWriteNodes(MODEL, plan, "all", engineAddrs(plan))).toEqual([]);
+  });
+
+  it("names the strip when the PARAMETER is the fill's", () => {
+    const plan = withInsertFx();
+    plan.paramSource!.set(nodeParamContestPath("ch1", "insertFx"), "manual");
+    plan.paramSource!.set(nodeParamContestPath("ch1", `insertFxParams.${insertFxParamKey("compander", 6)}`), "default");
+    expect(unauthoredWriteNodes(MODEL, plan, "all", engineAddrs(plan))).toEqual(["ch1"]);
   });
 });
 

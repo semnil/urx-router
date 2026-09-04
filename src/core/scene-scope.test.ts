@@ -229,10 +229,10 @@ describe("scene-scoped plan documents", () => {
   });
 });
 
-// The third encoding of the same boundary, and the one a provenance mark rests on: after a
-// write the plan's values are the unit's, EXCEPT where the write did not go. Asked
-// differentially against the emit rather than compared to a list, since a list would agree
-// with itself however wrong both halves were.
+// The third encoding of the same boundary, and the one a scene-scoped LOAD rests on: the
+// device-wide values it carries over came off the plan on screen rather than out of the
+// document, so their provenance is that plan's. Asked differentially against the emit rather
+// than compared to a list, since a list would agree with itself however wrong both halves were.
 describe("sceneExternalParamNames", () => {
   const MODEL = getModel("URX44V");
   const emit = (plan: Plan, scope: "all" | "scene"): Set<number> =>
@@ -250,7 +250,7 @@ describe("sceneExternalParamNames", () => {
     return { ...plan, nodeParams: { ...plan.nodeParams, [nodeId]: blank(plan.nodeParams[nodeId], []) as NodeParams } };
   }
 
-  it("names keys a scene-scoped write does not send, and only those", () => {
+  it("names keys a scene-scoped operation leaves alone, and only those", () => {
     const plan = defaultPlan("URX44V");
     const names = sceneExternalParamNames(plan);
     expect(names.size).toBeGreaterThan(0);

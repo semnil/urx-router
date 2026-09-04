@@ -36,14 +36,15 @@ export function isSceneExternalConnection(conn: PlanConnection): boolean {
   return false;
 }
 
-/** The node-parameter keys a scene-scoped write leaves on the device untouched, named the
- *  way the differ names them.
+/** The node-parameter keys a scene-scoped operation leaves alone, named the way the differ
+ *  names them.
  *
- *  Derived from the same three constants {@link captureSceneExternal} reads rather than
- *  listed again, so the two cannot answer differently. What it is FOR is provenance: after
- *  a write the plan's values are the unit's, except where the write did not go — and a key
- *  marked as the unit's on the strength of a write that skipped it would silence the very
- *  warning it exists to raise.
+ *  Derived from the same three constants {@link captureSceneExternal} reads rather than listed
+ *  again, so the two cannot answer differently. What it is FOR is a scene-scoped LOAD: the
+ *  device-wide values are copied off the plan on screen rather than written by the incoming
+ *  document, so their provenance is that plan's — read as the document's, they would be exempt
+ *  from the write confirm's warning, and the monitor, phones and oscillator are what that
+ *  exempts.
  */
 export function sceneExternalParamNames(plan: Plan): Set<string> {
   const names = new Set<string>();

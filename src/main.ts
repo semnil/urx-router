@@ -165,11 +165,7 @@ import { askRateChoice } from "./ui/rate-choice";
 import { cmdAddr, collisionOwners } from "./core/control/translate";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
-import {
-  markParamSource as markSource,
-  markPlanFromDevice as markAllFromDevice,
-  sentParamNames,
-} from "./app/param-source";
+import { markParamSource as markSource } from "./app/param-source";
 import type { SharedOwners, WriteScope } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
@@ -3153,16 +3149,6 @@ if (!DEMO) {
               saveReport(failed, residual, convergeErrors);
             }
             if (!skipped) {
-              // A write that converged with nothing failing puts the plan's values on the unit
-              // — but only the values it SENT. The emit skips a key for reasons the scene
-              // boundary knows nothing about (the 4-band PEQ under EQ 1-knob, `ssmcs` outside
-              // the SSMCS comp/EQ order), so the keys are taken from the emit rather than by
-              // walking the plan: one marked as the unit's on the strength of a write that
-              // skipped it makes the next confirm name a value the operator set themselves.
-              if (!failed.length && !residual.length && !convergeErrors.length) {
-                const sent = sentParamNames(getModel(modelId), plan, scope);
-                markAllFromDevice(plan, (_node, name) => !sent.has(name));
-              }
               setStatus(
                 (failed.length
                   ? t().status.writePartial(total - failed.length, failed.length)
