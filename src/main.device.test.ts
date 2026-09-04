@@ -1714,13 +1714,62 @@ describe("Write to device", () => {
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
 
+    expect(readAfterLastWrite(shell)).toBe(true);
+  });
+
+  /** Was the recorder's Track Count read AFTER something was written? The only reading that
+   *  separates the epilogue from the write's own diff, which reads the same address before
+   *  anything goes out — so counting reads of it passes whether or not the epilogue runs. */
+  const readAfterLastWrite = (shell: TauriShell): boolean => {
     const lastSet = shell.invokes.lastIndexOf("vd_set");
-    const readAfter = shell.invokes.some((cmd, i) => {
+    expect(lastSet).toBeGreaterThan(-1);
+    return shell.invokes.some((cmd, i) => {
       if (i <= lastSet || cmd !== "vd_get") return false;
       const a = shell.args[i] ?? {};
       return `${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR;
     });
-    expect(readAfter).toBe(true);
+  };
+
+  /** A rate write the device answers with `fail`, with the retry a STOPPED write offers
+   *  declined — a stub that agrees to everything retries the same failure for ever.
+   *  Declined by whether anything has been SENT rather than by counting: the reclock confirm
+   *  and the write's own both come before the first command goes out, and the retry is the
+   *  only one that can follow it. */
+  const rateWriteAnswered = async (fail: string): Promise<TauriShell> => {
+    let sent = false;
+    const shell = await bootDevice(
+      {
+        "plugin:dialog|message": (a: Record<string, unknown>) => (a.buttons === "OkCancel" && sent ? "Cancel" : "Ok"),
+      },
+      true,
+      { [TRACK_COUNT_SEED]: 8 },
+    );
+    chooseRate(96_000);
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      sent = true;
+      if (Number(a.paramId) === PARAMS.SAMPLE_RATE.id) throw new Error(`${fail}: ${a.paramId}:${a.x}:${a.y}`);
+      return null;
+    });
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    return shell;
+  };
+
+  // The shell SENDS before it waits (`vd.rs`, do_set), so an answer that never came leaves
+  // the rate on the wire: it may have landed and taken the Track Count down with it. Armed
+  // on an acknowledgement alone, the recorder went on showing a count the unit no longer has
+  // and nothing on screen said so.
+  it("re-reads the recorder when the rate write's answer never came", SLOW, async () => {
+    const shell = await rateWriteAnswered("broker-timeout");
+    expect(readAfterLastWrite(shell)).toBe(true);
+  });
+
+  // The control that keeps the case above honest: an answer that DECLINED the rate is the
+  // one failure that says it did not land, so there is nothing for the recorder to have lost
+  // and the epilogue's read would be a round trip nothing asked for.
+  it("re-reads nothing when the rate write was refused", SLOW, async () => {
+    const shell = await rateWriteAnswered("broker-rejected");
+    expect(readAfterLastWrite(shell)).toBe(false);
   });
 
   // The unit does the lowering itself, so the plan is stale the moment the write lands.
@@ -1732,17 +1781,7 @@ describe("Write to device", () => {
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
     expect(shell.count("vd_set")).toBeGreaterThan(10);
-    // AFTER the last write, which is the only reading that separates this from the write's
-    // own diff: the diff reads 839 too, so counting reads of the address passes whether or
-    // not the epilogue runs at all.
-    const lastSet = shell.invokes.lastIndexOf("vd_set");
-    expect(lastSet).toBeGreaterThan(-1);
-    const readAfterWrite = shell.invokes.some((cmd, i) => {
-      if (i <= lastSet || cmd !== "vd_get") return false;
-      const a = shell.args[i] ?? {};
-      return `${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR;
-    });
-    expect(readAfterWrite).toBe(true);
+    expect(readAfterLastWrite(shell)).toBe(true);
   });
 
   /** A device table whose recorder re-read the case drives itself. The write's own

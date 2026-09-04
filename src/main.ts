@@ -3013,12 +3013,15 @@ if (!DEMO) {
                 signal,
                 scope,
                 ledger,
-                // Armed the moment the rate LANDS, not from the returned outcomes: an abort
-                // between two sends throws out of the send loop and takes those outcomes
-                // with it, so a rate that reached the unit would go unrecorded and the
-                // recorder would never be re-read.
+                // Armed the moment the rate RESOLVES, not from the returned outcomes: an
+                // abort between two sends throws out of the send loop and takes those
+                // outcomes with it, so a rate that reached the unit would go unrecorded and
+                // the recorder would never be re-read. Everything but an explicit refusal
+                // arms it: the shell sends before it waits, so a write whose answer never
+                // came may have landed and taken the Track Count down with it, and the
+                // recorder would then be left showing a count the unit no longer has.
                 onSent: (o) => {
-                  if (pendingTrackCost !== null && o.ok && o.command.name === "SAMPLE_RATE") {
+                  if (pendingTrackCost !== null && o.result !== "refused" && o.command.name === "SAMPLE_RATE") {
                     trackCountMayHaveDropped = true;
                   }
                 },
