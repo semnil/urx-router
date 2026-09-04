@@ -216,13 +216,14 @@ const confirms = (shell: TauriShell): string[] =>
     .filter((d) => d.buttons === "OkCancel")
     .map((d) => d.message ?? "");
 
-/** The messages of the dialogs that REPORTED a failure, in order. */
 // param 839 counts stereo PAIRS, so 8 is 16 tracks — the full recorder. The seed table keys on
 // the stub's own address form, "id/x/y"; the invoke arguments spell the same address with
-// colons. Two blocks drive this address — the rate's own cases and the adoption's — so one seat.
+// colons. Two describes drive the recorder — the rate's own cases and the adoption's — so
+// one seat rather than a literal in each.
 const TRACK_COUNT_SEED = "839/0/0";
 const TRACK_COUNT_ADDR = "839:0:0";
 
+/** The messages of the dialogs that REPORTED a failure, in order. */
 const errors = (shell: TauriShell): string[] =>
   dialogs(shell)
     .filter((d) => d.kind === "error")
@@ -1829,6 +1830,9 @@ describe("Write to device", () => {
     // failed before sending anything, which is the state the message denies.
     expect(shell.count("vd_set")).toBeGreaterThan(10);
     expect(errors(shell)).toContain(t().error.trackCountReread(t().error.shell.deviceLost));
+    // The write's own verdict survives the dialog. This is the OTHER outcome reaching the
+    // same tail — restoring only the cancelled line passes every case but this one.
+    expect(countFor(statusText(), t().status.written)).toBeGreaterThan(0);
   });
 
   // What the re-read does to the undo history. The tail spells it absorb(), not rebase():
@@ -2197,6 +2201,45 @@ describe("a value the unit holds and the app cannot write", () => {
   // Both halves are driven, because "the line is there" passes on its own whenever the tail
   // does not run at all: the rate has to land (which arms the tail) AND the cancel has to fall
   // inside the converge's re-read (which is what leaves something to take back).
+  // The numeric phase can finish and the cancel still land — between the converge returning
+  // and the name writes. The adoption has already changed the plan by then, so leaving that
+  // gate to throw hands `withDevice` a bare "Canceled" and the count goes unsaid, which is
+  // the same silence this whole block exists to close.
+  it("reports what a cancel between the numeric phase and the names took back", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" }, unitHoldingLowLpf());
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+    // The address the confirm diff reads LAST, taken from that diff rather than named here:
+    // it is the emit's own last command, and a name would go stale the day the emit grows one.
+    const readSoFar: string[] = [];
+    let lastOfDiff = "";
+    table.vd_set = (a: Record<string, unknown>) => {
+      if (!lastOfDiff) lastOfDiff = readSoFar[readSoFar.length - 1] ?? "";
+      return baseSet(a);
+    };
+    table.vd_get = (a: Record<string, unknown>) => {
+      const key = `${a.paramId}:${a.x}:${a.y}`;
+      if (!lastOfDiff) readSoFar.push(key);
+      const value = baseGet(a);
+      // Answered, so the converge's re-read leaves its loop with nothing residual — the store
+      // keeps every write — and the next thing the flow reaches is the gate before the names.
+      if (lastOfDiff && key === lastOfDiff) $("btn-write").click();
+      return value;
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // The positive control: without a write there is no converge to finish, and the case would
+    // be measuring a cancel taken before anything went out.
+    expect(shell.count("vd_set")).toBeGreaterThan(10);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled + ` — ${t().status.paramsBounded(1)}`));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
+
   it("keeps the line that says the plan changed when the recorder re-read fails", SLOW, async () => {
     const withRecorderRead = async (failRead: boolean): Promise<TauriShell> => {
       const seed = unitHoldingLowLpf();
@@ -2210,7 +2253,7 @@ describe("a value the unit holds and the app cannot write", () => {
         return baseSet(a);
       };
       table.vd_get = (a: Record<string, unknown>) => {
-        if (failRead && written && Number(a.paramId) === 839) throw new Error("device-lost");
+        if (failRead && written && `${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR) throw new Error("device-lost");
         const value = baseGet(a);
         // Cancel during the converge's re-read, once this address has answered: the rate went
         // out earlier in the same round, so the recorder tail is armed by the time it lands.
@@ -2544,6 +2587,10 @@ describe("the failure report a device action offers", () => {
     });
     await vi.waitFor(() => expect(errors(shell)).toContain(t().status.saveError("disk-full")), { timeout: 10_000 });
     expect(shell.count("write_text_file")).toBe(0);
+    // …and the write's own verdict stands behind that dialog, the way it does on the decline
+    // path above. The offer runs after withDevice returned, so what showError would clear here
+    // is an outcome rather than a progress message.
+    expect(statusText()).toBe(t().status.writeReadFailed(1));
   });
 });
 
