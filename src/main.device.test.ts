@@ -77,9 +77,18 @@ async function drainShell(shell: TauriShell): Promise<void> {
   const deadline = Date.now() + 20_000;
   let seen = shell.invokes.length;
   // Several readings: one sample of "unchanged" is satisfied inside a pause between two
-  // phases of the very flow being waited out.
-  for (let quiet = 0; quiet < 10;) {
+  // phases of the very flow being waited out. What the RUN of them has to cover is a note
+  // the app produces late — a live start that fails emits one well after its own teardown
+  // has handed the link back — rather than a flow's round trips, which resolve as
+  // microtasks with no timer between them.
+  for (let quiet = 0; quiet < 25;) {
     if (Date.now() > deadline) throw new Error(`the page is still invoking (${shell.invokes.length})`);
+    // The MIDI trace sink batches its writes, and that write is the last thing the app
+    // does after a case — so a drain that only waited would be waiting out a timer rather
+    // than a device flow, and the window would have to exceed the batch. Emptied by name
+    // on every reading instead, which takes the sink out of what the window has to cover.
+    // A no-op with nothing queued.
+    (window as unknown as { __urxMidiProbe?: { flush(): void } }).__urxMidiProbe?.flush();
     await new Promise((r) => setTimeout(r, 10));
     const now = shell.invokes.length;
     quiet = now === seen ? quiet + 1 : 0;
