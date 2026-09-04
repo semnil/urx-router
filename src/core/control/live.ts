@@ -897,6 +897,12 @@ export class LiveSync {
         // session is gone there is nobody left to report a failed converge to, and the
         // capture below would write a dead plan's values into a rebuilt snapshot.
         if (this.sessionGen !== gen) return;
+        // `converged` is what the loop sent and read back, so it is what the addresses mean.
+        // Ahead of the failure check, because a round that failed leaves every earlier round's
+        // confirmations standing and this is the last chance the plan has to take them: the
+        // address stops differing the moment the write lands, so no later flush produces a
+        // diff that would offer it again.
+        this.hooks.onConfirmed?.(confirmedAddrs(r.ledger), converged);
         // sendConverging reports per-command failures instead of rejecting, so a
         // failed write here would otherwise be swallowed — and captureSnapshot
         // would then record the plan as device truth, leaving those parameters
@@ -909,8 +915,6 @@ export class LiveSync {
           // teardown that names nothing.
           throw new Error(failed?.error || r.readErrors[0] || "converge failed");
         }
-        // `converged` is what the loop sent and read back, so it is what the addresses mean.
-        this.hooks.onConfirmed?.(confirmedAddrs(r), converged);
         this.capture(converged, since);
       }
       // A refetch after the converge, if both happened: converge rebuilds the snapshot

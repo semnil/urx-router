@@ -2125,6 +2125,111 @@ describe("a value the unit holds and the app cannot write", () => {
     expect(statusText()).toContain(t().status.paramsBounded(1));
   });
 
+  it("takes what the device confirmed before a cancel, and says so", SLOW, async () => {
+    // The cancel lands during the converge's re-read, after this address has answered with the
+    // value the write sent. The loop throws and there is no result to read the confirmation
+    // off — and this write was the plan's only chance at it, since the value that landed is
+    // what stops the address differing: every later diff finds the unit already agreeing.
+    const base = deviceCommands({ "plugin:dialog|message": "Ok" }, unitHoldingLowLpf());
+    const get = base.vd_get as (a: Record<string, unknown>) => number;
+    const set = base.vd_set as (a: Record<string, unknown>) => void;
+    let writes = 0;
+    const shell = (await bootApp({
+      tauri: {
+        ...base,
+        vd_set: (a: Record<string, unknown>) => {
+          writes++;
+          return set(a);
+        },
+        vd_get: (a: Record<string, unknown>) => {
+          const value = get(a);
+          // A second press is what cancels an in-flight write. Only after a write has gone out,
+          // so the diff that builds the confirm prompt runs to the end.
+          if (writes > 0 && a.paramId === 685 && a.y === lpf.slot) $("btn-write").click();
+          return value;
+        },
+      },
+    }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // The positive control: the write reached the unit and the cancel reached the flow. Without
+    // both, "the plan took the value" would be a statement about a write that never ran.
+    expect(writes).toBeGreaterThan(0);
+    // The line is written in the handler that catches the abort, which runs AFTER the
+    // connection is released — so the disconnect this case waited on does not imply it yet.
+    await vi.waitFor(() => expect(statusText()).toContain(t().status.canceled));
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    expect(statusText()).toContain(t().status.paramsBounded(1));
+  });
+
+  it("takes what earlier rounds confirmed when a later round's send is REFUSED", SLOW, async () => {
+    // An insert-FX selector accepts its write and does not keep it, so a second round goes out,
+    // and that one is refused — which stops the loop before it can re-read. A refused write
+    // moved nothing, not even the values a head of this kind resets, so it says nothing about
+    // this address, which round 1 sent and read back; and there is no later write that would
+    // offer it again.
+    //
+    // SAVES because a write that fails offers its report — an unstubbed save dialog rejects,
+    // and the flow then reports a device failure instead of the partial write it had. The
+    // write's own confirm is answered and the retry a STOPPED write offers is declined, or a
+    // stub that agrees to everything retries the same refusal for ever; counted from the click
+    // rather than from the run, since the fetch below raises a confirm of its own.
+    let writing = false;
+    let confirms = 0;
+    const base = deviceCommands(
+      {
+        ...SAVES,
+        "plugin:dialog|message": (a: Record<string, unknown>) =>
+          a.buttons === "OkCancel" && writing && ++confirms > 1 ? "Cancel" : "Ok",
+      },
+      unitHoldingLowLpf(),
+    );
+    const set = base.vd_set as (a: Record<string, unknown>) => void;
+    // EVERY insert-FX selector, and counted per ADDRESS. Refusing one of the family would let
+    // an earlier selector's acknowledgement clear the ledger, which is the other case and would
+    // let this one pass without measuring its own; counting across the family instead refuses
+    // the second selector of round 1, and the round the confirmations come from never happens.
+    const writes = new Map<string, number>();
+    let refusals = 0;
+    const shell = (await bootApp({
+      tauri: {
+        ...base,
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId !== PARAMS.INSERT_FX.id) return set(a);
+          const key = `${a.paramId}/${a.x}/${a.y}`;
+          const n = (writes.get(key) ?? 0) + 1;
+          writes.set(key, n);
+          // Accepted and not kept the first time, so it is still differing when the re-read
+          // comes round; refused the second, which is what stops the loop.
+          if (n > 1) {
+            refusals++;
+            throw new Error("nak");
+          }
+          return null;
+        },
+      },
+    }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+
+    writing = true;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    // The positive control: without a second send there is no failing round, and the case would
+    // be asserting the ordinary clean-write path under another name.
+    expect(refusals).toBeGreaterThan(0);
+    // …and the premise that makes it this case rather than the ordinary one: what was refused
+    // is a head, whose ACKNOWLEDGEMENT would have emptied the ledger.
+    expect(PARAMS.INSERT_FX.sideEffect).toBe("converge");
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+    expect(statusText()).toContain(t().status.paramsBounded(1));
+  });
+
   it("takes nothing from a write the device did not keep", SLOW, async () => {
     // The one address under test accepts the write and does not hold it. The converge cannot
     // close on it, the write reports a residual, and the unit's value for that address is then

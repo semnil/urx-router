@@ -152,10 +152,12 @@ import {
   readFollowUsb,
   readTrackCount,
   confirmedAddrs,
+  newConfirmLedger,
   sendConverging,
   sendNames,
   setFollowUsb,
   type CommandDiff,
+  type ConvergeResult,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
 import { collisionOwners } from "./core/control/translate";
@@ -2503,6 +2505,13 @@ function connectFailureStatus(err: unknown, onError: (message: string) => string
   return standalone ? errorText(err) : onError(errorText(err));
 }
 
+/** A cancel (throwIfAborted) surfaces as an AbortError. Read by NAME rather than by class:
+ *  `instanceof DOMException` answers false for an error raised in another realm, and one
+ *  reported as a device failure sends the operator after a write that never failed. */
+function isAbortError(err: unknown): boolean {
+  return (err as { name?: unknown } | null)?.name === "AbortError";
+}
+
 // Connect, run an action with the connected device, then always disconnect. The
 // connect doubles as a pre-check: callers that would discard work put their
 // confirm inside `action`, so a no-device state surfaces a clear message without
@@ -2527,9 +2536,9 @@ async function withDevice(
       await vdDisconnect(device.epoch);
     }
   } catch (err) {
-    // A cancel (throwIfAborted) surfaces as an AbortError DOMException; show the
-    // neutral "canceled" status rather than wrapping it as an action failure.
-    if (err instanceof DOMException && err.name === "AbortError") setStatus(t().status.canceled);
+    // A cancel surfaces as an AbortError; show the neutral "canceled" status rather than
+    // wrapping it as an action failure.
+    if (isAbortError(err)) setStatus(t().status.canceled);
     else showError(connectFailureStatus(err, onError));
   } finally {
     releaseDeviceLink(holder);
@@ -2991,27 +3000,46 @@ if (!DEMO) {
               setStatus(t().status.canceled);
               return null;
             }
-            const convergeResult = await sendConverging(getModel(modelId), plan, {
-              initialDiffs: diffs,
-              signal,
-              scope,
-              // Armed the moment the rate LANDS, not from the returned outcomes: an abort
-              // between two sends throws out of the send loop and takes those outcomes
-              // with it, so a rate that reached the unit would go unrecorded and the
-              // recorder would never be re-read.
-              onSent: (o) => {
-                if (pendingTrackCost !== null && o.ok && o.command.name === "SAMPLE_RATE") {
-                  trackCountMayHaveDropped = true;
-                }
-              },
-            });
+            // Held here rather than read off the result, for the same reason `onSent` below
+            // exists: a cancel throws out of the loop and there is no result to read. What the
+            // unit confirmed before the cancel is in here, and taking it is the only chance —
+            // the address stops differing the moment the write lands, so no later write
+            // produces a diff that would offer it again.
+            const ledger = newConfirmLedger();
+            let convergeResult: ConvergeResult;
+            try {
+              convergeResult = await sendConverging(getModel(modelId), plan, {
+                initialDiffs: diffs,
+                signal,
+                scope,
+                ledger,
+                // Armed the moment the rate LANDS, not from the returned outcomes: an abort
+                // between two sends throws out of the send loop and takes those outcomes
+                // with it, so a rate that reached the unit would go unrecorded and the
+                // recorder would never be re-read.
+                onSent: (o) => {
+                  if (pendingTrackCost !== null && o.ok && o.command.name === "SAMPLE_RATE") {
+                    trackCountMayHaveDropped = true;
+                  }
+                },
+              });
+            } catch (err) {
+              if (!isAbortError(err)) throw err;
+              // Reported here rather than left to withDevice's neutral line, because the plan
+              // may have changed on the way out. The same join window as the clean path below:
+              // this runs on the rejection's own microtask, so no announcement can land
+              // between the loop stopping and the join.
+              const cancelTaken = adoptConfirmedWrites(confirmedAddrs(ledger));
+              setStatus(t().status.canceled + (cancelTaken ? ` — ${t().status.paramsBounded(cancelTaken)}` : ""));
+              return null;
+            }
             const { outcomes, residual, readErrors: convergeErrors } = convergeResult;
             // Here, with nothing awaited between the converge and this line: the adoption joins
             // the confirmed ADDRESSES to plan KEYS, and one address is a different key under a
             // different effect type, so a front-panel type change announced during the awaits
             // below would join one moment's addresses to another moment's plan. `sendNames` is
             // one such await, on the clean path.
-            const takenBack = adoptConfirmedWrites(confirmedAddrs(convergeResult));
+            const takenBack = adoptConfirmedWrites(confirmedAddrs(ledger));
             const skipped = outcomes.filter((o) => o.skipped).length;
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
@@ -3036,8 +3064,11 @@ if (!DEMO) {
             if (failed.length || residual.length || convergeErrors.length) {
               saveReport(failed, residual, convergeErrors);
             }
+            // On every outcome, not only the clean one: a write that stopped can still have
+            // landed and read back the address the plan takes its value from, and a line that
+            // reported only the stop would leave a changed plan unmentioned.
+            const note = takenBack ? ` — ${t().status.paramsBounded(takenBack)}` : "";
             if (!skipped) {
-              const note = takenBack ? ` — ${t().status.paramsBounded(takenBack)}` : "";
               setStatus(
                 (failed.length
                   ? t().status.writePartial(total - failed.length, failed.length)
@@ -3053,7 +3084,7 @@ if (!DEMO) {
             // all not-sent too.
             const sent = outcomes.filter((o) => o.ok).length;
             const notSent = skipped + nameWrites.length;
-            setStatus(t().status.writeStopped(sent, notSent));
+            setStatus(t().status.writeStopped(sent, notSent) + note);
             return { sent, notSent };
           };
 

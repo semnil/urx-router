@@ -7,6 +7,7 @@ import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
+import type { ParamSpec } from "./params";
 import { cmdAddr, planToCommands, planToNameWrites } from "./translate";
 import type { EmitOptions, NameWrite, VdCommand, WriteScope } from "./translate";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
@@ -102,13 +103,6 @@ export interface DiffResult {
   /** Per-command read failures (e.g. timeout). A non-empty list means the
    *  comparison is incomplete and the caller must not write on it. */
   errors: string[];
-  /** The addresses this pass actually got a value for. NOT the complement of `unread`:
-   *  `stopOnError` breaks the loop at the first failure, so every command after it in emit
-   *  order is in neither list — it was never asked about. A caller deciding per address
-   *  whether the device is known to hold the plan's value has to intersect with this rather
-   *  than subtract the failures, which is the difference between "did not differ" and "was
-   *  never read". */
-  read: Set<number>;
   /** The commands behind those failures. `errors` carries a name and a message, which
    *  is what a report prints; a caller that has to decide something PER ADDRESS — the
    *  self-test, deciding whether a guessed mapping round-tripped — cannot get there
@@ -147,28 +141,37 @@ export interface DiffOptions {
    *  `emit`, which decides what the plan emits at all: this drops addresses the plan does
    *  emit and that this one pass must not push back on. */
   exclude?: ReadonlySet<number>;
+  /** A ledger of addresses the device is holding at the plan's value, kept CURRENT as this
+   *  pass runs: an address read at the plan's value goes in, one read at any other value
+   *  comes out. Passed in rather than returned because an abort throws out of this loop and
+   *  takes the return value with it, while what the pass had already established stays true.
+   *
+   *  A read that FAILS leaves the address as it was. Its last successful read still says
+   *  where the device is, and a link that cannot answer now is not a device that moved. */
+  matched?: Set<number>;
 }
 
 export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions = {}): Promise<DiffResult> {
-  const { signal, stopOnError = false, scope = "all", emit = {}, exclude } = opts;
+  const { signal, stopOnError = false, scope = "all", emit = {}, exclude, matched } = opts;
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
   const unread: VdCommand[] = [];
-  const read = new Set<number>();
   for (const command of planToCommands(model, plan, scope, emit)) {
     if (exclude?.has(cmdAddr(command))) continue;
     signal?.throwIfAborted();
     try {
       const current = await vdGet(command.paramId, command.x, command.y);
-      read.add(cmdAddr(command));
-      if (current !== command.vdValue) diffs.push({ command, current });
+      if (current !== command.vdValue) {
+        diffs.push({ command, current });
+        matched?.delete(cmdAddr(command));
+      } else matched?.add(cmdAddr(command));
     } catch (e) {
       errors.push(`${command.name}: ${e instanceof Error ? e.message : String(e)}`);
       unread.push(command);
       if (stopOnError) break;
     }
   }
-  return { diffs, errors, unread, read };
+  return { diffs, errors, unread };
 }
 
 export interface SendOutcome {
@@ -222,8 +225,42 @@ export async function sendCommands(
  *  Both are ok:false, so every reader of an outcome list needs the distinction. */
 export const reachedAndFailed = (o: SendOutcome): boolean => !o.ok && !o.skipped;
 
-/** The addresses this converge left the device demonstrably holding the plan's value: sent,
- *  acknowledged, and no longer differing when the loop re-read them.
+/**
+ * What a converge has confirmed, address by address, held where a caller can still reach it
+ * after the loop stops.
+ *
+ * Two sets, because the confirmation is a conjunction of two things the loop learns at
+ * different moments: a send the device acknowledged, and a read that then found the device at
+ * the plan's value. Both are written as the loop runs rather than assembled at the end of a
+ * round — `acked` grows with each send that LANDS, and the same ack takes the address it just
+ * overwrote out of `matched` — so the pair is current at every instant, including one a cancel
+ * stops at.
+ *
+ * A caller passes one in when it needs the answer after a THROW: a cancel unwinds the loop with
+ * no result to read a ledger off, and the addresses the unit had already confirmed are then
+ * here and nowhere else.
+ */
+export interface ConfirmLedger {
+  /** Addresses a send in this converge acknowledged. */
+  acked: Set<number>;
+  /** Addresses the loop's most recent successful read of each found the device holding the
+   *  plan's value, minus every address a write has LANDED on since. */
+  matched: Set<number>;
+}
+
+export const newConfirmLedger = (): ConfirmLedger => ({ acked: new Set(), matched: new Set() });
+
+// Params whose write makes the device move OTHER values (ParamSpec.sideEffect). Which ones is
+// not enumerated for a converge head — settling them by re-reading is what this loop is for —
+// so once one of these LANDS the loop can vouch for no address it is not about to re-read.
+const SIDE_EFFECT_PARAMS = new Set<string>(
+  Object.entries(PARAMS as Record<string, ParamSpec>)
+    .filter(([, spec]) => spec.sideEffect !== undefined)
+    .map(([name]) => name),
+);
+
+/** The addresses a converge left the device demonstrably holding the plan's value: sent,
+ *  acknowledged, and read back at that value with no write landing since that could move it.
  *
  *  It is a set of ADDRESSES rather than a verdict on the run, because the two questions have
  *  different answers. A caller that wants to take a value the write path normalised — the plan
@@ -233,20 +270,14 @@ export const reachedAndFailed = (o: SendOutcome): boolean => !o.ok && !o.skipped
  *  than on the address adopted values no write had touched, which an unrelated fader move
  *  reproduced.
  *
- *  An address is confirmed by having been READ, not by not having failed. `stopOnError` breaks
- *  the diff at its first failure, so the addresses after it are in neither the differences nor
- *  the failures — never asked about, and a subtraction leaves them in. What survives the
- *  intersection is then reduced by the residual, which is a difference the last round left
- *  standing: the device is demonstrably NOT at the plan's value there. */
-export function confirmedAddrs(r: ConvergeResult): Set<number> {
+ *  An address is confirmed by having been READ at the plan's value, not by not having failed.
+ *  `stopOnError` breaks a diff at its first failure, so the addresses after it are in neither
+ *  the differences nor the failures — never asked about, and a subtraction leaves them in. Only
+ *  a read that returned the plan's value puts an address in `matched`, so there is nothing for
+ *  a subtraction to miss. */
+export function confirmedAddrs(l: ConfirmLedger): Set<number> {
   const out = new Set<number>();
-  // Sent and acknowledged, INTERSECTED with what the last diff actually read, then minus what
-  // it found still differing. The intersection is the load-bearing half: subtracting the read
-  // failures is not enough, because `stopOnError` breaks the diff at the first one and leaves
-  // every later address unasked — in neither `unread` nor `residual`, and sent, so subtraction
-  // alone reported it confirmed and the plan took a value the unit did not hold.
-  for (const o of r.outcomes) if (o.ok && r.readAddrs.has(cmdAddr(o.command))) out.add(cmdAddr(o.command));
-  for (const d of r.residual) out.delete(cmdAddr(d.command));
+  for (const a of l.acked) if (l.matched.has(a)) out.add(a);
   return out;
 }
 
@@ -327,12 +358,9 @@ export interface ConvergeResult {
   /** The commands behind them (see DiffResult.unread), so a caller can decide per
    *  address rather than per message. */
   unread: VdCommand[];
-  /** What the LAST diff this loop performed actually read. A round that broke on a send
-   *  failure re-reads nothing and reports none; a loop given `initialDiffs` that enters no
-   *  round performed no diff at all and reports none either, while one that seeded its own
-   *  reports that seed's. `confirmedAddrs` intersects with it, so an address the loop never
-   *  asked about is not confirmed by having been sent. */
-  readAddrs: Set<number>;
+  /** What this loop confirmed, address by address (see ConfirmLedger). The one the caller
+   *  passed in, when it passed one. */
+  ledger: ConfirmLedger;
 }
 
 /**
@@ -405,6 +433,9 @@ export interface ConvergeOptions {
   exclude?: ReadonlySet<number>;
   /** Keep a per-round record (see ConvergeRound). Diagnostics only. */
   trace?: boolean;
+  /** The ledger this loop confirms into (see ConfirmLedger). A caller passes its own when it
+   *  has to read the answer on a path where this call THROWS — a cancel leaves no result. */
+  ledger?: ConfirmLedger;
   /**
    * Abandon a sweep at its first read failure instead of finishing it.
    *
@@ -458,14 +489,13 @@ export async function sendConverging(
     trace: wantTrace = false,
     stopOnError = true,
     exclude,
+    ledger = newConfirmLedger(),
   } = opts;
   const outcomes: SendOutcome[] = [];
   const readErrors: string[] = [];
   const unread: VdCommand[] = [];
   const trace: ConvergeRound[] = [];
-  // The last diff this loop performed. Reassigned rather than accumulated: an address read in
-  // an earlier round says nothing about where the device is now.
-  let readAddrs = new Set<number>();
+  const matched = ledger.matched;
   let residual = initialDiffs;
   if (!residual) {
     // The whole write set holds this wait, not a subset: the seed read asks the
@@ -480,10 +510,9 @@ export async function sendConverging(
         timeoutMs: settleMs,
         signal,
       });
-    const seed = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude });
+    const seed = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude, matched });
     readErrors.push(...seed.errors);
     unread.push(...seed.unread);
-    readAddrs = seed.read;
     residual = seed.diffs;
   }
   let rounds = 0;
@@ -491,16 +520,30 @@ export async function sendConverging(
     signal?.throwIfAborted();
     const startedAt = Date.now();
     const sending = roundCommands(model, plan, scope, emit, residual, exclude);
-    const sent = await sendCommands(sending, signal, onSent);
+    const sent = await sendCommands(sending, signal, (o) => {
+      if (o.ok) {
+        const addr = cmdAddr(o.command);
+        ledger.acked.add(addr);
+        // Invalidated as each write LANDS, not when the round is planned: a command the device
+        // refused moved nothing, and neither did one a cancel stopped before it went out, so
+        // what an earlier read established about every other address still holds. A
+        // side-effect head resets addresses the catalogue does not enumerate, so ITS ack takes
+        // every address out rather than its own.
+        if (SIDE_EFFECT_PARAMS.has(o.command.name)) matched.clear();
+        else matched.delete(addr);
+      }
+      onSent?.(o);
+    });
     outcomes.push(...sent);
     rounds++;
     const record = (reread: CommandDiff[] | null): void => {
       if (wantTrace) trace.push({ sent: sending, elapsedMs: Date.now() - startedAt, reread });
     };
     if (sent.some(reachedAndFailed)) {
-      // No re-read follows, so nothing this round sent is confirmed — including the group
-      // members `roundCommands` pulled in that were never in the diff to begin with.
-      readAddrs = new Set();
+      // No re-read follows, so nothing that LANDED this round is confirmed — including the
+      // group members `roundCommands` pulled in that were never in the diff to begin with.
+      // Each ack above has already taken its own address out. What an earlier round confirmed
+      // and no ack in this one moved stays.
       record(null);
       break;
     }
@@ -517,14 +560,13 @@ export async function sendConverging(
     // its own window. No converge head's reset latency is measured either — only the
     // "refetch" family's, which never reaches this loop.
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
-    const next = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude });
+    const next = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude, matched });
     readErrors.push(...next.errors);
     unread.push(...next.unread);
-    readAddrs = next.read;
     residual = next.diffs;
     record(residual);
   }
-  return { outcomes, rounds, trace, residual, readErrors, unread, readAddrs };
+  return { outcomes, rounds, trace, residual, readErrors, unread, ledger };
 }
 
 /**

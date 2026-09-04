@@ -11,6 +11,7 @@ import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import {
   compareCounts,
   confirmedAddrs,
+  newConfirmLedger,
   compareNames,
   comparePlan,
   diffNames,
@@ -26,9 +27,13 @@ import {
   sendConverging,
   sendNames,
   setFollowUsb,
+  type SendOutcome,
 } from "./client";
 import { addrKey, cmdAddr, planToCommands, planToNameWrites, type VdCommand } from "./translate";
+import { defaultPlan } from "../../models/initial-state";
+import { FX_EFFECT_TYPE_DEFAULT, fxParams } from "./fx-effect";
 import { NODE_NAME_MAX_CHARS, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
+import type { ParamSpec } from "./params";
 import { PORT_REF_NONE } from "./vd";
 
 const model = getModel("URX44V");
@@ -850,11 +855,32 @@ describe("confirmedAddrs", () => {
     return table;
   };
 
+  /** One named command out of a plan's emit — the address a case refuses or watches. */
+  const cmdFor = (plan: Plan, name: string): VdCommand => {
+    const cmd = planToCommands(model, plan).find((c) => c.name === name)!;
+    expect(cmd).toBeDefined();
+    return cmd;
+  };
+
+  /** A device that drops every write to `cmd`'s address — so it is still differing when the
+   *  round's re-read comes round — and then REFUSES the second one, stopping the loop. */
+  const stubborn = (cmd: VdCommand): void => {
+    const table = device();
+    let sets = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (id === cmd.paramId && x === cmd.x && y === cmd.y) {
+        return ++sets > 1 ? Promise.reject(new Error("nak")) : Promise.resolve();
+      }
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+  };
+
   it("confirms what the loop sent, read back and found matching", async () => {
     device();
     const plan = dirty();
     const r = await sendConverging(model, plan, { settleMs: 0 });
-    const confirmed = confirmedAddrs(r);
+    const confirmed = confirmedAddrs(r.ledger);
     expect(r.residual).toEqual([]);
     expect(r.outcomes.length).toBeGreaterThan(0);
     // Everything it sent, since the device kept all of it and the re-read saw no difference.
@@ -876,20 +902,184 @@ describe("confirmedAddrs", () => {
     expect(r.outcomes.some((o) => o.ok)).toBe(true);
     // Nothing is confirmed: the only diff that read anything ran BEFORE the write, and the one
     // after it read nothing at all. An earlier reading kept the seed's reads and confirmed them.
-    expect(r.readAddrs.size).toBe(0);
-    expect(confirmedAddrs(r).size).toBe(0);
+    expect(confirmedAddrs(r.ledger).size).toBe(0);
   });
 
   it("confirms nothing from a round that broke on a send failure", async () => {
     // No re-read follows such a round, so what it sent is unverified — including the group
     // members `roundCommands` pulls in that were never in the diff. The seed diff DID read the
-    // scope, so this is the same distinction: the reads that count are the last diff's.
+    // scope, and it read it BEFORE the write: a read is what a confirmation rests on, and this
+    // one predates everything this round did.
     device();
     vi.mocked(vdSet).mockRejectedValue(new Error("nak"));
     const r = await sendConverging(model, dirty(), { settleMs: 0 });
     expect(r.outcomes.some(reachedAndFailed)).toBe(true);
-    expect(r.readAddrs.size).toBe(0);
-    expect(confirmedAddrs(r).size).toBe(0);
+    expect(confirmedAddrs(r.ledger).size).toBe(0);
+  });
+
+  // The pair below differ in ONE thing — which parameter the device refuses — so what the
+  // second one measures is the side-effect head and not the failure.
+  const failedAt = (r: { outcomes: SendOutcome[] }, cmd: VdCommand): boolean =>
+    r.outcomes.some((o) => reachedAndFailed(o) && cmdAddr(o.command) === cmdAddr(cmd));
+
+  /** An address round 1 is bound to SEND: the device answers 0 for everything, so a command
+   *  whose value is 0 never differs, is never sent, and could confirm nothing either way. */
+  const otherThan = (plan: Plan, stuck: VdCommand): VdCommand => {
+    const cmd = planToCommands(model, plan).find((c) => c.vdValue !== 0 && cmdAddr(c) !== cmdAddr(stuck))!;
+    expect(cmd).toBeDefined();
+    return cmd;
+  };
+
+  it("keeps what an earlier round confirmed when a later round's send fails", async () => {
+    // Round 1 sends the whole diff and its re-read confirms all but one address; round 2
+    // re-sends that one and the device refuses it. The refusal says nothing about the addresses
+    // round 2 never touched, and there is no later chance to confirm them: the write that
+    // landed is what stopped them differing, so no subsequent diff offers them again.
+    const plan = defaultPlan("URX44V");
+    const stuck = cmdFor(plan, "CH_ON");
+    const kept = otherThan(plan, stuck);
+    stubborn(stuck);
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+    expect(r.rounds).toBe(2);
+    expect(failedAt(r, stuck)).toBe(true);
+    const confirmed = confirmedAddrs(r.ledger);
+    expect(confirmed.has(cmdAddr(stuck))).toBe(false);
+    expect(confirmed.has(cmdAddr(kept))).toBe(true);
+  });
+
+  it("takes back an address a later read found moved", async () => {
+    // A confirmation is the LAST read's answer rather than the first: an address that agreed at
+    // round 1 and disagrees at round 2 is one the unit is no longer holding at the plan's value,
+    // and the front panel is a reachable way there while a converge is running.
+    const plan = defaultPlan("URX44V");
+    const stuck = cmdFor(plan, "CH_ON");
+    const moved = otherThan(plan, stuck);
+    const table = device();
+    let stuckSets = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (id === stuck.paramId && x === stuck.x && y === stuck.y) {
+        // Dropped every time, so a second round happens at all; on the second one the OTHER
+        // address moves under the loop, the way a front-panel turn would move it.
+        if (++stuckSets === 2) table.set(`${moved.paramId}:${moved.x}:${moved.y}`, moved.vdValue + 1);
+        return Promise.resolve();
+      }
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+    const r = await sendConverging(model, plan, { settleMs: 0, maxRounds: 2 });
+    expect(r.rounds).toBe(2);
+    expect(r.residual.map((d) => cmdAddr(d.command))).toContain(cmdAddr(moved));
+    // The control is the case above, where the same address is not moved and IS confirmed.
+    expect(confirmedAddrs(r.ledger).has(cmdAddr(moved))).toBe(false);
+  });
+
+  /** The commands whose write moves values the catalogue does not enumerate. */
+  const headCmds = (plan: Plan): VdCommand[] => {
+    const heads = new Set(
+      Object.entries(PARAMS as Record<string, ParamSpec>)
+        .filter(([, spec]) => spec.sideEffect !== undefined)
+        .map(([name]) => name),
+    );
+    return planToCommands(model, plan).filter((c) => heads.has(c.name) && c.vdValue !== 0);
+  };
+
+  it("keeps what an earlier round confirmed when a side-effect head is REFUSED", async () => {
+    // A refused write moved nothing — not the address it names and not the values a head of
+    // this kind resets — so it says nothing about what an earlier round read back. Invalidating
+    // on the round being PLANNED discarded those, and the plan then kept a value the unit is
+    // not at with no diff left to offer it again.
+    const plan = defaultPlan("URX44V");
+    const stuck = headCmds(plan)[0]!;
+    expect(stuck).toBeDefined();
+    const kept = otherThan(plan, stuck);
+    stubborn(stuck);
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+    expect(r.rounds).toBe(2);
+    expect(failedAt(r, stuck)).toBe(true);
+    expect(confirmedAddrs(r.ledger).has(cmdAddr(kept))).toBe(true);
+  });
+
+  it("drops everything once a side-effect head LANDS", async () => {
+    // The other half of the same rule. This round's head is acknowledged and the command after
+    // it is refused, so the loop stops with no re-read: which values the head reset is what
+    // this loop settles by re-reading, and it never got to.
+    const plan = defaultPlan("URX44V");
+    const order = planToCommands(model, plan);
+    const head = headCmds(plan)[0]!;
+    const at = (c: VdCommand): number => order.findIndex((o) => cmdAddr(o) === cmdAddr(c));
+    // After the head in EMIT order, since the send stops at the first refusal: written the
+    // other way round the head never goes out and the case measures the refusal instead.
+    const refused = order.find((c) => c.vdValue !== 0 && at(c) > at(head))!;
+    expect(refused).toBeDefined();
+    const kept = otherThan(plan, head);
+    const table = device();
+    let refusedSets = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      const same = (c: VdCommand): boolean => id === c.paramId && x === c.x && y === c.y;
+      // Both accepted and not kept, so a second round sends them again; only the later one is
+      // refused there.
+      if (same(head)) return Promise.resolve();
+      if (same(refused)) return ++refusedSets > 1 ? Promise.reject(new Error("nak")) : Promise.resolve();
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+    expect(r.rounds).toBe(2);
+    // The head landed and the command behind it did not, which is what leaves no re-read.
+    expect(r.outcomes.some((o) => o.ok && cmdAddr(o.command) === cmdAddr(head))).toBe(true);
+    expect(failedAt(r, refused)).toBe(true);
+    // The case above is the control: the same head REFUSED leaves this address confirmed.
+    expect(confirmedAddrs(r.ledger).has(cmdAddr(kept))).toBe(false);
+  });
+
+  it("stops differing once the unit takes the value the emit sends", async () => {
+    // Why a confirmation this loop drops is not an opportunity that comes round again. The plan
+    // holds a raw the app cannot send, the emit sends the value the control admits, and the
+    // unit takes it. From then on the plan and the unit name different settings and no diff
+    // says so, because the comparison uses that same admitted value.
+    const lpf = fxParams(FX_EFFECT_TYPE_DEFAULT[1]).find((d) => d.key === "delayLpf")!;
+    const below = lpf.rawMin! - 1;
+    const plan = basePlan();
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: FX_EFFECT_TYPE_DEFAULT[1], params: { delayLpf: below } } };
+    const slot = planToCommands(model, plan).find((c) => c.node === "bus.fx2" && c.y === lpf.slot)!;
+    expect(slot).toBeDefined();
+    expect(slot.vdValue).toBe(lpf.rawMin);
+    device();
+    const before = await diffPlan(model, plan);
+    expect(before.diffs.some((d) => cmdAddr(d.command) === cmdAddr(slot))).toBe(true);
+    await sendConverging(model, plan, { settleMs: 0 });
+    const after = await diffPlan(model, plan);
+    expect(after.diffs.some((d) => cmdAddr(d.command) === cmdAddr(slot))).toBe(false);
+    // …while the plan still names the value the unit is not at.
+    expect(plan.nodeParams["bus.fx2"]!.fxEffect!.params!.delayLpf).toBe(below);
+  });
+
+  it("hands a canceled converge the addresses it had already confirmed", async () => {
+    // The cancel lands during the re-read, after the address in question has answered.
+    // `diffPlan` throws and there is no result to read the answer off, so the caller's own
+    // ledger is where it is — and the plan's chance to take a normalised value is this write,
+    // since the value it sent is what stops the address differing.
+    const plan = dirty();
+    const target = cmdFor(plan, "CH_ON");
+    device();
+    const ac = new AbortController();
+    let writes = 0;
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      const reply = answer(id, x, y);
+      // Aborted as this read is issued: the loop checks at the top of the NEXT command, so this
+      // one still answers and lands in the ledger.
+      if (writes > 0 && id === target.paramId && x === target.x && y === target.y) ac.abort();
+      return reply;
+    });
+    const set = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      writes++;
+      return set(id, x, y, v);
+    });
+    const ledger = newConfirmLedger();
+    await expect(sendConverging(model, plan, { settleMs: 0, signal: ac.signal, ledger })).rejects.toThrow();
+    expect(confirmedAddrs(ledger).has(cmdAddr(target))).toBe(true);
   });
 
   it("drops an address the converge left differing", async () => {
@@ -901,7 +1091,7 @@ describe("confirmedAddrs", () => {
       return Promise.resolve();
     });
     const r = await sendConverging(model, dirty(), { settleMs: 0 });
-    const confirmed = confirmedAddrs(r);
+    const confirmed = confirmedAddrs(r.ledger);
     expect(r.residual.map((d) => cmdAddr(d.command))).toContain(cmdAddr(stuck));
     expect(confirmed.has(cmdAddr(stuck))).toBe(false);
     // The positive control: its neighbours, which the same rounds sent, ARE confirmed.

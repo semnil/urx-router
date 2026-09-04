@@ -12,7 +12,7 @@ vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn(
 
 import { vdSet, vdSetStr, vdGet, vdGetStr } from "../platform";
 import { COMP_EQ_SSMCS, PARAMS } from "./params";
-import { addrKey, planToCommands } from "./translate";
+import { addrKey, cmdAddr, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
 import { MBC_ONE_KNOB, insertFxParamKey } from "./insert-fx-effect";
@@ -180,6 +180,49 @@ describe("LiveSync sideEffect converge", () => {
     // What the set CONTAINS is the device flow's question (main.device.test.ts) — this mock's
     // converge re-reads a device that already agrees, so it sends nothing and confirms nothing.
     expect(seen[0]!.addrs).toBeInstanceOf(Set);
+  });
+
+  it("hands the confirmed addresses over even when a later round's send fails", async () => {
+    // The failure ends the session, and what earlier rounds confirmed is the plan's only chance
+    // at those values: the write that landed is what stops the address differing, so no later
+    // flush produces a diff that would carry it again.
+    const plan = basePlan();
+    plan.nodeParams.ch1 = { on: true };
+    const table = new Map<string, number>();
+    const key = (id: number, x: number, y: number): string => `${id}:${x}:${y}`;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => Promise.resolve(table.get(key(id, x, y)) ?? 0));
+    // One address the device accepts and does not keep, so a second round happens, and then
+    // refuses — which is what stops the loop before it can re-read.
+    const stuck = planToCommands(model, plan).find((c) => c.name === "CH_ON")!;
+    let stuckSets = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (id === stuck.paramId && x === stuck.x && y === stuck.y) {
+        return ++stuckSets > 1 ? Promise.reject(new Error("nak")) : Promise.resolve();
+      }
+      table.set(key(id, x, y), v);
+      return Promise.resolve();
+    });
+    const seen: ReadonlySet<number>[] = [];
+    const errors: string[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: (message) => void errors.push(String(message)),
+      onSent: () => {},
+      onCollapsed: () => {},
+      onConfirmed: (addrs) => void seen.push(addrs),
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(errors, "a refused send tears the session down").toHaveLength(1);
+    expect(seen).toHaveLength(1);
+    // The refused address is not among them; everything round 1 landed and round 2 left alone is.
+    expect(seen[0]!.has(cmdAddr(stuck))).toBe(false);
+    expect(seen[0]!.size).toBeGreaterThan(0);
   });
 
   it("goes back to waiting for quiet while flushes are converging", async () => {
