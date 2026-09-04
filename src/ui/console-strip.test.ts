@@ -18,6 +18,7 @@ import { PAN_BAL_BAL } from "../core/control/params";
 import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, insertFxSelected } from "../core/control/params";
 import { insertFxControl, planToCommands } from "../core/control/translate";
 import { getModel } from "../models";
+import { fxEffectTypes } from "../core/control/fx-effect";
 import { defaultPlan } from "../models/initial-state";
 import { t } from "../i18n";
 
@@ -850,6 +851,30 @@ describe("where the focus goes after the INS FX popover closes", () => {
     h.view.refresh();
     expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden, "the repaint closed it").toBe(true);
     expect(document.activeElement, "not the document body").toBe(fxOpenerOf("bus.fx1"));
+  });
+
+  // A row of the type list is reached by the KEYBOARD as well, and its rows are not buttons —
+  // they are focusable `div`s, so nothing gives them Space / Enter for free. The pointer path
+  // is covered several times over above; this is the other half, and it is the whole of how
+  // the selector is operated without a mouse.
+  it.each([" ", "Enter"])("chooses an FX type when a row is activated with %s", (activator) => {
+    h = consoleHost();
+    const before = h.plan.nodeParams["bus.fx1"]?.fxEffect?.type;
+    fxOpenerOf("bus.fx1")!.click();
+    const rows = [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];
+    // A row the channel is NOT on, so a write that lands is a write that shows.
+    const target = rows.find((r) => !r.classList.contains("active")) ?? rows[1];
+    const wanted = target.textContent;
+    target.focus();
+    const e = key(target, activator);
+    // The row is a focusable `div`, so Space scrolls the page and Enter can submit whatever
+    // encloses it unless the handler says otherwise. Asserting the type moved says the
+    // selection happened; only this says the browser's own answer to the press was refused,
+    // and dropping the `preventDefault` leaves every other assertion here satisfied.
+    expect(e.defaultPrevented, `${activator} was answered by the row, not by the browser`).toBe(true);
+    const after = h.plan.nodeParams["bus.fx1"]?.fxEffect?.type;
+    expect(after, `${activator} chose a type`).not.toBe(before);
+    expect(fxEffectTypes(0).find((o) => o.value === after)?.label, "the row that was activated").toBe(wanted);
   });
 
   it("keeps it on the same row when a one-strip repaint re-opens the FX type list", () => {

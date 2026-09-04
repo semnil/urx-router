@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { FX_DYN, ORDER_FOR_TEST, fxControlLabel } from "./fx-effect-screen";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxFamilyOf } from "../core/control/fx-effect";
 import { bindControl, controlId, listControls, FX_LEVEL_SCOPE, FX_ON_SCOPE, FX_SCOPE } from "../core/midi/controls";
@@ -9,6 +9,9 @@ import { diffPlans, nodeParamContestPath, patchContestNames } from "../core/plan
 import { defaultPlan } from "../models/initial-state";
 import { getModel } from "../models";
 import { setLang, t } from "../i18n";
+import { DynScreen } from "./dyn-screen";
+import { dynHost } from "./dyn-screen.test-util";
+import type { DynHost } from "./dyn-screen.test-util";
 import type { DynCtx } from "./dyn-screen";
 import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
@@ -235,10 +238,131 @@ describe("the words a MIDI assignment prints for an FX control", () => {
     setLang("en");
   });
 
+  // An assignment outlives the catalogue it was made against. A mapping saved under a key a
+  // later build no longer carries reaches the resolver as an FX scope whose key matches no
+  // descriptor of any type — and the answer has to be "I cannot name this", so the caller
+  // falls back to printing the id rather than to a label belonging to some other row.
+  it("declines an FX scope whose key no type carries", () => {
+    setLang("en");
+    expect(fxControlLabel(`${FX_SCOPE}.aKeyNoCatalogueHas`, t())).toBeNull();
+  });
+
   it("declines a scope that is not one of its own", () => {
     setLang("en");
     for (const scope of [undefined, "gate", "insfx.compander.6", "fxsomething.level"]) {
       expect(fxControlLabel(scope, t()), String(scope)).toBeNull();
     }
+  });
+});
+
+// The two rows the delay families add that are NOT knobs, operated. Everything else about
+// them is pinned already — which row the unit owns, which tag it carries, that the writer
+// and the follow registration are complements — and all of it is asked of `fxRowOwners` or
+// of the emitted commands. What nothing asked is whether pressing the controls on the FACE
+// writes the plan: a row can lock correctly, tag correctly and still be wired to nothing.
+describe("operating the rows a delay adds to the face", () => {
+  let host: DynHost | undefined;
+
+  afterEach(() => {
+    host?.restore();
+    host = undefined;
+    document.body.replaceChildren();
+  });
+
+  /** FX 2 holds Mono Delay out of the factory, so its face carries Sync, BPM and Note. */
+  const openDelay = (): DynHost => {
+    setLang("en");
+    const h = dynHost();
+    new DynScreen(h.hooks).open(FX_DYN, "bus.fx2");
+    host = h;
+    return h;
+  };
+
+  const row = (h: DynHost, label: string): HTMLElement => {
+    const hit = [...h.box.querySelectorAll<HTMLElement>(".prefs-row")].find(
+      (r) => r.querySelector(".lbl")?.textContent === label,
+    );
+    if (!hit) throw new Error(`no row labelled "${label}" on the face`);
+    return hit;
+  };
+
+  /** Every value the node's `fxEffect` holds, as one flat map — the group's own fields beside
+   *  the parameters, since a gesture can reach either. */
+  const leaves = (h: DynHost): Record<string, unknown> => {
+    const fx = h.plan.nodeParams["bus.fx2"]?.fxEffect ?? {};
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fx)) {
+      if (k === "params")
+        for (const [pk, pv] of Object.entries((v ?? {}) as Record<string, number>)) out[`params.${pk}`] = pv;
+      else out[k] = v;
+    }
+    return out;
+  };
+
+  /** Which of them a gesture moved. A press owns exactly ONE leaf, and the write witness
+   *  naming it is only half of that — the other half is that nothing else moved, which the
+   *  witness cannot say and a `toContain` cannot see. Asked over every leaf rather than over
+   *  the sibling that would hurt most: a press that quietly reset BPM, or the effect's Mix,
+   *  is the same defect and the same silence. */
+  const moved = (before: Record<string, unknown>, after: Record<string, unknown>): string[] =>
+    [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((k) => before[k] !== after[k]).sort();
+
+  it("writes the Sync switch through to the plan", () => {
+    const h = openDelay();
+    const params = (): Record<string, number> | undefined => h.plan.nodeParams["bus.fx2"]?.fxEffect?.params;
+    expect(params()?.sync ?? 0, "the factory state this case turns ON from").toBe(0);
+    const button = row(h, t().inspector.fxEffect.params.sync).querySelector<HTMLButtonElement>(".prefs-switch");
+    if (!button) throw new Error("the Sync row carries no switch");
+    const before = leaves(h);
+    button.click();
+    expect(h.patches.at(-1)?.id).toBe("bus.fx2");
+    expect(params()?.sync, "Sync is now on in the plan").toBe(1);
+    // ONE press, ONE write, and it names the leaf rather than the group: `patch` rebuilds the
+    // whole `fxEffect`, so a name spelled at the wrong depth matches nothing and a device read
+    // arriving in the same window silently takes the edit back. Exact equality rather than
+    // containment — a witness that names a leaf the gesture had no business touching is how a
+    // second write travels unseen.
+    expect(h.patches).toHaveLength(1);
+    expect(h.patches[0].written).toEqual(["fxEffect.params.sync"]);
+    // …and the plan agrees: nothing but Sync moved. With Sync ON the unit derives the delay
+    // time from the BPM and the note value, so a press that also reset either changes what the
+    // effect does — and the witness above is satisfied by naming only Sync while doing it.
+    expect(moved(before, leaves(h))).toEqual(["params.sync"]);
+  });
+
+  it("writes a chosen Note value through to the plan, from the state that can reach it", () => {
+    const h = openDelay();
+    const params = (): Record<string, number> | undefined => h.plan.nodeParams["bus.fx2"]?.fxEffect?.params;
+    const noteLabel = t().inspector.fxEffect.params.note;
+    // With Sync OFF the unit does not read the note value, so the row ships LOCKED and its
+    // select is `disabled`. Dispatching at it there writes the plan — `disabled` stops a
+    // person, not a dispatched event — so a case that starts here asserts a write down a path
+    // the operator cannot take, and leaves the one they do take unmeasured.
+    expect(params()?.sync ?? 0, "the factory state, where the row is not the operator's").toBe(0);
+    expect(row(h, noteLabel).querySelector<HTMLSelectElement>("select")?.disabled).toBe(true);
+
+    // The real route: switch Sync on, which rebuilds the face with the ownership swapped.
+    row(h, t().inspector.fxEffect.params.sync).querySelector<HTMLButtonElement>(".prefs-switch")!.click();
+    // Re-fetched AFTER the rebuild — the row a locator held before it is a row that is gone.
+    const select = row(h, noteLabel).querySelector<HTMLSelectElement>("select");
+    if (!select) throw new Error("the Note row carries no select");
+    expect(select.disabled, "the rebuild handed the row back to the operator").toBe(false);
+
+    // The state the choice is measured FROM, taken after the Sync press so that press's own
+    // write is not read as this one's.
+    const beforeNote = leaves(h);
+    const before = params()?.note ?? 9;
+    // Any option but the one it is on, so the case cannot pass on a no-op write.
+    const other = [...select.options].map((o) => Number(o.value)).find((v) => v !== before);
+    expect(other, "the Note row offers more than one value").toBeDefined();
+    select.value = String(other);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(params()?.note, "the chosen note is in the plan").toBe(other);
+    // Two gestures, two writes — the Sync press and this one, and nothing between them.
+    expect(h.patches).toHaveLength(2);
+    expect(h.patches.at(-1)?.written).toEqual(["fxEffect.params.note"]);
+    // Choosing a note leaves Sync where the operator put it, and everything else alone.
+    expect(moved(beforeNote, leaves(h))).toEqual(["params.note"]);
+    expect(params()?.sync, "still the state the row was reached from").toBe(1);
   });
 });
