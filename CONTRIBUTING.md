@@ -38,6 +38,7 @@ pnpm tauri dev     # desktop app
 | `pnpm format` | Prettier over the TypeScript sources |
 | `pnpm check:md` | Markdown table integrity |
 | `pnpm check:skips` | every permanent skip in `e2e/race` is registered against what holds its reason |
+| `pnpm check:pr-assumptions -- --file <body.md>` | the assumptions field of the body in that file names what each observation needs. Run it on the body you are about to submit; on a pull request the workflow supplies the body itself, and a run given neither refuses rather than reporting on nothing |
 | `pnpm build:demo` | browser demo build (no save dialog or image export) |
 
 ## Conventions
@@ -129,7 +130,17 @@ CI diffs the generated files, so an out-of-date bundle fails the build.
   anything but documentation, and on the one that changes the version. It is the slowest
   of the required checks, and it runs in parallel with the rest.
 - The document and configuration checks run on **every** pull request regardless — Markdown
-  table integrity, the reusable-assets index and `pnpm check:gates`.
+  table integrity, the reusable-assets index, `pnpm check:gates`, the comment-provenance
+  ledger, and the assumptions field below.
+- **The assumptions field is answered, never used to defer.** The template asks what the
+  change rests on and nobody has observed; what it must not hold is an observation you
+  could have taken, since the body stops being visible the moment the pull request merges
+  and the item is then in no list anyone reads. So each item opens with the external thing
+  its observation needs — `[hardware]` a reading off the unit, `[operator]` someone's own
+  hands or eyes, `[other-checkout]` a machine this one is not — and an observation needing
+  none of the three has no tag to write: take it and drop the line, or answer "none".
+  `pnpm check:pr-assumptions` refuses an untagged item, and it reads what is written there
+  whether or not the box beside it is ticked.
 - A merge waits for `ci-required`, `docs-required`, `format` and `race-required`. Each
   reports on every pull request, so a change that skips the work behind one of them still
   gets a green check rather than a check that never arrives. `pnpm check:gates` is what
