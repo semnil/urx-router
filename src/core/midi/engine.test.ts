@@ -744,7 +744,10 @@ describe("gang (several controls on one address)", () => {
     // the same pair, so the pair ends OFF — not back where it started.
     engine.onMessage(encodeCc(0, 7, 127));
     expect([a.get(), b.get()], "one press turns the pair off").toEqual([0, 0]);
-    expect(applied, "and both mappings acted").toEqual([a.id, b.id]);
+    // ONCE, not once per member. The mirror had already moved the partner by the time the
+    // second member wrote, so that write changed nothing — and `applied` is what schedules the
+    // repaint, the dirty flag and the live-sync flush, none of which is owed twice for one edit.
+    expect(applied, "one edit, reported once").toEqual([a.id]);
 
     // …and the next press brings it back, which is what says the first was a flip rather
     // than a value the mirror happened to settle on.

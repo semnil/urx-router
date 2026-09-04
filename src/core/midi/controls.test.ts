@@ -6,7 +6,8 @@ import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
 import { ref } from "../../models/types";
 import { COMP_EQ_SSMCS, EQ_TYPE_PASS, INSERT_FX_OPTIONS } from "../control/params";
 import { planToCommands } from "../control/translate";
-import { bindControl, controlId, listControls, parseControlId } from "./controls";
+import { bindControl, controlId, listControls, parseControlId, EQ_SCOPE, eqBandScope } from "./controls";
+import { MidiEngine } from "./engine";
 import {
   COMPANDER_H,
   COMPANDER_S,
@@ -722,6 +723,60 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(push(mute, 1), "mute at 48 kHz").toBe(true);
     expect(send().params?.level).not.toBe(-10);
     expect(send().params?.on).toBe(false);
+  });
+});
+
+// A gang whose members do not merely share an address but share a LOCK: the EQ 1-knob computes
+// the four bands while it is on, so a band cannot be written until the knob is off — and the
+// knob is in the same gang. Driven through the real engine and the real catalogue, because what
+// is being asked is an interaction between the two.
+describe("a gang whose first member unlocks another", () => {
+  const ONE = controlId("ch1", "oneKnob", EQ_SCOPE);
+  const LOW = controlId("ch1", "bandOn", eqBandScope(0));
+
+  const knobOnBandStored = (): void => {
+    const bands = (plan.nodeParams.ch1?.eqBands ?? []).slice();
+    bands[0] = { ...bands[0], on: true };
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      eqOneKnob: { ...plan.nodeParams.ch1?.eqOneKnob, on: true },
+      eqBands: bands,
+    };
+  };
+
+  // BOTH learn orders. The order decides which member commits first, and only one of them
+  // ever worked: with the band learned first there was nothing to write to when its turn came,
+  // and nothing came back for it afterwards.
+  it.each([
+    [[ONE, LOW], "the knob learned first"],
+    [[LOW, ONE], "the band learned first"],
+  ])("switches the whole gang off, %s", (order) => {
+    knobOnBandStored();
+    // The premise the case rests on, stated rather than assumed: the knob is on, and the band
+    // READS off while holding an on of its own. Without this a run where the seed did not take
+    // proves nothing — the band would read off because it IS off.
+    expect(bindControl(model, plan, ONE)!.get(), "the knob is on").toBe(1);
+    expect(bindControl(model, plan, LOW)!.get(), "the band reads off, because the knob owns it").toBe(0);
+    expect(plan.nodeParams.ch1?.eqBands?.[0]?.on, "…while holding an on of its own").toBe(true);
+
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: () => {},
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 9 } as const;
+    engine.setMappings(order.map((control) => ({ control, addr, mode: "absolute", button: "state" }) as const));
+    engine.onMessage([0xb0, 9, 0]);
+
+    expect(plan.nodeParams.ch1?.eqOneKnob?.on, "the knob went off").toBe(false);
+    // …and so did the band. Left behind, it comes back the moment the knob releases it — the
+    // operator switched one physical control off and an EQ band arrived on.
+    expect(plan.nodeParams.ch1?.eqBands?.[0]?.on, "and the band it was hiding").toBe(false);
   });
 });
 

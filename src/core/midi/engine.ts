@@ -269,7 +269,24 @@ export class MidiEngine {
       .filter((mapping) => !echoed.has(addrKey(mapping.addr)))
       .map((mapping) => this.decide(mapping, ev))
       .filter((d): d is Decision => d !== null);
-    for (const d of decisions) this.commit(d);
+    // …and a member the lock refuses is tried again once the rest have written, because the
+    // lock may be another member's to release: the EQ 1-knob computes the four bands while it
+    // is on, so a gang told to switch everything off cannot write a band until the knob in the
+    // same gang has gone off, and in the order that learns the band FIRST nothing ever did.
+    // Bounded by the member count, and stops as soon as a pass writes nothing.
+    let pending = decisions.filter((d) => !this.commit(d));
+    for (let pass = 0; pass < matched.length && pending.length > 0; pass++) {
+      const again: Decision[] = [];
+      let wrote = false;
+      for (const d of pending) {
+        const fresh = this.redecide(d, ev);
+        if (fresh === null) continue; // nothing left to write once it could be read
+        if (this.commit(fresh)) wrote = true;
+        else again.push(fresh);
+      }
+      if (!wrote) break;
+      pending = again;
+    }
   }
 
   // One report per gated window, on the first message that would actually have
@@ -356,10 +373,18 @@ export class MidiEngine {
     return { mapping, control, key, isHead, before, target };
   }
 
-  private commit({ mapping, control, key, isHead, before, target }: Decision): void {
+  /** Write one decided edit. False when the control refused it — which a gang retries, since
+   *  the lock may belong to a member of this same message.
+   *
+   *  The value is read AGAIN here rather than taken from the decision: between deciding and
+   *  writing, another member may have moved this control (the funnel mirrors an insert-FX edit
+   *  onto a linked partner) or released the lock that was hiding its value. What `applied`
+   *  reports has to be the difference this write actually made. */
+  private commit({ mapping, control, key, isHead, target }: Decision): boolean {
+    const before = control.get();
     if (!control.set(target)) {
       this.hooks.trace?.(`drop locked ${mapping.control}`);
-      return; // device-locked — swallowed
+      return false; // device-locked — swallowed, or retried by a gang
     }
     const after = control.get();
     // The controller already shows what it sent: remember the applied value as
@@ -376,6 +401,19 @@ export class MidiEngine {
     }
     this.hooks.trace?.(`apply ${mapping.control} ${before} -> ${after}`);
     if (after !== before) this.hooks.applied(control);
+    return true;
+  }
+
+  /** A member the lock refused, made ready to try again once the rest have committed. A
+   *  TOGGLE is decided afresh: its target is a function of the value it could not read while
+   *  locked. Anything else keeps the target it already has, which the incoming value alone
+   *  decides — and re-deciding one would re-run the 14-bit assembly and the pickup engagement
+   *  that deciding already did. */
+  private redecide(d: Decision, ev: MidiEvent): Decision | null {
+    if (d.control.kind !== "toggle") return d;
+    const before = d.control.get();
+    const target = this.toggleTarget(d.mapping, ev, before);
+    return target === null ? null : { ...d, before, target };
   }
 
   // Toggles: "edge" (default) flips on each on-value — a note-on, or a CC ≥ 64;
@@ -393,10 +431,12 @@ export class MidiEngine {
     // has no discrete press, and a cc14 arrives as two 7-bit halves that would each
     // flip it (≥ 64) — leave both misbindings inert, like the pitchbend one.
     if (mapping.addr.type === "pitchbend" || mapping.addr.type === "cc14") return null;
-    if (mapping.button === "state") {
-      const target = ev.type === "note" ? (ev.on ? 1 : 0) : ev.value >= 64 ? 1 : 0;
-      return target === current ? null : target;
-    }
+    // No same-state shortcut: the value read here may not be the value that is there when the
+    // write lands. A control LOCKED by another member of this same message reads as off while
+    // holding something else, so dropping the decision on "it already matches" left the state
+    // it was hiding in place — and a lock released a moment later put it back on screen.
+    // `commit` is what decides nothing happened, by comparing what it read to what it wrote.
+    if (mapping.button === "state") return ev.type === "note" ? (ev.on ? 1 : 0) : ev.value >= 64 ? 1 : 0;
     const on = ev.type === "note" ? ev.on : ev.value >= 64;
     return on ? (current >= 0.5 ? 0 : 1) : null;
   }
