@@ -275,12 +275,29 @@ export class MidiEngine {
     // same gang has gone off, and in the order that learns the band FIRST nothing ever did.
     // Bounded by the member count, and stops as soon as a pass writes nothing.
     //
+    // A GOVERNED member is written before the one that governs it — a 1-knob over the values it
+    // computes, a Sync switch over the time it derives. Which way a write moves the lock is not
+    // asked, because it does not have to be: on the way INTO a lock the governed value is
+    // written while it still can be, and on the way out of one the retry below lands it once
+    // the governor has let go. Asked instead, the answer would have to be predicted from a
+    // value nothing has written yet, and it differs per control — a 1-knob locks the bands
+    // while it is on and its own level while it is off.
+    //
+    // Two buckets rather than a sort: no control here governs another that governs a third,
+    // and a chain deeper than one is carried by the retry anyway.
+    const governors = new Set(
+      decisions.map((d) => d.control.governedBy).filter((gid): gid is string => gid !== undefined),
+    );
+    const ordered = [
+      ...decisions.filter((d) => !governors.has(d.control.id)),
+      ...decisions.filter((d) => governors.has(d.control.id)),
+    ];
     // The DECISION is what is retried, not the deciding. Re-deciding would read the control
     // again, and for an edge toggle the target is a flip of what it reads — so the two learn
     // orders parted company, one flipping the value the operator was shown and the other
     // flipping the one the release had just put there. Retrying the decision also keeps the
     // 14-bit assembly and the pickup engagement to the one pass that owns them.
-    let pending = decisions.filter((d) => !this.commit(d));
+    let pending = ordered.filter((d) => !this.commit(d));
     for (let pass = 0; pass < matched.length && pending.length > 0; pass++) {
       const again = pending.filter((d) => !this.commit(d));
       if (again.length === pending.length) break;

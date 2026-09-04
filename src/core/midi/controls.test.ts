@@ -6,7 +6,17 @@ import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
 import { ref } from "../../models/types";
 import { COMP_EQ_SSMCS, EQ_TYPE_PASS, INSERT_FX_OPTIONS } from "../control/params";
 import { planToCommands } from "../control/translate";
-import { bindControl, controlId, listControls, parseControlId, EQ_SCOPE, eqBandScope } from "./controls";
+import {
+  bindControl,
+  controlId,
+  listControls,
+  parseControlId,
+  COMP_SCOPE,
+  EQ_SCOPE,
+  eqBandScope,
+  FX_SCOPE,
+  INSFX_SCOPE,
+} from "./controls";
 import { MidiEngine } from "./engine";
 import {
   COMPANDER_H,
@@ -734,25 +744,27 @@ describe("a gang whose first member unlocks another", () => {
   const ONE = controlId("ch1", "oneKnob", EQ_SCOPE);
   const LOW = controlId("ch1", "bandOn", eqBandScope(0));
 
-  const knobOnBandStored = (): void => {
+  const knobOnBandStored = (knobOn = true, bandOn = true): void => {
     const bands = (plan.nodeParams.ch1?.eqBands ?? []).slice();
-    bands[0] = { ...bands[0], on: true };
+    bands[0] = { ...bands[0], on: bandOn };
     plan.nodeParams.ch1 = {
       ...plan.nodeParams.ch1,
-      eqOneKnob: { ...plan.nodeParams.ch1?.eqOneKnob, on: true },
+      eqOneKnob: { ...plan.nodeParams.ch1?.eqOneKnob, on: knobOn },
       eqBands: bands,
     };
   };
 
   /** Drive one press through the real engine and report what the plan ended up holding. */
-  const press = (order: readonly string[], button: "edge" | "state", value: number) => {
-    knobOnBandStored();
-    // The premise the case rests on, stated rather than assumed: the knob is on, and the band
-    // READS off while holding an on of its own. Without this a run where the seed did not take
-    // proves nothing — the band would read off because it IS off.
-    expect(bindControl(model, plan, ONE)!.get(), "the knob is on").toBe(1);
-    expect(bindControl(model, plan, LOW)!.get(), "the band reads off, because the knob owns it").toBe(0);
-    expect(plan.nodeParams.ch1?.eqBands?.[0]?.on, "…while holding an on of its own").toBe(true);
+  const press = (order: readonly string[], button: "edge" | "state", value: number, knobOn = true, bandOn = true) => {
+    knobOnBandStored(knobOn, bandOn);
+    // The premise, stated rather than assumed: the knob reads as it was seeded, and the band
+    // READS off exactly when the knob owns it. Without this a run where the seed did not take
+    // proves nothing — with the knob off the band would read off because it IS off.
+    expect(bindControl(model, plan, ONE)!.get(), "the knob is where the case put it").toBe(knobOn ? 1 : 0);
+    expect(bindControl(model, plan, LOW)!.get(), "the band reads off only while the knob owns it").toBe(
+      knobOn ? 0 : bandOn ? 1 : 0,
+    );
+    expect(plan.nodeParams.ch1?.eqBands?.[0]?.on, "…whatever it is holding").toBe(bandOn);
 
     const engine = new MidiEngine({
       resolve: (cid) => bindControl(model, plan, cid),
@@ -805,6 +817,36 @@ describe("a gang whose first member unlocks another", () => {
     const after = press([ONE, LOW], "edge", 127);
     expect(after.oneKnob, "the knob was on and flips off").toBe(false);
     expect(after.low, "the band read off and flips on").toBe(true);
+  });
+
+  // The whole table: the lock going ON as well as coming off, both button modes, both learn
+  // orders. The direction that ADDS the lock is the one the retry cannot save — the governed
+  // value has to be written before the governor takes it, and after that there is nothing to
+  // write to and no way back.
+  it.each([
+    ["the lock coming off", true, true],
+    ["the lock going on", false, false],
+  ] as const)("%s lands the same way from either learn order, in either mode", (_label, knobOn, bandOn) => {
+    for (const [button, value] of [
+      ["edge", 127],
+      ["state", knobOn ? 0 : 127],
+    ] as const) {
+      const knobFirst = press([ONE, LOW], button, value, knobOn, bandOn);
+      const bandFirst = press([LOW, ONE], button, value, knobOn, bandOn);
+      expect(bandFirst, `${button}: the learn order decided the outcome`).toEqual(knobFirst);
+      // The knob moved in both, which is the positive control: two orders agreeing that
+      // NOTHING happened would satisfy the line above.
+      expect(knobFirst.oneKnob, `${button}: the knob moved`).toBe(!knobOn);
+    }
+  });
+
+  // …and what the locking direction lands on. The band is writable when the press arrives and
+  // the knob is about to take it, so the band's own value has to be written first — left to
+  // the order the assignments were made in, it was written or lost by luck.
+  it("writes a band the knob is about to take over", () => {
+    const after = press([ONE, LOW], "state", 127, false, false);
+    expect(after.oneKnob, "the knob went on").toBe(true);
+    expect(after.low, "and the band took the press before it was locked").toBe(true);
   });
 });
 
@@ -885,5 +927,63 @@ describe("the insert effect's bypass", () => {
       (k) => (before as Record<string, unknown>)[k] !== (plan.nodeParams.ch1 as Record<string, unknown>)[k],
     );
     expect(moved).toEqual(["insertFxOn"]);
+  });
+});
+
+// The dependency the gang orders itself by, declared across every processor that has one. It
+// is a control ID, so a typo or a renamed scope leaves it naming nothing — and a governor that
+// resolves to no control silently puts the ordering back to the one the mappings happened to
+// be learned in, which is the defect it exists to remove.
+describe("the lock dependencies the catalogue declares", () => {
+  const listFor = (seed: (p: Plan) => void): ReturnType<typeof listControls> => {
+    seed(plan);
+    return listControls(model, plan);
+  };
+
+  it("names a governor that exists, wherever one is named", () => {
+    const seeded = listFor((p) => {
+      p.nodeParams.ch1 = { ...p.nodeParams.ch1, insertFx: 512 };
+      p.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { sync: 1, bpm: 120, note: 9, delay: 5000 } } };
+    });
+    const ids = new Set(seeded.map((c) => c.id));
+    const named = seeded.filter((c) => c.governedBy !== undefined);
+    // The positive control: a run that declared none would satisfy the loop below.
+    expect(named.length, "the catalogue declares dependencies at all").toBeGreaterThan(0);
+    expect(named.filter((c) => !ids.has(c.governedBy!)).map((c) => `${c.id} -> ${c.governedBy}`)).toEqual([]);
+    // …and nothing waits for itself, which would be a control that is never written.
+    expect(named.filter((c) => c.governedBy === c.id).map((c) => c.id)).toEqual([]);
+  });
+
+  // One per family that HAS a governor among its controls, so a processor that loses its
+  // declaration is red here rather than only in whichever gang someone happens to build.
+  //
+  // Pitch Fix is deliberately not among them. Its MIDI Control decides which of its slots the
+  // unit drives, exactly as the 1-knobs do, but it is a writable slot with no parameter row —
+  // no mapping can name it, so it can be in no gang and there is nothing for its slots to wait
+  // for. The case above is what holds that: a declaration pointing at it would name a control
+  // that does not exist, and the ordering would silently go back to the learn order.
+  it.each([
+    ["EQ", (p: Plan) => void p, `ch1/bandOn@${eqBandScope(0)}`, controlId("ch1", "oneKnob", EQ_SCOPE)],
+    ["COMP", (p: Plan) => void p, "ch1/threshold@comp", controlId("ch1", "oneKnob", COMP_SCOPE)],
+    [
+      "the multi-band compressor",
+      (p: Plan) => {
+        p.nodeParams["bus.mix1"] = { insertFx: 1792 };
+      },
+      `bus.mix1/insfx@${INSFX_SCOPE}.mbc.${MBC_ONE_KNOB.level.slot}`,
+      controlId("bus.mix1", "insfx", `${INSFX_SCOPE}.mbc.${MBC_ONE_KNOB.on.slot}`),
+    ],
+    [
+      "FX Sync",
+      (p: Plan) => {
+        p.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { sync: 1, bpm: 120, note: 9, delay: 5000 } } };
+      },
+      `bus.fx2/fx@${FX_SCOPE}.delay`,
+      controlId("bus.fx2", "fx", `${FX_SCOPE}.sync`),
+    ],
+  ])("%s names the control that governs it", (_family, seed, dependent, governor) => {
+    const found = listFor(seed).find((c) => c.id === dependent);
+    if (!found) throw new Error(`${dependent} is not in the catalogue — the case addresses nothing`);
+    expect(found.governedBy).toBe(governor);
   });
 });

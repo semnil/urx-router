@@ -20,7 +20,13 @@ import {
   type SsmcsParams,
 } from "../plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../levels";
-import { FX_CHANNEL_NODE_INDEX, fxParams, fxRowOwners, resolveFxEffectType } from "../control/fx-effect";
+import {
+  FX_CHANNEL_NODE_INDEX,
+  DELAY_SYNC_SLOT,
+  fxParams,
+  fxRowOwners,
+  resolveFxEffectType,
+} from "../control/fx-effect";
 import type { FxParamDesc } from "../control/fx-effect";
 import {
   busBalance,
@@ -57,6 +63,7 @@ import {
   insertFxParams,
   insertFxSlotVal,
   reKeyInsertFxParams,
+  MBC_ONE_KNOB,
 } from "../control/insert-fx-effect";
 import { channelEqUnavailable, insertFxMenu, insertFxRateLock, nodeRateDisabled } from "../constraints";
 import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../control/vd";
@@ -177,6 +184,21 @@ export interface ControlDesc {
    *  id, or a processor / band scope (`gate`, `comp`, `eq.low`). */
   scope?: string;
   kind: ControlKind;
+  /**
+   * The control id whose value decides whether THIS one may be written — a 1-knob over the
+   * values it computes, a Sync switch over the time it derives, Pitch Fix's MIDI Control over
+   * the scale it drives.
+   *
+   * It is a dependency and not a lock STATE: which way round the two sit is all a gang needs
+   * to order itself, and it is the half that does not change. The polarity does change — a
+   * 1-knob locks the bands while it is on and its own level while it is off, and the insert
+   * effect's driver swaps which set of slots it holds — so a gang writes the governed control
+   * FIRST and its governor after, then retries what a lock refused. That is right in both
+   * directions without anyone predicting the lock: on the way into a lock the governed value
+   * is written while it still can be, and on the way out the retry lands it once the governor
+   * has let go.
+   */
+  governedBy?: string;
 }
 
 /** A control bound to a concrete plan: normalized read/write access. */
@@ -427,7 +449,13 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
 
   /** A continuous parameter inside a `gate` / `comp` sub-object, on the field
    *  table's own grid. */
-  const subDyn = (sub: "gate" | "comp", scope: string, f: DynField, locked?: () => boolean): BoundControl => {
+  const subDyn = (
+    sub: "gate" | "comp",
+    scope: string,
+    f: DynField,
+    locked?: () => boolean,
+    governedBy?: string,
+  ): BoundControl => {
     const codec = dynCodec(f);
     const cur = (): Record<string, unknown> => (plan.nodeParams[id]?.[sub] ?? {}) as Record<string, unknown>;
     return {
@@ -436,6 +464,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       param: f.key as ControlParam,
       scope,
       kind: "continuous",
+      governedBy,
       get: () => codec.get(typeof cur()[f.key] === "number" ? (cur()[f.key] as number) : f.def),
       set: (v) => {
         if (locked?.()) return false;
@@ -454,6 +483,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     param: ControlParam,
     def: boolean,
     locked?: () => boolean,
+    governedBy?: string,
   ): BoundControl => {
     const cur = (): Record<string, unknown> => (plan.nodeParams[id]?.[sub] ?? {}) as Record<string, unknown>;
     return {
@@ -462,6 +492,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       param,
       scope,
       kind: "toggle",
+      governedBy,
       get: () => (((cur()[key] as boolean | undefined) ?? def) ? 1 : 0),
       set: (v) => {
         if (locked?.()) return false;
@@ -483,6 +514,9 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     id: controlId(id, "oneKnobLevel", scope),
     node: id,
     param: "oneKnobLevel",
+    // The knob of the same scope owns it, the other way round from the values that knob
+    // computes: this one is locked while the knob is OFF, and those while it is on.
+    governedBy: controlId(id, "oneKnob", scope),
     scope,
     kind: "continuous",
     get: () => oneKnobCodec.get(read()),
@@ -588,9 +622,18 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         // nothing while it is off. Same rules the screen's rows render under.
         const comp = (): Record<string, unknown> => (plan.nodeParams[id]?.comp ?? {}) as Record<string, unknown>;
         const oneOn = (): boolean => comp().oneKnob === true;
+        const compKnob = controlId(id, "oneKnob", COMP_SCOPE);
         for (const f of dyn.comp)
-          out.push(subDyn("comp", COMP_SCOPE, f, COMP_ONE_KNOB_DRIVEN.has(f.key) ? oneOn : undefined));
-        out.push(subFlag("comp", COMP_SCOPE, "autoMakeup", "autoMakeup", false, oneOn));
+          out.push(
+            subDyn(
+              "comp",
+              COMP_SCOPE,
+              f,
+              COMP_ONE_KNOB_DRIVEN.has(f.key) ? oneOn : undefined,
+              COMP_ONE_KNOB_DRIVEN.has(f.key) ? compKnob : undefined,
+            ),
+          );
+        out.push(subFlag("comp", COMP_SCOPE, "autoMakeup", "autoMakeup", false, oneOn, compKnob));
         out.push(subFlag("comp", COMP_SCOPE, "oneKnob", "oneKnob", false));
         out.push(
           oneKnobLevel(
@@ -642,6 +685,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       ),
     );
 
+    // The knob that computes all four bands while it is on. Named once for the loop below.
+    const eqKnob = controlId(id, "oneKnob", EQ_SCOPE);
     for (const [index] of EQ_BAND_NAMES.entries()) {
       const scope = eqBandScope(index);
       const band = (): EqBand => plan.nodeParams[id]?.eqBands?.[index] ?? {};
@@ -660,6 +705,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         id: controlId(id, "bandOn", scope),
         node: id,
         param: "bandOn",
+        governedBy: eqKnob,
         scope,
         kind: "toggle",
         get: () => (bandLocked() ? 0 : (band().on ?? true) ? 1 : 0),
@@ -686,6 +732,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           param: f.key as ControlParam,
           scope,
           kind: "continuous",
+          governedBy: eqKnob,
           get: () => codec.get((band()[f.key as "freq" | "q" | "gain"] as number | undefined) ?? f.def),
           set: (v) => {
             if (bandLocked() || unused()) return false;
@@ -776,7 +823,10 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     // for both. A node holding Compander-S with nothing stored yet — offline, a demo, or
     // any plan before its first device read — would then have every pickup crossing point
     // and every feedback value taken from the other one.
-    for (const d of insertFxParams(insFxFamily, insFxSel)) {
+    const insFxDescs = insertFxParams(insFxFamily, insFxSel);
+    const driverCandidate = insFxFamily === "mbc" ? MBC_ONE_KNOB.on.slot : null;
+    const driverSlot = insFxDescs.some((x) => x.slot === driverCandidate) ? driverCandidate : null;
+    for (const d of insFxDescs) {
       if (d.control === "select") continue;
       const scope = `${INSFX_SCOPE}.${insFxFamily}.${d.slot}`;
       // Through the shared reader, or a plan filled from a device read answers with the
@@ -788,6 +838,16 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       // write the plan while the writer is suppressing it.
       const lockedNow = (): boolean =>
         insertFxLockedSlots(insFxFamily, plan.nodeParams[id]?.insertFxParams).has(d.slot);
+      // The slot whose value decides that set: the multi-band compressor's 1-Knob switch. Pitch
+      // Fix's MIDI Control decides one too and is NOT here — it is a writable slot with no
+      // parameter row, so no mapping can name it, nothing can be ganged to it and nothing waits
+      // for it. Which is why the driver is looked up in the list this loop walks rather than
+      // named outright: the day one gains a row it starts governing, and until then it governs
+      // nothing. Itself excepted — a control waiting for itself would never be written.
+      const governedBy =
+        driverSlot === null || driverSlot === d.slot
+          ? undefined
+          : controlId(id, "insfx", `${INSFX_SCOPE}.${insFxFamily}.${driverSlot}`);
       const write = (raw: number): void => {
         // The mirrored slots Pitch Fix keeps: the device reads both, so a write that moved
         // one would be half applied. `reKeyInsertFxParams` also drops the bare slot the
@@ -803,6 +863,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           param: "insfx",
           scope,
           kind: "toggle",
+          governedBy,
           get: () => (cur() ? 1 : 0),
           set: (v) => {
             if (lockedNow()) return false;
@@ -822,6 +883,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         param: "insfx",
         scope,
         kind: "continuous",
+        governedBy,
         get: () => codec.get(cur()),
         set: (v) => {
           if (lockedNow()) return false;
@@ -887,6 +949,11 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       // the delay time and announcing it, so a mapping made before Sync went on would drive
       // a value the unit overwrites on its own.
       const drivenNow = (): boolean => fxRowOwners(fxType, fxParamsOf()).get(d.key) === "computed";
+      // Which row that is depends on the Sync switch, so the switch governs it — and governs
+      // nothing when it is not the one deciding, itself included.
+      const syncKey = fxParams(fxType).find((x) => x.slot === DELAY_SYNC_SLOT)?.key;
+      const fxGovernedBy =
+        syncKey === undefined || syncKey === d.key ? undefined : controlId(id, "fx", `${FX_SCOPE}.${syncKey}`);
       if (d.control === "toggle") {
         out.push({
           id: controlId(id, "fx", scope),
@@ -894,6 +961,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           param: "fx",
           scope,
           kind: "toggle",
+          governedBy: fxGovernedBy,
           get: () => (cur() ? 1 : 0),
           set: (v) => {
             if (drivenNow()) return false;
@@ -910,6 +978,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         param: "fx",
         scope,
         kind: "continuous",
+        governedBy: fxGovernedBy,
         get: () => codec.get(cur()),
         set: (v) => {
           if (drivenNow()) return false;

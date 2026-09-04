@@ -638,7 +638,7 @@ export const FX_TYPE_DEFAULTS: Record<number, Record<number, number>> = {
 /** Array slots the delay families address by number here: the delay time both types share,
  *  the tempo Sync switch that decides who owns it, and the note value Sync reads. */
 const DELAY_TIME_SLOT = 6;
-const DELAY_SYNC_SLOT = 4;
+export const DELAY_SYNC_SLOT = 4;
 const DELAY_NOTE_SLOT = 11;
 
 /** Why a row is not the operator's right now. `computed` = the unit is deriving the value
