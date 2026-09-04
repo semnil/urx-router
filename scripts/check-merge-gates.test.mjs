@@ -552,6 +552,37 @@ describe("a workflow that reads a pull request's own fields", () => {
     expect(findingsOf(withTypes(both, `${DEFAULTS}, edited, labeled, unlabeled`))).toEqual([]);
   });
 
+  // `a.b` and `a['b']` are the same access in an expression, and a path mixes them freely.
+  // Read as one spelling, the rule was silent on the other three — so a workflow written
+  // the index way inherited nothing, which is the contract this rule exists to carry.
+  it.each([
+    ["index, single quotes", (f) => `github.event.pull_request['${f}']`],
+    ["index, double quotes", (f) => `github.event.pull_request["${f}"]`],
+    ["mixed, on an earlier hop", (f) => `github['event'].pull_request.${f}`],
+    ["mixed, on two hops", (f) => `github.event["pull_request"].${f}`],
+  ])("reads a field written by %s", (_name, spell) => {
+    for (const field of Object.keys({ body: 0, title: 0, labels: 0 })) {
+      const text = HEALTHY.replace(
+        "      - run: echo work\n",
+        `      - env:\n          V: \${{ ${spell(field)} }}\n        run: node scripts/check.mjs\n`,
+      );
+      expect(findingsOf(text).join("\n")).toContain(field);
+    }
+  });
+
+  // And the same spelling passes once the types are right, so what the rule reads is the
+  // access rather than the punctuation around it.
+  it("passes an index-written field whose own types are subscribed", () => {
+    const text = withTypes(
+      HEALTHY.replace(
+        "      - run: echo work\n",
+        "      - env:\n          V: ${{ github.event.pull_request['labels'] }}\n        run: node scripts/check.mjs\n",
+      ),
+      `${DEFAULTS}, labeled, unlabeled`,
+    );
+    expect(findingsOf(text)).toEqual([]);
+  });
+
   // The rule must not fire on every workflow that lacks `types:`, which is all of them:
   // what makes the subscription necessary is reading something the event carries.
   it("says nothing about a workflow that reads no part of the pull request", () => {

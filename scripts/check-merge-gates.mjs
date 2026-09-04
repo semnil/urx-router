@@ -644,6 +644,11 @@ const PR_FIELD_EVENTS = {
   labels: ["labeled", "unlabeled"],
 };
 
+/** One hop of an expression's access path. GitHub's expression syntax spells a property
+ *  two ways — `a.b` and `a['b']` — and they are the same access, so a rule reading only
+ *  the first is one that anyone writing the second walks straight past. */
+const hop = (name) => `(?:\\.\\s*${name}|\\[\\s*(?:'${name}'|"${name}")\\s*\\])`;
+
 // A workflow that reads one of those fields has to run when that field changes, and by
 // default it does not: `pull_request:` with no `types:` is opened / synchronize /
 // reopened, none of which any of them is. Without the right type the verdict taken when
@@ -654,15 +659,25 @@ const PR_FIELD_EVENTS = {
 // Keyed on the CONSUMPTION rather than on a workflow's name, so the next check that reads
 // one of these inherits it. EVERY reference is collected rather than the first: one
 // workflow can read the body in one step and the labels in another, and what those two
-// need are different sets.
+// need are different sets. Both spellings of every hop are read — `a.b` and `a['b']` are
+// the same access in an expression and mix freely within one path — so what the rule is
+// about is REACHING the field rather than one way of writing it.
+//
+// What it does not see is a path that gets there without naming it: `toJSON(github.event)`
+// carries the body, and so does a value handed down through an output or an input. Those
+// are outside a lexical reading, and a rule firing on `github.event` whole would ask every
+// workflow for every event type.
 function checkPullRequestFieldConsumers(workflows) {
+  const names = Object.keys(PR_FIELD_EVENTS).join("|");
+  // The FIELD hop keeps a capture per spelling, since exactly one of them can match.
   const fieldPattern = new RegExp(
-    `github\\.event\\.pull_request\\.(${Object.keys(PR_FIELD_EVENTS).join("|")})\\b`,
+    `github\\s*${hop("event")}\\s*${hop("pull_request")}\\s*` +
+      `(?:\\.\\s*(${names})\\b|\\[\\s*(?:'(${names})'|"(${names})")\\s*\\])`,
     "g",
   );
   for (const workflow of workflows) {
     if (!workflow.pullRequest || !workflow.text) continue;
-    const fields = [...new Set([...workflow.text.matchAll(fieldPattern)].map((m) => m[1]))].sort();
+    const fields = [...new Set([...workflow.text.matchAll(fieldPattern)].map((m) => m[1] ?? m[2] ?? m[3]))].sort();
     if (!fields.length) continue;
     const types = listOf(workflow.pullRequest.children?.get("types"));
     for (const field of fields) {
