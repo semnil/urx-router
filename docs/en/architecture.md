@@ -530,7 +530,16 @@ carries a one-line map of the same directories and points here.
   refusal caused by a device read (the operator's click went unanswered) while staying silent for a second
   file flow (its own dialog is already on screen) / `adopt-writes.ts` which values a confirmed write lets the
   plan take back — it takes the plan the converge SENT as well as the live one, since the live flush clones
-  before its await and one address is a different key under a different effect type
+  before its await and one address is a different key under a different effect type /
+  `param-source.ts` where each of a plan's parameter values came from — the fill records `load` /
+  `default` as it goes, an edit records `manual`, and a settled read or a landed write records
+  `device` for everything they reached. Transient, and never serialized: the document holds state,
+  not a record of how it was operated /
+  `unauthored-writes.ts` which of a write's changes the operator never chose. The plan is dense — the
+  loader completes a document from the model's factory values — so a write carries keys nobody set, and
+  this names the strips they are on by re-emitting the plan with those keys blanked: an address that
+  survives that emit is one an authored key asks for. `load` counts as authored (the document named the
+  value); `default` and `device` do not
 
 - `src-tauri/` — Rust shell. Webview host + tauri-plugin-dialog + file IO commands
   (`read_text_file`/`read_binary_file`/`write_text_file`/`write_binary_file`; `third_party_licenses` reads
