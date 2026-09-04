@@ -48,6 +48,7 @@ import {
   EQ_TYPE_PASS,
   EQ_TYPE_PEAKING,
   EQ_TYPE_SHELVING,
+  insertFxEngaged,
 } from "../control/params";
 import { mixSendLocks } from "../routing";
 import {
@@ -152,6 +153,11 @@ export type ControlParam =
   // under one family simply does not bind while the node holds another — the same answer
   // `bindControl` already gives a mapping for a node that lost the processor it named.
   | "insfx"
+  // …and its BYPASS, which is not one of those values: it is a flag of the node's own, the
+  // shape `gateOn` / `compOn` / `eqOn` take, and it is switched by a face rather than by a
+  // row on the tuning screen. Offered only while the node HOLDS an effect — with none there
+  // is no insert to switch, and the strip draws an opener in place of the face.
+  | "insertFxOn"
   // The FX channel's effect values. ONE token, as `insfx` is, and for the same reason: an
   // FX value is a raw slot under a type the channel can change, so the plan key it is stored
   // under goes in the SCOPE (`fx.revxHpf`) and the union stays closed. The plan key rather
@@ -740,6 +746,20 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   const insFxSel = effectiveInsertFx(model, plan, id);
   const insFxFamily = insFxSel === undefined ? null : insertFxFamilyOf(insFxSel);
   if (insFxFamily) {
+    // The face's own switch. It writes the bypass and nothing else — selection belongs to the
+    // popover — so it takes a param of its own rather than a slot scope: `insfx` names a raw
+    // engine slot under a family, and this is neither.
+    out.push({
+      id: controlId(id, "insertFxOn"),
+      node: id,
+      param: "insertFxOn",
+      kind: "toggle",
+      get: () => (insertFxEngaged({ insertFx: insFxSel, insertFxOn: plan.nodeParams[id]?.insertFxOn }) ? 1 : 0),
+      set: (v) => {
+        np().insertFxOn = v >= 0.5;
+        return true;
+      },
+    });
     // With the SELECTOR, not the family alone: the two companders are one family whose
     // defaults are all that separate them, so the family alone answers with Compander-H's
     // for both. A node holding Compander-S with nothing stored yet — offline, a demo, or

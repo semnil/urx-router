@@ -4,7 +4,7 @@ import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
 import { ensureFixedConnections, LEVEL_OFF_DB } from "../plan";
 import { ref } from "../../models/types";
-import { COMP_EQ_SSMCS, EQ_TYPE_PASS } from "../control/params";
+import { COMP_EQ_SSMCS, EQ_TYPE_PASS, INSERT_FX_OPTIONS } from "../control/params";
 import { planToCommands } from "../control/translate";
 import { bindControl, controlId, listControls, parseControlId } from "./controls";
 import {
@@ -722,5 +722,55 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(push(mute, 1), "mute at 48 kHz").toBe(true);
     expect(send().params?.level).not.toBe(-10);
     expect(send().params?.on).toBe(false);
+  });
+});
+
+// The insert effect's BYPASS. It is the face on the CONSOLE strip rather than a row on the
+// tuning screen, and it is a flag of the node's own rather than a slot of the engine array —
+// so it takes a param of its own, the shape `gateOn` / `compOn` / `eqOn` take.
+describe("the insert effect's bypass", () => {
+  const id = controlId("ch1", "insertFxOn");
+  const hold = (sel: number): void => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: sel };
+  };
+
+  it("is offered only while the node holds an effect", () => {
+    // The factory plan holds none, and there is then no insert to switch: the strip draws an
+    // opener where the face would be, so a control offered here would be one the operator has
+    // no way to see.
+    expect(listControls(model, plan).some((c) => c.id === id)).toBe(false);
+    expect(bindControl(model, plan, id)).toBeNull();
+    hold(INSERT_FX_OPTIONS[1].value);
+    expect(listControls(model, plan).some((c) => c.id === id)).toBe(true);
+    expect(bindControl(model, plan, id)).not.toBeNull();
+  });
+
+  it("reads engaged for a held effect with no stored flag, and follows the bypass", () => {
+    hold(INSERT_FX_OPTIONS[1].value);
+    // ABSENT means engaged — what the unit does on a selector write, and the same predicate
+    // the strip's face is drawn from rather than a second reading of the field. The factory
+    // plan carries the flag as `false`, so the state has to be built rather than assumed.
+    delete plan.nodeParams.ch1!.insertFxOn;
+    expect(plan.nodeParams.ch1?.insertFxOn, "the state this case reads from").toBeUndefined();
+    expect(bindControl(model, plan, id)!.get(), "absent = engaged").toBe(1);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFxOn: false };
+    expect(bindControl(model, plan, id)!.get(), "and a stored bypass reads as off").toBe(0);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFxOn: true };
+    expect(bindControl(model, plan, id)!.get(), "…and back").toBe(1);
+  });
+
+  it("writes the bypass and nothing else", () => {
+    hold(INSERT_FX_OPTIONS[1].value);
+    const before = { ...plan.nodeParams.ch1 };
+    expect(bindControl(model, plan, id)!.set(0)).toBe(true);
+    expect(plan.nodeParams.ch1?.insertFxOn).toBe(false);
+    expect(bindControl(model, plan, id)!.set(1)).toBe(true);
+    expect(plan.nodeParams.ch1?.insertFxOn).toBe(true);
+    // The selection is the popover's, not this control's: a press that also released or
+    // changed the effect would be the defect the face's own comment names.
+    const moved = [...new Set([...Object.keys(before), ...Object.keys(plan.nodeParams.ch1 ?? {})])].filter(
+      (k) => (before as Record<string, unknown>)[k] !== (plan.nodeParams.ch1 as Record<string, unknown>)[k],
+    );
+    expect(moved).toEqual(["insertFxOn"]);
   });
 });
