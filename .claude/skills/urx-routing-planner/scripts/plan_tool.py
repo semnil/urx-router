@@ -267,8 +267,8 @@ RAW_PARAM_KEYS = {
 }
 RAW_ADVICE = (
     "verify on the device, or have the user dial it in on the unit and fetch the plan back. "
-    "Omitting a key is NOT a way to keep the unit's value — whether it is depends on what else "
-    "the plan writes, which this tool does not model"
+    "Omitting a key is NOT a way to keep the unit's value — the app completes a loaded document "
+    "from the model's factory values, so an omitted key goes out like any other"
 )
 
 
@@ -447,11 +447,26 @@ def node_param_warnings(plan, nodes):
                 f"node {node_id}: {SELECTOR_KEYS['fxEffect.type']} resets that effect's parameters on the device"
                 + ("" if named else " — the selector is written even though this plan names no type")
                 + ". The EFFECT TYPE and every parameter slot go out whenever this section is present, so "
-                "omitting fxEffect.params keeps nothing; omit the whole fxEffect section to keep the unit's effect"
+                "omitting fxEffect.params keeps nothing — and neither does omitting the whole section, since "
+                "the app fills in the channel's factory effect and writes that"
             )
         for key, note in RAW_PARAM_KEYS.items():
             if key in params:
                 out.append(f"node {node_id}: {note} — {RAW_ADVICE}")
+    # The same irreversible write, reached from the other side. A document that says nothing
+    # about an FX channel is completed from the model's factory values, so the selector goes
+    # out and the effect on the unit is replaced. Silence used to be the way to leave a channel
+    # alone; it is not one any more, and an author who is not told reads the absence as safety.
+    written = {
+        i: p.get("fxEffect") for i, p in (node_params or {}).items() if isinstance(p, dict)
+    }
+    silent = [i for i in nodes if i.startswith("bus.fx") and not isinstance(written.get(i), dict)]
+    if silent:
+        out.append(
+            f"FX: {', '.join(silent)} name no fxEffect, so the app fills in each channel's factory "
+            "effect and the write sends it — whatever the unit holds there is replaced. To keep the "
+            "unit's effects, carry their values in the plan (fetch the plan back from the unit)"
+        )
     for slot, ids in slot_holders.items():
         if len(ids) > 1:
             out.append(

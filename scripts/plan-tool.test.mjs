@@ -125,10 +125,15 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     expect(unnamed).toContain("names no type");
     expect(named).not.toContain("names no type");
 
-    // The control: a plan that omits the section is the way to leave the effect alone, and
-    // nothing about it is advised against.
+    // …and the other side of the same fact, which silence used to hide: a plan that omits the
+    // section does not leave the channel alone, since the app fills in its factory effect and
+    // the write sends that. The advisory is a different line — the section is not present to
+    // reset — and it has to be there, or an author reads the absence of a warning as safety.
     const omitted = { ...doc({}), nodeParams: { "bus.fx1": { level: -10 } } };
-    expect(toolWarnings(dir, omitted)).not.toContain("resets that effect's parameters");
+    const quiet = toolWarnings(dir, omitted);
+    expect(quiet).not.toContain("resets that effect's parameters");
+    expect(quiet).toContain("name no fxEffect");
+    expect(quiet, "the channel it names is the one the document left out").toContain("bus.fx1");
   });
 
   // The two advisories a plan with `fxEffect.params` used to draw at once said opposite
@@ -142,7 +147,11 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     const KEEP = "omit to keep its current value";
     const fx = toolWarnings(dir, doc({ type: 0, params: { revxLpf: 40 } }));
     expect(fx).not.toContain(KEEP);
-    expect(fx).toContain("omit the whole fxEffect section");
+    // Nor the version that survived it: omitting the SECTION keeps nothing either, since the
+    // loader completes what a document leaves out. An advisory offering that as the way to
+    // preserve the effect sends an author to the one thing that does not preserve it.
+    expect(fx).not.toContain("omit the whole fxEffect section to keep");
+    expect(fx).toContain("neither does omitting the whole section");
 
     // The control, on the same run: the shared advice is not simply gone.
     const both = {

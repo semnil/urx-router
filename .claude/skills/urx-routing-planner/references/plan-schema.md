@@ -25,10 +25,17 @@ any private protocol knowledge.
 ```
 
 Only `format`, `version`, `modelId`, and `connections` are required. Everything
-else defaults when omitted (the loader fills sensible values), so a minimal plan
-is just those four keys plus the wires you want. Prefer minimal plans: omit
-`positions` (the app auto-arranges) and any param you are not deliberately
-setting.
+else defaults when omitted, so a minimal plan is just those four keys plus the
+wires you want. Prefer minimal plans: omit `positions` (the app auto-arranges) and
+any param you are not deliberately setting.
+
+**What omission means on the wire.** The loader COMPLETES a document from the
+model's factory values, so an omitted key is a key the panel shows and the write
+sends — the same value in both places. It does not leave the unit's own setting
+alone; the app's write confirm names every strip whose values the document did not
+describe, and writing anyway replaces them with the factory ones. A plan that has
+to keep what the unit currently holds must carry those values: fetch the plan from
+the unit and edit that.
 
 - `format` — always the string `"urx-router-plan"`. Anything else and the app
   refuses the document before it looks at the routing.
@@ -148,8 +155,9 @@ the device default. The full set:
   previous type back only refills it with *that* type's defaults — whatever the
   user had set is gone. The engine is shared working area, so it can also discard
   settings belonging to another channel using it. Author `insertFx` only when the
-  user asked to change the insert effect; omit it to leave the unit's effect
-  alone. `fxEffect.type` below carries the same rule.
+  user asked to change the insert effect — and note that omitting it does not
+  leave the unit's effect alone: the factory value is filled in and sent like any
+  other key. `fxEffect.type` below carries the same rule.
   **One slot per effect family, device-wide** (user guide Effect list, "Number of
   simultaneous uses: 1 slot"): the four guitar amps share one slot across the MONO
   IN channels, Pitch Fix another, the two companders a third, and the Multi-Band
@@ -195,29 +203,21 @@ reads a unit, not a scale you can author a value on. A hand-written number lands
 wherever that raw value happens to sit on the device's curve, so have the user dial
 the effect in on the device and fetch it back rather than authoring one.
 
-**For `ssmcs` and `insertFxParams`, do not rely on omitting a key to keep the unit's
-value.** Writing only the keys a plan carries is what the APP does, and the device is
-the other half — but so is the rest of the write path, and between them the answer
-depends on things a plan cannot state: whether the channel is in the comp/EQ mode that
-sends SSMCS at all, which effect family the selector names (a slot keyed under another
-family is never sent), what the loader turns a bare slot number into when no selector
-is present, and which slots the unit recomputes for itself (the two switches above).
-Have the user dial the effect in on the unit and fetch the plan back, or verify on the
-device. `scripts/plan_tool.py` warns whenever a plan carries one of these maps and
-deliberately says nothing about omission: reproducing those conditions in a tool that
-carries routing data only is a second implementation of the write path, and it was
-tried — three of its branches contradicted the app they described.
+**For `ssmcs` and `insertFxParams`, omitting a key keeps nothing.** The loader fills
+it from the model's factory values and the write sends it, the same as any other key.
+What a plan cannot do is author one either — the numbers are the device's own internal
+units and a hand-written value lands wherever it happens to sit on the unit's curve.
+So where these matter, have the user dial the effect in on the unit and fetch the plan
+back. `scripts/plan_tool.py` warns whenever a plan carries one of these maps.
 
-**`fxEffect` is the exception to "omit the raws and the unit keeps its values", and
-it is all-or-nothing.** Omitting the whole section writes nothing for that channel —
-that silence is how a plan leaves an FX channel as the unit has it. Including the
-section in ANY form authors the whole channel: the EFFECT TYPE selector is emitted
-whether or not the section names a type (an absent one resolves to the channel's
-factory type), and every parameter slot goes with it at that type's defaults. So
-`{ "level": 80 }` writes the selector and resets the array, and omitting only
-`fxEffect.params` does not preserve anything. There is no partial FX write, because
-a type write refills the array regardless. `plan_tool.py` warns on the section's
-presence for that reason, not only on a `type` written into it.
+**`fxEffect` carries a selector, and a selector write is not reversible.** The EFFECT
+TYPE is emitted whether or not the section names a type — an absent one resolves to the
+channel's factory type, which the fill supplies for a document that omits the section
+entirely — and every parameter slot goes with it at that type's defaults. There is no
+partial FX write, and no way for a plan to say "leave this channel alone". The app's
+write confirm names the strips a document did not describe, so the choice reaches the
+operator; what reaches them is decided by the plan handed over. `plan_tool.py` warns on
+the section's presence for that reason, not only on a `type` written into it.
 
 ## nodeNames / nodeColors / notes
 
@@ -256,10 +256,9 @@ below treats it as absent.
 
 An **empty** `fxEffect` (`{}`) is removed by the sanitiser before any of that, and
 warned about for the same reason the rows above are: the document does not survive
-as written. It is not a harmless difference — a document keeping it would author the
-whole channel at the factory defaults, while the loaded plan leaves the channel
-alone. If you meant the defaults, write them; if you meant to leave the unit's FX
-as it is, omit the section.
+as written. What it lands on is the same place omitting the section lands — the
+channel's factory effect, supplied by the fill — so the warning is about the document
+saying something it does not mean rather than about a difference in the result.
 
 **`plan_tool.py validate` warns about every row that needs no effect catalogue** —
 the non-numeric leaf, the non-object `params`, the non-object `fxEffect` — and
