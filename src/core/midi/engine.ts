@@ -69,16 +69,18 @@ interface PickupState {
   lastIn: number | null;
 }
 
-/** One mapping's decided edit: what its control read before the message and what it is to be
- *  set to. A gang decides every member's before this way, then writes them — applying one can
- *  move another's control through the mirror the apply hook runs. */
-/** One member's resolved control and what it decided to do to it, if anything. */
+/** One member's resolved control and what it decided to do to it, if anything. A null decision
+ *  is a member that resolved and chose to act on nothing — kept apart from a mapping that named
+ *  nothing this plan carries, because only the second may let another member speak for it. */
 interface Attempt {
   mapping: MidiMapping;
   control: BoundControl;
   decision: Decision | null;
 }
 
+/** One mapping's decided edit: what its control read before the message and what it is to be
+ *  set to. A gang decides every member's before this way, then writes them — applying one can
+ *  move another's control through the mirror the apply hook runs. */
 interface Decision {
   mapping: MidiMapping;
   control: BoundControl;
@@ -288,7 +290,8 @@ export class MidiEngine {
     // dropping the rest costs nothing, since the mirror writes them anyway.
     //
     // Keyed by the ADDRESS as well as by `mirrorId ?? id`. One incoming CC matches two addresses —
-    // its own and the 14-bit pair it could be the MSB of (`matches`) — so `matched` can hold two
+    // its own and the 14-bit pair it belongs to as either half (`matches` folds an LSB back onto
+    // its MSB, so 7 and 39 both reach the pair 7/39) — so `matched` can hold two
     // gangs at once, and a gang is the members sharing ONE address. Collapsed across that boundary,
     // a member on the other address decided for this one: a 14-bit binding on a toggle is inert by
     // design, and as the pair primary it silenced the plain CC that was bound beside it.

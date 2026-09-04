@@ -172,8 +172,12 @@ carries a one-line map of the same directories and points here.
     1-knob taking values over does not arrive first; and it retries what a lock refused, which is how the
     same order serves a lock being released. What that settles is narrow and worth stating as such: where one member's write
     moves another's control, the learn order does not decide which of them wins. Members a MIRROR keeps equal are ONE
-    decision rather than several, taken at the pair primary — in BAL that is every control on the
-    pair, since the mirror replaces the partner's node params and every send, while PAN carries
+    decision rather than several, taken at the pair primary and WITHIN one address — an incoming CC
+    matches its own 7-bit address and the 14-bit pair it carries a half of — a controller under 32 is
+    that pair's MSB and one from 32 to 63 its LSB, and learn builds a pair from exactly that span — so
+    one message reaches two
+    gangs at once and a member on the other one must not decide for this one. In BAL that is every
+    control on the pair, since the mirror replaces the partner's node params and every send, while PAN carries
     across the insert effect alone — written in turn they were two, and a mirror
     settles on whichever went last, so a pair that starts at different values (a plan can hold one, and it
     loads without complaint) ended wherever the learn order put it. A member that decided to do NOTHING keeps its group's seat, since a

@@ -1258,7 +1258,9 @@ describe("a mirrored gang whose members read the press differently", () => {
   });
 });
 
-// One incoming CC matches TWO addresses — its own and the 14-bit pair it could be the MSB of — so
+// One incoming CC matches TWO addresses — its own, and the 14-bit pair it belongs to as either
+// half: a controller under 32 is that pair's MSB and one from 32 to 63 is its LSB, folded back onto
+// the MSB the pair is keyed by. So
 // a message can reach two gangs at once, and a gang is the members sharing ONE address. Collapsed
 // across that boundary, a member on the other address decided for this one.
 describe("a mirrored pair bound to two different addresses", () => {
