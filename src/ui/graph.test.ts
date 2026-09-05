@@ -464,6 +464,40 @@ describe("hide and show", () => {
     expect(view.zoom).toBe(2.5);
   });
 
+  // The same rule for a hung node: a track slot is restored on its own, and its position comes
+  // from the recorder above it — whose own note can push the slot past the shelf. The chip, the
+  // status line and the inspector all name the slot, so the slot is what has to land in view.
+  it("shows a restored track slot itself, not the recorder it hangs under", () => {
+    fx = graphFixture({
+      seed: (plan) => void (plan.notes["out.sdrec"] = "a note long enough to wrap across three whole lines here"),
+    });
+    const view = fx.graph as unknown as { zoom: number; pan: { x: number; y: number } };
+    const svg = fx.host.querySelector("svg")!;
+    const shelf = fx.host.querySelector<HTMLElement>(".hidden-shelf")!;
+    svg.getBoundingClientRect = () => ({ width: 960, height: 560, x: 0, y: 0, top: 0, left: 0 }) as DOMRect;
+    Object.defineProperty(shelf, "offsetHeight", { value: 84, configurable: true });
+
+    fx.graph.hideNode("bus.mix2"); // keeps the shelf open after the slot comes back
+    fx.graph.hideNode("out.sdrec.t4");
+    view.zoom = 2.5;
+    view.pan = { x: 0, y: 0 };
+    fx.graph.showNode("out.sdrec.t4");
+
+    const visible = 560 - 84;
+    const boxOf = (id: string) => {
+      const y = Number(
+        nodeEl(fx.host, id)!
+          .getAttribute("transform")!
+          .match(/-?\d+(?:\.\d+)?/g)![1],
+      );
+      return { top: y * view.zoom + view.pan.y, bottom: (y + 44) * view.zoom + view.pan.y };
+    };
+    expect(boxOf("out.sdrec.t4").bottom).toBeLessThanOrEqual(visible);
+    expect(boxOf("out.sdrec.t4").top).toBeGreaterThanOrEqual(0);
+    // The parent is the one that went, which is what says this measured the fallback.
+    expect(boxOf("out.sdrec").top).toBeLessThan(0);
+  });
+
   it("leaves the view alone when the restored member is already on screen", () => {
     fx = graphFixture({
       seed: (plan) => {

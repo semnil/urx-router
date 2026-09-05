@@ -2408,10 +2408,15 @@ export class Graph {
     this.render();
     // The chip says a node is coming back and the status line says it came, so it has to be
     // somewhere the operator can see: a node placed beside its STEREO partner goes wherever
-    // that partner is. After the render, since the pan is measured from what was drawn.
-    const shown = this.parentOf(id) ?? id;
-    const partner = this.linkedPartnerOnBoard(shown);
-    this.panIntoView(shown, partner ? [partner] : []);
+    // that partner is, and a hung one wherever its parent is. The node the CHIP named is the
+    // one that must land in view — a track slot restored on its own sits below a recorder
+    // whose own note can push it off the bottom, and framing the parent shows the parent.
+    // After the render, since the pan is measured from what was drawn.
+    const partner = this.linkedPartnerOnBoard(parent ?? id);
+    this.panIntoView(
+      id,
+      [parent, partner].filter((x): x is string => x !== undefined && x !== null),
+    );
     this.select({ type: "node", id });
     this.cb.onChange();
     this.cb.onStatus(t().status.shownNode(this.labelOf(id)));
@@ -2494,11 +2499,13 @@ export class Graph {
    *  single-node restore alone: an alignment the device drives must not move the view under
    *  the operator, and *Show all* re-frames with `fitView` already.
    *
-   *  `shown` is the node the chip named. `alongside` comes with it only while both fit at the
-   *  current zoom: a pair too tall for the visible area — a small window, a deep zoom, an
-   *  expanded note — would otherwise be framed from its top, which shows the partner and
-   *  leaves the node the operator asked for behind the shelf. Where `shown` alone does not fit
-   *  either, its top-left corner wins, which is where its header and label are. */
+   *  `shown` is the node the chip named — never its parent, though the parent is what carries
+   *  a hung node's position: a track slot restored on its own is what the chip, the status line
+   *  and the inspector all name. `alongside` (a parent, a STEREO partner) comes with it only
+   *  while both fit at the current zoom: a pair too tall for the visible area — a small window,
+   *  a deep zoom, an expanded note — would otherwise be framed from its top, which shows the
+   *  other one and leaves the node the operator asked for behind the shelf. Where `shown` alone
+   *  does not fit either, its top-left corner wins, which is where its header and label are. */
   private panIntoView(shown: string, alongside: readonly string[]): void {
     const own = this.boxOf([shown]);
     if (!own) return;

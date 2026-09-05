@@ -705,7 +705,10 @@ The constraint core (`core/routing.ts`):
   Because that placement follows the partner wherever it is — which can be outside the viewport the operator
   panned to, while the chip's status line says the node is shown and the inspector selects it — the
   single-node restore then pans by the least that brings it into view (`panIntoView`), leaving the zoom alone.
-  The partner comes along only while both fit in what is VISIBLE: the shelf covers the bottom of the canvas
+  What it brings in is the node the CHIP named, never the parent a hung one takes its position from: a track
+  slot restored on its own is what the chip, the status line and the inspector all say came back, and framing
+  the recorder above it shows the recorder. The partner (or that parent) comes along only while both fit in
+  what is VISIBLE: the shelf covers the bottom of the canvas
   and is open exactly then, and a pair too tall for what is left of it — a small window, a deep zoom, an
   expanded note whose whole rows Arrange reserved — would otherwise be framed from its top, showing the
   partner and leaving the node the chip named behind the shelf. There the node asked for wins.
