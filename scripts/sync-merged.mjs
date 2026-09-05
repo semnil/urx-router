@@ -39,6 +39,10 @@
 // Where the machine cannot be asked what is running, both halves go ahead saying so: git still
 // refuses to remove a worktree holding changes, and refuses to overwrite them in a merge.
 //
+// The classification above is over what a REMOVAL destroys. A fast-forward is git's own operation
+// and behaves as it does anywhere: it refuses over an untracked file it would overwrite, and takes
+// an ignored one without a word. Nothing here changes that.
+//
 // The dry run FETCHES, which prunes remote-tracking refs. It has to: every answer above is about
 // the remote, and reporting them off a stale one would be reporting about a different repository.
 // No branch, worktree, working tree or HEAD is touched.
