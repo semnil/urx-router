@@ -124,7 +124,15 @@ async function holder(cwd, name = "vite-stub.mjs") {
   };
 }
 
-const lsofHere = spawnSync("lsof", ["-v"], { encoding: "utf8" }).status !== null;
+/** Whether this machine can be asked what a process's working directory is — which is what the
+ *  guard rests on, and is not the same question as whether the reader is installed. A container
+ *  can carry it and still answer nothing, and the cases below would then be measuring the
+ *  could-not-be-asked path while claiming to measure the guard. Asked of this process, whose
+ *  answer is known. */
+const cwdIsReadable = (() => {
+  const r = spawnSync("lsof", ["-a", "-d", "cwd", "-F", "pn", "-p", String(process.pid)], { encoding: "utf8" });
+  return r.status === 0 && typeof r.stdout === "string" && r.stdout.includes("\nn");
+})();
 
 describe("sync-merged, driven as the program", () => {
   it("changes nothing when it is given no flag", () => {
@@ -477,7 +485,7 @@ describe("sync-merged, when the default branch cannot move", () => {
 });
 
 describe("sync-merged, the running-process guard", () => {
-  it.skipIf(!lsofHere)("refuses when a build or a server is running out of the tree", async () => {
+  it.skipIf(!cwdIsReadable)("refuses when a build or a server is running out of the tree", async () => {
     const { down } = fixture();
     const h = await holder(down);
     try {
@@ -490,7 +498,7 @@ describe("sync-merged, the running-process guard", () => {
     }
   });
 
-  it.skipIf(!lsofHere)("refuses when it is running in a subdirectory of the tree", async () => {
+  it.skipIf(!cwdIsReadable)("refuses when it is running in a subdirectory of the tree", async () => {
     const { down } = fixture();
     const sub = join(down, "src");
     mkdirSync(sub);
@@ -502,7 +510,7 @@ describe("sync-merged, the running-process guard", () => {
     }
   });
 
-  it.skipIf(!lsofHere)("proceeds when what runs there is a shell rather than a build", async () => {
+  it.skipIf(!cwdIsReadable)("proceeds when what runs there is a shell rather than a build", async () => {
     const { down } = fixture();
     const h = await holder(down, "shell-stub.mjs");
     try {
@@ -514,7 +522,7 @@ describe("sync-merged, the running-process guard", () => {
     }
   });
 
-  it.skipIf(!lsofHere)("proceeds when the build is running in a worktree nested inside the tree", async () => {
+  it.skipIf(!cwdIsReadable)("proceeds when the build is running in a worktree nested inside the tree", async () => {
     const { down } = fixture();
     const tree = join(down, "nested");
     git(down, "worktree", "add", tree, "feat");
@@ -529,7 +537,7 @@ describe("sync-merged, the running-process guard", () => {
     }
   });
 
-  it.skipIf(!lsofHere)("says the question could not be put when the reader itself fails", async () => {
+  it.skipIf(!cwdIsReadable)("says the question could not be put when the reader itself fails", async () => {
     const { down } = fixture();
     const box = mkdtempSync(join(tmpdir(), "sync-merged-path-"));
     roots.push(box);
