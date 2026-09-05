@@ -265,6 +265,52 @@ test("restoring a member whose partner is off screen brings the pair into view",
   await expect(stereoTie(page)).toHaveCount(1);
 });
 
+// The boundary the product allows: the shell's smallest window, the deepest zoom, and a note
+// that makes the pair taller than what is left above an open shelf. Framing the pair from its
+// top there shows the partner and leaves the node the chip named behind the shelf — and the
+// shelf covers the bottom of the canvas, so a check against the whole host counts that as
+// visible.
+test.describe("restoring into the smallest window", () => {
+  test.use({ viewport: { width: 960, height: 640 } });
+
+  test("keeps the node the chip named above the shelf when the pair cannot fit", async ({ page }) => {
+    const arrangedWithNote = {
+      format: "urx-router-plan",
+      version: 1,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch3: { stereoLink: true }, ch4: { stereoLink: true } },
+      // Three wrapped lines at the note's 21-character budget, which is what makes CH 3 tall
+      // enough for Arrange to reserve three rows under it.
+      notes: { ch3: "a note long enough to wrap across three whole lines here" },
+      // Where Arrange puts the pair with that note: three rows between them.
+      positions: { ch3: { x: 500, y: 300 }, ch4: { x: 500, y: 504 } },
+      hidden: ["ch4", "bus.mix2"],
+    };
+    await page.goto(`/?plan=${planParam(arrangedWithNote)}`);
+    await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+
+    // Deepest zoom, which is where the pair stops fitting.
+    const host = (await page.locator("#graph-host").boundingBox())!;
+    await page.mouse.move(host.x + host.width / 2, host.y + host.height / 2);
+    for (let i = 0; i < 30; i++) await page.mouse.wheel(0, -120);
+
+    await page.locator(".hidden-shelf .chip", { hasText: "CH 4" }).click();
+
+    // A second node stays shelved, so the shelf is still covering the canvas — the whole
+    // point of measuring against its top rather than the host's bottom.
+    const shelf = (await page.locator(".hidden-shelf").boundingBox())!;
+    expect(await page.locator(".hidden-shelf .chip").count()).toBeGreaterThan(0);
+    const back = (await node(page, "ch4").boundingBox())!;
+    expect(back.y).toBeGreaterThanOrEqual(host.y);
+    expect(back.y + back.height).toBeLessThanOrEqual(shelf.y);
+    // The pair really did not fit, so this measured the fallback and not the ordinary path:
+    // CH 3 is the one that went, and it went off the top.
+    const partner = (await node(page, "ch3").boundingBox())!;
+    expect(partner.y + partner.height).toBeLessThan(host.y);
+  });
+});
+
 test("a MONO x 2 pair does not drag together", async ({ page }) => {
   const before2 = await node(page, "ch2").boundingBox();
   const box1 = await node(page, "ch1").boundingBox();

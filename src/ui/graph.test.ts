@@ -417,6 +417,53 @@ describe("hide and show", () => {
     expect(fx.plan.positions["ch2"]!.y).toBeGreaterThan(120);
   });
 
+  // The boundary the product allows: the smallest window the shell permits, the deepest zoom,
+  // and a note that makes the pair taller than what is left above an open shelf. Framing the
+  // pair from its top there shows the partner and leaves the node the chip named behind the
+  // shelf — so the node asked for wins, and the partner is the one that goes.
+  it("shows the restored member itself when the pair cannot fit above the shelf", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+        plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
+        plan.notes["ch1"] = "a note the pair has to clear";
+      },
+    });
+    const view = fx.graph as unknown as { zoom: number; pan: { x: number; y: number } };
+    const svg = fx.host.querySelector("svg")!;
+    const shelf = fx.host.querySelector<HTMLElement>(".hidden-shelf")!;
+    // jsdom lays nothing out, so the window and the shelf are stated: the shell's own minimum
+    // (960 x 640, less the app chrome) with a shelf over the bottom of it.
+    svg.getBoundingClientRect = () => ({ width: 960, height: 560, x: 0, y: 0, top: 0, left: 0 }) as DOMRect;
+    Object.defineProperty(shelf, "offsetHeight", { value: 84, configurable: true });
+    // Arranged, so the pair carries the whole row the note reserves; a second shelved node,
+    // so the shelf is still there after CH 2 comes back.
+    fx.graph.autoLayout();
+    fx.graph.hideNode("bus.mix2");
+    fx.graph.hideNode("ch2");
+    view.zoom = 2.5;
+    view.pan = { x: 0, y: 0 };
+    fx.graph.showNode("ch2");
+
+    const visible = 560 - 84;
+    // Read off the board's own transform rather than the plan: an unmoved node carries no
+    // saved position, and the question is where it is DRAWN.
+    const boxOf = (id: string) => {
+      const y = Number(
+        nodeEl(fx.host, id)!
+          .getAttribute("transform")!
+          .match(/-?\d+(?:\.\d+)?/g)![1],
+      );
+      return { top: y * view.zoom + view.pan.y, bottom: (y + 44) * view.zoom + view.pan.y };
+    };
+    // The restored node is above the shelf, and the pair really did not fit — otherwise this
+    // case would be measuring the ordinary path.
+    expect(boxOf("ch2").bottom).toBeLessThanOrEqual(visible);
+    expect(boxOf("ch2").top).toBeGreaterThanOrEqual(0);
+    expect(boxOf("ch1").top).toBeLessThan(0); // the partner is what went off, not the node asked for
+    expect(view.zoom).toBe(2.5);
+  });
+
   it("leaves the view alone when the restored member is already on screen", () => {
     fx = graphFixture({
       seed: (plan) => {

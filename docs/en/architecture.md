@@ -702,6 +702,13 @@ The constraint core (`core/routing.ts`):
   moves. *Show all* follows the same rule per pair: where exactly one member is returning it moves, and only
   a pair whose two members were both shelved — neither of them "already there" — falls to the primary-keeping
   sweep. A node with no partner on the board still parks under the viewport, where it is easy to find.
+  Because that placement follows the partner wherever it is — which can be outside the viewport the operator
+  panned to, while the chip's status line says the node is shown and the inspector selects it — the
+  single-node restore then pans by the least that brings it into view (`panIntoView`), leaving the zoom alone.
+  The partner comes along only while both fit in what is VISIBLE: the shelf covers the bottom of the canvas
+  and is open exactly then, and a pair too tall for what is left of it — a small window, a deep zoom, an
+  expanded note whose whole rows Arrange reserved — would otherwise be framed from its top, showing the
+  partner and leaving the node the chip named behind the shelf. There the node asked for wins.
   The position written is the default layout's offset, but what counts as "already in the slot" is a **band**
   (`inPairSlot`): the primary's column, on the side the layout puts the partner, no closer than that offset and
   no further than the rows the upper of the two occupies. Arrange advances a column by whole rows big enough to

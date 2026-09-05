@@ -2410,7 +2410,8 @@ export class Graph {
     // somewhere the operator can see: a node placed beside its STEREO partner goes wherever
     // that partner is. After the render, since the pan is measured from what was drawn.
     const shown = this.parentOf(id) ?? id;
-    this.panIntoView([shown, this.linkedPartnerOnBoard(shown) ?? shown]);
+    const partner = this.linkedPartnerOnBoard(shown);
+    this.panIntoView(shown, partner ? [partner] : []);
     this.select({ type: "node", id });
     this.cb.onChange();
     this.cb.onStatus(t().status.shownNode(this.labelOf(id)));
@@ -2493,8 +2494,46 @@ export class Graph {
    *  single-node restore alone: an alignment the device drives must not move the view under
    *  the operator, and *Show all* re-frames with `fitView` already.
    *
-   *  Where the box does not fit at the current zoom, the top-left corner wins. */
-  private panIntoView(ids: readonly string[]): void {
+   *  `shown` is the node the chip named. `alongside` comes with it only while both fit at the
+   *  current zoom: a pair too tall for the visible area — a small window, a deep zoom, an
+   *  expanded note — would otherwise be framed from its top, which shows the partner and
+   *  leaves the node the operator asked for behind the shelf. Where `shown` alone does not fit
+   *  either, its top-left corner wins, which is where its header and label are. */
+  private panIntoView(shown: string, alongside: readonly string[]): void {
+    const own = this.boxOf([shown]);
+    if (!own) return;
+    const area = this.visibleArea();
+    const pad = MARGIN;
+    const both = this.boxOf([shown, ...alongside]) ?? own;
+    const fits = both.w * this.zoom <= area.w - pad * 2 && both.h * this.zoom <= area.h - pad * 2;
+    const box = fits ? both : own;
+    let dx = 0;
+    let dy = 0;
+    const right = (box.x + box.w) * this.zoom + this.pan.x;
+    const bottom = (box.y + box.h) * this.zoom + this.pan.y;
+    if (right > area.w - pad) dx = area.w - pad - right;
+    if (bottom > area.h - pad) dy = area.h - pad - bottom;
+    const left = box.x * this.zoom + this.pan.x + dx;
+    const top = box.y * this.zoom + this.pan.y + dy;
+    if (left < pad) dx += pad - left;
+    if (top < pad) dy += pad - top;
+    if (dx === 0 && dy === 0) return;
+    this.pan = { x: this.pan.x + dx, y: this.pan.y + dy };
+    this.applyTransform();
+  }
+
+  /** The part of the canvas a node can be SEEN in: the SVG box less the shelf, which covers
+   *  the bottom of it and is open exactly when a node is being restored from a chip. */
+  private visibleArea(): { w: number; h: number } {
+    const rect = this.svg.getBoundingClientRect();
+    return {
+      w: rect.width || 1000,
+      h: (rect.height || 700) - (this.shelf.style.display === "none" ? 0 : this.shelf.offsetHeight),
+    };
+  }
+
+  /** The content-space box covering `ids`, or null when none of them is on the board. */
+  private boxOf(ids: readonly string[]): { x: number; y: number; w: number; h: number } | null {
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -2507,25 +2546,7 @@ export class Graph {
       maxX = Math.max(maxX, p.x + NODE_W);
       maxY = Math.max(maxY, p.y + this.nodeHeight(id));
     }
-    if (!Number.isFinite(minX)) return;
-    const rect = this.svg.getBoundingClientRect();
-    const vw = rect.width || 1000;
-    // The shelf sits over the bottom of the canvas, and a restore is exactly when it is open.
-    const vh = (rect.height || 700) - (this.shelf.style.display === "none" ? 0 : this.shelf.offsetHeight);
-    const pad = MARGIN;
-    let dx = 0;
-    let dy = 0;
-    const right = maxX * this.zoom + this.pan.x;
-    const bottom = maxY * this.zoom + this.pan.y;
-    if (right > vw - pad) dx = vw - pad - right;
-    if (bottom > vh - pad) dy = vh - pad - bottom;
-    const left = minX * this.zoom + this.pan.x + dx;
-    const top = minY * this.zoom + this.pan.y + dy;
-    if (left < pad) dx += pad - left;
-    if (top < pad) dy += pad - top;
-    if (dx === 0 && dy === 0) return;
-    this.pan = { x: this.pan.x + dx, y: this.pan.y + dy };
-    this.applyTransform();
+    return Number.isFinite(minX) ? { x: minX, y: minY, w: maxX - minX, h: maxY - minY } : null;
   }
 
   /** Park a restored node at the current viewport center, in content coords. */
