@@ -959,6 +959,17 @@ column and is already past the card floor, so a stack is height the panel does n
 on it comes and goes with a selector on the same panel, which would resize the modal under the press
 that added it (the reason [the multi-band faces leave their locked rows untagged](#the-multi-band-compressor-is-four-faces)).
 
+**Every tag ON A CARD is drawn the same**, whichever of the two the field landed on. It is one
+statement — when this value applies — and which card kind carries it is decided by whether the
+control happens to be continuous, which is not something the reader can see. So the card recipe is
+one rule: 8 px, outlined in the lamp's ink, square corners. Outlined and not filled, because the card
+already has a lit face in the knob's pointer. **A row outside the knob grid keeps the settings
+pill** — the dashed, dim, round one Preferences uses. There the panel is a list, several tags stand
+at once, and the rows carrying them are the dimmed ones, so amber would be the brightest thing on the
+screen and would be pointing at what is not in effect. A section heading's pill stays that way too:
+what the EQ passes as `settingsSection`'s second argument is the band's name (`src/ui/dyn-eq.ts`,
+the PARAMETERS heading), which is a different thing from a row's tag.
+
 **The card labels are not shouted.** The design-system artifact's `.lbl` recipe carries no
 `text-transform` and the INS FX artifact's specimen uppercases them, so the two documents disagree;
 the unit settles it, and every insert-FX row it names is initial-capital (read 2026-08-28,

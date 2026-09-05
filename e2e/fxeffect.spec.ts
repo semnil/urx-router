@@ -490,3 +490,41 @@ test("the delay's Note card prints its tag under the name", async ({ page }) => 
   expect(geometry.labelCentred).toBeLessThan(1);
   await closeScreen(page);
 });
+
+// A tag on a CARD says one thing — when this value applies — and which of the two card kinds
+// carries it is decided by whether the control is continuous, which the reader cannot see. So
+// the two are drawn alike. Compared to each other rather than to literal values: the palette
+// moves, and a pair of literals would be rewritten every time it did.
+test("a card's tag is drawn the same whichever kind of card carries it", async ({ page }) => {
+  const face = (sel: string) =>
+    screenBox(page)
+      .locator(sel)
+      .first()
+      .evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return [cs.fontSize, cs.fontWeight, cs.borderTopStyle, cs.borderTopLeftRadius, cs.color].join(" ");
+      });
+
+  // Sync ships off, so the Note card carries the tag and the Delay knob does not.
+  await openFromInspector(page, "bus.fx2");
+  await expect(screenBox(page).locator(".gt-knobtag")).toHaveCount(0);
+  const onARowCard = await face(".gt-knobs > .prefs-row .prefs-lock");
+  // Switching it on swaps which card holds one: the delay time becomes the unit's.
+  await screenRow(page, "Sync").getByRole("button").first().click();
+  await expect(screenBox(page).locator(".gt-knobs > .prefs-row .prefs-lock")).toHaveCount(0);
+  expect(await face(".gt-knobtag")).toBe(onARowCard);
+  await closeScreen(page);
+
+  // The control, without which the comparison is satisfied by every tag having become one
+  // thing: a row OUTSIDE the knob grid keeps the settings pill, because a list of them on the
+  // rows a panel has dimmed would make amber the brightest thing on the screen.
+  await page.click("#btn-view-graph");
+  await page.locator('g.node[data-id="ch1"]').click();
+  const eq = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^EQ$/ }) });
+  if (!(await eq.evaluate((el) => (el as HTMLDetailsElement).open))) await eq.locator("summary").click();
+  await eq.locator("#btn-eq-screen").click();
+  await expect(screenBox(page)).toContainText("EQ");
+  await expect(screenBox(page).locator(".gt-knobs")).toHaveCount(0);
+  expect(await face(".prefs-row .prefs-lock")).not.toBe(onARowCard);
+  await closeScreen(page);
+});

@@ -3375,7 +3375,17 @@ input[type="range"]:focus-visible,
   min-width: 0;
   width: 100%;
 }
-.gt-knobtag {
+/* A CARD's tag, in both places a card can hold one: beside a knob's name, and on a card
+   whose control is not a knob, where the row builder emits the settings pill. One recipe,
+   because it is one statement — when this value applies — and which of the two a field
+   lands on is decided by whether its control happens to be continuous.
+
+   Not a row OUTSIDE the knob grid. There the panel is a list, several tags stand at once,
+   and the rows carrying them are the dimmed ones — amber there is the brightest thing on
+   the screen, pointing at what is not in effect. Those keep `.prefs-lock` as it is, and so
+   does a section heading's pill, which carries a band name rather than a statement. */
+.gt-knobtag,
+.gt-knobs > .prefs-row .prefs-lock {
   font: 600 8px var(--mono);
   letter-spacing: 0.4px;
   color: var(--led-ink);
