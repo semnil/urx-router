@@ -1961,6 +1961,10 @@ function loadPlan(next: Plan): boolean {
   selection = null;
   try {
     draw();
+    // What ran after the sample above is the load's too: the fixed connections, and the
+    // STEREO-pair snap the board takes as it adopts the document. Left unsampled they
+    // would land in whatever the next gesture stamps, which is an app edit.
+    traceProbe?.sample("load");
     dirty = false;
   } catch (err) {
     // Put the previous document back on screen and report, rather than throwing: three
