@@ -3395,19 +3395,40 @@ What the write costs there is irreversible. An EFFECT TYPE write refills the eng
 type's defaults, and selecting the old type back does not bring the old values with it. So the decision
 is put in front of the operator instead of being taken by a document's silence:
 `app/unauthored-writes.ts` reports the strips a write moves at addresses whose value the operator
-did not choose, and the write confirm names them. The join is `planToCommandOrigins`: the emit is
-run once over a plan whose node parameters record their reads, and the LAST key read before a
-command goes out is the key that command's value came from — the value is read immediately before
-it is pushed, which is what keeps the two from drifting the way a stamp kept by hand at each of a
-hundred-odd emit sites would. A key the plan does not carry is read all the same, on the way to
-deciding whether to send one at all, and is excluded: a command pushed after such a read has no
-plan key behind it.
+did not choose, and the write confirm names them. The join is `planToCommandOrigins`: the emit runs
+once over a plan whose node parameters record their reads, and `rawCommand` — the one seat holding
+both a command and the value it carries — writes the key onto the command as it builds it. Carried
+there rather than in a table beside it, because the shared-address collapse hands back a COPY of
+the command that survives it.
+
+What names a command is the read the emit has not spent: the value is read immediately before the
+command carrying it is built, and the cursor is cleared at every build, so nothing can be between
+them. A helper that builds several commands and pushes them together — the EQ 1-knob's ON, TYPE and
+LEVEL go out as one chain — therefore gives each its own key, which reading the pushes instead does
+not. What the command CARRIES need not be what the key holds: the emit inverts (the SSMCS bank's
+COMP and EQ send ON as 0), rounds and clamps, and each of those is that key's value going out. A
+run of commands sending one value to every linked instance takes the name from the one before it,
+matched on the parameter as well as the value — matched on the value alone, a channel's fader, which
+comes off a connection rather than a node parameter, took whichever parameter had last been read
+carrying a zero.
+
+Three answers, not two. A key the plan does not carry names nothing: the emit asks before it decides
+whether to send one, then supplies the value itself, and that is nobody's to have chosen. A command
+carrying no record AT ALL is the third, and reads as a value the note cannot vouch for rather than
+as one nobody supplied — the two must not collapse together, or losing track goes out silently.
 
 A key that merely GATES a command — a channel's insert-FX selector, its comp/EQ order — needs no
 reading of its own. It owns the value of its own command, on the same node, so a write that is
 actually changing the selector already names the strip through it; one that is not leaves an
 engine parameter the operator dialled in as theirs. `plan_tool.py` says the same thing a step
 earlier, to the author of a generated plan.
+
+`command-origin.contract.test.ts` is what says the record is true, and it measures rather than
+restates: every leaf of a factory-filled plan is moved — one at a time, both ways and out
+altogether — and the addresses whose value follows it are that leaf's. A command named with a key
+must be one that key really moves, and one called the emit's own must be a command no leaf moves at
+all. It runs on both comp/EQ orders, since the factory one emits no SSMCS and no row of it would
+otherwise reach an inverting encoder.
 
 Once the section is present the whole channel is authored — **there is no partial FX write**. The
 selector goes out whether or not the document names a type (an absent one resolves to the channel's
