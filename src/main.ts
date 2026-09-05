@@ -2054,6 +2054,11 @@ function loadFromText(text: string, path?: string): boolean | null {
     // than left for the emit to skip. The DEVICE paths do not come through here: a fetch
     // fills from the unit, and a node it could not read stays absent on purpose.
     fillFactoryParams(next.modelId, next);
+    // …and then back through the rate rule, because the fill can put a value BACK that the
+    // repair above just took away: a document omitting Track Count carries nothing for the
+    // repair to clamp, and the factory 16 lands on a recorder that holds eight pairs at 96 kHz
+    // and one at 192. `setPlanSampleRate` is the one seat that rule lives in.
+    setPlanSampleRate(next, next.sampleRate);
     // …and the values a scene-scoped document did not carry are not the document's either:
     // they were copied off the plan on screen a few lines above, so their provenance is that
     // plan's. Left as the fill leaves them they would read as "the document wrote this",
