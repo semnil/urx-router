@@ -962,13 +962,19 @@ that added it (the reason [the multi-band faces leave their locked rows untagged
 **Every tag ON A CARD is drawn the same**, whichever of the two the field landed on. It is one
 statement — when this value applies — and which card kind carries it is decided by whether the
 control happens to be continuous, which is not something the reader can see. So the card recipe is
-one rule: 8 px, outlined in the lamp's ink, square corners. Outlined and not filled, because the card
-already has a lit face in the knob's pointer. **A row outside the knob grid keeps the settings
-pill** — the dashed, dim, round one Preferences uses. There the panel is a list, several tags stand
-at once, and the rows carrying them are the dimmed ones, so amber would be the brightest thing on the
-screen and would be pointing at what is not in effect. A section heading's pill stays that way too:
-what the EQ passes as `settingsSection`'s second argument is the band's name (`src/ui/dyn-eq.ts`,
-the PARAMETERS heading), which is a different thing from a row's tag.
+one rule: 8 px, 2 px corners, outlined in the lamp's ink. Outlined and not filled, because the card
+already has a lit face in the knob's pointer. **The twelve-note keyboard's row takes it too** — it
+is a card, a wide one, and what excludes it from the stack above is the height a stack costs, which
+a face does not. **And a locked card leaves its tag out of the dim**, the way a locked row does: the
+tag is what says why the card cannot be touched, so the one thing the dim must not reach is the one
+thing explaining it.
+
+**What keeps the settings pill is a row outside the knob grid** — the dashed, dim, round one
+Preferences uses. The panel there is a list rather than a grid of cards: the tags stand in a column
+on the rows the panel has dimmed, where amber would be the brightest thing on the screen and would
+be pointing at what is not in effect. A section heading's pill stays that way too: what the EQ
+passes as `settingsSection`'s second argument is the band's name (`src/ui/dyn-eq.ts`, the PARAMETERS
+heading), which is a different thing from a row's tag.
 
 **The card labels are not shouted.** The design-system artifact's `.lbl` recipe carries no
 `text-transform` and the INS FX artifact's specimen uppercases them, so the two documents disagree;

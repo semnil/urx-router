@@ -3357,8 +3357,13 @@ input[type="range"]:focus-visible,
   outline: 2px solid var(--led);
   outline-offset: 2px;
 }
-.gt-knob.locked {
-  opacity: 0.45;
+/* A locked card dims its CHILDREN, with the tag left out — the shape a locked settings row
+   already had. On the card itself the dim composites everything inside it, the tag included,
+   and the tag is the one thing it must not reach: it says why the card cannot be touched, and
+   the same words on a locked row beside it are printed at full strength. */
+.gt-knob.locked > :not(.lblc),
+.gt-knob.locked > .lblc > :not(.gt-knobtag) {
+  opacity: var(--row-lock-dim);
 }
 .gt-knob.locked .con-knob input[type="range"] {
   cursor: not-allowed;
@@ -3859,7 +3864,8 @@ button.consent-btn-primary {
   gap: 8px;
 }
 /* "Desktop app only" tag: dashed like the unknown FOLLOW USB pill — present but
-   not applicable here. Kept at full opacity while its row dims. */
+   not applicable here. Kept at full opacity while its row dims. A tuning screen's knob
+   grid restyles this pill to the card recipe; everywhere else it is this. */
 .prefs-lock {
   font-family: var(--mono);
   font-size: 9px;
@@ -3916,7 +3922,8 @@ button.consent-btn-primary {
   cursor: not-allowed;
 }
 /* A row that does not apply in this build (browser / demo): the label and the
-   control dim, the dashed tag stays readable, the control refuses input. */
+   control dim, the tag stays readable, the control refuses input. A locked knob card
+   takes the same shape, for the same reason. */
 .prefs-row.locked > :not(.lblc),
 .prefs-row.locked .lblc > :not(.prefs-lock, .fine-tag) {
   opacity: var(--row-lock-dim);
