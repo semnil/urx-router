@@ -959,6 +959,24 @@ column and is already past the card floor, so a stack is height the panel does n
 on it comes and goes with a selector on the same panel, which would resize the modal under the press
 that added it (the reason [the multi-band faces leave their locked rows untagged](#the-multi-band-compressor-is-four-faces)).
 
+**Every tag ON A CARD is drawn the same**, whichever of the two the field landed on. It is one
+statement — when this value applies — and which card kind carries it is decided by whether the
+control happens to be continuous, which is not something the reader can see. So the card recipe is
+one rule: 8 px, 2 px corners, outlined in the lamp's ink. Outlined and not filled, because the card
+already has a lit face in the knob's pointer. **The twelve-note keyboard's row takes it too** — it
+is a card, a wide one, and what excludes it from the stack above is the height a stack costs, which
+a face does not. **And a locked card dims its contents rather than itself**, the way a locked row
+does, which decides two things at once: the tag stays at full strength — it is what says why the
+card cannot be touched, so it is the one thing the dim must not reach — and the card keeps its own
+frame, so a grid holding both kinds does not draw two strengths of card edge.
+
+**What keeps the settings pill is a row outside the knob grid** — the dashed, dim, round one
+Preferences uses. The panel there is a list rather than a grid of cards: the tags stand in a column
+on the rows the panel has dimmed, where amber would be the brightest thing on the screen and would
+be pointing at what is not in effect. A section heading's pill stays that way too: what the EQ
+passes as `settingsSection`'s second argument is the band's name (`src/ui/dyn-eq.ts`, the PARAMETERS
+heading), which is a different thing from a row's tag.
+
 **The card labels are not shouted.** The design-system artifact's `.lbl` recipe carries no
 `text-transform` and the INS FX artifact's specimen uppercases them, so the two documents disagree;
 the unit settles it, and every insert-FX row it names is initial-capital (read 2026-08-28,
