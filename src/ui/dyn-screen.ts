@@ -532,6 +532,11 @@ const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 /** Shared empty map for a processor with every row plainly editable. */
 const NO_STATES: ReadonlyMap<string, SettingsRowOptions> = new Map<string, SettingsRowOptions>();
 
+/** What a reserved display bar says. A no-break space rather than the empty string: an
+ *  element holding only ordinary whitespace lays out no line box at all, and the reserve
+ *  is a line box. */
+const BLANK_RESERVE = " ";
+
 /** The 1-knob level row, which COMP and the EQ each own one of. Shared because the two
  *  are the same control on the same scale — including the element id, which the E2E
  *  suite addresses and which works only because one screen is open at a time; spelling
@@ -1398,7 +1403,7 @@ export class DynScreen {
     // The reserve either way when the bar has moved to the controls column: the space is
     // what keeps every display starting at the same height, and the bar itself is what
     // moved — not the room it takes.
-    col.append(bar ? this.displayBar(bar) : this.reservedBar(proc, ctx));
+    col.append(bar ? this.displayBar(bar) : this.reservedBar());
     col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
     col.append(this.hintLine(proc, ctx));
     return col;
@@ -1406,12 +1411,17 @@ export class DynScreen {
 
   /** The display bar's space, with nothing in it. `visibility: hidden` rather than a
    *  height: it keeps the box and takes the heading and the button out of the tab order
-   *  and the accessibility tree, which is what an empty reserve has to do. */
-  private reservedBar(proc: DynProcessor, ctx: DynCtx): HTMLElement {
-    const title = proc.title(ctx.m, ctx);
+   *  and the accessibility tree, which is what an empty reserve has to do.
+   *
+   *  It carries no WORDS, only the blank that holds a line box. A bar's height is its font
+   *  and its padding, so a blank one reserves what a drawn one occupies; a labelled one
+   *  reserves its label as well — a width nobody can see, which a narrow display column
+   *  cannot hold and the grid then takes a horizontal scrollbar for, and a line count that
+   *  puts the reserve at a different height on each screen. */
+  private reservedBar(): HTMLElement {
     const sec = this.displayBar({
-      label: title,
-      items: [{ label: title, id: "", sel: 0 }],
+      label: BLANK_RESERVE,
+      items: [{ label: BLANK_RESERVE, id: "", sel: 0 }],
       inert: true,
     });
     sec.classList.add("gt-reserved");

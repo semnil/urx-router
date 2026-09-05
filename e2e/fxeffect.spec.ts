@@ -404,3 +404,25 @@ test("a type change moves an unheld value to the new type's own default", async 
   await expect(screenRow(page, "Reverb Time").locator("input[type=range]")).not.toHaveValue(hallRaw);
   await closeScreen(page);
 });
+
+// The panel is the one screen whose display column is a fixed 230px AND whose title is long
+// enough to have outgrown it. Nothing in it should ever reach past the grid, and the reason a
+// stray box is expensive here is that `.prefs-grid` carries `overflow-y: auto`, which makes its
+// horizontal axis `auto` too: the grid takes a scrollbar, and on a machine whose scrollbars hold
+// space that bar eats 15px of the panel's height and the panel takes a vertical one as well.
+// Asserted on both families, since what sized the reserve was the effect's own name.
+for (const [node, name] of [
+  ["bus.fx1", "Rev-X Hall"],
+  ["bus.fx2", "Mono Delay"],
+] as const) {
+  test(`the ${name} panel does not scroll sideways`, async ({ page }) => {
+    await openFromInspector(page, node);
+    await expect(screenBox(page)).toContainText(`FX EFFECT — ${name}`);
+    // Read the grid rather than the box: the box hides its own overflow, so a box measurement
+    // reports nothing whatever the panel inside it is doing.
+    const grid = screenBox(page).locator(".prefs-grid");
+    expect(await grid.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+    await closeScreen(page);
+  });
+}
+
