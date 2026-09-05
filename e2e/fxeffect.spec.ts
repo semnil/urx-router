@@ -426,3 +426,26 @@ for (const [node, name] of [
   });
 }
 
+// A tag says when a row's value applies. On a card it goes UNDER the name, where a knob card
+// prints its value — beside it, it is centred against a label box that reserves two lines and
+// holds one, so it hangs between the name and the line under it.
+test("the delay's Note card prints its tag under the name", async ({ page }) => {
+  await openFromInspector(page, "bus.fx2");
+  const note = screenBox(page)
+    .locator(".gt-knobs > .prefs-row")
+    .filter({ has: page.getByText("Note", { exact: true }) });
+  const geometry = await note.evaluate((row) => {
+    const label = row.querySelector(".lbl")!.getBoundingClientRect();
+    const tag = row.querySelector(".prefs-lock")!.getBoundingClientRect();
+    return {
+      under: tag.top >= label.bottom - 0.5,
+      labelCentred: Math.abs(
+        (label.left + label.right) / 2 - (row.getBoundingClientRect().left + row.getBoundingClientRect().right) / 2,
+      ),
+    };
+  });
+  expect(geometry.under).toBe(true);
+  // …and the name keeps the card's centre, which it cannot while a tag shares its line.
+  expect(geometry.labelCentred).toBeLessThan(1);
+  await closeScreen(page);
+});

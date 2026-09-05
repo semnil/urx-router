@@ -3227,6 +3227,16 @@ input[type="range"]:focus-visible,
   min-height: 22px;
   overflow-wrap: anywhere;
 }
+/* A card carrying a tag STACKS the two — the name on its own line, the tag under it, where
+   a knob card prints its value. Beside the name the tag is centred against a label box that
+   reserves two lines and holds one, so it hangs between the name and the line under it and
+   pulls the name off the card's centre to make room. Only a card that has one: the rule
+   above is what every other card is laid out by. */
+.gt-knobs > .prefs-row > .lblc:has(> .prefs-lock) {
+  display: grid;
+  justify-items: center;
+  row-gap: 3px;
+}
 /* The control sits where the knob face would, centred in what the label leaves — so a
    select and a knob in neighbouring cards are on the same line. It keeps its own height:
    stretched to fill the card it reads as a panel rather than as a control. */
