@@ -432,19 +432,22 @@ for (const [node, name] of [
 }
 
 // What the reserve holds is the bar's own height, and a bar's height is its font and its
-// padding: it must not depend on which screen reserved it. A label would make it depend on
-// two things at once — its width, which is what the cases above catch on a 230px display
-// column, and how many lines it wraps to, which they cannot see because a label that FITS
-// still moves the height. Measured against a screen at the other end of the title length,
-// through the same builder.
-test("the reserved bar's row is the same height on a long title and a short one", async ({ page }) => {
-  const reserveHeight = () =>
-    screenBox(page)
-      .locator(".prefs-section.gt-reserved")
-      .evaluate((el) => el.getBoundingClientRect().height);
+// padding: it must not depend on which screen reserved it. Read two ways, because either
+// alone has a hole. The HEIGHT catches a label whose width pushes the heading's text into
+// several lines, and misses one that fits — the heading is a flex row of that text and the
+// bar, and the bar is the taller of the two until the text reaches four lines, so a label
+// short enough to wrap twice moves nothing. WHAT IT SAYS catches every label, including the
+// one on the section heading alone, which widens nothing and wraps to one line.
+test("the reserved bar's row carries no words, and the same height on any title", async ({ page }) => {
+  const reserve = () => screenBox(page).locator(".prefs-section.gt-reserved");
+  const reserveHeight = () => reserve().evaluate((el) => el.getBoundingClientRect().height);
+  // A no-break space is what holds the line box, so the test is for word characters rather
+  // than for the empty string.
+  const reserveWords = () => reserve().evaluate((el) => (el.textContent ?? "").replace(/[\s ]+/g, ""));
 
   await openFromInspector(page, "bus.fx2");
   await expect(screenBox(page)).toContainText("FX EFFECT — Mono Delay");
+  expect(await reserveWords()).toBe("");
   const long = await reserveHeight();
   await closeScreen(page);
 
@@ -454,6 +457,7 @@ test("the reserved bar's row is the same height on a long title and a short one"
   if (!(await gate.evaluate((el) => (el as HTMLDetailsElement).open))) await gate.locator("summary").click();
   await gate.locator("#btn-gate-screen").click();
   await expect(screenBox(page)).toContainText("Gate");
+  expect(await reserveWords()).toBe("");
   expect(await reserveHeight()).toBe(long);
   await closeScreen(page);
 });

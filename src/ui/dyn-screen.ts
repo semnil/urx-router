@@ -1374,8 +1374,9 @@ export class DynScreen {
     // style.css is where the measurement lives, along with what it yields to.
     if (proc.banked) grid.classList.add("gt-faced");
     if (this.faceReserve !== null) grid.style.setProperty("--gt-face-min", `${this.faceReserve}px`);
-    // A reversed panel is one class plus the DOM order, not a second layout: the two
-    // columns are what they always were, and only which of them is the flexible one moves.
+    // A reversed panel is one class plus the DOM order, not a second layout: it is still one
+    // flexible track and one fixed one. What moves is which side holds each, and how wide
+    // the fixed one is.
     const display = this.displayColumn(proc);
     const controls = this.controlColumn(m);
     if (this.paramsFirst) grid.classList.add("gt-paramsleft");
@@ -1975,8 +1976,8 @@ export class DynScreen {
   private knobCard(f: DynField, label: string, value: number, opts: SettingsRowOptions | undefined): HTMLElement {
     const card = el("div", "gt-knob" + (opts?.locked ? " locked" : ""));
     // The label and its reason share a line: the tag qualifies the NAME, and under the knob
-    // it reads as a second value. A card whose control is not a knob has no knob to read it
-    // against, so the stylesheet stacks that one instead.
+    // it reads as a second value. A card with no knob to read it against is laid out by the
+    // stylesheet, which stacks the two — and names the row it does not do that to.
     const lblc = el("span", "lblc");
     const name = el("span", "lbl");
     name.textContent = label;
