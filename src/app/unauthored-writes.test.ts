@@ -133,18 +133,31 @@ describe("a leaf that gates its node's whole block", () => {
     expect(unauthoredWriteNodes(MODEL, plan, "all", engineAddrs(plan))).toEqual([]);
   });
 
-  // The selector is its OWN address, and that is the one an unauthored selector names — the
-  // engine slot's value is still what the operator dialled in. Both go out in the same write,
-  // so a diff carrying either names the strip; the split matters because the selector is the
-  // irreversible half, refilling the array from its type's defaults.
-  it("names the strip through the selector's own address when the selector is the fill's", () => {
+  // An unauthored selector names the strip through BOTH of its addresses. Its own is the
+  // obvious one; the engine array follows it, since a type write refills every slot from that
+  // type's defaults — so what lands there is the fill's choice however the operator dialled the
+  // slot in under the type they had.
+  it("names the strip through the selector and the array it decides", () => {
     const plan = withInsertFx();
     plan.paramSource!.set(nodeParamContestPath("ch1", "insertFx"), "default");
     const selector = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "INSERT_FX");
     expect(selector.length, "the premise: the selector reaches the wire").toBeGreaterThan(0);
     expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(selector.map(cmdAddr)))).toEqual(["ch1"]);
-    // …and not through the engine slot, whose value the operator chose.
-    expect(unauthoredWriteNodes(MODEL, plan, "all", engineAddrs(plan))).toEqual([]);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", engineAddrs(plan))).toEqual(["ch1"]);
+  });
+
+  // A step does not move every value: an enum is bounded to an option list and a neighbouring
+  // integer is not on it. `insertFx` at No Effect is the write that CLEARS the unit's insert
+  // effect, and it is what a document omitting the key gets — the case the whole feature is
+  // for, and one no step could see.
+  it("names the strips whose insert effect the fill would clear", () => {
+    const plan = filledPlan();
+    const clearing = planToCommands(MODEL, plan, "all").filter((c) => c.name === "INSERT_FX");
+    expect(clearing.length, "the premise: the fill sends a selector").toBeGreaterThan(0);
+    const named = unauthoredWriteNodes(MODEL, plan, "all", new Set(clearing.map(cmdAddr)));
+    expect(named).toContain("ch1");
+    expect(named).toContain("bus.stereo");
+    expect(named).toContain("bus.mix1");
   });
 
   it("names the strip when the PARAMETER is the fill's", () => {
@@ -192,4 +205,63 @@ describe("an authored leaf inside an array", () => {
     expect(addrs.size, "the premise").toBeGreaterThan(0);
     expect(unauthoredWriteNodes(MODEL, plan, "all", addrs)).toEqual(["ch1"]);
   });
+});
+
+// A step in one direction is not enough: a value sitting at the top of its range does not move
+// upward, and the emit clamps it back to what it already was. Asked only that way, the strip
+// whose gain the fill left at the ceiling would go unnamed.
+it("names a strip whose unauthored value sits at the end of its range", () => {
+  const plan = filledPlan();
+  for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
+  plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, gain: 70 };
+  plan.paramSource!.set(nodeParamContestPath("ch1", "gain"), "default");
+  const gain = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "HA_GAIN");
+  expect(gain.length, "the premise: the gain reaches the wire").toBeGreaterThan(0);
+  const addr = new Set(gain.map(cmdAddr));
+  // The premise that makes this the DOWNWARD case: a step up encodes to the value it already
+  // has, so only a step down can tell that the address follows this leaf.
+  const up = { ...plan, nodeParams: { ...plan.nodeParams, ch1: { ...plan.nodeParams.ch1, gain: 71 } } };
+  const upAt = planToCommands(MODEL, up, "all").filter((c) => c.node === "ch1" && c.name === "HA_GAIN");
+  expect(upAt[0].vdValue, "the premise: a step up is clamped back").toBe(gain[0].vdValue);
+  expect(unauthoredWriteNodes(MODEL, plan, "all", addr)).toEqual(["ch1"]);
+});
+
+// Removing a value does not always change what the emit sends: an FX channel's effect slots go
+// out with the descriptor's own default when the plan carries none, and the fill puts exactly
+// that default in the plan — so dropping the key emits the same number. Only moving the value
+// separates them, and these are 24 commands a write really does send.
+it("names a strip whose only unauthored key is one its removal cannot separate", () => {
+  const plan = filledPlan();
+  for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
+  const type = nodeParamContestPath("bus.fx1", "fxEffect.type");
+  expect(plan.paramSource!.has(type), "the premise: the fill supplied the effect type").toBe(true);
+  plan.paramSource!.set(type, "default");
+
+  const fx = planToCommands(MODEL, plan, "all").filter((c) => c.node === "bus.fx1" && c.name.startsWith("FX_EFFECT"));
+  expect(fx.length, "the premise: the section reaches the wire").toBeGreaterThan(0);
+
+  // The premise that makes this the STEP's case: an absent effect type resolves to the
+  // channel's factory type, which is the one the fill put there — so dropping the key sends
+  // exactly what keeping it sends, and its removal says nothing about who decided the values.
+  const bare = {
+    ...plan,
+    nodeParams: {
+      ...plan.nodeParams,
+      "bus.fx1": {
+        ...plan.nodeParams["bus.fx1"],
+        fxEffect: { ...plan.nodeParams["bus.fx1"]!.fxEffect, type: undefined },
+      },
+    },
+  } as typeof plan;
+  const without = new Map(
+    planToCommands(MODEL, bare, "all")
+      .filter((c) => c.node === "bus.fx1" && c.name.startsWith("FX_EFFECT"))
+      .map((c) => [cmdAddr(c), c.vdValue]),
+  );
+  expect(
+    fx.every((c) => without.get(cmdAddr(c)) === c.vdValue),
+    "the premise: dropping the type changes nothing the write sends",
+  ).toBe(true);
+
+  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(fx.map(cmdAddr)))).toEqual(["bus.fx1"]);
 });

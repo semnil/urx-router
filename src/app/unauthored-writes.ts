@@ -39,6 +39,7 @@ function shiftLeaves(
     return out;
   }
   if (!path.length || !move(path.join("."))) return value;
+  if (by === 0) return undefined;
   if (typeof value === "number") return value + by;
   if (typeof value === "boolean") return flip ? !value : value;
   if (typeof value === "string") return value + "x";
@@ -60,7 +61,7 @@ function shiftLeaves(
  * `fxEffect` slot is emitted with a fallback whether or not the plan carries it, so removing
  * one costs no address at all though the write sends its value.
  *
- * Four extra emits rather than one per leaf. The leaf count is the document's to choose — the
+ * Two extra emits rather than one per leaf. The leaf count is the document's to choose — the
  * load-time sanitiser keeps an unknown key whose value is well formed — so a per-leaf walk is
  * a plan-sized amount of work in front of a modal.
  *
@@ -88,15 +89,20 @@ export function unauthoredWriteNodes(
   const base = planToCommands(model, plan, scope);
   const held = new Map(base.map((c) => [cmdAddr(c), c.vdValue]));
   const moved = new Set<number>();
-  // Four passes: each direction, and each with the unauthored SWITCHES left alone. A switch is
-  // what turns a block off — the EQ 1-knob, a channel's own ON — so flipping one takes its
-  // block out of the emit and no value inside it can be compared at all. Held still, the block
-  // stays and the values within it answer for themselves.
+  // Two passes. One steps each unauthored value and flips each unauthored switch, and reads
+  // only a CHANGED value: an address the step makes disappear is one whose presence a switch
+  // decides while its value is still the operator's — an EQ band under the 1-knob switch — and
+  // what this feeds says the VALUE is not theirs.
+  //
+  // The other REMOVES them, because a step does not move every value. An enum is bounded to an
+  // option list and a neighbouring integer is not on it: `insertFx` sits at -1 (No Effect), where
+  // -2 and 0 both resolve back to -1, so a write that CLEARS the unit's insert effect moved
+  // nothing a step could see. Without the value the emit either skips the address or falls back
+  // to the descriptor's own default, and that pass reads both — a value the plan no longer
+  // decides is one the plan was deciding.
   for (const [by, flip] of [
     [1, true],
-    [-1, true],
-    [1, false],
-    [-1, false],
+    [0, true],
   ] as Array<[number, boolean]>) {
     const shifted: Record<string, NodeParams> = {};
     for (const [nodeId, params] of Object.entries(plan.nodeParams)) {
@@ -110,10 +116,13 @@ export function unauthoredWriteNodes(
     const after = new Map(
       planToCommands(model, { ...plan, nodeParams: shifted }, scope).map((c) => [cmdAddr(c), c.vdValue]),
     );
-    // A DIFFERENT value only. An address the shift makes disappear is one whose presence an
-    // unauthored leaf decides while its value is still the operator's — an EQ band under the
-    // 1-knob switch — and the sentence this feeds says the VALUE is not theirs.
-    for (const [addr, value] of held) if (after.has(addr) && after.get(addr) !== value) moved.add(addr);
+    for (const [addr, value] of held) {
+      // A CHANGED value in either pass, and under the removal an address that stops being
+      // emitted at all — dropping the key is what takes the block away. A step that takes one
+      // away is different: that is a flipped switch, and the value it removed is still the
+      // operator's, while what this feeds says the VALUE is not theirs.
+      if (after.has(addr) ? after.get(addr) !== value : by === 0) moved.add(addr);
+    }
   }
 
   const named = new Set<string>();
