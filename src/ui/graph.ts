@@ -2406,6 +2406,11 @@ export class Graph {
     if (!changed) return;
     this.commitHidden();
     this.render();
+    // The chip says a node is coming back and the status line says it came, so it has to be
+    // somewhere the operator can see: a node placed beside its STEREO partner goes wherever
+    // that partner is. After the render, since the pan is measured from what was drawn.
+    const shown = this.parentOf(id) ?? id;
+    this.panIntoView([shown, this.linkedPartnerOnBoard(shown) ?? shown]);
     this.select({ type: "node", id });
     this.cb.onChange();
     this.cb.onStatus(t().status.shownNode(this.labelOf(id)));
@@ -2477,6 +2482,50 @@ export class Graph {
   private placeRestored(id: string): void {
     if (this.linkedPartnerOnBoard(id)) this.snapToLinkedPartner(id);
     else this.placeInView(id);
+  }
+
+  /** Pan by the least that brings `ids` inside the viewport, or not at all when they are
+   *  already there. The zoom is left alone: a restore is not a re-frame.
+   *
+   *  A node placed beside its STEREO partner goes wherever that partner is, which can be off
+   *  screen — and the shelf answers a chip with a status line saying the node is shown and an
+   *  inspector selecting it, so nothing else would say that it is not. Called from the shelf's
+   *  single-node restore alone: an alignment the device drives must not move the view under
+   *  the operator, and *Show all* re-frames with `fitView` already.
+   *
+   *  Where the box does not fit at the current zoom, the top-left corner wins. */
+  private panIntoView(ids: readonly string[]): void {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const id of ids) {
+      if (this.isHidden(id)) continue;
+      const p = this.posOf(id);
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x + NODE_W);
+      maxY = Math.max(maxY, p.y + this.nodeHeight(id));
+    }
+    if (!Number.isFinite(minX)) return;
+    const rect = this.svg.getBoundingClientRect();
+    const vw = rect.width || 1000;
+    // The shelf sits over the bottom of the canvas, and a restore is exactly when it is open.
+    const vh = (rect.height || 700) - (this.shelf.style.display === "none" ? 0 : this.shelf.offsetHeight);
+    const pad = MARGIN;
+    let dx = 0;
+    let dy = 0;
+    const right = maxX * this.zoom + this.pan.x;
+    const bottom = maxY * this.zoom + this.pan.y;
+    if (right > vw - pad) dx = vw - pad - right;
+    if (bottom > vh - pad) dy = vh - pad - bottom;
+    const left = minX * this.zoom + this.pan.x + dx;
+    const top = minY * this.zoom + this.pan.y + dy;
+    if (left < pad) dx += pad - left;
+    if (top < pad) dy += pad - top;
+    if (dx === 0 && dy === 0) return;
+    this.pan = { x: this.pan.x + dx, y: this.pan.y + dy };
+    this.applyTransform();
   }
 
   /** Park a restored node at the current viewport center, in content coords. */

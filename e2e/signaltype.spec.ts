@@ -218,6 +218,53 @@ test("restoring a shelved member of a STEREO pair lands it beside its partner", 
   await expect(stereoTie(page)).toHaveCount(1);
 });
 
+// A member placed beside its partner goes wherever that partner is. The chip's own status
+// line says the node is shown and the inspector selects it, so a restore that lands off
+// screen disagrees with everything else the gesture says.
+test("restoring a member whose partner is off screen brings the pair into view", async ({ page }) => {
+  const shelvedPartner = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch3: { stereoLink: true }, ch4: { stereoLink: true } },
+    positions: { ch3: { x: 500, y: 300 } },
+    hidden: ["ch4"],
+  };
+  await page.goto(`/?plan=${planParam(shelvedPartner)}`);
+  await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+
+  // Drag the empty canvas until CH 3 is past the right edge — what the operator does by
+  // panning away from it. Asserted rather than assumed: the pan below has nothing to do if
+  // the node is still in frame.
+  const host = (await page.locator("#graph-host").boundingBox())!;
+  const outsideHost = async (id: string): Promise<boolean> => {
+    const b = (await node(page, id).boundingBox())!;
+    return b.x > host.x + host.width || b.x + b.width < host.x;
+  };
+  const empty = { x: host.x + host.width - 30, y: host.y + 30 };
+  for (let i = 0; i < 8; i++) {
+    await page.mouse.move(empty.x - 300, empty.y);
+    await page.mouse.down();
+    await page.mouse.move(empty.x, empty.y, { steps: 6 });
+    await page.mouse.up();
+  }
+  expect(await outsideHost("ch3")).toBe(true);
+
+  await page.locator(".hidden-shelf .chip").click();
+
+  const back = (await node(page, "ch4").boundingBox())!;
+  expect(back.x + back.width).toBeGreaterThan(host.x);
+  expect(back.x).toBeLessThan(host.x + host.width);
+  expect(back.y + back.height).toBeGreaterThan(host.y);
+  expect(back.y).toBeLessThan(host.y + host.height);
+  // The view moved, not the nodes: the pair still holds the offset it was placed at.
+  const ch3 = (await node(page, "ch3").boundingBox())!;
+  expect(Math.abs(back.x - ch3.x)).toBeLessThan(2);
+  expect(back.y).toBeGreaterThan(ch3.y);
+  await expect(stereoTie(page)).toHaveCount(1);
+});
+
 test("a MONO x 2 pair does not drag together", async ({ page }) => {
   const before2 = await node(page, "ch2").boundingBox();
   const box1 = await node(page, "ch1").boundingBox();

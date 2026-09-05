@@ -389,6 +389,48 @@ describe("hide and show", () => {
     expect(fx.plan.positions["ch1"]!.y).toBeLessThan(300);
   });
 
+  // A node placed beside its partner goes wherever that partner is, and the chip's own status
+  // line says the node is shown — so the view has to follow it there.
+  it("pans a restored member into view when its linked partner is off screen", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+        plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
+        plan.positions["ch1"] = { x: 1544, y: 120 };
+      },
+    });
+    const view = fx.graph as unknown as { zoom: number; pan: { x: number; y: number } };
+    // The fixture's viewport is the 1000 x 700 fallback at zoom 1, pan 0, so a node at
+    // x = 1544 is past its right edge — the state the operator reaches by panning.
+    const onScreen = (id: string): boolean => {
+      const p = fx.plan.positions[id] ?? { x: NaN, y: NaN };
+      const left = p.x * view.zoom + view.pan.x;
+      return left >= 0 && left <= 1000;
+    };
+    fx.graph.hideNode("ch2");
+    expect(onScreen("ch1")).toBe(false);
+    fx.graph.showNode("ch2");
+    expect(onScreen("ch2")).toBe(true);
+    expect(view.zoom).toBe(1); // a restore is not a re-frame
+    // …and the pair kept its offset: the pan moved the view, not the nodes.
+    expect(fx.plan.positions["ch2"]!.x).toBe(1544);
+    expect(fx.plan.positions["ch2"]!.y).toBeGreaterThan(120);
+  });
+
+  it("leaves the view alone when the restored member is already on screen", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+        plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
+      },
+    });
+    const view = fx.graph as unknown as { pan: { x: number; y: number } };
+    fx.graph.hideNode("ch2");
+    const pan = { ...view.pan };
+    fx.graph.showNode("ch2");
+    expect(view.pan).toEqual(pan);
+  });
+
   // A restore is not a move: a member coming back to the slot it already belongs in earns no
   // document entry and no undo entry.
   it("writes no position when Show all returns a member to the slot it already had", () => {
