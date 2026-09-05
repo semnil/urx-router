@@ -61,6 +61,44 @@ test("a track slot can be shelved and restored via its chip, like a ducker", asy
   await expect(node(page, "out.sdrec.t4")).toBeVisible();
 });
 
+// `toBeVisible` is satisfied by a node that is in the DOM and painted, wherever the view
+// happens to be — and a slot's position comes from the recorder it hangs under, whose own
+// expanded note can put it past the bottom of the canvas. The shelf covers that bottom and is
+// open exactly when a chip is clicked, so the slot the chip, the status line and the inspector
+// all name has to land between the top of the canvas and the top of the shelf.
+test.describe("restoring a slot into the smallest window", () => {
+  test.use({ viewport: { width: 960, height: 640 } });
+
+  test("puts the slot itself on screen, not the recorder it hangs under", async ({ page }) => {
+    // A note on the recorder — three wrapped lines at the note's 21-character budget, so the
+    // chain of slots below it starts far enough down to leave the canvas — and two nodes
+    // shelved, so the shelf is still there after Track 7/8 comes back.
+    const noted = {
+      format: "urx-router-plan",
+      version: 1,
+      modelId: "URX44V",
+      connections: [],
+      notes: { "out.sdrec": "a note long enough to wrap across three whole lines here" },
+      hidden: ["out.sdrec.t4", "bus.mix2"],
+    };
+    await page.goto(`/?plan=${planParamZ(noted)}`);
+    await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+    await expect(node(page, "out.sdrec.t4")).toHaveCount(0);
+
+    const host = (await page.locator("#graph-host").boundingBox())!;
+    await page.mouse.move(host.x + host.width / 2, host.y + host.height / 2);
+    for (let i = 0; i < 30; i++) await page.mouse.wheel(0, -120); // deepest zoom
+
+    await page.locator(".hidden-shelf .chip", { hasText: "Track 7/8" }).click();
+
+    const shelf = (await page.locator(".hidden-shelf").boundingBox())!;
+    expect(await page.locator(".hidden-shelf .chip").count()).toBeGreaterThan(0);
+    const slot = (await node(page, "out.sdrec.t4").boundingBox())!;
+    expect(slot.y).toBeGreaterThanOrEqual(host.y);
+    expect(slot.y + slot.height).toBeLessThanOrEqual(shelf.y);
+  });
+});
+
 test("a track-pair slot records its factory source as a no-param record assign", async ({ page }) => {
   // Factory: track pair 1/2 records CH1/2 from the CH1 primary node — a record
   // source select (no level / pan / PRE-POST, unlike a bus send).

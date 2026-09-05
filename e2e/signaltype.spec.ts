@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "./fixtures";
-import { faceplate, selectWire } from "./graph-helpers";
+import { faceplate, selectWire, stereoTie } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
+import { planParam } from "./plan-param";
 
 // Positions below are compared with node(), pointer grabs measured with
 // faceplate() — the two boxes differ by the tap jack's overhang, so never mix them
@@ -10,7 +11,6 @@ const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-i
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 const sigSelect = (page: Page) => param(page, "Signal Type").locator("select");
 const panBalSelect = (page: Page) => param(page, "PAN / BAL").locator("select");
-const link = (page: Page) => page.locator("#graph-host text", { hasText: "♥" });
 
 // Save the plan and parse it back. The pan readers below are pure selectors over
 // the result, so one save covers every assertion about the same board state.
@@ -45,13 +45,13 @@ test("mono pair gets a Signal Type select; STEREO reveals PAN/BAL and a heart li
   await expect(sigSelect(page).locator("option")).toHaveText(["MONO x 2", "STEREO"]);
   await expect(sigSelect(page)).toHaveValue("0"); // MONO x 2
   await expect(param(page, "PAN / BAL")).toHaveCount(0);
-  await expect(link(page)).toHaveCount(0);
+  await expect(stereoTie(page)).toHaveCount(0);
 
   await chooseOption(sigSelect(page), "1"); // STEREO
   await expect(param(page, "PAN / BAL")).toHaveCount(1);
   // Linking lands in BAL, as it does on the unit.
   await expect(panBalSelect(page)).toHaveValue("1");
-  await expect(link(page)).toHaveCount(1); // heart tie on the canvas
+  await expect(stereoTie(page)).toHaveCount(1); // heart tie on the canvas
 
   // The partner channel shows the same Signal Type (stored on the primary).
   await node(page, "ch2").click();
@@ -108,7 +108,7 @@ test("a STEREO pair drags as one unit; the heart tie follows", async ({ page }) 
   expect(Math.hypot(after2.x - before2.x, after2.y - before2.y)).toBeGreaterThan(20);
   expect(Math.abs(after1.x - before1.x - (after2.x - before2.x))).toBeLessThan(2);
   expect(Math.abs(after1.y - before1.y - (after2.y - before2.y))).toBeLessThan(2);
-  await expect(link(page)).toHaveCount(1); // tie still drawn after the move
+  await expect(stereoTie(page)).toHaveCount(1); // tie still drawn after the move
 });
 
 test("STEREO-linking snaps a partner moved away back beside the kept primary", async ({ page }) => {
@@ -137,7 +137,7 @@ test("STEREO-linking snaps a partner moved away back beside the kept primary", a
   expect(Math.abs(after2.x - after1.x)).toBeLessThan(2); // same column
   expect(after2.y).toBeGreaterThan(after1.y); // below it
   expect(Math.hypot(after2.x - moved2.x, after2.y - moved2.y)).toBeGreaterThan(20); // it really moved back
-  await expect(link(page)).toHaveCount(1);
+  await expect(stereoTie(page)).toHaveCount(1);
 });
 
 test("STEREO-linking from the partner keeps the partner and realigns the primary above it", async ({ page }) => {
@@ -165,7 +165,150 @@ test("STEREO-linking from the partner keeps the partner and realigns the primary
   expect(Math.abs(after1.x - after2.x)).toBeLessThan(2); // same column
   expect(after1.y).toBeLessThan(after2.y); // above it
   expect(Math.hypot(after1.x - moved1.x, after1.y - moved1.y)).toBeGreaterThan(20);
-  await expect(link(page)).toHaveCount(1);
+  await expect(stereoTie(page)).toHaveCount(1);
+});
+
+// A document that arrives already linked — a `?plan=` link, a saved file, a plan a
+// generator wrote — went through no edit funnel, so nothing snapped its partner. The
+// load has to, or the heart tie opens the plan stretched across the gap.
+test("a loaded plan whose pair is already STEREO opens with the partner aligned", async ({ page }) => {
+  const strayPair = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch3: { stereoLink: true }, ch4: { stereoLink: true } },
+    positions: { ch3: { x: 500, y: 300 }, ch4: { x: 900, y: 620 } },
+  };
+  await page.goto(`/?plan=${planParam(strayPair)}`);
+  await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+
+  const ch3 = await node(page, "ch3").boundingBox();
+  const ch4 = await node(page, "ch4").boundingBox();
+  if (!ch3 || !ch4) throw new Error("nodes not found");
+  expect(Math.abs(ch4.x - ch3.x)).toBeLessThan(2); // same column as the primary
+  expect(ch4.y).toBeGreaterThan(ch3.y); // directly below it
+  await expect(stereoTie(page)).toHaveCount(1);
+});
+
+// The shelf is the other way a linked pair can arrive apart: the shelved member kept
+// whatever position it was carrying, and the tie is drawn the moment it comes back.
+test("restoring a shelved member of a STEREO pair lands it beside its partner", async ({ page }) => {
+  const shelvedPartner = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch3: { stereoLink: true }, ch4: { stereoLink: true } },
+    positions: { ch3: { x: 500, y: 300 }, ch4: { x: 900, y: 620 } },
+    hidden: ["ch4"],
+  };
+  await page.goto(`/?plan=${planParam(shelvedPartner)}`);
+  await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+  await expect(node(page, "ch4")).toHaveCount(0);
+  const ch3 = (await node(page, "ch3").boundingBox())!;
+
+  await page.locator(".hidden-shelf .chip").click();
+
+  const back = (await node(page, "ch4").boundingBox())!;
+  const after3 = (await node(page, "ch3").boundingBox())!;
+  expect(Math.abs(after3.x - ch3.x)).toBeLessThan(2); // the one on the board stays
+  expect(Math.abs(back.x - after3.x)).toBeLessThan(2); // the restored one lands in its column
+  expect(back.y).toBeGreaterThan(after3.y);
+  await expect(stereoTie(page)).toHaveCount(1);
+});
+
+// A member placed beside its partner goes wherever that partner is. The chip's own status
+// line says the node is shown and the inspector selects it, so a restore that lands off
+// screen disagrees with everything else the gesture says.
+test("restoring a member whose partner is off screen brings the pair into view", async ({ page }) => {
+  const shelvedPartner = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch3: { stereoLink: true }, ch4: { stereoLink: true } },
+    positions: { ch3: { x: 500, y: 300 } },
+    hidden: ["ch4"],
+  };
+  await page.goto(`/?plan=${planParam(shelvedPartner)}`);
+  await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+
+  // Drag the empty canvas until CH 3 is past the right edge — what the operator does by
+  // panning away from it. Asserted rather than assumed: the pan below has nothing to do if
+  // the node is still in frame.
+  const host = (await page.locator("#graph-host").boundingBox())!;
+  const outsideHost = async (id: string): Promise<boolean> => {
+    const b = (await node(page, id).boundingBox())!;
+    return b.x > host.x + host.width || b.x + b.width < host.x;
+  };
+  const empty = { x: host.x + host.width - 30, y: host.y + 30 };
+  for (let i = 0; i < 8; i++) {
+    await page.mouse.move(empty.x - 300, empty.y);
+    await page.mouse.down();
+    await page.mouse.move(empty.x, empty.y, { steps: 6 });
+    await page.mouse.up();
+  }
+  expect(await outsideHost("ch3")).toBe(true);
+
+  await page.locator(".hidden-shelf .chip").click();
+
+  const back = (await node(page, "ch4").boundingBox())!;
+  expect(back.x + back.width).toBeGreaterThan(host.x);
+  expect(back.x).toBeLessThan(host.x + host.width);
+  expect(back.y + back.height).toBeGreaterThan(host.y);
+  expect(back.y).toBeLessThan(host.y + host.height);
+  // The view moved, not the nodes: the pair still holds the offset it was placed at.
+  const ch3 = (await node(page, "ch3").boundingBox())!;
+  expect(Math.abs(back.x - ch3.x)).toBeLessThan(2);
+  expect(back.y).toBeGreaterThan(ch3.y);
+  await expect(stereoTie(page)).toHaveCount(1);
+});
+
+// The boundary the product allows: the shell's smallest window, the deepest zoom, and a note
+// that makes the pair taller than what is left above an open shelf. Framing the pair from its
+// top there shows the partner and leaves the node the chip named behind the shelf — and the
+// shelf covers the bottom of the canvas, so a check against the whole host counts that as
+// visible.
+test.describe("restoring into the smallest window", () => {
+  test.use({ viewport: { width: 960, height: 640 } });
+
+  test("keeps the node the chip named above the shelf when the pair cannot fit", async ({ page }) => {
+    const arrangedWithNote = {
+      format: "urx-router-plan",
+      version: 1,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch3: { stereoLink: true }, ch4: { stereoLink: true } },
+      // Three wrapped lines at the note's 21-character budget, which is what makes CH 3 tall
+      // enough for Arrange to reserve three rows under it.
+      notes: { ch3: "a note long enough to wrap across three whole lines here" },
+      // Where Arrange puts the pair with that note: three rows between them.
+      positions: { ch3: { x: 500, y: 300 }, ch4: { x: 500, y: 504 } },
+      hidden: ["ch4", "bus.mix2"],
+    };
+    await page.goto(`/?plan=${planParam(arrangedWithNote)}`);
+    await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+
+    // Deepest zoom, which is where the pair stops fitting.
+    const host = (await page.locator("#graph-host").boundingBox())!;
+    await page.mouse.move(host.x + host.width / 2, host.y + host.height / 2);
+    for (let i = 0; i < 30; i++) await page.mouse.wheel(0, -120);
+
+    await page.locator(".hidden-shelf .chip", { hasText: "CH 4" }).click();
+
+    // A second node stays shelved, so the shelf is still covering the canvas — the whole
+    // point of measuring against its top rather than the host's bottom.
+    const shelf = (await page.locator(".hidden-shelf").boundingBox())!;
+    expect(await page.locator(".hidden-shelf .chip").count()).toBeGreaterThan(0);
+    const back = (await node(page, "ch4").boundingBox())!;
+    expect(back.y).toBeGreaterThanOrEqual(host.y);
+    expect(back.y + back.height).toBeLessThanOrEqual(shelf.y);
+    // The pair really did not fit, so this measured the fallback and not the ordinary path:
+    // CH 3 is the one that went, and it went off the top.
+    const partner = (await node(page, "ch3").boundingBox())!;
+    expect(partner.y + partner.height).toBeLessThan(host.y);
+  });
 });
 
 test("a MONO x 2 pair does not drag together", async ({ page }) => {

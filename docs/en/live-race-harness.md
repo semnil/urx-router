@@ -826,7 +826,11 @@ before their `markChanged(source)`, and `scene-scope.ts`'s `applySceneExternal` 
 are both *outside* the shared plan — into the readback's private clone in `applyDeviceStateScoped`,
 and into the incoming document in `loadFromText` before `loadPlan` installs it. Both reach the plan
 only through the merge or the replacement that follows, so a sample stamped at either site would diff
-a plan those writes have not touched yet. Its keys are therefore attributed to the funnel they ride
+a plan those writes have not touched yet. `graph.ts`'s `alignLinkedPairs` is the same shape from the
+layout side — the snap a STEREO-linked pair gets when it arrives already linked — and it runs where the
+funnel that brought the link in can still name it: inside `Graph.setModel` (a load, a device re-render),
+inside the shelf restore, and in each device-follow reconcile ahead of that read's own sample.
+Its keys are therefore attributed to the funnel they ride
 in — `ui` / `midi` for a mirror, `load` for a scene-scoped file, and the device-read source
 (`device-action` / `follow-full` / `refetch`) for a kept scene-external value — and invariant 13 names
 that funnel. A case pairing it with another writer would be measuring the funnel, not this writer.

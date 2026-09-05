@@ -260,6 +260,15 @@ as written. What it lands on is the same place omitting the section lands — th
 channel's factory effect, supplied by the fill — so the warning is about the document
 saying something it does not mean rather than about a difference in the result.
 
+**A `positions` entry is rewritten too, by the board rather than by the loader.** A MONO IN
+pair whose Signal Type is STEREO is tied together on the canvas, so as the board adopts the
+document it places the partner (the even channel) at its canonical offset from the pair's
+primary, wherever the document parked it. The primary keeps the position the document gave
+it, and a pair with either member listed under `hidden` is left alone. Nothing is reported —
+this is layout, not a repair — and it is one more reason to omit `positions` entirely and
+let the app arrange the board. `plan_tool.py validate` does not see it: it happens after the
+checks above, in the view, and this tool mirrors the loader.
+
 **`plan_tool.py validate` warns about every row that needs no effect catalogue** —
 the non-numeric leaf, the non-object `params`, the non-object `fxEffect` — and
 CANNOT see the two that do: a finite number outside its window, and a `type` no

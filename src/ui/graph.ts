@@ -248,6 +248,20 @@ interface Pt {
   y: number;
 }
 
+/** A node's slot in the default layout — where the board draws it while the plan
+ *  holds no position of its own. */
+function defaultLayoutPos(node: DeviceNode): Pt {
+  return { x: MARGIN + node.pos.col * COL_GAP, y: MARGIN + node.pos.row * ROW_GAP };
+}
+
+// Two positions count as the same slot when they are within this. A pair the operator
+// dragged carries float error: the partner's own coordinate is `primary + offset` computed
+// once and re-added at a different base on every move, so a pair that never left its slot
+// can sit ~1e-13 px off the value an alignment would write. Sub-pixel, since a write nobody
+// can see is still a plan write, and on the device-follow path it lands outside every edit
+// funnel.
+const ALIGN_SLOP = 0.01;
+
 export class Graph {
   private svg!: SVGSVGElement;
   private viewport!: SVGGElement;
@@ -377,6 +391,16 @@ export class Graph {
     this.selection = null;
     this.selectedNodes.clear();
     this.adoptPlanState();
+    // Before the draw and the fit: a document arriving with a pair already STEREO-linked
+    // had no edit funnel to snap its partner, so this is where the two loading paths
+    // (loadPlan and rerenderPlan, which is Fetch / the Live-sync read / a .urxf import)
+    // get what linking in the app gives. Positions decide the fit, so a snap taken
+    // afterwards would frame the board it replaced. `nodeById` is what the align reads for
+    // a node's slot, and `render` rebuilds it, so it is seeded here rather than left to the
+    // model this view is replacing.
+    this.nodeById.clear();
+    for (const node of this.model.nodes) this.nodeById.set(node.id, node);
+    this.alignLinkedPairs();
     this.render();
     this.fitView();
   }
@@ -659,10 +683,6 @@ export class Graph {
 
   // --- geometry ------------------------------------------------------------
 
-  private defaultPos(node: DeviceNode): Pt {
-    return { x: MARGIN + node.pos.col * COL_GAP, y: MARGIN + node.pos.row * ROW_GAP };
-  }
-
   private posOf(nodeId: string): Pt {
     // A hung node always derives its position from its parent — just below it — so
     // it moves as a unit and any saved position is ignored. Several nodes can hang
@@ -681,7 +701,7 @@ export class Graph {
     }
     const saved = this.plan.positions[nodeId];
     if (saved) return saved;
-    return this.defaultPos(this.nodeById.get(nodeId)!);
+    return defaultLayoutPos(this.nodeById.get(nodeId)!);
   }
 
   private parentOf(id: string): string | undefined {
@@ -824,10 +844,98 @@ export class Graph {
     const keepPartner = this.selection?.type === "node" && this.selection.id === partner;
     const kept = keepPartner ? partner : primary;
     const other = keepPartner ? primary : partner;
-    const dk = this.defaultPos(this.nodeById.get(kept)!);
-    const dother = this.defaultPos(this.nodeById.get(other)!);
+    this.plan.positions[other] = this.alignedPairPos(kept, other);
+  }
+
+  /** Where a pair's `other` member belongs beside the one kept in place: the offset the
+   *  default layout gives the two, carried onto the kept node's position. Channels are never
+   *  hung, so their drawn position is the saved one or the default. */
+  private alignedPairPos(kept: string, other: string): Pt {
+    const dk = defaultLayoutPos(this.nodeById.get(kept)!);
+    const dother = defaultLayoutPos(this.nodeById.get(other)!);
+    const kp = this.plan.positions[kept] ?? dk;
+    return { x: kp.x + (dother.x - dk.x), y: kp.y + (dother.y - dk.y) };
+  }
+
+  /** Whether `other` already stands in the pair's slot beside `kept`: its own column, on the
+   *  side the layout puts it, no closer than the default offset and no further than the rows
+   *  the upper of the two occupies.
+   *
+   *  A BAND rather than the one position `alignedPairPos` writes, because Arrange advances a
+   *  column by whole rows big enough to clear an expanded note (`rowsFor`, shared with it) and
+   *  a load must not undo that. Widening the written offset instead is not the answer: Arrange
+   *  re-packs the whole column while this moves two nodes, so the pair would land on top of
+   *  whatever sits in the row it grew into. The band's own floor is the default offset, so a
+   *  pair the operator stretched still comes back.
+   *
+   *  Its lower edge carries the tolerance for the same reason its equality once did: a dragged
+   *  pair's saved offset is the default one re-added at a different base, which lands ~1e-13 px
+   *  off often enough to matter, and a write nobody can see is still a plan write. */
+  private inPairSlot(kept: string, other: string): boolean {
+    const want = this.alignedPairPos(kept, other);
     const kp = this.posOf(kept);
-    this.plan.positions[other] = { x: kp.x + (dother.x - dk.x), y: kp.y + (dother.y - dk.y) };
+    const at = this.posOf(other);
+    if (Math.abs(at.x - want.x) >= ALIGN_SLOP) return false;
+    const wantDy = want.y - kp.y;
+    const dy = at.y - kp.y;
+    if (Math.sign(dy) !== Math.sign(wantDy)) return false;
+    const clear = this.rowsFor(wantDy > 0 ? kept : other) * ROW_GAP;
+    return Math.abs(dy) >= Math.abs(wantDy) - ALIGN_SLOP && Math.abs(dy) <= clear + ALIGN_SLOP;
+  }
+
+  /** How many whole rows a node occupies — its own drawn height plus any hung children,
+   *  rounded up to the grid. Arrange advances a column by this, so a position derived from
+   *  it lands where Arrange would put the node below. */
+  private rowsFor(id: string): number {
+    let span = this.nodeHeight(id);
+    for (const childId of this.attachedDescendants(id))
+      if (!this.isHidden(childId)) span += DUCKER_GAP + this.nodeHeight(childId);
+    return Math.max(1, Math.ceil((span + (ROW_GAP - NODE_H)) / ROW_GAP));
+  }
+
+  /** Snap the partner of every STEREO-linked pair to its canonical offset from the pair's
+   *  primary, and report whether any of them moved.
+   *
+   *  What `alignStereoPair` does for a link made in the app, for the links that arrive with
+   *  no edit funnel behind them: a device read, a device-follow reconcile of a Signal Type
+   *  moved on the unit's own panel, and a loaded document. Without it the heart tie is drawn
+   *  across whatever gap an earlier manual move opened.
+   *
+   *  The primary is kept rather than the selected member, so the pair settles on the same two
+   *  slots whatever the board's selection is. A pair with either member shelved is left alone:
+   *  no tie is drawn for it, and snapping the visible member toward a shelved one would
+   *  relocate it for a partner that is not on screen. */
+  alignLinkedPairs(): boolean {
+    let moved = false;
+    for (const [primary, partner] of this.model.channelPairs) {
+      if (!this.plan.nodeParams[primary]?.stereoLink) continue;
+      if (this.isHidden(primary) || this.isHidden(partner)) continue;
+      // Against the partner's DRAWN position, not its saved one: a pair neither member of
+      // which was ever moved is already in its slot, and writing a position for it would
+      // put an entry in the document for a node nothing relocated.
+      if (this.inPairSlot(primary, partner)) continue;
+      this.plan.positions[partner] = this.alignedPairPos(primary, partner);
+      moved = true;
+    }
+    return moved;
+  }
+
+  /** Snap `id` to its canonical offset from a STEREO-linked partner already on the board,
+   *  and report whether it did. The node already there stays where it is. */
+  private snapToLinkedPartner(id: string): void {
+    const partner = this.linkedPartnerOnBoard(id);
+    // Not unconditionally: a node whose slot is already the right one gets no document entry
+    // and no undo entry for a move of zero pixels.
+    if (partner && !this.inPairSlot(partner, id)) this.plan.positions[id] = this.alignedPairPos(partner, id);
+  }
+
+  /** The STEREO-linked partner of `id` that is on the board, or null — which is what says
+   *  whether there is a slot to snap into at all, separately from whether `id` already
+   *  stands in it. */
+  private linkedPartnerOnBoard(id: string): string | null {
+    const pair = this.linkedPairOf(id);
+    const partner = pair ? (pair[0] === id ? pair[1] : pair[0]) : null;
+    return partner && !this.isHidden(partner) ? partner : null;
   }
 
   /** The channelPairs entry [primary, partner] containing `id` when that pair is
@@ -2286,11 +2394,11 @@ export class Graph {
     let changed = this.hidden.delete(id);
     if (parent) {
       if (this.hidden.delete(parent)) {
-        this.placeInView(parent);
+        this.placeRestored(parent);
         changed = true;
       }
     } else {
-      if (changed) this.placeInView(id);
+      if (changed) this.placeRestored(id);
       // Restore the whole unit: any hung children (a ducker, the SD Rec slots) that
       // were shelved come back with their parent.
       for (const child of this.attachedDescendants(id)) if (this.hidden.delete(child)) changed = true;
@@ -2298,6 +2406,17 @@ export class Graph {
     if (!changed) return;
     this.commitHidden();
     this.render();
+    // The chip says a node is coming back and the status line says it came, so it has to be
+    // somewhere the operator can see: a node placed beside its STEREO partner goes wherever
+    // that partner is, and a hung one wherever its parent is. The node the CHIP named is the
+    // one that must land in view — a track slot restored on its own sits below a recorder
+    // whose own note can push it off the bottom, and framing the parent shows the parent.
+    // After the render, since the pan is measured from what was drawn.
+    const partner = this.linkedPartnerOnBoard(parent ?? id);
+    this.panIntoView(
+      id,
+      [parent, partner].filter((x): x is string => x !== undefined && x !== null),
+    );
     this.select({ type: "node", id });
     this.cb.onChange();
     this.cb.onStatus(t().status.shownNode(this.labelOf(id)));
@@ -2306,8 +2425,21 @@ export class Graph {
   /** Bring every shelved node back and re-frame the diagram. */
   showAll(): void {
     if (!this.hidden.size) return;
+    const returning = new Set(this.hidden);
     this.hidden.clear();
     this.commitHidden();
+    // A STEREO-linked pair can come back with its two members parked apart — the shelved
+    // one kept whatever position it was carrying, which is one nobody has seen since it
+    // went to the shelf. Where exactly one member is returning it moves and the node
+    // already on the board stays, the same rule a chip restore follows; where both are,
+    // neither was on the board, so the pair falls to the primary-keeping sweep below.
+    for (const id of returning) {
+      const pair = this.linkedPairOf(id);
+      if (!pair) continue;
+      if (returning.has(pair[0] === id ? pair[1] : pair[0])) continue;
+      this.snapToLinkedPartner(id);
+    }
+    this.alignLinkedPairs();
     this.render();
     this.fitView();
     this.cb.onChange();
@@ -2346,6 +2478,82 @@ export class Graph {
       this.pathNodes.clear();
       this.cb.onSelect(null);
     }
+  }
+
+  /** Place a node that has just come back from the shelf. A member of a STEREO-linked
+   *  pair whose partner is already on the board lands at its canonical offset from that
+   *  partner — the tie is drawn the moment both are up, so the pair arrives together
+   *  rather than opening stretched. The one already on the board stays where it is.
+   *  Everything else parks under the viewport, where it is easy to find. */
+  private placeRestored(id: string): void {
+    if (this.linkedPartnerOnBoard(id)) this.snapToLinkedPartner(id);
+    else this.placeInView(id);
+  }
+
+  /** Pan by the least that brings `ids` inside the viewport, or not at all when they are
+   *  already there. The zoom is left alone: a restore is not a re-frame.
+   *
+   *  A node placed beside its STEREO partner goes wherever that partner is, which can be off
+   *  screen — and the shelf answers a chip with a status line saying the node is shown and an
+   *  inspector selecting it, so nothing else would say that it is not. Called from the shelf's
+   *  single-node restore alone: an alignment the device drives must not move the view under
+   *  the operator, and *Show all* re-frames with `fitView` already.
+   *
+   *  `shown` is the node the chip named — never its parent, though the parent is what carries
+   *  a hung node's position: a track slot restored on its own is what the chip, the status line
+   *  and the inspector all name. `alongside` (a parent, a STEREO partner) comes with it only
+   *  while both fit at the current zoom: a pair too tall for the visible area — a small window,
+   *  a deep zoom, an expanded note — would otherwise be framed from its top, which shows the
+   *  other one and leaves the node the operator asked for behind the shelf. Where `shown` alone
+   *  does not fit either, its top-left corner wins, which is where its header and label are. */
+  private panIntoView(shown: string, alongside: readonly string[]): void {
+    const own = this.boxOf([shown]);
+    if (!own) return;
+    const area = this.visibleArea();
+    const pad = MARGIN;
+    const both = this.boxOf([shown, ...alongside]) ?? own;
+    const fits = both.w * this.zoom <= area.w - pad * 2 && both.h * this.zoom <= area.h - pad * 2;
+    const box = fits ? both : own;
+    let dx = 0;
+    let dy = 0;
+    const right = (box.x + box.w) * this.zoom + this.pan.x;
+    const bottom = (box.y + box.h) * this.zoom + this.pan.y;
+    if (right > area.w - pad) dx = area.w - pad - right;
+    if (bottom > area.h - pad) dy = area.h - pad - bottom;
+    const left = box.x * this.zoom + this.pan.x + dx;
+    const top = box.y * this.zoom + this.pan.y + dy;
+    if (left < pad) dx += pad - left;
+    if (top < pad) dy += pad - top;
+    if (dx === 0 && dy === 0) return;
+    this.pan = { x: this.pan.x + dx, y: this.pan.y + dy };
+    this.applyTransform();
+  }
+
+  /** The part of the canvas a node can be SEEN in: the SVG box less the shelf, which covers
+   *  the bottom of it and is open exactly when a node is being restored from a chip. */
+  private visibleArea(): { w: number; h: number } {
+    const rect = this.svg.getBoundingClientRect();
+    return {
+      w: rect.width || 1000,
+      h: (rect.height || 700) - (this.shelf.style.display === "none" ? 0 : this.shelf.offsetHeight),
+    };
+  }
+
+  /** The content-space box covering `ids`, or null when none of them is on the board. */
+  private boxOf(ids: readonly string[]): { x: number; y: number; w: number; h: number } | null {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const id of ids) {
+      if (this.isHidden(id)) continue;
+      const p = this.posOf(id);
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x + NODE_W);
+      maxY = Math.max(maxY, p.y + this.nodeHeight(id));
+    }
+    return Number.isFinite(minX) ? { x: minX, y: minY, w: maxX - minX, h: maxY - minY } : null;
   }
 
   /** Park a restored node at the current viewport center, in content coords. */
@@ -2455,7 +2663,6 @@ export class Graph {
     // A node spanning more than one row (an expanded note, or a hung ducker that
     // the default grid reserves a whole row for) advances by enough whole rows to
     // clear it, so expanded notes still never overlap the node below.
-    const vgap = ROW_GAP - NODE_H;
     const colY = new Map<number, number>();
     this.plan.positions = {};
     for (const node of this.model.nodes) {
@@ -2466,12 +2673,9 @@ export class Graph {
       const y = colY.get(col) ?? MARGIN;
       this.plan.positions[node.id] = { x: MARGIN + col * COL_GAP, y };
       // The vertical footprint of this node plus any hung children it must clear
-      // (a ducker, or the stacked SD Rec track slots).
-      let span = this.nodeHeight(node.id);
-      for (const childId of this.attachedDescendants(node.id))
-        if (!this.isHidden(childId)) span += DUCKER_GAP + this.nodeHeight(childId);
-      const rows = Math.max(1, Math.ceil((span + vgap) / ROW_GAP));
-      colY.set(col, y + rows * ROW_GAP);
+      // (a ducker, or the stacked SD Rec track slots). Shared with the STEREO pair's own
+      // offset, so a pair lands where Arrange would have put its lower member.
+      colY.set(col, y + this.rowsFor(node.id) * ROW_GAP);
     }
     this.render();
     this.fitView();

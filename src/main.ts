@@ -83,6 +83,7 @@ import type { DynKind } from "./ui/dyn-registry";
 import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
 import { FileFlowLatch, singleFlight } from "./app/flow-latch";
 import { nodeParamEffects } from "./app/node-param-effects";
+import { changesLinkState } from "./app/link-state-change";
 import {
   detectHideOffSends,
   detectLabelSource,
@@ -469,6 +470,14 @@ const live = DEMO
         // The plan this read was issued for is gone (a file flow replaced it): its
         // values belong to a document nothing shows, and no snapshot can describe it.
         if (!merged) return null;
+        // This read pulls each named node's whole body, and a pair primary's body carries
+        // the Signal Type — so a link can arrive here as well as at the two reconciles. This
+        // is the one seat whose reflect is the fine-grained branch, which repaints the nodes
+        // this read named and draws no tie, so the full one is asked for on the LINK moving
+        // rather than on the snap having moved a node: an already adjacent pair has nothing
+        // to snap, and its tie would then wait for whatever re-rendered next.
+        const snapped = snapLinkedPairs();
+        if (snapped || changesLinkState(merged.devicePatch)) followFull = true;
         traceProbe?.sample("refetch");
         noteMergeConflicts(merged);
         for (const id of nodeIds) followDirtyNodes.add(id);
@@ -604,6 +613,29 @@ function authorFromDevice(node: string, place: () => boolean, kind: WriteSource 
   planHistory?.absorb(moved);
   return true;
 }
+/** Snap a STEREO-linked pair a device read brought in, and settle what the snap wrote.
+ *
+ *  The one seat for every device-side caller, because two things have to happen around the
+ *  write and neither is the caller's subject. It runs BEFORE the read's own trace sample, so
+ *  the position it writes is attributed to that read rather than to whichever writer samples
+ *  next — the reflect that repaints it is coalesced across producers and cannot name one. And
+ *  the keys go into the history's baseline rather than into an undo entry: the snap is a
+ *  layout consequence of a device change, so a later gesture must not carry it, and the
+ *  reconcile's own reset does not cover a read that authored nothing itself.
+ *
+ *  The board owns the geometry, so the graph is asked rather than the plan: which positions
+ *  count as the pair's slot is a question about what is drawn, notes included.
+ *
+ *  Returns whether anything moved, because a caller whose reflect repaints only the nodes its
+ *  read named has to widen it: the partner this moves is not one of them, and the heart tie is
+ *  rebuilt by a full render alone. */
+function snapLinkedPairs(): boolean {
+  const before = clonePlanState(plan);
+  if (!graph.alignLinkedPairs()) return false;
+  planHistory?.absorb(diffPlans(before, plan));
+  return true;
+}
+
 /** Record that a device read supplied these keys.
  *
  *  The patch is what the merge ACTUALLY adopted — a key the read left alone because the plan
@@ -991,6 +1023,9 @@ const follow =
             applyNodeState(getModel(modelId), into, nodeIds, signal, pending),
           );
           if (!merged) return;
+          // A Signal Type moved on the unit's own panel reaches the plan here, with no edit
+          // funnel to snap the pair's partner beside its primary.
+          snapLinkedPairs();
           traceProbe?.sample("follow-scoped");
           noteMergeConflicts(merged);
           // Re-based here rather than in the coalesced reflect: only the copy this read
@@ -1017,6 +1052,10 @@ const follow =
             applyDeviceStateScoped(into, signal, pending),
           );
           if (!merged) return;
+          // Same as the scoped reconcile above: a link the whole-device read brought in gets
+          // its partner snapped. This is the hook a scene or preset recall on the unit takes,
+          // where several Signal Types move at once.
+          snapLinkedPairs();
           traceProbe?.sample("follow-full");
           noteMergeConflicts(merged);
           plan.unreadNodes = merged.unreadNodes;
@@ -1284,8 +1323,10 @@ function planValuesChanged(): void {
 // operator's own move on the hardware. The follow-side writers do NOT come through here
 // — each settles the history at its own site, where what the device authored is known:
 // a notify's own keys (applyDirect → absorb), a refetch's patch (refetchNodes →
-// absorb), a reconcile's reset (reflectFollow's full branch), and the write-adoption's
-// confirmed keys (adoptConfirmedWrites → absorb).
+// absorb), a reconcile's reset (reflectFollow's full branch), the write-adoption's
+// confirmed keys (adoptConfirmedWrites → absorb), and the position a STEREO pair's snap
+// writes (snapLinkedPairs → absorb), which is the one of the five the device did not
+// author and the only one that needs no reset behind it.
 /** Whether the model has the microSD recorder at all. URX22 does not, so nothing about
  *  Track Count — a menu entry, a ceiling, a warning — belongs on it. Spelled once so the
  *  three sites that ask cannot drift apart.
@@ -1947,11 +1988,15 @@ function loadPlan(next: Plan): boolean {
   const prevDirty = dirty;
   modelId = next.modelId;
   plan = next;
-  traceProbe?.sample("load");
   ensureFixedConnections(getModel(modelId), plan);
   selection = null;
   try {
     draw();
+    // After the draw, not before the fixed connections: everything up to here is the load's
+    // — the document itself, the connections added above, and the STEREO-pair snap the board
+    // takes as it adopts it. Sampled ahead of them, the last two landed in whatever the next
+    // gesture stamps, which is an app edit.
+    traceProbe?.sample("load");
     dirty = false;
   } catch (err) {
     // Put the previous document back on screen and report, rather than throwing: three

@@ -33,10 +33,13 @@ import {
   tapHit,
   wireHit,
 } from "./graph.test-util";
-import type { GraphFixture } from "./graph.test-util";
+import type { GraphFixture, GraphOptions } from "./graph.test-util";
 import { LEVEL_MIN_DB } from "../core/plan";
+import type { Plan } from "../core/plan";
+import { defaultPlan } from "../models/initial-state";
 import { isFixedConnection } from "../core/routing";
 import { getModel } from "../models";
+import type { ModelId } from "../models/types";
 import { getSettings, resetSettingsCache, updateSettings } from "../core/settings";
 import { pinSettingsReset } from "../core/settings-reset.test-util";
 import { setLang, t } from "../i18n";
@@ -342,6 +345,213 @@ describe("hide and show", () => {
     expect(fx.plan.positions?.["ch_5_6"]).toBeDefined();
   });
 
+  // A restored member of a STEREO-linked pair lands beside its partner rather than
+  // under the viewport: the tie is drawn the moment both are on the board, so parking
+  // it wherever the operator happens to be looking opens the pair stretched.
+  const linkedPair = (kept: string): GraphOptions => ({
+    seed: (plan) => {
+      plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+      plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
+      plan.positions[kept] = { x: 500, y: 300 };
+    },
+  });
+
+  it("lands a restored STEREO partner beside the primary already on the board", () => {
+    fx = graphFixture(linkedPair("ch1"));
+    fx.graph.hideNode("ch2");
+    fx.graph.showNode("ch2");
+    expect(fx.plan.positions["ch1"]).toEqual({ x: 500, y: 300 }); // the one on the board stays
+    expect(fx.plan.positions["ch2"]!.x).toBe(500);
+    expect(fx.plan.positions["ch2"]!.y).toBeGreaterThan(300);
+  });
+
+  // The same the other way round: what moves is the node coming back, not the primary.
+  it("lands a restored STEREO primary above the partner already on the board", () => {
+    fx = graphFixture(linkedPair("ch2"));
+    fx.graph.hideNode("ch1");
+    fx.graph.showNode("ch1");
+    expect(fx.plan.positions["ch2"]).toEqual({ x: 500, y: 300 });
+    expect(fx.plan.positions["ch1"]!.x).toBe(500);
+    expect(fx.plan.positions["ch1"]!.y).toBeLessThan(300);
+  });
+
+  // Show all follows the chip's rule per pair: the shelved member's own position is one
+  // nobody has seen since it went to the shelf, so it is the one that moves — including
+  // when it is the PRIMARY, where a primary-keeping sweep would drag the visible partner
+  // to a coordinate only the shelved node was carrying.
+  it("moves the member Show all brought back, not the one already on the board", () => {
+    fx = graphFixture(linkedPair("ch2"));
+    fx.plan.positions["ch1"] = { x: 40, y: 40 }; // stale: where ch1 sat before it was shelved
+    fx.graph.hideNode("ch1");
+    fx.graph.showAll();
+    expect(fx.plan.positions["ch2"]).toEqual({ x: 500, y: 300 });
+    expect(fx.plan.positions["ch1"]!.x).toBe(500);
+    expect(fx.plan.positions["ch1"]!.y).toBeLessThan(300);
+  });
+
+  // A node placed beside its partner goes wherever that partner is, and the chip's own status
+  // line says the node is shown — so the view has to follow it there.
+  it("pans a restored member into view when its linked partner is off screen", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+        plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
+        plan.positions["ch1"] = { x: 1544, y: 120 };
+      },
+    });
+    const view = fx.graph as unknown as { zoom: number; pan: { x: number; y: number } };
+    // The fixture's viewport is the 1000 x 700 fallback at zoom 1, pan 0, so a node at
+    // x = 1544 is past its right edge — the state the operator reaches by panning.
+    const onScreen = (id: string): boolean => {
+      const p = fx.plan.positions[id] ?? { x: NaN, y: NaN };
+      const left = p.x * view.zoom + view.pan.x;
+      return left >= 0 && left <= 1000;
+    };
+    fx.graph.hideNode("ch2");
+    expect(onScreen("ch1")).toBe(false);
+    fx.graph.showNode("ch2");
+    expect(onScreen("ch2")).toBe(true);
+    expect(view.zoom).toBe(1); // a restore is not a re-frame
+    // …and the pair kept its offset: the pan moved the view, not the nodes.
+    expect(fx.plan.positions["ch2"]!.x).toBe(1544);
+    expect(fx.plan.positions["ch2"]!.y).toBeGreaterThan(120);
+  });
+
+  // The boundary the product allows: the smallest window the shell permits, the deepest zoom,
+  // and a note that makes the pair taller than what is left above an open shelf. Framing the
+  // pair from its top there shows the partner and leaves the node the chip named behind the
+  // shelf — so the node asked for wins, and the partner is the one that goes.
+  it("shows the restored member itself when the pair cannot fit above the shelf", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+        plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
+        plan.notes["ch1"] = "a note the pair has to clear";
+      },
+    });
+    const view = fx.graph as unknown as { zoom: number; pan: { x: number; y: number } };
+    const svg = fx.host.querySelector("svg")!;
+    const shelf = fx.host.querySelector<HTMLElement>(".hidden-shelf")!;
+    // jsdom lays nothing out, so the window and the shelf are stated: the shell's own minimum
+    // (960 x 640, less the app chrome) with a shelf over the bottom of it.
+    svg.getBoundingClientRect = () => ({ width: 960, height: 560, x: 0, y: 0, top: 0, left: 0 }) as DOMRect;
+    Object.defineProperty(shelf, "offsetHeight", { value: 84, configurable: true });
+    // Arranged, so the pair carries the whole row the note reserves; a second shelved node,
+    // so the shelf is still there after CH 2 comes back.
+    fx.graph.autoLayout();
+    fx.graph.hideNode("bus.mix2");
+    fx.graph.hideNode("ch2");
+    view.zoom = 2.5;
+    view.pan = { x: 0, y: 0 };
+    fx.graph.showNode("ch2");
+
+    const visible = 560 - 84;
+    // Read off the board's own transform rather than the plan: an unmoved node carries no
+    // saved position, and the question is where it is DRAWN.
+    const boxOf = (id: string) => {
+      const y = Number(
+        nodeEl(fx.host, id)!
+          .getAttribute("transform")!
+          .match(/-?\d+(?:\.\d+)?/g)![1],
+      );
+      return { top: y * view.zoom + view.pan.y, bottom: (y + 44) * view.zoom + view.pan.y };
+    };
+    // The restored node is above the shelf, and the pair really did not fit — otherwise this
+    // case would be measuring the ordinary path.
+    expect(boxOf("ch2").bottom).toBeLessThanOrEqual(visible);
+    expect(boxOf("ch2").top).toBeGreaterThanOrEqual(0);
+    expect(boxOf("ch1").top).toBeLessThan(0); // the partner is what went off, not the node asked for
+    expect(view.zoom).toBe(2.5);
+  });
+
+  // The same rule for a hung node: a track slot is restored on its own, and its position comes
+  // from the recorder above it — whose own note can push the slot past the shelf. The chip, the
+  // status line and the inspector all name the slot, so the slot is what has to land in view.
+  it("shows a restored track slot itself, not the recorder it hangs under", () => {
+    fx = graphFixture({
+      seed: (plan) => void (plan.notes["out.sdrec"] = "a note long enough to wrap across three whole lines here"),
+    });
+    const view = fx.graph as unknown as { zoom: number; pan: { x: number; y: number } };
+    const svg = fx.host.querySelector("svg")!;
+    const shelf = fx.host.querySelector<HTMLElement>(".hidden-shelf")!;
+    svg.getBoundingClientRect = () => ({ width: 960, height: 560, x: 0, y: 0, top: 0, left: 0 }) as DOMRect;
+    Object.defineProperty(shelf, "offsetHeight", { value: 84, configurable: true });
+
+    fx.graph.hideNode("bus.mix2"); // keeps the shelf open after the slot comes back
+    fx.graph.hideNode("out.sdrec.t4");
+    view.zoom = 2.5;
+    view.pan = { x: 0, y: 0 };
+    fx.graph.showNode("out.sdrec.t4");
+
+    const visible = 560 - 84;
+    const boxOf = (id: string) => {
+      const y = Number(
+        nodeEl(fx.host, id)!
+          .getAttribute("transform")!
+          .match(/-?\d+(?:\.\d+)?/g)![1],
+      );
+      return { top: y * view.zoom + view.pan.y, bottom: (y + 44) * view.zoom + view.pan.y };
+    };
+    expect(boxOf("out.sdrec.t4").bottom).toBeLessThanOrEqual(visible);
+    expect(boxOf("out.sdrec.t4").top).toBeGreaterThanOrEqual(0);
+    // The parent is the one that went, which is what says this measured the fallback.
+    expect(boxOf("out.sdrec").top).toBeLessThan(0);
+  });
+
+  it("leaves the view alone when the restored member is already on screen", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+        plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
+      },
+    });
+    const view = fx.graph as unknown as { pan: { x: number; y: number } };
+    fx.graph.hideNode("ch2");
+    const pan = { ...view.pan };
+    fx.graph.showNode("ch2");
+    expect(view.pan).toEqual(pan);
+  });
+
+  // A restore is not a move: a member coming back to the slot it already belongs in earns no
+  // document entry and no undo entry.
+  it("writes no position when Show all returns a member to the slot it already had", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+        plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
+      },
+    });
+    fx.graph.hideNode("ch2");
+    expect(fx.plan.positions["ch2"]).toBeUndefined();
+    fx.graph.showAll();
+    expect(fx.plan.positions["ch2"]).toBeUndefined();
+  });
+
+  // Show all can bring several members back at once, so it closes the gap the way a
+  // load does — keeping the primary — rather than moving whichever node arrived.
+  it("closes a linked pair's gap when Show all brings its member back", () => {
+    fx = graphFixture(linkedPair("ch1"));
+    fx.plan.positions["ch2"] = { x: 900, y: 620 };
+    fx.graph.hideNode("ch2");
+    fx.graph.showAll();
+    expect(fx.plan.positions["ch1"]).toEqual({ x: 500, y: 300 });
+    expect(fx.plan.positions["ch2"]!.x).toBe(500);
+    expect(fx.plan.positions["ch2"]!.y).toBeGreaterThan(300);
+  });
+
+  // The negative control: without the link there is no tie to keep short, so the node does
+  // not follow its pair — it parks where every restored node parks, which is the same place
+  // for a node that has no pair at all.
+  it("parks a restored MONO x 2 member where any restore parks, not beside its pair", () => {
+    fx = graphFixture({ seed: (plan) => void (plan.positions["ch1"] = { x: 500, y: 300 }) });
+    fx.graph.hideNode("ch2");
+    fx.graph.showNode("ch2");
+    fx.graph.hideNode("bus.mix2");
+    fx.graph.showNode("bus.mix2");
+    expect(fx.plan.positions["ch2"]!.x).not.toBe(500);
+    expect(fx.plan.positions["ch2"]).toEqual(fx.plan.positions["bus.mix2"]);
+  });
+
   it("brings everything back from Show all", () => {
     fx = graphFixture();
     fx.graph.hideNode("bus.mix1");
@@ -520,6 +730,158 @@ describe("node drag", () => {
     fx = graphFixture();
     fx.graph.alignStereoPair("ch1");
     expect(nodeEl(fx.host, "ch1")).not.toBeNull();
+  });
+});
+
+// A link the app did not make: a device read, a device-follow reconcile of a Signal
+// Type moved on the unit, a loaded document. No edit funnel ran, so the snap that
+// linking in the app performs has to be taken over the plan as it arrives.
+describe("alignLinkedPairs", () => {
+  // Built for every case: the file's afterEach restores `fx` whether or not the case
+  // made one, so a case without one restores its predecessor a second time and takes
+  // the jsdom globals down under every case after it.
+  beforeEach(() => {
+    fx = graphFixture();
+  });
+
+  /** Where the board actually drew a node, from its own transform. */
+  const drawnAt = (id: string): { x: number; y: number } => {
+    const [x, y] = nodeEl(fx.host, id)!
+      .getAttribute("transform")!
+      .match(/-?\d+(?:\.\d+)?/g)!
+      .map(Number);
+    return { x, y };
+  };
+  // Both of the model's pairs parked apart and already linked — the state a device read
+  // leaves behind. Two pairs rather than one: the sweep is a loop, and a single pair
+  // cannot tell it apart from one that stops after the first thing it moves.
+  const linkedPairPlan = (): Plan => {
+    const plan = defaultPlan("URX44V");
+    for (const id of ["ch1", "ch2", "ch3", "ch4"]) {
+      plan.nodeParams[id] = { ...plan.nodeParams[id], stereoLink: true };
+    }
+    plan.positions["ch1"] = { x: 700, y: 40 };
+    plan.positions["ch2"] = { x: 120, y: 800 };
+    plan.positions["ch3"] = { x: 500, y: 300 };
+    plan.positions["ch4"] = { x: 900, y: 620 };
+    return plan;
+  };
+  /** The fixture's own graph, rebound to `plan`. `setModel` is the seat under test for a
+   *  load, so the cases that are not about it seed through it too. */
+  const on = (plan: Plan, modelId: ModelId = "URX44V"): Plan => {
+    fx.graph.setModel(getModel(modelId), plan);
+    return plan;
+  };
+
+  it("snaps every linked pair's partner into the primary's column, keeping the primary put", () => {
+    // The offset to expect is read off a board nothing ever moved, rather than spelled
+    // as a constant here: an assertion against a copy of the layout arithmetic passes
+    // whatever that arithmetic later becomes.
+    const gap = drawnAt("ch4").y - drawnAt("ch3").y;
+
+    const plan = on(linkedPairPlan());
+    expect(plan.positions["ch3"]).toEqual({ x: 500, y: 300 });
+    expect(plan.positions["ch4"]).toEqual({ x: 500, y: 300 + gap });
+    // The second pair too, so a sweep that stops after the first is red here.
+    expect(plan.positions["ch1"]).toEqual({ x: 700, y: 40 });
+    expect(plan.positions["ch2"]).toEqual({ x: 700, y: 40 + gap });
+  });
+
+  it("leaves a pair that is not linked where it stands", () => {
+    const plan = linkedPairPlan();
+    plan.nodeParams["ch3"] = { ...plan.nodeParams["ch3"], stereoLink: false };
+    on(plan);
+    expect(plan.positions["ch4"]).toEqual({ x: 900, y: 620 });
+  });
+
+  // Both halves of the guard: no tie is drawn for a pair with a shelved member, so there is
+  // no gap to close, and the position of a node nobody can see must not be rewritten either.
+  it("leaves a pair with its PRIMARY shelved alone", () => {
+    const plan = linkedPairPlan();
+    plan.hidden = ["ch3"];
+    on(plan);
+    expect(plan.positions["ch4"]).toEqual({ x: 900, y: 620 });
+  });
+
+  it("leaves a pair with its PARTNER shelved alone", () => {
+    const plan = linkedPairPlan();
+    plan.hidden = ["ch4"];
+    on(plan);
+    expect(plan.positions["ch4"]).toEqual({ x: 900, y: 620 });
+  });
+
+  it("writes no position for a linked pair nothing ever moved", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+    on(plan);
+    expect(plan.positions["ch2"]).toBeUndefined();
+  });
+
+  // A pair the operator dragged carries float error in its saved offset, so an equality
+  // test reports it as off-canonical and rewrites it — a plan write for a move of ~1e-13 px,
+  // which on the device-follow path lands outside every edit funnel.
+  // Both signs: the drift lands on either side of the offset, and only one of them is caught
+  // by the band's ceiling — the other needs its floor to carry the tolerance too.
+  it.each([
+    ["over", 479.21785452540706, 291.4388726636495],
+    ["under", 983.5990309575515, 913.213396719236],
+  ])("writes nothing for a pair whose saved offset drifted %s the canonical one", (_which, a, b) => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+    plan.positions["ch1"] = { x: 100, y: a };
+    plan.positions["ch2"] = { x: 100, y: a + 68 };
+    const dy = plan.positions["ch2"].y - plan.positions["ch1"].y; // what a drag captures
+    plan.positions["ch1"] = { x: 100, y: b };
+    plan.positions["ch2"] = { x: 100, y: b + dy };
+    expect(plan.positions["ch2"].y).not.toBe(b + 68); // the drift is real, not assumed
+    on(plan);
+    expect(plan.positions["ch2"].y).toBe(b + dy); // and the sweep left it alone
+  });
+
+  // The other half of the note rule, and the reason it is a band rather than a wider offset:
+  // this snap moves two nodes while Arrange re-packs a whole column, so a pair widened to
+  // clear the note would land in the row the node below already occupies.
+  it("never writes a partner onto the node below, however tall the primary is", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+    plan.notes["ch1"] = "a note";
+    on(plan);
+    expect(drawnAt("ch2")).not.toEqual(drawnAt("ch3"));
+    expect(drawnAt("ch2").y - drawnAt("ch1").y).toBe(drawnAt("ch4").y - drawnAt("ch3").y);
+  });
+
+  // Arrange advances a column by whole rows big enough to clear an expanded note. An offset
+  // taken from the bare grid would lay the partner inside that note at the next load.
+  it("clears an expanded note on the primary, the way Arrange does", () => {
+    // Read off the pristine board, before this case's own plan is on it.
+    const bare = drawnAt("ch4").y - drawnAt("ch3").y;
+    const plan = linkedPairPlan();
+    plan.notes["ch3"] = "a note";
+    on(plan);
+    fx.graph.autoLayout();
+    const arranged = { ...plan.positions["ch4"]! };
+    // The note is what makes this a test: without it Arrange's own gap is the bare grid's.
+    expect(arranged.y - plan.positions["ch3"]!.y).toBeGreaterThan(bare);
+    expect(fx.graph.alignLinkedPairs()).toBe(false);
+    expect(plan.positions["ch4"]).toEqual(arranged);
+  });
+
+  it("runs on the document a load puts on the board", () => {
+    const plan = on(linkedPairPlan());
+    expect(plan.positions["ch4"]!.x).toBe(500);
+    expect(nodeEl(fx.host, "ch4")!.getAttribute("transform")).toContain("translate(500 ");
+  });
+
+  // The URX22 has one pair, and its own column geometry: the assertions above are about
+  // the pair, not about where the URX44V happens to put CH 3.
+  it("snaps a URX22 pair too", () => {
+    const plan = defaultPlan("URX22");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+    plan.positions["ch1"] = { x: 420, y: 260 };
+    plan.positions["ch2"] = { x: 880, y: 700 };
+    on(plan, "URX22");
+    expect(plan.positions["ch2"]!.x).toBe(420);
+    expect(plan.positions["ch2"]!.y).toBeGreaterThan(260);
   });
 });
 
