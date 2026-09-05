@@ -35,6 +35,7 @@ import {
   PlanWriteWitness,
   type PatchTouch,
   patchContestNames,
+  type PlanPatch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import { applyParamRange, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
@@ -603,6 +604,17 @@ function authorFromDevice(node: string, place: () => boolean, kind: WriteSource 
   planHistory?.absorb(moved);
   return true;
 }
+/** Record that a device read supplied these keys.
+ *
+ *  The patch is what the merge ACTUALLY adopted — a key the read left alone because the plan
+ *  had moved under it is not in there, and neither is one a failed or cancelled read never
+ *  reached. Without this a value the unit replaced keeps reading as the document's, so a later
+ *  divergence in it is never mentioned; `authorFromDevice` covers only the follow-side applies.
+ */
+function notePatchFromDevice(patch: PlanPatch): void {
+  markSource(plan, patchContestNames(patch), "device");
+}
+
 /** After a write the device confirmed, the plan takes the values that were actually sent.
  *
  *  Which values those are is `confirmedAdoptions` (`app/adopt-writes.ts`), which needs the plan
@@ -868,6 +880,7 @@ async function followRead(
       },
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
+    else notePatchFromDevice(merged.devicePatch);
     return merged;
   } finally {
     followReads.delete(entry);
@@ -2778,6 +2791,7 @@ if (!DEMO) {
         }
         if (merged.errors.length) console.warn("device readback issues:", merged.errors);
         noteMergeConflicts(merged);
+        notePatchFromDevice(merged.devicePatch);
         // Follow USB is outside the plan (see params.ts), so the readback does not
         // carry it — read it on the same connection so the badge matches the values
         // that just landed.
@@ -3326,6 +3340,7 @@ if (!DEMO) {
         midi?.probeMark("live:read:end");
         if (!merged) return await abort(t().status.canceled);
         noteMergeConflicts(merged);
+        notePatchFromDevice(merged.devicePatch);
         plan.unreadNodes = merged.unreadNodes;
         rerenderPlan();
         // A partial read leaves the plan holding defaults where the device was not
@@ -3575,7 +3590,12 @@ if (!DEMO) {
     }
     let result: ReadbackResult;
     try {
+      // A settings FILE, not the connected unit: its values are the same kind of thing a plan
+      // document supplies, so they are recorded as such. Calling them the unit's would claim
+      // the connected device holds them, which a file written by another unit does not.
+      const beforeImport = clonePlanState(plan);
       result = await applySourceState(getModel(modelId), plan, paramSourceOf(current));
+      markSource(plan, patchContestNames(diffPlans(beforeImport, plan)), "load");
     } catch (err) {
       showError(t().status.settingsError(errorText(err)));
       return;

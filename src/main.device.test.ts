@@ -692,6 +692,39 @@ describe("Fetch from device", () => {
     expect(shell.count("vd_get")).toBeLessThan(10);
   });
 
+  // A read replaces values the document wrote, and from then on they are the unit's: a later
+  // divergence in one is the unit having moved, not a setting the operator chose. Recorded off
+  // the merge's own patch, which is what the read ACTUALLY adopted — a key it left alone
+  // because the plan had moved under it is not in there.
+  //
+  // The document names EVERY key, so before the fetch nothing in the plan is unauthored and the
+  // confirm carries no note. That is what makes the note's presence afterwards the answer.
+  it("takes the values a fetch adopted as the unit's", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const written = defaultPlan("URX44V");
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: clockReads(false, 48_000) }),
+    }))!;
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const first = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(first, "the premise: the write asked").toHaveLength(1);
+    expect(stripsNamed(first[0]), "the premise: the document authored everything").toEqual([]);
+
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(shell.count("vd_get"), "the premise: the fetch swept the device").toBeGreaterThan(400);
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 3);
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the positive control: the second write asked too").toHaveLength(2);
+    expect(stripsNamed(asked[1]).length).toBeGreaterThan(0);
+  });
+
   it("reads a unit on the verified firmware without asking anything", SLOW, async () => {
     const shell = await bootDevice({}, false); // every confirm would DECLINE
     $("btn-fetch").click();
