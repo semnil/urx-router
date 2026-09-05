@@ -684,10 +684,13 @@ The constraint core (`core/routing.ts`):
   so the tie is never stretched across a gap an earlier manual move opened. The pair keeps independent saved
   positions afterwards (unlike a ducker's parent-derived position), so it stays freely draggable.
   A link the app did not make gets the same snap from `alignLinkedPairs`, which reads the pair off the plan
-  instead of off an edit: a loaded document and a whole-plan device read both go through `Graph.setModel`, and a
-  device-follow reconcile of a Signal Type moved on the unit's own panel calls it beside the read that brought
-  the link in — ahead of that read's trace sample, so the layout consequence is attributed to the funnel it
-  rides in rather than to whichever writer samples next. There the **primary** is kept rather than the selected
+  instead of off an edit: a loaded document and a whole-plan device read both go through `Graph.setModel`, and
+  the three device-side reads call it beside the read that brought the link in — the scoped reconcile of a
+  Signal Type moved on the unit's own panel, the whole-device one a scene recall and the idle sweep take, and
+  the side-effect refetch, whose re-read of a pair primary's body carries the Signal Type with it. All three go
+  through `snapLinkedPairs`, ahead of that read's trace sample, so the layout consequence is attributed to the
+  funnel it rides in rather than to whichever writer samples next; the refetch also asks for the full reflect,
+  since the fine-grained one repaints the nodes its read named and draws no tie. There the **primary** is kept rather than the selected
   member, so the pair settles on the same two slots whatever the board's selection happens to be, and a pair
   with either member shelved is left alone: no tie is drawn for it, so there is no gap to close, and snapping
   the visible member toward a shelved one would relocate it for a partner that is not on screen.
@@ -697,11 +700,15 @@ The constraint core (`core/routing.ts`):
   moves. *Show all* follows the same rule per pair: where exactly one member is returning it moves, and only
   a pair whose two members were both shelved — neither of them "already there" — falls to the primary-keeping
   sweep. A node with no partner on the board still parks under the viewport, where it is easy to find.
-  The offset itself is the default layout's, **widened so the upper node's drawn footprint clears**: Arrange
-  reserves whole rows for an expanded note, and the two now derive that from one place (`rowsFor`), so a snap
-  cannot lay the lower member inside the upper one's note. Two positions count as the same slot within a
-  sub-pixel tolerance — a pair the operator dragged carries float error of ~1e-13 px in its saved offset, and
-  on the device-follow path a write nobody can see would still be a plan write outside every edit funnel.
+  The position written is the default layout's offset, but what counts as "already in the slot" is a **band**
+  (`inPairSlot`): the primary's column, on the side the layout puts the partner, no closer than that offset and
+  no further than the rows the upper of the two occupies. Arrange advances a column by whole rows big enough to
+  clear an expanded note, and the band shares that arithmetic (`rowsFor`), so a load does not undo it — while
+  writing the widened offset instead would land the pair on top of whatever sits in the row it grew into, since
+  Arrange re-packs a whole column and this moves two nodes. The band's floor carries a sub-pixel tolerance: a
+  dragged pair's saved offset is the default one re-added at a different base, which lands ~1e-13 px off often
+  enough to matter, and on the device-follow path a write nobody can see would still be a plan write outside
+  every edit funnel.
 
 The UI (`graph.ts`) uses these to let a wire be dragged from either an output or an input port,
 highlighting the opposite-side ports in two layers: legal targets filled, rule-defined-but-occupied

@@ -848,18 +848,39 @@ export class Graph {
   }
 
   /** Where a pair's `other` member belongs beside the one kept in place: the offset the
-   *  default layout gives the two, widened so the upper node's drawn footprint clears —
-   *  Arrange reserves whole rows for an expanded note, and an offset taken from the bare
-   *  grid would lay the lower node inside that note. Channels are never hung, so their
-   *  drawn position is the saved one or the default. */
+   *  default layout gives the two, carried onto the kept node's position. Channels are never
+   *  hung, so their drawn position is the saved one or the default. */
   private alignedPairPos(kept: string, other: string): Pt {
     const dk = defaultLayoutPos(this.nodeById.get(kept)!);
     const dother = defaultLayoutPos(this.nodeById.get(other)!);
     const kp = this.plan.positions[kept] ?? dk;
-    const down = dother.y >= dk.y;
-    const clear = this.rowsFor(down ? kept : other) * ROW_GAP;
-    const dy = Math.max(Math.abs(dother.y - dk.y), clear) * (down ? 1 : -1);
-    return { x: kp.x + (dother.x - dk.x), y: kp.y + dy };
+    return { x: kp.x + (dother.x - dk.x), y: kp.y + (dother.y - dk.y) };
+  }
+
+  /** Whether `other` already stands in the pair's slot beside `kept`: its own column, on the
+   *  side the layout puts it, no closer than the default offset and no further than the rows
+   *  the upper of the two occupies.
+   *
+   *  A BAND rather than the one position `alignedPairPos` writes, because Arrange advances a
+   *  column by whole rows big enough to clear an expanded note (`rowsFor`, shared with it) and
+   *  a load must not undo that. Widening the written offset instead is not the answer: Arrange
+   *  re-packs the whole column while this moves two nodes, so the pair would land on top of
+   *  whatever sits in the row it grew into. The band's own floor is the default offset, so a
+   *  pair the operator stretched still comes back.
+   *
+   *  Its lower edge carries the tolerance for the same reason its equality once did: a dragged
+   *  pair's saved offset is the default one re-added at a different base, which lands ~1e-13 px
+   *  off often enough to matter, and a write nobody can see is still a plan write. */
+  private inPairSlot(kept: string, other: string): boolean {
+    const want = this.alignedPairPos(kept, other);
+    const kp = this.posOf(kept);
+    const at = this.posOf(other);
+    if (Math.abs(at.x - want.x) >= ALIGN_SLOP) return false;
+    const wantDy = want.y - kp.y;
+    const dy = at.y - kp.y;
+    if (Math.sign(dy) !== Math.sign(wantDy)) return false;
+    const clear = this.rowsFor(wantDy > 0 ? kept : other) * ROW_GAP;
+    return Math.abs(dy) >= Math.abs(wantDy) - ALIGN_SLOP && Math.abs(dy) <= clear + ALIGN_SLOP;
   }
 
   /** How many whole rows a node occupies — its own drawn height plus any hung children,
@@ -889,13 +910,11 @@ export class Graph {
     for (const [primary, partner] of this.model.channelPairs) {
       if (!this.plan.nodeParams[primary]?.stereoLink) continue;
       if (this.isHidden(primary) || this.isHidden(partner)) continue;
-      const want = this.alignedPairPos(primary, partner);
       // Against the partner's DRAWN position, not its saved one: a pair neither member of
-      // which was ever moved is already at the offset, and writing a position for it would
+      // which was ever moved is already in its slot, and writing a position for it would
       // put an entry in the document for a node nothing relocated.
-      const at = this.posOf(partner);
-      if (Math.abs(at.x - want.x) < ALIGN_SLOP && Math.abs(at.y - want.y) < ALIGN_SLOP) continue;
-      this.plan.positions[partner] = want;
+      if (this.inPairSlot(primary, partner)) continue;
+      this.plan.positions[partner] = this.alignedPairPos(primary, partner);
       moved = true;
     }
     return moved;
@@ -903,12 +922,20 @@ export class Graph {
 
   /** Snap `id` to its canonical offset from a STEREO-linked partner already on the board,
    *  and report whether it did. The node already there stays where it is. */
-  private snapToLinkedPartner(id: string): boolean {
+  private snapToLinkedPartner(id: string): void {
+    const partner = this.linkedPartnerOnBoard(id);
+    // Not unconditionally: a node whose slot is already the right one gets no document entry
+    // and no undo entry for a move of zero pixels.
+    if (partner && !this.inPairSlot(partner, id)) this.plan.positions[id] = this.alignedPairPos(partner, id);
+  }
+
+  /** The STEREO-linked partner of `id` that is on the board, or null — which is what says
+   *  whether there is a slot to snap into at all, separately from whether `id` already
+   *  stands in it. */
+  private linkedPartnerOnBoard(id: string): string | null {
     const pair = this.linkedPairOf(id);
     const partner = pair ? (pair[0] === id ? pair[1] : pair[0]) : null;
-    if (!partner || this.isHidden(partner)) return false;
-    this.plan.positions[id] = this.alignedPairPos(partner, id);
-    return true;
+    return partner && !this.isHidden(partner) ? partner : null;
   }
 
   /** The channelPairs entry [primary, partner] containing `id` when that pair is
@@ -2448,7 +2475,8 @@ export class Graph {
    *  rather than opening stretched. The one already on the board stays where it is.
    *  Everything else parks under the viewport, where it is easy to find. */
   private placeRestored(id: string): void {
-    if (!this.snapToLinkedPartner(id)) this.placeInView(id);
+    if (this.linkedPartnerOnBoard(id)) this.snapToLinkedPartner(id);
+    else this.placeInView(id);
   }
 
   /** Park a restored node at the current viewport center, in content coords. */

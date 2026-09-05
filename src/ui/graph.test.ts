@@ -389,6 +389,21 @@ describe("hide and show", () => {
     expect(fx.plan.positions["ch1"]!.y).toBeLessThan(300);
   });
 
+  // A restore is not a move: a member coming back to the slot it already belongs in earns no
+  // document entry and no undo entry.
+  it("writes no position when Show all returns a member to the slot it already had", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+        plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
+      },
+    });
+    fx.graph.hideNode("ch2");
+    expect(fx.plan.positions["ch2"]).toBeUndefined();
+    fx.graph.showAll();
+    expect(fx.plan.positions["ch2"]).toBeUndefined();
+  });
+
   // Show all can bring several members back at once, so it closes the gap the way a
   // load does — keeping the primary — rather than moving whichever node arrived.
   it("closes a linked pair's gap when Show all brings its member back", () => {
@@ -682,19 +697,34 @@ describe("alignLinkedPairs", () => {
   // A pair the operator dragged carries float error in its saved offset, so an equality
   // test reports it as off-canonical and rewrites it — a plan write for a move of ~1e-13 px,
   // which on the device-follow path lands outside every edit funnel.
-  it("writes nothing for a pair whose saved offset carries a dragged pair's float error", () => {
+  // Both signs: the drift lands on either side of the offset, and only one of them is caught
+  // by the band's ceiling — the other needs its floor to carry the tolerance too.
+  it.each([
+    ["over", 479.21785452540706, 291.4388726636495],
+    ["under", 983.5990309575515, 913.213396719236],
+  ])("writes nothing for a pair whose saved offset drifted %s the canonical one", (_which, a, b) => {
     const plan = defaultPlan("URX44V");
     plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
-    const a = 479.21785452540706;
     plan.positions["ch1"] = { x: 100, y: a };
     plan.positions["ch2"] = { x: 100, y: a + 68 };
     const dy = plan.positions["ch2"].y - plan.positions["ch1"].y; // what a drag captures
-    const b = 291.4388726636495;
     plan.positions["ch1"] = { x: 100, y: b };
     plan.positions["ch2"] = { x: 100, y: b + dy };
     expect(plan.positions["ch2"].y).not.toBe(b + 68); // the drift is real, not assumed
     on(plan);
     expect(plan.positions["ch2"].y).toBe(b + dy); // and the sweep left it alone
+  });
+
+  // The other half of the note rule, and the reason it is a band rather than a wider offset:
+  // this snap moves two nodes while Arrange re-packs a whole column, so a pair widened to
+  // clear the note would land in the row the node below already occupies.
+  it("never writes a partner onto the node below, however tall the primary is", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+    plan.notes["ch1"] = "a note";
+    on(plan);
+    expect(drawnAt("ch2")).not.toEqual(drawnAt("ch3"));
+    expect(drawnAt("ch2").y - drawnAt("ch1").y).toBe(drawnAt("ch4").y - drawnAt("ch3").y);
   });
 
   // Arrange advances a column by whole rows big enough to clear an expanded note. An offset

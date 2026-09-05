@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { faceplate, stereoTie } from "./graph-helpers";
-import { LIVE_COMMANDS, notifyParam, setDeviceValue, stubTauriDevice } from "./tauri-stub";
+import { LIVE_COMMANDS, notifyBurst, notifyParam, setDeviceValue, stubTauriDevice } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 
 // A STEREO link the app did not make. Signal Type is moved on the unit's own panel;
@@ -70,10 +70,23 @@ test("a Signal Type moved on the unit snaps the pair back beside its primary", a
 // moves several Signal Types at once takes.
 test("a burst wide enough to force a whole-device read snaps the pair too", async ({ page }) => {
   const before = await liveWithParkedPartner(page);
-  await notifyParam(page, PARAMS.CH_FADER.id, 0, 100);
-  await notifyParam(page, PARAMS.CH_FADER.id, 1, 100);
-  await notifyParam(page, PARAMS.CH_FADER.id, 2, 100);
-  await notifyParam(page, PARAMS.HA_GAIN.id, 0, 300);
-  await notifyParam(page, SIGNAL_TYPE, 0, 1);
+  // Seeded so the read that follows finds what the burst announced, and delivered as ONE
+  // batch: five distinct controls is what puts the follow layer past hand operation, and
+  // five separate calls could let the settle fire between them and take the narrow path —
+  // which every assertion below would still pass.
+  for (const [id, y, value] of BURST) await setDeviceValue(page, id, y, value);
+  await notifyBurst(
+    page,
+    BURST.map(([paramId, y, value]) => ({ paramId, y, value })),
+  );
   await expectSnapped(page, before);
 });
+
+// Five distinct controls, against MAX_CONCENTRATION = 3 in src/core/control/follow.ts.
+const BURST: ReadonlyArray<[number, number, number]> = [
+  [PARAMS.CH_FADER.id, 0, 100],
+  [PARAMS.CH_FADER.id, 1, 100],
+  [PARAMS.CH_FADER.id, 2, 100],
+  [PARAMS.HA_GAIN.id, 0, 300],
+  [SIGNAL_TYPE, 0, 1],
+];

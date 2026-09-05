@@ -263,13 +263,23 @@ export const setDeviceValue = (page: Page, paramId: number, y: number, value: nu
  *  and a case waiting for the change times out reading as the feature being gone — and a
  *  case asserting that nothing happens passes for free. */
 export const notifyParam = (page: Page, paramId: number, y: number, value: number, x = 0): Promise<void> =>
+  notifyBurst(page, [{ paramId, y, value, x }]);
+
+/** Announce several at once, as ONE batch. A case about what a burst's WIDTH does — the follow
+ *  layer escalates to a whole-device read past a few distinct controls — cannot send them one
+ *  call at a time: each round trip is its own delay, and a settle that fires part-way through
+ *  takes the narrow path instead while every assertion about the outcome still holds. */
+export const notifyBurst = (
+  page: Page,
+  updates: ReadonlyArray<{ paramId: number; y: number; value: number; x?: number }>,
+): Promise<void> =>
   page.evaluate(
-    ([id, xx, yy, v]) => {
+    (list) => {
       const w = window as unknown as { __urxNotify: { onmessage: (batch: unknown) => void } | null };
       if (!w.__urxNotify) throw new Error("notifyParam: nothing subscribed to the notify stream");
-      w.__urxNotify.onmessage([{ param_id: id, x: xx, y: yy, value: v }]);
+      w.__urxNotify.onmessage(list.map((u) => ({ param_id: u.paramId, x: u.x ?? 0, y: u.y, value: u.value })));
     },
-    [paramId, x, y, value],
+    updates as Array<{ paramId: number; y: number; value: number; x?: number }>,
   );
 
 /** Every link-ledger line the stub was asked to append, in order (raw JSONL). */

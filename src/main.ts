@@ -470,8 +470,10 @@ const live = DEMO
         // values belong to a document nothing shows, and no snapshot can describe it.
         if (!merged) return null;
         // This read pulls each named node's whole body, and a pair primary's body carries
-        // the Signal Type — so a link can arrive here as well as at the two reconciles.
-        snapLinkedPairs();
+        // the Signal Type — so a link can arrive here as well as at the two reconciles. This
+        // is the one seat whose reflect is the fine-grained branch, which repaints the nodes
+        // this read named and draws no tie; a snap here asks for the full one instead.
+        if (snapLinkedPairs()) followFull = true;
         traceProbe?.sample("refetch");
         noteMergeConflicts(merged);
         for (const id of nodeIds) followDirtyNodes.add(id);
@@ -617,11 +619,17 @@ function authorFromDevice(node: string, place: () => boolean, kind: WriteSource 
  *  layout consequence of a device change, so a later gesture must not carry it, and the
  *  reconcile's own reset does not cover a read that authored nothing itself.
  *
- *  The board owns the geometry, so the graph is asked rather than the plan: the offset it
- *  writes clears an expanded note the way Arrange does. */
-function snapLinkedPairs(): void {
+ *  The board owns the geometry, so the graph is asked rather than the plan: which positions
+ *  count as the pair's slot is a question about what is drawn, notes included.
+ *
+ *  Returns whether anything moved, because a caller whose reflect repaints only the nodes its
+ *  read named has to widen it: the partner this moves is not one of them, and the heart tie is
+ *  rebuilt by a full render alone. */
+function snapLinkedPairs(): boolean {
   const before = clonePlanState(plan);
-  if (graph.alignLinkedPairs()) planHistory?.absorb(diffPlans(before, plan));
+  if (!graph.alignLinkedPairs()) return false;
+  planHistory?.absorb(diffPlans(before, plan));
+  return true;
 }
 
 /** Record that a device read supplied these keys.
