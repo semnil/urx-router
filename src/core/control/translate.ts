@@ -21,6 +21,8 @@ import type {
   SsmcsParams,
 } from "../plan";
 import { incomingConnection, normalizeNodeName, SSMCS_INITIAL } from "../plan";
+import type { NodeParams } from "../plan";
+import { nodeParamContestPath } from "../plan-history";
 import type { ParamRangeProblem } from "../plan-validate";
 import {
   FX_CHANNEL_NODE_INDEX,
@@ -1811,12 +1813,101 @@ export function planToCommands(
  * Nothing that talks to a device may use this: a repeated address sends the losing
  * owner's value and then overwrites it, which is the defect the collapse removes.
  */
+
+/** The plan key an emitted command took its VALUE from, absent where the emit supplied the
+ *  value itself — a fixed switch, or a descriptor's own default for a slot the plan omits. */
+export type CommandOrigin = string | undefined;
+
+/** Every leaf read the emit makes, in order, named the way the differ names one.
+ *
+ *  A Proxy rather than a stamp at each of the emit's hundred-odd push sites: the value a
+ *  command carries is READ immediately before it is pushed, so the reads between one push and
+ *  the next are that command's inputs and the last of them is the one it carries. Recording it
+ *  at the read is what keeps the two from drifting — a stamp is a second spelling of the same
+ *  fact, kept by hand at every site that emits. */
+function recordingParams(nodeParams: Plan["nodeParams"], read: (name: string) => void): Plan["nodeParams"] {
+  const wrap = (value: unknown, path: string[]): unknown => {
+    if (value === null || typeof value !== "object") return value;
+    return new Proxy(value as object, {
+      get(target, prop, receiver) {
+        const held = Reflect.get(target, prop, receiver);
+        // The plan's OWN string properties only. A key it does not carry is read all the same
+        // — the emit asks before it decides whether to send one — and it is not a value the
+        // plan supplies, so a command pushed after such a read has no plan key behind it and
+        // must not inherit that name. A prototype method is excluded by the same test.
+        if (typeof prop !== "string" || !Object.prototype.hasOwnProperty.call(target, prop)) return held;
+        if (held !== null && typeof held === "object") return wrap(held, [...path, prop]);
+        read([...path, prop].join("."));
+        return held;
+      },
+    });
+  };
+  const out: Plan["nodeParams"] = {};
+  for (const [nodeId, params] of Object.entries(nodeParams)) {
+    out[nodeId] = wrap(params, []) as NodeParams;
+  }
+  return out;
+}
+
+/**
+ * What produced each command a write under `scope` would send, keyed by address.
+ *
+ * The join a caller needs to say whether the operator chose what a write is about to change.
+ * A key that merely GATES a command — a channel's insert-FX selector, its comp/EQ order —
+ * needs no entry of its own: it owns the value of its OWN command, and that command is on the
+ * same node, so a write actually changing the selector already names the strip through it. Read
+ * as though a gate owned what it gates, an operator editing one engine parameter under a
+ * selector they fetched from the unit is told they are changing something they did not choose,
+ * and nothing about that write touches the selector.
+ *
+ * Keyed by address AFTER the collapse, so a shared address answers for the owner that survives
+ * it, and filtered by the same scope rule the emit uses.
+ */
+export function planToCommandOrigins(
+  model: DeviceModel,
+  plan: Plan,
+  scope: WriteScope = "all",
+): Map<number, CommandOrigin> {
+  const reads: string[] = [];
+  let mark = 0;
+  // The LEAF paths, resolved to contest names below: a command's owner node is stamped after
+  // it is pushed (`own`), so inside the hook there is no node to name it with yet.
+  const seen = new Map<VdCommand, string[]>();
+  const proxied = { ...plan, nodeParams: recordingParams(plan.nodeParams, (name) => reads.push(name)) };
+  const commands = buildCommands(model, proxied, {}, (command) => {
+    seen.set(command, reads.slice(mark));
+    mark = reads.length;
+  });
+  const origins = new Map<number, CommandOrigin>();
+  for (const c of collapseSharedAddrs(commands)) {
+    if (scope !== "all" && (PARAMS[c.name] as ParamSpec).sceneExternal === true) continue;
+    const window = seen.get(c) ?? [];
+    origins.set(cmdAddr(c), window.length ? nodeParamContestPath(c.node ?? "", window[window.length - 1]) : undefined);
+  }
+  return origins;
+}
+
 export function planToCommandsUncollapsed(model: DeviceModel, plan: Plan): VdCommand[] {
   return buildCommands(model, plan);
 }
 
-function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): VdCommand[] {
+function buildCommands(
+  model: DeviceModel,
+  plan: Plan,
+  emit: EmitOptions = {},
+  /** Called as each command is pushed, before anything else reads the plan again. The one
+   *  seat from which a command can be tied to the plan keys that produced it — see
+   *  {@link planToCommandOrigins}, which is the only caller. */
+  onPush?: (command: VdCommand) => void,
+): VdCommand[] {
   const out: VdCommand[] = [];
+  if (onPush) {
+    const push = out.push.bind(out);
+    out.push = (...commands: VdCommand[]): number => {
+      for (const c of commands) onPush(c);
+      return push(...commands);
+    };
+  }
   // Owner-node stamping for the device-follow index: own(id) attributes every
   // command pushed since the last own() call to `id`. `mark` auto-advances, so a
   // single own(id) at the end of each per-node block (or iteration) covers that

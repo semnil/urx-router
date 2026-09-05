@@ -137,13 +137,37 @@ describe("a leaf that gates its node's whole block", () => {
   // obvious one; the engine array follows it, since a type write refills every slot from that
   // type's defaults — so what lands there is the fill's choice however the operator dialled the
   // slot in under the type they had.
-  it("names the strip through the selector and the array it decides", () => {
+  const selectorAddrs = (plan: Plan): Set<number> => {
+    const sel = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "INSERT_FX");
+    expect(sel.length, "the premise: the selector reaches the wire").toBeGreaterThan(0);
+    return new Set(sel.map(cmdAddr));
+  };
+
+  // A selector the fill supplied names the strip through its OWN address, like any other value
+  // nobody chose.
+  it("names the strip for a selector nobody chose", () => {
     const plan = withInsertFx();
     plan.paramSource!.set(nodeParamContestPath("ch1", "insertFx"), "default");
-    const selector = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "INSERT_FX");
-    expect(selector.length, "the premise: the selector reaches the wire").toBeGreaterThan(0);
-    expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(selector.map(cmdAddr)))).toEqual(["ch1"]);
-    expect(unauthoredWriteNodes(MODEL, plan, "all", engineAddrs(plan))).toEqual(["ch1"]);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", selectorAddrs(plan))).toEqual(["ch1"]);
+  });
+
+  // …and the array with it, WHEN that selector is one of the things the write is changing: a
+  // type write refills the effect's slots from the type's own defaults, so what lands there is
+  // not the value the operator dialled in under the type they had.
+  it("names the array a selector the write is changing would refill", () => {
+    const plan = withInsertFx();
+    plan.paramSource!.set(nodeParamContestPath("ch1", "insertFx"), "default");
+    const both = new Set([...selectorAddrs(plan), ...engineAddrs(plan)]);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", both)).toEqual(["ch1"]);
+  });
+
+  // The distinction that separates those two. With the selector fetched off the unit and only
+  // an engine parameter of the operator's own moving, the write changes no selector and no
+  // refill happens — saying otherwise names a strip whose changing value they set themselves.
+  it("says nothing when only an authored engine value moves under a selector that does not", () => {
+    const plan = withInsertFx();
+    plan.paramSource!.set(nodeParamContestPath("ch1", "insertFx"), "device");
+    expect(unauthoredWriteNodes(MODEL, plan, "all", engineAddrs(plan))).toEqual([]);
   });
 
   // A step does not move every value: an enum is bounded to an option list and a neighbouring
@@ -217,51 +241,85 @@ it("names a strip whose unauthored value sits at the end of its range", () => {
   plan.paramSource!.set(nodeParamContestPath("ch1", "gain"), "default");
   const gain = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "HA_GAIN");
   expect(gain.length, "the premise: the gain reaches the wire").toBeGreaterThan(0);
-  const addr = new Set(gain.map(cmdAddr));
-  // The premise that makes this the DOWNWARD case: a step up encodes to the value it already
-  // has, so only a step down can tell that the address follows this leaf.
-  const up = { ...plan, nodeParams: { ...plan.nodeParams, ch1: { ...plan.nodeParams.ch1, gain: 71 } } };
-  const upAt = planToCommands(MODEL, up, "all").filter((c) => c.node === "ch1" && c.name === "HA_GAIN");
-  expect(upAt[0].vdValue, "the premise: a step up is clamped back").toBe(gain[0].vdValue);
-  expect(unauthoredWriteNodes(MODEL, plan, "all", addr)).toEqual(["ch1"]);
+  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(gain.map(cmdAddr)))).toEqual(["ch1"]);
 });
 
-// Removing a value does not always change what the emit sends: an FX channel's effect slots go
-// out with the descriptor's own default when the plan carries none, and the fill puts exactly
-// that default in the plan — so dropping the key emits the same number. Only moving the value
-// separates them, and these are 24 commands a write really does send.
-it("names a strip whose only unauthored key is one its removal cannot separate", () => {
+// An FX channel's level is emitted with the descriptor's own default when the plan carries
+// none, and the fill puts exactly that default — 100, the top of its range — into the plan. So
+// the value is unauthored while nothing about the emit distinguishes it from a plan that never
+// named it, and a write moving the unit's 80 back to 100 has to be named for what it is.
+it.each(["bus.fx1", "bus.fx2"])("names %s when the fill supplied its level", (node) => {
   const plan = filledPlan();
   for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
-  const type = nodeParamContestPath("bus.fx1", "fxEffect.type");
-  expect(plan.paramSource!.has(type), "the premise: the fill supplied the effect type").toBe(true);
-  plan.paramSource!.set(type, "default");
+  const level = nodeParamContestPath(node, "fxEffect.level");
+  expect(plan.paramSource!.get(level), "the premise: the fill carries it").toBe("manual");
+  expect(plan.nodeParams[node]?.fxEffect?.level, "the premise: at the top of its range").toBe(100);
+  plan.paramSource!.set(level, "default");
 
-  const fx = planToCommands(MODEL, plan, "all").filter((c) => c.node === "bus.fx1" && c.name.startsWith("FX_EFFECT"));
-  expect(fx.length, "the premise: the section reaches the wire").toBeGreaterThan(0);
-
-  // The premise that makes this the STEP's case: an absent effect type resolves to the
-  // channel's factory type, which is the one the fill put there — so dropping the key sends
-  // exactly what keeping it sends, and its removal says nothing about who decided the values.
-  const bare = {
+  const at = planToCommands(MODEL, plan, "all");
+  const moved = {
     ...plan,
     nodeParams: {
       ...plan.nodeParams,
-      "bus.fx1": {
-        ...plan.nodeParams["bus.fx1"],
-        fxEffect: { ...plan.nodeParams["bus.fx1"]!.fxEffect, type: undefined },
-      },
+      [node]: { ...plan.nodeParams[node], fxEffect: { ...plan.nodeParams[node]!.fxEffect, level: 80 } },
     },
   } as typeof plan;
-  const without = new Map(
-    planToCommands(MODEL, bare, "all")
-      .filter((c) => c.node === "bus.fx1" && c.name.startsWith("FX_EFFECT"))
-      .map((c) => [cmdAddr(c), c.vdValue]),
-  );
-  expect(
-    fx.every((c) => without.get(cmdAddr(c)) === c.vdValue),
-    "the premise: dropping the type changes nothing the write sends",
-  ).toBe(true);
+  const held = new Map(planToCommands(MODEL, moved, "all").map((c) => [cmdAddr(c), c.vdValue]));
+  const changing = at.filter((c) => held.get(cmdAddr(c)) !== c.vdValue);
+  expect(changing, "the premise: the unit differs in that one value").toHaveLength(1);
 
-  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(fx.map(cmdAddr)))).toEqual(["bus.fx1"]);
+  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(changing.map(cmdAddr)))).toEqual([node]);
+  // The control: the same address, with the level the operator's own.
+  plan.paramSource!.set(level, "manual");
+  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(changing.map(cmdAddr)))).toEqual([]);
+});
+
+// A slot the plan does not carry is still emitted, with the descriptor's own default — so that
+// command has no plan key behind it and cannot be a value the operator failed to choose. Read
+// as though the absent key owned it, every such slot would name its strip.
+it("says nothing about a slot the emit supplies itself", () => {
+  const plan = filledPlan();
+  for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
+  const params = { ...plan.nodeParams["bus.fx1"]!.fxEffect!.params };
+  const dropped = Object.keys(params)[0];
+  delete params[dropped];
+  plan.nodeParams["bus.fx1"] = {
+    ...plan.nodeParams["bus.fx1"],
+    fxEffect: { ...plan.nodeParams["bus.fx1"]!.fxEffect, params },
+  };
+  expect(plan.paramSource!.has(nodeParamContestPath("bus.fx1", `fxEffect.params.${dropped}`)), "the premise").toBe(
+    true,
+  );
+  plan.paramSource!.delete(nodeParamContestPath("bus.fx1", `fxEffect.params.${dropped}`));
+
+  const fx = planToCommands(MODEL, plan, "all").filter((c) => c.node === "bus.fx1" && c.name.startsWith("FX_EFFECT"));
+  expect(fx.length, "the premise: the section still reaches the wire").toBeGreaterThan(0);
+  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(fx.map(cmdAddr)))).toEqual([]);
+});
+
+// The value a command carries is the LAST key read before it goes out. The guard above it is
+// read first and decides only whether the block runs at all: an EQ band's ON follows the band,
+// not the 1-knob switch that let the bands through.
+it("names the strip for the band's own key, not the switch read before it", () => {
+  const plan = filledPlan();
+  for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
+  expect(plan.nodeParams.ch1?.eqOneKnob?.on, "the premise: the switch is off, so the bands go out").toBe(false);
+  plan.paramSource!.set(nodeParamContestPath("ch1", "eqBands.0.on"), "default");
+
+  const band = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "EQ_BAND_ON");
+  expect(band.length, "the premise: the bands reach the wire").toBeGreaterThan(0);
+  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set([cmdAddr(band[0])]))).toEqual(["ch1"]);
+});
+
+// The floor under every case above: a plan the operator authored throughout names nothing,
+// whatever the write is changing. The emit reads keys the plan does NOT carry on its way to a
+// decision — 52 such reads on a factory-filled URX44V — and a command pushed after one of them
+// carries no plan key at all, so taking that name would put a strip in the note for a value
+// nobody supplied.
+it("says nothing about a plan the operator authored throughout", () => {
+  const plan = filledPlan();
+  for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "load");
+  const every = new Set(planToCommands(MODEL, plan, "all").map(cmdAddr));
+  expect(every.size, "the premise: the write has plenty to send").toBeGreaterThan(100);
+  expect(unauthoredWriteNodes(MODEL, plan, "all", every)).toEqual([]);
 });

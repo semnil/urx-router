@@ -3366,15 +3366,20 @@ any more. A plan that has to keep the unit's effect carries its values: fetch th
 What the write costs there is irreversible. An EFFECT TYPE write refills the engine array with that
 type's defaults, and selecting the old type back does not bring the old values with it. So the decision
 is put in front of the operator instead of being taken by a document's silence:
-`app/unauthored-writes.ts` reports the strips a write moves at addresses whose VALUE an
-unauthored key decides, and the write confirm names them. It asks the emit's values rather than
-its shape — the plan is re-emitted with the unauthored keys moved off their values, and an
-address whose command carries a different value is one of them. The shape answers a different
-question in both directions: `insertFx` gates its node's whole insert-FX block, so removing it
-takes an authored engine parameter's address with it, while an `fxEffect` slot is emitted with a
-fallback whether or not the plan carries it, so removing one costs no address at all though the
-write sends its value. `plan_tool.py` says the same thing a step earlier, to the author of a
-generated plan.
+`app/unauthored-writes.ts` reports the strips a write moves at addresses whose value the operator
+did not choose, and the write confirm names them. The join is `planToCommandOrigins`: the emit is
+run once over a plan whose node parameters record their reads, and the LAST key read before a
+command goes out is the key that command's value came from — the value is read immediately before
+it is pushed, which is what keeps the two from drifting the way a stamp kept by hand at each of a
+hundred-odd emit sites would. A key the plan does not carry is read all the same, on the way to
+deciding whether to send one at all, and is excluded: a command pushed after such a read has no
+plan key behind it.
+
+A key that merely GATES a command — a channel's insert-FX selector, its comp/EQ order — needs no
+reading of its own. It owns the value of its own command, on the same node, so a write that is
+actually changing the selector already names the strip through it; one that is not leaves an
+engine parameter the operator dialled in as theirs. `plan_tool.py` says the same thing a step
+earlier, to the author of a generated plan.
 
 Once the section is present the whole channel is authored — **there is no partial FX write**. The
 selector goes out whether or not the document names a type (an absent one resolves to the channel's
