@@ -965,9 +965,10 @@ control happens to be continuous, which is not something the reader can see. So 
 one rule: 8 px, 2 px corners, outlined in the lamp's ink. Outlined and not filled, because the card
 already has a lit face in the knob's pointer. **The twelve-note keyboard's row takes it too** — it
 is a card, a wide one, and what excludes it from the stack above is the height a stack costs, which
-a face does not. **And a locked card leaves its tag out of the dim**, the way a locked row does: the
-tag is what says why the card cannot be touched, so the one thing the dim must not reach is the one
-thing explaining it.
+a face does not. **And a locked card dims its contents rather than itself**, the way a locked row
+does, which decides two things at once: the tag stays at full strength — it is what says why the
+card cannot be touched, so it is the one thing the dim must not reach — and the card keeps its own
+frame, so a grid holding both kinds does not draw two strengths of card edge.
 
 **What keeps the settings pill is a row outside the knob grid** — the dashed, dim, round one
 Preferences uses. The panel there is a list rather than a grid of cards: the tags stand in a column

@@ -515,10 +515,13 @@ const tagFace = (page: Page, sel: string) =>
       for (let n: Element | null = el; n; n = n.parentElement) opacity *= Number(getComputedStyle(n).opacity);
       return {
         font: [cs.fontFamily, cs.fontSize, cs.fontWeight, cs.letterSpacing].join(" "),
-        border: [cs.borderTopWidth, cs.borderTopStyle, cs.borderTopColor, cs.borderTopLeftRadius].join(" "),
-        padding: [cs.paddingTop, cs.paddingLeft].join(" "),
+        // All four sides and all four corners, since a recipe can lose one of them on its own.
+        border: [cs.borderWidth, cs.borderStyle, cs.borderColor, cs.borderRadius].join(" "),
+        padding: cs.padding,
         color: cs.color,
-        background: cs.backgroundColor,
+        // Both, because the recipe's own claim is that the tag is OUTLINED and not filled, and
+        // a fill written as a gradient leaves `background-color` transparent.
+        background: [cs.backgroundColor, cs.backgroundImage].join(" "),
         opacity: +opacity.toFixed(3),
       };
     });
@@ -533,10 +536,26 @@ test("a card's tag is drawn the same whichever kind of card carries it", async (
   // The anchor: the card recipe is the lamp's ink, at full strength on a locked card.
   expect(onARowCard.color).toBe(lamp);
   expect(onARowCard.opacity).toBe(1);
-  // Switching it on swaps which card holds one: the delay time becomes the unit's.
+  // Switching it on swaps which card holds one: the delay time becomes the unit's — and locks
+  // the card it moves to, which is what makes the two comparable at all. A locked card dims its
+  // contents and keeps its own frame, the way a locked row does, so the frame is read against an
+  // unlocked neighbour's: putting the dim back on the card would take the frame with it.
   await screenRow(page, "Sync").getByRole("button").first().click();
   await expect(screenBox(page).locator(".gt-knobs > .prefs-row .prefs-lock")).toHaveCount(0);
   expect(await tagFace(page, ".gt-knobtag")).toEqual(onARowCard);
+  const frames = await screenBox(page)
+    .locator(".gt-knobs > .gt-knob")
+    .evaluateAll((cards) => {
+      const face = (el: Element) => {
+        const cs = getComputedStyle(el);
+        return [cs.borderWidth, cs.borderStyle, cs.borderColor, cs.backgroundImage].join(" ");
+      };
+      const locked = cards.filter((c) => c.classList.contains("locked"));
+      const plain = cards.filter((c) => !c.classList.contains("locked"));
+      return { locked: locked.map(face), plain: [...new Set(plain.map(face))] };
+    });
+  expect(frames.locked.length).toBe(1);
+  expect(frames.plain).toEqual([frames.locked[0]]);
   await closeScreen(page);
 
   // The control, without which the comparison is satisfied by every tag having become one
