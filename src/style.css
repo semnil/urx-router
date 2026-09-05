@@ -3231,8 +3231,13 @@ input[type="range"]:focus-visible,
    a knob card prints its value. Beside the name the tag is centred against a label box that
    reserves two lines and holds one, so it hangs between the name and the line under it and
    pulls the name off the card's centre to make room. Only a card that has one: the rule
-   above is what every other card is laid out by. */
-.gt-knobs > .prefs-row > .lblc:has(> .prefs-lock) {
+   above is what every other card is laid out by.
+
+   NOT the twelve-note keyboard's row, which spans every column and is already past the
+   card floor: there the stack is height the panel does not have, and the tag on it comes
+   and goes with a selector on the same panel, so the modal would resize under the press
+   that added it. A card the floor absorbs keeps its height either way. */
+.gt-knobs > .prefs-row:not(:has(.gt-notes)) > .lblc:has(> .prefs-lock) {
   display: grid;
   justify-items: center;
   row-gap: 3px;

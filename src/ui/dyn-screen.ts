@@ -217,9 +217,10 @@ export interface DynBar {
   /** The section heading the bar sits in ("Display", "Band"). */
   label: string;
   items: readonly DynBarItem[];
-  /** Nothing is selected and nothing can be: the choice does not belong to the operator
-   *  right now (the EQ's bands are the device's while 1-knob is on). The items keep their
-   *  space — hiding them outright would shorten the heading they sit in. */
+  /** Nothing is selected and nothing can be. The bar keeps its BOX — hiding it outright
+   *  would shorten the heading it sits in, and the heading's height is what every screen's
+   *  display starts from. What it does not keep is anything to read: `reservedBar` is the
+   *  only caller, and its label is blank for the reason stated there. */
   inert?: boolean;
 }
 
@@ -1973,8 +1974,9 @@ export class DynScreen {
    */
   private knobCard(f: DynField, label: string, value: number, opts: SettingsRowOptions | undefined): HTMLElement {
     const card = el("div", "gt-knob" + (opts?.locked ? " locked" : ""));
-    // The label and its reason share a line, the way the row layout puts them together —
-    // the tag qualifies the NAME, and under the knob it reads as a second value.
+    // The label and its reason share a line: the tag qualifies the NAME, and under the knob
+    // it reads as a second value. A card whose control is not a knob has no knob to read it
+    // against, so the stylesheet stacks that one instead.
     const lblc = el("span", "lblc");
     const name = el("span", "lbl");
     name.textContent = label;

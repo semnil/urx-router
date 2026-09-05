@@ -419,21 +419,58 @@ for (const [node, name] of [
     await openFromInspector(page, node);
     await expect(screenBox(page)).toContainText(`FX EFFECT — ${name}`);
     // Read the grid rather than the box: the box hides its own overflow, so a box measurement
-    // reports nothing whatever the panel inside it is doing.
-    const grid = screenBox(page).locator(".prefs-grid");
-    expect(await grid.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+    // reports nothing whatever the panel inside it is doing. And read each COLUMN as well,
+    // because the grid alone can be quieted without the box fitting: clipping a column
+    // (`overflow: hidden` on `.prefs-col`) ends the scrollable area there, so the grid reports
+    // 0 while the invisible box that caused it is still 32px wider than the column holding it.
+    const overflow = await screenBox(page)
+      .locator(".prefs-grid")
+      .evaluate((grid) => [grid, ...grid.children].map((el) => el.scrollWidth - el.clientWidth));
+    expect(overflow).toEqual([0, 0, 0]);
     await closeScreen(page);
   });
 }
+
+// What the reserve holds is the bar's own height, and a bar's height is its font and its
+// padding: it must not depend on which screen reserved it. A label would make it depend on
+// two things at once — its width, which is what the cases above catch on a 230px display
+// column, and how many lines it wraps to, which they cannot see because a label that FITS
+// still moves the height. Measured against a screen at the other end of the title length,
+// through the same builder.
+test("the reserved bar's row is the same height on a long title and a short one", async ({ page }) => {
+  const reserveHeight = () =>
+    screenBox(page)
+      .locator(".prefs-section.gt-reserved")
+      .evaluate((el) => el.getBoundingClientRect().height);
+
+  await openFromInspector(page, "bus.fx2");
+  await expect(screenBox(page)).toContainText("FX EFFECT — Mono Delay");
+  const long = await reserveHeight();
+  await closeScreen(page);
+
+  await page.click("#btn-view-graph");
+  await page.locator('g.node[data-id="ch1"]').click();
+  const gate = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^GATE$/ }) });
+  if (!(await gate.evaluate((el) => (el as HTMLDetailsElement).open))) await gate.locator("summary").click();
+  await gate.locator("#btn-gate-screen").click();
+  await expect(screenBox(page)).toContainText("Gate");
+  expect(await reserveHeight()).toBe(long);
+  await closeScreen(page);
+});
 
 // A tag says when a row's value applies. On a card it goes UNDER the name, where a knob card
 // prints its value — beside it, it is centred against a label box that reserves two lines and
 // holds one, so it hangs between the name and the line under it.
 test("the delay's Note card prints its tag under the name", async ({ page }) => {
   await openFromInspector(page, "bus.fx2");
-  const note = screenBox(page)
-    .locator(".gt-knobs > .prefs-row")
-    .filter({ has: page.getByText("Note", { exact: true }) });
+  // `screenRow` names both card shapes, so a Note row that became a knob card fails here as a
+  // layout verdict rather than as a control that is not there. It is asserted to be the row
+  // shape the rule addresses, and to carry the tag, before anything is measured off it: the
+  // tag is on this row because Sync ships off, and a case that read its rectangle without
+  // saying so would throw rather than report where the tag went.
+  const note = screenRow(page, "Note");
+  await expect(note).toHaveClass(/\bprefs-row\b/);
+  await expect(note.locator(".prefs-lock")).toHaveText("Sync off");
   const geometry = await note.evaluate((row) => {
     const label = row.querySelector(".lbl")!.getBoundingClientRect();
     const tag = row.querySelector(".prefs-lock")!.getBoundingClientRect();
