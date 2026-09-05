@@ -38,6 +38,11 @@ export const selectWire = (page: Page, from: string, to: string): Promise<void> 
 export const faceplate = (page: Page, id: string): Locator =>
   page.locator(`#graph-host g.node[data-id="${id}"]`).locator("rect").first();
 
+/** The heart tie drawn between the two members of a STEREO-linked pair. Its glyph is the
+ *  only thing that says the pair is tied on canvas, so a spec asserting the link — or its
+ *  absence — addresses it here rather than spelling the glyph out again. */
+export const stereoTie = (page: Page): Locator => page.locator("#graph-host text", { hasText: "♥" });
+
 /** Press one jack and release over another, committing a connection. */
 export async function drag(page: Page, from: Locator, to: Locator): Promise<void> {
   const a = await from.boundingBox();

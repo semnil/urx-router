@@ -694,8 +694,14 @@ The constraint core (`core/routing.ts`):
   The shelf is where such a pair comes back together. A member restored from a chip lands at its canonical
   offset from a partner already on the board instead of under the viewport (`placeRestored`), and the node
   already there stays put — the tie is drawn the moment both are up, so the one arriving is the one that
-  moves. *Show all* can bring several back at once, so it closes the gap through `alignLinkedPairs` and keeps
-  the primary; a node with no partner on the board still parks under the viewport, where it is easy to find.
+  moves. *Show all* follows the same rule per pair: where exactly one member is returning it moves, and only
+  a pair whose two members were both shelved — neither of them "already there" — falls to the primary-keeping
+  sweep. A node with no partner on the board still parks under the viewport, where it is easy to find.
+  The offset itself is the default layout's, **widened so the upper node's drawn footprint clears**: Arrange
+  reserves whole rows for an expanded note, and the two now derive that from one place (`rowsFor`), so a snap
+  cannot lay the lower member inside the upper one's note. Two positions count as the same slot within a
+  sub-pixel tolerance — a pair the operator dragged carries float error of ~1e-13 px in its saved offset, and
+  on the device-follow path a write nobody can see would still be a plan write outside every edit funnel.
 
 The UI (`graph.ts`) uses these to let a wire be dragged from either an output or an input port,
 highlighting the opposite-side ports in two layers: legal targets filled, rule-defined-but-occupied

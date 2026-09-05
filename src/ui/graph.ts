@@ -254,52 +254,13 @@ function defaultLayoutPos(node: DeviceNode): Pt {
   return { x: MARGIN + node.pos.col * COL_GAP, y: MARGIN + node.pos.row * ROW_GAP };
 }
 
-/** Where a pair's `other` member belongs beside the one kept in place: the offset the
- *  default layout gives the two, carried onto the kept node's position. Null when
- *  either id is not a node of this model. Channels are never hung, so their drawn
- *  position is the saved one or the default — what `posOf` derives for a hung node
- *  does not arise here. */
-function alignedPairPos(model: DeviceModel, plan: Plan, kept: string, other: string): Pt | null {
-  const keptNode = model.nodes.find((n) => n.id === kept);
-  const otherNode = model.nodes.find((n) => n.id === other);
-  if (!keptNode || !otherNode) return null;
-  const dk = defaultLayoutPos(keptNode);
-  const dother = defaultLayoutPos(otherNode);
-  const kp = plan.positions[kept] ?? dk;
-  return { x: kp.x + (dother.x - dk.x), y: kp.y + (dother.y - dk.y) };
-}
-
-/** Snap the partner of every STEREO-linked pair to its canonical offset from the pair's
- *  primary, and report whether any of them moved.
- *
- *  What `alignStereoPair` does for a link made in the app, for the links that arrive with
- *  no edit funnel behind them: a device read, a device-follow reconcile of a Signal Type
- *  moved on the unit's own panel, and a loaded document. Without it the heart tie is drawn
- *  across whatever gap an earlier manual move opened.
- *
- *  The primary is kept rather than the selected member, so the pair settles on the same two
- *  slots whatever the board's selection is. A pair with either member shelved is left alone:
- *  no tie is drawn for it, and snapping the visible member toward a shelved one would
- *  relocate it for a partner that is not on screen. */
-export function alignLinkedPairs(model: DeviceModel, plan: Plan): boolean {
-  const hidden = new Set(plan.hidden);
-  let moved = false;
-  for (const [primary, partner] of model.channelPairs) {
-    if (!plan.nodeParams[primary]?.stereoLink) continue;
-    if (hidden.has(primary) || hidden.has(partner)) continue;
-    const want = alignedPairPos(model, plan, primary, partner);
-    const partnerNode = model.nodes.find((n) => n.id === partner);
-    if (!want || !partnerNode) continue;
-    // Against the partner's DRAWN position, not its saved one: a pair neither member of
-    // which was ever moved is already at the offset, and writing a position for it would
-    // put an entry in the document for a node nothing relocated.
-    const at = plan.positions[partner] ?? defaultLayoutPos(partnerNode);
-    if (at.x === want.x && at.y === want.y) continue;
-    plan.positions[partner] = want;
-    moved = true;
-  }
-  return moved;
-}
+// Two positions count as the same slot when they are within this. A pair the operator
+// dragged carries float error: the partner's own coordinate is `primary + offset` computed
+// once and re-added at a different base on every move, so a pair that never left its slot
+// can sit ~1e-13 px off the value an alignment would write. Sub-pixel, since a write nobody
+// can see is still a plan write, and on the device-follow path it lands outside every edit
+// funnel.
+const ALIGN_SLOP = 0.01;
 
 export class Graph {
   private svg!: SVGSVGElement;
@@ -434,8 +395,12 @@ export class Graph {
     // had no edit funnel to snap its partner, so this is where the two loading paths
     // (loadPlan and rerenderPlan, which is Fetch / the Live-sync read / a .urxf import)
     // get what linking in the app gives. Positions decide the fit, so a snap taken
-    // afterwards would frame the board it replaced.
-    alignLinkedPairs(this.model, this.plan);
+    // afterwards would frame the board it replaced. `nodeById` is what the align reads for
+    // a node's slot, and `render` rebuilds it, so it is seeded here rather than left to the
+    // model this view is replacing.
+    this.nodeById.clear();
+    for (const node of this.model.nodes) this.nodeById.set(node.id, node);
+    this.alignLinkedPairs();
     this.render();
     this.fitView();
   }
@@ -879,8 +844,71 @@ export class Graph {
     const keepPartner = this.selection?.type === "node" && this.selection.id === partner;
     const kept = keepPartner ? partner : primary;
     const other = keepPartner ? primary : partner;
-    const at = alignedPairPos(this.model, this.plan, kept, other);
-    if (at) this.plan.positions[other] = at;
+    this.plan.positions[other] = this.alignedPairPos(kept, other);
+  }
+
+  /** Where a pair's `other` member belongs beside the one kept in place: the offset the
+   *  default layout gives the two, widened so the upper node's drawn footprint clears —
+   *  Arrange reserves whole rows for an expanded note, and an offset taken from the bare
+   *  grid would lay the lower node inside that note. Channels are never hung, so their
+   *  drawn position is the saved one or the default. */
+  private alignedPairPos(kept: string, other: string): Pt {
+    const dk = defaultLayoutPos(this.nodeById.get(kept)!);
+    const dother = defaultLayoutPos(this.nodeById.get(other)!);
+    const kp = this.plan.positions[kept] ?? dk;
+    const down = dother.y >= dk.y;
+    const clear = this.rowsFor(down ? kept : other) * ROW_GAP;
+    const dy = Math.max(Math.abs(dother.y - dk.y), clear) * (down ? 1 : -1);
+    return { x: kp.x + (dother.x - dk.x), y: kp.y + dy };
+  }
+
+  /** How many whole rows a node occupies — its own drawn height plus any hung children,
+   *  rounded up to the grid. Arrange advances a column by this, so a position derived from
+   *  it lands where Arrange would put the node below. */
+  private rowsFor(id: string): number {
+    let span = this.nodeHeight(id);
+    for (const childId of this.attachedDescendants(id))
+      if (!this.isHidden(childId)) span += DUCKER_GAP + this.nodeHeight(childId);
+    return Math.max(1, Math.ceil((span + (ROW_GAP - NODE_H)) / ROW_GAP));
+  }
+
+  /** Snap the partner of every STEREO-linked pair to its canonical offset from the pair's
+   *  primary, and report whether any of them moved.
+   *
+   *  What `alignStereoPair` does for a link made in the app, for the links that arrive with
+   *  no edit funnel behind them: a device read, a device-follow reconcile of a Signal Type
+   *  moved on the unit's own panel, and a loaded document. Without it the heart tie is drawn
+   *  across whatever gap an earlier manual move opened.
+   *
+   *  The primary is kept rather than the selected member, so the pair settles on the same two
+   *  slots whatever the board's selection is. A pair with either member shelved is left alone:
+   *  no tie is drawn for it, and snapping the visible member toward a shelved one would
+   *  relocate it for a partner that is not on screen. */
+  alignLinkedPairs(): boolean {
+    let moved = false;
+    for (const [primary, partner] of this.model.channelPairs) {
+      if (!this.plan.nodeParams[primary]?.stereoLink) continue;
+      if (this.isHidden(primary) || this.isHidden(partner)) continue;
+      const want = this.alignedPairPos(primary, partner);
+      // Against the partner's DRAWN position, not its saved one: a pair neither member of
+      // which was ever moved is already at the offset, and writing a position for it would
+      // put an entry in the document for a node nothing relocated.
+      const at = this.posOf(partner);
+      if (Math.abs(at.x - want.x) < ALIGN_SLOP && Math.abs(at.y - want.y) < ALIGN_SLOP) continue;
+      this.plan.positions[partner] = want;
+      moved = true;
+    }
+    return moved;
+  }
+
+  /** Snap `id` to its canonical offset from a STEREO-linked partner already on the board,
+   *  and report whether it did. The node already there stays where it is. */
+  private snapToLinkedPartner(id: string): boolean {
+    const pair = this.linkedPairOf(id);
+    const partner = pair ? (pair[0] === id ? pair[1] : pair[0]) : null;
+    if (!partner || this.isHidden(partner)) return false;
+    this.plan.positions[id] = this.alignedPairPos(partner, id);
+    return true;
   }
 
   /** The channelPairs entry [primary, partner] containing `id` when that pair is
@@ -2359,13 +2387,21 @@ export class Graph {
   /** Bring every shelved node back and re-frame the diagram. */
   showAll(): void {
     if (!this.hidden.size) return;
+    const returning = new Set(this.hidden);
     this.hidden.clear();
     this.commitHidden();
-    // A STEREO-linked pair can come back with its two members parked apart — the
-    // shelved one kept whatever position it was carrying. Both are on the board now, so
-    // the tie is drawn: close the gap the way a load does, keeping the primary, since
-    // several members can arrive at once and none of them is the one that just came back.
-    alignLinkedPairs(this.model, this.plan);
+    // A STEREO-linked pair can come back with its two members parked apart — the shelved
+    // one kept whatever position it was carrying, which is one nobody has seen since it
+    // went to the shelf. Where exactly one member is returning it moves and the node
+    // already on the board stays, the same rule a chip restore follows; where both are,
+    // neither was on the board, so the pair falls to the primary-keeping sweep below.
+    for (const id of returning) {
+      const pair = this.linkedPairOf(id);
+      if (!pair) continue;
+      if (returning.has(pair[0] === id ? pair[1] : pair[0])) continue;
+      this.snapToLinkedPartner(id);
+    }
+    this.alignLinkedPairs();
     this.render();
     this.fitView();
     this.cb.onChange();
@@ -2412,11 +2448,7 @@ export class Graph {
    *  rather than opening stretched. The one already on the board stays where it is.
    *  Everything else parks under the viewport, where it is easy to find. */
   private placeRestored(id: string): void {
-    const pair = this.linkedPairOf(id);
-    const partner = pair ? (pair[0] === id ? pair[1] : pair[0]) : null;
-    const at = partner && !this.isHidden(partner) ? alignedPairPos(this.model, this.plan, partner, id) : null;
-    if (at) this.plan.positions[id] = at;
-    else this.placeInView(id);
+    if (!this.snapToLinkedPartner(id)) this.placeInView(id);
   }
 
   /** Park a restored node at the current viewport center, in content coords. */
@@ -2526,7 +2558,6 @@ export class Graph {
     // A node spanning more than one row (an expanded note, or a hung ducker that
     // the default grid reserves a whole row for) advances by enough whole rows to
     // clear it, so expanded notes still never overlap the node below.
-    const vgap = ROW_GAP - NODE_H;
     const colY = new Map<number, number>();
     this.plan.positions = {};
     for (const node of this.model.nodes) {
@@ -2537,12 +2568,9 @@ export class Graph {
       const y = colY.get(col) ?? MARGIN;
       this.plan.positions[node.id] = { x: MARGIN + col * COL_GAP, y };
       // The vertical footprint of this node plus any hung children it must clear
-      // (a ducker, or the stacked SD Rec track slots).
-      let span = this.nodeHeight(node.id);
-      for (const childId of this.attachedDescendants(node.id))
-        if (!this.isHidden(childId)) span += DUCKER_GAP + this.nodeHeight(childId);
-      const rows = Math.max(1, Math.ceil((span + vgap) / ROW_GAP));
-      colY.set(col, y + rows * ROW_GAP);
+      // (a ducker, or the stacked SD Rec track slots). Shared with the STEREO pair's own
+      // offset, so a pair lands where Arrange would have put its lower member.
+      colY.set(col, y + this.rowsFor(node.id) * ROW_GAP);
     }
     this.render();
     this.fitView();

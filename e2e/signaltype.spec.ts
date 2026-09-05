@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "./fixtures";
-import { faceplate, selectWire } from "./graph-helpers";
+import { faceplate, selectWire, stereoTie } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
 import { planParam } from "./plan-param";
 
@@ -11,7 +11,6 @@ const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-i
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 const sigSelect = (page: Page) => param(page, "Signal Type").locator("select");
 const panBalSelect = (page: Page) => param(page, "PAN / BAL").locator("select");
-const link = (page: Page) => page.locator("#graph-host text", { hasText: "♥" });
 
 // Save the plan and parse it back. The pan readers below are pure selectors over
 // the result, so one save covers every assertion about the same board state.
@@ -46,13 +45,13 @@ test("mono pair gets a Signal Type select; STEREO reveals PAN/BAL and a heart li
   await expect(sigSelect(page).locator("option")).toHaveText(["MONO x 2", "STEREO"]);
   await expect(sigSelect(page)).toHaveValue("0"); // MONO x 2
   await expect(param(page, "PAN / BAL")).toHaveCount(0);
-  await expect(link(page)).toHaveCount(0);
+  await expect(stereoTie(page)).toHaveCount(0);
 
   await chooseOption(sigSelect(page), "1"); // STEREO
   await expect(param(page, "PAN / BAL")).toHaveCount(1);
   // Linking lands in BAL, as it does on the unit.
   await expect(panBalSelect(page)).toHaveValue("1");
-  await expect(link(page)).toHaveCount(1); // heart tie on the canvas
+  await expect(stereoTie(page)).toHaveCount(1); // heart tie on the canvas
 
   // The partner channel shows the same Signal Type (stored on the primary).
   await node(page, "ch2").click();
@@ -109,7 +108,7 @@ test("a STEREO pair drags as one unit; the heart tie follows", async ({ page }) 
   expect(Math.hypot(after2.x - before2.x, after2.y - before2.y)).toBeGreaterThan(20);
   expect(Math.abs(after1.x - before1.x - (after2.x - before2.x))).toBeLessThan(2);
   expect(Math.abs(after1.y - before1.y - (after2.y - before2.y))).toBeLessThan(2);
-  await expect(link(page)).toHaveCount(1); // tie still drawn after the move
+  await expect(stereoTie(page)).toHaveCount(1); // tie still drawn after the move
 });
 
 test("STEREO-linking snaps a partner moved away back beside the kept primary", async ({ page }) => {
@@ -138,7 +137,7 @@ test("STEREO-linking snaps a partner moved away back beside the kept primary", a
   expect(Math.abs(after2.x - after1.x)).toBeLessThan(2); // same column
   expect(after2.y).toBeGreaterThan(after1.y); // below it
   expect(Math.hypot(after2.x - moved2.x, after2.y - moved2.y)).toBeGreaterThan(20); // it really moved back
-  await expect(link(page)).toHaveCount(1);
+  await expect(stereoTie(page)).toHaveCount(1);
 });
 
 test("STEREO-linking from the partner keeps the partner and realigns the primary above it", async ({ page }) => {
@@ -166,7 +165,7 @@ test("STEREO-linking from the partner keeps the partner and realigns the primary
   expect(Math.abs(after1.x - after2.x)).toBeLessThan(2); // same column
   expect(after1.y).toBeLessThan(after2.y); // above it
   expect(Math.hypot(after1.x - moved1.x, after1.y - moved1.y)).toBeGreaterThan(20);
-  await expect(link(page)).toHaveCount(1);
+  await expect(stereoTie(page)).toHaveCount(1);
 });
 
 // A document that arrives already linked — a `?plan=` link, a saved file, a plan a
@@ -189,7 +188,7 @@ test("a loaded plan whose pair is already STEREO opens with the partner aligned"
   if (!ch3 || !ch4) throw new Error("nodes not found");
   expect(Math.abs(ch4.x - ch3.x)).toBeLessThan(2); // same column as the primary
   expect(ch4.y).toBeGreaterThan(ch3.y); // directly below it
-  await expect(link(page)).toHaveCount(1);
+  await expect(stereoTie(page)).toHaveCount(1);
 });
 
 // The shelf is the other way a linked pair can arrive apart: the shelved member kept
@@ -216,7 +215,7 @@ test("restoring a shelved member of a STEREO pair lands it beside its partner", 
   expect(Math.abs(after3.x - ch3.x)).toBeLessThan(2); // the one on the board stays
   expect(Math.abs(back.x - after3.x)).toBeLessThan(2); // the restored one lands in its column
   expect(back.y).toBeGreaterThan(after3.y);
-  await expect(link(page)).toHaveCount(1);
+  await expect(stereoTie(page)).toHaveCount(1);
 });
 
 test("a MONO x 2 pair does not drag together", async ({ page }) => {

@@ -19,7 +19,7 @@ vi.mock("../core/storage", async (importOriginal) => {
 });
 
 import { exportSvgToPdf, exportSvgToPng } from "../core/storage";
-import { alignLinkedPairs, PALETTES, WIRE_GROUP } from "./graph";
+import { PALETTES, WIRE_GROUP } from "./graph";
 import {
   drag,
   faceplate,
@@ -39,6 +39,7 @@ import type { Plan } from "../core/plan";
 import { defaultPlan } from "../models/initial-state";
 import { isFixedConnection } from "../core/routing";
 import { getModel } from "../models";
+import type { ModelId } from "../models/types";
 import { getSettings, resetSettingsCache, updateSettings } from "../core/settings";
 import { pinSettingsReset } from "../core/settings-reset.test-util";
 import { setLang, t } from "../i18n";
@@ -374,6 +375,20 @@ describe("hide and show", () => {
     expect(fx.plan.positions["ch1"]!.y).toBeLessThan(300);
   });
 
+  // Show all follows the chip's rule per pair: the shelved member's own position is one
+  // nobody has seen since it went to the shelf, so it is the one that moves — including
+  // when it is the PRIMARY, where a primary-keeping sweep would drag the visible partner
+  // to a coordinate only the shelved node was carrying.
+  it("moves the member Show all brought back, not the one already on the board", () => {
+    fx = graphFixture(linkedPair("ch2"));
+    fx.plan.positions["ch1"] = { x: 40, y: 40 }; // stale: where ch1 sat before it was shelved
+    fx.graph.hideNode("ch1");
+    fx.graph.showAll();
+    expect(fx.plan.positions["ch2"]).toEqual({ x: 500, y: 300 });
+    expect(fx.plan.positions["ch1"]!.x).toBe(500);
+    expect(fx.plan.positions["ch1"]!.y).toBeLessThan(300);
+  });
+
   // Show all can bring several members back at once, so it closes the gap the way a
   // load does — keeping the primary — rather than moving whichever node arrived.
   it("closes a linked pair's gap when Show all brings its member back", () => {
@@ -386,13 +401,17 @@ describe("hide and show", () => {
     expect(fx.plan.positions["ch2"]!.y).toBeGreaterThan(300);
   });
 
-  // The negative control: without the link there is no tie to keep short, so the node
-  // still parks under the viewport instead of following its pair.
-  it("parks a restored MONO x 2 member under the viewport, not beside its pair", () => {
+  // The negative control: without the link there is no tie to keep short, so the node does
+  // not follow its pair — it parks where every restored node parks, which is the same place
+  // for a node that has no pair at all.
+  it("parks a restored MONO x 2 member where any restore parks, not beside its pair", () => {
     fx = graphFixture({ seed: (plan) => void (plan.positions["ch1"] = { x: 500, y: 300 }) });
     fx.graph.hideNode("ch2");
     fx.graph.showNode("ch2");
+    fx.graph.hideNode("bus.mix2");
+    fx.graph.showNode("bus.mix2");
     expect(fx.plan.positions["ch2"]!.x).not.toBe(500);
+    expect(fx.plan.positions["ch2"]).toEqual(fx.plan.positions["bus.mix2"]);
   });
 
   it("brings everything back from Show all", () => {
@@ -580,7 +599,6 @@ describe("node drag", () => {
 // Type moved on the unit, a loaded document. No edit funnel ran, so the snap that
 // linking in the app performs has to be taken over the plan as it arrives.
 describe("alignLinkedPairs", () => {
-  const model = getModel("URX44V");
   // Built for every case: the file's afterEach restores `fx` whether or not the case
   // made one, so a case without one restores its predecessor a second time and takes
   // the jsdom globals down under every case after it.
@@ -596,54 +614,121 @@ describe("alignLinkedPairs", () => {
       .map(Number);
     return { x, y };
   };
-  // A pair parked apart and already linked — the state a device read leaves behind.
+  // Both of the model's pairs parked apart and already linked — the state a device read
+  // leaves behind. Two pairs rather than one: the sweep is a loop, and a single pair
+  // cannot tell it apart from one that stops after the first thing it moves.
   const linkedPairPlan = (): Plan => {
     const plan = defaultPlan("URX44V");
-    plan.nodeParams["ch3"] = { ...plan.nodeParams["ch3"], stereoLink: true };
-    plan.nodeParams["ch4"] = { ...plan.nodeParams["ch4"], stereoLink: true };
+    for (const id of ["ch1", "ch2", "ch3", "ch4"]) {
+      plan.nodeParams[id] = { ...plan.nodeParams[id], stereoLink: true };
+    }
+    plan.positions["ch1"] = { x: 700, y: 40 };
+    plan.positions["ch2"] = { x: 120, y: 800 };
     plan.positions["ch3"] = { x: 500, y: 300 };
     plan.positions["ch4"] = { x: 900, y: 620 };
     return plan;
   };
+  /** The fixture's own graph, rebound to `plan`. `setModel` is the seat under test for a
+   *  load, so the cases that are not about it seed through it too. */
+  const on = (plan: Plan, modelId: ModelId = "URX44V"): Plan => {
+    fx.graph.setModel(getModel(modelId), plan);
+    return plan;
+  };
 
-  it("snaps the partner to the primary's own column, keeping the primary put", () => {
+  it("snaps every linked pair's partner into the primary's column, keeping the primary put", () => {
     // The offset to expect is read off a board nothing ever moved, rather than spelled
     // as a constant here: an assertion against a copy of the layout arithmetic passes
     // whatever that arithmetic later becomes.
     const gap = drawnAt("ch4").y - drawnAt("ch3").y;
 
-    const plan = linkedPairPlan();
-    expect(alignLinkedPairs(model, plan)).toBe(true);
+    const plan = on(linkedPairPlan());
     expect(plan.positions["ch3"]).toEqual({ x: 500, y: 300 });
     expect(plan.positions["ch4"]).toEqual({ x: 500, y: 300 + gap });
+    // The second pair too, so a sweep that stops after the first is red here.
+    expect(plan.positions["ch1"]).toEqual({ x: 700, y: 40 });
+    expect(plan.positions["ch2"]).toEqual({ x: 700, y: 40 + gap });
   });
 
   it("leaves a pair that is not linked where it stands", () => {
     const plan = linkedPairPlan();
     plan.nodeParams["ch3"] = { ...plan.nodeParams["ch3"], stereoLink: false };
-    expect(alignLinkedPairs(model, plan)).toBe(false);
+    on(plan);
     expect(plan.positions["ch4"]).toEqual({ x: 900, y: 620 });
   });
 
-  it("leaves a pair with a shelved member alone — no tie is drawn, so there is no gap", () => {
+  // Both halves of the guard: no tie is drawn for a pair with a shelved member, so there is
+  // no gap to close, and the position of a node nobody can see must not be rewritten either.
+  it("leaves a pair with its PRIMARY shelved alone", () => {
     const plan = linkedPairPlan();
     plan.hidden = ["ch3"];
-    expect(alignLinkedPairs(model, plan)).toBe(false);
+    on(plan);
+    expect(plan.positions["ch4"]).toEqual({ x: 900, y: 620 });
+  });
+
+  it("leaves a pair with its PARTNER shelved alone", () => {
+    const plan = linkedPairPlan();
+    plan.hidden = ["ch4"];
+    on(plan);
     expect(plan.positions["ch4"]).toEqual({ x: 900, y: 620 });
   });
 
   it("writes no position for a linked pair nothing ever moved", () => {
     const plan = defaultPlan("URX44V");
     plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
-    expect(alignLinkedPairs(model, plan)).toBe(false);
+    on(plan);
     expect(plan.positions["ch2"]).toBeUndefined();
   });
 
-  it("runs on the document a load puts on the board", () => {
+  // A pair the operator dragged carries float error in its saved offset, so an equality
+  // test reports it as off-canonical and rewrites it — a plan write for a move of ~1e-13 px,
+  // which on the device-follow path lands outside every edit funnel.
+  it("writes nothing for a pair whose saved offset carries a dragged pair's float error", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+    const a = 479.21785452540706;
+    plan.positions["ch1"] = { x: 100, y: a };
+    plan.positions["ch2"] = { x: 100, y: a + 68 };
+    const dy = plan.positions["ch2"].y - plan.positions["ch1"].y; // what a drag captures
+    const b = 291.4388726636495;
+    plan.positions["ch1"] = { x: 100, y: b };
+    plan.positions["ch2"] = { x: 100, y: b + dy };
+    expect(plan.positions["ch2"].y).not.toBe(b + 68); // the drift is real, not assumed
+    on(plan);
+    expect(plan.positions["ch2"].y).toBe(b + dy); // and the sweep left it alone
+  });
+
+  // Arrange advances a column by whole rows big enough to clear an expanded note. An offset
+  // taken from the bare grid would lay the partner inside that note at the next load.
+  it("clears an expanded note on the primary, the way Arrange does", () => {
+    // Read off the pristine board, before this case's own plan is on it.
+    const bare = drawnAt("ch4").y - drawnAt("ch3").y;
     const plan = linkedPairPlan();
-    fx.graph.setModel(model, plan);
+    plan.notes["ch3"] = "a note";
+    on(plan);
+    fx.graph.autoLayout();
+    const arranged = { ...plan.positions["ch4"]! };
+    // The note is what makes this a test: without it Arrange's own gap is the bare grid's.
+    expect(arranged.y - plan.positions["ch3"]!.y).toBeGreaterThan(bare);
+    expect(fx.graph.alignLinkedPairs()).toBe(false);
+    expect(plan.positions["ch4"]).toEqual(arranged);
+  });
+
+  it("runs on the document a load puts on the board", () => {
+    const plan = on(linkedPairPlan());
     expect(plan.positions["ch4"]!.x).toBe(500);
     expect(nodeEl(fx.host, "ch4")!.getAttribute("transform")).toContain("translate(500 ");
+  });
+
+  // The URX22 has one pair, and its own column geometry: the assertions above are about
+  // the pair, not about where the URX44V happens to put CH 3.
+  it("snaps a URX22 pair too", () => {
+    const plan = defaultPlan("URX22");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+    plan.positions["ch1"] = { x: 420, y: 260 };
+    plan.positions["ch2"] = { x: 880, y: 700 };
+    on(plan, "URX22");
+    expect(plan.positions["ch2"]!.x).toBe(420);
+    expect(plan.positions["ch2"]!.y).toBeGreaterThan(260);
   });
 });
 

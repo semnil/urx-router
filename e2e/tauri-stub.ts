@@ -257,12 +257,17 @@ export const setDeviceValue = (page: Page, paramId: number, y: number, value: nu
 /** Announce a device-side parameter change through the session's notify stream — what
  *  the unit sends when one of its own controls is moved. Seed the address with
  *  `setDeviceValue` first: a change the app cannot read back is one the reconcile the
- *  notify schedules will undo. */
+ *  notify schedules will undo.
+ *
+ *  Throws when no session registered the stream. Delivered to nothing, the call succeeds
+ *  and a case waiting for the change times out reading as the feature being gone — and a
+ *  case asserting that nothing happens passes for free. */
 export const notifyParam = (page: Page, paramId: number, y: number, value: number, x = 0): Promise<void> =>
   page.evaluate(
     ([id, xx, yy, v]) => {
       const w = window as unknown as { __urxNotify: { onmessage: (batch: unknown) => void } | null };
-      w.__urxNotify?.onmessage([{ param_id: id, x: xx, y: yy, value: v }]);
+      if (!w.__urxNotify) throw new Error("notifyParam: nothing subscribed to the notify stream");
+      w.__urxNotify.onmessage([{ param_id: id, x: xx, y: yy, value: v }]);
     },
     [paramId, x, y, value],
   );
