@@ -17,15 +17,23 @@
 // about it is landed here either.
 //
 // WHAT IT REFUSES. Removing a worktree: the one this run is in, a locked one, one holding
-// anything uncommitted, one that cannot be read, and one with a build or a server running out of
-// it. Fast-forwarding: a default branch carrying commits the remote does not, one checked out
-// nowhere, and the same running-process rule over the tree that holds it. **A blocked
-// fast-forward stops the whole apply** — the deletions are what the fast-forward makes legal, so
-// running them without it deletes worktrees and then leaves every branch behind.
+// tracked or untracked changes, one that cannot be read, and one with a build or a server running
+// out of it. Ignored files are not changes — a build output is not work, and a worktree carrying
+// only one is removed. Fast-forwarding: a default branch that does not exist here, one checked
+// out nowhere, one carrying commits the remote does not, and the same running-process rule over
+// the tree that holds it.
 //
-// The dry run FETCHES. It has to: every answer above is about the remote, and reporting them off
-// a stale one would be reporting about a different repository. Nothing else is touched — no
-// branch, no worktree, no working tree, no HEAD.
+// **Any of those stops the whole apply, and the fast-forward runs first.** The deletions are what
+// it makes legal, so running them without it removes worktrees and then leaves every branch
+// behind — which is also why the fast-forward is not placed behind them, where its own failure
+// (a working tree that changed since the plan was read) would leave exactly that.
+//
+// Where the machine cannot be asked what is running, both halves go ahead saying so: git still
+// refuses to remove a worktree holding changes, and refuses to overwrite them in a merge.
+//
+// The dry run FETCHES, which prunes remote-tracking refs. It has to: every answer above is about
+// the remote, and reporting them off a stale one would be reporting about a different repository.
+// No branch, worktree, working tree or HEAD is touched.
 import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { platform } from "node:os";
@@ -35,7 +43,15 @@ function git(args, cwd, allowFail = false) {
   const r = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: 1 << 28 });
   const out = typeof r.stdout === "string" ? r.stdout.replace(/\r/g, "") : "";
   const err = (typeof r.stderr === "string" ? r.stderr : (r.error?.message ?? "")).replace(/\r/g, "").trim();
-  if (!allowFail && r.status !== 0) throw new Error(`git ${args.join(" ")}\n${err}`);
+  // A command that never started and one that ran and refused are different answers, and the
+  // second is the only one whose stderr says anything about this repository.
+  if (!allowFail && r.status !== 0) {
+    throw new Error(
+      r.error
+        ? `git could not be started (${r.error.message}) for: git ${args.join(" ")}`
+        : `git ${args.join(" ")}\n${err}`,
+    );
+  }
   return { out: out.replace(/\n+$/, ""), err, status: r.status };
 }
 
@@ -82,9 +98,11 @@ function workingDirs() {
     encoding: "utf8",
     maxBuffer: 1 << 28,
   });
-  // A missing lsof leaves stdout unset rather than empty, and empty is also what a machine with
-  // nothing running produces — so the two are separated before the output is read.
-  if (typeof lsof.stdout !== "string") return null;
+  // Three answers reach this point and only one of them is "nothing is running there": a reader
+  // that never started leaves stdout unset, and one that started and refused — a directory it may
+  // not read, a process that ended between the two calls — leaves it a string with the answer
+  // missing from it. Both are "the question could not be put", which is not the same as no.
+  if (typeof lsof.stdout !== "string" || lsof.status !== 0) return null;
   const cwds = new Map();
   let pid = null;
   for (const line of lsof.stdout.split("\n")) {
@@ -126,23 +144,36 @@ function unclean(path) {
  * `running` is the list of processes running out of the tree that holds it, or null where the
  * question could not be put to the machine — on which the step goes ahead, saying so, since
  * git's own refusals still stand between it and anything uncommitted.
+ *
+ * `act` gates the WHOLE apply rather than the fast-forward alone. Where the default branch cannot
+ * be moved, the deletions are not merely unhelpful: it is the fast-forward that makes them legal,
+ * and running them alone removes worktrees and then leaves every branch behind. `ff` is false only
+ * when the branch is already where the remote is — there is nothing to move, and the cleanup that
+ * someone else's pull left behind is exactly what this is then for.
  */
 export function decide({ base, remote, local, ahead, fastForward, holder, running }) {
-  if (local === null) return { skip: `${base} does not exist here` };
-  if (local === ahead) return { skip: `${base} is already at ${remote}` };
-  if (!fastForward) return { blocked: `${base} has commits ${remote} does not — not a fast-forward` };
-  if (!holder) return { blocked: `${base} is checked out in no worktree` };
-  if (running === null)
-    return { go: holder, note: `what runs in ${holder} could not be read — git's refusals are the only guard here` };
-  if (running.length > 0)
-    return { blocked: running.map((c) => `pid ${c.pid} runs out of ${holder}: ${c.command}`).join("\n         ") };
-  return { go: holder };
+  if (local === null) return { reason: `${base} does not exist here` };
+  if (!holder) return { reason: `${base} is checked out in no worktree` };
+  if (local !== ahead && !fastForward) return { reason: `${base} has commits ${remote} does not — not a fast-forward` };
+  if (running !== null && running.length > 0) {
+    return { reason: running.map((c) => `pid ${c.pid} runs out of ${holder}: ${c.command}`).join("\n         ") };
+  }
+  const note =
+    running === null ? `what runs in ${holder} could not be read — git's refusals are the only guard here` : undefined;
+  return { act: true, ff: local !== ahead, tree: holder, note };
 }
 
 function plan(cwd, log) {
   const here = git(["rev-parse", "--show-toplevel"], cwd).out;
   const head = git(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], cwd, true);
-  if (head.status !== 0) throw new Error("origin/HEAD names no branch — run `git remote set-head origin -a`");
+  if (head.status !== 0) {
+    const origin = git(["remote", "get-url", "origin"], cwd, true);
+    throw new Error(
+      origin.status !== 0
+        ? "this repository has no remote named origin, so there is no default branch to sync to"
+        : "origin/HEAD names no branch — run `git remote set-head origin -a`",
+    );
+  }
   const base = head.out.slice("refs/remotes/origin/".length);
   const remote = `origin/${base}`;
 
@@ -157,6 +188,9 @@ function plan(cwd, log) {
 
   const trees = worktrees(cwd);
   const procs = workingDirs();
+  // Asked with the full refname: a bare name resolves a tag of the same spelling first, so the
+  // answer would be about the tag while every other reading here is about the branch. Anything
+  // but a plain yes is a no, which keeps the branch — an error here reads as "not landed".
   const landed = (ref) => git(["merge-base", "--is-ancestor", ref, remote], cwd, true).status === 0;
   const onFirstParent = new Set(git(["rev-list", "--first-parent", remote], cwd).out.split("\n"));
 
@@ -169,7 +203,7 @@ function plan(cwd, log) {
     if (branch === base) continue;
     const tree = trees.find((w) => w.branch === branch);
     const busy = tree && holdersOf(tree.path, procs, trees);
-    const why = !landed(branch)
+    const why = !landed(ref)
       ? `not merged into ${remote}`
       : onFirstParent.has(at)
         ? "its tip is on the remote's own first-parent line — an unstarted branch, or one that landed by fast-forward, and this cannot tell the two apart"
@@ -194,17 +228,26 @@ function plan(cwd, log) {
     remote,
     local,
     ahead,
-    fastForward: local !== null && landed(base),
+    fastForward: local !== null && landed(`refs/heads/${base}`),
     holder: holder?.path ?? null,
     running: holder ? holdersOf(holder.path, procs, trees) : [],
   });
 
   for (const { branch, tree, why } of kept) log(`keep   ${branch}${tree ? ` (${tree.path})` : ""} — ${why}`);
-  for (const { branch, tree } of removals) log(`remove ${branch}${tree ? ` + ${tree.path}` : ""}`);
+  for (const { branch, tree } of removals) log(`would remove ${branch}${tree ? ` + ${tree.path}` : ""}`);
   log(
-    sync.skip ? `sync   ${sync.skip}` : sync.blocked ? `SYNC BLOCKED — ${sync.blocked}` : `sync   ${base} -> ${remote}`,
+    !sync.act
+      ? `SYNC BLOCKED — ${sync.reason}`
+      : sync.ff
+        ? `sync   ${base} -> ${remote}`
+        : `sync   ${base} is already at ${remote}`,
   );
   if (sync.note) log(`note   ${sync.note}`);
+  // Said once rather than per worktree: where the machine cannot be asked, it cannot be asked
+  // about any of them, and the removals below go ahead on git's own refusals alone.
+  if (procs === null && removals.some((r) => r.tree)) {
+    log("note   what runs in the worktrees below could not be read — git's refusals are the only guard there");
+  }
   return { removals, sync, remote, base, ahead };
 }
 
@@ -219,48 +262,51 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
   const { removals, sync, remote, base, ahead } = p;
 
   if (!apply) {
-    log(removals.length || sync.go ? "\n(dry run — pass --apply to act)" : "\n(nothing to apply)");
-    return sync.blocked ? 1 : 0;
+    log(removals.length || sync.ff ? "\n(dry run — pass --apply to act)" : "\n(nothing to apply)");
+    return sync.act ? 0 : 1;
   }
-  if (sync.blocked) {
+  if (!sync.act) {
     log("\nnothing applied — the fast-forward is what makes the deletions legal");
     return 1;
   }
 
+  // The fast-forward goes FIRST, and nothing else runs until it has. It is what makes the
+  // deletions legal — git is asked whether a branch is merged into HEAD, and until the default
+  // branch has moved the answer is no for exactly these — and it is the step that can still fail
+  // here, on a working tree that changed since the plan was read. Behind the removals, that
+  // failure would leave the worktrees gone and every branch behind.
   let failed = false;
+  if (sync.ff) {
+    const ff = git(["merge", "--ff-only", remote], sync.tree, true);
+    if (ff.status !== 0) {
+      log(`SYNC BLOCKED — ${ff.err}`);
+      log("\nnothing applied — the fast-forward is what makes the deletions legal");
+      return 1;
+    }
+    log(`synced ${base} -> ${ahead.slice(0, 7)}`);
+  }
+
   for (const { branch, tree } of removals) {
     if (!tree) continue;
     const r = git(["worktree", "remove", tree.path], cwd, true);
     if (r.status !== 0) {
       log(`keep   ${branch} — its worktree could not be removed: ${r.err}`);
       failed = true;
-    }
-  }
-
-  // The fast-forward comes before the branch deletions: git is asked whether a branch is merged
-  // into HEAD, and until the default branch has moved the answer is no for exactly these.
-  if (sync.go) {
-    const ff = git(["merge", "--ff-only", remote], sync.go, true);
-    if (ff.status !== 0) {
-      log(`SYNC BLOCKED — ${ff.err}`);
-      return 1;
-    }
-    log(`synced ${base} -> ${ahead.slice(0, 7)}`);
+    } else log(`removed ${tree.path}`);
   }
 
   // Deleted from the tree that holds the default branch rather than from the one this run was
-  // started in: `-d` asks whether the branch is merged into the HEAD it is asked from, and a run
-  // started in some other branch's worktree would be answered about that branch instead. `-d`
-  // rather than `-D` because it is a second opinion on the ancestry read above; no legitimate
-  // state reaches its refusal once that read is right, so nothing here pins it.
-  const deleteFrom = sync.go ?? cwd;
+  // started in: asking git for a merged-only deletion asks about the HEAD it is asked from, and a
+  // run started in some other branch's worktree would be answered about that branch instead. The
+  // merged-only form rather than the forcing one because it is a second opinion on the ancestry
+  // read above.
   for (const { branch, tree } of removals) {
     if (tree && git(["worktree", "list", "--porcelain", "-z"], cwd).out.includes(`worktree ${tree.path}\0`)) continue;
-    const r = git(["branch", "-d", branch], deleteFrom, true);
+    const r = git(["branch", "-d", branch], sync.tree, true);
     if (r.status !== 0) {
       log(`keep   ${branch} — git declined to delete it: ${r.err}`);
       failed = true;
-    }
+    } else log(`removed ${branch}`);
   }
   return failed ? 1 : 0;
 }

@@ -159,11 +159,14 @@ describe("sync-merged, when a branch has landed", () => {
     const tree = join(down, "..", "wt");
     git(down, "worktree", "add", tree, "feat");
 
-    expect(report(down).text).toMatch(/^remove feat \+ /m);
+    expect(report(down).text).toMatch(/^would remove feat \+ /m);
     expect(branches(down)).toContain("feat");
+    const removed = realpathSync(tree);
 
-    const { code } = report(down, true);
+    const { code, text } = report(down, true);
     expect(code).toBe(0);
+    expect(text).toContain(`removed ${removed}`);
+    expect(text).toContain("removed feat");
     expect(branches(down)).not.toContain("feat");
     expect(existsSync(tree)).toBe(false);
     expect(at(down, "main")).toBe(at(down, "origin/main"));
@@ -337,6 +340,17 @@ describe("sync-merged, on a branch it must not delete", () => {
     expect(existsSync(tree)).toBe(true);
   });
 
+  it("asks whether the BRANCH landed when a tag of the same name has", () => {
+    const { down } = fixture({ landing: "none" });
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    // The tag points at a commit the remote's default branch holds; the branch does not.
+    git(down, "tag", "feat", "origin/main");
+    expect(report(down, true).text).toMatch(/^keep {3}feat.*not merged into origin\/main$/m);
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
+  });
+
   it("evaluates the worktree guards when a tag carries the branch's name", () => {
     const { down } = fixture();
     const tree = join(down, "..", "wt");
@@ -357,6 +371,54 @@ describe("sync-merged, on a branch it must not delete", () => {
     expect(code).toBe(1);
     expect(text).toMatch(/^keep {3}feat.*could not be removed/m);
     expect(branches(down)).toContain("feat");
+  });
+});
+
+describe("sync-merged, when the fast-forward fails at the moment it is applied", () => {
+  it("removes no worktree, since the plan read a working tree that has since changed", () => {
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    // b.txt is what the merge writes, and an untracked one of its own is what git refuses over.
+    // It arrives after the plan would have been read, which is the ordering this is about.
+    writeFileSync(join(down, "b.txt"), "mine\n");
+    const { code, text } = report(down, true);
+    expect(code).toBe(1);
+    expect(text).toContain("nothing applied");
+    expect(existsSync(tree)).toBe(true);
+    expect(branches(down)).toContain("feat");
+    expect(readFileSync(join(down, "b.txt"), "utf8")).toBe("mine\n");
+  });
+});
+
+describe("sync-merged, when there is nothing to fast-forward", () => {
+  it("still cleans up, and deletes from the tree that holds the default branch", () => {
+    const { down } = fixture();
+    // What someone else's `git pull` leaves: the default branch is already where the remote is,
+    // and the branch it merged is still sitting here.
+    git(down, "fetch", "-q", "origin");
+    git(down, "merge", "-q", "--ff-only", "origin/main");
+    git(down, "branch", "side", "HEAD");
+    const tree = join(down, "..", "wtside");
+    git(down, "worktree", "add", tree, "side");
+    const { code, text } = report(tree, true);
+    expect(code).toBe(0);
+    expect(text).toContain("is already at origin/main");
+    expect(branches(down)).not.toContain("feat");
+  });
+
+  it("refuses when the default branch does not exist here at all", () => {
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    git(down, "checkout", "-q", "--detach");
+    git(down, "branch", "-D", "main");
+    const { code, text } = report(down, true);
+    expect(code).toBe(1);
+    expect(text).toContain("main does not exist here");
+    expect(text).toContain("nothing applied");
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
   });
 });
 
@@ -467,6 +529,27 @@ describe("sync-merged, the running-process guard", () => {
     }
   });
 
+  it.skipIf(!lsofHere)("says the question could not be put when the reader itself fails", async () => {
+    const { down } = fixture();
+    const box = mkdtempSync(join(tmpdir(), "sync-merged-path-"));
+    roots.push(box);
+    writeFileSync(join(box, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    git(down, "worktree", "add", join(down, "..", "wt"), "feat");
+    const h = await holder(down);
+    const realPath = process.env.PATH;
+    try {
+      process.env.PATH = `${box}:${realPath}`;
+      const { code, text } = report(down, true);
+      expect(text).toContain("could not be read — git's refusals are the only guard here");
+      expect(text).toContain("in the worktrees below could not be read");
+      expect(text).not.toContain(`pid ${h.pid}`);
+      expect(code).toBe(0);
+    } finally {
+      process.env.PATH = realPath;
+      await h.stop();
+    }
+  });
+
   it("counts a process by the innermost worktree its directory belongs to", () => {
     const outer = { path: "/repo" };
     const inner = { path: "/repo/.claude/worktrees/one" };
@@ -477,9 +560,10 @@ describe("sync-merged, the running-process guard", () => {
 
   it("goes ahead, saying so, where the machine cannot be asked what is running", () => {
     const facts = { base: "main", remote: "origin/main", local: "a", ahead: "b", fastForward: true, holder: "/repo" };
-    expect(decide({ ...facts, running: null })).toMatchObject({ go: "/repo" });
+    expect(decide({ ...facts, running: null })).toMatchObject({ act: true, ff: true, tree: "/repo" });
     expect(decide({ ...facts, running: null }).note).toContain("could not be read");
-    expect(decide({ ...facts, running: [] })).toEqual({ go: "/repo" });
-    expect(decide({ ...facts, running: [{ pid: "9", command: "vite" }] }).blocked).toContain("pid 9");
+    expect(decide({ ...facts, running: [] })).toEqual({ act: true, ff: true, tree: "/repo", note: undefined });
+    expect(decide({ ...facts, running: [{ pid: "9", command: "vite" }] }).reason).toContain("pid 9");
+    expect(decide({ ...facts, running: [], local: "b" })).toMatchObject({ act: true, ff: false });
   });
 });
