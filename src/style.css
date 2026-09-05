@@ -2065,10 +2065,10 @@ input[type="range"]:focus-visible,
   background: var(--graph-bg);
 }
 /* The tuning screens draw the same faders and meters, so they need the groove —
-   and nothing else from the rule above. They used to take the whole tenancy,
-   which is how a modal ended up `flex: 1` inside its scrim: it stretched to the
-   viewport (1452px measured) and painted itself on the canvas colour instead of
-   the panel, while every other dialog sat in the shared box. */
+   and nothing else from the rule above. Taking the whole tenancy hands this modal
+   that rule's `flex: 1` inside its scrim, which stretches it to the viewport and
+   paints it on the canvas colour instead of the panel, while every other dialog
+   sits in the shared box. */
 #dyn-screen-box {
   --groove: color-mix(in srgb, var(--canvas-bg) 55%, #000 45%);
 }

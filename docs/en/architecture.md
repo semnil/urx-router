@@ -3272,8 +3272,10 @@ in-progress note from the shortcut.
 ## Preferences
 
 The toolbar gear opens the Preferences modal (`ui/prefs.ts`), available in every build. It is the
-consent-box family (920 px, two columns), and at a shrunken window height the box scrolls inside
-itself, so the content and the Close action stay reachable. Since every setting applies the moment
+consent-box family (`.prefs-box`, `min(1180px, 100%)`, two columns), and the box itself never
+scrolls: it is a fixed column with the title on top and the Close action pinned at the bottom, and
+the grid between them is the only scrolling region, so a shrunken window height cannot hide Close
+behind a scroll. Since every setting applies the moment
 it is changed, a press outside the box or Escape dismisses the modal like the MIDI panel and the
 licenses modal — the capture-phase wiring all three share lives in `ui/dom.ts` (`wireDismiss`).
 Settings persist as one
