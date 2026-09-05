@@ -16,12 +16,11 @@
 // the remote's own first-parent line. A squash merge leaves no reachable tip at all, so nothing
 // about it is landed here either.
 //
-// WHAT IT REFUSES. Removing a worktree: the one this run is in, a locked one, one holding
-// tracked or untracked changes, one that cannot be read, and one with a build or a server running
-// out of it. Ignored files are not changes — a build output is not work, and a worktree carrying
-// only one is removed. Fast-forwarding: a default branch that does not exist here, one checked
-// out nowhere, one carrying commits the remote does not, and the same running-process rule over
-// the tree that holds it.
+// WHAT IT REFUSES. Removing a worktree: the one this run is in, a locked one, one holding tracked
+// or untracked changes, one that cannot be read, one carrying ignored content that no command here
+// rebuilds, and one with a build or a server running out of it. Fast-forwarding: a default branch
+// that does not exist here, one checked out nowhere, one carrying commits the remote does not, and
+// the same running-process rule over the tree that holds it.
 //
 // **Any of those stops the whole apply, and the fast-forward runs first.** The deletions are what
 // it makes legal, so running them without it removes worktrees and then leaves every branch
@@ -129,13 +128,69 @@ export function holdersOf(dir, procs, trees) {
   return procs.filter((c) => owner(c.cwd) === dir);
 }
 
-/** Why a worktree may not be removed, or null when it may. Uncommitted content of any kind
- *  counts, ignored files excluded — and so does a worktree that cannot be asked, since a
- *  directory nobody can look inside is not the same as one that is empty. */
+/**
+ * The ignored paths a removal may destroy: each is written by a command in this repository and
+ * comes back by running it again.
+ *
+ * Being ignored is not what makes a file rebuildable, and here it is not even the common case:
+ * this repository ignores saved routing plans, signing material, a private checkout belonging to
+ * another repository, and each machine's own settings. Removing a worktree deletes every one of
+ * them with no copy anywhere, so anything ignored and NOT named here keeps the worktree instead.
+ * A path this list does not know is therefore work, which is the direction that fails safe.
+ * scripts/sync-merged.test.mjs holds the split against .gitignore, so a pattern added there is
+ * red until it is classified.
+ */
+export const REGENERABLE = {
+  paths: [
+    "node_modules",
+    "dist",
+    "dist-trace",
+    "coverage",
+    "test-results",
+    "playwright-report",
+    "src-tauri/target",
+    "src-tauri/gen",
+    "src-tauri/THIRD_PARTY_LICENSES.html",
+    "src-tauri/icons/android",
+    "src-tauri/icons/ios",
+    "scripts/app-icon.png",
+  ],
+  names: [".DS_Store", "__pycache__"],
+  extensions: [".log", ".pyc"],
+};
+
+/** Whether one entry of a status listing is something a command here writes. */
+function rebuildable(entry) {
+  const path = entry.replace(/\/$/, "");
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return (
+    REGENERABLE.paths.includes(path) ||
+    REGENERABLE.names.includes(name) ||
+    REGENERABLE.extensions.some((ext) => name.endsWith(ext))
+  );
+}
+
+/** Why a worktree may not be removed, or null when it may. Uncommitted content of any kind counts,
+ *  and so does ignored content this cannot name; so does a worktree that cannot be asked, since a
+ *  directory nobody can look inside is not the same as one that is empty.
+ *
+ *  `--ignored=matching` reports an ignored directory as itself rather than as its contents, which
+ *  is what keeps this from enumerating node_modules; the traditional mode expands it under the
+ *  `--untracked-files=all` the tracked half needs. */
 function unclean(path) {
-  const r = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], path, true);
+  const r = git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"], path, true);
   if (r.status !== 0) return "its worktree could not be read — the directory may be gone";
-  return r.out === "" ? null : "its worktree holds uncommitted work";
+  const work = [];
+  for (const rec of r.out.split("\0")) {
+    if (rec === "") continue;
+    if (rec.slice(0, 2) !== "!!") return "its worktree holds uncommitted work";
+    const entry = rec.slice(3);
+    if (!rebuildable(entry)) work.push(entry);
+  }
+  if (work.length === 0) return null;
+  const shown = work.slice(0, 3).join(", ");
+  const rest = work.length > 3 ? ` (+${work.length - 3} more)` : "";
+  return `its worktree holds ignored files that no command here rebuilds: ${shown}${rest}`;
 }
 
 /**
@@ -275,6 +330,13 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
   // branch has moved the answer is no for exactly these — and it is the step that can still fail
   // here, on a working tree that changed since the plan was read. Behind the removals, that
   // failure would leave the worktrees gone and every branch behind.
+  //
+  // What it is asked to move is a BRANCH; what it can name is a DIRECTORY, and a merge acts on
+  // whichever branch that directory is on when it runs. Between the plan reading it and the apply
+  // writing to it sits a fetch over the network, so another session can switch it in the meantime
+  // — and the merge would then fast-forward that session's branch instead, under a line naming
+  // the one that was meant. Asked here, nothing is written; asked again below, a switch that
+  // arrived inside the merge itself stops the deletions rather than passing for a sync.
   let failed = false;
   if (sync.ff) {
     const ff = git(["merge", "--ff-only", remote], sync.tree, true);

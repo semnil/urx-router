@@ -19,7 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { decide, holdersOf, run } from "./sync-merged.mjs";
+import { REGENERABLE, decide, holdersOf, run } from "./sync-merged.mjs";
 
 const PROGRAM = resolve(dirname(fileURLToPath(import.meta.url)), "sync-merged.mjs");
 
@@ -88,6 +88,8 @@ function program(cwd, ...args) {
   const r = spawnSync(process.execPath, [PROGRAM, ...args], { cwd, encoding: "utf8" });
   return { code: r.status, text: (r.stdout ?? "") + (r.stderr ?? "") };
 }
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Spelled from the full refname rather than the short one: `%(refname:short)` renders as
 // `heads/feat` where a tag shares the name, which is the very case one of these drives.
@@ -306,15 +308,29 @@ describe("sync-merged, on a branch it must not delete", () => {
     expect(existsSync(tree)).toBe(true);
   });
 
-  it("removes one whose worktree holds only an ignored file", () => {
-    const { down } = fixture({ ignore: "out/\n" });
+  it("removes one whose worktree holds only build output", () => {
+    const { down } = fixture({ ignore: "dist/\n/plans\n" });
     const tree = join(down, "..", "wt");
     git(down, "worktree", "add", tree, "feat");
-    mkdirSync(join(tree, "out"));
-    writeFileSync(join(tree, "out", "bundle.js"), "// build output\n");
+    mkdirSync(join(tree, "dist"));
+    writeFileSync(join(tree, "dist", "bundle.js"), "// build output\n");
     expect(report(down, true).code).toBe(0);
     expect(branches(down)).not.toContain("feat");
     expect(existsSync(tree)).toBe(false);
+  });
+
+  it("keeps one whose worktree holds ignored files that are not build output", () => {
+    // The same .gitignore as the case above: what differs is which ignored path is there. A
+    // saved plan is ignored and is the operator's only copy, so removing the worktree over it
+    // deletes work that no command brings back and that git never held.
+    const { down } = fixture({ ignore: "dist/\n/plans\n" });
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    mkdirSync(join(tree, "plans"));
+    writeFileSync(join(tree, "plans", "session.json"), '{"saved":true}\n');
+    expect(report(down, true).text).toMatch(/^keep {3}feat.*no command here rebuilds: plans\/$/m);
+    expect(branches(down)).toContain("feat");
+    expect(readFileSync(join(tree, "plans", "session.json"), "utf8")).toBe('{"saved":true}\n');
   });
 
   it("keeps one whose worktree directory has gone missing", () => {
@@ -573,5 +589,54 @@ describe("sync-merged, the running-process guard", () => {
     expect(decide({ ...facts, running: [] })).toEqual({ act: true, ff: true, tree: "/repo", note: undefined });
     expect(decide({ ...facts, running: [{ pid: "9", command: "vite" }] }).reason).toContain("pid 9");
     expect(decide({ ...facts, running: [], local: "b" })).toMatchObject({ act: true, ff: false });
+  });
+});
+
+describe("sync-merged, the ignored-content split", () => {
+  // Every ignore pattern this repository carries is either something a command here writes or
+  // something only this machine holds. The module names the first column; this names the second,
+  // so a pattern added to .gitignore is red until someone says which it is. That is the guard over
+  // the shape the whole rule comes from: /plans holds saved routing plans, and a worktree removal
+  // reaches them exactly as it reaches dist/.
+  const LOCAL_WORK = [
+    "*.local",
+    ".claude/*",
+    ".claude/skills/*",
+    "/plans",
+    "/reference",
+    "*.p12",
+    "*.pfx",
+    "*.pem",
+    "*.key",
+    "*.cer",
+    "*.mobileprovision",
+    "/.agents",
+    "/.codex",
+    "/AGENTS.md",
+  ];
+
+  const patterns = readFileSync(join(REPO, ".gitignore"), "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#") && !line.startsWith("!"));
+
+  const rebuildable = (pattern) => {
+    const path = pattern.replace(/^\//, "").replace(/\/$/, "");
+    if (path.startsWith("*.")) return REGENERABLE.extensions.includes(path.slice(1));
+    return REGENERABLE.paths.includes(path) || REGENERABLE.names.includes(path.slice(path.lastIndexOf("/") + 1));
+  };
+
+  it("reads a .gitignore that has patterns in it", () => {
+    // Two emptiness assertions follow, and an unreadable file satisfies both.
+    expect(patterns.length).toBeGreaterThan(10);
+    expect(patterns).toContain("/plans");
+  });
+
+  it("classifies every pattern in .gitignore as one or the other", () => {
+    expect(patterns.filter((p) => !rebuildable(p) && !LOCAL_WORK.includes(p))).toEqual([]);
+  });
+
+  it("classifies none of them as both", () => {
+    expect(LOCAL_WORK.filter(rebuildable)).toEqual([]);
   });
 });
