@@ -174,6 +174,12 @@ export interface VdCommand {
    */
   node?: string;
   /**
+   * The node-parameter key this command's VALUE came from, `null` where the emit supplied it
+   * and ABSENT where nothing recorded one. Present only under `planToCommandOrigins`, which is
+   * the only reader; a spread carries it, so the shared-address collapse keeps it.
+   */
+  origin?: string | null;
+  /**
    * Owner nodes whose command for this SAME address carried a DIFFERENT value and
    * was dropped in favour of this one (the last-wins collapse in
    * collapseSharedAddrs). Absent on every command of a plan with no shared
@@ -249,7 +255,59 @@ function rawCommand(
   planValue: number,
 ): VdCommand {
   const vdValue = encodeValue(encoding, planValue);
-  return { name, paramId, x: 0, y, planValue, vdValue };
+  return stampOrigin({ name, paramId, x: 0, y, planValue, vdValue }, planValue);
+}
+
+/**
+ * Where the value a command carries came from, recorded AS the command is built — the one
+ * moment both are in hand. Off by default; `planToCommandOrigins` turns it on for one
+ * synchronous emit.
+ *
+ * The reading is not the order of the reads alone. A command is built from a value that was
+ * just read, so a FRESH read is that command's key when the two agree — and they can disagree,
+ * where an enum resolves an out-of-range number to its own default, which is a value the plan
+ * did not supply. A read already spent is reused only for a command carrying the SAME value,
+ * which is the shape of a loop sending one value to every linked instance. Anything else is a
+ * value the emit supplied itself.
+ *
+ * Losing track is a third answer, not the second: a command with no `origin` field at all never
+ * went through here, and the caller treats that as a value it cannot vouch for rather than as
+ * one nobody supplied.
+ */
+let originCursor: {
+  fresh?: { name: string; value: unknown };
+  previous?: { name: ParamName; planValue: number; origin: string | null };
+} | null = null;
+
+function stampOrigin(command: VdCommand, planValue: number): VdCommand {
+  if (!originCursor) return command;
+  const fresh = originCursor.fresh;
+  originCursor.fresh = undefined;
+  let origin: string | null = null;
+  if (fresh !== undefined) {
+    // A read the emit has not spent yet is this command's, when the two agree about the value.
+    // Two ways they do not, and they mean opposite things. The plan holding NOTHING there is
+    // the emit asking before it decides — it then supplies the value itself, which is nobody's
+    // to have chosen. A key that holds a DIFFERENT value is a record this cannot make: the read
+    // was for something else, and the command is left unstamped rather than called the emit's,
+    // since the caller must not read a lost record as a value nobody supplied. Measured: the
+    // second never happens on any of the three models, so it is the fail-safe, not the rule.
+    const asNumber = typeof fresh.value === "boolean" ? (fresh.value ? 1 : 0) : fresh.value;
+    if (fresh.value === undefined) origin = null;
+    else if (asNumber !== planValue) {
+      originCursor.previous = undefined;
+      return command;
+    } else origin = fresh.name;
+  } else {
+    // No read of its own. One value going to every linked instance is a run of commands with
+    // the SAME parameter and the same value, so only the one immediately before it can lend a
+    // name — matching on the value alone attributed a channel's fader, which comes off a
+    // connection, to whichever parameter had last been read carrying a zero.
+    const before = originCursor.previous;
+    origin = before && before.name === command.name && before.planValue === planValue ? before.origin : null;
+  }
+  originCursor.previous = { name: command.name, planValue, origin };
+  return { ...command, origin };
 }
 
 function command(name: ParamName, y: number, planValue: number): VdCommand {
@@ -1814,30 +1872,29 @@ export function planToCommands(
  * owner's value and then overwrites it, which is the defect the collapse removes.
  */
 
-/** The plan key an emitted command took its VALUE from, absent where the emit supplied the
- *  value itself — a fixed switch, or a descriptor's own default for a slot the plan omits. */
-export type CommandOrigin = string | undefined;
-
-/** Every leaf read the emit makes, in order, named the way the differ names one.
+/** The plan, with its node parameters recording every read of a value they carry.
  *
- *  A Proxy rather than a stamp at each of the emit's hundred-odd push sites: the value a
- *  command carries is READ immediately before it is pushed, so the reads between one push and
- *  the next are that command's inputs and the last of them is the one it carries. Recording it
- *  at the read is what keeps the two from drifting — a stamp is a second spelling of the same
- *  fact, kept by hand at every site that emits. */
-function recordingParams(nodeParams: Plan["nodeParams"], read: (name: string) => void): Plan["nodeParams"] {
+ *  A Proxy rather than a key threaded through each of the emit's hundred-odd command sites:
+ *  the value a command is built from is READ immediately before it is built, so the read is
+ *  where the two meet, and recording it there keeps them from drifting the way a second
+ *  spelling kept by hand at every site would.
+ *
+ *  Every string property, carried or not: the emit asks for a key before it decides whether to
+ *  send one, and asking is how it finds out. What keeps an absent key from naming the command
+ *  that follows it is the value test where the command is built — the key held nothing, so it
+ *  is not the value that went out. A prototype method fails the same test. */
+function recordingParams(
+  nodeParams: Plan["nodeParams"],
+  read: (name: string, value: unknown) => void,
+): Plan["nodeParams"] {
   const wrap = (value: unknown, path: string[]): unknown => {
     if (value === null || typeof value !== "object") return value;
     return new Proxy(value as object, {
       get(target, prop, receiver) {
         const held = Reflect.get(target, prop, receiver);
-        // The plan's OWN string properties only. A key it does not carry is read all the same
-        // — the emit asks before it decides whether to send one — and it is not a value the
-        // plan supplies, so a command pushed after such a read has no plan key behind it and
-        // must not inherit that name. A prototype method is excluded by the same test.
-        if (typeof prop !== "string" || !Object.prototype.hasOwnProperty.call(target, prop)) return held;
+        if (typeof prop !== "string") return held;
         if (held !== null && typeof held === "object") return wrap(held, [...path, prop]);
-        read([...path, prop].join("."));
+        read([...path, prop].join("."), held);
         return held;
       },
     });
@@ -1850,39 +1907,44 @@ function recordingParams(nodeParams: Plan["nodeParams"], read: (name: string) =>
 }
 
 /**
- * What produced each command a write under `scope` would send, keyed by address.
+ * What produced the value of each command a write under `scope` would send, keyed by address.
  *
  * The join a caller needs to say whether the operator chose what a write is about to change.
  * A key that merely GATES a command — a channel's insert-FX selector, its comp/EQ order —
- * needs no entry of its own: it owns the value of its OWN command, and that command is on the
- * same node, so a write actually changing the selector already names the strip through it. Read
- * as though a gate owned what it gates, an operator editing one engine parameter under a
- * selector they fetched from the unit is told they are changing something they did not choose,
- * and nothing about that write touches the selector.
+ * needs no entry of its own: it owns the value of its OWN command, on the same node, so a
+ * write that is actually changing the selector already names the strip through it. Read as
+ * though a gate owned what it gates, an operator editing one engine parameter under a selector
+ * they fetched from the unit is told they are changing something they did not choose, and
+ * nothing about that write touches the selector.
  *
- * Keyed by address AFTER the collapse, so a shared address answers for the owner that survives
- * it, and filtered by the same scope rule the emit uses.
+ * Answers per address AFTER the collapse, so a shared address answers for the owner that
+ * survives it, and under the same scope rule the emit uses. `undefined` for an address whose
+ * command carries no record at all — a state the caller must not read as "nobody supplied it".
  */
 export function planToCommandOrigins(
   model: DeviceModel,
   plan: Plan,
   scope: WriteScope = "all",
-): Map<number, CommandOrigin> {
-  const reads: string[] = [];
-  let mark = 0;
-  // The LEAF paths, resolved to contest names below: a command's owner node is stamped after
-  // it is pushed (`own`), so inside the hook there is no node to name it with yet.
-  const seen = new Map<VdCommand, string[]>();
-  const proxied = { ...plan, nodeParams: recordingParams(plan.nodeParams, (name) => reads.push(name)) };
-  const commands = buildCommands(model, proxied, {}, (command) => {
-    seen.set(command, reads.slice(mark));
-    mark = reads.length;
-  });
-  const origins = new Map<number, CommandOrigin>();
+): Map<number, string | null | undefined> {
+  const cursor: NonNullable<typeof originCursor> = {};
+  const proxied = {
+    ...plan,
+    nodeParams: recordingParams(plan.nodeParams, (name, value) => {
+      cursor.fresh = { name, value };
+    }),
+  };
+  originCursor = cursor;
+  let commands: VdCommand[];
+  try {
+    commands = buildCommands(model, proxied);
+  } finally {
+    originCursor = null;
+  }
+  const origins = new Map<number, string | null | undefined>();
   for (const c of collapseSharedAddrs(commands)) {
     if (scope !== "all" && (PARAMS[c.name] as ParamSpec).sceneExternal === true) continue;
-    const window = seen.get(c) ?? [];
-    origins.set(cmdAddr(c), window.length ? nodeParamContestPath(c.node ?? "", window[window.length - 1]) : undefined);
+    const key = c.origin;
+    origins.set(cmdAddr(c), key === undefined || key === null ? key : nodeParamContestPath(c.node ?? "", key));
   }
   return origins;
 }
@@ -1891,23 +1953,8 @@ export function planToCommandsUncollapsed(model: DeviceModel, plan: Plan): VdCom
   return buildCommands(model, plan);
 }
 
-function buildCommands(
-  model: DeviceModel,
-  plan: Plan,
-  emit: EmitOptions = {},
-  /** Called as each command is pushed, before anything else reads the plan again. The one
-   *  seat from which a command can be tied to the plan keys that produced it — see
-   *  {@link planToCommandOrigins}, which is the only caller. */
-  onPush?: (command: VdCommand) => void,
-): VdCommand[] {
+function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): VdCommand[] {
   const out: VdCommand[] = [];
-  if (onPush) {
-    const push = out.push.bind(out);
-    out.push = (...commands: VdCommand[]): number => {
-      for (const c of commands) onPush(c);
-      return push(...commands);
-    };
-  }
   // Owner-node stamping for the device-follow index: own(id) attributes every
   // command pushed since the last own() call to `id`. `mark` auto-advances, so a
   // single own(id) at the end of each per-node block (or iteration) covers that

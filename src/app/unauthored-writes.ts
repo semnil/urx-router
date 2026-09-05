@@ -41,8 +41,8 @@ export function unauthoredWriteNodes(
 ): string[] {
   if (!changing.size) return [];
   const source = plan.paramSource;
-  const chose = (name: string | undefined): boolean => {
-    const from = name === undefined ? undefined : source?.get(name);
+  const chose = (name: string): boolean => {
+    const from = source?.get(name);
     return from === "load" || from === "manual";
   };
 
@@ -51,10 +51,12 @@ export function unauthoredWriteNodes(
   for (const c of planToCommands(model, plan, scope)) {
     const addr = cmdAddr(c);
     if (c.node === undefined || !changing.has(addr)) continue;
-    // A value the emit supplied itself belongs to nobody, so it is not one the operator failed
-    // to choose.
-    const value = origins.get(addr);
-    if (value !== undefined && !chose(value)) named.add(c.node);
+    const origin = origins.get(addr);
+    // `null` is the emit supplying the value itself, which is nobody's to choose. `undefined`
+    // is a command that carries no record at all — a value this cannot vouch for, which is the
+    // same standing as one the operator did not set, and it must not read as the first.
+    if (origin === null) continue;
+    if (origin === undefined || !chose(origin)) named.add(c.node);
   }
   return model.nodes.filter((n) => named.has(n.id)).map((n) => n.id);
 }

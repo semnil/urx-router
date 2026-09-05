@@ -722,7 +722,17 @@ describe("Fetch from device", () => {
     await invoked(shell, "vd_disconnect", 3);
     const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
     expect(asked, "the positive control: the second write asked too").toHaveLength(2);
-    expect(stripsNamed(asked[1]).length).toBeGreaterThan(0);
+    // Named BY NAME, not by a count: the read also brings in keys the document never had, and
+    // those are unrecorded and warned about with or without this. What only the record produces
+    // is a strip whose every key the document DID write and the read then replaced — the stereo
+    // channels here, which the first write above did not name.
+    const { getModel } = await import("./models");
+    const { fullLabel } = await import("./models/types");
+    const stereo = getModel("URX44V")
+      .nodes.filter((n) => /^ch_\d+_\d+$/.test(n.id))
+      .map((n) => fullLabel(n));
+    expect(stereo.length, "the premise: the model has stereo channels").toBeGreaterThan(0);
+    for (const label of stereo) expect(stripsNamed(asked[1]), label).toContain(label);
   });
 
   it("reads a unit on the verified firmware without asking anything", SLOW, async () => {

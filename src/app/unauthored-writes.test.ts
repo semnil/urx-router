@@ -323,3 +323,38 @@ it("says nothing about a plan the operator authored throughout", () => {
   expect(every.size, "the premise: the write has plenty to send").toBeGreaterThan(100);
   expect(unauthoredWriteNodes(MODEL, plan, "all", every)).toEqual([]);
 });
+
+// A helper that builds several commands and pushes them together — the EQ 1-knob's ON, TYPE and
+// LEVEL go out as one chain — must still give each its own key. Read off the pushes instead,
+// the whole chain's reads land on the first of them and the other two answer for nobody.
+it.each(["ch1", "bus.stereo", "bus.mix1"])("names %s for a filled 1-knob level in a pushed chain", (node) => {
+  const plan = filledPlan();
+  plan.nodeParams[node] = { ...plan.nodeParams[node], eqOneKnob: { on: true, type: 0, level: 100 } };
+  for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
+  const level = nodeParamContestPath(node, "eqOneKnob.level");
+  plan.paramSource!.set(level, "default");
+
+  const cmds = planToCommands(MODEL, plan, "all").filter((c) => c.node === node && c.name === "EQ_ONE_KNOB_LEVEL");
+  expect(cmds.length, "the premise: the level reaches the wire").toBeGreaterThan(0);
+  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(cmds.map(cmdAddr)))).toEqual([node]);
+  // The control: the same address with the level the operator's own.
+  plan.paramSource!.set(level, "manual");
+  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(cmds.map(cmdAddr)))).toEqual([]);
+});
+
+// Two channels selecting the same shared engine slot collapse to one command, and the survivor
+// is a COPY. Carried on the command rather than in a table keyed by the object, the record
+// survives that copy; looked up by identity it does not, and the strip goes unnamed.
+it("keeps a value's key across the shared-address collapse", () => {
+  const plan = filledPlan();
+  const key = insertFxParamKey("compander", 6);
+  plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 1793, insertFxParams: { [key]: -2000 } };
+  plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: 1794, insertFxParams: { [key]: -3000 } };
+  for (const k of plan.paramSource!.keys()) plan.paramSource!.set(k, "manual");
+  plan.paramSource!.set(nodeParamContestPath("ch2", `insertFxParams.${key}`), "device");
+
+  const survivor = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch2" && c.name === "INSERT_FX_EFFECT");
+  expect(survivor, "the premise: one command survives the collapse").toHaveLength(1);
+  expect(survivor[0].shadowed, "the premise: it is the copy the collapse made").toEqual(["ch1"]);
+  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(survivor.map(cmdAddr)))).toEqual(["ch2"]);
+});
