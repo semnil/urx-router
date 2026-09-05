@@ -142,14 +142,18 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         __urxWrites: Array<[number, number]>;
         __urxStrWrites: Array<[number, number, string]>;
         __urxLinkLog: string[];
+        __urxInstance: Record<string, number>;
+        __urxNotify: { onmessage: (batch: unknown) => void } | null;
       };
       w.__urxDialogs = dialogs;
       w.__urxWrites = writes;
       w.__urxStrWrites = strWrites;
       w.__urxLinkLog = linkLog;
+      w.__urxNotify = null;
       // Per-instance state, empty until something writes. x/y default to 0 so a
       // scalar param has exactly one key whichever way it is addressed.
       const instance: Record<string, number> = {};
+      w.__urxInstance = instance;
       const slotKey = (a?: Record<string, unknown>): string =>
         `${Number(a?.paramId)}:${Number(a?.x ?? 0)}:${Number(a?.y ?? 0)}`;
       (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
@@ -207,6 +211,11 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
             linkLog.push(String(args?.line ?? ""));
             return Promise.resolve(constants.append_link_log ?? "");
           }
+          // Keep the notify stream's own channel: a change made on the unit's own panel
+          // arrives through it, and it is the only way a spec can deliver one. Captured
+          // beside the constant answer rather than instead of it, so a spec that never
+          // registered the live commands still meets the same refusal it always did.
+          if (cmd === "vd_params_subscribe") w.__urxNotify = args?.channel as typeof w.__urxNotify;
           return cmd in constants
             ? Promise.resolve(constants[cmd])
             : Promise.reject(new Error(`stub: unhandled command ${cmd}`));
@@ -232,6 +241,31 @@ export const strWritesOf = (page: Page): Promise<Array<[number, number, string]>
 /** Every vd_set the stub received, as [paramId, value]. */
 export const writesOf = (page: Page): Promise<Array<[number, number]>> =>
   page.evaluate(() => (window as unknown as { __urxWrites: Array<[number, number]> }).__urxWrites);
+
+/** Move one ADDRESS on the stubbed device, the way a hand on the unit's panel does.
+ *  `values` seeds every instance of a param id at once, which cannot say that one
+ *  channel holds a value and its neighbour does not — the two members of a mono pair
+ *  differ only in y. */
+export const setDeviceValue = (page: Page, paramId: number, y: number, value: number, x = 0): Promise<void> =>
+  page.evaluate(
+    ([id, xx, yy, v]) => {
+      (window as unknown as { __urxInstance: Record<string, number> }).__urxInstance[`${id}:${xx}:${yy}`] = v;
+    },
+    [paramId, x, y, value],
+  );
+
+/** Announce a device-side parameter change through the session's notify stream — what
+ *  the unit sends when one of its own controls is moved. Seed the address with
+ *  `setDeviceValue` first: a change the app cannot read back is one the reconcile the
+ *  notify schedules will undo. */
+export const notifyParam = (page: Page, paramId: number, y: number, value: number, x = 0): Promise<void> =>
+  page.evaluate(
+    ([id, xx, yy, v]) => {
+      const w = window as unknown as { __urxNotify: { onmessage: (batch: unknown) => void } | null };
+      w.__urxNotify?.onmessage([{ param_id: id, x: xx, y: yy, value: v }]);
+    },
+    [paramId, x, y, value],
+  );
 
 /** Every link-ledger line the stub was asked to append, in order (raw JSONL). */
 export const linkLogOf = (page: Page): Promise<string[]> =>
