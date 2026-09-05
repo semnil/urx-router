@@ -689,8 +689,10 @@ The constraint core (`core/routing.ts`):
   Signal Type moved on the unit's own panel, the whole-device one a scene recall and the idle sweep take, and
   the side-effect refetch, whose re-read of a pair primary's body carries the Signal Type with it. All three go
   through `snapLinkedPairs`, ahead of that read's trace sample, so the layout consequence is attributed to the
-  funnel it rides in rather than to whichever writer samples next; the refetch also asks for the full reflect,
-  since the fine-grained one repaints the nodes its read named and draws no tie. There the **primary** is kept rather than the selected
+  funnel it rides in rather than to whichever writer samples next. The refetch also asks for the full reflect,
+  since the fine-grained one repaints the nodes its read named and draws no tie — and it asks on the **link
+  state** having moved (`changesLinkState`) as well as on the snap having moved a node, because a pair that is
+  already adjacent has nothing to snap and its tie would otherwise wait for whatever re-rendered next. There the **primary** is kept rather than the selected
   member, so the pair settles on the same two slots whatever the board's selection happens to be, and a pair
   with either member shelved is left alone: no tie is drawn for it, so there is no gap to close, and snapping
   the visible member toward a shelved one would relocate it for a partner that is not on screen.

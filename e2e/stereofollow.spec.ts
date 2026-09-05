@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { faceplate, stereoTie } from "./graph-helpers";
+import { screenBox } from "./dyn-helpers";
 import { LIVE_COMMANDS, notifyBurst, notifyParam, setDeviceValue, stubTauriDevice } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 
@@ -81,6 +82,45 @@ test("a burst wide enough to force a whole-device read snaps the pair too", asyn
   );
   await expectSnapped(page, before);
 });
+
+// The third seat, and the one whose reflect is the fine-grained branch. An edit the unit
+// recomputes (a 1-knob) is re-read afterwards, and that read pulls the channel's whole body,
+// Signal Type included. With the pair ALREADY adjacent the snap has nothing to move, so a
+// seat that asks for the full repaint on a node having moved leaves the tie undrawn.
+test("a link arriving through a side-effect refetch shows on an already adjacent pair", async ({ page }) => {
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  await expect(stereoTie(page)).toHaveCount(0);
+
+  // The unit holds STEREO on the pair; nothing has told the app yet.
+  await setDeviceValue(page, SIGNAL_TYPE, 0, 1);
+  await setDeviceValue(page, SIGNAL_TYPE, 1, 1);
+
+  // A COMP 1-knob toggle is written, and its own value is re-read afterwards.
+  await node(page, "ch1").click();
+  const comp = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^COMP$/ }) });
+  if (!(await comp.evaluate((el) => (el as HTMLDetailsElement).open))) await comp.locator("summary").click();
+  await comp.locator("#btn-comp-screen").click();
+  await expect(screenBox(page)).toBeVisible();
+  await oneKnob(page).locator("button", { hasText: "On" }).click();
+
+  // CH 2 never moved, so the tie appearing is the whole of what this case measures.
+  const ch1 = (await node(page, "ch1").boundingBox())!;
+  const ch2 = (await node(page, "ch2").boundingBox())!;
+  expect(Math.abs(ch2.x - ch1.x)).toBeLessThan(2);
+  await expect(stereoTie(page)).toHaveCount(1, { timeout: 30_000 });
+
+  // And the other direction: unlinking on the unit has to take the tie away again, which is
+  // the half a condition reading only the arriving value would miss.
+  await setDeviceValue(page, SIGNAL_TYPE, 0, 0);
+  await setDeviceValue(page, SIGNAL_TYPE, 1, 0);
+  await oneKnob(page).locator("button", { hasText: "Off" }).click();
+  await expect(stereoTie(page)).toHaveCount(0, { timeout: 30_000 });
+});
+
+/** The COMP screen's 1-Knob toggle row. Exact-ish: the rack also carries "1-Knob Level". */
+const oneKnob = (page: Page) => screenBox(page).locator(".prefs-row", { hasText: "1-Knob" }).first();
 
 // Five distinct controls, against MAX_CONCENTRATION = 3 in src/core/control/follow.ts.
 const BURST: ReadonlyArray<[number, number, number]> = [

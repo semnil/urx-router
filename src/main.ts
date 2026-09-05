@@ -83,6 +83,7 @@ import type { DynKind } from "./ui/dyn-registry";
 import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
 import { FileFlowLatch, singleFlight } from "./app/flow-latch";
 import { nodeParamEffects } from "./app/node-param-effects";
+import { changesLinkState } from "./app/link-state-change";
 import {
   detectHideOffSends,
   detectLabelSource,
@@ -472,8 +473,11 @@ const live = DEMO
         // This read pulls each named node's whole body, and a pair primary's body carries
         // the Signal Type — so a link can arrive here as well as at the two reconciles. This
         // is the one seat whose reflect is the fine-grained branch, which repaints the nodes
-        // this read named and draws no tie; a snap here asks for the full one instead.
-        if (snapLinkedPairs()) followFull = true;
+        // this read named and draws no tie, so the full one is asked for on the LINK moving
+        // rather than on the snap having moved a node: an already adjacent pair has nothing
+        // to snap, and its tie would then wait for whatever re-rendered next.
+        const snapped = snapLinkedPairs();
+        if (snapped || changesLinkState(merged.devicePatch)) followFull = true;
         traceProbe?.sample("refetch");
         noteMergeConflicts(merged);
         for (const id of nodeIds) followDirtyNodes.add(id);
