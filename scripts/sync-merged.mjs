@@ -18,14 +18,23 @@
 //
 // WHAT IT REFUSES. Removing a worktree: the one this run is in, a locked one, one holding tracked
 // or untracked changes, one that cannot be read, one carrying ignored content that no command here
-// rebuilds, and one with a build or a server running out of it. Fast-forwarding: a default branch
-// that does not exist here, one checked out nowhere, one carrying commits the remote does not, and
-// the same running-process rule over the tree that holds it.
+// rebuilds, one with a build or a server running out of it, and one that has been switched off the
+// branch it is about to lose. Fast-forwarding: a default branch that does not exist here, one
+// checked out nowhere, one carrying commits the remote does not, one whose tree is not where the
+// plan read it, and the same running-process rule over the tree that holds it.
 //
 // **Any of those stops the whole apply, and the fast-forward runs first.** The deletions are what
 // it makes legal, so running them without it removes worktrees and then leaves every branch
 // behind — which is also why the fast-forward is not placed behind them, where its own failure
 // (a working tree that changed since the plan was read) would leave exactly that.
+//
+// Two of the three writes re-read what the plan read, immediately before making it: a merge and a
+// removal name a DIRECTORY, and act on whichever branch that directory is on when they run.
+// Between the plan reading one and the apply writing to it sits a fetch over the network, so a
+// session that switches a tree in that window would have its own branch fast-forwarded under a
+// line naming the default one, or its checkout removed without being asked what it holds. The
+// third, deleting a branch, needs no reading of its own — the merged-only form refuses from a
+// HEAD that does not contain it.
 //
 // Where the machine cannot be asked what is running, both halves go ahead saying so: git still
 // refuses to remove a worktree holding changes, and refuses to overwrite them in a merge.
@@ -193,6 +202,17 @@ function unclean(path) {
   return `its worktree holds ignored files that no command here rebuilds: ${shown}${rest}`;
 }
 
+/** What HEAD names in a worktree and where it points, or null where it names no branch at all. */
+function headOf(dir) {
+  const ref = git(["symbolic-ref", "--quiet", "HEAD"], dir, true);
+  const sha = git(["rev-parse", "HEAD"], dir, true);
+  if (ref.status !== 0 || sha.status !== 0) return null;
+  return { ref: ref.out, sha: sha.out };
+}
+
+const describeHead = (head) =>
+  head === null ? "it is on no branch" : `it is on ${head.ref} at ${head.sha.slice(0, 7)}`;
+
 /**
  * What to do about the default branch, from facts alone.
  *
@@ -303,7 +323,7 @@ function plan(cwd, log) {
   if (procs === null && removals.some((r) => r.tree)) {
     log("note   what runs in the worktrees below could not be read — git's refusals are the only guard there");
   }
-  return { removals, sync, remote, base, ahead };
+  return { removals, sync, remote, base, ahead, local };
 }
 
 export function run(cwd = process.cwd(), apply = false, log = console.log) {
@@ -314,7 +334,7 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
     log(`REFUSED — ${e.message}`);
     return 1;
   }
-  const { removals, sync, remote, base, ahead } = p;
+  const { removals, sync, remote, base, ahead, local } = p;
 
   if (!apply) {
     log(removals.length || sync.ff ? "\n(dry run — pass --apply to act)" : "\n(nothing to apply)");
@@ -338,6 +358,13 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
   // the one that was meant. Asked here, nothing is written; asked again below, a switch that
   // arrived inside the merge itself stops the deletions rather than passing for a sync.
   let failed = false;
+  const before = headOf(sync.tree);
+  if (before?.ref !== `refs/heads/${base}` || before.sha !== local) {
+    const read = `${base} at ${local.slice(0, 7)}`;
+    log(`SYNC BLOCKED — ${sync.tree} is not where the plan read it (${read}): ${describeHead(before)}`);
+    log("\nnothing applied — the fast-forward is what makes the deletions legal");
+    return 1;
+  }
   if (sync.ff) {
     const ff = git(["merge", "--ff-only", remote], sync.tree, true);
     if (ff.status !== 0) {
@@ -345,11 +372,26 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
       log("\nnothing applied — the fast-forward is what makes the deletions legal");
       return 1;
     }
-    log(`synced ${base} -> ${ahead.slice(0, 7)}`);
   }
+  const after = headOf(sync.tree);
+  if (after?.ref !== `refs/heads/${base}` || after.sha !== ahead) {
+    log(`SYNC BLOCKED — ${base} did not reach ${remote} in ${sync.tree}: ${describeHead(after)}`);
+    log("\nnothing removed — the fast-forward is what makes the deletions legal");
+    return 1;
+  }
+  if (sync.ff) log(`synced ${base} -> ${ahead.slice(0, 7)}`);
 
   for (const { branch, tree } of removals) {
     if (!tree) continue;
+    // The same window, over the trees this is about to take: a session that switched one of them
+    // has a checkout it is working in, and a removal does not ask what branch it is on. Its own
+    // branch is left alone below, since the worktree it is in is still listed.
+    const head = headOf(tree.path);
+    if (head?.ref !== `refs/heads/${branch}`) {
+      log(`keep   ${branch} — ${tree.path} is no longer on it: ${describeHead(head)}`);
+      failed = true;
+      continue;
+    }
     const r = git(["worktree", "remove", tree.path], cwd, true);
     if (r.status !== 0) {
       log(`keep   ${branch} — its worktree could not be removed: ${r.err}`);

@@ -15,7 +15,7 @@
 // would satisfy every assertion about what is kept.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -90,6 +90,61 @@ function program(cwd, ...args) {
 }
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Where git is, read before any shim is on the PATH. */
+const REAL_GIT = (() => {
+  const r = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : "git";
+})();
+
+/** Whether this machine resolves a shim named `git` ahead of the real one, which is what the race
+ *  cases rest on. Asked by putting one there, since a spawn on Windows resolves by extension and
+ *  a file with none is not a program however executable its bits say it is. */
+const gitCanBeShimmed = (() => {
+  try {
+    const box = mkdtempSync(join(tmpdir(), "sync-merged-shimprobe-"));
+    writeFileSync(join(box, "git"), "#!/bin/sh\necho shimmed\n", { mode: 0o755 });
+    const r = spawnSync("git", ["--version"], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${box}${delimiter}${process.env.PATH}` },
+    });
+    rmSync(box, { recursive: true, force: true });
+    return r.status === 0 && (r.stdout ?? "").includes("shimmed");
+  } catch {
+    return false;
+  }
+})();
+
+/**
+ * The program, with `git` resolved through a shim that fires ONCE — at the command named by
+ * `at`, before delegating to the real git — and runs `action` there.
+ *
+ * It exists for a window nothing else can construct: the tree the plan read is switched to
+ * another branch before the apply writes to it. Wall-clock that window is a fetch over the
+ * network; placed by hand it is one command, and the same either way.
+ */
+function raced(cwd, { at: trigger, action, nth = 1 }, ...args) {
+  const box = mkdtempSync(join(tmpdir(), "sync-merged-git-"));
+  roots.push(box);
+  const mark = join(box, "fired");
+  const seen = join(box, "seen");
+  const q = JSON.stringify;
+  // `nth` because one command is asked twice — the check on either side of the merge reads HEAD
+  // the same way — and which of the two the switch lands in is the whole of some cases.
+  writeFileSync(
+    join(box, "git"),
+    `#!/bin/sh\nif [ "$*" = ${q(trigger)} ]; then\n  echo x >> ${q(seen)}\n  if [ "$(wc -l < ${q(seen)})" -eq ${nth} ]; then\n    : > ${q(mark)}\n    ${action}\n  fi\nfi\nexec ${q(REAL_GIT)} "$@"\n`,
+    { mode: 0o755 },
+  );
+  const r = spawnSync(process.execPath, [PROGRAM, ...args], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${box}${delimiter}${process.env.PATH}` },
+  });
+  // Asserted by every case: a trigger that matches nothing leaves the run untouched, and every
+  // assertion about what it refused would then be satisfied by a run with no race in it.
+  return { code: r.status, text: (r.stdout ?? "") + (r.stderr ?? ""), fired: existsSync(mark) };
+}
 
 // Spelled from the full refname rather than the short one: `%(refname:short)` renders as
 // `heads/feat` where a tag shares the name, which is the very case one of these drives.
@@ -589,6 +644,141 @@ describe("sync-merged, the running-process guard", () => {
     expect(decide({ ...facts, running: [] })).toEqual({ act: true, ff: true, tree: "/repo", note: undefined });
     expect(decide({ ...facts, running: [{ pid: "9", command: "vite" }] }).reason).toContain("pid 9");
     expect(decide({ ...facts, running: [], local: "b" })).toMatchObject({ act: true, ff: false });
+  });
+});
+
+describe("sync-merged, when the tree it is about to write to is switched under it", () => {
+  // A merge names a directory. The plan reads which branch that directory is on; the apply acts
+  // on whichever one it is on then, and between the two sits a fetch over the network. Both cases
+  // place the switch at an exact command, so the window is the one that exists rather than one
+  // some timing happened to open.
+  const SWITCH = (down) => `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} switch -q -c ongoing`;
+  // The last thing the plan reads before the apply begins to write.
+  const LAST_PLAN_READ = "merge-base --is-ancestor refs/heads/main origin/main";
+
+  it.skipIf(!gitCanBeShimmed)("writes nothing when the switch lands before the fast-forward", () => {
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const was = at(down, "main");
+
+    const r = raced(down, { at: LAST_PLAN_READ, action: SWITCH(down) }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("is not where the plan read it");
+    expect(r.text).toContain("on refs/heads/ongoing");
+    expect(r.text).toContain("nothing applied");
+    expect(at(down, "main")).toBe(was);
+    expect(at(down, "ongoing")).toBe(was);
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
+  });
+
+  it.skipIf(!gitCanBeShimmed)("writes nothing when the tree stays on the branch and moves on", () => {
+    // The other half of the same reading, and the one a branch name alone cannot see: nobody
+    // switched anything, someone committed. The plan's answer was about a commit that is no
+    // longer the tip, so what a fast-forward would do here was never measured.
+    const { down } = fixture();
+    const was = at(down, "main");
+    const commit = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} commit -q --allow-empty -m theirs`;
+
+    // Placed one command later than the case above, at the first read of the check itself: a
+    // commit arriving before that is one the plan itself sees, and it is refused for not being a
+    // fast-forward — a different guard, which would answer for this one.
+    const r = raced(down, { at: "symbolic-ref --quiet HEAD", action: commit }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("is not where the plan read it");
+    expect(r.text).toContain("on refs/heads/main");
+    expect(at(down, "main")).not.toBe(was);
+    expect(branches(down)).toContain("feat");
+  });
+
+  it.skipIf(!gitCanBeShimmed)("removes nothing when the switch lands inside the fast-forward", () => {
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const was = at(down, "main");
+
+    const r = raced(down, { at: "merge --ff-only origin/main", action: SWITCH(down) }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("did not reach origin/main");
+    expect(r.text).toContain("nothing removed");
+    expect(r.text).not.toContain("synced main");
+    // What the earlier check cannot prevent, measured rather than assumed away: the merge moved
+    // the branch that was there. The default branch did not move, and neither did the cleanup.
+    expect(at(down, "main")).toBe(was);
+    expect(at(down, "ongoing")).toBe(at(down, "origin/main"));
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
+  });
+
+  it.skipIf(!gitCanBeShimmed)("removes nothing when the branch is put back where it was", () => {
+    // The check after the merge reads a VALUE and not only a name: a tree back on the branch it
+    // was on is not a tree at the commit the sync was for, and the deletions rest on the commit.
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const was = at(down, "main");
+    const back = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} reset -q --hard ${was}`;
+
+    const r = raced(down, { at: "symbolic-ref --quiet HEAD", nth: 2, action: back }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("did not reach origin/main");
+    expect(r.text).toContain("on refs/heads/main");
+    expect(at(down, "main")).toBe(was);
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
+  });
+
+  it.skipIf(!gitCanBeShimmed)("checks the tree even when there is nothing to fast-forward", () => {
+    // Both readings sit outside the merge, or a run with no merge to do writes on a plan nobody
+    // re-read — which is exactly the run that only cleans up.
+    const { down } = fixture();
+    git(down, "fetch", "-q", "origin");
+    git(down, "merge", "-q", "--ff-only", "origin/main");
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+
+    const r = raced(down, { at: LAST_PLAN_READ, action: SWITCH(down) }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("is not where the plan read it");
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
+  });
+
+  it.skipIf(!gitCanBeShimmed)("keeps a worktree that has been switched off the branch it is about to lose", () => {
+    // The tree being removed, rather than the tree being written to: a session that switched one
+    // is working in it, and git removes a clean worktree without asking what branch it is on.
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const elsewhere = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(tree)} switch -q -c theirs`;
+
+    const r = raced(down, { at: LAST_PLAN_READ, action: elsewhere }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/^keep {3}feat.*is no longer on it: it is on refs\/heads\/theirs/m);
+    expect(existsSync(tree)).toBe(true);
+    expect(branches(down)).toContain("feat");
+    // The fast-forward is what makes the deletions legal and it still ran, so the branch is kept
+    // by the reading above rather than by the sync having been refused.
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
+  });
+
+  it.skipIf(!gitCanBeShimmed)("goes through when the shim fires at nothing", () => {
+    // The positive control for both: the same PATH, the same delegation, no switch. Without it,
+    // a shim that broke every git call would satisfy every assertion above.
+    const { down } = fixture();
+    const r = raced(down, { at: "no-such-command", action: "true" }, "--apply");
+    expect(r.fired).toBe(false);
+    expect(r.code).toBe(0);
+    expect(r.text).toContain("synced main");
+    expect(branches(down)).not.toContain("feat");
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
   });
 });
 
