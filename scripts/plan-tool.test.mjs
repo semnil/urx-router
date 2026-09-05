@@ -67,13 +67,33 @@ const toolPaths = (dir, plan) => {
     .map((l) => l.slice("WARNING: node param ".length).split(":")[0]);
 };
 
-/** Whether the app's load leaves this node's fxEffect as the document wrote it. */
-const appChanges = async (plan) => {
+/** The app's own load. THREE stages: deserialize, the load-time repair, and the fill that
+ *  completes a document from the model's factory values. The last is optional here because
+ *  the two questions below are different — `appChanges` asks what the document's own values
+ *  survive, and the fill answers about the ones it did not write. */
+const appLoad = async (plan, fill) => {
   const { deserializeDocument } = await import("../src/core/plan.ts");
   const { paramRangeProblems, applyParamRange } = await import("../src/core/plan-validate.ts");
+  const { fillFactoryParams } = await import("../src/models/initial-state.ts");
   const loaded = deserializeDocument(JSON.stringify(plan)).plan;
   applyParamRange(loaded, paramRangeProblems(loaded));
+  if (fill) fillFactoryParams(loaded.modelId, loaded);
+  return loaded;
+};
+
+/** Whether the app's load leaves this node's fxEffect as the document wrote it. */
+const appChanges = async (plan) => {
+  const loaded = await appLoad(plan, false);
   return JSON.stringify(loaded.nodeParams[NODE]?.fxEffect) !== JSON.stringify(plan.nodeParams[NODE].fxEffect);
+};
+
+/** Every leaf of `value`, by dotted path — the granularity the comparison below needs. */
+const leavesOf = (value, path = [], out = new Map()) => {
+  if (Array.isArray(value)) value.forEach((v, i) => leavesOf(v, [...path, String(i)], out));
+  else if (value && typeof value === "object")
+    for (const [k, v] of Object.entries(value)) leavesOf(v, [...path, k], out);
+  else if (path.length) out.set(path.join("."), value);
+  return out;
 };
 
 // Rev-X Hall's own LPF starts well above 0, and no channel offers type 12345 — the two the
@@ -125,10 +145,15 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     expect(unnamed).toContain("names no type");
     expect(named).not.toContain("names no type");
 
-    // The control: a plan that omits the section is the way to leave the effect alone, and
-    // nothing about it is advised against.
+    // …and the other side of the same fact, which silence used to hide: a plan that omits the
+    // section does not leave the channel alone, since the app fills in its factory effect and
+    // the write sends that. The advisory is a different line — the section is not present to
+    // reset — and it has to be there, or an author reads the absence of a warning as safety.
     const omitted = { ...doc({}), nodeParams: { "bus.fx1": { level: -10 } } };
-    expect(toolWarnings(dir, omitted)).not.toContain("resets that effect's parameters");
+    const quiet = toolWarnings(dir, omitted);
+    expect(quiet).not.toContain("resets that effect's parameters");
+    expect(quiet).toContain("carry no usable fxEffect");
+    expect(quiet, "the channel it names is the one the document left out").toContain("bus.fx1");
   });
 
   // The two advisories a plan with `fxEffect.params` used to draw at once said opposite
@@ -142,7 +167,11 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     const KEEP = "omit to keep its current value";
     const fx = toolWarnings(dir, doc({ type: 0, params: { revxLpf: 40 } }));
     expect(fx).not.toContain(KEEP);
-    expect(fx).toContain("omit the whole fxEffect section");
+    // Nor the version that survived it: omitting the SECTION keeps nothing either, since the
+    // loader completes what a document leaves out. An advisory offering that as the way to
+    // preserve the effect sends an author to the one thing that does not preserve it.
+    expect(fx).not.toContain("omit the whole fxEffect section to keep");
+    expect(fx).toContain("neither does omitting the whole section");
 
     // The control, on the same run: the shared advice is not simply gone.
     const both = {
@@ -221,5 +250,83 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       "a number outside its parameter's window",
       "a type no channel offers",
     ]);
+  });
+
+  // The third stage the answers above rest on. `appChanges` asks what the SANITISER does to a
+  // document's own values, which is only the tool's claim while the fill leaves those alone —
+  // it completes absences, and a fill that altered a written value would make every verdict in
+  // the table above describe a load the app no longer performs.
+  it("completes a document without altering what it wrote", async () => {
+    for (const [name, fx] of CASES.map(([n, f]) => [n, f])) {
+      const plan = doc(fx);
+      const two = (await appLoad(plan, false)).nodeParams[NODE]?.fxEffect;
+      const three = (await appLoad(plan, true)).nodeParams[NODE]?.fxEffect;
+      const after = leavesOf(three);
+      for (const [path, value] of leavesOf(two)) expect(after.get(path), `${name} · ${path}`).toEqual(value);
+    }
+    // The positive control: the fill does add. Without it the loop above passes on two
+    // identical objects and states nothing about a stage that ran.
+    const plan = doc({ type: 0 });
+    expect(leavesOf((await appLoad(plan, true)).nodeParams[NODE]?.fxEffect).size).toBeGreaterThan(
+      leavesOf((await appLoad(plan, false)).nodeParams[NODE]?.fxEffect).size,
+    );
+  });
+
+  // What the fill costs, said to the author before they hand the plan over. Silence used to be
+  // how a plan preserved a channel; a document that names none of these three now writes the
+  // factory value over whatever the unit holds, and the insert-FX one CLEARS the effect.
+  it("names each selector a document leaves out", () => {
+    const bare = { format: "urx-router-plan", version: 2, modelId: "URX44V", connections: [] };
+    const out = toolWarnings(dir, bare);
+    expect(out).toContain("carry no usable fxEffect");
+    expect(out).toContain("carry no usable insertFx");
+    // The SSMCS strip is conditional: the factory comp/EQ order sends none of it, so only a
+    // document that selects the order and omits the values is warned about.
+    expect(out).not.toContain("carry no usable ssmcs");
+    const ssmcs = { ...bare, nodeParams: { ch1: { compEqType: 1 } } };
+    expect(toolWarnings(dir, ssmcs)).toContain("select the SSMCS comp/EQ order and carry no usable ssmcs");
+    // …and a document that carries the strip is not told about it.
+    const dialled = { ...bare, nodeParams: { ch1: { compEqType: 1, ssmcs: { outGain: 10 } } } };
+    expect(toolWarnings(dir, dialled)).not.toContain("carry no usable ssmcs");
+  });
+
+  // Each of the three asks whether the document carries a value the app can USE. A key holding
+  // the wrong kind of thing is dropped on load and completed from the factory, which lands
+  // exactly where an absent key lands — so a rule reading the key's PRESENCE tells the author
+  // the opposite of what the write does, on the document most likely to have got it wrong.
+  it.each([
+    ["a number where the effect object goes", { "bus.fx1": { fxEffect: 5 } }, "carry no usable fxEffect", true],
+    ["an effect object the app removes", { "bus.fx1": { fxEffect: {} } }, "carry no usable fxEffect", true],
+    [
+      "an effect the document wrote",
+      { "bus.fx1": { fxEffect: { type: 0 } } },
+      "bus.fx1, bus.fx2: carry no usable fxEffect",
+      false,
+    ],
+    ["a boolean where the selector goes", { ch1: { insertFx: true } }, "ch1, ch2", true],
+    ["a selector the document wrote", { ch1: { insertFx: 1793 } }, "ch1, ch2", false],
+  ])("%s", (_name, nodeParams, needle, warned) => {
+    const out = toolWarnings(dir, {
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams,
+    });
+    expect(out.includes(needle)).toBe(warned);
+  });
+
+  // `True == 1` in Python, and the app's own comparison is `===` — so a boolean comp/EQ type
+  // falls back to the COMP-first order and sends no SSMCS at all.
+  it("does not read a boolean as the SSMCS comp/EQ order", () => {
+    const doc = (v) => ({
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch1: { compEqType: v } },
+    });
+    expect(toolWarnings(dir, doc(true))).not.toContain("carry no usable ssmcs");
+    expect(toolWarnings(dir, doc(1)), "the control: the real value is warned about").toContain("carry no usable ssmcs");
   });
 });

@@ -11,6 +11,7 @@
 // of control-layer imports so the demo bundle can use the save/load half.
 
 import type { DelayParams, NodeParams, Plan, PlanConnection } from "./plan";
+import { nodeParamContestPath, walkParamLeaves } from "./plan-history";
 
 // Nodes whose params are scene-external in full (monitor strips carry only
 // monitor state, bus.osc only oscillator state).
@@ -33,6 +34,28 @@ export function isSceneExternalConnection(conn: PlanConnection): boolean {
   }
   if (conn.kind === "sendSwitch") return conn.from.split(":")[0] === "bus.osc";
   return false;
+}
+
+/** The node-parameter keys a scene-scoped operation leaves alone, named the way the differ
+ *  names them.
+ *
+ *  Derived from the same three constants {@link captureSceneExternal} reads rather than listed
+ *  again, so the two cannot answer differently. What it is FOR is a scene-scoped LOAD: the
+ *  device-wide values are copied off the plan on screen rather than written by the incoming
+ *  document, so their provenance is that plan's — read as the document's, they would be exempt
+ *  from the write confirm's warning, and the monitor, phones and oscillator are what that
+ *  exempts.
+ */
+export function sceneExternalParamNames(plan: Plan): Set<string> {
+  const names = new Set<string>();
+  const add = (nodeId: string, value: unknown, prefix = ""): void =>
+    walkParamLeaves(value, (path) => names.add(nodeParamContestPath(nodeId, prefix + path)));
+  for (const id of FULL_NODE_IDS) add(id, plan.nodeParams[id]);
+  add(STREAM_NODE, plan.nodeParams[STREAM_NODE]?.delay, "delay.");
+  if (plan.nodeParams[SDREC_NODE]?.sdRecTrackCount !== undefined) {
+    names.add(nodeParamContestPath(SDREC_NODE, "sdRecTrackCount"));
+  }
+  return names;
 }
 
 /** Snapshot of a plan's scene-external state, for keep-across-replace flows. */

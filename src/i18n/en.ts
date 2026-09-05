@@ -928,6 +928,8 @@ export const en = {
       `The connected device is ${device}, but ${ui} is selected. Switch to ${device} (replacing the current plan) and fetch?`,
     write: (n: number): string =>
       `Write ${n} change${n === 1 ? "" : "s"} to the device? This overwrites the device's current settings.`,
+    unauthoredWrite: (strips: string): string =>
+      `The write also changes settings you did not edit — values the plan filled in for you, or values the device has moved since it was read.\nAffected: ${strips}`,
     firmwareMismatch: (device: string, supported: string): string =>
       `The connected device's firmware (${device}) differs from the version this app was tested with (${supported}). It may not work correctly. Continue anyway?`,
     selfTest: tr(

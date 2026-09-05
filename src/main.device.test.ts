@@ -211,6 +211,27 @@ function dialogs(shell: TauriShell): Array<{ message?: string; kind?: string; bu
 }
 
 /** The messages of the dialogs that ASKED (OK / Cancel), in order. */
+/** The strips a write confirm's unauthored-write note names, as ITEMS.
+ *
+ *  Split rather than searched: the names are a comma-separated run and several of this
+ *  model's labels are prefixes of others ("CH 1" of "CH 11/12", "FX 1" of nothing), so a
+ *  `toContain` on a label answers yes for a note that never mentioned it. Empty when the
+ *  message carries no note at all, which is the other thing these cases assert. */
+function stripsNamed(message: string): string[] {
+  const [head, tail] = t().confirm.unauthoredWrite("\u0000").split("\u0000");
+  const at = message.indexOf(head);
+  if (at < 0) return [];
+  // The note is one paragraph and the question is the next, so the run ends at the break —
+  // the message puts nothing after the names, so a split on the placeholder's own tail would
+  // take the question into the last item.
+  const rest = message.slice(at + head.length).split("\n\n")[0];
+  const end = tail ? rest.indexOf(tail) : -1;
+  return (end < 0 ? rest : rest.slice(0, end))
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
+}
+
 const confirms = (shell: TauriShell): string[] =>
   dialogs(shell)
     .filter((d) => d.buttons === "OkCancel")
@@ -669,6 +690,49 @@ describe("Fetch from device", () => {
     // Declined: no whole-device sweep followed the confirm.
     await new Promise((r) => setTimeout(r, 200));
     expect(shell.count("vd_get")).toBeLessThan(10);
+  });
+
+  // A read replaces values the document wrote, and from then on they are the unit's: a later
+  // divergence in one is the unit having moved, not a setting the operator chose. Recorded off
+  // the merge's own patch, which is what the read ACTUALLY adopted — a key it left alone
+  // because the plan had moved under it is not in there.
+  //
+  // The document names EVERY key, so before the fetch nothing in the plan is unauthored and the
+  // confirm carries no note. That is what makes the note's presence afterwards the answer.
+  it("takes the values a fetch adopted as the unit's", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const written = defaultPlan("URX44V");
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: clockReads(false, 48_000) }),
+    }))!;
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const first = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(first, "the premise: the write asked").toHaveLength(1);
+    expect(stripsNamed(first[0]), "the premise: the document authored everything").toEqual([]);
+
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(shell.count("vd_get"), "the premise: the fetch swept the device").toBeGreaterThan(400);
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 3);
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the positive control: the second write asked too").toHaveLength(2);
+    // Named BY NAME, not by a count: the read also brings in keys the document never had, and
+    // those are unrecorded and warned about with or without this. What only the record produces
+    // is a strip whose every key the document DID write and the read then replaced — the stereo
+    // channels here, which the first write above did not name.
+    const { getModel } = await import("./models");
+    const { fullLabel } = await import("./models/types");
+    const stereo = getModel("URX44V")
+      .nodes.filter((n) => /^ch_\d+_\d+$/.test(n.id))
+      .map((n) => fullLabel(n));
+    expect(stereo.length, "the premise: the model has stereo channels").toBeGreaterThan(0);
+    for (const label of stereo) expect(stripsNamed(asked[1]), label).toContain(label);
   });
 
   it("reads a unit on the verified firmware without asking anything", SLOW, async () => {
@@ -1887,15 +1951,20 @@ describe("Write to device", () => {
   // the confirm outright used to leave the whole suite green.
   it("asks how many changes it is about to write, and sends nothing when that is declined", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(false, 48_000) }, false);
-    // A message that reconstructs to itself under `confirm.write` IS the write confirm.
-    // Waiting on "some confirm appeared" is not enough: with the confirm gone the write
-    // runs on, fails to converge and offers to save a failure report — which is an
+    // A message whose LAST paragraph reconstructs to itself under `confirm.write` IS the write
+    // confirm. Waiting on "some confirm appeared" is not enough: with the confirm gone the
+    // write runs on, fails to converge and offers to save a failure report — which is an
     // OkCancel dialog too, so the wait would be satisfied by the very regression the case
     // exists to catch, and the failure would name a NaN instead of a missing dialog.
+    // The last paragraph rather than the whole message, because the dialog carries what else
+    // it has to say about this write ahead of the question — a shared-address owner, and the
+    // strips whose values nobody chose, which a plan the app itself seeded has throughout.
+    const question = (m: string): string => m.slice(m.lastIndexOf("\n\n") + 2);
     const written = (): string | undefined =>
       confirms(shell).find((m) => {
-        const n = Number(/\d+/.exec(m)?.[0]);
-        return Number.isFinite(n) && m === t().confirm.write(n);
+        const q = question(m);
+        const n = Number(/\d+/.exec(q)?.[0]);
+        return Number.isFinite(n) && q === t().confirm.write(n);
       });
     $("btn-write").click();
     await vi.waitFor(() => expect(written()).toBeDefined(), { timeout: 10_000 });
@@ -1905,7 +1974,7 @@ describe("Write to device", () => {
     // rather than a substring. What that cannot pin is the number itself — the expectation
     // is built from the same digits — so a `total` that dropped one of its two terms would
     // still render a well-formed frame.
-    const n = Number(/\d+/.exec(written()!)?.[0]);
+    const n = Number(/\d+/.exec(question(written()!))?.[0]);
     expect(n).toBeGreaterThan(10);
     // And exactly one confirm: the decline has to end the flow rather than lead to another
     // question.
@@ -1980,20 +2049,18 @@ describe("Write to device", () => {
     expect(statusText()).toContain(t().status.writeNoChanges);
   });
 
-  // The plan format's silence, held at the only place it can actually be measured: the
-  // commands that reach a unit. The skill instructs a plan author to omit `fxEffect` when the
-  // user did not ask to change the effect, and promises the unit keeps its FX. Emitting
-  // defaults for an undescribed channel instead resets it from a document that says nothing —
-  // and the EFFECT TYPE write is not recoverable, since it refills the engine array with that
-  // type's defaults. This was written that way, measured, and reverted; the case is what stops
-  // the next attempt at "make the panel and the wire agree" from agreeing in this direction.
-  it("writes no FX address for a plan that omits the effect, leaving the unit's own settings", SLOW, async () => {
+  // The plan format's silence, held at the only place it can actually be measured: what
+  // reaches a unit, and what the operator is told before it does. A document that says
+  // nothing about the FX channels is completed from the model's factory values, so the write
+  // DOES send the selector — and that write is not recoverable, since it refills the engine
+  // array with the type's defaults. What stands in front of it is the confirm: it names the
+  // strips whose values nobody chose, so writing them is a decision rather than a surprise.
+  // The pair below is what makes that a real question — the same plan, described and not.
+  it("names the strips a document never described, and stays quiet about the ones it did", SLOW, async () => {
     const { emptyPlan, serialize } = await import("./core/plan");
-    // A plan with something to write and NOTHING about either FX channel.
-    const plan = emptyPlan("URX44V");
-    plan.nodeParams["ch1"] = { level: -10 };
-    expect(plan.nodeParams["bus.fx1"]?.fxEffect, "the premise").toBeUndefined();
-    expect(plan.nodeParams["bus.fx2"]?.fxEffect, "the premise").toBeUndefined();
+    const { getModel } = await import("./models");
+    const { fullLabel } = await import("./models/types");
+    const fxLabel = (id: string): string => fullLabel(getModel("URX44V").nodes.find((n) => n.id === id)!);
 
     // The unit is holding FX settings of its own, on both channels' selector and array.
     const FX = new Set([679, 681, 683, 685]);
@@ -2001,22 +2068,96 @@ describe("Write to device", () => {
       FX.has(a.paramId as number) ? 4242 : clockReads(false, 48_000)(a);
     // The legacy UNCOMPRESSED link shape, which the codec still decodes: jsdom here has no
     // Blob.stream for the compressed one, and the plan is what this case is about.
-    const link = Buffer.from(serialize(plan), "utf8").toString("base64url");
+    const linkFor = (plan: ReturnType<typeof emptyPlan>): string =>
+      encodeURIComponent(Buffer.from(serialize(plan), "utf8").toString("base64url"));
+    const runWrite = async (plan: ReturnType<typeof emptyPlan>): Promise<TauriShell> => {
+      const shell = (await bootApp({
+        url: `/?plan=${linkFor(plan)}`,
+        tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: custom }),
+      }))!;
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      return shell;
+    };
+    const fxWrites = (shell: TauriShell): Array<Record<string, unknown>> =>
+      shell.invokes
+        .map((cmd, i) => (cmd === "vd_set" ? shell.args[i] : undefined))
+        .filter((a): a is Record<string, unknown> => !!a && FX.has(a.paramId as number));
+
+    // A plan with something to write and NOTHING about either FX channel.
+    const silent = emptyPlan("URX44V");
+    silent.nodeParams["ch1"] = { level: -10 };
+    expect(silent.nodeParams["bus.fx1"]?.fxEffect, "the premise").toBeUndefined();
+    const quiet = await runWrite(silent);
+    // The positive control: the write ran and sent something, so what is asserted about the
+    // dialog is asserted about a write that reached the device.
+    expect(quiet.count("vd_set")).toBeGreaterThan(0);
+    // The contract this case exists for: the fill sends the factory effect, and the confirm
+    // said so first, naming the strip the operator never described.
+    expect(fxWrites(quiet).length).toBeGreaterThan(0);
+    const warned = confirms(quiet).filter((m) => stripsNamed(m).includes(fxLabel("bus.fx1")));
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain(
+      t()
+        .confirm.write(1)
+        .replace(/^[\s\S]*?\?\s*/, ""),
+    );
+
+    // The other half, which is what stops "always warn" from passing: the same two strips,
+    // described by the document, are the operator's own values and are not warned about.
+    const { defaultPlan } = await import("./models/initial-state");
+    const factory = defaultPlan("URX44V");
+    const described = emptyPlan("URX44V");
+    described.nodeParams["ch1"] = { level: -10 };
+    // The factory values, but WRITTEN IN the document: same numbers on the wire, different
+    // provenance — which is the whole distinction the note is drawn from.
+    for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    const told = await runWrite(described);
+    expect(told.count("vd_set"), "the positive control").toBeGreaterThan(0);
+    expect(confirms(told).filter((m) => stripsNamed(m).includes(fxLabel("bus.fx1")))).toEqual([]);
+  });
+
+  // The other half of the same mark: a write takes the plan's values AS the unit's only once
+  // it has landed in full. Taken on a write that did not converge, it would relabel the keys
+  // the DOCUMENT named — which are exempt from the warning because someone wrote them — as
+  // the unit's, and the next attempt would then warn about values the operator chose.
+  it("does not relabel a document's own values as the unit's when the write did not land", SLOW, async () => {
+    const { emptyPlan, serialize } = await import("./core/plan");
+    const { getModel } = await import("./models");
+    const { fullLabel } = await import("./models/types");
+    const { defaultPlan } = await import("./models/initial-state");
+    const label = (id: string): string => fullLabel(getModel("URX44V").nodes.find((n) => n.id === id)!);
+
+    const factory = defaultPlan("URX44V");
+    const described = emptyPlan("URX44V");
+    described.nodeParams["ch1"] = { level: -10 };
+    // The FX channels are what the document names; everything else is left to the fill.
+    for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    const link = encodeURIComponent(Buffer.from(serialize(described), "utf8").toString("base64url"));
+    // Reads that never reflect a write: every address answers its clock value or 0, so the
+    // converge runs out with a residual and the write is not a landing.
     const shell = (await bootApp({
-      url: `/?plan=${encodeURIComponent(link)}`,
-      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: custom }),
+      url: `/?plan=${link}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: clockReads(false, 48_000) }),
     }))!;
 
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
-    // The positive control: the write ran and sent something, so the absence below is an
-    // absence of FX writes rather than of writes.
-    expect(shell.count("vd_set")).toBeGreaterThan(0);
+    // The count is read out of the line and put back, so the premise pins the whole frame
+    // rather than a substring of it.
+    const stuck = Number(/\d+/.exec(statusText())?.[0]);
+    expect(statusText(), "the premise: this write did not converge").toBe(t().status.writeResidual(stuck));
 
-    const fxWrites = shell.invokes
-      .map((cmd, i) => (cmd === "vd_set" ? shell.args[i] : undefined))
-      .filter((a): a is Record<string, unknown> => !!a && FX.has(a.paramId as number));
-    expect(fxWrites).toEqual([]);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the positive control: both attempts asked").toHaveLength(2);
+    // The note ran on both — reconstructed from its own message rather than from a label,
+    // since `fullLabel("ch1")` is "CH 1" and three of this model's labels contain that string.
+    const noteMark = t().confirm.unauthoredWrite("").replace(/\s*$/, "");
+    expect(asked.every((m) => m.includes(noteMark))).toBe(true);
+    // …and named neither FX channel either time, because the document named those.
+    expect(asked.filter((m) => stripsNamed(m).includes(label("bus.fx1")))).toEqual([]);
   });
 
   // A parameter whose current value could not be read is one the write has no diff for,

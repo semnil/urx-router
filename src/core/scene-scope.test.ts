@@ -1,11 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { applySceneExternal, captureSceneExternal, isSceneExternalConnection, stripSceneExternal } from "./scene-scope";
+import {
+  applySceneExternal,
+  captureSceneExternal,
+  isSceneExternalConnection,
+  sceneExternalParamNames,
+  stripSceneExternal,
+} from "./scene-scope";
 import { deserializeDocument, serialize } from "./plan";
+import type { NodeParams, Plan } from "./plan";
+import { nodeParamContestPath } from "./plan-history";
 import { defaultPlan } from "../models/initial-state";
 import { getModel } from "../models";
 import { PARAMS } from "./control/params";
 import type { ParamSpec } from "./control/params";
-import { planToCommands } from "./control/translate";
+import { cmdAddr, planToCommands } from "./control/translate";
 
 // The scene boundary, in two groups so a reader can tell what is hardware-measured
 // from what is asserted. Together they are the contract: params.ts flags (the
@@ -218,5 +226,66 @@ describe("scene-scoped plan documents", () => {
     applySceneExternal(doc.plan, captureSceneExternal(current));
     expect(doc.plan.sampleRate).toBe(176400);
     expect(doc.plan.nodeParams["bus.osc"]).toEqual({ osc: { on: true, level: -20 } });
+  });
+});
+
+// The third encoding of the same boundary, and the one a scene-scoped LOAD rests on: the
+// device-wide values it carries over came off the plan on screen rather than out of the
+// document, so their provenance is that plan's. Asked differentially against the emit rather
+// than compared to a list, since a list would agree with itself however wrong both halves were.
+describe("sceneExternalParamNames", () => {
+  const MODEL = getModel("URX44V");
+  const emit = (plan: Plan, scope: "all" | "scene"): Set<number> =>
+    new Set(planToCommands(MODEL, plan, scope).map(cmdAddr));
+
+  /** The plan with one leaf blanked, the way a caller asking "what does this key send" needs
+   *  it: blanked rather than deleted, since an array index is part of a key's identity. */
+  function without(plan: Plan, nodeId: string, path: string): Plan {
+    const blank = (v: unknown, at: string[]): unknown => {
+      if (Array.isArray(v)) return v.map((x, i) => blank(x, [...at, String(i)]));
+      if (v && typeof v === "object")
+        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, blank(x, [...at, k])]));
+      return at.join(".") === path ? undefined : v;
+    };
+    return { ...plan, nodeParams: { ...plan.nodeParams, [nodeId]: blank(plan.nodeParams[nodeId], []) as NodeParams } };
+  }
+
+  it("names keys a scene-scoped operation leaves alone, and only those", () => {
+    const plan = defaultPlan("URX44V");
+    const names = sceneExternalParamNames(plan);
+    expect(names.size).toBeGreaterThan(0);
+    const sceneBase = emit(plan, "scene");
+    const allBase = emit(plan, "all");
+
+    // Every name it gives: the key reaches the device on an unscoped write and not on a
+    // scene-scoped one. A key that reached NEITHER would satisfy the second half alone.
+    let checked = 0;
+    for (const name of names) {
+      const [, nodeId, ...rest] = name.split("\0");
+      const path = rest.join(".");
+      const cut = without(plan, nodeId, path);
+      if (emit(cut, "all").size === allBase.size) continue; // sends nothing under either scope
+      checked++;
+      expect(emit(cut, "scene").size, name).toBe(sceneBase.size);
+    }
+    expect(checked, "the positive control: some named key does send under the full scope").toBeGreaterThan(0);
+
+    // The one entry the differential above cannot reach: Track Count is read-only, so it
+    // emits nothing under either scope and the loop skips it. It is still a key a scene
+    // recall leaves alone, and it is the function's only conditional — asserted here, or
+    // deleting that arm changes no test in the tree.
+    const tracks = nodeParamContestPath("out.sdrec", "sdRecTrackCount");
+    expect(plan.nodeParams["out.sdrec"]?.sdRecTrackCount, "the premise").toBeGreaterThan(0);
+    expect(names.has(tracks)).toBe(true);
+    // …and the arm's other side: a plan not carrying it does not name it.
+    const noTracks = { ...plan, nodeParams: { ...plan.nodeParams, "out.sdrec": {} } };
+    expect(sceneExternalParamNames(noTracks).has(tracks)).toBe(false);
+
+    // …and the reverse, on a key it does not name: a channel's head-amp gain is sent under
+    // both scopes, so the set is a boundary rather than everything it happened to walk.
+    const gain = without(plan, "ch1", "gain");
+    expect(names.has(nodeParamContestPath("ch1", "gain"))).toBe(false);
+    expect(emit(gain, "all").size).toBeLessThan(allBase.size);
+    expect(emit(gain, "scene").size).toBeLessThan(sceneBase.size);
   });
 });

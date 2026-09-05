@@ -24,6 +24,7 @@ import {
   diffPlans,
   HISTORY_FIELDS,
   invertPatch,
+  type TransientField,
 } from "./plan-history";
 import { emptyPlan } from "./plan";
 import type { Plan } from "./plan";
@@ -38,7 +39,7 @@ import { MODEL_IDS } from "../models";
  *  flight, and the in-context apply must leave it alone. It has to move every key
  *  the patch carries, or the part it left standing lands and the assertion passes
  *  for the wrong reason. */
-const MUTATIONS: Array<[Exclude<keyof Plan, "unreadNodes" | "modelId">, (p: Plan) => void, (p: Plan) => void]> = [
+const MUTATIONS: Array<[Exclude<keyof Plan, TransientField | "modelId">, (p: Plan) => void, (p: Plan) => void]> = [
   [
     "sampleRate",
     (p) => {

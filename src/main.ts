@@ -1,7 +1,7 @@
 import "./style.css";
 
 import { MODEL_IDS, getModel } from "./models";
-import { defaultPlan } from "./models/initial-state";
+import { defaultPlan, fillFactoryParams } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef } from "./models/types";
 import {
@@ -25,7 +25,7 @@ import {
   setPlanSampleRate,
   SSMCS_INITIAL,
 } from "./core/plan";
-import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
+import { applySceneExternal, captureSceneExternal, sceneExternalParamNames } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import {
@@ -34,6 +34,8 @@ import {
   nodeParamContestPath,
   PlanWriteWitness,
   type PatchTouch,
+  patchContestNames,
+  type PlanPatch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import { applyParamRange, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
@@ -161,9 +163,11 @@ import {
   type ConvergeResult,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
-import { collisionOwners } from "./core/control/translate";
+import { cmdAddr, collisionOwners } from "./core/control/translate";
 import { confirmedAdoptions } from "./app/adopt-writes";
-import type { SharedOwners } from "./core/control/translate";
+import { unauthoredWriteNodes } from "./app/unauthored-writes";
+import { markParamSource as markSource } from "./app/param-source";
+import type { SharedOwners, WriteScope } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
 import { version } from "../package.json";
@@ -323,6 +327,16 @@ function sharedSettingText(owners: SharedOwners[]): string {
   const first = owners[0];
   const more = owners.reduce((n, o) => n + o.dropped.length, 0) - 1;
   return t().status.sharedSetting(graph.labelOf(first.dropped[0]), graph.labelOf(first.kept ?? ""), more);
+}
+/** The confirm's line about what the write changes beyond what the operator authored, or "".
+ *
+ *  Every strip by name, not the first few and a count: the list is bounded by the model, and a
+ *  name is the only part of this the operator can act on — a count tells them something is
+ *  wrong somewhere and leaves them the whole board to look through. */
+function unauthoredNoteFor(changing: ReadonlySet<number>, scope: WriteScope): string {
+  const nodes = unauthoredWriteNodes(getModel(modelId), plan, scope, changing);
+  if (!nodes.length) return "";
+  return t().confirm.unauthoredWrite(nodes.map((id) => graph.labelOf(id)).join(", "));
 }
 // The link ledger — what a session asks of the Device Center broker, and what the
 // broker fails to answer (core/control/link-stats.ts says why these values and not
@@ -577,15 +591,30 @@ const followDirtyNodes = new Set<string>();
 function authorFromDevice(node: string, place: () => boolean, kind: WriteSource = "follow-direct"): boolean {
   const before = clonePlanState(plan);
   if (!place()) return false;
+  const moved = diffPlans(before, plan);
+  // The unit is where these values came from, so they are not something to warn the operator
+  // about before a write: the write is what agrees with them.
+  markSource(plan, patchContestNames(moved), "device");
   // The trace kind is the caller's, because the callers are not one writer: a follow is a
   // notify landing, while the write-adoption is the device-action funnel writing back what a
   // write confirmed. Both are device-side writers, so no invariant's verdict turns on the
   // split — what it buys is a ledger a person can read without guessing which one wrote.
   traceProbe?.sample(kind);
   followDirtyNodes.add(node);
-  planHistory?.absorb(diffPlans(before, plan));
+  planHistory?.absorb(moved);
   return true;
 }
+/** Record that a device read supplied these keys.
+ *
+ *  The patch is what the merge ACTUALLY adopted — a key the read left alone because the plan
+ *  had moved under it is not in there, and neither is one a failed or cancelled read never
+ *  reached. Without this a value the unit replaced keeps reading as the document's, so a later
+ *  divergence in it is never mentioned; `authorFromDevice` covers only the follow-side applies.
+ */
+function notePatchFromDevice(patch: PlanPatch): void {
+  markSource(plan, patchContestNames(patch), "device");
+}
+
 /** After a write the device confirmed, the plan takes the values that were actually sent.
  *
  *  Which values those are is `confirmedAdoptions` (`app/adopt-writes.ts`), which needs the plan
@@ -851,6 +880,7 @@ async function followRead(
       },
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
+    else notePatchFromDevice(merged.devicePatch);
     return merged;
   } finally {
     followReads.delete(entry);
@@ -1995,7 +2025,8 @@ function loadFromText(text: string, path?: string): boolean | null {
     // settings; keep the current plan's values for them — the same semantic as a
     // scene recall on the unit. Only within the same model: another model's
     // monitor / patch wiring would not validate on this one.
-    if (doc.sceneScoped && next.modelId === plan.modelId) applySceneExternal(next, captureSceneExternal(plan));
+    const carriedScene = doc.sceneScoped && next.modelId === plan.modelId;
+    if (carriedScene) applySceneExternal(next, captureSceneExternal(plan));
     // Surface every violation as a copyable report. A device readback runs neither
     // check — the unit is the authority for what it is actually running — which is
     // what splits the two classes: illegal routing is a plan this app cannot
@@ -2016,6 +2047,27 @@ function loadFromText(text: string, path?: string): boolean | null {
     // because the plan the operator is deciding about is this one.
     const ranged = problems.filter((p) => p.reason === "paramRange");
     applyParamRange(next, ranged);
+    // …and then completed from the model's factory values. A document carries only what
+    // someone wrote in it, and what it omits is a key the panel draws a default for and the
+    // write does not send — one channel on screen, another on the wire. Run here, after the
+    // repair, so a value the funnel discarded is completed like any other absent one rather
+    // than left for the emit to skip. The DEVICE paths do not come through here: a fetch
+    // fills from the unit, and a node it could not read stays absent on purpose.
+    fillFactoryParams(next.modelId, next);
+    // …and then back through the rate rule, because the fill can put a value BACK that the
+    // repair above just took away: a document omitting Track Count carries nothing for the
+    // repair to clamp, and the factory 16 lands on a recorder that holds eight pairs at 96 kHz
+    // and one at 192. `setPlanSampleRate` is the one seat that rule lives in.
+    setPlanSampleRate(next, next.sampleRate);
+    // …and the values a scene-scoped document did not carry are not the document's either:
+    // they were copied off the plan on screen a few lines above, so their provenance is that
+    // plan's. Left as the fill leaves them they would read as "the document wrote this",
+    // which exempts the monitor, phones and oscillator from the write confirm's warning.
+    if (carriedScene) {
+      for (const name of sceneExternalParamNames(next)) {
+        markSource(next, [name], plan.paramSource?.get(name) ?? "default");
+      }
+    }
     const finishLoad = (): boolean => {
       // Refused (a device read holds the plan): loadPlan said so, and the caller must
       // not go on to remember a recent path and announce a document that never opened.
@@ -2427,6 +2479,7 @@ planHistory = new PlanHistory({
   reflect: (touch) => reflectHistory(touch),
   labelOf: (id) => graph.labelOf(id),
   onStatus: (msg) => setStatus(msg),
+  onAuthored: (names) => markSource(plan, names, "manual"),
   // A device read merges into `plan` across many awaits and re-bases the live snapshot
   // from its own copy, and a file flow can replace the plan outright: patching under
   // either acts on a premise that is still moving. Every read that RE-AUTHORS the plan
@@ -2743,6 +2796,7 @@ if (!DEMO) {
         }
         if (merged.errors.length) console.warn("device readback issues:", merged.errors);
         noteMergeConflicts(merged);
+        notePatchFromDevice(merged.devicePatch);
         // Follow USB is outside the plan (see params.ts), so the readback does not
         // carry it — read it on the same connection so the badge matches the values
         // that just landed.
@@ -3018,12 +3072,19 @@ if (!DEMO) {
               );
               return null;
             }
-            if (
-              confirmFirst &&
-              !(await confirmDialog(
-                sharedNote ? `${sharedNote}\n\n${t().confirm.write(total)}` : t().confirm.write(total),
-              ))
-            ) {
+            // What the operator never chose, from the addresses that will actually move. The
+            // plan is dense, so a write carries keys nobody set; naming the strips is what makes
+            // that a decision rather than a surprise. Built inside the ask, since a retry is the
+            // same decision being carried out rather than taken again.
+            const ask = (): string =>
+              [
+                sharedNote,
+                unauthoredNoteFor(new Set(diffs.map((d) => cmdAddr(d.command))), scope),
+                t().confirm.write(total),
+              ]
+                .filter(Boolean)
+                .join("\n\n");
+            if (confirmFirst && !(await confirmDialog(ask()))) {
               setStatus(t().status.canceled + adoptedNote());
               return null;
             }
@@ -3284,6 +3345,7 @@ if (!DEMO) {
         midi?.probeMark("live:read:end");
         if (!merged) return await abort(t().status.canceled);
         noteMergeConflicts(merged);
+        notePatchFromDevice(merged.devicePatch);
         plan.unreadNodes = merged.unreadNodes;
         rerenderPlan();
         // A partial read leaves the plan holding defaults where the device was not
@@ -3533,7 +3595,12 @@ if (!DEMO) {
     }
     let result: ReadbackResult;
     try {
+      // A settings FILE, not the connected unit: its values are the same kind of thing a plan
+      // document supplies, so they are recorded as such. Calling them the unit's would claim
+      // the connected device holds them, which a file written by another unit does not.
+      const beforeImport = clonePlanState(plan);
       result = await applySourceState(getModel(modelId), plan, paramSourceOf(current));
+      markSource(plan, patchContestNames(diffPlans(beforeImport, plan)), "load");
     } catch (err) {
       showError(t().status.settingsError(errorText(err)));
       return;

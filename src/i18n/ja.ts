@@ -742,6 +742,8 @@ export const ja: Messages = {
     switchModel: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。${device} に切り替えて (現在の計画は破棄) 取得しますか?`,
     write: (n: number): string => `${n} 件の変更をデバイスに書き込みますか? デバイスの現在の設定を上書きします。`,
+    unauthoredWrite: (strips: string): string =>
+      `操作していない設定も変更されます — プランが補った既定値、または読み込み後にデバイス側で変わった値です。\n対象: ${strips}`,
     firmwareMismatch: (device: string, supported: string): string =>
       `接続中のデバイスのファームウェア (${device}) は、このアプリの動作確認バージョン (${supported}) と異なります。正しく動作しない可能性があります。続行しますか?`,
     selfTest:

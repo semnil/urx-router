@@ -985,3 +985,29 @@ describe("menu keyboard navigation", () => {
     });
   }
 });
+
+// A document may omit Track Count, and the loader completes it from the model's factory value
+// — 16, which a recorder holding eight pairs at 96 kHz and one at 192 cannot carry. The rate
+// rule runs BEFORE the completion and has nothing to clamp there, so the plan has to go back
+// through it afterwards: without that a sparse document at a high rate offers eight pairs of
+// slots against a recorder that has two, and no write could ever establish it.
+describe("a document that omits Track Count at a rate the recorder cannot carry", () => {
+  const at = async (rate: number): Promise<string> => {
+    const { serialize, emptyPlan, setPlanSampleRate } = await import("./core/plan");
+    const doc = emptyPlan("URX44V");
+    setPlanSampleRate(doc, rate);
+    expect(doc.nodeParams["out.sdrec"]?.sdRecTrackCount, "the premise: the document names none").toBeUndefined();
+    const link = encodeURIComponent(Buffer.from(serialize(doc), "utf8").toString("base64url"));
+    await bootApp({ url: `/?plan=${link}`, tauri: false });
+    selectNode("out.sdrec");
+    return row(t().inspector.sdRecTrackCount).querySelector<HTMLSelectElement>("select")!.value;
+  };
+
+  it.each([
+    [192_000, "2"],
+    [96_000, "8"],
+    [48_000, "16"],
+  ])("%i Hz shows %s", async (rate, expected) => {
+    expect(await at(rate)).toBe(expected);
+  });
+});

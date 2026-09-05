@@ -15,7 +15,7 @@
 import { t } from "../i18n";
 import type { Plan } from "../core/plan";
 import type { PatchTouch, PlanPatch } from "../core/plan-history";
-import { applyPatch, patchTouch, PlanHistoryStack } from "../core/plan-history";
+import { applyPatch, patchTouch, PlanHistoryStack, patchContestNames } from "../core/plan-history";
 import { ownsNativeUndo } from "./keys";
 
 /** How long after the last edit an entry closes when no pointer or focus boundary
@@ -60,6 +60,11 @@ export interface PlanHistoryHooks {
   /** Display name for a node id, for the status line. */
   labelOf: (nodeId: string) => string;
   onStatus: (msg: string) => void;
+  /** The keys a closed gesture — or an undo / redo — wrote, in the differ's own naming.
+   *  The plan records where each value came from, and this is the one place that knows
+   *  which keys an EDIT moved: the patch the entry carries. Reusing it means the set the
+   *  provenance calls "the operator's" and the set undo covers cannot drift apart. */
+  onAuthored?: (names: readonly string[]) => void;
   /** The undo / redo depth changed. Unused while the shortcut is the only entry
    *  point; a menu or toolbar affordance would drive its enabled state from here
    *  together with canUndo / canRedo. */
@@ -306,6 +311,9 @@ export class PlanHistory {
     }
     const patch = op.take();
     if (!patch) return;
+    // Touched is touched: an undo moves the value as much as the gesture it reverses did,
+    // so the keys it carries are the operator's from here on.
+    this.hooks.onAuthored?.(patchContestNames(patch));
     this.apply(patch, touch);
     const single = touch.nodes.size === 1 ? this.hooks.labelOf([...touch.nodes][0]) : null;
     this.hooks.onStatus(single ? op.doneNode(single) : op.done);
@@ -335,7 +343,8 @@ export class PlanHistory {
     this.cancelPending();
     if (!this.open) return;
     this.open = false;
-    this.stack.record(this.hooks.getPlan());
+    const entry = this.stack.record(this.hooks.getPlan());
+    if (entry) this.hooks.onAuthored?.(patchContestNames(entry));
     // Reported unconditionally: a gesture that recorded nothing still closed the open
     // entry, which can take canUndo back to false.
     this.notifyDepth();

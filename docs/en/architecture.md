@@ -550,7 +550,16 @@ carries a one-line map of the same directories and points here.
   refusal caused by a device read (the operator's click went unanswered) while staying silent for a second
   file flow (its own dialog is already on screen) / `adopt-writes.ts` which values a confirmed write lets the
   plan take back — it takes the plan the converge SENT as well as the live one, since the live flush clones
-  before its await and one address is a different key under a different effect type
+  before its await and one address is a different key under a different effect type /
+  `param-source.ts` where each of a plan's parameter values came from — the fill records `load` /
+  `default` as it goes, an edit records `manual`, and a settled read or a landed write records
+  `device` for everything they reached. Transient, and never serialized: the document holds state,
+  not a record of how it was operated /
+  `unauthored-writes.ts` which of a write's changes the operator never chose. The plan is dense — the
+  loader completes a document from the model's factory values — so a write carries keys nobody set, and
+  this names the strips they are on by re-emitting the plan with those keys blanked: an address that
+  survives that emit is one an authored key asks for. `load` counts as authored (the document named the
+  value); `default` and `device` do not
 
 - `src-tauri/` — Rust shell. Webview host + tauri-plugin-dialog + file IO commands
   (`read_text_file`/`read_binary_file`/`write_text_file`/`write_binary_file`; `third_party_licenses` reads
@@ -3375,31 +3384,44 @@ canvas down on its first paint.
 
 ### An FX channel the plan does not describe
 
-`planToCommands` emits an FX channel only when the plan carries an `fxEffect` for it. **That silence is
-a statement**: it is how a plan says "leave this channel as the unit has it", and the skill's `SKILL.md`
-and `references/plan-schema.md` both instruct an author to omit the section when the user did not ask to
-change the effect. Emitting defaults for an undescribed channel instead resets a unit's FX from a
-document that says nothing, and an EFFECT TYPE write is not recoverable — it refills the engine array
-with that type's defaults, and selecting the old type back does not bring the old values with it.
+`planToCommands` emits an FX channel only when the plan carries an `fxEffect` for it, and **the loader
+never leaves one absent**: `fillFactoryParams` completes a document from the model's factory values, so a
+channel a document says nothing about reaches the write path carrying that channel's factory effect.
+Silence used to be a statement — the way a plan said "leave this channel as the unit has it", which the
+skill's `SKILL.md` and `references/plan-schema.md` both instructed an author to use — and it is not one
+any more. A plan that has to keep the unit's effect carries its values: fetch the plan back, then edit.
 
-Once the section is present, the whole channel is authored — **there is no partial FX write**. The
+What the write costs there is irreversible. An EFFECT TYPE write refills the engine array with that
+type's defaults, and selecting the old type back does not bring the old values with it. So the decision
+is put in front of the operator instead of being taken by a document's silence:
+`app/unauthored-writes.ts` reports the strips a write moves at addresses whose value the operator
+did not choose, and the write confirm names them. The join is `planToCommandOrigins`: the emit is
+run once over a plan whose node parameters record their reads, and the LAST key read before a
+command goes out is the key that command's value came from — the value is read immediately before
+it is pushed, which is what keeps the two from drifting the way a stamp kept by hand at each of a
+hundred-odd emit sites would. A key the plan does not carry is read all the same, on the way to
+deciding whether to send one at all, and is excluded: a command pushed after such a read has no
+plan key behind it.
+
+A key that merely GATES a command — a channel's insert-FX selector, its comp/EQ order — needs no
+reading of its own. It owns the value of its own command, on the same node, so a write that is
+actually changing the selector already names the strip through it; one that is not leaves an
+engine parameter the operator dialled in as theirs. `plan_tool.py` says the same thing a step
+earlier, to the author of a generated plan.
+
+Once the section is present the whole channel is authored — **there is no partial FX write**. The
 selector goes out whether or not the document names a type (an absent one resolves to the channel's
 factory type), and every parameter slot goes with it at that type's defaults, because a type write would
 refill the slots the plan left out anyway. So `{ "level": 80 }` resets the effect exactly as a document
 naming a type does, and omitting only `fxEffect.params` preserves nothing.
 
-**The panel does not say any of this.** `inspector.ts` reads an absent `fxEffect` as `{}` and draws the
-resolved type, ON, level 100 and each descriptor's own default, so an undescribed channel shows a full
-effect that the write path will not send. The two readings are each coherent and they disagree; the
-divergence is pinned in `inspector.test.ts` rather than left to be noticed, because aligning the *emit*
-to the panel is the fix that looks obvious and is destructive — it was written, measured and reverted.
-What the panel would need is a way to say that a row is showing a default rather than a plan value, and
-that is a question about every sparse parameter (a bus master's level and pan skip the same way), not
-about FX.
-
-Every plan the app itself authors carries an `fxEffect` on both channels — the shipped default plans do
-(all three models), and a device readback writes one — so what this reaches is a document authored
-elsewhere: a `?plan=` payload from a generator, or a hand edit.
+**The panel and the wire agree on a document the loader completed.** `inspector.ts` reads an absent
+`fxEffect` as `{}` and draws the resolved type, ON, level 100 and each descriptor's own default; the fill
+puts those same values into the plan, so the row and the command carry one number. Aligning the *emit* to
+the panel is the other way to close that gap and it is the destructive one — it was written, measured and
+reverted — which is why the plan is completed at the LOAD, where the operator can be told what it means.
+Where the fill does not run the two still diverge: a node a device read could not answer for stays sparse
+on purpose, and the Inspector's own stand-in for an absent value is not always the model's factory one.
 
 ### Taking back a value the write path normalised
 

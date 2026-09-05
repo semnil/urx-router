@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDLE_COMMIT_MS, PlanHistory } from "./history";
 import type { PatchTouch } from "../core/plan-history";
+import { nodeParamContestPath } from "../core/plan-history";
 import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
 
@@ -19,16 +20,20 @@ interface Harness {
   depthReports: number;
   /** Simulate an edit funnel: mutate, then report it. */
   edit: (mutate: (p: Plan) => void) => void;
+  /** Every key set `onAuthored` reported, in the order it reported them. */
+  authored: string[][];
 }
 
 function harness(): Harness {
   const plan = emptyPlan("URX44V");
-  const h: Partial<Harness> & Pick<Harness, "reflects" | "statuses" | "blocked" | "rateLocked" | "depthReports"> = {
+  const h: Partial<Harness> &
+    Pick<Harness, "reflects" | "statuses" | "blocked" | "rateLocked" | "depthReports" | "authored"> = {
     reflects: [],
     statuses: [],
     blocked: null,
     rateLocked: false,
     depthReports: 0,
+    authored: [],
   };
   const history = new PlanHistory({
     getPlan: () => plan,
@@ -38,6 +43,7 @@ function harness(): Harness {
     labelOf: (id) => id.toUpperCase(),
     onStatus: (msg) => h.statuses.push(msg),
     onDepthChange: () => (h.depthReports += 1),
+    onAuthored: (names) => h.authored.push([...names]),
   });
   history.install();
   const out = h as Harness;
@@ -747,5 +753,31 @@ describe("the application menu's entry points", () => {
     h.history.menu("redo");
     settle();
     expect(h.plan.sampleRate).toBe(96000);
+  });
+});
+
+// The plan records where each value came from, and this hook is the one place that knows
+// which keys an EDIT moved — the patch the entry carries. Undo reports too: touched is
+// touched, so the keys an undo moves are the operator's from then on. Without a case here,
+// dropping either call left every suite in the tree green.
+describe("onAuthored", () => {
+  it("reports the keys a closed gesture wrote, and the keys an undo moves back", () => {
+    const h = harness();
+    h.edit((p) => (p.nodeParams.ch1 = { gain: 12 }));
+    idle();
+    expect(h.authored.map((n) => [...n].sort())).toEqual([[nodeParamContestPath("ch1", "gain")]]);
+
+    h.history.undo();
+    expect(h.authored, "the undo reported as well").toHaveLength(2);
+    expect(h.authored[1]).toEqual([nodeParamContestPath("ch1", "gain")]);
+  });
+
+  // A gesture that recorded nothing has no keys to report — the close still runs, and a
+  // hook fired unconditionally would name an empty patch as an edit.
+  it("says nothing for a gesture that recorded no change", () => {
+    const h = harness();
+    h.history.note();
+    idle();
+    expect(h.authored).toEqual([]);
   });
 });
