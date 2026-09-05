@@ -472,8 +472,17 @@ test("pitch MIDI Control is written, and the mask it clears becomes the unit's",
   const mode = screenSelect(page, "MIDI Control");
   await expect(mode).toBeEnabled();
   await expect(screenRow(page, "Scale")).not.toHaveClass(/\blocked\b/);
+  // The mode is chosen ON this panel and its two tagged rows are on it too, so a tag that
+  // costs height moves the modal under the press that added it. The twelve-note row is the
+  // one past the card floor, where a stacked tag would not be absorbed.
+  const panelHeight = () =>
+    screenBox(page)
+      .locator(".gt-knobs")
+      .evaluate((el) => el.getBoundingClientRect().height);
+  const untagged = await panelHeight();
   await chooseOption(mode, { label: "Real Time" });
   await expect(mode).toHaveValue("2");
+  expect(await panelHeight()).toBe(untagged);
   // Both bits, or the mode is one nobody chose. Read back off the row rather than the plan:
   // the row is what the operator sees, and it decodes the pair.
   await expect(screenRow(page, "Scale")).toHaveClass(/\blocked\b/);

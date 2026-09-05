@@ -217,9 +217,10 @@ export interface DynBar {
   /** The section heading the bar sits in ("Display", "Band"). */
   label: string;
   items: readonly DynBarItem[];
-  /** Nothing is selected and nothing can be: the choice does not belong to the operator
-   *  right now (the EQ's bands are the device's while 1-knob is on). The items keep their
-   *  space — hiding them outright would shorten the heading they sit in. */
+  /** Nothing is selected and nothing can be. The bar keeps its BOX — hiding it outright
+   *  would shorten the heading it sits in, and the heading's height is what every screen's
+   *  display starts from. What it does not keep is anything to read: `reservedBar` is the
+   *  only caller, and its label is blank for the reason stated there. */
   inert?: boolean;
 }
 
@@ -531,6 +532,11 @@ const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
 /** Shared empty map for a processor with every row plainly editable. */
 const NO_STATES: ReadonlyMap<string, SettingsRowOptions> = new Map<string, SettingsRowOptions>();
+
+/** What a reserved display bar says. A no-break space rather than the empty string: an
+ *  element holding only ordinary whitespace lays out no line box at all, and the reserve
+ *  is a line box. */
+const BLANK_RESERVE = " ";
 
 /** The 1-knob level row, which COMP and the EQ each own one of. Shared because the two
  *  are the same control on the same scale — including the element id, which the E2E
@@ -1368,8 +1374,9 @@ export class DynScreen {
     // style.css is where the measurement lives, along with what it yields to.
     if (proc.banked) grid.classList.add("gt-faced");
     if (this.faceReserve !== null) grid.style.setProperty("--gt-face-min", `${this.faceReserve}px`);
-    // A reversed panel is one class plus the DOM order, not a second layout: the two
-    // columns are what they always were, and only which of them is the flexible one moves.
+    // A reversed panel is one class plus the DOM order, not a second layout: it is still one
+    // flexible track and one fixed one. What moves is which side holds each, and how wide
+    // the fixed one is.
     const display = this.displayColumn(proc);
     const controls = this.controlColumn(m);
     if (this.paramsFirst) grid.classList.add("gt-paramsleft");
@@ -1398,7 +1405,7 @@ export class DynScreen {
     // The reserve either way when the bar has moved to the controls column: the space is
     // what keeps every display starting at the same height, and the bar itself is what
     // moved — not the room it takes.
-    col.append(bar ? this.displayBar(bar) : this.reservedBar(proc, ctx));
+    col.append(bar ? this.displayBar(bar) : this.reservedBar());
     col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
     col.append(this.hintLine(proc, ctx));
     return col;
@@ -1406,12 +1413,17 @@ export class DynScreen {
 
   /** The display bar's space, with nothing in it. `visibility: hidden` rather than a
    *  height: it keeps the box and takes the heading and the button out of the tab order
-   *  and the accessibility tree, which is what an empty reserve has to do. */
-  private reservedBar(proc: DynProcessor, ctx: DynCtx): HTMLElement {
-    const title = proc.title(ctx.m, ctx);
+   *  and the accessibility tree, which is what an empty reserve has to do.
+   *
+   *  It carries no WORDS, only the blank that holds a line box. A bar's height is its font
+   *  and its padding, so a blank one reserves what a drawn one occupies; a labelled one
+   *  reserves its label as well — a width nobody can see, which a narrow display column
+   *  cannot hold and the grid then takes a horizontal scrollbar for, and a line count that
+   *  puts the reserve at a different height on each screen. */
+  private reservedBar(): HTMLElement {
     const sec = this.displayBar({
-      label: title,
-      items: [{ label: title, id: "", sel: 0 }],
+      label: BLANK_RESERVE,
+      items: [{ label: BLANK_RESERVE, id: "", sel: 0 }],
       inert: true,
     });
     sec.classList.add("gt-reserved");
@@ -1963,8 +1975,9 @@ export class DynScreen {
    */
   private knobCard(f: DynField, label: string, value: number, opts: SettingsRowOptions | undefined): HTMLElement {
     const card = el("div", "gt-knob" + (opts?.locked ? " locked" : ""));
-    // The label and its reason share a line, the way the row layout puts them together —
-    // the tag qualifies the NAME, and under the knob it reads as a second value.
+    // The label and its reason share a line: the tag qualifies the NAME, and under the knob
+    // it reads as a second value. A card with no knob to read it against is laid out by the
+    // stylesheet, which stacks the two — and names the row it does not do that to.
     const lblc = el("span", "lblc");
     const name = el("span", "lbl");
     name.textContent = label;

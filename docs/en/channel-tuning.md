@@ -66,13 +66,17 @@ lanes with no matching GR, because the GR sample missed it. That is the device, 
 ## Layout
 
 A modal on the Preferences / Device setup shell (`.consent-box` + `.prefs-box`, two columns).
-The left column is the display, the right the controls and readouts.
+One column is the display, the other the controls and readouts; which side each takes is the
+descriptor's, below.
 
-**The width is the one part of that shell it does not share.** `#dyn-screen-box` sits in the same
-rule as `#console-host` (to share the lane sizing tokens), and the `flex: 1` it picks up there beats
-`.prefs-box`'s `width: min(920px, 100%)`. So this screen alone spans the viewport (1452 px in a
-1500 px window) and its ground is the board's `--graph-bg` rather than `--panel`. Of the shared
-tokens only `--groove` is actually read here; `--strip-w` / `--head-h` are inherited and unused.
+**It shares that shell's box, width included.** The one thing it takes from the CONSOLE is
+`--groove`, which it declares in a rule of its own that repeats the value — these screens draw the
+same faders and meters, and a meter is unreadable off black. It is not in `#console-host`'s rule
+(only the light theme's override names both) and it inherits nothing from it: the modal is a sibling
+of `#app` while the console sits inside `#stage`, so `--strip-w` / `--head-h` are not in scope there
+at all. Everything about the box itself is `.prefs-box`'s: `width: min(1180px, 100%)` on `--panel`,
+clamped to `calc(100vh - 48px)`, a fixed title row on top and the Close action pinned at the bottom,
+with the grid between them as the only scrolling region.
 
 ```text
 ┌ [CH 1] Gate ─────────────────────────────────────────────────┐
@@ -101,6 +105,14 @@ keep their halves. What it returns to the display column is 149 px: the 4-band E
 Every screen now spends that width on a plot and a rack side by side, so there is no longer one whose
 extra width only widens black. Where the width is still tight is the 960 px minimum window inside the
 SSMCS bank, and that is [The lane ruler](#the-lane-ruler-and-what-it-does-not-carry).
+
+**A panel-first screen swaps the two.** A descriptor whose display is a level rack and nothing else —
+the guitar amps, Pitch Fix and FX EFFECT — sets `paramsFirst`, which puts the controls in the flexible
+column and the rack in a fixed 230 px one: a dozen knobs on the left, input and output on the right,
+which is the arrangement the unit's own INS FX screen takes. It is one class on the grid
+(`.gt-paramsleft`) plus the DOM order, so it is still two tracks, one flexible and one fixed — what
+moves is which side holds each, and how wide the fixed one is. Being one step more specific than the
+rule above, it restates the narrow-window rule for the same reason that rule does.
 
 **The last column has 4 px of padding, for a focus ring.** `.prefs-grid` carries `overflow-y: auto`, so
 its horizontal axis computes to `auto` and the box clips sideways whether or not it ever scrolls that
@@ -131,6 +143,13 @@ proportional. This is why it does not reuse the CONSOLE's ruler, which is spaced
 **Every display starts at one height**, whether its processor carries a bar or not: a screen without
 one reserves the row instead, through the same builder, so the space is whatever the bars that do get
 drawn occupy. Without it the black display sat a bar's height higher on those screens.
+
+**The reserve carries no words.** A bar's height is its font and its padding, so a blank one reserves
+what a drawn one occupies; a labelled one reserves its label as well — a width nobody can see, which a
+230 px display column cannot hold, and the grid's `overflow-y: auto` makes its horizontal axis `auto`
+too, so what the panel gets for that box is a horizontal scrollbar. Its line count is the other half:
+the same label wrapping to two lines in a narrow column and one in a wide one puts the reserve, and
+with it the whole modal, at a different height on each screen.
 
 The note under the display is always printed now, since the plot always is. Its box is a fixed height
 whatever it holds — three lines, everywhere — so a longer string is CUT rather than wrapped, and
@@ -929,6 +948,16 @@ between the label and the knob (the .gt-knob min-height); the knob face stays cl
 same height, and a family with one face has nothing to hold still against. The cabinet's Gate is therefore a **single
 button carrying its own state** (`onOffButton`) rather than the settings ON/OFF pair: a pair costs
 two of the row's columns and prints the word that is not in effect beside the one that is.
+
+**Where a card prints its tag depends on what the card holds.** A knob card puts it beside the name:
+the tag qualifies the name, and under the knob it would read as a second value. A card whose control
+is not a knob has no value line to compete with, and its label reserves two lines so a one-line name
+and a two-line one put their controls level — so a tag beside the name there hangs between the name
+and the line under it, and pushes the name off the card's centre. Those stack instead: the name on
+its own line, the tag under it. **The twelve-note keyboard's row is the exception** — it spans every
+column and is already past the card floor, so a stack is height the panel does not have, and the tag
+on it comes and goes with a selector on the same panel, which would resize the modal under the press
+that added it (the reason [the multi-band faces leave their locked rows untagged](#the-multi-band-compressor-is-four-faces)).
 
 **The card labels are not shouted.** The design-system artifact's `.lbl` recipe carries no
 `text-transform` and the INS FX artifact's specimen uppercases them, so the two documents disagree;
