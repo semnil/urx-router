@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "./fixtures";
 import { faceplate, selectWire } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
+import { planParam } from "./plan-param";
 
 // Positions below are compared with node(), pointer grabs measured with
 // faceplate() — the two boxes differ by the tap jack's overhang, so never mix them
@@ -165,6 +166,56 @@ test("STEREO-linking from the partner keeps the partner and realigns the primary
   expect(Math.abs(after1.x - after2.x)).toBeLessThan(2); // same column
   expect(after1.y).toBeLessThan(after2.y); // above it
   expect(Math.hypot(after1.x - moved1.x, after1.y - moved1.y)).toBeGreaterThan(20);
+  await expect(link(page)).toHaveCount(1);
+});
+
+// A document that arrives already linked — a `?plan=` link, a saved file, a plan a
+// generator wrote — went through no edit funnel, so nothing snapped its partner. The
+// load has to, or the heart tie opens the plan stretched across the gap.
+test("a loaded plan whose pair is already STEREO opens with the partner aligned", async ({ page }) => {
+  const strayPair = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch3: { stereoLink: true }, ch4: { stereoLink: true } },
+    positions: { ch3: { x: 500, y: 300 }, ch4: { x: 900, y: 620 } },
+  };
+  await page.goto(`/?plan=${planParam(strayPair)}`);
+  await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+
+  const ch3 = await node(page, "ch3").boundingBox();
+  const ch4 = await node(page, "ch4").boundingBox();
+  if (!ch3 || !ch4) throw new Error("nodes not found");
+  expect(Math.abs(ch4.x - ch3.x)).toBeLessThan(2); // same column as the primary
+  expect(ch4.y).toBeGreaterThan(ch3.y); // directly below it
+  await expect(link(page)).toHaveCount(1);
+});
+
+// The shelf is the other way a linked pair can arrive apart: the shelved member kept
+// whatever position it was carrying, and the tie is drawn the moment it comes back.
+test("restoring a shelved member of a STEREO pair lands it beside its partner", async ({ page }) => {
+  const shelvedPartner = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch3: { stereoLink: true }, ch4: { stereoLink: true } },
+    positions: { ch3: { x: 500, y: 300 }, ch4: { x: 900, y: 620 } },
+    hidden: ["ch4"],
+  };
+  await page.goto(`/?plan=${planParam(shelvedPartner)}`);
+  await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+  await expect(node(page, "ch4")).toHaveCount(0);
+  const ch3 = (await node(page, "ch3").boundingBox())!;
+
+  await page.locator(".hidden-shelf .chip").click();
+
+  const back = (await node(page, "ch4").boundingBox())!;
+  const after3 = (await node(page, "ch3").boundingBox())!;
+  expect(Math.abs(after3.x - ch3.x)).toBeLessThan(2); // the one on the board stays
+  expect(Math.abs(back.x - after3.x)).toBeLessThan(2); // the restored one lands in its column
+  expect(back.y).toBeGreaterThan(after3.y);
   await expect(link(page)).toHaveCount(1);
 });
 

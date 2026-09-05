@@ -248,6 +248,59 @@ interface Pt {
   y: number;
 }
 
+/** A node's slot in the default layout — where the board draws it while the plan
+ *  holds no position of its own. */
+function defaultLayoutPos(node: DeviceNode): Pt {
+  return { x: MARGIN + node.pos.col * COL_GAP, y: MARGIN + node.pos.row * ROW_GAP };
+}
+
+/** Where a pair's `other` member belongs beside the one kept in place: the offset the
+ *  default layout gives the two, carried onto the kept node's position. Null when
+ *  either id is not a node of this model. Channels are never hung, so their drawn
+ *  position is the saved one or the default — what `posOf` derives for a hung node
+ *  does not arise here. */
+function alignedPairPos(model: DeviceModel, plan: Plan, kept: string, other: string): Pt | null {
+  const keptNode = model.nodes.find((n) => n.id === kept);
+  const otherNode = model.nodes.find((n) => n.id === other);
+  if (!keptNode || !otherNode) return null;
+  const dk = defaultLayoutPos(keptNode);
+  const dother = defaultLayoutPos(otherNode);
+  const kp = plan.positions[kept] ?? dk;
+  return { x: kp.x + (dother.x - dk.x), y: kp.y + (dother.y - dk.y) };
+}
+
+/** Snap the partner of every STEREO-linked pair to its canonical offset from the pair's
+ *  primary, and report whether any of them moved.
+ *
+ *  What `alignStereoPair` does for a link made in the app, for the links that arrive with
+ *  no edit funnel behind them: a device read, a device-follow reconcile of a Signal Type
+ *  moved on the unit's own panel, and a loaded document. Without it the heart tie is drawn
+ *  across whatever gap an earlier manual move opened.
+ *
+ *  The primary is kept rather than the selected member, so the pair settles on the same two
+ *  slots whatever the board's selection is. A pair with either member shelved is left alone:
+ *  no tie is drawn for it, and snapping the visible member toward a shelved one would
+ *  relocate it for a partner that is not on screen. */
+export function alignLinkedPairs(model: DeviceModel, plan: Plan): boolean {
+  const hidden = new Set(plan.hidden);
+  let moved = false;
+  for (const [primary, partner] of model.channelPairs) {
+    if (!plan.nodeParams[primary]?.stereoLink) continue;
+    if (hidden.has(primary) || hidden.has(partner)) continue;
+    const want = alignedPairPos(model, plan, primary, partner);
+    const partnerNode = model.nodes.find((n) => n.id === partner);
+    if (!want || !partnerNode) continue;
+    // Against the partner's DRAWN position, not its saved one: a pair neither member of
+    // which was ever moved is already at the offset, and writing a position for it would
+    // put an entry in the document for a node nothing relocated.
+    const at = plan.positions[partner] ?? defaultLayoutPos(partnerNode);
+    if (at.x === want.x && at.y === want.y) continue;
+    plan.positions[partner] = want;
+    moved = true;
+  }
+  return moved;
+}
+
 export class Graph {
   private svg!: SVGSVGElement;
   private viewport!: SVGGElement;
@@ -377,6 +430,12 @@ export class Graph {
     this.selection = null;
     this.selectedNodes.clear();
     this.adoptPlanState();
+    // Before the draw and the fit: a document arriving with a pair already STEREO-linked
+    // had no edit funnel to snap its partner, so this is where the two loading paths
+    // (loadPlan and rerenderPlan, which is Fetch / the Live-sync read / a .urxf import)
+    // get what linking in the app gives. Positions decide the fit, so a snap taken
+    // afterwards would frame the board it replaced.
+    alignLinkedPairs(this.model, this.plan);
     this.render();
     this.fitView();
   }
@@ -659,10 +718,6 @@ export class Graph {
 
   // --- geometry ------------------------------------------------------------
 
-  private defaultPos(node: DeviceNode): Pt {
-    return { x: MARGIN + node.pos.col * COL_GAP, y: MARGIN + node.pos.row * ROW_GAP };
-  }
-
   private posOf(nodeId: string): Pt {
     // A hung node always derives its position from its parent — just below it — so
     // it moves as a unit and any saved position is ignored. Several nodes can hang
@@ -681,7 +736,7 @@ export class Graph {
     }
     const saved = this.plan.positions[nodeId];
     if (saved) return saved;
-    return this.defaultPos(this.nodeById.get(nodeId)!);
+    return defaultLayoutPos(this.nodeById.get(nodeId)!);
   }
 
   private parentOf(id: string): string | undefined {
@@ -824,10 +879,8 @@ export class Graph {
     const keepPartner = this.selection?.type === "node" && this.selection.id === partner;
     const kept = keepPartner ? partner : primary;
     const other = keepPartner ? primary : partner;
-    const dk = this.defaultPos(this.nodeById.get(kept)!);
-    const dother = this.defaultPos(this.nodeById.get(other)!);
-    const kp = this.posOf(kept);
-    this.plan.positions[other] = { x: kp.x + (dother.x - dk.x), y: kp.y + (dother.y - dk.y) };
+    const at = alignedPairPos(this.model, this.plan, kept, other);
+    if (at) this.plan.positions[other] = at;
   }
 
   /** The channelPairs entry [primary, partner] containing `id` when that pair is
@@ -2286,11 +2339,11 @@ export class Graph {
     let changed = this.hidden.delete(id);
     if (parent) {
       if (this.hidden.delete(parent)) {
-        this.placeInView(parent);
+        this.placeRestored(parent);
         changed = true;
       }
     } else {
-      if (changed) this.placeInView(id);
+      if (changed) this.placeRestored(id);
       // Restore the whole unit: any hung children (a ducker, the SD Rec slots) that
       // were shelved come back with their parent.
       for (const child of this.attachedDescendants(id)) if (this.hidden.delete(child)) changed = true;
@@ -2308,6 +2361,11 @@ export class Graph {
     if (!this.hidden.size) return;
     this.hidden.clear();
     this.commitHidden();
+    // A STEREO-linked pair can come back with its two members parked apart — the
+    // shelved one kept whatever position it was carrying. Both are on the board now, so
+    // the tie is drawn: close the gap the way a load does, keeping the primary, since
+    // several members can arrive at once and none of them is the one that just came back.
+    alignLinkedPairs(this.model, this.plan);
     this.render();
     this.fitView();
     this.cb.onChange();
@@ -2346,6 +2404,19 @@ export class Graph {
       this.pathNodes.clear();
       this.cb.onSelect(null);
     }
+  }
+
+  /** Place a node that has just come back from the shelf. A member of a STEREO-linked
+   *  pair whose partner is already on the board lands at its canonical offset from that
+   *  partner — the tie is drawn the moment both are up, so the pair arrives together
+   *  rather than opening stretched. The one already on the board stays where it is.
+   *  Everything else parks under the viewport, where it is easy to find. */
+  private placeRestored(id: string): void {
+    const pair = this.linkedPairOf(id);
+    const partner = pair ? (pair[0] === id ? pair[1] : pair[0]) : null;
+    const at = partner && !this.isHidden(partner) ? alignedPairPos(this.model, this.plan, partner, id) : null;
+    if (at) this.plan.positions[id] = at;
+    else this.placeInView(id);
   }
 
   /** Park a restored node at the current viewport center, in content coords. */

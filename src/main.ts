@@ -59,7 +59,7 @@ import {
   REC_POINT_PRE_COMP,
   REC_POINT_PRE_EQ,
 } from "./core/control/params";
-import { Graph } from "./ui/graph";
+import { alignLinkedPairs, Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
@@ -991,6 +991,12 @@ const follow =
             applyNodeState(getModel(modelId), into, nodeIds, signal, pending),
           );
           if (!merged) return;
+          // A Signal Type moved on the unit's own panel reaches the plan here, with no edit
+          // funnel to snap the pair's partner beside its primary. Ahead of the sample below,
+          // so the position it writes is attributed to this read rather than to whichever
+          // writer samples next; the reflect that repaints it is coalesced across producers
+          // and cannot name one.
+          alignLinkedPairs(getModel(modelId), plan);
           traceProbe?.sample("follow-scoped");
           noteMergeConflicts(merged);
           // Re-based here rather than in the coalesced reflect: only the copy this read
@@ -1017,6 +1023,9 @@ const follow =
             applyDeviceStateScoped(into, signal, pending),
           );
           if (!merged) return;
+          // Same as the scoped reconcile above: a link the whole-device read brought in
+          // gets its partner snapped before the sample names this read's writes.
+          alignLinkedPairs(getModel(modelId), plan);
           traceProbe?.sample("follow-full");
           noteMergeConflicts(merged);
           plan.unreadNodes = merged.unreadNodes;
