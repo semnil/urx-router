@@ -285,19 +285,19 @@ function stampOrigin(command: VdCommand, planValue: number): VdCommand {
   originCursor.fresh = undefined;
   let origin: string | null = null;
   if (fresh !== undefined) {
-    // A read the emit has not spent yet is this command's, when the two agree about the value.
-    // Two ways they do not, and they mean opposite things. The plan holding NOTHING there is
-    // the emit asking before it decides — it then supplies the value itself, which is nobody's
-    // to have chosen. A key that holds a DIFFERENT value is a record this cannot make: the read
-    // was for something else, and the command is left unstamped rather than called the emit's,
-    // since the caller must not read a lost record as a value nobody supplied. Measured: the
-    // second never happens on any of the three models, so it is the fail-safe, not the rule.
-    const asNumber = typeof fresh.value === "boolean" ? (fresh.value ? 1 : 0) : fresh.value;
-    if (fresh.value === undefined) origin = null;
-    else if (asNumber !== planValue) {
-      originCursor.previous = undefined;
-      return command;
-    } else origin = fresh.name;
+    // A read the emit has not spent yet is this command's: the value is read immediately before
+    // the command carrying it is built, and the cursor is cleared at every build, so nothing
+    // else can be between them.
+    //
+    // What the command carries need NOT be what the key holds. The emit inverts (the SSMCS
+    // COMP / EQ switches send ON as 0), rounds, and clamps to a range, and every one of those
+    // is the value going out under that key — requiring the two to be equal called a document's
+    // own SSMCS switch a value nobody chose. The plan holding NOTHING there is the one case
+    // that names no key: the emit asks before it decides whether to send one, and then supplies
+    // the value itself. That case is a fail-safe rather than a working rule — no command on any
+    // model is built right after such a read — and what stands behind it is the contract test,
+    // which refuses a command called the emit's own that a leaf can move.
+    origin = fresh.value === undefined ? null : fresh.name;
   } else {
     // No read of its own. One value going to every linked instance is a run of commands with
     // the SAME parameter and the same value, so only the one immediately before it can lend a

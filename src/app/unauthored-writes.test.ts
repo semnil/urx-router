@@ -358,3 +358,37 @@ it("keeps a value's key across the shared-address collapse", () => {
   expect(survivor[0].shadowed, "the premise: it is the copy the collapse made").toEqual(["ch1"]);
   expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(survivor.map(cmdAddr)))).toEqual(["ch2"]);
 });
+
+// The emit does not always send what the plan holds: the SSMCS bank's COMP and EQ switches go
+// out INVERTED, ON as 0. Made a condition of the record, that transform read as a value nobody
+// supplied and a document's own switch was named — so the key has to survive it, and the same
+// value from the fill has to be named all the same.
+describe.each(["compOn", "eqOn"] as const)("an SSMCS %s the document wrote", (leaf) => {
+  const withSsmcs = (): Plan => {
+    const plan = filledPlan();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: 1, [leaf]: true };
+    for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
+    plan.paramSource!.set(nodeParamContestPath("ch1", leaf), "manual");
+    return plan;
+  };
+  const addrs = (plan: Plan): Set<number> => {
+    const cmds = planToCommands(MODEL, plan, "all").filter(
+      (c) => c.node === "ch1" && c.name === (leaf === "compOn" ? "SSMCS_COMP_ON" : "SSMCS_EQ_ON"),
+    );
+    expect(cmds.length, "the premise: the switch reaches the wire").toBeGreaterThan(0);
+    // The premise that makes this the inverting case: ON goes out as 0.
+    expect(cmds[0].vdValue, "the premise: the switch is inverted on the wire").toBe(0);
+    return new Set(cmds.map(cmdAddr));
+  };
+
+  it("is not named", () => {
+    const plan = withSsmcs();
+    expect(unauthoredWriteNodes(MODEL, plan, "all", addrs(plan))).toEqual([]);
+  });
+
+  it("is named once the same value came from the fill", () => {
+    const plan = withSsmcs();
+    plan.paramSource!.set(nodeParamContestPath("ch1", leaf), "default");
+    expect(unauthoredWriteNodes(MODEL, plan, "all", addrs(plan))).toEqual(["ch1"]);
+  });
+});
