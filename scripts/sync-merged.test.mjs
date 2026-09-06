@@ -769,7 +769,7 @@ describe("sync-merged, when a second session changes something after the plan wa
     // back rather than reasoned about — a clean tree with the sync's file absent from it.
     expect(git(down, "status", "--porcelain=v1")).toBe("");
     expect(existsSync(join(down, "b.txt"))).toBe(false);
-    expect(r.text).toContain("back where that session left them");
+    expect(r.text).toContain("back to what that branch holds");
     expect(r.text).toContain("run again from the tree that holds it");
     expect(branches(down)).toContain("feat");
     expect(existsSync(tree)).toBe(true);
@@ -801,10 +801,70 @@ describe("sync-merged, when a second session changes something after the plan wa
     );
     expect(r.fired).toBe(true);
     expect(r.code).toBe(1);
-    expect(r.text).toContain("HOLDS THIS SYNC'S CHANGES, STAGED");
+    expect(r.text).toContain("STILL HOLDS WHAT THIS SYNC WROTE: b.txt");
     expect(r.text).toContain("run again from the tree that holds it");
     expect(at(down, "main")).toBe(at(down, "origin/main"));
     expect(at(down, "ongoing")).toBe(was);
+    // What they typed is still there. It is named rather than deleted, since nothing here can
+    // tell a file they wrote over ours from work of their own.
+    expect(readFileSync(join(down, "b.txt"), "utf8")).toBe("theirs\n");
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
+  });
+
+  it.skipIf(!gitCanBeShimmed)("leaves a branch that already holds the file the sync brings in", () => {
+    // The switched-to branch has committed the same path — what a branch that has already merged
+    // the default one looks like. Putting the tree back to the branch's OLD tip deletes that file
+    // and stages the deletion, so the put-back reads the tree's own HEAD instead.
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const was = at(down, "main");
+    git(down, "switch", "-q", "-c", "ongoing");
+    writeFileSync(join(down, "b.txt"), "b\n");
+    git(down, "add", "b.txt");
+    git(down, "commit", "-qm", "theirs");
+    git(down, "switch", "-q", "main");
+    const theirs = at(down, "ongoing");
+    const onto = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} switch -q ongoing`;
+
+    const r = raced(down, { at: "read-tree -m -u", action: onto }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("back to what that branch holds");
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
+    expect(at(down, "ongoing")).toBe(theirs);
+    // Their file survives, and nothing of the sync is staged on their branch.
+    expect(readFileSync(join(down, "b.txt"), "utf8")).toBe("b\n");
+    expect(git(down, "status", "--porcelain=v1")).toBe("");
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
+    expect(was).not.toBe(at(down, "main"));
+  });
+
+  it.skipIf(!gitCanBeShimmed)("leaves a branch holding its own version of that file", () => {
+    // The same path with content of its own, which git will not let a session switch onto until
+    // the files have been written — so this one arrives just after them, where git's own checkout
+    // has already restored the branch's content and the put-back has nothing to do.
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    git(down, "switch", "-q", "-c", "ongoing");
+    writeFileSync(join(down, "b.txt"), "mine\n");
+    git(down, "add", "b.txt");
+    git(down, "commit", "-qm", "theirs");
+    git(down, "switch", "-q", "main");
+    const theirs = at(down, "ongoing");
+    const onto = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} switch -q ongoing`;
+
+    const r = raced(down, { at: HEAD_READ, nth: 3, action: onto }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("back to what that branch holds");
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
+    expect(at(down, "ongoing")).toBe(theirs);
+    expect(readFileSync(join(down, "b.txt"), "utf8")).toBe("mine\n");
+    expect(git(down, "status", "--porcelain=v1")).toBe("");
     expect(branches(down)).toContain("feat");
     expect(existsSync(tree)).toBe(true);
   });

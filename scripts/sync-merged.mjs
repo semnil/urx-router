@@ -45,10 +45,11 @@
 //
 // A switch arriving inside the second command writes no ref, but it does leave an INDEX its
 // tree's own HEAD no longer describes — this sync's changes, staged on someone else's branch and
-// carried by their next commit. So the tree is read back afterwards, and where it has moved the
-// index update is taken back by the same read in the other direction. Two arrivals in two
-// consecutive gaps — a switch and then an edit to a file the sync brought in — is the one shape
-// that cannot be taken back, and it is reported rather than tidied over.
+// carried by their next commit. So the tree is read back afterwards, and where it has moved, each
+// path the sync wrote goes back to what THAT branch holds — but only where it still holds what
+// the sync wrote, since a path that session has touched since cannot be told from work of its own
+// and is named rather than deleted. Taking the whole tree back to the branch's old tip instead
+// deletes what the branch it is on legitimately has at those paths.
 //
 // It is also taken in NO TREE BUT THE ONE THIS WAS STARTED IN, which bounds all of that to this
 // checkout. Run from anywhere else with a sync pending, nothing is applied.
@@ -236,6 +237,38 @@ function headOf(dir) {
 
 const describeHead = (head) =>
   head === null ? "it is on no branch" : `it is on ${head.ref} at ${head.sha.slice(0, 7)}`;
+
+const lines = (r) => r.out.split("\n").filter(Boolean);
+
+/**
+ * Take back what the sync wrote into a worktree that is no longer on the branch it wrote for.
+ *
+ * WHICH PATHS are acted on is the whole of it. Only those that still hold what the sync wrote AND
+ * differ from that tree's HEAD are taken back: a path already matching the HEAD needs nothing —
+ * which is every path when the switch lands after the write, since git's own checkout restores
+ * the target's content on the way — and a path matching neither was written by that session
+ * afterwards, so it is left alone and named, nothing here being able to tell it from work of
+ * their own. Taking the tree back to the branch's OLD TIP instead, which is what a plain reverse
+ * read does, deletes whatever that branch legitimately holds at those paths: a file it had
+ * committed was removed and staged as a deletion, under a line saying it had been put back.
+ *
+ * The restore reads that tree's own HEAD, which in every arrangement reachable here holds the
+ * same content at those paths as the old tip does — git allows the switch only where it can carry
+ * the difference — so the source is not what separates the two; the selection is.
+ */
+function putBack(cwd, dir, local, ahead) {
+  const touched = lines(git(["diff", "--name-only", local, ahead], cwd, true));
+  if (touched.length === 0) return { back: true, held: [] };
+  const offHead = lines(git(["diff", "--name-only", "HEAD", "--", ...touched], dir, true));
+  const offOurs = lines(git(["diff", "--name-only", ahead, "--", ...touched], dir, true));
+  const mine = offHead.filter((p) => !offOurs.includes(p));
+  const held = offHead.filter((p) => offOurs.includes(p));
+  if (mine.length) git(["restore", "--source", "HEAD", "--staged", "--worktree", "--", ...mine], dir, true);
+  // Read back rather than taken from an exit code: the claim is about the tree, not the command.
+  // No case reaches a restore that fails, so this half is a second opinion and nothing more.
+  const rest = mine.length ? lines(git(["diff", "--name-only", "HEAD", "--", ...mine], dir, true)) : [];
+  return { back: held.length === 0 && rest.length === 0, held: [...new Set([...held, ...rest])] };
+}
 
 /**
  * What to do about the default branch, from facts alone.
@@ -481,17 +514,16 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
     }
     // read-tree writes no ref, so a switch arriving inside it moves nothing — but it writes an
     // INDEX, and the tree it wrote is then one whose HEAD describes something else: the sync's
-    // changes sit there staged, and that session's next commit carries them. Taken back by the
-    // same read in the other direction, which is exact while their tree is otherwise untouched.
+    // changes sit there staged, and that session's next commit carries them.
     const left = headOf(sync.tree);
     if (left?.ref !== `refs/heads/${base}`) {
-      const undo = git(["read-tree", "-m", "-u", ahead, local], sync.tree, true);
+      const put = putBack(cwd, sync.tree, local, ahead);
       log(`synced ${base} -> ${ahead.slice(0, 7)}`);
       log(`SYNC BLOCKED — ${sync.tree} left ${base} while its files were being written: ${describeHead(left)}`);
       log(
-        undo.status === 0
-          ? "       its index and files are back where that session left them"
-          : `       AND ITS INDEX NOW HOLDS THIS SYNC'S CHANGES, STAGED: ${undo.err}`,
+        put.back
+          ? "       the files it wrote are back to what that branch holds"
+          : `       AND IT STILL HOLDS WHAT THIS SYNC WROTE: ${put.held.join(", ")}`,
       );
       log("\nnothing removed — run again from the tree that holds it");
       return 1;
