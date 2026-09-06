@@ -2202,6 +2202,12 @@ export class DynScreen {
 /** The font every plot's tick labels and annotations use. Beside the tokens because both
  *  are "what a plot draws with", and the canvas owner resolves both. */
 export const PLOT_FONT = '9.5px "SF Mono", Menlo, Consolas, monospace';
+/** The same stack at the two other weights a plot draws in. Spelled out rather than
+ *  reached through `var(--mono)`: a canvas font shorthand is parsed with no CSS context,
+ *  so a `var()` in it makes the whole value unparseable, the setter drops it, and the text
+ *  lands in the context's default sans-serif with nothing reporting the miss. */
+export const PLOT_FONT_TAG = '600 9px "SF Mono", Menlo, Consolas, monospace';
+export const PLOT_FONT_READ = '700 11px "SF Mono", Menlo, Consolas, monospace';
 
 /** The token names a plot canvas is handed. A draw naming anything else reads undefined,
  *  which canvas IGNORES rather than refuses — pinned by `palette.contract`. */

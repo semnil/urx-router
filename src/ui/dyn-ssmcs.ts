@@ -229,7 +229,7 @@ const MAKEUP_MAX_DB = 24;
  * Built once per redraw rather than read per sample point: the curve evaluates it ~120
  * times, and each read walks the plan.
  */
-function transferOf(v: StripValues): { out: (inDb: number) => number; gainDb: number } {
+function transferOf(v: StripValues): { out: (inDb: number) => number; gainDb: number; thr: number } {
   const drive = v.compDrive;
   // The corner, on the input meter's own dBFS, by CORNER_RAMP_RAW's two-region law and
   // clamped at CORNER_FLOOR_DB. `thresholdCorner` is the upper region's own law, which the
@@ -261,15 +261,15 @@ function transferOf(v: StripValues): { out: (inDb: number) => number; gainDb: nu
   // outright, so it returns the input rather than a curve with no reduction in it.
   const curve = kneeResponse({ thr, ratio, up, down, gain: gainDb });
   const out = (inDb: number): number => (drive === 0 ? inDb : curve(inDb));
-  return { out, gainDb };
+  return { out, gainDb, thr };
 }
 
 /** The transfer curve and its reduction annotation, from this bank’s own model. The
  *  drawing itself is shared with the COMP→EQ bank (`drawTransferCurve`): only the response
  *  differs, and the two would otherwise drift apart the way their annotations already had. */
 function drawTransfer(c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Record<string, string>, v: StripValues): void {
-  const { out, gainDb } = transferOf(v);
-  drawTransferCurve(c, g, tok, { out, gainDb, loDb: IN_LO_DB });
+  const { out, gainDb, thr } = transferOf(v);
+  drawTransferCurve(c, g, tok, { out, gainDb, loDb: IN_LO_DB, markAt: thr });
 }
 
 /** The gain the curve carries over its whole length, which the unity reference has to be

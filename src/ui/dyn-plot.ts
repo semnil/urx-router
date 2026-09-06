@@ -8,7 +8,7 @@
 // mean is the descriptor's alone.
 
 import { METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB } from "../core/meters";
-import { HI_DB, PLOT_FONT, splitDisplay } from "./dyn-screen";
+import { HI_DB, PLOT_FONT, PLOT_FONT_READ, PLOT_FONT_TAG, splitDisplay } from "./dyn-screen";
 import type { DynCtx, DynPlotGeo, DynPlotProcessor } from "./dyn-screen";
 import type { Messages } from "../i18n/en";
 
@@ -78,14 +78,7 @@ export function drawDbAxes(
     c.stroke();
     c.fillText(String(db), g.pad.l - 6, g.py(db) + 3);
   }
-  c.fillStyle = tok["--plot-dim"];
-  c.textAlign = "left";
-  c.fillText("IN dBFS", g.w - g.pad.r - 58, g.h - g.pad.b + 24);
-  c.save();
-  c.translate(13, g.h - g.pad.b - 2);
-  c.rotate(-Math.PI / 2);
-  c.fillText("OUT dBFS", 0, 0);
-  c.restore();
+  drawAxisNames(c, g, tok, { x: "IN dBFS", y: "OUT dBFS" });
 
   // Unity reference, so the curve's departure from it reads against something.
   const off = o.unityOffsetDb ?? 0;
@@ -219,9 +212,13 @@ export function drawTransferCurve(
   c: CanvasRenderingContext2D,
   g: DynPlotGeo,
   tok: Record<string, string>,
-  o: { out: (inDb: number) => number; gainDb: number; loDb: number },
+  o: { out: (inDb: number) => number; gainDb: number; loDb: number; markAt?: number | null },
 ): void {
   drawCurveLine(c, g, tok, o);
+  // The corner, on the input axis. Every compressor here drives it from a value the unit
+  // does not show, so the plot is where it is read — and a kink found by eye is an
+  // estimate. A curve with no corner (a bypassed band, a straight line) passes null.
+  if (o.markAt !== undefined && o.markAt !== null) curveMarks(c, g, tok, [{ at: o.markAt, tag: "T" }]);
 
   const top = o.out(HI_DB) - o.gainDb;
   if (top >= -0.05) return;
@@ -238,6 +235,74 @@ export function drawTransferCurve(
   c.textAlign = "right";
   // Inset from the axis so the label does not sit on the frame.
   c.fillText(`${top.toFixed(1)} dB`, g.px(HI_DB) - 22, g.py((from + to) / 2) + 3);
+}
+
+/** How far the rotated axis name sits from the frame's left edge. One number rather than
+ *  one per plot: the left gutters are not the same width, but the name sits at the far
+ *  left of whichever gutter it is in. */
+const AXIS_NAME_INSET = 12;
+
+/**
+ * The axis names, in the one place every plot here puts them: the horizontal axis's along
+ * the foot at the right, the vertical axis's rotated up the left gutter.
+ *
+ * Both are placed off the FRAME rather than off the string, so a longer name does not need
+ * a constant of its own — which is what the two plots that grew these independently each
+ * carried, and why the same word sat at two different heights depending on which screen
+ * was open.
+ *
+ * `x` is omitted by a plot whose ticks carry their own units: the DUCKER's time axis spans
+ * milliseconds and seconds, so no single name states what its numbers are.
+ */
+export function drawAxisNames(
+  c: CanvasRenderingContext2D,
+  g: DynPlotGeo,
+  tok: Record<string, string>,
+  o: { x?: string; y: string; x0?: number },
+): void {
+  const x0 = o.x0 ?? 0;
+  c.font = PLOT_FONT;
+  c.fillStyle = tok["--plot-dim"];
+  if (o.x) {
+    c.textAlign = "right";
+    c.fillText(o.x, x0 + g.w - g.pad.r, g.h - g.pad.b + 24);
+  }
+  c.save();
+  c.translate(x0 + AXIS_NAME_INSET, g.h - g.pad.b - 2);
+  c.rotate(-Math.PI / 2);
+  c.textAlign = "left";
+  c.fillText(o.y, 0, 0);
+  c.restore();
+}
+
+/**
+ * The live reduction as a number, in the frame's top corner — the reading that belongs to
+ * the RESPONSE, beside the response.
+ *
+ * The bar in the rack and the tile under it are the same value read two other ways; what
+ * a curve cannot say on its own is how far the signal currently is from it, and the
+ * annotation `drawTransferCurve` hangs off the top is the curve's own arithmetic at full
+ * scale, which does not move with the signal.
+ *
+ * Every transfer plot whose rack carries a reduction draws it, so the number is in one
+ * place on every screen that has one. Nothing is drawn without a reading: a parked figure
+ * would say the processor is passing everything, which is a different state from not being
+ * metered.
+ */
+export function drawGrReadout(
+  c: CanvasRenderingContext2D,
+  g: DynPlotGeo,
+  read: (laneKey: string) => number | null,
+  tok: Record<string, string>,
+): void {
+  const gr = read("gr");
+  if (gr === null || gr >= 0) return;
+  c.save();
+  c.fillStyle = tok["--gr"];
+  c.textAlign = "right";
+  c.font = PLOT_FONT_READ;
+  c.fillText(`GR ${gr.toFixed(1)} dB`, g.w - g.pad.r - 4, g.pad.t + 12);
+  c.restore();
 }
 
 /**
@@ -263,7 +328,7 @@ export function curveMarks(
   c.fillStyle = tok["--plot-dim"];
   c.lineWidth = 1;
   c.setLineDash([2, 3]);
-  c.font = "600 9px var(--mono), monospace";
+  c.font = PLOT_FONT_TAG;
   c.textAlign = "center";
   for (const m of marks) {
     const x = Math.round(g.px(m.at)) + 0.5;
@@ -318,10 +383,10 @@ export function transferPlot(o: {
    * bar selects nothing else.
    */
   on?: (ctx: DynCtx) => boolean;
-  /** Drawn on the same canvas after the dot, for a processor with a live number to put
-   *  beside its curve. Separate from `drawCurve`, which is the STATIC layer and is not
-   *  redrawn per frame — a live value drawn there would freeze at whatever it read when a
-   *  parameter last moved. */
+  /** Drawn on the same canvas after the dot and the reduction, for a processor with
+   *  something else live to put beside its curve. Separate from `drawCurve`, which is the
+   *  STATIC layer and is not redrawn per frame — a live value drawn there would freeze at
+   *  whatever it read when a parameter last moved. */
   liveExtra?: (
     c: CanvasRenderingContext2D,
     g: DynPlotGeo,
@@ -350,6 +415,11 @@ export function transferPlot(o: {
       const out = read("out");
       const offset = o.outOffsetDb?.(ctx) ?? 0;
       drawLiveDot(c, g, read("in"), out === null ? null : out + offset, tok, { in: o.loDb, out: o.outLoDb });
+      // Every transfer plot draws the reduction the same way, so the rule is here rather
+      // than declared once per descriptor — which is how the gate came to be the one face
+      // with a reduction and no number. A plot whose rack has no `gr` lane reads null and
+      // this draws nothing.
+      drawGrReadout(c, g, read, tok);
       o.liveExtra?.(c, g, read, tok, ctx);
     },
   };

@@ -282,6 +282,28 @@ describe("the COMP face", () => {
     expect(scAt(t().inspector.dyn.knee)).toBe(-1);
   });
 
+  // The corner is the one value on this bank that no row carries — the unit drives it from
+  // Comp Drive and never shows it — so the plot is the only place it can be read, and a
+  // kink read by eye is an estimate. It is marked the way every other transfer plot marks
+  // one, and it MOVES with the drive, which is what tells a mark apart from a decoration
+  // drawn at a fixed place.
+  it("marks the compressor's corner on the input axis, and moves it with Comp Drive", () => {
+    // The most recent one: the recorder is the host's and collects every draw the screen
+    // has made, so an earlier render's mark is still in it.
+    const markX = (): number => {
+      const marks = h!.canvas.texts.filter((p) => p.text === "T");
+      expect(marks.length).toBeGreaterThan(0);
+      return marks[marks.length - 1].x;
+    };
+    const near = markX();
+    h!.plan.nodeParams[ssmcsChannel] = {
+      ...h!.plan.nodeParams[ssmcsChannel],
+      ssmcs: { ...strip(h!), compDrive: 200 },
+    };
+    screen!.refresh([ssmcsChannel]);
+    expect(markX()).not.toBeCloseTo(near, 1);
+  });
+
   it("switches the side-chain filter from the row above the filter's own sliders", () => {
     segment(SC_SEG);
     const off = [...h!.box.querySelectorAll<HTMLButtonElement>(".prefs-row .prefs-toggle button")].find(

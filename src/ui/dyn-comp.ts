@@ -195,6 +195,16 @@ export const COMP_DYN: DynPlotProcessor = {
   },
 
   // The curve and its reduction annotation are the drawing both compressor banks make, so
-  // both call one function; what differs is only the response each of them models.
-  drawCurve: (c, g, v, tok) => drawTransferCurve(c, g, tok, { out: responseOf(v), gainDb: v.get("gain"), loDb: LO_DB }),
+  // both call one function; what differs is only the response each of them models. The
+  // threshold is marked on the input axis for the reason `curveMarks` states: it is a kink
+  // in the line and nothing else, so reading it off the plot otherwise means finding where
+  // the slope changes and estimating it.
+  drawCurve: (c, g, v, tok) => {
+    drawTransferCurve(c, g, tok, {
+      out: responseOf(v),
+      gainDb: v.get("gain"),
+      loDb: LO_DB,
+      markAt: v.get("threshold"),
+    });
+  },
 };

@@ -58,7 +58,7 @@ import { el, onOff, onOffButton, settingsRow, settingsSection, sliderRow } from 
 import type { SettingsRowOptions } from "./dom";
 import { enumRow, rowBreak } from "./dyn-chan";
 import { curveMarks, drawTransferCurve, transferPlot } from "./dyn-plot";
-import { splitDisplay } from "./dyn-screen";
+import { PLOT_FONT_TAG, splitDisplay } from "./dyn-screen";
 import type { DynPlotGeo } from "./dyn-screen";
 import { GAIN_TICKS, drawFreqAxes, freqGeo } from "./dyn-freq-plot";
 import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ } from "../core/control/vd";
@@ -335,19 +335,24 @@ const qualifyBand = (bandFace: boolean, d: InsertFxParamDesc): boolean => !bandF
 function mbcResponses(v: DynValues): {
   band: "low" | "mid" | "high";
   gainDb: number;
+  /** Where the band's own corner sits, or null while it is bypassed and there is none. */
+  thresholdDb: number | null;
   out: (inDb: number) => number;
 }[] {
   return MBC_BANDS.map((b) => {
     // A bypassed band is a straight line: the unit passes it through with neither the
     // compression nor the make-up. Measured — with the other two silenced so the post meter
     // read this band alone, a bypassed band sat ON its unity level and 92 dB above silence.
-    if (mbcRaw(v, b.bypass)) return { band: b.band, gainDb: 0, out: (inDb: number): number => inDb };
+    if (mbcRaw(v, b.bypass)) {
+      return { band: b.band, gainDb: 0, thresholdDb: null, out: (inDb: number): number => inDb };
+    }
     const c = mbcBandCurve({ threshold: mbcRaw(v, b.threshold), ratio: mbcRaw(v, b.ratio), gain: mbcRaw(v, b.gain) });
     const silent = c.gainDb === -Infinity;
     return {
       band: b.band,
       // What the annotation over the curve takes off before it calls the rest a reduction.
       gainDb: silent ? 0 : c.gainDb,
+      thresholdDb: c.thresholdDb,
       out: (inDb: number): number =>
         silent
           ? CURVE_LO_DB - 40
@@ -614,22 +619,6 @@ function insFxFace(): DynProcessor {
     // that has one: its axis is frequency, and a level plotted against frequency is a
     // reading of nothing.
     on: (ctx) => hasCurve(familyOf(ctx)) && !isMbcMain(ctx),
-    // The reduction as a NUMBER, beside the curve it is happening on. The bar overlay
-    // and its tile in the METER column are the same value read two other ways; what the
-    // plot was missing is the one that belongs to the response — the annotation hanging
-    // off the top is the curve's own arithmetic at full scale, which does not move with
-    // the signal. Nothing is drawn without a reading: a parked figure would say the
-    // effect is passing everything, which is a different state from not being metered.
-    liveExtra: (c, g, read, tok) => {
-      const gr = read("gr");
-      if (gr === null || gr >= 0) return;
-      c.save();
-      c.fillStyle = tok["--gr"];
-      c.textAlign = "right";
-      c.font = "700 11px var(--mono), monospace";
-      c.fillText(`GR ${gr.toFixed(1)} dB`, g.w - g.pad.r - 4, g.pad.t + 12);
-      c.restore();
-    },
   });
   return {
     key: "insfx",
@@ -982,7 +971,14 @@ function insFxFace(): DynProcessor {
         if (isMbcMain(ctx)) return drawMbcBands(c, g, v, tok, ctx);
         const band = MBC_FACES[ctx.sel - 1];
         const r = mbcResponses(v).find((x) => x.band === band);
-        if (r) drawTransferCurve(c, g, tok, { out: r.out, gainDb: r.gainDb, loDb: CURVE_LO_DB });
+        if (r) {
+          drawTransferCurve(c, g, tok, {
+            out: r.out,
+            gainDb: r.gainDb,
+            loDb: CURVE_LO_DB,
+            markAt: r.thresholdDb,
+          });
+        }
         return;
       }
       const selector = effectiveInsertFx(ctx.model, ctx.plan, ctx.nodeId);
@@ -1007,7 +1003,7 @@ function insFxFace(): DynProcessor {
       // no row on the screen carries — the family is one and the selector decides it.
       c.fillStyle = tok["--plot-dim"];
       c.textAlign = "left";
-      c.font = "600 9px var(--mono), monospace";
+      c.font = PLOT_FONT_TAG;
       c.fillText(
         `EXPANDER ${selector === COMPANDER_H ? EXPANDER_RATIO.h : EXPANDER_RATIO.s}:1`,
         g.pad.l + 4,
@@ -1079,7 +1075,7 @@ function drawMbcBands(
   c.strokeStyle = tok["--plot-dim"];
   c.lineWidth = 1;
   c.fillStyle = tok["--plot-dim"];
-  c.font = "600 9px var(--mono), monospace";
+  c.font = PLOT_FONT_TAG;
   c.textAlign = "center";
   for (const [i, x] of cuts.entries()) {
     c.beginPath();

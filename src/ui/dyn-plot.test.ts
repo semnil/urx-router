@@ -61,11 +61,12 @@ describe("plot drawing stays off the frame instead of on its edge", () => {
     const r = recorder();
     COMP_DYN.drawCurve(r.ctx, compGeo, vals({ threshold: thr, ratio, gain: 0, knee: 0 }), TOK, {} as never);
 
-    // The response is sampled on a fixed grid from the input floor to 0 dBFS; the
-    // annotation adds two more points after it. Asserted rather than assumed, so a change
-    // to the sampling fails here instead of silently moving which point is read.
+    // The response is sampled on a fixed grid from the input floor to 0 dBFS; two
+    // annotations follow it, each a two-point line — the reduction hanging off the right
+    // edge and the threshold mark on the input axis. Asserted rather than assumed, so a
+    // change to the sampling fails here instead of silently moving which point is read.
     const SAMPLES = 121;
-    expect(r.ys.length).toBe(SAMPLES + 2);
+    expect(r.ys.length).toBe(SAMPLES + 4);
     const lo = COMP_DYN.loDb;
     const at = (db: number): number => r.ys[Math.round(((db - lo) / (0 - lo)) * (SAMPLES - 1))];
     const inAtThreshold = lo + Math.round(((thr - lo) / (0 - lo)) * (SAMPLES - 1)) * ((0 - lo) / (SAMPLES - 1));
