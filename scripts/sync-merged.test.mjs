@@ -647,7 +647,7 @@ describe("sync-merged, the running-process guard", () => {
   });
 });
 
-describe("sync-merged, when the tree it is about to write to is switched under it", () => {
+describe("sync-merged, when a second session changes something after the plan was read", () => {
   // A merge names a directory. The plan reads which branch that directory is on; the apply acts
   // on whichever one it is on then, and between the two sits a fetch over the network. Both cases
   // place the switch at an exact command, so the window is the one that exists rather than one
@@ -761,12 +761,51 @@ describe("sync-merged, when the tree it is about to write to is switched under i
     const r = raced(down, { at: LAST_PLAN_READ, action: elsewhere }, "--apply");
     expect(r.fired).toBe(true);
     expect(r.code).toBe(1);
-    expect(r.text).toMatch(/^keep {3}feat.*is no longer on it: it is on refs\/heads\/theirs/m);
+    expect(r.text).toMatch(/^keep {3}feat.*its worktree is on theirs now$/m);
     expect(existsSync(tree)).toBe(true);
     expect(branches(down)).toContain("feat");
     // The fast-forward is what makes the deletions legal and it still ran, so the branch is kept
     // by the reading above rather than by the sync having been refused.
     expect(at(down, "main")).toBe(at(down, "origin/main"));
+  });
+
+  it.skipIf(!gitCanBeShimmed)("keeps one whose worktree is given a saved plan after the plan was read", () => {
+    // The reason the removal rule is asked twice. A file that was there when the plan ran keeps
+    // the worktree; one saved a moment later has to keep it for the same reason, or the rule only
+    // covers a session that was already finished when this started.
+    const { down } = fixture({ ignore: "dist/\n/plans\n" });
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const dir = join(tree, "plans");
+    const file = join(dir, "session.json");
+    const save = `mkdir -p ${JSON.stringify(dir)}; printf '{"saved":true}\\n' > ${JSON.stringify(file)}`;
+
+    const r = raced(down, { at: LAST_PLAN_READ, action: save }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/^keep {3}feat.*no command here rebuilds: plans\/$/m);
+    expect(existsSync(tree)).toBe(true);
+    expect(readFileSync(file, "utf8")).toBe('{"saved":true}\n');
+    expect(branches(down)).toContain("feat");
+    // The fast-forward still ran, so the branch is kept by the reading rather than by the sync
+    // having been refused ahead of it.
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
+  });
+
+  it.skipIf(!gitCanBeShimmed)("keeps one that gains a commit after the plan was read", () => {
+    // The same second reading, over the branch rather than the worktree: what the plan measured
+    // as landed is a commit that is no longer its tip.
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const commit = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(tree)} commit -q --allow-empty -m theirs`;
+
+    const r = raced(down, { at: LAST_PLAN_READ, action: commit }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/^keep {3}feat.*not merged into origin\/main$/m);
+    expect(existsSync(tree)).toBe(true);
+    expect(branches(down)).toContain("feat");
   });
 
   it.skipIf(!gitCanBeShimmed)("goes through when the shim fires at nothing", () => {

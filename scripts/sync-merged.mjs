@@ -242,6 +242,56 @@ export function decide({ base, remote, local, ahead, fastForward, holder, runnin
   return { act: true, ff: local !== ahead, tree: holder, note };
 }
 
+/** Everything the removal rule reads that is shared across branches, taken at one moment. */
+function survey(cwd, remote) {
+  return {
+    here: git(["rev-parse", "--show-toplevel"], cwd).out,
+    trees: worktrees(cwd),
+    procs: workingDirs(),
+    onFirstParent: new Set(git(["rev-list", "--first-parent", remote], cwd).out.split("\n")),
+  };
+}
+
+/**
+ * Why a branch may not be removed, or null when it may, from a survey taken at a moment.
+ *
+ * Called twice on purpose: once by the plan, to report, and again by the apply on a FRESH survey,
+ * immediately before each removal. Nothing it reads holds still — a session can commit to the
+ * branch, save a file into the worktree, start a build in it, lock it or switch it away — and by
+ * the time anything is destroyed the plan is minutes and a network fetch old. Reading it once and
+ * destroying on that answer is the same defect at every one of those readings.
+ *
+ * `at` names the worktree the plan meant. Given one, the tree is looked up by PATH and required to
+ * still be on the branch: found by branch instead, a tree switched away is simply not found, and a
+ * run would then leave the checkout standing and delete the branch under it.
+ */
+function whyKeep(cwd, remote, branch, ref, s, at = null) {
+  const tree = (at ? s.trees.find((w) => w.path === at) : s.trees.find((w) => w.branch === branch)) ?? null;
+  // Asked with the full refname: a bare name resolves a tag of the same spelling first, so the
+  // answer would be about the tag while every other reading here is about the branch. Anything
+  // but a plain yes is a no, which keeps the branch — an error here reads as "not landed", and so
+  // does a ref that is gone, which is why nothing above asks separately whether it still exists.
+  if (git(["merge-base", "--is-ancestor", ref, remote], cwd, true).status !== 0)
+    return { tree, why: `not merged into ${remote}` };
+  const tip = git(["rev-parse", "--verify", "--quiet", ref], cwd, true);
+  if (s.onFirstParent.has(tip.out))
+    return {
+      tree,
+      why: "its tip is on the remote's own first-parent line — an unstarted branch, or one that landed by fast-forward, and this cannot tell the two apart",
+    };
+  if (at && !tree) return { tree, why: `${at} is no longer a worktree of this repository` };
+  if (!tree) return { tree, why: null };
+  if (tree.path === s.here) return { tree, why: "this session is working in it" };
+  if (tree.branch !== branch) return { tree, why: `its worktree is on ${tree.branch ?? "no branch"} now` };
+  if (tree.locked) return { tree, why: "its worktree is locked — another session is inside" };
+  const dirty = unclean(tree.path);
+  if (dirty) return { tree, why: dirty };
+  const busy = holdersOf(tree.path, s.procs, s.trees);
+  if (busy && busy.length > 0)
+    return { tree, why: `${busy.length} process(es) run out of its worktree: pid ${busy[0].pid}` };
+  return { tree, why: null };
+}
+
 function plan(cwd, log) {
   const here = git(["rev-parse", "--show-toplevel"], cwd).out;
   const head = git(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], cwd, true);
@@ -265,39 +315,19 @@ function plan(cwd, log) {
   const ahead = tip(`refs/remotes/${remote}`);
   if (ahead === null) throw new Error(`${remote} does not exist — the remote's default branch may have been renamed`);
 
-  const trees = worktrees(cwd);
-  const procs = workingDirs();
-  // Asked with the full refname: a bare name resolves a tag of the same spelling first, so the
-  // answer would be about the tag while every other reading here is about the branch. Anything
-  // but a plain yes is a no, which keeps the branch — an error here reads as "not landed".
-  const landed = (ref) => git(["merge-base", "--is-ancestor", ref, remote], cwd, true).status === 0;
-  const onFirstParent = new Set(git(["rev-list", "--first-parent", remote], cwd).out.split("\n"));
+  const s = survey(cwd, remote);
+  const { trees, procs } = s;
 
   const removals = [];
   const kept = [];
-  for (const rec of git(["for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads"], cwd).out.split("\n")) {
-    const [ref, at] = rec.split("\0");
+  for (const rec of git(["for-each-ref", "--format=%(refname)", "refs/heads"], cwd).out.split("\n")) {
+    const ref = rec;
     if (!ref) continue;
     const branch = ref.slice("refs/heads/".length);
     if (branch === base) continue;
-    const tree = trees.find((w) => w.branch === branch);
-    const busy = tree && holdersOf(tree.path, procs, trees);
-    const why = !landed(ref)
-      ? `not merged into ${remote}`
-      : onFirstParent.has(at)
-        ? "its tip is on the remote's own first-parent line — an unstarted branch, or one that landed by fast-forward, and this cannot tell the two apart"
-        : tree && tree.path === here
-          ? "this session is working in it"
-          : tree && tree.locked
-            ? "its worktree is locked — another session is inside"
-            : tree
-              ? (unclean(tree.path) ??
-                (busy && busy.length > 0
-                  ? `${busy.length} process(es) run out of its worktree: pid ${busy[0].pid}`
-                  : null))
-              : null;
+    const { tree, why } = whyKeep(cwd, remote, branch, ref, s);
     if (why) kept.push({ branch, tree, why });
-    else removals.push({ branch, tree });
+    else removals.push({ branch, ref, tree });
   }
 
   const local = tip(`refs/heads/${base}`);
@@ -307,7 +337,8 @@ function plan(cwd, log) {
     remote,
     local,
     ahead,
-    fastForward: local !== null && landed(`refs/heads/${base}`),
+    fastForward:
+      local !== null && git(["merge-base", "--is-ancestor", `refs/heads/${base}`, remote], cwd, true).status === 0,
     holder: holder?.path ?? null,
     running: holder ? holdersOf(holder.path, procs, trees) : [],
   });
@@ -385,14 +416,15 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
   }
   if (sync.ff) log(`synced ${base} -> ${ahead.slice(0, 7)}`);
 
-  for (const { branch, tree } of removals) {
+  for (const { branch, ref, tree } of removals) {
     if (!tree) continue;
-    // The same window, over the trees this is about to take: a session that switched one of them
-    // has a checkout it is working in, and a removal does not ask what branch it is on. Its own
-    // branch is left alone below, since the worktree it is in is still listed.
-    const head = headOf(tree.path);
-    if (head?.ref !== `refs/heads/${branch}`) {
-      log(`keep   ${branch} — ${tree.path} is no longer on it: ${describeHead(head)}`);
+    // Asked again, on a reading taken now rather than on the plan's: the same rule, so a file
+    // saved into the tree, a build started in it, a lock, a switch or a commit on the branch is
+    // seen here whether it arrived before the plan or after it. Its own branch is left alone
+    // below, since the worktree it is in is still listed.
+    const { why } = whyKeep(cwd, remote, branch, ref, survey(cwd, remote), tree.path);
+    if (why) {
+      log(`keep   ${branch} — ${why}`);
       failed = true;
       continue;
     }
