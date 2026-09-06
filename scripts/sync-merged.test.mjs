@@ -290,10 +290,15 @@ describe("sync-merged, when a branch has landed", () => {
     // has already fast-forwarded the default branch: with nothing to merge, no tree is written to.
     const { down } = fixture();
     git(down, "fetch", "-q", "origin");
+    // Off the merge's first parent, so this run's own HEAD does not contain feat — which is the
+    // whole case: a merged-only deletion is answered about the HEAD it is asked from.
+    git(down, "branch", "side", "origin/main~1");
     git(down, "merge", "-q", "--ff-only", "origin/main");
-    git(down, "branch", "side", "HEAD");
     const tree = join(down, "..", "wtside");
     git(down, "worktree", "add", tree, "side");
+    // Asserted rather than assumed: the case is void if the run's own HEAD does contain it, and
+    // the deletion would then succeed from either tree.
+    expect(() => git(tree, "merge-base", "--is-ancestor", "feat", "HEAD")).toThrow();
     const { code } = report(tree, true);
     expect(code).toBe(0);
     expect(branches(down)).not.toContain("feat");
