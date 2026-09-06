@@ -35,6 +35,7 @@
     "e2e:serve": "node scripts/e2e-serve.mjs",
     "e2e:serve:trace": "node scripts/e2e-serve.mjs --trace",
     "e2e:worktree": "node scripts/e2e-worktree.mjs",
+    "sync:merged": "node scripts/sync-merged.mjs",
     "reset:storage": "node scripts/reset-storage.mjs",
     "tauri": "tauri",
     "clean": "rm -rf node_modules/.vite dist dist-trace && cargo clean --manifest-path src-tauri/Cargo.toml",
