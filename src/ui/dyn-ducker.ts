@@ -21,6 +21,7 @@ import type { NodeParams } from "../core/plan";
 import { parseRef, ref } from "../models/types";
 import { CURVE_PAD, drawAxisNames } from "./dyn-plot";
 import { channelLabel, flagOffNote, PLOT_FONT, splitDisplay } from "./dyn-screen";
+import { levelLane } from "./dyn-chan";
 import type { DynCtx, DynLane, DynPlotProcessor } from "./dyn-screen";
 
 /** Lane ruler floor: the threshold's own domain, and no more. A ducker triggers on
@@ -135,24 +136,11 @@ export const DUCKER_DYN: DynPlotProcessor = {
       readoutCols: 2,
       lanes: [
         key,
-        {
-          key: "in",
-          label: text.tapIn,
-          caption: ctx.m.dynTuning.laneIn,
-          kind: "level",
-          tap: tapFor(host, "preducker", ctx.model.id) ?? null,
-        },
-        // In the PRE DUCKER lane's slot, not a column of its own. The reduction is
-        // applied to THAT signal — the key only decides when — so the level going in
-        // and the amount taken off it belong in one column, on one ruler. It keeps its
-        // own readout tile.
-        {
-          key: "out",
-          label: text.tapOut,
-          caption: ctx.m.dynTuning.laneOut,
-          kind: "level",
-          tap: tapFor(host, "post", ctx.model.id) ?? null,
-        },
+        levelLane("in", tapFor(host, "preducker", ctx.model.id) ?? null, ctx.m.dynTuning.laneIn),
+        levelLane("out", tapFor(host, "post", ctx.model.id) ?? null, ctx.m.dynTuning.laneOut),
+        // In the OUTPUT column's slot, not one of its own — where every reduction on every
+        // screen is drawn. `sameSlot` merges into the column built before it, which is why
+        // this entry follows the output lane rather than the key one.
         { key: "gr", label: text.tapGr, kind: "gr", gr: grAddr("ducker", ctx.nodeId), sameSlot: true },
       ],
     };

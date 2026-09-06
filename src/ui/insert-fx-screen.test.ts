@@ -139,8 +139,8 @@ describe("the meter lanes", () => {
     // A bus tap is stereo, and the effect sits AFTER the fader there — so the output side
     // is POST rather than the channel's PRE FADER.
     expect(lanes[1].tap!.r).toBeDefined();
-    expect(lanes[1].label).toBe(t().dynTuning.insfx.tapOutBus);
-    expect(lanes[0].label).toBe(t().dynTuning.insfx.tapIn);
+    expect(lanes[1].label).toBe("POST");
+    expect(lanes[0].label).toBe("PRE INS FX");
   });
 
   it("meters the band its own face is about, and none on MAIN", () => {

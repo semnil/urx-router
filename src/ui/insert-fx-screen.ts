@@ -56,7 +56,7 @@ import type { NodeParams, Plan } from "../core/plan";
 import type { DeviceModel } from "../models/types";
 import { el, onOff, onOffButton, settingsRow, settingsSection, sliderRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { enumRow, rowBreak } from "./dyn-chan";
+import { enumRow, levelLane, rowBreak } from "./dyn-chan";
 import { curveMarks, drawTransferCurve, transferPlot } from "./dyn-plot";
 import { PLOT_FONT_TAG, splitDisplay } from "./dyn-screen";
 import type { DynPlotGeo } from "./dyn-screen";
@@ -547,16 +547,7 @@ function lanesOf(ctx: DynCtx, isOutput: boolean): DynLane[] {
   const inTap = tapFor(ctx.nodeId, "preinsfx", ctx.model.id) ?? null;
   const outTap = tapFor(ctx.nodeId, isOutput ? "post" : "prefader", ctx.model.id) ?? null;
   const fam = familyOf(ctx);
-  const lanes: DynLane[] = [
-    { key: "in", label: g.insfx.tapIn, caption: g.laneIn, kind: "level", tap: inTap },
-    {
-      key: "out",
-      label: isOutput ? g.insfx.tapOutBus : g.insfx.tapOut,
-      caption: g.laneOut,
-      kind: "level",
-      tap: outTap,
-    },
-  ];
+  const lanes: DynLane[] = [levelLane("in", inTap, g.laneIn), levelLane("out", outTap, g.laneOut)];
   // The multi-band compressor is metered per BAND, and a band face carries the one that
   // belongs to it. MAIN carries none: it sets the crossovers and the levels the bands are
   // mixed back at, and three reductions beside those say which band is working without
@@ -663,9 +654,10 @@ function insFxFace(): DynProcessor {
           // into the device's own reading, supplied through `fieldText`.
           unit: "raw",
         }));
+      const lanes = lanesOf(ctx, ifx.isOutput);
       return {
         fields,
-        lanes: lanesOf(ctx, ifx.isOutput),
+        lanes,
         // A guitar amp's panel is a dozen controls and its display is a level rack with
         // nothing else in it, so the two columns swap. The companders keep the ordinary
         // order: their display is the point of the screen. The reserve rides with it: both

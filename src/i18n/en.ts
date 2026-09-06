@@ -603,9 +603,15 @@ export const en = {
       recPoint: tr("Rec Point tap"),
     },
   },
-  // Dynamics tuning screens (GATE / COMP). The LANE captions carry the device's own tap
-  // vocabulary and stay English in every language, like the CONSOLE meter-point badges that
-  // name the same points. The heading over them does not — see `readouts`.
+  // The channel tuning screens. A lane's CAPTION names the end of the processor it reads
+  // (Input / Output) and stays English in every language, like the CONSOLE meter-point
+  // badges naming the same points; the heading over the tiles does not — see `readouts`.
+  //
+  // A LEVEL tap's name is not here: the readout tile takes it from the tap the lane already
+  // resolved (`core/meters.ts`), which is where a meter address and its device name are
+  // written together and what the CONSOLE's own meter-point badge prints. The names below
+  // are the ones no tap carries — the four reductions, which are their own addresses rather
+  // than points on the strip, and the ducker's key caption, whose source moves with a wire.
   dynTuning: {
     close: tr("Close"),
     display: tr("Display"),
@@ -638,17 +644,13 @@ export const en = {
     gate: {
       title: dev("Gate"),
       open: tr("Gate screen"),
-      tapIn: dev("Pre Gate"),
-      tapGr: dev("Gate GR"),
-      tapOut: dev("Pre Comp"),
+      tapGr: dev("GATE GR"),
       curveHint: tr("Drag the curve's knee to set the threshold."),
     },
     comp: {
       title: dev("Comp"),
       open: tr("Comp screen"),
-      tapIn: dev("Pre Comp"),
-      tapGr: dev("Comp GR"),
-      tapOut: dev("Pre EQ"),
+      tapGr: dev("COMP GR"),
       // The second sentence is the whole of what two rejected visual aids were built to
       // say. Measured on a URX44V: a 50 ms burst 11 dB over the corner takes 10 dB of
       // reduction at Attack 0.09 ms and none at 80 ms, while the SETTLED reduction for the
@@ -678,7 +680,6 @@ export const en = {
       faceMain: fixed("Main"),
       faceComp: fixed("Comp"),
       faceEq: fixed("EQ"),
-      tapOut: dev("Pre Ins FX"),
       mainHint: tr(
         "Comp Drive moves the compressor's curve. Sweet Spot Data and Morphing move both, only while Live sync is up.",
       ),
@@ -689,11 +690,9 @@ export const en = {
     ducker: {
       title: dev("Ducker"),
       open: tr("Ducker screen"),
-      tapKey: (label: string): string => `Key · ${label}`,
-      noKey: tr("Key · none"),
-      tapIn: dev("Pre Ducker"),
-      tapGr: dev("Ducker GR"),
-      tapOut: dev("Post"),
+      tapKey: (label: string): string => `KEY · ${label}`,
+      noKey: tr("KEY · NONE"),
+      tapGr: dev("DUCKER GR"),
       hint: tr("The diagonals are times, not the shape of the change. Key is one bar even in stereo: L and R, summed."),
     },
     // One screen for three parameter families: the title names the effect the channel holds,
@@ -706,10 +705,6 @@ export const en = {
       // use (EFFECT TYPE / EFFECT ON). Latin in both languages, like every screen title.
       title: fixed("FX EFFECT"),
       open: tr("FX Effect screen"),
-      // The two taps either side of the effect. The caption above each says which END of
-      // the effect it is; these name the tap itself, as the meter-point selector does.
-      tapIn: dev("Input"),
-      tapOut: dev("Pre Fader"),
       // While tempo Sync is on the unit computes the delay time from the BPM and the note
       // value and announces the result, so the row reads it rather than setting it.
       syncedTag: tr("Synced"),
@@ -722,10 +717,7 @@ export const en = {
     insfx: {
       title: dev("INS FX"),
       open: tr("Insert FX screen"),
-      tapIn: dev("Pre Ins FX"),
-      tapOut: dev("Pre Fader"),
-      tapOutBus: dev("Post"),
-      tapGr: dev("Ins FX GR"),
+      tapGr: dev("INS FX GR"),
       // The multi-band compressor's first face: what the three bands share, against the
       // three that are one band each. `fixed()` because it is this app's own word for that
       // face rather than a row read off the unit, and one translated segment among four

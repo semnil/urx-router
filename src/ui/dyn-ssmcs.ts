@@ -58,7 +58,7 @@ import type { ControlParam } from "../core/midi/controls";
 import { processorOn, SSMCS_INITIAL } from "../core/plan";
 import type { NodeParams, SsmcsBand, SsmcsParams } from "../core/plan";
 import { onOff, settingsChoice, settingsRow } from "./dom";
-import { bindChannelStrip, enumRow } from "./dyn-chan";
+import { bindChannelStrip, enumRow, levelLane } from "./dyn-chan";
 import {
   bandMarkers,
   drawBandMarkers,
@@ -412,12 +412,8 @@ function ssmcsFieldText(f: DynField, v: number): string | undefined {
 }
 
 /** The three taps a lane can carry beyond the ones `bindChannelStrip` names. */
-const strippedLane = (ctx: DynCtx, key: string, label: string, tapKey: string): DynLane => ({
-  key,
-  label,
-  kind: "level",
-  tap: tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null,
-});
+const strippedLane = (ctx: DynCtx, key: string, tapKey: string): DynLane =>
+  levelLane(key, tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null);
 
 /** The compressor's key signal — the side-chain filter's output, which is what its
  *  detector hears. Not a point on the strip, which is why its tap does not come from the
@@ -463,7 +459,7 @@ export const SSMCS_DYN: DynPlotProcessor = {
       // No fader cap: this bank's corner is driven by an internal value, so there is no
       // editable value in the meter's own dBFS to put on it.
       cap: null,
-      extraLanes: [strippedLane(ctx, "post", ctx.m.dynTuning.ssmcs.tapOut, "preinsfx")],
+      extraLanes: [strippedLane(ctx, "post", "preinsfx")],
     });
     // Four tiles, so two columns — the same arrangement the DUCKER's four take.
     return bound && { ...bound, readoutCols: 2 };
@@ -764,10 +760,7 @@ export const SSMCS_EQ_DYN: DynPlotProcessor = {
     if (!inSsmcsMode(ctx)) return null;
     return {
       fields: ssmcsEqBandFields(bandOf(ctx)),
-      lanes: [
-        strippedLane(ctx, "in", ctx.m.dynTuning.comp.tapOut, "preeq"),
-        strippedLane(ctx, "out", ctx.m.dynTuning.ssmcs.tapOut, "preinsfx"),
-      ],
+      lanes: [strippedLane(ctx, "in", "preeq"), strippedLane(ctx, "out", "preinsfx")],
     };
   },
 

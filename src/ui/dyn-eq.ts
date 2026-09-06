@@ -48,7 +48,7 @@ import { tapFor } from "../core/meters";
 import type { EqBand, NodeParams } from "../core/plan";
 import { el, onOff, settingsRow, settingsSection } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { enumRow } from "./dyn-chan";
+import { enumRow, levelLane } from "./dyn-chan";
 import { bandMarkers, drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo, pickBandMarker } from "./dyn-freq-plot";
 import type { BandMarker } from "./dyn-freq-plot";
 import { flagOffNote, oneKnobLevelRow, splitDisplay } from "./dyn-screen";
@@ -110,12 +110,8 @@ export const EQ_DYN: DynPlotProcessor = {
     // inapplicable ones lock and say why, which is the treatment the 1-knob's own rows
     // already get while 1-knob is off.
     const fields = eqBandFields(ctx.sel);
-    const lane = (key: string, tapKey: string, caption: string): DynLane => {
-      const tap = tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null;
-      // No label rather than the internal key if a tap fails to resolve: the lane then
-      // has no meter, and "preeq" is not a caption.
-      return { key, label: tap?.label ?? "", caption, kind: "level", tap };
-    };
+    const lane = (key: string, tapKey: string, caption: string): DynLane =>
+      levelLane(key, tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null, caption);
     return {
       fields,
       lanes: [lane("in", keys.in, ctx.m.dynTuning.laneIn), lane("out", keys.out, ctx.m.dynTuning.laneOut)],

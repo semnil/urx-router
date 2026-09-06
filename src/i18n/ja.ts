@@ -497,9 +497,10 @@ export const ja: Messages = {
       recPoint: "Rec Point タップ",
     },
   },
-  // レーンのキャプションと表示モード名は実機のタップ語彙なので ja でも英語のまま
+  // レーンのキャプション (プロセッサのどちら端か) と表示モード名は ja でも英語のまま
   // (CONSOLE のメーターポイントバッジと同じ点を指すため表記を揃える)。その上の見出しは
   // 対象外 — ユーザーガイドの日本語が片仮名なので「メーター」と訳す。
+  // レベルタップの名前はここに無い — `core/meters.ts` の tap テーブルが持つ。
   dynTuning: {
     close: "閉じる",
     display: "Display",
@@ -514,17 +515,13 @@ export const ja: Messages = {
     gate: {
       title: "Gate",
       open: "Gate 画面",
-      tapIn: "Pre Gate",
-      tapGr: "Gate GR",
-      tapOut: "Pre Comp",
+      tapGr: "GATE GR",
       curveHint: "曲線のニーを左右にドラッグして Threshold を設定します。",
     },
     comp: {
       title: "Comp",
       open: "Comp 画面",
-      tapIn: "Pre Comp",
-      tapGr: "Comp GR",
-      tapOut: "Pre EQ",
+      tapGr: "COMP GR",
       curveHint:
         "曲線はスライダーが信号に与える変化、点はライブのレベルです。近づけるには Attack と Release を調整します。",
     },
@@ -541,7 +538,6 @@ export const ja: Messages = {
       faceMain: "Main",
       faceComp: "Comp",
       faceEq: "EQ",
-      tapOut: "Pre Ins FX",
       mainHint:
         "Comp Drive はコンプの曲線を動かします。Sweet Spot Data と Morphing は両方を、ライブ同期中のみ動かします。",
       scHint:
@@ -550,28 +546,21 @@ export const ja: Messages = {
     ducker: {
       title: "Ducker",
       open: "Ducker 画面",
-      tapKey: (label: string): string => `Key · ${label}`,
-      noKey: "Key · なし",
-      tapIn: "Pre Ducker",
-      tapGr: "Ducker GR",
-      tapOut: "Post",
+      tapKey: (label: string): string => `KEY · ${label}`,
+      noKey: "KEY · なし",
+      tapGr: "DUCKER GR",
       hint: "斜線は変化にかかる時間で、変化の形ではありません。Key はステレオでも 1 本 (L+R の和) です。",
     },
     fx: {
       title: "FX EFFECT",
       open: "FX Effect 画面",
-      tapIn: "Input",
-      tapOut: "Pre Fader",
       syncedTag: "同期中",
       syncOffTag: "Sync オフ",
     },
     insfx: {
       title: "INS FX",
       open: "Insert FX 画面",
-      tapIn: "Pre Ins FX",
-      tapOut: "Pre Fader",
-      tapOutBus: "Post",
-      tapGr: "Ins FX GR",
+      tapGr: "INS FX GR",
       faceMain: "Main",
       vibOnly: "Vib のみ",
       curveHint:

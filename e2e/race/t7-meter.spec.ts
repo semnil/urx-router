@@ -137,7 +137,7 @@ test.describe("T7 meter", () => {
           [...CH1_POST, -100],
         ]),
       ).toEqual(["", "unregistered"]);
-      await expect(dynReadout(page, "Gate GR")).toHaveText("-23.9");
+      await expect(dynReadout(page, "GATE GR")).toHaveText("-23.9");
       await expect(meterReadout(page, "CH 1")).toHaveText("—");
 
       const afterOpen = await countersOf(page);
@@ -159,7 +159,7 @@ test.describe("T7 meter", () => {
       expect(afterReconcile.meterUnsubs).toBe(afterOpen.meterUnsubs);
       // …and the screen is still being fed on its own addresses.
       await pushMetersDelivered(page, [[107, 0, -311]]);
-      await expect(dynReadout(page, "Gate GR")).toHaveText("-31.1");
+      await expect(dynReadout(page, "GATE GR")).toHaveText("-31.1");
 
       await mark(page, "close-gate");
       await dynBox(page).locator(".consent-btn-secondary").click();
@@ -258,7 +258,7 @@ test.describe("T7 meter", () => {
       expect(await meterAddrsOf(page)).toEqual(GATE_TAPS);
       expect(end.meterSubs).toBeGreaterThan(off.meterSubs);
       await pushMetersDelivered(page, [[107, 0, -177]]);
-      await expect(dynReadout(page, "Gate GR")).toHaveText("-17.7");
+      await expect(dynReadout(page, "GATE GR")).toHaveText("-17.7");
     });
 
     // meter-late-unsub-kills-console, barrier form. The window is the screen's own
@@ -669,7 +669,7 @@ test.describe("T7 meter", () => {
       expect(end.meterSubs).toBe(base.meterSubs);
       expect(end.meterUnsubs).toBe(base.meterUnsubs);
       await pushMetersDelivered(page, [[107, 0, -239]]);
-      await expect(dynReadout(page, "Gate GR")).toHaveText("-23.9");
+      await expect(dynReadout(page, "GATE GR")).toHaveText("-23.9");
 
       // The re-scope is not lost, only deferred: closing the screen hands the slot
       // back and the console registers the set its badges now claim.

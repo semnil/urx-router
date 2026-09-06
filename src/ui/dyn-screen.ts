@@ -114,12 +114,11 @@ export interface DynLane {
    *  own, and give it no caption. Everything else stays per-lane — its readings, its
    *  peak hold and its readout cell are untouched — so this is placement only.
    *
-   *  Every reduction on every screen is drawn this way: it reads better against the level
-   *  it was taken off than as a column of its own. The DUCKER pairs its reduction with the
-   *  KEY level rather than the output, because there the two are cause and effect — one
-   *  column shows the key rising to the threshold cap while the reduction hangs from the
-   *  top of the same ruler. The cost is that the shared ruler has to span the deeper of the
-   *  two domains, since a merged lane cannot carry a scale of its own. */
+   *  Every reduction on every screen is drawn this way, the DUCKER's included: it reads
+   *  better against the level it was taken off than as a column of its own. The merge is
+   *  into the column built BEFORE it, so a reduction lane follows the output lane in the
+   *  list. The cost is that the shared ruler has to span the deeper of the two domains,
+   *  since a merged lane cannot carry a scale of its own. */
   sameSlot?: true;
   /**
    * dB to take OFF this reduction before drawing it, which makes the BAR a different

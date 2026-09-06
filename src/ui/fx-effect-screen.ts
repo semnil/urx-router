@@ -33,7 +33,7 @@ import type { DynField, FxFieldKey } from "../core/control/translate";
 import { tapFor } from "../core/meters";
 import type { FxEffectParams, NodeParams } from "../core/plan";
 import type { DynBinding, DynCtx, DynLane, DynProcessor } from "./dyn-screen";
-import { enumRow, rowBreak } from "./dyn-chan";
+import { enumRow, levelLane, rowBreak } from "./dyn-chan";
 import { onOffButton, settingsRow } from "./dom";
 import type { Messages } from "../i18n/en";
 
@@ -199,20 +199,8 @@ const rawOf = (ctx: DynCtx, d: FxParamDesc): number => fxOf(ctx).params?.[d.key]
 function lanesOf(ctx: DynCtx): DynLane[] {
   const g = ctx.m.dynTuning;
   return [
-    {
-      key: "in",
-      label: g.fx.tapIn,
-      caption: g.laneIn,
-      kind: "level",
-      tap: tapFor(ctx.nodeId, "input", ctx.model.id) ?? null,
-    },
-    {
-      key: "out",
-      label: g.fx.tapOut,
-      caption: g.laneOut,
-      kind: "level",
-      tap: tapFor(ctx.nodeId, "prefader", ctx.model.id) ?? null,
-    },
+    levelLane("in", tapFor(ctx.nodeId, "input", ctx.model.id) ?? null, g.laneIn),
+    levelLane("out", tapFor(ctx.nodeId, "prefader", ctx.model.id) ?? null, g.laneOut),
   ];
 }
 

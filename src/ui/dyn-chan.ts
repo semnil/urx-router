@@ -13,9 +13,33 @@ import { COMP_EQ_COMP_FIRST } from "../core/control/params";
 import { el, settingsRow, settingsSelect } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { grAddr, tapFor } from "../core/meters";
-import type { GrKind } from "../core/meters";
+import type { GrKind, MeterTap } from "../core/meters";
 import type { NodeParams } from "../core/plan";
 import type { DynBinding, DynCtx, DynLane } from "./dyn-screen";
+
+/**
+ * A level lane, named by the tap it reads.
+ *
+ * The readout tile prints `DynLane.label` and the rack's caption prints
+ * `caption ?? label`, so a lane carries two names: the POINT and, where the screen is one
+ * processor, the END of it. The point's name comes from the tap table, which is the one
+ * place a meter address and its device name are written together — the CONSOLE's own
+ * meter-point badge prints the same string, so a screen that spelled it again was a second
+ * copy with nothing comparing the two.
+ *
+ * An unresolved tap leaves the label empty rather than falling back to the internal key:
+ * the lane then has no meter, and `preeq` is not a name the operator has seen.
+ */
+export function levelLane(key: string, tap: MeterTap | null, caption?: string, extra?: Partial<DynLane>): DynLane {
+  return {
+    key,
+    label: tap?.label ?? "",
+    ...(caption === undefined ? {} : { caption }),
+    kind: "level",
+    tap,
+    ...extra,
+  };
+}
 
 export function bindChannelStrip(
   ctx: DynCtx,
@@ -80,23 +104,19 @@ export function bindChannelStrip(
   const fields = dyn && o.fields(dyn);
   if (!fields) return null;
   const text = ctx.m.dynTuning[o.grKind];
-  const inLane: DynLane = {
-    key: "in",
-    label: text.tapIn,
-    ...(o.tapCaptions ? {} : { caption: ctx.m.dynTuning.laneIn }),
-    kind: "level",
-    tap: tapFor(ctx.nodeId, o.inTapKey, ctx.model.id) ?? null,
-    // The threshold rides the input meter: its dB and the meter's dBFS are the
-    // same coordinate, which is what earns the rack its one gesture.
-    ...(o.cap ? { cap: o.cap } : {}),
-  };
-  const outLane: DynLane = {
-    key: "out",
-    label: text.tapOut,
-    ...(o.tapCaptions ? {} : { caption: ctx.m.dynTuning.laneOut }),
-    kind: "level",
-    tap: tapFor(ctx.nodeId, o.outTapKey, ctx.model.id) ?? null,
-  };
+  // The threshold rides the input meter: its dB and the meter's dBFS are the same
+  // coordinate, which is what earns the rack its one gesture.
+  const inLane = levelLane(
+    "in",
+    tapFor(ctx.nodeId, o.inTapKey, ctx.model.id) ?? null,
+    o.tapCaptions ? undefined : ctx.m.dynTuning.laneIn,
+    o.cap ? { cap: o.cap } : undefined,
+  );
+  const outLane = levelLane(
+    "out",
+    tapFor(ctx.nodeId, o.outTapKey, ctx.model.id) ?? null,
+    o.tapCaptions ? undefined : ctx.m.dynTuning.laneOut,
+  );
   const grLane = (extra: Partial<DynLane>): DynLane => ({
     key: "gr",
     label: text.tapGr,

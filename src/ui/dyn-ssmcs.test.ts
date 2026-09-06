@@ -180,12 +180,7 @@ describe("the MAIN face", () => {
   // (its display is the two plots), so the order is the only thing the merge decides here.
   it("meters all four taps and prints them as four tiles", () => {
     const tiles = readouts(h!.box);
-    expect(tiles.map((r) => r.label)).toEqual([
-      t().dynTuning.comp.tapIn,
-      t().dynTuning.comp.tapOut,
-      t().dynTuning.comp.tapGr,
-      t().dynTuning.ssmcs.tapOut,
-    ]);
+    expect(tiles.map((r) => r.label)).toEqual(["PRE COMP", "PRE EQ", t().dynTuning.comp.tapGr, "PRE INS FX"]);
     // Two columns, which is what four tiles take.
     expect(h!.box.querySelector<HTMLElement>(".gt-readouts")?.style.getPropertyValue("--gt-ro-cols")).toBe("2");
     expect(tiles.filter((r) => r.gr).length).toBe(1);
@@ -410,9 +405,9 @@ describe("the COMP face", () => {
     segment(SC_SEG);
     const cells = readouts(h!.box);
     expect(cells.map((c) => c.label)).toEqual([
-      t().dynTuning.comp.tapIn,
+      "PRE COMP",
       t().inspector.ssmcs.sideChain,
-      t().dynTuning.comp.tapOut,
+      "PRE EQ",
       t().dynTuning.comp.tapGr,
     ]);
     expect(cells[1].gr).toBe(false);
@@ -560,7 +555,7 @@ describe("the EQ face", () => {
   });
 
   it("meters the two taps that bracket the EQ", () => {
-    expect(readouts(h!.box).map((r) => r.label)).toEqual([t().dynTuning.comp.tapOut, t().dynTuning.ssmcs.tapOut]);
+    expect(readouts(h!.box).map((r) => r.label)).toEqual(["PRE EQ", "PRE INS FX"]);
   });
 
   it("writes to the band the bar has selected, leaving the others alone", () => {
