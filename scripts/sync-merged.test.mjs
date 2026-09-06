@@ -812,6 +812,76 @@ describe("sync-merged, when a second session changes something after the plan wa
     expect(existsSync(tree)).toBe(true);
   });
 
+  it.skipIf(!gitCanBeShimmed)("says so when the sync's version is left in the index alone", () => {
+    // The working file put back by hand while the index still carries the sync's version: the
+    // next commit on that branch takes it. `git diff HEAD` is empty there and `git status` says
+    // MM, so the two are asked separately.
+    const { down, origin } = fixture();
+    // The landed branch only ADDS a file; a path has to be MODIFIED for there to be an earlier
+    // version to put back by hand, so the remote moves one too.
+    writeFileSync(join(origin, "a.txt"), "a2\n");
+    git(origin, "commit", "-qam", "three");
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const was = at(down, "main");
+    git(down, "branch", "ongoing", was);
+    const onto = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} switch -q ongoing`;
+    const byHand = `printf 'a\\n' > ${JSON.stringify(join(down, "a.txt"))}`;
+
+    const r = raced(
+      down,
+      [
+        { at: "read-tree -m -u", action: onto },
+        { at: HEAD_READ, nth: 3, action: byHand },
+      ],
+      "--apply",
+    );
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("STILL HOLDS WHAT THIS SYNC WROTE: a.txt");
+    expect(r.text).toContain("run again from the tree that holds it");
+    // What they put back is what the file holds, and the index is what the report is about.
+    expect(readFileSync(join(down, "a.txt"), "utf8")).toBe("a\n");
+    expect(git(down, "status", "--porcelain=v1")).toContain("MM a.txt");
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
+    expect(at(down, "ongoing")).toBe(was);
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
+  });
+
+  it.skipIf(!gitCanBeShimmed)("leaves the working file alone when the index has been taken off it", () => {
+    // The other side of the same reading. That session unstaged the path, so the index is back at
+    // their HEAD while the working file still holds what the sync wrote. Restoring would write
+    // over a file whose index they have just decided about, so it is named instead.
+    const { down, origin } = fixture();
+    writeFileSync(join(origin, "a.txt"), "a2\n");
+    git(origin, "commit", "-qam", "three");
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const was = at(down, "main");
+    git(down, "branch", "ongoing", was);
+    const onto = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} switch -q ongoing`;
+    const unstage = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} restore --staged a.txt`;
+
+    const r = raced(
+      down,
+      [
+        { at: "read-tree -m -u", action: onto },
+        { at: HEAD_READ, nth: 3, action: unstage },
+      ],
+      "--apply",
+    );
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("STILL HOLDS WHAT THIS SYNC WROTE: a.txt");
+    // Their working file is left exactly as it was found, holding the sync's version.
+    expect(readFileSync(join(down, "a.txt"), "utf8")).toBe("a2\n");
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
+    expect(at(down, "ongoing")).toBe(was);
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
+  });
+
   it.skipIf(!gitCanBeShimmed)("leaves a branch that already holds the file the sync brings in", () => {
     // The switched-to branch has committed the same path — what a branch that has already merged
     // the default one looks like. Putting the tree back to the branch's OLD tip deletes that file

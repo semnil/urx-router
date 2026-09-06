@@ -46,10 +46,12 @@
 // A switch arriving inside the second command writes no ref, but it does leave an INDEX its
 // tree's own HEAD no longer describes — this sync's changes, staged on someone else's branch and
 // carried by their next commit. So the tree is read back afterwards, and where it has moved, each
-// path the sync wrote goes back to what THAT branch holds — but only where it still holds what
-// the sync wrote, since a path that session has touched since cannot be told from work of its own
-// and is named rather than deleted. Taking the whole tree back to the branch's old tip instead
-// deletes what the branch it is on legitimately has at those paths.
+// path the sync wrote goes back to what THAT branch holds — but only where BOTH its index and its
+// working file still hold what the sync wrote, the two being asked separately because a file put
+// back by hand hides the sync's version in the index behind a working file that matches HEAD.
+// Anything else the sync's content is still in is named rather than deleted, that session having
+// touched it since. Taking the whole tree back to the branch's old tip instead deletes what the
+// branch it is on legitimately has at those paths.
 //
 // It is also taken in NO TREE BUT THE ONE THIS WAS STARTED IN, which bounds all of that to this
 // checkout. Run from anywhere else with a sync pending, nothing is applied.
@@ -243,31 +245,45 @@ const lines = (r) => r.out.split("\n").filter(Boolean);
 /**
  * Take back what the sync wrote into a worktree that is no longer on the branch it wrote for.
  *
- * WHICH PATHS are acted on is the whole of it. Only those that still hold what the sync wrote AND
- * differ from that tree's HEAD are taken back: a path already matching the HEAD needs nothing —
- * which is every path when the switch lands after the write, since git's own checkout restores
- * the target's content on the way — and a path matching neither was written by that session
- * afterwards, so it is left alone and named, nothing here being able to tell it from work of
- * their own. Taking the tree back to the branch's OLD TIP instead, which is what a plain reverse
- * read does, deletes whatever that branch legitimately holds at those paths: a file it had
- * committed was removed and staged as a deletion, under a line saying it had been put back.
+ * WHICH PATHS are acted on is the whole of it, and the INDEX and the WORKING FILE are asked
+ * separately at every step. A path is taken back only where both of them still hold exactly what
+ * the sync wrote: the working file is where that session's typing lives, so a path holding
+ * anything else there is left alone whatever the index says. A path already matching that tree's
+ * HEAD on both sides needs nothing, which is every path when the switch lands after the write,
+ * git's own checkout having restored the branch's content on the way.
  *
- * The restore reads that tree's own HEAD, which in every arrangement reachable here holds the
- * same content at those paths as the old tip does — git allows the switch only where it can carry
- * the difference — so the source is not what separates the two; the selection is.
+ * What is left holding the sync's content on EITHER side is named and not touched. That is the
+ * case a reading of the working file alone cannot see: put the file back by hand and the index
+ * still carries the sync's version, staged, for the next commit on that branch to take — `git
+ * diff HEAD` is empty there while `git status` says `MM`.
+ *
+ * Taking the tree back to the branch's OLD TIP instead, which is what a plain reverse read does,
+ * deletes whatever that branch legitimately holds at those paths: a file it had committed was
+ * removed and staged as a deletion, under a line saying it had been put back. The restore reads
+ * that tree's own HEAD, which at the paths this acts on holds the same content as the old tip in
+ * every arrangement reachable here — git allows the switch only where it can carry the difference
+ * — so the source is not what separates the two; the selection is.
  */
 function putBack(cwd, dir, local, ahead) {
   const touched = lines(git(["diff", "--name-only", local, ahead], cwd, true));
   if (touched.length === 0) return { back: true, held: [] };
-  const offHead = lines(git(["diff", "--name-only", "HEAD", "--", ...touched], dir, true));
-  const offOurs = lines(git(["diff", "--name-only", ahead, "--", ...touched], dir, true));
-  const mine = offHead.filter((p) => !offOurs.includes(p));
-  const held = offHead.filter((p) => offOurs.includes(p));
-  if (mine.length) git(["restore", "--source", "HEAD", "--staged", "--worktree", "--", ...mine], dir, true);
-  // Read back rather than taken from an exit code: the claim is about the tree, not the command.
-  // No case reaches a restore that fails, so this half is a second opinion and nothing more.
-  const rest = mine.length ? lines(git(["diff", "--name-only", "HEAD", "--", ...mine], dir, true)) : [];
-  return { back: held.length === 0 && rest.length === 0, held: [...new Set([...held, ...rest])] };
+  const named = (args) => new Set(lines(git(["diff", "--name-only", ...args, "--", ...touched], dir, true)));
+  const scan = () => {
+    const idxOffHead = named(["--cached", "HEAD"]);
+    const wtOffIdx = named([]);
+    const idxOffOurs = named(["--cached", ahead]);
+    const wtOffOurs = named([ahead]);
+    const off = touched.filter((p) => idxOffHead.has(p) || wtOffIdx.has(p));
+    return {
+      mine: off.filter((p) => !idxOffOurs.has(p) && !wtOffOurs.has(p)),
+      ours: off.filter((p) => !idxOffOurs.has(p) || !wtOffOurs.has(p)),
+    };
+  };
+  const first = scan();
+  if (first.mine.length) git(["restore", "--source", "HEAD", "--staged", "--worktree", "--", ...first.mine], dir, true);
+  // Read again rather than taken from an exit code: the claim is about the tree, not the command.
+  const held = scan().ours;
+  return { back: held.length === 0, held };
 }
 
 /**
