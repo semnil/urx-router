@@ -199,6 +199,21 @@ describe("the row order and the break", () => {
 // operator sees. Driven from `listControls` rather than a written-out list of scopes, so a
 // row the catalogue gains is covered the day it is added; and asked in both languages,
 // because a label composed of tokens is equally unreadable in either.
+// Two tiles on two columns, as on every other two-lane rack. Three left the row a third
+// empty and made each tile narrower than the same tile is where a rack has three.
+describe("the readout row", () => {
+  it("takes one column per lane", () => {
+    const nodeId = "bus.fx1";
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams[nodeId] = { ...plan.nodeParams[nodeId], fxEffect: { type: 0 } };
+    const binding = FX_DYN.bind(ctxFor(plan, nodeId))!;
+    expect(binding.lanes).toHaveLength(2);
+    // Not declared: two columns for two lanes is the host's rule, and a face that restated
+    // it would keep its old number the day a lane was added.
+    expect(binding.readoutCols).toBeUndefined();
+  });
+});
+
 describe("the words a MIDI assignment prints for an FX control", () => {
   const model = getModel("URX44V");
 

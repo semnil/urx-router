@@ -461,7 +461,8 @@ export const SSMCS_DYN: DynPlotProcessor = {
       cap: null,
       extraLanes: [strippedLane(ctx, "post", "preinsfx")],
     });
-    // Four tiles, so two columns — the same arrangement the DUCKER's four take.
+    // Four tiles as 2 x 2 rather than the row of four the lane count would give — the same
+    // arrangement the DUCKER's four take.
     return bound && { ...bound, readoutCols: 2 };
   },
 
@@ -652,9 +653,10 @@ export const SSMCS_COMP_DYN: DynPlotProcessor = {
       ...(sc ? { keyLane: sidechainLane(ctx) } : {}),
       grNetDb: strapGainDb(stripOf(ctx)),
     });
-    // Four tiles on SIDE CHAIN, on one row (`readoutCols: 4`); a second row is 64px, more
-    // than the height the bank holds its three faces at can absorb.
-    return bound && (sc ? { ...bound, readoutCols: 4 } : bound);
+    // SIDE CHAIN's four tiles go on one row, which is the lane count, so nothing is
+    // declared: a second row is 64px, more than the height the bank holds its three faces
+    // at can absorb.
+    return bound;
   },
   // This face is two of the bank bar's four segments: the transfer curve and the side-chain
   // response, each with the lane rack beside it.

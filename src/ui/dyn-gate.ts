@@ -39,10 +39,15 @@ const io = subObjectIo("gate");
 export const GATE_DYN: DynPlotProcessor = {
   key: "gate",
   loDb: LO_DB,
-  tickStep: 5,
+  // The step every rack on every screen reads in. The FLOOR is still this processor's own
+  // — a gate threshold reaches -72 where a compressor's stops at -54 — but the grid the
+  // bars are read against is one grid, so moving between screens does not change what a
+  // tick is worth. The ruler stops one step short of the floor, so a -72 floor labels
+  // down to -66.
+  tickStep: 6,
   title: (m) => m.dynTuning.gate.title,
   // A gate's reduction runs the whole ruler (range reaches -∞), so the
-  // shared tick column reads for it — a GR bar down to the -56 tick is 56 dB.
+  // shared tick column reads for it — a GR bar down to the -60 tick is 60 dB.
   //
   // No offset either, and none is possible to want: a gate has no makeup, so its reduction
   // and the level it was taken off cannot run into each other on the shared ruler.

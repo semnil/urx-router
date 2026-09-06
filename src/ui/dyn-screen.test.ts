@@ -1063,6 +1063,21 @@ describe("the OFF line", () => {
   });
 });
 
+// One tile size across every screen. The count is the binding's, the width is not: the row
+// is held to the control column whichever column the panel is in, or the three screens that
+// put their panel in the flexible track draw the same tile at more than twice the size.
+describe("readout tiles", () => {
+  it("leaves no empty cell on a two-lane rack", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(EQ, "ch1");
+    const cells = host.box.querySelector<HTMLElement>(".gt-readouts")!;
+    expect(cells.children.length).toBe(2);
+    expect(cells.style.getPropertyValue("--gt-ro-cols")).toBe("2");
+    screen.close();
+  });
+});
+
 describe("localization", () => {
   it("re-renders into the new language on refresh", () => {
     host = dynHost();

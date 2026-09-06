@@ -417,6 +417,37 @@ describe("the guitar amp's two faces", () => {
     ]);
   });
 
+  // Only the multi-band compressor states a card count. The amps and Pitch Fix take the
+  // stylesheet's, which is the one place that number lives — restating it here would be the
+  // second copy `.gt-knobs` records having drifted once already.
+  it("states a card count only where it is not the stylesheet's", () => {
+    for (const [node, effect] of [
+      ["ch1", "Clean"],
+      ["ch1", "Lead"],
+      ["ch1", "Pitch Fix"],
+    ] as const) {
+      const binding = INSFX_DYN.bind(holding(node, effect))!;
+      expect(binding.knobGrid, effect).toBe(true);
+      expect(binding.knobCols, effect).toBeUndefined();
+    }
+    // …and the multi-band compressor's is its own, for a reason its own case states.
+    expect(INSFX_DYN.bind(holding("bus.mix1", "M.B.Comp"))!.knobCols).toBe(3);
+  });
+
+  // One tile per lane and no empty cell — the arrangement every screen's rack takes now,
+  // and the host's rule rather than a number any face here writes. Which faces carry a
+  // reduction is what `lanesOf` decides, so the row follows it without being told.
+  it("declares no readout column count, so the row follows the lanes", () => {
+    for (const [node, effect] of [
+      ["ch1", "Clean"],
+      ["ch1", "Pitch Fix"],
+      ["ch1", "Compander-H"],
+      ["bus.mix1", "M.B.Comp"],
+    ] as const) {
+      expect(INSFX_DYN.bind(holding(node, effect))!.readoutCols, effect).toBeUndefined();
+    }
+  });
+
   it("reverses the columns where the panel is the point, and leaves them where the display is", () => {
     // A guitar amp and Pitch Fix are both a dozen continuous values against a column with
     // no reading of its own but the level taps. The companders' and the multi-band

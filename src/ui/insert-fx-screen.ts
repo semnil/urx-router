@@ -673,14 +673,17 @@ function insFxFace(): DynProcessor {
         // the controls beside it — the Key, the Scale and the twelve notes, drawn twice on
         // one face — and there was no lane rack on that face at all.
         ...(isPanelFirst(fam) ? { paramsFirst: true as const } : {}),
-        ...(isKnobGrid(fam) ? { knobGrid: true as const } : {}),
         // The multi-band compressor takes the amp's knobs — its values are the same kind of
-        // thing — but THREE to a row rather than six, and with the display column still
-        // first, because its display is a plot rather than a rack alone. Three is what
-        // makes the four faces the same height: MAIN is six cards and a band face four, so
-        // both are two rows, and the segment that moves between them does not resize the
-        // modal under the pointer.
-        ...(fam === "mbc" ? { knobCols: 3 } : {}),
+        // thing — but THREE to a row rather than the amps' seven, and with the display
+        // column still first, because its display is a plot rather than a rack alone. Three
+        // is what makes the four faces the same height: MAIN is six cards and a band face
+        // four, so both are two rows, and the segment that moves between them does not
+        // resize the modal under the pointer.
+        //
+        // Only the multi-band compressor states a count. The amps and Pitch Fix take the
+        // stylesheet's, which is where that number lives — restating it here would be the
+        // second copy `.gt-knobs` in style.css records having drifted once already.
+        ...(isKnobGrid(fam) ? { knobGrid: true as const, ...(fam === "mbc" ? { knobCols: 3 } : {}) } : {}),
       };
     },
 

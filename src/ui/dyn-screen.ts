@@ -158,10 +158,20 @@ export interface DynLane {
 export interface DynBinding {
   fields: DynField[];
   lanes: DynLane[];
-  /** How many columns the readout tiles take. Declared rather than derived from the
-   *  lane count: the host has no way to know that four tiles want two columns and
-   *  five might not, and a threshold on `lanes.length` is a guess dressed as a rule —
-   *  the same guess `nodeLabel` and the optional `bar` exist to avoid. Absent = 3. */
+  /** How many columns the readout tiles take. The rule the bindings follow is that the row
+   *  ends up with no empty cell — two tiles ask for two, three for three, and four for
+   *  either two (a 2 x 2 block) or four (one row, where a second row would not fit). It is
+   *  still DECLARED rather than derived here: which of the two a rack of four wants is a
+   *  question about that rack's height, and the host cannot answer it.
+   *
+   *  Absent = one column per lane, which is the rule (`no empty cell in the row`) for every
+   *  rack of one to three and was being spelled out by five descriptors that each said the
+   *  same thing. It is declared only where a rack wants otherwise — the two four-lane racks
+   *  that take 2 x 2 rather than a row of four.
+   *
+   *  It decides the tiles' proportions and not their width. The row is held to the control
+   *  column's own width wherever the panel sits, so a tile is the same size on every
+   *  screen (`.gt-readouts` in style.css). */
   readoutCols?: number;
   /** The height a bank reserves for all of its faces, where the stylesheet's own number is
    *  not enough. Declared by the binding, like `readoutCols`, because it is a property of
@@ -505,13 +515,6 @@ const FRAME_MS = 1000 / 30;
  *  cannot deliver more than 10 new values a second anyway. */
 const READOUT_EVERY = 5;
 
-/** Readout tile columns that are not the stylesheet's own default of three. The class is
- *  what carries the count, so a descriptor asking for a number nothing styles gets the
- *  default rather than a grid with no columns. */
-/** Readout tiles per row, where a descriptor asks for nothing else. Three is what most
- *  racks carry; the stylesheet's own fallback is the same number, and both are stated once. */
-const READOUT_COLS_DEFAULT = 3;
-
 /** Persisted bar selection, per processor. Its own key, like `urx-sends-open` and
  *  `urx-metertap`: this is per-surface UI state, not a Preferences setting. */
 const SEL_STORE = "urx-dyn-display2";
@@ -659,7 +662,7 @@ export class DynScreen {
   private fields: DynField[] = [];
   private lanes: DynLane[] = [];
   /** What the binding declared about the readouts. Only the column count so far. */
-  private readoutCols = READOUT_COLS_DEFAULT;
+  private readoutCols = 0;
   private paramsFirst = false;
   private knobGrid = false;
   /** The knob grid's column count, as the binding asked for it. 0 = the stylesheet's own. */
@@ -784,7 +787,7 @@ export class DynScreen {
   private applyBinding(bound: DynBinding): void {
     this.fields = bound.fields;
     this.lanes = bound.lanes;
-    this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
+    this.readoutCols = bound.readoutCols ?? bound.lanes.length;
     this.paramsFirst = bound.paramsFirst === true;
     this.knobGrid = bound.knobGrid === true;
     this.knobCols = bound.knobCols ?? 0;
@@ -1931,9 +1934,7 @@ export class DynScreen {
     const cells = el("div", "gt-readouts");
     // The count reaches the stylesheet as a VALUE rather than as a class per count, so a
     // descriptor can ask for any number and nothing silently answers with three.
-    if (this.readoutCols !== READOUT_COLS_DEFAULT) {
-      cells.style.setProperty("--gt-ro-cols", String(this.readoutCols));
-    }
+    cells.style.setProperty("--gt-ro-cols", String(this.readoutCols));
     for (const lane of this.lanes) cells.append(this.readoutCell(lane));
     ro.append(cells);
 

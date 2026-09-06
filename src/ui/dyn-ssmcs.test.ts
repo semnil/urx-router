@@ -359,9 +359,12 @@ describe("the COMP face", () => {
       { key: "out", kind: "level", sameSlot: false },
       { key: "gr", kind: "gr", sameSlot: true },
     ]);
-    // Four tiles want one row of four; three take the default.
-    expect(SSMCS_COMP_DYN.bind(ctxOf(h!, SC_SEL))!.readoutCols).toBe(4);
+    // One column per lane on both, which neither face declares: the row of four the filter's
+    // segment wants IS its lane count, and so is the curve's three.
+    expect(SSMCS_COMP_DYN.bind(ctxOf(h!, SC_SEL))!.readoutCols).toBeUndefined();
     expect(SSMCS_COMP_DYN.bind(ctxOf(h!, 0))!.readoutCols).toBeUndefined();
+    segment(SC_SEG);
+    expect(h!.box.querySelector<HTMLElement>(".gt-readouts")?.style.getPropertyValue("--gt-ro-cols")).toBe("4");
     // The filter's segment adds exactly one address to the curve's.
     const taps = (sel: number): string[] =>
       SSMCS_COMP_DYN.bind(ctxOf(h!, sel))!
