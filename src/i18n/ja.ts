@@ -241,6 +241,7 @@ export const ja: Messages = {
       "eq.lowMid": "EQ LOW-MID",
       "eq.highMid": "EQ HIGH-MID",
       "eq.high": "EQ HIGH",
+      ducker: "DUCKER",
       ssmcs: "SSMCS",
       "ssmcs.comp": "SSMCS COMP",
       "ssmcs.sc": "SSMCS Side Chain",

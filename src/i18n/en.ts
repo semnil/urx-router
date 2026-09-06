@@ -328,6 +328,7 @@ export const en = {
       "eq.lowMid": tr("EQ LOW-MID"),
       "eq.highMid": tr("EQ HIGH-MID"),
       "eq.high": tr("EQ HIGH"),
+      ducker: tr("DUCKER"),
       ssmcs: tr("SSMCS"),
       "ssmcs.comp": tr("SSMCS COMP"),
       "ssmcs.sc": tr("SSMCS Side Chain"),

@@ -1185,6 +1185,33 @@ test("a tuning screen's controls arm under processor and band scopes", async ({ 
   await box.locator(".consent-btn-secondary").click();
 });
 
+test("the DUCKER screen's sliders arm under the ducker's own scope", async ({ page }) => {
+  // A ducker is a node of its own, hung under a stereo channel: its screen carries the
+  // four values, and the strip's DUCKER chip the on/off, which takes the bare node scope.
+  // So the list holds both spellings for one node, named by the channel it prints under.
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+
+  // The opener sits on the host channel's strip, since a hung node has no strip of its own.
+  await strip(page, "CH 5/6").locator('.con-chip-open[aria-label="Ducker screen"]').click();
+  const box = screenBox(page);
+  await expect(box).toBeVisible();
+  await screenRow(page, "Threshold").locator(".ctl").click();
+  await expect(win.locator(".mw-hint")).toContainText("CH 5/6 · DUCKER · Threshold");
+  await sendMidi(page, [0xb0, 45, 100], [0xb0, 45, 101]);
+  const bound = mapRow(win, "out.ducker1/threshold@ducker");
+  await expect(bound).toBeVisible();
+  await expect(bound.locator(".mw-ctl")).toHaveText("CH 5/6 · DUCKER · Threshold");
+
+  // An incoming value moves the screen's own slider, on the field table's grid — the
+  // ducker's threshold floor is -60 dB, where the GATE's is -72.
+  await setLearn(page, win, false);
+  await sendMidi(page, [0xb0, 45, 0], [0xb0, 45, 0]);
+  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-60.0 dB");
+  await box.locator(".consent-btn-secondary").click();
+});
+
 test("an EQ band binds to that band, not to the selected one", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);

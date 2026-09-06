@@ -190,12 +190,26 @@ describe("binding", () => {
     expect(DUCKER_DYN.read(ctxFor(DUCKER, plan))).toEqual({});
   });
 
-  // The MIDI catalog carries a ducker's `duckerOn` and nothing else, so returning ids
-  // for these sliders would arm learn against controls that do not exist. The envelope
-  // carries three editable values on a time axis, so a press on it has no unambiguous
-  // reading either.
-  it("offers no MIDI ids and no plot drag", () => {
-    expect(DUCKER_DYN.controlId).toBeUndefined();
+  // The ids are spelled out rather than derived from the same call the descriptor makes:
+  // a derivation agrees with the descriptor whatever scope it moved to, and the scope is
+  // what a saved mapping is stored under.
+  it("names a MIDI id for every field it edits", () => {
+    const ctx = ctxFor(DUCKER);
+    const bound = DUCKER_DYN.bind(ctx)!;
+    // Keyed by the field rather than listed in order: the table's order is the device's
+    // read order for the screen to draw in, and an id does not follow it.
+    const ids = Object.fromEntries(bound.fields.map((f) => [f.key, DUCKER_DYN.controlId!(ctx, f.key)]));
+    expect(ids).toEqual({
+      range: `${DUCKER}/range@ducker`,
+      attack: `${DUCKER}/attack@ducker`,
+      decay: `${DUCKER}/decay@ducker`,
+      threshold: `${DUCKER}/threshold@ducker`,
+    });
+  });
+
+  // The envelope carries three editable values on a time axis, so a press on it has no
+  // unambiguous reading, and the cap it would drag is not on that axis at all.
+  it("offers no plot drag and no display bar", () => {
     expect(DUCKER_DYN.plotDragsCap).toBeUndefined();
     expect(DUCKER_DYN.bar).toBeUndefined();
   });

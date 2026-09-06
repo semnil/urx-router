@@ -360,6 +360,26 @@ describe("channel tuning screen parameters", () => {
     expect(ids).toContain("ch2/threshold@comp");
   });
 
+  // Both spellings sit on one node: the section master in the bare node scope, the values
+  // it tunes under a scope of their own.
+  it("lists a ducker's four values under its own scope, beside its unscoped master", () => {
+    const ids = new Set(listControls(model, plan).map((c) => c.id));
+    for (const id of [
+      "out.ducker1/duckerOn",
+      "out.ducker1/range@ducker",
+      "out.ducker1/attack@ducker",
+      "out.ducker1/decay@ducker",
+      "out.ducker1/threshold@ducker",
+    ])
+      expect(ids, id).toContain(id);
+    // A ducker has no HOLD, and it is not a strip: no fader, no sends, no processors of
+    // the channel it hangs under — that channel keeps its own.
+    expect(ids).not.toContain("out.ducker1/hold@ducker");
+    expect(ids).not.toContain("out.ducker1/level");
+    expect(ids).not.toContain("out.ducker1/threshold@gate");
+    expect(ids).not.toContain("ch_5_6/threshold@ducker");
+  });
+
   it("snaps to the field table's own grid, so MIDI and the slider agree", () => {
     // GATE threshold: -72 … 0 dB in 1 dB steps.
     const thr = bindControl(model, plan, "ch1/threshold@gate")!;
@@ -384,6 +404,12 @@ describe("channel tuning screen parameters", () => {
     freq.set(0.5);
     expect(plan.nodeParams.ch1?.eqBands?.[0]?.freq).toBe(632);
     expect(freq.get()).toBeCloseTo(0.5, 3);
+    // A ducker threshold: -60 … 0 dB in 1 dB steps, a shorter domain than the GATE's
+    // above, and stored on the ducker node rather than on the channel it attenuates.
+    const duck = bindControl(model, plan, "out.ducker1/threshold@ducker")!;
+    duck.set(0.5);
+    expect(plan.nodeParams["out.ducker1"]?.ducker?.threshold).toBe(-30);
+    expect(duck.get()).toBeCloseTo(0.5, 6);
   });
 
   it("writes one band without disturbing the other three", () => {

@@ -41,6 +41,7 @@ import {
   ssmcsEqBandFields,
   ssmcsEqBandHasQ,
   ssmcsPlanKey,
+  DUCKER_FIELDS,
   EQ_BAND_NAMES,
   SSMCS_EQ_BAND_NAMES,
   ssmcsCompFields,
@@ -85,6 +86,7 @@ export type SendTarget = (typeof SEND_TARGETS)[number];
  */
 export const GATE_SCOPE = "gate";
 export const COMP_SCOPE = "comp";
+export const DUCKER_SCOPE = "ducker";
 export const EQ_SCOPE = "eq";
 export const eqBandScope = (index: number): string => `${EQ_SCOPE}.${EQ_BAND_NAMES[index]}`;
 
@@ -480,10 +482,10 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   // spreads across `eqBands[i]` and `eqOneKnob`. Each write clones the group it
   // touches, so the history differ sees the same shape a screen edit produces.
 
-  /** A continuous parameter inside a `gate` / `comp` sub-object, on the field
-   *  table's own grid. */
+  /** A continuous parameter inside a `gate` / `comp` / `ducker` sub-object, on the
+   *  field table's own grid. */
   const subDyn = (
-    sub: "gate" | "comp",
+    sub: "gate" | "comp" | "ducker",
     scope: string,
     f: DynField,
     locked?: () => boolean,
@@ -782,6 +784,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
 
   if (node.kind === "ducker") {
     out.push(boolControl("duckerOn", false));
+    for (const f of DUCKER_FIELDS) out.push(subDyn("ducker", DUCKER_SCOPE, f));
     return out;
   }
 
