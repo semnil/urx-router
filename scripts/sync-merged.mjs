@@ -43,9 +43,14 @@
 // lock not stopping a switch and a worktree lock guarding removal alone. Which is why the sync is
 // not a merge; the two commands it is instead are at the head of the apply, with the reasoning.
 //
-// It is also taken in NO TREE BUT THE ONE THIS WAS STARTED IN, which bounds what those two
-// commands still leave open: a switch arriving between the last reading and the index update
-// leaves an index its tree's own HEAD does not describe, and that tree can now only be this
+// A switch arriving inside the second command writes no ref, but it does leave an INDEX its
+// tree's own HEAD no longer describes — this sync's changes, staged on someone else's branch and
+// carried by their next commit. So the tree is read back afterwards, and where it has moved the
+// index update is taken back by the same read in the other direction. Two arrivals in two
+// consecutive gaps — a switch and then an edit to a file the sync brought in — is the one shape
+// that cannot be taken back, and it is reported rather than tidied over.
+//
+// It is also taken in NO TREE BUT THE ONE THIS WAS STARTED IN, which bounds all of that to this
 // checkout. Run from anywhere else with a sync pending, nothing is applied.
 //
 // Where the machine cannot be asked what is running, both halves go ahead saying so: git still
@@ -260,7 +265,7 @@ export function decide({ base, remote, local, ahead, fastForward, holder, runnin
   if (local !== ahead && !fastForward) return { reason: `${base} has commits ${remote} does not — not a fast-forward` };
   if (local !== ahead && holder !== startedIn)
     return {
-      reason: `${base} is checked out in ${holder} and this run was started in ${startedIn} — the fast-forward is taken in no tree but the one it was started in`,
+      reason: `${base} is checked out in ${holder} and this run was started in ${startedIn} — the fast-forward is taken in no tree but the one it was started in, so run it from ${holder}`,
     };
   if (running !== null && running.length > 0) {
     return { reason: running.map((c) => `pid ${c.pid} runs out of ${holder}: ${c.command}`).join("\n         ") };
@@ -472,6 +477,23 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
           : `       AND ${base} COULD NOT BE PUT BACK: ${back.err}`,
       );
       log("\nnothing applied — the fast-forward is what makes the deletions legal");
+      return 1;
+    }
+    // read-tree writes no ref, so a switch arriving inside it moves nothing — but it writes an
+    // INDEX, and the tree it wrote is then one whose HEAD describes something else: the sync's
+    // changes sit there staged, and that session's next commit carries them. Taken back by the
+    // same read in the other direction, which is exact while their tree is otherwise untouched.
+    const left = headOf(sync.tree);
+    if (left?.ref !== `refs/heads/${base}`) {
+      const undo = git(["read-tree", "-m", "-u", ahead, local], sync.tree, true);
+      log(`synced ${base} -> ${ahead.slice(0, 7)}`);
+      log(`SYNC BLOCKED — ${sync.tree} left ${base} while its files were being written: ${describeHead(left)}`);
+      log(
+        undo.status === 0
+          ? "       its index and files are back where that session left them"
+          : `       AND ITS INDEX NOW HOLDS THIS SYNC'S CHANGES, STAGED: ${undo.err}`,
+      );
+      log("\nnothing removed — run again from the tree that holds it");
       return 1;
     }
   }

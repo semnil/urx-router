@@ -127,19 +127,21 @@ const gitCanBeShimmed = (() => {
  * another branch before the apply writes to it. Wall-clock that window is a fetch over the
  * network; placed by hand it is one command, and the same either way.
  */
-function raced(cwd, { at: trigger, action, nth = 1 }, ...args) {
+function raced(cwd, steps, ...args) {
   const box = mkdtempSync(join(tmpdir(), "sync-merged-git-"));
   roots.push(box);
-  const mark = join(box, "fired");
-  const seen = join(box, "seen");
   const q = JSON.stringify;
-  // `nth` because one command is asked twice — the check on either side of the merge reads HEAD
-  // the same way — and which of the two the switch lands in is the whole of some cases.
-  writeFileSync(
-    join(box, "git"),
-    `#!/bin/sh\ncase "$*" in\n  ${q(trigger)}*)\n    echo x >> ${q(seen)}\n    if [ "$(wc -l < ${q(seen)})" -eq ${nth} ]; then\n      : > ${q(mark)}\n      ${action}\n    fi\n    ;;\nesac\nexec ${q(REAL_GIT)} "$@"\n`,
-    { mode: 0o755 },
-  );
+  const list = Array.isArray(steps) ? steps : [steps];
+  // `nth` because one command is asked several times — the sync reads HEAD the same way on either
+  // side of each of its two halves — and which of them a switch lands in is the whole of some
+  // cases. A LIST because one of them needs two arrivals in two consecutive gaps, and neither
+  // stands in for the other.
+  const marks = list.map((_, i) => join(box, `fired-${i}`));
+  const blocks = list.map(({ at: trigger, action, nth = 1 }, i) => {
+    const seen = join(box, `seen-${i}`);
+    return `case "$*" in\n  ${q(trigger)}*)\n    echo x >> ${q(seen)}\n    if [ "$(wc -l < ${q(seen)})" -eq ${nth} ]; then\n      : > ${q(marks[i])}\n      ${action}\n    fi\n    ;;\nesac\n`;
+  });
+  writeFileSync(join(box, "git"), `#!/bin/sh\n${blocks.join("")}exec ${q(REAL_GIT)} "$@"\n`, { mode: 0o755 });
   const r = spawnSync(process.execPath, [PROGRAM, ...args], {
     cwd,
     encoding: "utf8",
@@ -147,7 +149,7 @@ function raced(cwd, { at: trigger, action, nth = 1 }, ...args) {
   });
   // Asserted by every case: a trigger that matches nothing leaves the run untouched, and every
   // assertion about what it refused would then be satisfied by a run with no race in it.
-  return { code: r.status, text: (r.stdout ?? "") + (r.stderr ?? ""), fired: existsSync(mark) };
+  return { code: r.status, text: (r.stdout ?? "") + (r.stderr ?? ""), fired: marks.every((m) => existsSync(m)) };
 }
 
 // Spelled from the full refname rather than the short one: `%(refname:short)` renders as
@@ -760,6 +762,47 @@ describe("sync-merged, when a second session changes something after the plan wa
     expect(r.code).toBe(1);
     expect(r.text).toContain("nothing removed");
     // The swap named the branch, so the sync landed on the one it was for and on no other.
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
+    expect(at(down, "ongoing")).toBe(was);
+    // A ref that did not move is half of it. The index is the other half: what read-tree wrote is
+    // staged on whatever branch is there, and that session's next commit would carry it. Read
+    // back rather than reasoned about — a clean tree with the sync's file absent from it.
+    expect(git(down, "status", "--porcelain=v1")).toBe("");
+    expect(existsSync(join(down, "b.txt"))).toBe(false);
+    expect(r.text).toContain("back where that session left them");
+    expect(r.text).toContain("run again from the tree that holds it");
+    expect(branches(down)).toContain("feat");
+    expect(existsSync(tree)).toBe(true);
+  });
+
+  it.skipIf(!gitCanBeShimmed)("says what it holds when the switched-to tree cannot be put back", () => {
+    // The remainder: a switch AND an edit of their own, both inside the same gap. The index then
+    // holds this sync's changes and cannot be taken back without discarding their edit, so it is
+    // left and named — the one outcome here a reader has to act on.
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const was = at(down, "main");
+    git(down, "branch", "ongoing", was);
+    // TWO arrivals in two consecutive gaps, which is what it takes: a switch before the index
+    // update, so the tree this run writes to is theirs, and then an edit to the very file the
+    // sync brought in, before the run gets to read HEAD back. A switch alone is taken back, and
+    // one arriving AFTER the index update is taken back by git's own checkout.
+    const onto = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} switch -q ongoing`;
+    const edit = `printf 'theirs\\n' > ${JSON.stringify(join(down, "b.txt"))}`;
+
+    const r = raced(
+      down,
+      [
+        { at: "read-tree -m -u", action: onto },
+        { at: HEAD_READ, nth: 3, action: edit },
+      ],
+      "--apply",
+    );
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("HOLDS THIS SYNC'S CHANGES, STAGED");
+    expect(r.text).toContain("run again from the tree that holds it");
     expect(at(down, "main")).toBe(at(down, "origin/main"));
     expect(at(down, "ongoing")).toBe(was);
     expect(branches(down)).toContain("feat");
