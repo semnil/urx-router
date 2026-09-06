@@ -34,7 +34,7 @@ vi.mock("../core/meters", async (importOriginal) => {
 
 import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
-import { COMP_EQ_SSMCS } from "../core/control/params";
+import { COMP_EQ_SSMCS, COMP_KNEE_OPTIONS } from "../core/control/params";
 import { barLevels, dynHost, pickBand, readouts, rowsByKey, segments } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import { MeterStore } from "../core/meters";
@@ -1027,6 +1027,42 @@ describe("the compressor's panel", () => {
     expect(rows).toEqual([t().inspector.on, t().inspector.autoMakeup, t().inspector.oneKnobLevel]);
     // …and none of the three is left behind in Parameters.
     expect(labels()).not.toContain(t().inspector.autoMakeup);
+    screen.close();
+  });
+
+  // Moving a row between sections re-wires the callback that carries its value, and a row
+  // that draws correctly while writing nothing looks exactly like one that works. So each
+  // of the four is operated and the plan is read back.
+  it("writes each of its edits into the plan, from whichever section the row is in", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const row = (label: string): HTMLElement =>
+      [...host.box.querySelectorAll<HTMLElement>(".prefs-row")].find(
+        (r) => r.querySelector(".lbl")?.textContent === label,
+      )!;
+    const press = (label: string, text: string): void => {
+      [...row(label).querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === text)!.click();
+    };
+    const comp = (): Record<string, unknown> => (host.plan.nodeParams["ch1"]?.comp ?? {}) as Record<string, unknown>;
+
+    // The order is the one the locks allow: Auto Makeup and Knee cannot be operated while
+    // 1-knob is on (user guide), and the level does nothing while it is off.
+    press(t().inspector.autoMakeup, t().inspector.on);
+    expect(comp().autoMakeup).toBe(true);
+
+    // Knee is the row that MOVED — out of the tail and in front of Attack.
+    const knee = COMP_KNEE_OPTIONS.find((o) => o.value !== comp().knee)!;
+    press(t().inspector.dyn.knee, knee.label);
+    expect(comp().knee).toBe(knee.value);
+
+    press(t().inspector.on, t().inspector.on);
+    expect(comp().oneKnob).toBe(true);
+
+    const level = row(t().inspector.oneKnobLevel).querySelector<HTMLInputElement>("input[type=range]")!;
+    level.value = String(Number(level.value) + Number(level.step || 1));
+    level.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(comp().oneKnobLevel).toBe(Number(level.value));
     screen.close();
   });
 });
