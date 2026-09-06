@@ -20,8 +20,9 @@
 // or untracked changes, one that cannot be read, one carrying ignored content that no command here
 // rebuilds, one with a build or a server running out of it, and one that has been switched off the
 // branch it is about to lose. Fast-forwarding: a default branch that does not exist here, one
-// checked out nowhere, one carrying commits the remote does not, one whose tree is not where the
-// plan read it, and the same running-process rule over the tree that holds it.
+// checked out nowhere, one checked out in a tree other than the one this run was started in, one
+// carrying commits the remote does not, one whose tree is not where the plan read it, and the same
+// running-process rule over the tree that holds it.
 //
 // **Any of those stops the whole apply, and the fast-forward runs first.** The deletions are what
 // it makes legal, so running them without it removes worktrees and then leaves every branch
@@ -40,9 +41,11 @@
 // on the whole rule rather than on part of it, so nothing is destroyed. A fast-forward is not: git
 // resolves the branch from HEAD as the merge runs, no operation both names a branch and updates
 // its checkout, and no lock git offers is one `git switch` takes. So a switch landing between the
-// reading and the merge still moves that session's branch. What the reading buys there is that the
-// run STOPS and says which branch moved, instead of printing a sync that did not happen and going
-// on to delete; the branch that moved lost no commit, a fast-forward being what it is.
+// reading and the merge still moves that session's branch, and the reading only makes the run STOP
+// and say which branch moved rather than print a sync that did not happen and go on to delete.
+// Which is why the fast-forward is taken in NO TREE BUT THE ONE THIS WAS STARTED IN: the session
+// that could switch it is then the one that typed the command. Run from anywhere else with a sync
+// pending, nothing is applied.
 //
 // Where the machine cannot be asked what is running, both halves go ahead saying so: git still
 // refuses to remove a worktree holding changes, and refuses to overwrite them in a merge.
@@ -239,11 +242,23 @@ const describeHead = (head) =>
  * and running them alone removes worktrees and then leaves every branch behind. `ff` is false only
  * when the branch is already where the remote is — there is nothing to move, and the cleanup that
  * someone else's pull left behind is exactly what this is then for.
+ *
+ * `startedIn` is the tree the command was run from, and a fast-forward is taken in NO OTHER. A
+ * merge writes to a worktree by naming its directory and acts on whichever branch that directory
+ * is on when it runs, so writing only here leaves the one session that can switch the tree out
+ * from under the merge as the one that typed the command. It costs what it sounds like: run from
+ * a worktree with a sync pending, nothing is applied — the fast-forward is what makes the
+ * deletions legal, so it stops those too. A run with nothing to fast-forward writes to no tree
+ * and is unaffected, which is the cleanup someone else's pull left behind.
  */
-export function decide({ base, remote, local, ahead, fastForward, holder, running }) {
+export function decide({ base, remote, local, ahead, fastForward, holder, running, startedIn }) {
   if (local === null) return { reason: `${base} does not exist here` };
   if (!holder) return { reason: `${base} is checked out in no worktree` };
   if (local !== ahead && !fastForward) return { reason: `${base} has commits ${remote} does not — not a fast-forward` };
+  if (local !== ahead && holder !== startedIn)
+    return {
+      reason: `${base} is checked out in ${holder} and this run was started in ${startedIn} — the fast-forward is taken in no tree but the one it was started in`,
+    };
   if (running !== null && running.length > 0) {
     return { reason: running.map((c) => `pid ${c.pid} runs out of ${holder}: ${c.command}`).join("\n         ") };
   }
@@ -351,6 +366,7 @@ function plan(cwd, log) {
       local !== null && git(["merge-base", "--is-ancestor", `refs/heads/${base}`, remote], cwd, true).status === 0,
     holder: holder?.path ?? null,
     running: holder ? holdersOf(holder.path, procs, trees) : [],
+    startedIn: here,
   });
 
   for (const { branch, tree, why } of kept) log(`keep   ${branch}${tree ? ` (${tree.path})` : ""} — ${why}`);

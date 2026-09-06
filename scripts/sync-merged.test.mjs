@@ -266,19 +266,31 @@ describe("sync-merged, when a branch has landed", () => {
     expect(existsSync(t2)).toBe(false);
   });
 
-  it("fast-forwards the tree that holds the default branch, not the one the run is in", () => {
+  it("applies nothing when a sync is pending and the run was started somewhere else", () => {
+    // A merge writes to a worktree by naming its DIRECTORY, so it is taken in no tree but the one
+    // this was started in — leaving the session that could switch it as the one that typed the
+    // command. The fast-forward is what makes the deletions legal, so it stops those too.
     const { down } = fixture();
     const tree = join(down, "..", "wt");
     git(down, "worktree", "add", tree, "feat");
     const featAt = at(down, "feat");
+    const was = at(down, "main");
 
-    expect(report(tree, true).text).toMatch(/^keep {3}feat.*this session is working in it$/m);
-    expect(at(down, "main")).toBe(at(down, "origin/main"));
+    const { code, text } = report(tree, true);
+    expect(code).toBe(1);
+    expect(text).toMatch(/^SYNC BLOCKED — main is checked out in .* and this run was started in /m);
+    expect(text).toContain("nothing applied");
+    expect(at(down, "main")).toBe(was);
     expect(at(down, "feat")).toBe(featAt);
+    expect(existsSync(tree)).toBe(true);
   });
 
   it("deletes a landed branch though the run's own HEAD does not contain it", () => {
+    // Started in a worktree of its own, which the rule above allows because someone else's pull
+    // has already fast-forwarded the default branch: with nothing to merge, no tree is written to.
     const { down } = fixture();
+    git(down, "fetch", "-q", "origin");
+    git(down, "merge", "-q", "--ff-only", "origin/main");
     git(down, "branch", "side", "HEAD");
     const tree = join(down, "..", "wtside");
     git(down, "worktree", "add", tree, "side");
@@ -638,12 +650,28 @@ describe("sync-merged, the running-process guard", () => {
   });
 
   it("goes ahead, saying so, where the machine cannot be asked what is running", () => {
-    const facts = { base: "main", remote: "origin/main", local: "a", ahead: "b", fastForward: true, holder: "/repo" };
+    const facts = {
+      base: "main",
+      remote: "origin/main",
+      local: "a",
+      ahead: "b",
+      fastForward: true,
+      holder: "/repo",
+      startedIn: "/repo",
+    };
     expect(decide({ ...facts, running: null })).toMatchObject({ act: true, ff: true, tree: "/repo" });
     expect(decide({ ...facts, running: null }).note).toContain("could not be read");
     expect(decide({ ...facts, running: [] })).toEqual({ act: true, ff: true, tree: "/repo", note: undefined });
     expect(decide({ ...facts, running: [{ pid: "9", command: "vite" }] }).reason).toContain("pid 9");
     expect(decide({ ...facts, running: [], local: "b" })).toMatchObject({ act: true, ff: false });
+  });
+
+  it("takes the fast-forward in no tree but the one the run was started in", () => {
+    const facts = { base: "main", remote: "origin/main", ahead: "b", fastForward: true, holder: "/repo", running: [] };
+    // Nothing to merge, so no tree is written to and where the run was started does not matter.
+    expect(decide({ ...facts, local: "b", startedIn: "/repo/wt" })).toMatchObject({ act: true, ff: false });
+    expect(decide({ ...facts, local: "a", startedIn: "/repo" })).toMatchObject({ act: true, ff: true });
+    expect(decide({ ...facts, local: "a", startedIn: "/repo/wt" }).reason).toContain("started in /repo/wt");
   });
 });
 
