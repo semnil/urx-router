@@ -173,7 +173,7 @@ cites it stay aligned:
   re-registers at its own end, so a clean reading is the registration having caught up inside the
   gesture that moved it — while `subscribe()` re-posted at `begin()` and after a completed reconcile
   only, a structural edit left this open until something reconciled, and the clause reported it. Two
-  cases keep a **firing control** beside the clean assertion (`t2`'s 1-Knob OFF flush, `t2d`'s FX slot
+  cases keep a **firing control** beside the clean assertion (`t2`'s 1-knob OFF flush, `t2d`'s FX slot
   family): the same snapshot paired with the registration as it stood one flush earlier, which is
   exactly the stale pairing the app used to leave behind, so "clean" cannot be a clause that stopped
   being able to fire. The emitted set is read as the **live snapshot's key set** (`snapshot` in the
@@ -882,10 +882,10 @@ agreement, zero findings.
 
 **T2 — address-set shape**
 
-- **The EQ 1-Knob blind spot**, isolated with a single-notify differential: the ON flush takes the 18
+- **The EQ 1-knob blind spot**, isolated with a single-notify differential: the ON flush takes the 18
   band addresses out of the write set and out of the REGISTRATION together, so a notify on one is
   refused at the bridge and costs **zero** — the settle and the idle net are both armed from inside
-  `onNotify`, which never runs — while one on the address the toggle keeps (1-Knob level, 48) costs
+  `onNotify`, which never runs — while one on the address the toggle keeps (1-knob level, 48) costs
   **one**. The app stays in step by following the recomputation's CAUSE: 48 is `sideEffect: "refetch"`.
   Before the flush re-registered, the same differential read two against one, the two being the
   escalation an address the broker still delivered and `live.lookup` no longer resolved
@@ -895,7 +895,7 @@ agreement, zero findings.
   (`EQ_BAND_GAIN` / `EQ_BAND_FREQ`), so four addresses across two bands are two controls. The earlier
   reading of two whole-device sweeps was the unresolvable-address escalation, not concentration —
   the case's own comment had claimed the burst was confounded with the cliff, and it was not
-- **1-Knob OFF writes all 18 band addresses and registers for them in the same flush.** The writes
+- **1-knob OFF writes all 18 band addresses and registers for them in the same flush.** The writes
   still precede the subscribe inside that flush; what closed is the gap that used to outlive it
 - **The COMP/EQ bank swap** registers the new bank and drops the old one in the swap's own flush; a
   notify on the abandoned bank is refused (zero reconciles) against one on the live bank
@@ -965,11 +965,11 @@ agreement, zero findings.
 
 **T2c–T2f — the eight cases filled in later** (all measured, all pinned)
 
-- **A 1-Knob LEVEL drag was not one undo entry — fixed.** Each refetch ran `planHistory.rebase()`,
+- **A 1-knob LEVEL drag was not one undo entry — fixed.** Each refetch ran `planHistory.rebase()`,
   re-cloning the whole plan, so the same drag ended as 0 entries (one Ctrl+Z reached past it into the
   previous gesture) or as 1 entry describing only what followed the last re-base (75 of the gesture's
   91 units unreachable). Which one occurred was a race between the pointer and a device round trip.
-  Measured after the fix: `1 entry / Ctrl+Z: 91 → 0 (where the press started) / 1-Knob still on`. The
+  Measured after the fix: `1 entry / Ctrl+Z: 91 → 0 (where the press started) / 1-knob still on`. The
   storm itself is the design and stays (one node readback per flush window that carried the level); the
   effective flush period goes 205 ms → 330 ms, each window paying ~67 `vd_get` plus a `vd_get_str`
 - **An FX effect-type undo is incomplete by construction — and measuring "incomplete" split it in
@@ -1021,7 +1021,7 @@ agreement, zero findings.
   `subscribe()` ran at `begin()` and after a reconcile only — so a `sideEffect` edit's flush shrank
   the index while the broker kept the larger registration, and an address was still delivered that
   `live.lookup` no longer resolved. The flush now re-registers at its own end (`followSetStale` →
-  `DeviceFollow.refresh`), so the three openers this entry listed — EQ 1-Knob ON, COMP/EQ Type,
+  `DeviceFollow.refresh`), so the three openers this entry listed — EQ 1-knob ON, COMP/EQ Type,
   Insert FX — open nothing: `capture()` builds the index and the address list in one pass, and the
   flush posts that list before it returns. The name addresses are the standing exception and always
   were — they are registered and live in `nameIndex` rather than the numeric index, which `onNotify`

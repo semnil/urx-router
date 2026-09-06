@@ -490,7 +490,7 @@ carries a one-line map of the same directories and points here.
   by family and slot. It shows every family the app edits at all — nothing is edited in the inspector any more,
   so a value cannot be authored on two surfaces — and a family whose state the flat catalogue does not carry
   supplies its own rows beside the catalogue's: Pitch Fix its Key, Scale and note mask, and the multi-band
-  compressor the 1-Knob pair the app reads and never writes. `fx-effect-screen.ts` is the second of that kind and stands for the three parameter
+  compressor the 1-knob pair the app reads and never writes. `fx-effect-screen.ts` is the second of that kind and stands for the three parameter
   families an FX channel's effect can take (Rev-X on FX1, Rev.R3 on FX2, the two delays on both), resolved from
   the EFFECT TYPE the plan holds. It carries no EFFECT TYPE row for the same reason INS FX does not, and its
   fields name the PLAN KEY rather than a family and a slot: the two delay types are one family and put their
@@ -812,8 +812,8 @@ the inspector, and the open modal itself.
 > `[HPF Freq.]`, `[Level]`, `[Width]`, `[Interval]`, `[Pan]`, `[Name]`, `[Color]`, and the `Assign`
 > sub-menu). **The INS FX screens were read the same way on 2026-08-28, and again on 2026-08-30**, and
 > their rows are the reason the Effect Reference Guide is not the arbiter: the guide is a document and
-> `dev()` names what the SCREEN prints, and on several of them they differ. The unit prints `1-Knob` and
-> `1-Knob Level` where the guide writes `1-knob`; `Gate` on the guitar cabinet where the guide writes
+> `dev()` names what the SCREEN prints, and on several of them they differ. The unit prints
+> `Gate` on the guitar cabinet where the guide writes
 > `Off/Gate`; `M.B.Comp` where the guide writes `M.B.COMP`; `L-M Xover` and `M-H Xover` where the guide
 > writes `L-M XOVER`; and `Low` / `Mid` / `High` for the bands where the guide writes `LOW` / `MID` /
 > `HIGH`. On Crunch and Lead the guide names the voicing switch nothing at all — it lists the two values
