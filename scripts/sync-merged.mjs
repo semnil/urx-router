@@ -31,10 +31,18 @@
 // Two of the three writes re-read what the plan read, immediately before making it: a merge and a
 // removal name a DIRECTORY, and act on whichever branch that directory is on when they run.
 // Between the plan reading one and the apply writing to it sits a fetch over the network, so a
-// session that switches a tree in that window would have its own branch fast-forwarded under a
-// line naming the default one, or its checkout removed without being asked what it holds. The
-// third, deleting a branch, needs no reading of its own — the merged-only form refuses from a
-// HEAD that does not contain it.
+// session that switches a tree in that window has its own branch fast-forwarded under a line
+// naming the default one, or its checkout removed without being asked what it holds. The third,
+// deleting a branch, needs no reading of its own — the merged-only form refuses from a HEAD that
+// does not contain it.
+//
+// What that second reading can do differs between the two. A removal is REFUSED before it happens,
+// on the whole rule rather than on part of it, so nothing is destroyed. A fast-forward is not: git
+// resolves the branch from HEAD as the merge runs, no operation both names a branch and updates
+// its checkout, and no lock git offers is one `git switch` takes. So a switch landing between the
+// reading and the merge still moves that session's branch. What the reading buys there is that the
+// run STOPS and says which branch moved, instead of printing a sync that did not happen and going
+// on to delete; the branch that moved lost no commit, a fast-forward being what it is.
 //
 // Where the machine cannot be asked what is running, both halves go ahead saying so: git still
 // refuses to remove a worktree holding changes, and refuses to overwrite them in a merge.
@@ -206,12 +214,14 @@ function unclean(path) {
   return `its worktree holds ignored files that no command here rebuilds: ${shown}${rest}`;
 }
 
-/** What HEAD names in a worktree and where it points, or null where it names no branch at all. */
+/** What HEAD names in a worktree and where it points, or null where it names no branch at all.
+ *  Both in ONE invocation: this is the reading the fast-forward is guarded by, and the gap between
+ *  it and the merge is the gap a switch has to land in. */
 function headOf(dir) {
-  const ref = git(["symbolic-ref", "--quiet", "HEAD"], dir, true);
-  const sha = git(["rev-parse", "HEAD"], dir, true);
-  if (ref.status !== 0 || sha.status !== 0) return null;
-  return { ref: ref.out, sha: sha.out };
+  const r = git(["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"], dir, true);
+  const [sha, ref] = r.out.split("\n");
+  if (r.status !== 0 || !ref?.startsWith("refs/heads/")) return null;
+  return { ref, sha };
 }
 
 const describeHead = (head) =>

@@ -655,6 +655,8 @@ describe("sync-merged, when a second session changes something after the plan wa
   const SWITCH = (down) => `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} switch -q -c ongoing`;
   // The last thing the plan reads before the apply begins to write.
   const LAST_PLAN_READ = "merge-base --is-ancestor refs/heads/main origin/main";
+  // The reading the fast-forward is guarded by, taken once on each side of the merge.
+  const HEAD_READ = "rev-parse HEAD --symbolic-full-name HEAD";
 
   it.skipIf(!gitCanBeShimmed)("writes nothing when the switch lands before the fast-forward", () => {
     const { down } = fixture();
@@ -685,7 +687,7 @@ describe("sync-merged, when a second session changes something after the plan wa
     // Placed one command later than the case above, at the first read of the check itself: a
     // commit arriving before that is one the plan itself sees, and it is refused for not being a
     // fast-forward — a different guard, which would answer for this one.
-    const r = raced(down, { at: "symbolic-ref --quiet HEAD", action: commit }, "--apply");
+    const r = raced(down, { at: HEAD_READ, action: commit }, "--apply");
     expect(r.fired).toBe(true);
     expect(r.code).toBe(1);
     expect(r.text).toContain("is not where the plan read it");
@@ -723,7 +725,7 @@ describe("sync-merged, when a second session changes something after the plan wa
     const was = at(down, "main");
     const back = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} reset -q --hard ${was}`;
 
-    const r = raced(down, { at: "symbolic-ref --quiet HEAD", nth: 2, action: back }, "--apply");
+    const r = raced(down, { at: HEAD_READ, nth: 2, action: back }, "--apply");
     expect(r.fired).toBe(true);
     expect(r.code).toBe(1);
     expect(r.text).toContain("did not reach origin/main");
