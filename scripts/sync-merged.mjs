@@ -29,33 +29,32 @@
 // behind — which is also why the fast-forward is not placed behind them, where its own failure
 // (a working tree that changed since the plan was read) would leave exactly that.
 //
-// Two of the three writes re-read what the plan read, immediately before making it: a merge and a
-// removal name a DIRECTORY, and act on whichever branch that directory is on when they run.
-// Between the plan reading one and the apply writing to it sits a fetch over the network, so a
-// session that switches a tree in that window has its own branch fast-forwarded under a line
-// naming the default one, or its checkout removed without being asked what it holds. The third,
-// deleting a branch, needs no reading of its own — the merged-only form refuses from a HEAD that
-// does not contain it.
+// Every write re-reads what the plan read, immediately before making it. A removal names a
+// DIRECTORY and acts on whichever branch that directory is on when it runs, and between the plan
+// reading one and the apply writing to it sits a fetch over the network, so a session that
+// switched a tree in that window would have its checkout removed without being asked what it
+// holds. Deleting a branch needs no reading of its own — the merged-only form refuses from a HEAD
+// that does not contain it.
 //
-// What that second reading can do differs between the two. A removal is REFUSED before it happens,
-// on the whole rule rather than on part of it, so nothing is destroyed. A fast-forward is not: git
-// resolves the branch from HEAD as the merge runs, and no operation both names a branch and
-// updates its checkout. Nor does any lock keep a checkout switch out of the gap: an index lock
-// does not stop one, and a worktree lock guards removal alone. So a switch landing between the
-// reading and the merge still moves that session's branch, and the reading only makes the run STOP
-// and say which branch moved rather than print a sync that did not happen and go on to delete.
+// A removal can be REFUSED on that reading, on the whole rule rather than on part of it, so
+// nothing is destroyed. The sync cannot be, if it is a merge: `git merge` is pointed at a
+// directory too and resolves the branch from HEAD as it runs, so a switch arriving in the gap has
+// that session's branch fast-forwarded instead — and no lock keeps one out of that gap, an index
+// lock not stopping a switch and a worktree lock guarding removal alone. Which is why the sync is
+// not a merge; the two commands it is instead are at the head of the apply, with the reasoning.
 //
-// The fast-forward is therefore taken in NO TREE BUT THE ONE THIS WAS STARTED IN. That is a
-// narrowing and not a fix: it rules out every other worktree, and leaves a second terminal in
-// THIS checkout, which nothing here can rule out. Run from anywhere else with a sync pending,
-// nothing is applied.
+// It is also taken in NO TREE BUT THE ONE THIS WAS STARTED IN, which bounds what those two
+// commands still leave open: a switch arriving between the last reading and the index update
+// leaves an index its tree's own HEAD does not describe, and that tree can now only be this
+// checkout. Run from anywhere else with a sync pending, nothing is applied.
 //
 // Where the machine cannot be asked what is running, both halves go ahead saying so: git still
-// refuses to remove a worktree holding changes, and refuses to overwrite them in a merge.
+// refuses to remove a worktree holding changes, and refuses to write over them when the sync
+// brings a tree in line.
 //
-// The classification above is over what a REMOVAL destroys. A fast-forward is git's own operation
-// and behaves as it does anywhere: it refuses over an untracked file it would overwrite, and takes
-// an ignored one without a word. Nothing here changes that.
+// The classification above is over what a REMOVAL destroys. Bringing a tree to a commit is git's
+// own operation and behaves as it does anywhere: it refuses over an untracked file it would
+// overwrite, and takes an ignored one without a word. Nothing here changes that.
 //
 // The dry run FETCHES, which prunes remote-tracking refs. It has to: every answer above is about
 // the remote, and reporting them off a stale one would be reporting about a different repository.
@@ -250,7 +249,7 @@ const describeHead = (head) =>
  * merge writes to a worktree by naming its directory and acts on whichever branch that directory
  * is on when it runs, so writing only here rules out every other worktree as a place the switch
  * could come from. What it does not rule out is a second terminal in this same checkout, which is
- * why the readings around the merge stay. It costs what it sounds like: run from
+ * why the sync names the branch rather than merging into it. It costs what it sounds like: run from
  * a worktree with a sync pending, nothing is applied — the fast-forward is what makes the
  * deletions legal, so it stops those too. A run with nothing to fast-forward writes to no tree
  * and is unaffected, which is the cleanup someone else's pull left behind.
@@ -416,12 +415,24 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
   // here, on a working tree that changed since the plan was read. Behind the removals, that
   // failure would leave the worktrees gone and every branch behind.
   //
-  // What it is asked to move is a BRANCH; what it can name is a DIRECTORY, and a merge acts on
-  // whichever branch that directory is on when it runs. Between the plan reading it and the apply
-  // writing to it sits a fetch over the network, so another session can switch it in the meantime
-  // — and the merge would then fast-forward that session's branch instead, under a line naming
-  // the one that was meant. Asked here, nothing is written; asked again below, a switch that
-  // arrived inside the merge itself stops the deletions rather than passing for a sync.
+  // What it is asked to move is a BRANCH, and `git merge` can only be pointed at a DIRECTORY —
+  // it acts on whichever branch that directory is on when it runs, so a checkout switch arriving
+  // while this is in flight has that session's branch fast-forwarded instead. Reading HEAD first
+  // narrows the gap and does not close it, and nothing git offers closes it either: an index lock
+  // does not stop a switch, and a worktree lock guards removal alone. So the merge is not used.
+  // The two things it does are done separately, and only the FIRST of them writes a ref:
+  //
+  //   update-ref <branch> <new> <old>   names the branch, and swaps it only if it is still where
+  //                                     the plan read it. No other ref can be written by it.
+  //   read-tree  -m -u <old> <new>      brings that tree's index and files in line. It writes no
+  //                                     ref at all, so a switch arriving here moves nothing.
+  //
+  // The order matters both ways. The swap first, because a tree switched away needs no bringing
+  // in line — the branch is then checked out nowhere, and the sync is simply finished. The
+  // read-tree behind it, because it is the half that can still refuse (an uncommitted edit to a
+  // file the sync writes, an untracked file where it adds one) and by then the branch has moved:
+  // that refusal is followed by putting the branch back, which is the one place here that has to
+  // undo its own write.
   let failed = false;
   const before = headOf(sync.tree);
   if (before?.ref !== `refs/heads/${base}` || before.sha !== local) {
@@ -431,9 +442,35 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
     return 1;
   }
   if (sync.ff) {
-    const ff = git(["merge", "--ff-only", remote], sync.tree, true);
-    if (ff.status !== 0) {
-      log(`SYNC BLOCKED — ${ff.err}`);
+    const swap = git(
+      ["update-ref", "-m", `sync:merged fast-forward to ${remote}`, `refs/heads/${base}`, ahead, local],
+      cwd,
+      true,
+    );
+    if (swap.status !== 0) {
+      log(`SYNC BLOCKED — ${base} could not be moved: ${swap.err}`);
+      log("\nnothing applied — the fast-forward is what makes the deletions legal");
+      return 1;
+    }
+    // The branch is at the remote and its checkout is not. A tree that is no longer on it has
+    // nothing to bring in line, since the branch is then checked out nowhere: the sync is done,
+    // and the cleanup is not, because what makes the deletions legal is a HEAD that holds it.
+    const on = headOf(sync.tree);
+    if (on?.ref !== `refs/heads/${base}`) {
+      log(`synced ${base} -> ${ahead.slice(0, 7)}`);
+      log(`SYNC BLOCKED — ${sync.tree} left ${base} while it was being synced: ${describeHead(on)}`);
+      log("\nnothing removed — run again from the tree that holds it");
+      return 1;
+    }
+    const fill = git(["read-tree", "-m", "-u", local, ahead], sync.tree, true);
+    if (fill.status !== 0) {
+      const back = git(["update-ref", "-m", "sync:merged put back", `refs/heads/${base}`, local, ahead], cwd, true);
+      log(`SYNC BLOCKED — ${sync.tree} could not be brought to ${ahead.slice(0, 7)}: ${fill.err}`);
+      log(
+        back.status === 0
+          ? `       ${base} is back at ${local.slice(0, 7)}`
+          : `       AND ${base} COULD NOT BE PUT BACK: ${back.err}`,
+      );
       log("\nnothing applied — the fast-forward is what makes the deletions legal");
       return 1;
     }
