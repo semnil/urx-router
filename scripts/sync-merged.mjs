@@ -39,13 +39,16 @@
 //
 // What that second reading can do differs between the two. A removal is REFUSED before it happens,
 // on the whole rule rather than on part of it, so nothing is destroyed. A fast-forward is not: git
-// resolves the branch from HEAD as the merge runs, no operation both names a branch and updates
-// its checkout, and no lock git offers is one `git switch` takes. So a switch landing between the
+// resolves the branch from HEAD as the merge runs, and no operation both names a branch and
+// updates its checkout. Nor does any lock keep a checkout switch out of the gap: an index lock
+// does not stop one, and a worktree lock guards removal alone. So a switch landing between the
 // reading and the merge still moves that session's branch, and the reading only makes the run STOP
 // and say which branch moved rather than print a sync that did not happen and go on to delete.
-// Which is why the fast-forward is taken in NO TREE BUT THE ONE THIS WAS STARTED IN: the session
-// that could switch it is then the one that typed the command. Run from anywhere else with a sync
-// pending, nothing is applied.
+//
+// The fast-forward is therefore taken in NO TREE BUT THE ONE THIS WAS STARTED IN. That is a
+// narrowing and not a fix: it rules out every other worktree, and leaves a second terminal in
+// THIS checkout, which nothing here can rule out. Run from anywhere else with a sync pending,
+// nothing is applied.
 //
 // Where the machine cannot be asked what is running, both halves go ahead saying so: git still
 // refuses to remove a worktree holding changes, and refuses to overwrite them in a merge.
@@ -245,8 +248,9 @@ const describeHead = (head) =>
  *
  * `startedIn` is the tree the command was run from, and a fast-forward is taken in NO OTHER. A
  * merge writes to a worktree by naming its directory and acts on whichever branch that directory
- * is on when it runs, so writing only here leaves the one session that can switch the tree out
- * from under the merge as the one that typed the command. It costs what it sounds like: run from
+ * is on when it runs, so writing only here rules out every other worktree as a place the switch
+ * could come from. What it does not rule out is a second terminal in this same checkout, which is
+ * why the readings around the merge stay. It costs what it sounds like: run from
  * a worktree with a sync pending, nothing is applied — the fast-forward is what makes the
  * deletions legal, so it stops those too. A run with nothing to fast-forward writes to no tree
  * and is unaffected, which is the cleanup someone else's pull left behind.
