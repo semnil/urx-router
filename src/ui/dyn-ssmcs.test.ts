@@ -275,10 +275,10 @@ describe("the COMP face", () => {
   // else: a slider whose curve is not the one drawn moves nothing the operator can see.
   it("gives each segment the sliders that move the curve beside it", () => {
     expect([...rowsByKey(h!.box).keys()]).toEqual(["attack", "release", "ratio"]);
-    // Knee closes the compressor's group, after Ratio rather than above everything, which
-    // is where `lead` would have put it.
+    // Knee leads Attack, which is where the unit's own SSMCS COMP screen puts it — and
+    // where the shipped COMP screen puts its own, so the two banks read alike.
     const at = (label: string): number => rowLabels(h!.box).indexOf(label);
-    expect(at(t().inspector.dyn.ratio)).toBeLessThan(at(t().inspector.dyn.knee));
+    expect(at(t().inspector.dyn.knee)).toBeLessThan(at(t().inspector.dyn.attack));
     expect(at(t().inspector.ssmcs.sideChain)).toBe(-1);
 
     segment(SC_SEG);

@@ -59,7 +59,7 @@ function midiStore(
 
 const statusLine = (page: Page) => page.locator("#statusbar");
 
-/** The EQ tuning screen's 1-Knob ON button (located from the level slider's id, the
+/** The EQ tuning screen's 1-knob ON button (located from the level slider's id, the
  *  only stable anchor in that section — the same handle t1-overtake uses). */
 const oneKnobOn = (page: Page) =>
   page
@@ -158,7 +158,7 @@ test.describe("T4 midi", () => {
       // middle of the run, so only the writes after the last mark can be compared
       // against it without inventing orphans that were registered when they left.
       registrationWindow: { from: markTime(trace, "midi-idle")! },
-      // MIDI moves a fader value; the 1-Knob ON earlier in the run is a SHRINK, which
+      // MIDI moves a fader value; the 1-knob ON earlier in the run is a SHRINK, which
       // leaves the registration a superset. Clause B reports growth only, so it is
       // silent here — measured rather than assumed, since the pair is supplied.
       snapshot: await snapshotOf(page),

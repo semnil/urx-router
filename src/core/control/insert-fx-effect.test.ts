@@ -216,7 +216,7 @@ describe("the multi-band compressor's Band Bypass", () => {
     }
   });
 
-  it("belongs to the 1-Knob while it is on", () => {
+  it("belongs to the 1-knob while it is on", () => {
     // Switching the knob on clears all three, and a Level change clears them again over
     // anything written in between — the treatment the other fifteen driven slots get, and
     // not Out Gain's, which the knob leaves alone.
@@ -411,7 +411,7 @@ describe("insert-fx writable slots are all bounded", () => {
 // app does not write is the set its LEVEL recomputes — re-sending the plan's copy of one of
 // those would put the pre-knob number back over what the knob computed — while everything
 // the ON transition merely clobbered is emitted as usual, which restores it.
-describe("the multi-band compressor's 1-Knob", () => {
+describe("the multi-band compressor's 1-knob", () => {
   const oneKnobSlots = [MBC_GLOBAL.oneKnobOn, MBC_GLOBAL.oneKnobLevel];
 
   it("is written like every other 1-knob on this device", () => {
@@ -567,7 +567,7 @@ describe("insert-fx effect round-trip (emit∘readback fixed point)", () => {
 // The stored map is one namespace per family, so a node that has held three effects keeps
 // all three and selecting an old one finds what the operator left. A READ answers for one
 // family, and replacing the map with its answer is what deletes the other two — with live
-// sync up a 1-Knob write is enough to trigger one, and the loss shows only when the old
+// sync up a 1-knob write is enough to trigger one, and the loss shows only when the old
 // effect is selected again.
 describe("what a device read leaves in the stored map", () => {
   const guitar = insertFxParamKey("guitar-clean", 7);

@@ -38,14 +38,6 @@ const section = (page: Page, title: RegExp) =>
 
 const readout = (page: Page, label: string) => screenBox(page).locator(".gt-ro", { hasText: label });
 const paramRow = (page: Page, label: string) => screenBox(page).locator(".prefs-row", { hasText: label });
-/** A row by its exact label. `paramRow` matches on a substring, so "1-Knob" also picks up
- *  "1-Knob Level" — and a pin that asserts a row did *not* move would keep passing while
- *  silently measuring the other one. */
-const exactRow = (page: Page, label: string) =>
-  screenBox(page)
-    .locator(".prefs-row")
-    .filter({ has: page.getByText(label, { exact: true }) });
-
 /** Push a device-side parameter change, the way turning a knob on the unit does. */
 const pushParam = (page: Page, paramId: number, x: number, y: number, value: number) =>
   page.evaluate(
@@ -83,6 +75,22 @@ const openFromConsole = async (page: Page, which = 0) => {
  *  per section kind, so this unfolds only when it is actually closed — a second
  *  call in the same session would otherwise fold it again and hide the launcher. */
 const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/, ducker: /^Ducker$/ };
+/** The 1-knob section of whichever screen is open, by its heading. COMP's moved out of
+ *  Parameters into one of these, so its switch is called ON the way the EQ's is and a row
+ *  label no longer names it on its own. */
+const oneKnobSection = (page: Page) =>
+  screenBox(page)
+    .locator(".prefs-section")
+    .filter({ has: page.locator("h3", { hasText: "1-knob" }) });
+
+/** …and the switch itself, by its own label rather than by position: Auto Makeup rides
+ *  above it in that section and is an ON/OFF pair too, so the section's buttons are not
+ *  one control. */
+const oneKnobSwitch = (page: Page) =>
+  oneKnobSection(page)
+    .locator(".prefs-row")
+    .filter({ has: page.locator(".lbl", { hasText: /^ON$/ }) });
+
 const openFromInspector = async (page: Page, id: string, kind: keyof typeof SECTION_OF = "gate") => {
   await node(page, id).click();
   const sec = section(page, SECTION_OF[kind]);
@@ -594,7 +602,7 @@ test.describe("comp", () => {
 
     // 1-knob on: the device computes threshold / ratio / gain from one level and
     // announces each recomputation, so they stay on screen and stop being editable.
-    await paramRow(page, "1-Knob").locator("button", { hasText: "On" }).click();
+    await oneKnobSwitch(page).locator("button", { hasText: "ON" }).click();
     await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
     for (const label of ["Threshold", "Ratio", "Gain"]) {
       await expect(paramRow(page, label).locator("input[type=range]")).toBeDisabled();
@@ -603,7 +611,7 @@ test.describe("comp", () => {
     // rather than going, so nothing below it moves; it only stops being editable.
     await expect(paramRow(page, "Auto Makeup")).toHaveClass(/locked/);
 
-    await paramRow(page, "1-Knob").locator("button", { hasText: "Off" }).click();
+    await oneKnobSwitch(page).locator("button", { hasText: "OFF" }).click();
     await expect(paramRow(page, "Threshold").locator("input[type=range]")).toBeEnabled();
 
     // Auto Makeup drives the makeup gain alone.
@@ -614,22 +622,22 @@ test.describe("comp", () => {
 
   test("does not move under the pointer that toggles 1-knob", async ({ page }) => {
     await openFromInspector(page, "ch1", "comp");
-    // Exact label: the toggle's own row, never the "1-Knob Level" row below it.
-    const knob = exactRow(page, "1-Knob");
+    // The switch's own row inside the 1-knob section, never the level row below it.
+    const knob = oneKnobSwitch(page);
     const geo = async () => ({
       panel: await panelHeight(page),
       knobTop: await knob.evaluate((el) => el.getBoundingClientRect().top),
     });
     const before = await geo();
 
-    // Auto Makeup and 1-Knob Level are alternatives of different shapes — a toggle row
+    // Auto Makeup and the level are alternatives of different shapes — a toggle row
     // against a slider row — so swapping them in and out both shortened the panel and
     // lifted the row being clicked. Both stay, so neither figure moves.
-    await knob.locator("button", { hasText: "On" }).click();
+    await knob.locator("button", { hasText: "ON" }).click();
     await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
     expect(await geo()).toEqual(before);
 
-    await knob.locator("button", { hasText: "Off" }).click();
+    await knob.locator("button", { hasText: "OFF" }).click();
     await expect(page.locator("#dyn-oneknob-level")).toBeDisabled();
     expect(await geo()).toEqual(before);
   });
@@ -685,7 +693,7 @@ test.describe("comp, dragging while the device follows", () => {
     // Rebuilding the column then — or on the slider's own input event — replaces
     // the element under the pointer, and the drag ends after two or three steps.
     await openFromInspector(page, "ch1", "comp");
-    await paramRow(page, "1-Knob").locator("button", { hasText: "On" }).click();
+    await oneKnobSwitch(page).locator("button", { hasText: "ON" }).click();
     const slider = page.locator("#dyn-oneknob-level");
     const box = (await slider.boundingBox()) as { x: number; y: number; width: number; height: number };
 

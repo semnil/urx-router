@@ -475,9 +475,18 @@ test("the channel tuning screens show every processor, both displays and their n
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 
   const box = page.locator("#dyn-screen-box");
-  /** A row by its EXACT label: "1-Knob" substring-matches "1-Knob Level" too, and
-   *  picking by DOM order instead would silently follow a row inserted above it. */
-  const exactRow = (label: string) => box.locator(".prefs-row").filter({ has: page.getByText(label, { exact: true }) });
+  /** The 1-knob switch of whichever screen is open: its section by the heading, then the
+   *  row by its own label — COMP's section carries Auto Makeup above it, and that is an
+   *  ON/OFF pair too. */
+  const oneKnobSwitch = () =>
+    box
+      .locator(".prefs-section")
+      .filter({ has: page.locator("h3", { hasText: "1-knob" }) })
+      .locator(".prefs-row")
+      .filter({ has: page.locator(".lbl", { hasText: /^ON$/ }) });
+
+  const inspectorSection = (kind: keyof typeof SECTION_OF) =>
+    page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: SECTION_OF[kind] }) });
 
   const openFromInspector = async (kind: keyof typeof SECTION_OF, id = "ch1"): Promise<void> => {
     await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
@@ -517,7 +526,7 @@ test("the channel tuning screens show every processor, both displays and their n
     // COMP's 1-knob hands three values over to the device, which is the one state
     // that tags a row as device-driven.
     if (kind === "comp") {
-      await exactRow("1-Knob").locator("button", { hasText: "On" }).click();
+      await oneKnobSwitch().locator("button", { hasText: "ON" }).click();
       await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
       await inv.take(page, "#dyn-screen-modal");
     }
@@ -678,7 +687,7 @@ test("the channel tuning screens show every processor, both displays and their n
   await inv.take(page, "#dyn-screen-modal");
   await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
-  // …and with the unit's own 1-Knob on, which is the state that replaces the line under the
+  // …and with the unit's own 1-knob on, which is the state that replaces the line under the
   // display. There is no control for it — the app never writes it — so the plan is what puts
   // it there.
   const oneKnob = {

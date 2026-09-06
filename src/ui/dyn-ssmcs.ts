@@ -72,7 +72,7 @@ import type { BandMarker } from "./dyn-freq-plot";
 import { fmtSsmcsGain, fmtSsmcsHz, fmtSsmcsMs, fmtSsmcsQ, fmtSsmcsRatio } from "./inspector-format";
 import { CURVE_PAD, dbGeo, drawDbAxes, drawLiveDot, drawTransferCurve, kneeResponse, transferPlot } from "./dyn-plot";
 import { PLOT_FONT, splitDisplay } from "./dyn-screen";
-import type { DynBar, DynCtx, DynLane, DynPlotGeo, DynPlotProcessor } from "./dyn-screen";
+import type { DynBar, DynCtx, DynLane, DynPlotGeo, DynPlotProcessor, DynRows } from "./dyn-screen";
 import type { Messages } from "../i18n/en";
 
 /** Level-lane ruler. The stages this bank sits between carry programme level and it
@@ -708,15 +708,15 @@ export const SSMCS_COMP_DYN: DynPlotProcessor = {
     return controlId(ctx.nodeId, param, sc ? SSMCS_SC_SCOPE : SSMCS_COMP_SCOPE);
   },
 
-  // Knee closes the compressor's rows and Side Chain opens the filter's, each on the segment
-  // that carries the sliders it belongs to. Both are keyed on the filter's first slider: on
-  // SIDE CHAIN that row exists and the toggle lands above it, and on CURVE it does not, so
-  // the host appends the knee after the rows it did place.
-  rows: ({ m, vals, set, midi, sel }) => ({
-    before: {
-      scQ:
-        sel === SC_SEL
-          ? [
+  // Each segment's non-slider row, in front of the slider the unit's own screen puts it in
+  // front of: Side Chain opens the filter's three (p.111), and Knee leads Attack and
+  // Release on the compressor's (p.110) — the same position the shipped COMP screen gives
+  // it, since the two banks' screens are laid out alike on the unit.
+  rows: ({ m, vals, set, midi, sel }): DynRows =>
+    sel === SC_SEL
+      ? {
+          before: {
+            scQ: [
               midi(
                 settingsRow(
                   m.inspector.ssmcs.sideChain,
@@ -724,8 +724,12 @@ export const SSMCS_COMP_DYN: DynPlotProcessor = {
                 ),
                 "scOn",
               ),
-            ]
-          : [
+            ],
+          },
+        }
+      : {
+          before: {
+            attack: [
               settingsRow(
                 m.inspector.dyn.knee,
                 settingsChoice(
@@ -735,8 +739,8 @@ export const SSMCS_COMP_DYN: DynPlotProcessor = {
                 ),
               ),
             ],
-    },
-  }),
+          },
+        },
 
   hint: (ctx) => (ctx.sel === SC_SEL ? ctx.m.dynTuning.ssmcs.scHint : ctx.m.dynTuning.comp.curveHint),
   plotGeo: (w, h, ctx) => (ctx.sel === SC_SEL ? freqGeo(w, h) : dbGeo(w, h, IN_LO_DB, OUT_LO_DB, OUT_TICKS)),

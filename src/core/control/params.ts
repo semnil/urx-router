@@ -494,12 +494,12 @@ export const PARAMS = {
   INSERT_FX_EFFECT: { id: 697, encoding: "raw" },
   /**
    * The two engine slots that are CONTROLS over the rest of the array rather than values
-   * in it — the multi-band compressor's 1-Knob (its switch and its level) and Pitch Fix's
+   * in it — the multi-band compressor's 1-knob (its switch and its level) and Pitch Fix's
    * MIDI Control. Same array and same encoding as INSERT_FX_EFFECT; a separate name
    * because a name is what carries the side effect.
    *
    * `refetch` rather than `converge`: writing either makes the UNIT recompute slots the
-   * plan only mirrors — eighteen of them for the 1-Knob, the scale and the twelve-note mask
+   * plan only mirrors — eighteen of them for the 1-knob, the scale and the twelve-note mask
    * for MIDI Control — so the owner node is read back instead of being pushed. Pushing
    * would put the pre-change values over what the unit just derived, and the writer
    * suppresses those slots for exactly that reason; without the read, the plan keeps its

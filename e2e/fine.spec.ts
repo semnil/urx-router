@@ -105,10 +105,14 @@ test.describe("tuning-screen sliders", () => {
     // has rather than who is holding it, so it stays exactly where it was and the
     // Device-driven pill lands after it — a legend that came and went would move the
     // label block on every toggle.
+    // The switch lives in the screen's own 1-knob section now, where it is called ON —
+    // and Auto Makeup is in there with it, so the row is picked by its own label.
     await box
+      .locator(".prefs-section")
+      .filter({ has: page.locator("h3", { hasText: "1-knob" }) })
       .locator(".prefs-row")
-      .filter({ has: page.getByText("1-Knob", { exact: true }) })
-      .locator("button", { hasText: "On" })
+      .filter({ has: page.locator(".lbl", { hasText: /^ON$/ }) })
+      .locator("button", { hasText: "ON" })
       .click();
     await expect(gainRow).toHaveClass(/locked/);
     // A hidden element has no box, so this covers "still printed" too. The sibling

@@ -67,7 +67,7 @@ const ONE_KNOB_ON = "500:0:0";
  *  may legitimately decline to read back an address it has just written. */
 const EQ_ON_ANCHOR = "498:0:0";
 
-/** The 1-Knob ON button, located from the level slider's id (the only stable anchor in
+/** The 1-knob ON button, located from the level slider's id (the only stable anchor in
  *  that section) rather than by its localized label. `onOff` prints ON first. */
 const oneKnobOn = (page: Page): ReturnType<Page["locator"]> =>
   page

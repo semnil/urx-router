@@ -1110,7 +1110,7 @@ input[type="range"]:focus-visible,
 }
 
 /* A read-only param row (a value the device drives and only reports back, e.g. the
-   COMP ratio/gain while 1-Knob is on): the label + value with no control, dimmed. */
+   COMP ratio/gain while 1-knob is on): the label + value with no control, dimmed. */
 .param.readonly {
   opacity: 0.6;
 }

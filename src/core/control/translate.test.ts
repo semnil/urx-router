@@ -1253,7 +1253,7 @@ describe("shared device addresses (last wins)", () => {
   // Compander slot 6 (Threshold): the one slot the input companders and the
   // output MBC both carry, so it is where three owners can meet on engine 693.
   // The slot is a parameter because 6 means different things per family: a compander's
-  // Threshold, and the multi-band compressor's 1-Knob — which the emit path reads as "the
+  // Threshold, and the multi-band compressor's 1-knob — which the emit path reads as "the
   // unit owns every value here" and then emits none of them, so an owner given one would
   // drop out of a collision it is supposed to be in.
   const withCompander =
@@ -1328,7 +1328,7 @@ describe("shared device addresses (last wins)", () => {
       model,
       planWith(
         "URX44V",
-        // Slot 9 rather than 6, because 6 is the multi-band compressor's 1-Knob and the
+        // Slot 9 rather than 6, because 6 is the multi-band compressor's 1-knob and the
         // writer reads that as the unit owning every value of the effect — an owner given
         // one emits nothing and drops out of the collision it is supposed to be in. Nine
         // is a value under all three: that one's LOW Threshold, and the companders'

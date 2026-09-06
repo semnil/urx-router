@@ -70,7 +70,7 @@ const CH1_FX1_ON = "196:0:0";
 
 /** ch1's 4-band PEQ addresses in COMP->EQ mode: the band block starts 5 params after
  *  the EQ-ON anchor (44 → 49) with a 5-param stride, and only LOW/HIGH carry a filter
- *  type (translate.ts eqBandsFrom). These are exactly the addresses EQ 1-Knob ON
+ *  type (translate.ts eqBandsFrom). These are exactly the addresses EQ 1-knob ON
  *  removes from the write set. */
 function ch1EqBandAddrs(): string[] {
   const out: string[] = [];
@@ -94,7 +94,7 @@ const setsAfter = (trace: TraceEvent[], addr: string, at: number): number[] =>
     .filter((s) => s.addr === addr && s.start > at)
     .map((s) => s.value ?? Number.NaN);
 
-/** The EQ tuning screen's 1-Knob ON/OFF pair, located from the level slider's id (the
+/** The EQ tuning screen's 1-knob ON/OFF pair, located from the level slider's id (the
  *  only stable anchor in that section) rather than by its localized label. */
 const oneKnobFace = (page: Page, face: 0 | 1) =>
   page
@@ -118,16 +118,16 @@ test.describe("T2 shape-change", () => {
   // the bands leave the REGISTRATION with the write set instead of lingering in it until
   // some later reconcile. A band announcement is refused at the bridge rather than
   // delivered to an app that cannot place it — and what keeps the app in step is the
-  // address the toggle does NOT drop: 1-Knob level (48) stays registered and carries
+  // address the toggle does NOT drop: 1-knob level (48) stays registered and carries
   // `sideEffect: "refetch"`, so the app follows the CAUSE of the recomputation.
-  test("EQ 1-Knob blinds the app to the bands it just made the device recompute", async ({ page }) => {
+  test("EQ 1-knob blinds the app to the bands it just made the device recompute", async ({ page }) => {
     await goLive(page);
     await openEqScreen(page, "ch1");
     await setLatency(page, { get: 2, set: 25 });
     const bands = ch1EqBandAddrs();
     const BAND0_GAIN = "53:0:0";
-    /** EQ 1-Knob level — 2 params past the ON anchor's pair (translate.ts eqOneKnobFrom),
-     *  and the one EQ address that STAYS in the write set while 1-Knob is on. */
+    /** EQ 1-knob level — 2 params past the ON anchor's pair (translate.ts eqOneKnobFrom),
+     *  and the one EQ address that STAYS in the write set while 1-knob is on. */
     const ONE_KNOB_LEVEL = "48:0:0";
     // "The device recomputed the LOW band to +3.0 dB": a read of that address answers
     // 300 whatever the app wrote, so a value reaching the plan proves a READ carried it.
@@ -136,7 +136,7 @@ test.describe("T2 shape-change", () => {
     const regBefore = regKeys(await paramAddrsOf(page));
     expect(bands.every((a) => regBefore.has(a))).toBe(true);
 
-    // Phase 1 — 1-Knob ON. The write is sideEffect "refetch", so the flush re-reads
+    // Phase 1 — 1-knob ON. The write is sideEffect "refetch", so the flush re-reads
     // the owner node; no reconcile is involved.
     await mark(page, "oneknob-on-1");
     await oneKnobFace(page, 0).click();
@@ -160,8 +160,8 @@ test.describe("T2 shape-change", () => {
     expect(wentOut).toEqual([...bands].sort());
     expect(cameIn).toEqual([]);
 
-    // Phase 2 — 1-Knob OFF. The bands re-enter the write set and are all emitted,
-    // because the snapshot taken while 1-Knob was on holds no entry for them. The
+    // Phase 2 — 1-knob OFF. The bands re-enter the write set and are all emitted,
+    // because the snapshot taken while 1-knob was on holds no entry for them. The
     // value that goes out for the LOW band gain is the device's own 300, which only
     // the refetch of phase 1 could have put into the plan.
     await mark(page, "oneknob-off");
@@ -176,7 +176,7 @@ test.describe("T2 shape-change", () => {
     const regAfterOff = regKeys(await paramAddrsOf(page));
     expect(bands.filter((a) => !regAfterOff.has(a))).toEqual([]);
 
-    // Phase 3 — 1-Knob ON again, then the differential that decides the blind spot.
+    // Phase 3 — 1-knob ON again, then the differential that decides the blind spot.
     await mark(page, "oneknob-on-2");
     await oneKnobFace(page, 0).click();
     await settleAfter(page, "oneknob-on-2", 1200);
@@ -220,7 +220,7 @@ test.describe("T2 shape-change", () => {
     console.log(`registration: ${regBefore.size} before → ${regAfterOn.size} after the ON flush`);
     console.log(`band addresses: ${bands.length} total, ${stillRegistered.length} still registered`);
     console.log(`one REFUSED notify on a dropped band address (53): ${droppedCost} full reconcile(s)`);
-    console.log(`one notify on a KEPT address (48, 1-Knob level): ${keptCost} full reconcile(s)`);
+    console.log(`one notify on a KEPT address (48, 1-knob level): ${keptCost} full reconcile(s)`);
 
     // The differential. The refused notify reaches nothing — no settle, no idle net.
     // `onNotify` is where a delivered notify arms both, and it never runs; the other way
@@ -237,7 +237,7 @@ test.describe("T2 shape-change", () => {
 
     // Phase 3c — the same recomputation announced the way the device actually announces
     // it, as a four-address burst, with the addresses registered so it is delivered.
-    // Pushed with 1-Knob OFF: while it is ON these four addresses are in no
+    // Pushed with 1-knob OFF: while it is ON these four addresses are in no
     // registration and the bridge refuses the burst, as 3a measured one address at a
     // time. There is no window to re-open any more — the flush that drops them from the
     // write set drops them from the registration in the same breath.
@@ -292,7 +292,7 @@ test.describe("T2 shape-change", () => {
     // address set), so the number would be an artefact of comparing a full-run write
     // set against a final-state registration. The snapshot handed over is the one taken
     // BEFORE the burst, for the same reason: the two reconciles the burst provoked have
-    // re-registered since, without the 18 band addresses (1-Knob is on), so an
+    // re-registered since, without the 18 band addresses (1-knob is on), so an
     // end-of-window snapshot describes a set none of these notifies was pushed against.
     // No `snapshot`, for a reason of its own: clause B is a state predicate and its two
     // halves must be read at ONE instant, so pairing the pre-burst registration with a
@@ -345,7 +345,7 @@ test.describe("T2 shape-change", () => {
     // the pair below whatever the flush did.
     expect(deviceReflectsAfter(trace, off2)).toBe(0);
     const orphans = bands.filter((a) => written.has(a) && !regNow.has(a));
-    console.log(`after 1-Knob OFF: ${orphans.length} band address(es) written but not registered`);
+    console.log(`after 1-knob OFF: ${orphans.length} band address(es) written but not registered`);
     expect(orphans).toEqual([]);
 
     // The same fact decided by the analyzer rather than by hand, so the pin and the

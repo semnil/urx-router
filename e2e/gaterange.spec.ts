@@ -41,7 +41,7 @@ test("the inspector's GATE section keeps the toggle and the launcher only", asyn
 test("the inspector's COMP section is the ON toggle and the launcher", async ({ page }) => {
   // The detail editor moved to the dynamics screen for the same reason the gate's
   // did — a second copy here reads a render-time snapshot and would write stale
-  // values back. What 1-Knob and Auto Makeup do to those controls is pinned there
+  // values back. What 1-knob and Auto Makeup do to those controls is pinned there
   // (e2e/dyntuning.spec.ts), where they are.
   await node(page, "ch1").click();
   const comp = section(page, /^COMP$/);

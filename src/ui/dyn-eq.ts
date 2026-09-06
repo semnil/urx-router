@@ -239,7 +239,7 @@ export const EQ_DYN: DynPlotProcessor = {
   sections: ({ m, vals, states, set, setValue, midi }) => {
     const on = vals.oneKnobOn === true;
     const rateLocked = states.has("oneKnobOn");
-    const sec = settingsSection(m.inspector.eqOneKnob);
+    const sec = settingsSection(m.inspector.oneKnob);
     sec.append(
       midi(
         settingsRow(
@@ -267,7 +267,7 @@ export const EQ_DYN: DynPlotProcessor = {
     sec.append(
       midi(
         oneKnobLevelRow({
-          label: m.inspector.eqOneKnobLevel,
+          label: m.inspector.oneKnobLevel,
           value: vals.oneKnobLevel,
           onInput: (v) => setValue({ oneKnobLevel: v }),
           row: off ? { ...states.get("oneKnobLevel"), locked: true } : {},

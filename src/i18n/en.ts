@@ -300,8 +300,8 @@ export const en = {
       ratio: dev("Ratio"),
       release: dev("Release"),
       autoMakeup: dev("Auto Makeup"),
-      oneKnob: dev("1-Knob"),
-      oneKnobLevel: dev("1-Knob Level"),
+      oneKnob: dev("1-knob"),
+      oneKnobLevel: dev("1-knob Level"),
       freq: dev("Freq"),
       q: dev("Q"),
       bandOn: dev("Band ON"),
@@ -323,7 +323,7 @@ export const en = {
     scope: {
       gate: tr("GATE"),
       comp: tr("COMP"),
-      eq: tr("EQ 1-Knob"),
+      eq: tr("EQ 1-knob"),
       "eq.low": tr("EQ LOW"),
       "eq.lowMid": tr("EQ LOW-MID"),
       "eq.highMid": tr("EQ HIGH-MID"),
@@ -394,9 +394,7 @@ export const en = {
     eqOn: dev("EQ"),
     compOn: dev("COMP"),
     gateOn: dev("GATE"),
-    eqOneKnob: dev("1-knob"),
     eqOneKnobType: dev("1-knob Type"),
-    eqOneKnobLevel: dev("1-knob Level"),
     bandOn: dev("Band"),
     filterType: dev("Type"),
     frequency: dev("Freq"),
@@ -418,8 +416,8 @@ export const en = {
       knee: dev("Knee"),
     },
     autoMakeup: dev("Auto Makeup"),
-    oneKnob: dev("1-Knob"),
-    oneKnobLevel: dev("1-Knob Level"),
+    oneKnob: dev("1-knob"),
+    oneKnobLevel: dev("1-knob Level"),
     ssmcs: {
       title: dev("SSMCS"),
       sweetSpotData: dev("Sweet Spot Data"),
@@ -460,7 +458,6 @@ export const en = {
       bandLow: dev("Low"),
       bandMid: dev("Mid"),
       bandHigh: dev("High"),
-      oneKnob: dev("1-Knob"),
       scale: dev("Scale"),
       // The twelve semitone buttons. Absolute, named from C — the unit stores them that
       // way whatever the Key is.
@@ -514,8 +511,8 @@ export const en = {
         limitLow: dev("Limit Low"),
         limitHigh: dev("Limit High"),
         midiControl: dev("MIDI Control"),
-        oneKnobOn: dev("1-Knob"),
-        oneKnobLevel: dev("1-Knob Level"),
+        oneKnobOn: dev("1-knob"),
+        oneKnobLevel: dev("1-knob Level"),
         xoverLowMid: dev("L-M Xover"),
         xoverMidHigh: dev("M-H Xover"),
       },
@@ -763,7 +760,7 @@ export const en = {
       // Shown in place of the line above while the unit is driving the panel. It says who
       // owns the values rather than what they do, because that is what changed.
       mbcOneKnob: tr(
-        "1-Knob is on: the unit is setting every value here from its own level, and nothing edited here is sent to it.",
+        "1-knob is on: the unit is setting every value here from its own level, and nothing edited here is sent to it.",
       ),
       // The pill on a row the unit has taken over — Pitch Fix's Scale and its twelve notes
       // while MIDI Control is not Off, which is when the notes the correction aims at come

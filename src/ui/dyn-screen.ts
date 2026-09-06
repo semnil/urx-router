@@ -275,16 +275,23 @@ export interface DynRowCtx extends DynCtx {
   setValue: (patch: Record<string, number | boolean>) => void;
 }
 
-/** Extra rows a processor renders beside its sliders, in the device's own read
- *  order: `lead` above them (the mode switches), `tail` below (the selectors). */
+/**
+ * Extra rows a processor renders beside its sliders, **in the order the unit's own screen
+ * reads them**. That is the rule for every one of them, and it is the reason `before`
+ * exists: a row is placed where the device puts it rather than by what kind of control it
+ * is. A selector is not a class with a position — the unit lists Knee ahead of Attack on
+ * both compressor screens and the filter type ahead of a band's values, and the panel here
+ * says the same thing in the same order.
+ */
 export interface DynRows {
+  /** Above every slider, for a row the unit's screen puts ahead of the whole list. */
   lead?: HTMLElement[];
+  /** Below every slider, for a row the unit's screen puts after it. */
   tail?: HTMLElement[];
-  /** Rows placed immediately before the slider whose key names them, for a panel whose
-   *  fields fall into groups the device reads in that order. The SSMCS COMP face is the
-   *  one: its side-chain filter's three sliders follow the compressor's, and the Side
-   *  Chain toggle that opens them is what tells the reader where one group ends. `lead`
-   *  would put that toggle above rows it does not govern. */
+  /** Rows placed immediately before the slider whose key names them — the ordinary case,
+   *  since most of these sit inside the list rather than at either end. The SSMCS COMP
+   *  face's Side Chain toggle opens the filter's three sliders and its Knee leads Attack;
+   *  the shipped COMP screen's Knee does the same. */
   before?: Record<string, HTMLElement[]>;
 }
 
@@ -368,9 +375,9 @@ export interface DynProcessor {
    *  height whatever is selected. */
   rowStates?: (ctx: DynCtx, vals: Record<string, unknown>) => ReadonlyMap<string, SettingsRowOptions> | null;
   rows?: (ctx: DynRowCtx) => DynRows;
-  /** Sections above the parameters. GATE/COMP put their mode switches in `rows.lead`,
-   *  inside Parameters, because they are that processor's own values; the EQ's 1-knob
-   *  is a stage of its own with its own heading, as the unit prints it. */
+  /** Sections above the parameters. The 1-knob is one wherever a processor has one — COMP,
+   *  the 4-band EQ and the multi-band compressor — because it decides whose the rows below
+   *  it are rather than being one of them, which is how the unit prints it too. */
   sections?: (ctx: DynRowCtx) => HTMLElement[];
   /** A label for a field whose key the shared `inspector.dyn` table does not name (or
    *  names differently — COMP's `gain` is a makeup gain, the EQ's is a band gain). */

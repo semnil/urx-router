@@ -992,6 +992,45 @@ describe("refresh", () => {
   });
 });
 
+// The panel reads in the order the unit's own screen reads it, and the 1-knob is a stage
+// above it rather than three rows inside it. Both are rules over every screen; COMP is
+// where they were broken, so it is where they are pinned.
+describe("the compressor's panel", () => {
+  /** The parameter rows' visible labels, in the order they were built. */
+  const labels = (): string[] =>
+    [...host.box.querySelectorAll<HTMLElement>(".prefs-section")]
+      .filter((s) => s.querySelector("h3")?.textContent === t().dynTuning.parameters)
+      .flatMap((s) => [...s.querySelectorAll<HTMLElement>(".prefs-row")])
+      .map((r) => r.querySelector(".lbl")?.textContent ?? "");
+
+  it("puts Knee in front of Attack, where the unit's own COMP screen puts it", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const at = (label: string): number => labels().indexOf(label);
+    expect(at(t().inspector.dyn.gain)).toBeLessThan(at(t().inspector.dyn.knee));
+    expect(at(t().inspector.dyn.knee)).toBeLessThan(at(t().inspector.dyn.attack));
+    screen.close();
+  });
+
+  it("keeps the 1-knob and Auto Makeup together, above the parameters", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const sec = [...host.box.querySelectorAll<HTMLElement>(".prefs-section")].find(
+      (s) => s.querySelector("h3")?.textContent === t().inspector.oneKnob,
+    );
+    expect(sec).toBeDefined();
+    const rows = [...sec!.querySelectorAll<HTMLElement>(".prefs-row")].map((r) => r.querySelector(".lbl")?.textContent);
+    // The switch the section is named for leads, and Auto Makeup rides with it: the two
+    // lock each other, and a lock whose other half is in another section cannot be read.
+    expect(rows).toEqual([t().inspector.on, t().inspector.autoMakeup, t().inspector.oneKnobLevel]);
+    // …and none of the three is left behind in Parameters.
+    expect(labels()).not.toContain(t().inspector.autoMakeup);
+    screen.close();
+  });
+});
+
 // The line that says nothing here reaches the signal. It belongs to the host rather than
 // to each descriptor's own hint, and every processor answers one — a screen that hands the
 // operator a live editor for a block another surface calls off is the defect this closes,

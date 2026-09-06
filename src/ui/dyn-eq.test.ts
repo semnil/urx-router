@@ -97,7 +97,7 @@ function choose(label: string, text: string, within?: HTMLElement): void {
 const selectBand = (n: number): void => pickBand(host.box, n);
 
 const PARAMS = (): HTMLElement => section(t().dynTuning.parameters);
-const ONE_KNOB = (): HTMLElement => section(t().inspector.eqOneKnob);
+const ONE_KNOB = (): HTMLElement => section(t().inspector.oneKnob);
 
 // The band's five rows, by the labels they actually carry. The band's own on/off row
 // is labelled "Band" rather than ON — the ON row belongs to the 1-knob section.
@@ -188,7 +188,7 @@ describe("what an edit writes back", () => {
     host = dynHost();
     host.plan.nodeParams["ch1"]!.eqOneKnob = { on: true, type: 0, level: 0 };
     open();
-    nudgeSlider(t().inspector.eqOneKnobLevel, 4, ONE_KNOB());
+    nudgeSlider(t().inspector.oneKnobLevel, 4, ONE_KNOB());
     expect(host.plan.nodeParams["ch1"]!.eqOneKnob!.level).toBe(4);
     expect(typeof host.plan.nodeParams["ch1"]!.eqOneKnob!.level).toBe("number");
   });
@@ -209,7 +209,7 @@ describe("the rate lock", () => {
       expect(locked(label, PARAMS()), `row "${label}"`).toBe(true);
       expect(tagOf(label, PARAMS())).toBe(t().inspector.eqRateLocked);
     }
-    for (const label of [t().inspector.on, t().inspector.eqOneKnobType, t().inspector.eqOneKnobLevel]) {
+    for (const label of [t().inspector.on, t().inspector.eqOneKnobType, t().inspector.oneKnobLevel]) {
       expect(locked(label, ONE_KNOB()), `row "${label}"`).toBe(true);
       expect(tagOf(label, ONE_KNOB())).toBe(t().inspector.eqRateLocked);
     }
@@ -275,7 +275,7 @@ describe("the 1-knob", () => {
     open();
     expect(host.plan.nodeParams["ch1"]!.eqOneKnob?.on).not.toBe(true);
     expect(locked(t().inspector.eqOneKnobType, ONE_KNOB())).toBe(true);
-    expect(locked(t().inspector.eqOneKnobLevel, ONE_KNOB())).toBe(true);
+    expect(locked(t().inspector.oneKnobLevel, ONE_KNOB())).toBe(true);
   });
 
   it("hands them back when it is switched on", () => {
@@ -283,7 +283,7 @@ describe("the 1-knob", () => {
     oneKnobOn();
     open();
     expect(locked(t().inspector.eqOneKnobType, ONE_KNOB())).toBe(false);
-    expect(locked(t().inspector.eqOneKnobLevel, ONE_KNOB())).toBe(false);
+    expect(locked(t().inspector.oneKnobLevel, ONE_KNOB())).toBe(false);
   });
 
   // Scoped to the PARAMETERS section: the display column carries a reserved bar of its own

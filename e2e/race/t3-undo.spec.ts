@@ -150,7 +150,7 @@ function wheelBurstSampled(target: Locator, n: number, gap: number): Promise<{ g
   );
 }
 
-/** The EQ screen's 1-Knob ON button, found from the level slider's id rather than a
+/** The EQ screen's 1-knob ON button, found from the level slider's id rather than a
  *  localized label. Its write is a refetch (sideEffect) param. */
 const oneKnobOn = (page: Page) =>
   page

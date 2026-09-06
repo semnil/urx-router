@@ -806,7 +806,7 @@ function insFxFace(): DynProcessor {
       // measured: the word wraps inside a card and the panel grew 414px, which is the
       // resize under the pointer that "no row is ever removed" exists to stop.
       if (fam === "mbc") {
-        // The 1-Knob's own Level is locked too while the knob is off, and it is not a row
+        // The 1-knob's own Level is locked too while the knob is off, and it is not a row
         // of this panel — `mbcOneKnobSection` draws it, and asks the same predicate.
         const locked = insertFxLockedSlots(fam, params);
         return statesFor(
@@ -884,7 +884,7 @@ function insFxFace(): DynProcessor {
         // FIELDS it lays out and to nothing else, so a row built here has to ask for it —
         // and a row that does not is drawn live while the writer refuses to emit it, which
         // parts the plan from the unit with nothing on screen to say so. The multi-band
-        // compressor's band Bypass is the case: the 1-Knob owns it, `translate` stops
+        // compressor's band Bypass is the case: the 1-knob owns it, `translate` stops
         // sending it, and the MIDI surface refuses the same slot.
         const state = ctx.states.get(key) ?? {};
         pending.push(
@@ -910,8 +910,18 @@ function insFxFace(): DynProcessor {
       return { before, tail };
     },
 
-    // The multi-band compressor's 1-Knob, above the panel it governs — a stage of its own,
-    // the way the EQ's is, rather than two more cards in a grid of four-per-band rows.
+    // Which band the rows below belong to, on the Parameters heading — the same pill both
+    // EQ screens carry. The bar above names the face as well, and that is not the same
+    // thing: the bar says which face is selected, the pill says what the panel under it
+    // describes, and a reader looking at a row is looking at the pill.
+    paramsTag: (ctx) => {
+      const band = isMbcBandFace(ctx) ? MBC_FACES[ctx.sel - 1] : undefined;
+      return band ? { text: bandName(band, ctx.m), shown: true } : undefined;
+    },
+
+    // The multi-band compressor's 1-knob, above the panel it governs — a stage of its own,
+    // the way the EQ's and the shipped compressor's are, rather than two more cards in a
+    // grid of four-per-band rows.
     sections: (ctx) => (familyOf(ctx) === "mbc" ? [mbcOneKnobSection(ctx)] : []),
 
     // The companders' response IS defined by their parameters, so they take the plot the
@@ -1169,7 +1179,7 @@ function pitchNotesRow(ctx: DynRowCtx, owned: SettingsRowOptions | undefined): H
 }
 
 /**
- * The multi-band compressor's 1-Knob.
+ * The multi-band compressor's 1-knob.
  *
  * A stage above the panel rather than cards in it: it decides whose the values below are,
  * which is where the EQ's own 1-knob section sits for the same reason — and the grid under
@@ -1191,7 +1201,7 @@ function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
   // changes what the rest of the panel is (locks, the note under the display), and it is
   // one press rather than a gesture that has to survive.
   const setValue = (slot: number, v: number): void => ctx.setValue({ [slotKey("mbc", slot)]: v });
-  const sec = settingsSection(t.oneKnob);
+  const sec = settingsSection(ctx.m.inspector.oneKnob);
   sec.append(
     ctx.midi(
       settingsRow(
