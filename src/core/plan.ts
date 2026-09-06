@@ -184,6 +184,28 @@ export interface SsmcsParams {
   eq?: { low?: SsmcsBand; mid?: SsmcsBand; high?: SsmcsBand };
 }
 
+/**
+ * What an unset processor ON flag means. The unit ships GATE, COMP and a ducker off and
+ * the EQ on, so a plan that says nothing about one of them is describing that block's
+ * shipped state rather than leaving it undefined.
+ *
+ * One table because every surface that renders a processor has to answer it — the
+ * Inspector's section, the ducker block, and each tuning screen's own OFF line — and a
+ * default spelled per call site is a value three readers can disagree about while each
+ * one looks deliberate.
+ */
+export const PROCESSOR_ON_DEFAULT = {
+  gateOn: false,
+  compOn: false,
+  eqOn: true,
+  duckerOn: false,
+} as const;
+
+/** Whether a processor is on, with the shipped default standing in for an unset flag. */
+export function processorOn(np: NodeParams | undefined, key: keyof typeof PROCESSOR_ON_DEFAULT): boolean {
+  return np?.[key] ?? PROCESSOR_ON_DEFAULT[key];
+}
+
 // SSMCS factory-initial values, captured from a real URX44V MONO IN channel with
 // the default "01 Basic" Sweet Spot Data loaded (raw broker units). Shared by all
 // models' seeds and used as the inspector's absent-value fallback, so a new SSMCS
