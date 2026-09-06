@@ -12,7 +12,7 @@ import { controlId, GATE_SCOPE } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
 import { bindChannelStrip, subObjectIo } from "./dyn-chan";
 import { transferPlot } from "./dyn-plot";
-import { HI_DB } from "./dyn-screen";
+import { flagOffNote, HI_DB } from "./dyn-screen";
 import type { DynPlotProcessor } from "./dyn-screen";
 
 /** Input axis: the exact domain a GATE threshold can occupy, so a cap position
@@ -62,6 +62,7 @@ export const GATE_DYN: DynPlotProcessor = {
     outTicks: OUT_TICKS,
     hint: (m) => m.dynTuning.gate.curveHint,
   }),
+  offNote: (ctx) => flagOffNote(ctx, "gateOn"),
   read: io.read,
   patch: io.patch,
   // Every GATE value is a slider on the catalog's `gate` scope, so the key maps

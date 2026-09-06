@@ -231,7 +231,7 @@ function lanesOf(ctx: DynCtx): DynLane[] {
  */
 function offNote(ctx: DynCtx): string | null {
   if (nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate)) return ctx.m.inspector.fx2RateLocked;
-  return fxOf(ctx).on === false ? ctx.m.dynTuning.fx.bypassed : null;
+  return fxOf(ctx).on === false ? ctx.m.dynTuning.bypassed : null;
 }
 
 /** The rows the unit owns, tagged with which of the two things it is doing. Both stay on
@@ -496,10 +496,9 @@ function fxFace(): DynProcessor {
     // position the guitar amp and Pitch Fix take.
     display: (parts) => parts.lanes(),
 
-    // The line under the display. It carries why nothing is reaching the signal when that
-    // is the case, and prints nothing otherwise — there is no figure here to explain, and
-    // the reserve keeps the rack in the same place either way.
-    hint: (ctx) => offNote(ctx),
+    // Why nothing here reaches the signal. No `hint` beside it: there is no figure on this
+    // screen to explain, and the reserve keeps the rack in the same place either way.
+    offNote,
   };
 }
 

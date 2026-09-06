@@ -51,7 +51,7 @@ import type { SettingsRowOptions } from "./dom";
 import { enumRow } from "./dyn-chan";
 import { bandMarkers, drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo, pickBandMarker } from "./dyn-freq-plot";
 import type { BandMarker } from "./dyn-freq-plot";
-import { oneKnobLevelRow, splitDisplay } from "./dyn-screen";
+import { flagOffNote, oneKnobLevelRow, splitDisplay } from "./dyn-screen";
 import type { DynCtx, DynLane, DynPlotGeo, DynPlotProcessor } from "./dyn-screen";
 
 /** Level-lane ruler. The stages either side of an EQ are programme level, so the ruler
@@ -121,6 +121,8 @@ export const EQ_DYN: DynPlotProcessor = {
       lanes: [lane("in", keys.in, ctx.m.dynTuning.laneIn), lane("out", keys.out, ctx.m.dynTuning.laneOut)],
     };
   },
+
+  offNote: (ctx) => flagOffNote(ctx, "eqOn"),
 
   // No bar: the band markers ON the plot are the band control. One marker is one band and a
   // press on it is unambiguous, which is what a bar of four buttons was doing from a

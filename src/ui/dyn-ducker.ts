@@ -19,8 +19,8 @@ import { duckerKeyDb, grAddr, tapFor, tapsFor } from "../core/meters";
 import { incomingConnection } from "../core/plan";
 import type { NodeParams } from "../core/plan";
 import { parseRef, ref } from "../models/types";
-import { channelLabel, PLOT_FONT, splitDisplay } from "./dyn-screen";
 import { CURVE_PAD, drawAxisNames } from "./dyn-plot";
+import { channelLabel, flagOffNote, PLOT_FONT, splitDisplay } from "./dyn-screen";
 import type { DynCtx, DynLane, DynPlotProcessor } from "./dyn-screen";
 
 /** Lane ruler floor: the threshold's own domain, and no more. A ducker triggers on
@@ -168,6 +168,7 @@ export const DUCKER_DYN: DynPlotProcessor = {
   // change, and that the KEY lane is a FOLD of two sides. Everything else on screen
   // says what it is — the reduction is a labelled block on a labelled meter.
   hint: (ctx) => ctx.m.dynTuning.ducker.hint,
+  offNote: (ctx) => flagOffNote(ctx, "duckerOn"),
   read: cur,
   patch: (ctx, patch) => ({ ducker: { ...cur(ctx), ...patch } }) as NodeParams,
   // No `controlId`. The MIDI catalog carries a ducker's `duckerOn` and nothing else,

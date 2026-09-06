@@ -992,6 +992,38 @@ describe("refresh", () => {
   });
 });
 
+// The line that says nothing here reaches the signal. It belongs to the host rather than
+// to each descriptor's own hint, and every processor answers one — a screen that hands the
+// operator a live editor for a block another surface calls off is the defect this closes,
+// and it is the same defect whichever block it is.
+describe("the OFF line", () => {
+  it("is answered by every processor", () => {
+    for (const [key, proc] of Object.entries(DYN_PROCESSORS)) {
+      expect(typeof proc.offNote, key).toBe("function");
+    }
+  });
+
+  // Replaces rather than joins: the note's box is three lines and clips what does not fit,
+  // and the two sentences run past that at the narrowest window the app supports.
+  it("stands in front of the hint, and gives it back when the processor is on", () => {
+    host = dynHost();
+    const note = (): string => host.box.querySelector(".gt-note")!.textContent ?? "";
+
+    // A gate ships off, so this is the state a new plan opens in.
+    const off = new DynScreen(host.hooks);
+    off.open(GATE, "ch1");
+    expect(note()).toBe(t().dynTuning.bypassed);
+    expect(note()).not.toContain(t().dynTuning.gate.curveHint);
+    off.close();
+
+    host.plan.nodeParams.ch1 = { ...host.plan.nodeParams.ch1, gateOn: true };
+    const on = new DynScreen(host.hooks);
+    on.open(GATE, "ch1");
+    expect(note()).toBe(t().dynTuning.gate.curveHint);
+    on.close();
+  });
+});
+
 describe("localization", () => {
   it("re-renders into the new language on refresh", () => {
     host = dynHost();

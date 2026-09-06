@@ -53,7 +53,8 @@ import type { MeterTap } from "../core/meters";
 import { dynFromPos, dynToPos, dynValueText, formatDyn } from "../core/control/translate";
 import type { DynField } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
-import type { NodeParams, Plan } from "../core/plan";
+import { processorOn } from "../core/plan";
+import type { NodeParams, Plan, PROCESSOR_ON_DEFAULT } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
 
 /** Top of every meter ruler: a channel meter cannot read above 0 dBFS. */
@@ -329,6 +330,21 @@ export interface DynProcessor {
   /** One line under the display. Null reserves the space without printing (a plot
    *  needs saying what it shows; a fader cap on a meter explains itself). */
   hint?: (ctx: DynCtx) => string | null;
+  /**
+   * Why nothing this screen sets reaches the signal, or null when something does. The
+   * host prints it INSTEAD of `hint` — saying that the values are inert outranks
+   * describing what they would do — so a descriptor states the two separately rather
+   * than folding the precedence into its own `hint`.
+   *
+   * Every processor answers one: a screen that hands the operator a live editor for a
+   * switched-off block, while another surface says it is off, is the same defect
+   * whichever block it is. What differs is only which flag the descriptor reads.
+   *
+   * The two cannot be shown together. The note's box is three lines and clips what does
+   * not fit, and the concatenation runs past that at the 960px minimum window — so the
+   * precedence is the whole of the arrangement rather than a preference.
+   */
+  offNote: (ctx: DynCtx) => string | null;
   /** The processor's values as one flat record. Where they live is the descriptor's
    *  business — GATE/COMP keep one sub-object, the EQ spreads across `eqBands[i]` and
    *  `eqOneKnob` — and every consumer here reads them by key. */
@@ -537,6 +553,14 @@ const NO_STATES: ReadonlyMap<string, SettingsRowOptions> = new Map<string, Setti
  *  element holding only ordinary whitespace lays out no line box at all, and the reserve
  *  is a line box. */
 const BLANK_RESERVE = " ";
+
+/** The OFF line for a processor whose plan carries a plain on/off flag — GATE, COMP, the
+ *  4-band EQ and a ducker. Shared because what the line says does not depend on which
+ *  block it is said about, and what an unset flag means is the plan's own table rather
+ *  than a literal per descriptor. */
+export function flagOffNote(ctx: DynCtx, key: keyof typeof PROCESSOR_ON_DEFAULT): string | null {
+  return processorOn(ctx.plan.nodeParams[ctx.nodeId], key) ? null : ctx.m.dynTuning.bypassed;
+}
 
 /** The 1-knob level row, which COMP and the EQ each own one of. Shared because the two
  *  are the same control on the same scale — including the element id, which the E2E
@@ -1511,7 +1535,10 @@ export class DynScreen {
    *  the faced bank included (`style.css`, `.gt-note`). */
   private hintLine(proc: DynProcessor, ctx: DynCtx): HTMLElement {
     const hint = el("p", "gt-note");
-    const text = proc.hint?.(ctx);
+    // `offNote` outranks `hint`, in one place rather than inside each descriptor's own
+    // hint: what the operator has to be told first is that nothing here is reaching the
+    // signal. `DynProcessor.offNote` carries why the two cannot share the line.
+    const text = proc.offNote(ctx) ?? proc.hint?.(ctx);
     if (text) hint.textContent = text;
     else hint.setAttribute("aria-hidden", "true");
     return hint;

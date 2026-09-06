@@ -25,7 +25,7 @@ import { COMP_SCOPE, controlId } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
 import { bindChannelStrip, subObjectIo } from "./dyn-chan";
 import { drawTransferCurve, kneeResponse, transferPlot } from "./dyn-plot";
-import { oneKnobLevelRow } from "./dyn-screen";
+import { flagOffNote, oneKnobLevelRow } from "./dyn-screen";
 import type { DynCtx, DynPlotProcessor, DynValues } from "./dyn-screen";
 
 /** Input axis = the threshold's own domain (-54…0 dB). Ticks every 6 dB. */
@@ -124,6 +124,7 @@ export const COMP_DYN: DynPlotProcessor = {
     hint: (m) => m.dynTuning.comp.curveHint,
     unityOffsetDb: (ctx) => makeupOf(ctx),
   }),
+  offNote: (ctx) => flagOffNote(ctx, "compOn"),
   read: io.read,
   patch: io.patch,
   // Knee is a three-value selector, which the catalog does not carry: a control

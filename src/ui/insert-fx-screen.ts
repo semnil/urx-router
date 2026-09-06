@@ -285,7 +285,7 @@ function offNote(ctx: DynCtx): string | null {
       ? ctx.m.inspector.insFxRateLocked
       : ctx.m.inspector.insFxRateLockedAt(entry.option.label, formatRate(entry.option.maxRate));
   }
-  return np?.insertFxOn === false ? ctx.m.dynTuning.insfx.bypassed : null;
+  return np?.insertFxOn === false ? ctx.m.dynTuning.bypassed : null;
 }
 
 /** True where this family's response is DEFINED by its parameters, and so can be drawn
@@ -930,17 +930,13 @@ function insFxFace(): DynProcessor {
     // AFTER the spread: `transferPlot` supplies a display of its own, and this screen's is
     // the one that decides whether there is a plot in the column at all.
     display: (parts, ctx) => (hasCurve(familyOf(ctx)) ? splitDisplay(parts) : parts.lanes()),
-    // …and the note under it. Saying that nothing reaches the signal outranks describing
-    // what the curve would do to it, so the curve's own line takes the space only when
-    // there is nothing else to say — the arrangement the compressor screens have, where
-    // that line is the only one there is. Null keeps the line's space either way.
-    // Per family: the compander explains its curve, and Pitch Fix explains that its display
-    // is the correction's TARGET rather than a reading of the signal — which is what every
-    // other screen's display column carries, so without a line the twelve notes read as
-    // something the unit is tracking. A guitar face has a lane rack and nothing to explain.
+    // Why nothing here reaches the signal. The host prints it instead of the line below,
+    // which is the precedence every screen takes now rather than one this file applies.
+    offNote,
+    // …and the note under the display, per family: the compander explains its curve, and
+    // the multi-band compressor names what its figure is. A guitar face has a lane rack and
+    // nothing to explain. Null keeps the line's space either way.
     hint: (ctx) => {
-      const off = offNote(ctx);
-      if (off) return off;
       const fam = familyOf(ctx);
       const g = ctx.m.dynTuning.insfx;
       if (fam === "mbc") {

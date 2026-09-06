@@ -667,7 +667,7 @@ describe("a bypassed effect", () => {
     h.plan.nodeParams.ch1!.insertFxOn = false;
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_DYN, "ch1");
-    expect(note()).toBe(t().dynTuning.insfx.bypassed);
+    expect(note()).toBe(t().dynTuning.bypassed);
     // The rows are live: the plan holds the values and the unit stores them whether or
     // not the effect is in the path.
     const slider = h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx:compander:6"]')!;
@@ -891,7 +891,7 @@ describe("what the note under the display says", () => {
     h.plan.nodeParams.ch1!.insertFxOn = false;
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_DYN, "ch1");
-    expect(note()).toBe(t().dynTuning.insfx.bypassed);
+    expect(note()).toBe(t().dynTuning.bypassed);
     screen.close();
   });
 

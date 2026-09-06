@@ -73,7 +73,14 @@ const ssmcsChannel = "ch1";
 /** The host, with one mono channel switched into the morphing bank. */
 function host(mode = COMP_EQ_SSMCS): DynHost {
   const created = dynHost({ plotSize: { w: 700, h: 320 } });
-  created.plan.nodeParams[ssmcsChannel] = { ...created.plan.nodeParams[ssmcsChannel], compEqType: mode };
+  // The bank's COMP block is switched ON. It ships off, and a face whose block is off says
+  // so on its note line instead of describing its figure — which is the subject of its own
+  // case below, and would stand in front of every other case's reading here.
+  created.plan.nodeParams[ssmcsChannel] = {
+    ...created.plan.nodeParams[ssmcsChannel],
+    compEqType: mode,
+    compOn: true,
+  };
   return created;
 }
 

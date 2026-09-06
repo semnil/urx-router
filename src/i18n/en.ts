@@ -633,6 +633,11 @@ export const en = {
     peakPrefix: tr("pk"),
     noReading: tr("—"),
     driven: tr("Device-driven"),
+    // Every screen's OFF line, one string rather than one per processor. What it has to
+    // say is the same wherever it appears — the values are the operator's and the unit
+    // keeps them, and none of them is in the signal — and the block it is said about is
+    // already named by the title above it.
+    bypassed: tr("Bypassed — the values are kept and edited here, but nothing they are set to reaches the signal."),
     gate: {
       title: dev("Gate"),
       open: tr("Gate screen"),
@@ -708,7 +713,6 @@ export const en = {
       // the effect it is; these name the tap itself, as the meter-point selector does.
       tapIn: dev("Input"),
       tapOut: dev("Pre Fader"),
-      bypassed: tr("Bypassed — the values are kept and edited here, but nothing they are set to reaches the signal."),
       // While tempo Sync is on the unit computes the delay time from the BPM and the note
       // value and announces the result, so the row reads it rather than setting it.
       syncedTag: tr("Synced"),
@@ -733,7 +737,6 @@ export const en = {
       // Speed and Depth on the Clean amp: the selector beside them decides whether they
       // reach anything.
       vibOnly: tr("Vib only"),
-      bypassed: tr("Bypassed — the values are kept and edited here, but nothing they are set to reaches the signal."),
       // The companders' plot, and theirs alone: the amps and Pitch Fix carry no curve.
       // Named for what the shape IS, because this block does three things at once and a
       // reader who only sees the compressor half misreads the fall at the bottom as a

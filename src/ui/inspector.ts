@@ -1243,9 +1243,9 @@ function mergeFxEffect(actions: InspectorActions, plan: Plan, nodeId: string, pa
   );
 }
 
-// FX-channel EFFECT section: the EFFECT TYPE selector, the effect ON / Mix, then
-// the type-specific parameter controls (raw sliders with a display formatter,
-// toggles, selects) from the fx-effect descriptors. fxIndex = 0 (FX1) / 1 (FX2).
+// FX-channel EFFECT section: the EFFECT TYPE selector, the effect ON toggle and the
+// launcher. Mix and the type's own parameters are the tuning screen's, so nothing here
+// reads a value that screen can move. fxIndex = 0 (FX1) / 1 (FX2).
 function fxEffectSection(
   nodeId: string,
   fxIndex: number,

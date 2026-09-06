@@ -55,7 +55,7 @@ import {
   SSMCS_SC_SCOPE,
 } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
-import { SSMCS_INITIAL } from "../core/plan";
+import { processorOn, SSMCS_INITIAL } from "../core/plan";
 import type { NodeParams, SsmcsBand, SsmcsParams } from "../core/plan";
 import { onOff, settingsChoice, settingsRow } from "./dom";
 import { bindChannelStrip, enumRow } from "./dyn-chan";
@@ -344,6 +344,20 @@ const bandMarksOf = (
 
 // ---------------------------------------------------------------- shared descriptor parts
 
+/**
+ * Why nothing this bank sets reaches the signal, or null when something does.
+ *
+ * Two switches, and a face has to answer for both: the strip's own master takes every
+ * face out at once, and the COMP and EQ blocks each carry a switch of their own — the
+ * ones the unit's SSMCS COMP and EQ screens have at their top left. MAIN answers for the
+ * master alone, since Morphing and Comp Drive feed both blocks and neither block's switch
+ * makes those values inert on their own.
+ */
+const ssmcsOffNote = (ctx: DynCtx, block?: "compOn" | "eqOn"): string | null => {
+  const master = ssmcsOf(ctx).on ?? SSMCS_INITIAL.on;
+  return !master || (block && !processorOn(ctx.plan.nodeParams[ctx.nodeId], block)) ? ctx.m.dynTuning.bypassed : null;
+};
+
 /** One title for all three faces. Naming each face instead would print `[CH 1] Comp` and
  *  `[CH 1] EQ` — the shipped COMP and EQ screens' titles exactly, with nothing left to
  *  say which of the channel's two banks is on screen. */
@@ -457,6 +471,7 @@ export const SSMCS_DYN: DynPlotProcessor = {
 
   bar: BANK_BAR,
   hint: (ctx) => ctx.m.dynTuning.ssmcs.mainHint,
+  offNote: (ctx) => ssmcsOffNote(ctx),
   read: (ctx) => {
     const v = stripOf(ctx);
     return { sweetSpotData: v.sweetSpotData, compDrive: v.compDrive, morphing: v.morphing, outGain: v.outGain };
@@ -660,6 +675,7 @@ export const SSMCS_COMP_DYN: DynPlotProcessor = {
     outOffsetDb: outLiftDb,
     on: (ctx) => ctx.sel !== SC_SEL,
   }),
+  offNote: (ctx) => ssmcsOffNote(ctx, "compOn"),
 
   read: (ctx) => {
     const v = stripOf(ctx);
@@ -750,6 +766,8 @@ export const SSMCS_EQ_DYN: DynPlotProcessor = {
       ],
     };
   },
+
+  offNote: (ctx) => ssmcsOffNote(ctx, "eqOn"),
 
   bar: BANK_BAR,
   // No band bar: the markers ON the plot are the band control, as on the shipped EQ screen.

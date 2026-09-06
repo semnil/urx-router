@@ -513,6 +513,7 @@ export const ja: Messages = {
     peakPrefix: "pk",
     noReading: "—",
     driven: "本体が制御中",
+    bypassed: "バイパス中 — 値はここで保持・編集できますが、設定した内容は信号に届きません。",
     gate: {
       title: "Gate",
       open: "Gate 画面",
@@ -564,7 +565,6 @@ export const ja: Messages = {
       open: "FX Effect 画面",
       tapIn: "Input",
       tapOut: "Pre Fader",
-      bypassed: "バイパス中 — 値はここで保持・編集できますが、設定した内容は信号に届きません。",
       syncedTag: "同期中",
       syncOffTag: "Sync オフ",
     },
@@ -577,7 +577,6 @@ export const ja: Messages = {
       tapGr: "Ins FX GR",
       faceMain: "Main",
       vibOnly: "Vib のみ",
-      bypassed: "バイパス中 — 値はここで保持・編集できますが、設定した内容は信号に届きません。",
       curveHint:
         "ウィンドウより下ではさらに押し下げ、スレッショルドより上では抑え、0 dB を超えると頭打ちになります。ドットは実測レベルです。",
       mbcMainHint:
