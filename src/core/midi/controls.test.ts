@@ -435,19 +435,23 @@ describe("channel tuning screen parameters", () => {
     const p = defaultPlan(id);
     ensureFixedConnections(m, p);
     const outside: string[] = [];
-    let swept = 0;
+    const unwritten: string[] = [];
+    const swept = new Map<string, number>();
     const sweep = (nodeId: string, scope: string, fields: readonly DynField[]): void => {
       for (const f of fields) {
         const c = bindControl(m, p, controlId(nodeId, f.key as ControlParam, scope));
         if (!c || c.kind !== "continuous") continue;
         for (const v of [0, 0.5, 1]) {
-          c.set(v);
-          swept++;
+          // A refused write is not an out-of-range one: `subDyn` answers false rather than
+          // writing while a control is locked, and the value it left behind is whatever the
+          // plan already held. Counted separately, or a locked control with no seeded value
+          // reports as a range failure and names the wrong defect.
+          if (!c.set(v)) continue;
+          swept.set(scope, (swept.get(scope) ?? 0) + 1);
           const sub = (p.nodeParams[nodeId] ?? {}) as Record<string, Record<string, number> | undefined>;
           const held = sub[scope]?.[f.key];
-          if (held === undefined || held < f.min || held > f.max) {
-            outside.push(`${c.id} @${v} = ${held} (${f.min}..${f.max})`);
-          }
+          if (held === undefined) unwritten.push(`${c.id} @${v}`);
+          else if (held < f.min || held > f.max) outside.push(`${c.id} @${v} = ${held} (${f.min}..${f.max})`);
         }
       }
     };
@@ -458,8 +462,14 @@ describe("channel tuning screen parameters", () => {
       sweep(n.id, GATE_SCOPE, dyn.gate);
       if (dyn.comp) sweep(n.id, COMP_SCOPE, dyn.comp);
     }
-    // The positive control: an empty offender list says nothing unless something was read.
-    expect(swept, "no gate / comp / ducker control was swept").toBeGreaterThan(20);
+    // The positive control, per TABLE: an empty offender list says nothing unless every one
+    // of the three was read, and a floor over the total is satisfied by the other two —
+    // dropping the ducker branch left 60 swept and the case green.
+    for (const scope of [GATE_SCOPE, COMP_SCOPE, DUCKER_SCOPE]) {
+      expect(swept.get(scope) ?? 0, `${scope} contributed no control to the sweep`).toBeGreaterThan(0);
+    }
+    // A write this accepted and did not land is its own defect, and reads as one.
+    expect(unwritten).toEqual([]);
     expect(outside).toEqual([]);
   });
 

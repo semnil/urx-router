@@ -268,9 +268,10 @@ function linearCodec(min: number, max: number, step: number): { get(x: number): 
       // arithmetic yields 2.9000000000000004) — the same snap wireKnob applies.
       const raw = Number((min + Math.round((clamp01(v) * span) / step) * step).toFixed(4));
       // …and the bound, which the step grid does not give: a span that is not a whole
-      // number of steps puts the top position PAST the field's own maximum, and the
-      // slider stops there, so a full-scale message and a dragged slider would hold
-      // different values. The same bound `wireGridCodec` applies.
+      // number of steps puts the top position PAST the field's own maximum, and nothing
+      // on the load path brings it back — plan-validate reads the FX channel's windows and
+      // no others — so the document would keep a value outside the range its own field
+      // declares. The same bound `wireGridCodec` applies.
       return Math.min(max, Math.max(min, raw));
     },
   };
