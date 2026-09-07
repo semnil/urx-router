@@ -37,9 +37,9 @@ no hint of which picture it selects, so supporting it means calibrating the whol
 glyph set against the unit's screen first. The name and the color are supported because their values are
 self-describing.
 
-## While the Multi-Band Compressor's 1-Knob is on, only Out Gain stays yours
+## While the Multi-Band Compressor's 1-knob is on, only Out Gain stays yours
 
-The unit's multi-band compressor has a **1-Knob** — an On switch and a Level — that sets
+The unit's multi-band compressor has a **1-knob** — an On switch and a Level — that sets
 the whole effect from one number. Both are offered and both are written, like the 1-knobs
 on the COMP and EQ screens.
 

@@ -56,9 +56,9 @@ import type { NodeParams, Plan } from "../core/plan";
 import type { DeviceModel } from "../models/types";
 import { el, onOff, onOffButton, settingsRow, settingsSection, sliderRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { enumRow, rowBreak } from "./dyn-chan";
+import { enumRow, levelLane, rowBreak } from "./dyn-chan";
 import { curveMarks, drawTransferCurve, transferPlot } from "./dyn-plot";
-import { splitDisplay } from "./dyn-screen";
+import { PLOT_FONT_TAG, splitDisplay } from "./dyn-screen";
 import type { DynPlotGeo } from "./dyn-screen";
 import { GAIN_TICKS, drawFreqAxes, freqGeo } from "./dyn-freq-plot";
 import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ } from "../core/control/vd";
@@ -285,7 +285,7 @@ function offNote(ctx: DynCtx): string | null {
       ? ctx.m.inspector.insFxRateLocked
       : ctx.m.inspector.insFxRateLockedAt(entry.option.label, formatRate(entry.option.maxRate));
   }
-  return np?.insertFxOn === false ? ctx.m.dynTuning.insfx.bypassed : null;
+  return np?.insertFxOn === false ? ctx.m.dynTuning.bypassed : null;
 }
 
 /** True where this family's response is DEFINED by its parameters, and so can be drawn
@@ -335,19 +335,24 @@ const qualifyBand = (bandFace: boolean, d: InsertFxParamDesc): boolean => !bandF
 function mbcResponses(v: DynValues): {
   band: "low" | "mid" | "high";
   gainDb: number;
+  /** Where the band's own corner sits, or null while it is bypassed and there is none. */
+  thresholdDb: number | null;
   out: (inDb: number) => number;
 }[] {
   return MBC_BANDS.map((b) => {
     // A bypassed band is a straight line: the unit passes it through with neither the
     // compression nor the make-up. Measured — with the other two silenced so the post meter
     // read this band alone, a bypassed band sat ON its unity level and 92 dB above silence.
-    if (mbcRaw(v, b.bypass)) return { band: b.band, gainDb: 0, out: (inDb: number): number => inDb };
+    if (mbcRaw(v, b.bypass)) {
+      return { band: b.band, gainDb: 0, thresholdDb: null, out: (inDb: number): number => inDb };
+    }
     const c = mbcBandCurve({ threshold: mbcRaw(v, b.threshold), ratio: mbcRaw(v, b.ratio), gain: mbcRaw(v, b.gain) });
     const silent = c.gainDb === -Infinity;
     return {
       band: b.band,
       // What the annotation over the curve takes off before it calls the rest a reduction.
       gainDb: silent ? 0 : c.gainDb,
+      thresholdDb: c.thresholdDb,
       out: (inDb: number): number =>
         silent
           ? CURVE_LO_DB - 40
@@ -542,16 +547,7 @@ function lanesOf(ctx: DynCtx, isOutput: boolean): DynLane[] {
   const inTap = tapFor(ctx.nodeId, "preinsfx", ctx.model.id) ?? null;
   const outTap = tapFor(ctx.nodeId, isOutput ? "post" : "prefader", ctx.model.id) ?? null;
   const fam = familyOf(ctx);
-  const lanes: DynLane[] = [
-    { key: "in", label: g.insfx.tapIn, caption: g.laneIn, kind: "level", tap: inTap },
-    {
-      key: "out",
-      label: isOutput ? g.insfx.tapOutBus : g.insfx.tapOut,
-      caption: g.laneOut,
-      kind: "level",
-      tap: outTap,
-    },
-  ];
+  const lanes: DynLane[] = [levelLane("in", inTap, g.laneIn), levelLane("out", outTap, g.laneOut)];
   // The multi-band compressor is metered per BAND, and a band face carries the one that
   // belongs to it. MAIN carries none: it sets the crossovers and the levels the bands are
   // mixed back at, and three reductions beside those say which band is working without
@@ -614,22 +610,6 @@ function insFxFace(): DynProcessor {
     // that has one: its axis is frequency, and a level plotted against frequency is a
     // reading of nothing.
     on: (ctx) => hasCurve(familyOf(ctx)) && !isMbcMain(ctx),
-    // The reduction as a NUMBER, beside the curve it is happening on. The bar overlay
-    // and its tile in the METER column are the same value read two other ways; what the
-    // plot was missing is the one that belongs to the response — the annotation hanging
-    // off the top is the curve's own arithmetic at full scale, which does not move with
-    // the signal. Nothing is drawn without a reading: a parked figure would say the
-    // effect is passing everything, which is a different state from not being metered.
-    liveExtra: (c, g, read, tok) => {
-      const gr = read("gr");
-      if (gr === null || gr >= 0) return;
-      c.save();
-      c.fillStyle = tok["--gr"];
-      c.textAlign = "right";
-      c.font = "700 11px var(--mono), monospace";
-      c.fillText(`GR ${gr.toFixed(1)} dB`, g.w - g.pad.r - 4, g.pad.t + 12);
-      c.restore();
-    },
   });
   return {
     key: "insfx",
@@ -674,9 +654,10 @@ function insFxFace(): DynProcessor {
           // into the device's own reading, supplied through `fieldText`.
           unit: "raw",
         }));
+      const lanes = lanesOf(ctx, ifx.isOutput);
       return {
         fields,
-        lanes: lanesOf(ctx, ifx.isOutput),
+        lanes,
         // A guitar amp's panel is a dozen controls and its display is a level rack with
         // nothing else in it, so the two columns swap. The companders keep the ordinary
         // order: their display is the point of the screen. The reserve rides with it: both
@@ -692,14 +673,17 @@ function insFxFace(): DynProcessor {
         // the controls beside it — the Key, the Scale and the twelve notes, drawn twice on
         // one face — and there was no lane rack on that face at all.
         ...(isPanelFirst(fam) ? { paramsFirst: true as const } : {}),
-        ...(isKnobGrid(fam) ? { knobGrid: true as const } : {}),
         // The multi-band compressor takes the amp's knobs — its values are the same kind of
-        // thing — but THREE to a row rather than six, and with the display column still
-        // first, because its display is a plot rather than a rack alone. Three is what
-        // makes the four faces the same height: MAIN is six cards and a band face four, so
-        // both are two rows, and the segment that moves between them does not resize the
-        // modal under the pointer.
-        ...(fam === "mbc" ? { knobCols: 3 } : {}),
+        // thing — but THREE to a row rather than the amps' seven, and with the display
+        // column still first, because its display is a plot rather than a rack alone. Three
+        // is what makes the four faces the same height: MAIN is six cards and a band face
+        // four, so both are two rows, and the segment that moves between them does not
+        // resize the modal under the pointer.
+        //
+        // Only the multi-band compressor states a count. The amps and Pitch Fix take the
+        // stylesheet's, which is where that number lives — restating it here would be the
+        // second copy `.gt-knobs` in style.css records having drifted once already.
+        ...(isKnobGrid(fam) ? { knobGrid: true as const, ...(fam === "mbc" ? { knobCols: 3 } : {}) } : {}),
       };
     },
 
@@ -817,7 +801,7 @@ function insFxFace(): DynProcessor {
       // measured: the word wraps inside a card and the panel grew 414px, which is the
       // resize under the pointer that "no row is ever removed" exists to stop.
       if (fam === "mbc") {
-        // The 1-Knob's own Level is locked too while the knob is off, and it is not a row
+        // The 1-knob's own Level is locked too while the knob is off, and it is not a row
         // of this panel — `mbcOneKnobSection` draws it, and asks the same predicate.
         const locked = insertFxLockedSlots(fam, params);
         return statesFor(
@@ -895,7 +879,7 @@ function insFxFace(): DynProcessor {
         // FIELDS it lays out and to nothing else, so a row built here has to ask for it —
         // and a row that does not is drawn live while the writer refuses to emit it, which
         // parts the plan from the unit with nothing on screen to say so. The multi-band
-        // compressor's band Bypass is the case: the 1-Knob owns it, `translate` stops
+        // compressor's band Bypass is the case: the 1-knob owns it, `translate` stops
         // sending it, and the MIDI surface refuses the same slot.
         const state = ctx.states.get(key) ?? {};
         pending.push(
@@ -921,8 +905,18 @@ function insFxFace(): DynProcessor {
       return { before, tail };
     },
 
-    // The multi-band compressor's 1-Knob, above the panel it governs — a stage of its own,
-    // the way the EQ's is, rather than two more cards in a grid of four-per-band rows.
+    // Which band the rows below belong to, on the Parameters heading — the same pill both
+    // EQ screens carry. The bar above names the face as well, and that is not the same
+    // thing: the bar says which face is selected, the pill says what the panel under it
+    // describes, and a reader looking at a row is looking at the pill.
+    paramsTag: (ctx) => {
+      const band = isMbcBandFace(ctx) ? MBC_FACES[ctx.sel - 1] : undefined;
+      return band ? { text: bandName(band, ctx.m), shown: true } : undefined;
+    },
+
+    // The multi-band compressor's 1-knob, above the panel it governs — a stage of its own,
+    // the way the EQ's and the shipped compressor's are, rather than two more cards in a
+    // grid of four-per-band rows.
     sections: (ctx) => (familyOf(ctx) === "mbc" ? [mbcOneKnobSection(ctx)] : []),
 
     // The companders' response IS defined by their parameters, so they take the plot the
@@ -941,17 +935,13 @@ function insFxFace(): DynProcessor {
     // AFTER the spread: `transferPlot` supplies a display of its own, and this screen's is
     // the one that decides whether there is a plot in the column at all.
     display: (parts, ctx) => (hasCurve(familyOf(ctx)) ? splitDisplay(parts) : parts.lanes()),
-    // …and the note under it. Saying that nothing reaches the signal outranks describing
-    // what the curve would do to it, so the curve's own line takes the space only when
-    // there is nothing else to say — the arrangement the compressor screens have, where
-    // that line is the only one there is. Null keeps the line's space either way.
-    // Per family: the compander explains its curve, and Pitch Fix explains that its display
-    // is the correction's TARGET rather than a reading of the signal — which is what every
-    // other screen's display column carries, so without a line the twelve notes read as
-    // something the unit is tracking. A guitar face has a lane rack and nothing to explain.
+    // Why nothing here reaches the signal. The host prints it instead of the line below,
+    // which is the precedence every screen takes now rather than one this file applies.
+    offNote,
+    // …and the note under the display, per family: the compander explains its curve, and
+    // the multi-band compressor names what its figure is. A guitar face has a lane rack and
+    // nothing to explain. Null keeps the line's space either way.
     hint: (ctx) => {
-      const off = offNote(ctx);
-      if (off) return off;
       const fam = familyOf(ctx);
       const g = ctx.m.dynTuning.insfx;
       if (fam === "mbc") {
@@ -982,7 +972,14 @@ function insFxFace(): DynProcessor {
         if (isMbcMain(ctx)) return drawMbcBands(c, g, v, tok, ctx);
         const band = MBC_FACES[ctx.sel - 1];
         const r = mbcResponses(v).find((x) => x.band === band);
-        if (r) drawTransferCurve(c, g, tok, { out: r.out, gainDb: r.gainDb, loDb: CURVE_LO_DB });
+        if (r) {
+          drawTransferCurve(c, g, tok, {
+            out: r.out,
+            gainDb: r.gainDb,
+            loDb: CURVE_LO_DB,
+            markAt: r.thresholdDb,
+          });
+        }
         return;
       }
       const selector = effectiveInsertFx(ctx.model, ctx.plan, ctx.nodeId);
@@ -1007,7 +1004,7 @@ function insFxFace(): DynProcessor {
       // no row on the screen carries — the family is one and the selector decides it.
       c.fillStyle = tok["--plot-dim"];
       c.textAlign = "left";
-      c.font = "600 9px var(--mono), monospace";
+      c.font = PLOT_FONT_TAG;
       c.fillText(
         `EXPANDER ${selector === COMPANDER_H ? EXPANDER_RATIO.h : EXPANDER_RATIO.s}:1`,
         g.pad.l + 4,
@@ -1079,7 +1076,7 @@ function drawMbcBands(
   c.strokeStyle = tok["--plot-dim"];
   c.lineWidth = 1;
   c.fillStyle = tok["--plot-dim"];
-  c.font = "600 9px var(--mono), monospace";
+  c.font = PLOT_FONT_TAG;
   c.textAlign = "center";
   for (const [i, x] of cuts.entries()) {
     c.beginPath();
@@ -1177,7 +1174,7 @@ function pitchNotesRow(ctx: DynRowCtx, owned: SettingsRowOptions | undefined): H
 }
 
 /**
- * The multi-band compressor's 1-Knob.
+ * The multi-band compressor's 1-knob.
  *
  * A stage above the panel rather than cards in it: it decides whose the values below are,
  * which is where the EQ's own 1-knob section sits for the same reason — and the grid under
@@ -1199,7 +1196,7 @@ function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
   // changes what the rest of the panel is (locks, the note under the display), and it is
   // one press rather than a gesture that has to survive.
   const setValue = (slot: number, v: number): void => ctx.setValue({ [slotKey("mbc", slot)]: v });
-  const sec = settingsSection(t.oneKnob);
+  const sec = settingsSection(ctx.m.inspector.oneKnob);
   sec.append(
     ctx.midi(
       settingsRow(

@@ -847,7 +847,7 @@ function descBounds(d: InsertFxParamDesc): { rawMin: number; rawMax: number } {
  * Slots the app READS from the unit but never writes.
  *
  * There are none. Both rows that used to be here — Pitch Fix's MIDI Control and the
- * multi-band compressor's 1-Knob — are settings the operator changes on purpose, and what
+ * multi-band compressor's 1-knob — are settings the operator changes on purpose, and what
  * each does to its neighbours is what the unit does when they change it on the front panel
  * too. Refusing the write there was the app second-guessing a gesture, and it made these
  * two the odd ones out among 1-knob-shaped controls: the COMP and EQ knobs are written and
@@ -1026,7 +1026,7 @@ export function insertFxInactiveSlots(
  * gives the slots back.
  *
  * Two rules, and each is a rule about what the UNIT is doing rather than about the panel:
- * the multi-band compressor's 1-Knob owns the values it recomputes and its Level owns
+ * the multi-band compressor's 1-knob owns the values it recomputes and its Level owns
  * nothing while the knob is off, and Pitch Fix's MIDI Control owns the scale and the mask.
  *
  * Clean's modulation is NOT one of them. Speed and Depth are heard on the vibrato alone,
@@ -1097,7 +1097,7 @@ function isBareInsertFxSlot(key: string): boolean {
  * The map is one namespace per family on purpose — a node that has held three effects
  * carries all three, so switching back finds the values the operator left. A read answers
  * for ONE of them, and replacing the whole map with its answer is what deletes the other
- * two: with live sync up, a 1-Knob write is enough to trigger it, and the loss shows only
+ * two: with live sync up, a 1-knob write is enough to trigger it, and the loss shows only
  * when the operator selects the old effect again and finds it at the factory.
  *
  * Three things have to happen at once, which is why this is one function rather than a

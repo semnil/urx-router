@@ -33,7 +33,7 @@ import type { DynField, FxFieldKey } from "../core/control/translate";
 import { tapFor } from "../core/meters";
 import type { FxEffectParams, NodeParams } from "../core/plan";
 import type { DynBinding, DynCtx, DynLane, DynProcessor } from "./dyn-screen";
-import { enumRow, rowBreak } from "./dyn-chan";
+import { enumRow, levelLane, rowBreak } from "./dyn-chan";
 import { onOffButton, settingsRow } from "./dom";
 import type { Messages } from "../i18n/en";
 
@@ -199,20 +199,8 @@ const rawOf = (ctx: DynCtx, d: FxParamDesc): number => fxOf(ctx).params?.[d.key]
 function lanesOf(ctx: DynCtx): DynLane[] {
   const g = ctx.m.dynTuning;
   return [
-    {
-      key: "in",
-      label: g.fx.tapIn,
-      caption: g.laneIn,
-      kind: "level",
-      tap: tapFor(ctx.nodeId, "input", ctx.model.id) ?? null,
-    },
-    {
-      key: "out",
-      label: g.fx.tapOut,
-      caption: g.laneOut,
-      kind: "level",
-      tap: tapFor(ctx.nodeId, "prefader", ctx.model.id) ?? null,
-    },
+    levelLane("in", tapFor(ctx.nodeId, "input", ctx.model.id) ?? null, g.laneIn),
+    levelLane("out", tapFor(ctx.nodeId, "prefader", ctx.model.id) ?? null, g.laneOut),
   ];
 }
 
@@ -231,7 +219,7 @@ function lanesOf(ctx: DynCtx): DynLane[] {
  */
 function offNote(ctx: DynCtx): string | null {
   if (nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate)) return ctx.m.inspector.fx2RateLocked;
-  return fxOf(ctx).on === false ? ctx.m.dynTuning.fx.bypassed : null;
+  return fxOf(ctx).on === false ? ctx.m.dynTuning.bypassed : null;
 }
 
 /** The rows the unit owns, tagged with which of the two things it is doing. Both stay on
@@ -496,10 +484,9 @@ function fxFace(): DynProcessor {
     // position the guitar amp and Pitch Fix take.
     display: (parts) => parts.lanes(),
 
-    // The line under the display. It carries why nothing is reaching the signal when that
-    // is the case, and prints nothing otherwise — there is no figure here to explain, and
-    // the reserve keeps the rack in the same place either way.
-    hint: (ctx) => offNote(ctx),
+    // Why nothing here reaches the signal. No `hint` beside it: there is no figure on this
+    // screen to explain, and the reserve keeps the rack in the same place either way.
+    offNote,
   };
 }
 

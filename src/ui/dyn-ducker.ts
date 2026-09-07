@@ -19,7 +19,9 @@ import { duckerKeyDb, grAddr, tapFor, tapsFor } from "../core/meters";
 import { incomingConnection } from "../core/plan";
 import type { NodeParams } from "../core/plan";
 import { parseRef, ref } from "../models/types";
-import { channelLabel, PLOT_FONT, splitDisplay } from "./dyn-screen";
+import { CURVE_PAD, drawAxisNames } from "./dyn-plot";
+import { channelLabel, flagOffNote, PLOT_FONT, splitDisplay } from "./dyn-screen";
+import { levelLane } from "./dyn-chan";
 import type { DynCtx, DynLane, DynPlotProcessor } from "./dyn-screen";
 
 /** Lane ruler floor: the threshold's own domain, and no more. A ducker triggers on
@@ -38,7 +40,9 @@ const LO_DB = -60;
 const T_MIN_MS = DYN_ATTACK_MIN_MS;
 const T_MAX_MS = DUCKER_DECAY_MAX_MS;
 const T_TICKS = [0.1, 1, 10, 100, 1000, 5000];
-const ENV_PAD = { l: 44, r: 14, t: 14, b: 28 };
+/** The envelope sits in the same frame as the transfer curves — same gutters, so the
+ *  plot's edges do not move when the operator goes from one screen to the next. */
+const ENV_PAD = CURVE_PAD;
 
 /** The meter tap each Rec Point setting names, in the tap vocabulary of `meters.ts`.
  *  A stereo strip carries no discrete PRE EQ tap because its EQ is the first thing in
@@ -132,24 +136,11 @@ export const DUCKER_DYN: DynPlotProcessor = {
       readoutCols: 2,
       lanes: [
         key,
-        {
-          key: "in",
-          label: text.tapIn,
-          caption: ctx.m.dynTuning.laneIn,
-          kind: "level",
-          tap: tapFor(host, "preducker", ctx.model.id) ?? null,
-        },
-        // In the PRE DUCKER lane's slot, not a column of its own. The reduction is
-        // applied to THAT signal — the key only decides when — so the level going in
-        // and the amount taken off it belong in one column, on one ruler. It keeps its
-        // own readout tile.
-        {
-          key: "out",
-          label: text.tapOut,
-          caption: ctx.m.dynTuning.laneOut,
-          kind: "level",
-          tap: tapFor(host, "post", ctx.model.id) ?? null,
-        },
+        levelLane("in", tapFor(host, "preducker", ctx.model.id) ?? null, ctx.m.dynTuning.laneIn),
+        levelLane("out", tapFor(host, "post", ctx.model.id) ?? null, ctx.m.dynTuning.laneOut),
+        // In the OUTPUT column's slot, not one of its own — where every reduction on every
+        // screen is drawn. `sameSlot` merges into the column built before it, which is why
+        // this entry follows the output lane rather than the key one.
         { key: "gr", label: text.tapGr, kind: "gr", gr: grAddr("ducker", ctx.nodeId), sameSlot: true },
       ],
     };
@@ -165,6 +156,7 @@ export const DUCKER_DYN: DynPlotProcessor = {
   // change, and that the KEY lane is a FOLD of two sides. Everything else on screen
   // says what it is — the reduction is a labelled block on a labelled meter.
   hint: (ctx) => ctx.m.dynTuning.ducker.hint,
+  offNote: (ctx) => flagOffNote(ctx, "duckerOn"),
   read: cur,
   patch: (ctx, patch) => ({ ducker: { ...cur(ctx), ...patch } }) as NodeParams,
   // No `controlId`. The MIDI catalog carries a ducker's `duckerOn` and nothing else,
@@ -211,9 +203,10 @@ export const DUCKER_DYN: DynPlotProcessor = {
     // Axis names are literals, like every other plot here ("IN dBFS", "Hz"): canvas
     // text is outside the display inventory's reach, so a message put here could
     // never be shown in the sense that guard means.
-    c.fillStyle = tok["--plot-dim"];
-    c.textAlign = "left";
-    c.fillText("dB", g.pad.l + 2, g.pad.t - 3);
+    //
+    // No name across the foot: the ticks there carry their own units, since the axis spans
+    // milliseconds and seconds and no one word states what its numbers are.
+    drawAxisNames(c, g, tok, { y: "dB" });
   },
 
   // Attack down to the range floor, then release back to unity. Straight ramps: the

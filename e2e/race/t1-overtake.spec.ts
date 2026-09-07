@@ -43,7 +43,7 @@ import { chooseOption } from "../choose-option";
 // HPF frequency (26) at the same input index: a scoped (non-direct) param on ch1, so a
 // notify on it routes to a readback of the whole node rather than a direct apply.
 
-/** The EQ tuning screen's 1-Knob ON button, located from the level slider's id (the
+/** The EQ tuning screen's 1-knob ON button, located from the level slider's id (the
  *  only stable anchor in that section) rather than by its localized label. */
 const oneKnobOn = (page: Page) =>
   page
@@ -178,7 +178,7 @@ test.describe("T1 overtake", () => {
     const findings = analyze(trace, {
       edits: [{ label: "CH 1 fader during refetch", addr: CH1_FADER, at: editAt }],
       registration: await paramAddrsOf(page),
-      // 1-Knob ON SHRINKS the emitted set (the 18 PEQ band addresses leave it), so the
+      // 1-knob ON SHRINKS the emitted set (the 18 PEQ band addresses leave it), so the
       // registration is a superset here and clause B — which reports growth only —
       // stays silent. The shrink direction is clause C's and invariant 12's.
       snapshot: await snapshotOf(page),

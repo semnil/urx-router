@@ -1393,7 +1393,7 @@ describe("the live session", () => {
     const shell = await bootDevice();
     await heldByExcursion(shell);
 
-    // The EQ 1-Knob is a `sideEffect: "refetch"` write: its flush reads the owner node
+    // The EQ 1-knob is a `sideEffect: "refetch"` write: its flush reads the owner node
     // back through the same follow-read path, which is the second read this case needs.
     selectNode("ch1");
     $("inspector").querySelector<HTMLButtonElement>("#btn-eq-screen")!.click();

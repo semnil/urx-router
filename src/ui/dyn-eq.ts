@@ -48,10 +48,10 @@ import { tapFor } from "../core/meters";
 import type { EqBand, NodeParams } from "../core/plan";
 import { el, onOff, settingsRow, settingsSection } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { enumRow } from "./dyn-chan";
+import { enumRow, levelLane } from "./dyn-chan";
 import { bandMarkers, drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo, pickBandMarker } from "./dyn-freq-plot";
 import type { BandMarker } from "./dyn-freq-plot";
-import { oneKnobLevelRow, splitDisplay } from "./dyn-screen";
+import { flagOffNote, oneKnobLevelRow, splitDisplay } from "./dyn-screen";
 import type { DynCtx, DynLane, DynPlotGeo, DynPlotProcessor } from "./dyn-screen";
 
 /** Level-lane ruler. The stages either side of an EQ are programme level, so the ruler
@@ -110,17 +110,15 @@ export const EQ_DYN: DynPlotProcessor = {
     // inapplicable ones lock and say why, which is the treatment the 1-knob's own rows
     // already get while 1-knob is off.
     const fields = eqBandFields(ctx.sel);
-    const lane = (key: string, tapKey: string, caption: string): DynLane => {
-      const tap = tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null;
-      // No label rather than the internal key if a tap fails to resolve: the lane then
-      // has no meter, and "preeq" is not a caption.
-      return { key, label: tap?.label ?? "", caption, kind: "level", tap };
-    };
+    const lane = (key: string, tapKey: string, caption: string): DynLane =>
+      levelLane(key, tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null, caption);
     return {
       fields,
       lanes: [lane("in", keys.in, ctx.m.dynTuning.laneIn), lane("out", keys.out, ctx.m.dynTuning.laneOut)],
     };
   },
+
+  offNote: (ctx) => flagOffNote(ctx, "eqOn"),
 
   // No bar: the band markers ON the plot are the band control. One marker is one band and a
   // press on it is unambiguous, which is what a bar of four buttons was doing from a
@@ -237,7 +235,7 @@ export const EQ_DYN: DynPlotProcessor = {
   sections: ({ m, vals, states, set, setValue, midi }) => {
     const on = vals.oneKnobOn === true;
     const rateLocked = states.has("oneKnobOn");
-    const sec = settingsSection(m.inspector.eqOneKnob);
+    const sec = settingsSection(m.inspector.oneKnob);
     sec.append(
       midi(
         settingsRow(
@@ -265,7 +263,7 @@ export const EQ_DYN: DynPlotProcessor = {
     sec.append(
       midi(
         oneKnobLevelRow({
-          label: m.inspector.eqOneKnobLevel,
+          label: m.inspector.oneKnobLevel,
           value: vals.oneKnobLevel,
           onInput: (v) => setValue({ oneKnobLevel: v }),
           row: off ? { ...states.get("oneKnobLevel"), locked: true } : {},

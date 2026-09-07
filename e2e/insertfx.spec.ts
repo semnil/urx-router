@@ -370,10 +370,10 @@ test("multi-band comp splits into what the bands share and what each band is", a
   await closeScreen(page);
 });
 
-// 1-Knob is the unit's, and the app neither writes it nor writes over what it computed.
+// 1-knob is the unit's, and the app neither writes it nor writes over what it computed.
 // Both halves are here: the switch offers no gesture, and every value below it is locked
 // while it reads on. Seeded through a plan because there is no control to press.
-test("MBC 1-Knob is operable, and locks what its Level recomputes", async ({ page }) => {
+test("MBC 1-knob is operable, and locks what its Level recomputes", async ({ page }) => {
   const params: Record<string, number> = { "9": 100, "14": 100, "19": 100 };
   const plan = (oneKnob: boolean) => ({
     format: "urx-router-plan",
@@ -397,7 +397,7 @@ test("MBC 1-Knob is operable, and locks what its Level recomputes", async ({ pag
   const oneKnobRow = screenRow(page, "ON");
   await expect(oneKnobRow).not.toHaveClass(/\blocked\b/);
   await expect(oneKnobRow.locator("button").first()).toBeEnabled();
-  await expect(screenRow(page, "1-Knob Level")).toHaveClass(/\blocked\b/);
+  await expect(screenRow(page, "1-knob Level")).toHaveClass(/\blocked\b/);
   const outGain = screenRow(page, "Out Gain");
   await expect(outGain).not.toHaveClass(/\blocked\b/);
   await expect(outGain.locator("input")).toBeEnabled();
@@ -409,10 +409,10 @@ test("MBC 1-Knob is operable, and locks what its Level recomputes", async ({ pag
   await page.goto(`/?plan=${planParamZ(plan(true))}`);
   await node(page, "bus.mix1").click();
   await openScreen(page);
-  await expect(screenRow(page, "1-Knob Level")).not.toHaveClass(/\blocked\b/);
+  await expect(screenRow(page, "1-knob Level")).not.toHaveClass(/\blocked\b/);
   await expect(screenRow(page, "Out Gain").locator("input")).toBeEnabled();
   await expect(screenRow(page, "L-M Xover").locator("input")).toBeDisabled();
-  await expect(screenBox(page).getByText("1-Knob is on", { exact: false })).toBeVisible();
+  await expect(screenBox(page).getByText("1-knob is on", { exact: false })).toBeVisible();
   await page.click("#dyn-face-insfx-low");
   // …and the band face is the unit's entirely — every row of it, which is what "entirely"
   // has to be measured as. The Bypass is the one that is not a slider: the host applies the
@@ -433,7 +433,7 @@ test("MBC 1-Knob is operable, and locks what its Level recomputes", async ({ pag
 // moved one detent per press. The recipe for this row is in `oneKnobLevelRow`'s own doc, and
 // this row lost it by being written out longhand for a different scale rather than through
 // that helper.
-test("the MBC 1-Knob Level follows a drag rather than stepping once", async ({ page }) => {
+test("the MBC 1-knob Level follows a drag rather than stepping once", async ({ page }) => {
   const plan = {
     format: "urx-router-plan",
     version: 1,
@@ -444,7 +444,7 @@ test("the MBC 1-Knob Level follows a drag rather than stepping once", async ({ p
   await page.goto(`/?plan=${planParamZ(plan)}`);
   await node(page, "bus.mix1").click();
   await openScreen(page);
-  const level = screenRow(page, "1-Knob Level").locator("input[type=range]");
+  const level = screenRow(page, "1-knob Level").locator("input[type=range]");
   await expect(level).toBeEnabled();
   await expect(level).toHaveValue("4");
 

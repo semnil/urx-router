@@ -892,13 +892,13 @@ test.describe("T0b baseline sweeps", () => {
     };
 
     // Values first, then the enums, then the switches — and the two switches that
-    // take the parameters away entirely (a processor's own ON, and 1-Knob, which
+    // take the parameters away entirely (a processor's own ON, and 1-knob, which
     // hands its band's values to a single macro) last of all, driven by name at the
     // end of their processor's block. Driven in DOM order instead, the first gesture
     // of each screen would lock every gesture after it and the sweep would measure
     // the lock rather than the control.
     const ROW_ORDER: Record<string, number> = { range: 0, select: 1, toggle: 2 };
-    const LATE = new Set(["ON", "1-Knob"]);
+    const LATE = new Set(["ON", "1-knob"]);
     const SILENT_ROWS = new Set<string>();
     const rowGestures = (who: string, rows: Array<{ row: number; label: string; kind: string }>): Gesture[] =>
       [...rows]
@@ -966,7 +966,7 @@ test.describe("T0b baseline sweeps", () => {
       },
       ...lateGestures("COMP", compRows),
       {
-        label: "COMP · 1-Knob level (enabled by the toggle above)",
+        label: "COMP · 1-knob level (enabled by the toggle above)",
         run: () => keyOn(page.locator("#dyn-oneknob-level"), "ArrowRight"),
       },
       {
@@ -990,10 +990,10 @@ test.describe("T0b baseline sweeps", () => {
       { label: "EQ · marker → HIGHMID", run: () => page.keyboard.press("ArrowRight"), silent: true },
       { label: "EQ · marker → HIGH", run: () => page.keyboard.press("End"), silent: true },
       { label: "EQ · marker → LOW", run: () => page.keyboard.press("Home"), silent: true },
-      // The EQ's 1-Knob lives outside the parameter rows (its own section), so it is
+      // The EQ's 1-knob lives outside the parameter rows (its own section), so it is
       // named rather than enumerated.
       {
-        label: "EQ · 1-Knob ON",
+        label: "EQ · 1-knob ON",
         run: () =>
           page
             .locator("#dyn-screen-box .prefs-section", { has: page.locator("#dyn-oneknob-level") })
@@ -1002,16 +1002,16 @@ test.describe("T0b baseline sweeps", () => {
             .click(),
       },
       {
-        label: "EQ · 1-Knob level (enabled by the toggle above)",
+        label: "EQ · 1-knob level (enabled by the toggle above)",
         run: () => keyOn(page.locator("#dyn-oneknob-level"), "ArrowRight"),
       },
-      // …and with 1-Knob on the plot stops taking a press at all: the canvas is still
+      // …and with 1-knob on the plot stops taking a press at all: the canvas is still
       // drawn but it is no longer a pick plot, so it carries neither the class nor the
       // key listener. Dispatched onto the canvas rather than performed, so the gesture
       // measures the handler rather than Playwright's actionability check — a canvas that
       // is not in the tab order would simply time out on `focus`.
       {
-        label: "EQ · response under 1-Knob (inert)",
+        label: "EQ · response under 1-knob (inert)",
         run: () => dynBox(page).locator("#dyn-curve").dispatchEvent("keydown", { key: "ArrowRight", bubbles: true }),
         silent: true,
       },
@@ -1033,7 +1033,7 @@ test.describe("T0b baseline sweeps", () => {
     // of every input[data-fine-step] while Shift is held, so "did the fine grid
     // engage" is answerable as an attribute rather than as a value delta that a
     // coarse step could also produce. Run on CH 2, which the sweep never touched: on
-    // ch1 the sweep left 1-Knob on and the band rows locked, and a locked row is
+    // ch1 the sweep left 1-knob on and the band rows locked, and a locked row is
     // deliberately not armed — the measurement would read the lock, not the grid.
     await openScreen("eq", "ch2");
     await pickBand(page, 1); // a mid band is always Peaking, so its Gain is live

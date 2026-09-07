@@ -629,7 +629,7 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(fxParamsOf()?.delay).not.toBe(5000);
   });
 
-  it("refuses the slots the multi-band compressor's 1-Knob is driving, and takes them back", () => {
+  it("refuses the slots the multi-band compressor's 1-knob is driving, and takes them back", () => {
     const th = MBC_BANDS[0].threshold;
     const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${th}`);
     holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 1, [th]: 100 }, "mbc");
@@ -641,7 +641,7 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(slotVal("bus.stereo", "mbc", th)).not.toBe(100);
   });
 
-  it("refuses the 1-Knob's own Level while the knob is off", () => {
+  it("refuses the 1-knob's own Level while the knob is off", () => {
     const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${MBC_ONE_KNOB.level.slot}`);
     holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [MBC_ONE_KNOB.level.slot]: 4 }, "mbc");
     expect(push(cid, 0.5), "while the knob is off").toBe(false);

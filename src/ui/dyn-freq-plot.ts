@@ -9,6 +9,7 @@
 // curve, in both.
 
 import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ } from "../core/control/vd";
+import { drawAxisNames } from "./dyn-plot";
 import { PLOT_FONT } from "./dyn-screen";
 import type { DynPlotGeo } from "./dyn-screen";
 
@@ -95,14 +96,7 @@ export function drawFreqAxes(c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Re
   c.moveTo(x0 + g.pad.l, g.py(0) + 0.5);
   c.lineTo(x0 + g.w - g.pad.r, g.py(0) + 0.5);
   c.stroke();
-  c.fillStyle = tok["--plot-dim"];
-  c.textAlign = "left";
-  c.fillText("Hz", x0 + g.w - g.pad.r - 16, g.h - g.pad.b + 24);
-  c.save();
-  c.translate(x0 + 11, g.h - g.pad.b - 2);
-  c.rotate(-Math.PI / 2);
-  c.fillText("dB", 0, 0);
-  c.restore();
+  drawAxisNames(c, g, tok, { x: "Hz", y: "dB", x0 });
 }
 
 /** One band's marker: where it sits, what it is called, and the two states that are not

@@ -45,7 +45,7 @@ import { chooseOption } from "../choose-option";
  *  of this address is one whole-device reconcile. */
 const RATE_ADDR = "766:0:0";
 
-/** ch1 EQ 1-Knob LEVEL. It and its ON/TYPE siblings (46 / 47) are the catalog's only
+/** ch1 EQ 1-knob LEVEL. It and its ON/TYPE siblings (46 / 47) are the catalog's only
  *  sideEffect "refetch" parameters. */
 const CH1_ONE_KNOB_LEVEL = "48:0:0";
 /** ch1's LOW band gain — the band block starts 5 params after the EQ-ON anchor (44 →
@@ -84,7 +84,7 @@ const startsBetween = (trace: TraceEvent[], addr: string, from: number, to = Num
 const readsBetween = (trace: TraceEvent[], addr: string, from: number, to = Number.POSITIVE_INFINITY): number =>
   getsOf(trace).filter((g) => g.addr === addr && g.start > from && g.start < to).length;
 
-/** The EQ tuning screen's 1-Knob ON/OFF pair, located from the level slider's id (the
+/** The EQ tuning screen's 1-knob ON/OFF pair, located from the level slider's id (the
  *  only stable anchor in that section) rather than by its localized label. */
 const oneKnobFace = (page: Page, face: 0 | 1) =>
   page
@@ -141,7 +141,7 @@ test.describe("T2c shape-change", () => {
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   });
 
-  // shape-eq-oneknob-level-refetch-storm. The EQ 1-Knob LEVEL is the catalog's only
+  // shape-eq-oneknob-level-refetch-storm. The EQ 1-knob LEVEL is the catalog's only
   // DRAGGED control whose parameter is flagged sideEffect "refetch" (params.ts 46/47/48),
   // so one gesture drives the flush window and a whole-NODE readback against each other
   // for its whole length: every window that carries the level triggers refetchNodes,
@@ -152,7 +152,7 @@ test.describe("T2c shape-change", () => {
   // Laddered against a control on the same screen: the LOW band's Gain is a dragged
   // slider of the same shape with NO sideEffect, so everything the two arms do not
   // share is attributable to the flag rather than to dragging.
-  test("a 1-Knob level drag runs one readback per flush window and re-bases the history inside it", async ({
+  test("a 1-knob level drag runs one readback per flush window and re-bases the history inside it", async ({
     page,
   }) => {
     expect(await hasProbe(page)).toBe(true);
@@ -213,8 +213,8 @@ test.describe("T2c shape-change", () => {
     await expect(gain).toHaveValue(String(gainBefore));
     await settleAfter(page, "ctl-undo", 900, 2000);
 
-    // ---- arm B: the same gesture on the refetch-flagged 1-Knob LEVEL -----------
-    // 1-Knob ON first: the level row is locked while it is off (dyn-eq.ts), and the ON
+    // ---- arm B: the same gesture on the refetch-flagged 1-knob LEVEL -----------
+    // 1-knob ON first: the level row is locked while it is off (dyn-eq.ts), and the ON
     // write is itself a refetch, so it is settled out of the way before the drag.
     await mark(page, "oneknob-on");
     await oneKnobFace(page, 0).click();
@@ -284,7 +284,7 @@ test.describe("T2c shape-change", () => {
     // readback issued mid-gesture and resolving over later moves — is `midRefetch`
     // above, counted directly.
     const storm = analyze(trace, {
-      edits: [{ label: "1-Knob level drag", addr: CH1_ONE_KNOB_LEVEL, at: dragAt }],
+      edits: [{ label: "1-knob level drag", addr: CH1_ONE_KNOB_LEVEL, at: dragAt }],
       snapshot: await snapshotOf(page),
     });
     console.log(report("eq 1-knob level refetch storm", storm));
@@ -371,7 +371,7 @@ test.describe("T2c shape-change", () => {
     // gesture. It landed in one of two shapes depending on whether the last edit fell
     // before or after the last re-base, i.e. on a race between the pointer and a device
     // round trip: 0 entries (Ctrl+Z reached past the drag into the PREVIOUS gesture, the
-    // 1-Knob ON, switching it off), or 1 entry describing only the tail after the last
+    // 1-knob ON, switching it off), or 1 entry describing only the tail after the last
     // re-base (Ctrl+Z left the slider at a value the drag merely passed through).
     //
     // The baseline now absorbs only the keys the READ authored — readIntoPlan's
@@ -387,10 +387,10 @@ test.describe("T2c shape-change", () => {
     const stillOn = (await oneKnobFace(page, 0).getAttribute("aria-pressed")) === "true";
     console.log(
       `the drag recorded ${entries} undo entr(ies); one Ctrl+Z: level ${levelAfter} → ${undone}` +
-        ` (the press started at ${levelBefore}), 1-Knob still on = ${stillOn}`,
+        ` (the press started at ${levelBefore}), 1-knob still on = ${stillOn}`,
     );
     // An undo OF THIS GESTURE, in full: the level back where the press found it, and
-    // 1-Knob still on because the drag never touched it. Both halves matter — the second
+    // 1-knob still on because the drag never touched it. Both halves matter — the second
     // is what says the press did not reach past the gesture into the one before it.
     expect(entries).toBe(1);
     expect(undone).toBe(levelBefore);

@@ -88,7 +88,7 @@ describe("what the screen binds to", () => {
     expect(binding!.fields).toHaveLength(6);
     expect(binding!.knobGrid).toBe(true);
     expect(binding!.knobCols).toBe(3);
-    // The 1-Knob pair is not among them: the app never writes it, so it is not a field.
+    // The 1-knob pair is not among them: the app never writes it, so it is not a field.
     const slots = binding!.fields.map((f) => Number(/:(\d+)$/.exec(f.key)?.[1]));
     expect(slots).not.toContain(MBC_GLOBAL.oneKnobOn);
     expect(slots).not.toContain(MBC_GLOBAL.oneKnobLevel);
@@ -139,8 +139,8 @@ describe("the meter lanes", () => {
     // A bus tap is stereo, and the effect sits AFTER the fader there — so the output side
     // is POST rather than the channel's PRE FADER.
     expect(lanes[1].tap!.r).toBeDefined();
-    expect(lanes[1].label).toBe(t().dynTuning.insfx.tapOutBus);
-    expect(lanes[0].label).toBe(t().dynTuning.insfx.tapIn);
+    expect(lanes[1].label).toBe("POST");
+    expect(lanes[0].label).toBe("PRE INS FX");
   });
 
   it("meters the band its own face is about, and none on MAIN", () => {
@@ -417,6 +417,37 @@ describe("the guitar amp's two faces", () => {
     ]);
   });
 
+  // Only the multi-band compressor states a card count. The amps and Pitch Fix take the
+  // stylesheet's, which is the one place that number lives — restating it here would be the
+  // second copy `.gt-knobs` records having drifted once already.
+  it("states a card count only where it is not the stylesheet's", () => {
+    for (const [node, effect] of [
+      ["ch1", "Clean"],
+      ["ch1", "Lead"],
+      ["ch1", "Pitch Fix"],
+    ] as const) {
+      const binding = INSFX_DYN.bind(holding(node, effect))!;
+      expect(binding.knobGrid, effect).toBe(true);
+      expect(binding.knobCols, effect).toBeUndefined();
+    }
+    // …and the multi-band compressor's is its own, for a reason its own case states.
+    expect(INSFX_DYN.bind(holding("bus.mix1", "M.B.Comp"))!.knobCols).toBe(3);
+  });
+
+  // One tile per lane and no empty cell — the arrangement every screen's rack takes now,
+  // and the host's rule rather than a number any face here writes. Which faces carry a
+  // reduction is what `lanesOf` decides, so the row follows it without being told.
+  it("declares no readout column count, so the row follows the lanes", () => {
+    for (const [node, effect] of [
+      ["ch1", "Clean"],
+      ["ch1", "Pitch Fix"],
+      ["ch1", "Compander-H"],
+      ["bus.mix1", "M.B.Comp"],
+    ] as const) {
+      expect(INSFX_DYN.bind(holding(node, effect))!.readoutCols, effect).toBeUndefined();
+    }
+  });
+
   it("reverses the columns where the panel is the point, and leaves them where the display is", () => {
     // A guitar amp and Pitch Fix are both a dozen continuous values against a column with
     // no reading of its own but the level taps. The companders' and the multi-band
@@ -528,7 +559,7 @@ describe("moving between the faces", () => {
     screen.close();
   });
 
-  it("draws a band's Bypass locked while the 1-Knob owns it, not only in the state map", () => {
+  it("draws a band's Bypass locked while the 1-knob owns it, not only in the state map", () => {
     // The host applies `rowStates` to the FIELDS it lays out; a row the descriptor builds
     // has to ask for the same answer itself. The Bypass is the first locked row on this
     // screen that is not a slider, and drawn live it writes a plan value the writer is
@@ -667,7 +698,7 @@ describe("a bypassed effect", () => {
     h.plan.nodeParams.ch1!.insertFxOn = false;
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_DYN, "ch1");
-    expect(note()).toBe(t().dynTuning.insfx.bypassed);
+    expect(note()).toBe(t().dynTuning.bypassed);
     // The rows are live: the plan holds the values and the unit stores them whether or
     // not the effect is in the path.
     const slider = h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx:compander:6"]')!;
@@ -891,7 +922,7 @@ describe("what the note under the display says", () => {
     h.plan.nodeParams.ch1!.insertFxOn = false;
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_DYN, "ch1");
-    expect(note()).toBe(t().dynTuning.insfx.bypassed);
+    expect(note()).toBe(t().dynTuning.bypassed);
     screen.close();
   });
 
@@ -1101,6 +1132,20 @@ describe("the multi-band compressor", () => {
       ).toHaveLength(2);
   });
 
+  // Which band the Parameters below belong to, on the heading — the pill both EQ screens
+  // carry. The face bar above says which face is SELECTED, which is not the same claim: a
+  // reader looking at a row is looking at the pill beside it.
+  it("names the band on the Parameters heading, and names none on MAIN", () => {
+    const m = t().inspector.insertFxEffect;
+    expect(INSFX_DYN.paramsTag!(mbc(1))).toEqual({ text: m.bandLow, shown: true });
+    expect(INSFX_DYN.paramsTag!(mbc(2))).toEqual({ text: m.bandMid, shown: true });
+    expect(INSFX_DYN.paramsTag!(mbc(3))).toEqual({ text: m.bandHigh, shown: true });
+    // MAIN's rows belong to all three, so there is no one band to name.
+    expect(INSFX_DYN.paramsTag!(mbc(MAIN))).toBeUndefined();
+    // …and a family with a single face has no band at all.
+    expect(INSFX_DYN.paramsTag!(holding("ch1", "Compander-H"))).toBeUndefined();
+  });
+
   it("names a row by its band where the three share a face, and for the make-up everywhere", () => {
     const m = t().inspector.insertFxEffect;
     const label = (ctx: DynCtx, slot: number): string | undefined =>
@@ -1153,7 +1198,7 @@ describe("the multi-band compressor", () => {
     expect(INSFX_DYN.bind(mbc(MAIN))!.lanes.map((l) => l.key)).toEqual(["in", "out"]);
   });
 
-  it("locks everything a Level change reasserts while 1-Knob is on, and Out Gain never", () => {
+  it("locks everything a Level change reasserts while 1-knob is on, and Out Gain never", () => {
     // The positive control first: with the knob off the same call answers null, so the
     // assertion below is about the knob rather than about a screen that locks everything.
     expect(INSFX_DYN.rowStates!(mbc(MAIN), {})).toBeNull();
@@ -1196,13 +1241,13 @@ describe("the multi-band compressor", () => {
       }
       expect(INSFX_DYN.hint!({ ...bypassed(band), sel: MAIN }), `${band} seen from MAIN`).toBe(g.mbcMainHint);
     }
-    // The 1-Knob owns the Bypass, so its own line still outranks this one.
+    // The 1-knob owns the Bypass, so its own line still outranks this one.
     expect(INSFX_DYN.hint!(mbc(LOW, { ...oneKnobOn(), [insertFxParamKey("mbc", MBC_BANDS[0].bypass)]: 1 }))).toBe(
       g.mbcOneKnob,
     );
   });
 
-  it("offers the 1-Knob on every face, and writes it", () => {
+  it("offers the 1-knob on every face, and writes it", () => {
     // It is an operator control, like the COMP and EQ knobs it is the third of — and it is
     // on every face because it decides whose the rows below are wherever they are.
     const face = (id: string): HTMLElement => h.box.querySelector<HTMLElement>(`#${id}`)!;

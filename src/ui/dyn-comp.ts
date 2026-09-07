@@ -17,7 +17,7 @@
 //     GR lane carries a scale of its own rather than the level lanes' dB per pixel
 //     (a -8 dB reduction is 15% of the shared ruler — visible, but not readable).
 
-import { onOff, settingsChoice, settingsRow } from "./dom";
+import { onOff, settingsChoice, settingsRow, settingsSection } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { COMP_EQ_COMP_FIRST, COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS, COMP_ONE_KNOB_DRIVEN } from "../core/control/params";
 import { channelDynamics } from "../core/control/translate";
@@ -25,7 +25,7 @@ import { COMP_SCOPE, controlId } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
 import { bindChannelStrip, subObjectIo } from "./dyn-chan";
 import { drawTransferCurve, kneeResponse, transferPlot } from "./dyn-plot";
-import { oneKnobLevelRow } from "./dyn-screen";
+import { flagOffNote, oneKnobLevelRow } from "./dyn-screen";
 import type { DynCtx, DynPlotProcessor, DynValues } from "./dyn-screen";
 
 /** Input axis = the threshold's own domain (-54…0 dB). Ticks every 6 dB. */
@@ -124,6 +124,7 @@ export const COMP_DYN: DynPlotProcessor = {
     hint: (m) => m.dynTuning.comp.curveHint,
     unityOffsetDb: (ctx) => makeupOf(ctx),
   }),
+  offNote: (ctx) => flagOffNote(ctx, "compOn"),
   read: io.read,
   patch: io.patch,
   // Knee is a three-value selector, which the catalog does not carry: a control
@@ -151,8 +152,23 @@ export const COMP_DYN: DynPlotProcessor = {
     return out;
   },
 
-  rows: ({ m, vals, states, set, setValue, midi }) => {
-    const lead = [
+  // The 1-knob is a stage of its own above the parameters, as it is on the EQ screen and
+  // on the multi-band compressor's: it decides whose the rows below are. The unit prints
+  // it that way too — [1-knob] and [Auto Makeup] are buttons of the COMP screen rather
+  // than entries in its parameter list, in that order (p.104-105) — and Auto Makeup comes
+  // with it, because the two lock each other (1-knob on takes Auto Makeup away; 1-knob off
+  // takes the level away) and a lock is unreadable when its other half is in another
+  // section.
+  sections: ({ m, vals, states, set, setValue, midi }) => {
+    const sec = settingsSection(m.inspector.oneKnob);
+    sec.append(
+      midi(
+        settingsRow(
+          m.inspector.on,
+          onOff(vals.oneKnob === true, (on) => set({ oneKnob: on })),
+        ),
+        "oneKnob",
+      ),
       midi(
         settingsRow(
           m.inspector.autoMakeup,
@@ -160,13 +176,6 @@ export const COMP_DYN: DynPlotProcessor = {
           states.get("autoMakeup"),
         ),
         "autoMakeup",
-      ),
-      midi(
-        settingsRow(
-          m.inspector.oneKnob,
-          onOff(vals.oneKnob === true, (on) => set({ oneKnob: on })),
-        ),
-        "oneKnob",
       ),
       midi(
         oneKnobLevelRow({
@@ -177,24 +186,43 @@ export const COMP_DYN: DynPlotProcessor = {
         }),
         "oneKnobLevel",
       ),
-    ];
+    );
+    return [sec];
+  },
 
+  // Knee goes in front of Attack, which is where the unit's own COMP screen puts it. The
+  // parameters then read in the order the unit reads them, which is the rule every screen
+  // here follows; a selector is not a class with a position of its own.
+  rows: ({ m, vals, states, set }) => {
     const knee = typeof vals.knee === "number" ? vals.knee : COMP_KNEE_DEFAULT;
-    const tail = [
-      settingsRow(
-        m.inspector.dyn.knee,
-        settingsChoice(
-          COMP_KNEE_OPTIONS.map((o) => o.label),
-          knee,
-          (i) => set({ knee: COMP_KNEE_OPTIONS[i].value }),
-        ),
-        states.get("knee"),
-      ),
-    ];
-    return { lead, tail };
+    return {
+      before: {
+        attack: [
+          settingsRow(
+            m.inspector.dyn.knee,
+            settingsChoice(
+              COMP_KNEE_OPTIONS.map((o) => o.label),
+              knee,
+              (i) => set({ knee: COMP_KNEE_OPTIONS[i].value }),
+            ),
+            states.get("knee"),
+          ),
+        ],
+      },
+    };
   },
 
   // The curve and its reduction annotation are the drawing both compressor banks make, so
-  // both call one function; what differs is only the response each of them models.
-  drawCurve: (c, g, v, tok) => drawTransferCurve(c, g, tok, { out: responseOf(v), gainDb: v.get("gain"), loDb: LO_DB }),
+  // both call one function; what differs is only the response each of them models. The
+  // threshold is marked on the input axis for the reason `curveMarks` states: it is a kink
+  // in the line and nothing else, so reading it off the plot otherwise means finding where
+  // the slope changes and estimating it.
+  drawCurve: (c, g, v, tok) => {
+    drawTransferCurve(c, g, tok, {
+      out: responseOf(v),
+      gainDb: v.get("gain"),
+      loDb: LO_DB,
+      markAt: v.get("threshold"),
+    });
+  },
 };

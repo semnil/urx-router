@@ -73,7 +73,14 @@ const ssmcsChannel = "ch1";
 /** The host, with one mono channel switched into the morphing bank. */
 function host(mode = COMP_EQ_SSMCS): DynHost {
   const created = dynHost({ plotSize: { w: 700, h: 320 } });
-  created.plan.nodeParams[ssmcsChannel] = { ...created.plan.nodeParams[ssmcsChannel], compEqType: mode };
+  // The bank's COMP block is switched ON. It ships off, and a face whose block is off says
+  // so on its note line instead of describing its figure — which is the subject of its own
+  // case below, and would stand in front of every other case's reading here.
+  created.plan.nodeParams[ssmcsChannel] = {
+    ...created.plan.nodeParams[ssmcsChannel],
+    compEqType: mode,
+    compOn: true,
+  };
   return created;
 }
 
@@ -173,12 +180,7 @@ describe("the MAIN face", () => {
   // (its display is the two plots), so the order is the only thing the merge decides here.
   it("meters all four taps and prints them as four tiles", () => {
     const tiles = readouts(h!.box);
-    expect(tiles.map((r) => r.label)).toEqual([
-      t().dynTuning.comp.tapIn,
-      t().dynTuning.comp.tapOut,
-      t().dynTuning.comp.tapGr,
-      t().dynTuning.ssmcs.tapOut,
-    ]);
+    expect(tiles.map((r) => r.label)).toEqual(["PRE COMP", "PRE EQ", t().dynTuning.comp.tapGr, "PRE INS FX"]);
     // Two columns, which is what four tiles take.
     expect(h!.box.querySelector<HTMLElement>(".gt-readouts")?.style.getPropertyValue("--gt-ro-cols")).toBe("2");
     expect(tiles.filter((r) => r.gr).length).toBe(1);
@@ -268,10 +270,10 @@ describe("the COMP face", () => {
   // else: a slider whose curve is not the one drawn moves nothing the operator can see.
   it("gives each segment the sliders that move the curve beside it", () => {
     expect([...rowsByKey(h!.box).keys()]).toEqual(["attack", "release", "ratio"]);
-    // Knee closes the compressor's group, after Ratio rather than above everything, which
-    // is where `lead` would have put it.
+    // Knee leads Attack, which is where the unit's own SSMCS COMP screen puts it — and
+    // where the shipped COMP screen puts its own, so the two banks read alike.
     const at = (label: string): number => rowLabels(h!.box).indexOf(label);
-    expect(at(t().inspector.dyn.ratio)).toBeLessThan(at(t().inspector.dyn.knee));
+    expect(at(t().inspector.dyn.knee)).toBeLessThan(at(t().inspector.dyn.attack));
     expect(at(t().inspector.ssmcs.sideChain)).toBe(-1);
 
     segment(SC_SEG);
@@ -280,6 +282,28 @@ describe("the COMP face", () => {
     const scAt = (label: string): number => rowLabels(h!.box).indexOf(label);
     expect(scAt(t().inspector.ssmcs.sideChain)).toBeLessThan(scAt(t().inspector.q));
     expect(scAt(t().inspector.dyn.knee)).toBe(-1);
+  });
+
+  // The corner is the one value on this bank that no row carries — the unit drives it from
+  // Comp Drive and never shows it — so the plot is the only place it can be read, and a
+  // kink read by eye is an estimate. It is marked the way every other transfer plot marks
+  // one, and it MOVES with the drive, which is what tells a mark apart from a decoration
+  // drawn at a fixed place.
+  it("marks the compressor's corner on the input axis, and moves it with Comp Drive", () => {
+    // The most recent one: the recorder is the host's and collects every draw the screen
+    // has made, so an earlier render's mark is still in it.
+    const markX = (): number => {
+      const marks = h!.canvas.texts.filter((p) => p.text === "T");
+      expect(marks.length).toBeGreaterThan(0);
+      return marks[marks.length - 1].x;
+    };
+    const near = markX();
+    h!.plan.nodeParams[ssmcsChannel] = {
+      ...h!.plan.nodeParams[ssmcsChannel],
+      ssmcs: { ...strip(h!), compDrive: 200 },
+    };
+    screen!.refresh([ssmcsChannel]);
+    expect(markX()).not.toBeCloseTo(near, 1);
   });
 
   it("switches the side-chain filter from the row above the filter's own sliders", () => {
@@ -335,9 +359,12 @@ describe("the COMP face", () => {
       { key: "out", kind: "level", sameSlot: false },
       { key: "gr", kind: "gr", sameSlot: true },
     ]);
-    // Four tiles want one row of four; three take the default.
-    expect(SSMCS_COMP_DYN.bind(ctxOf(h!, SC_SEL))!.readoutCols).toBe(4);
+    // One column per lane on both, which neither face declares: the row of four the filter's
+    // segment wants IS its lane count, and so is the curve's three.
+    expect(SSMCS_COMP_DYN.bind(ctxOf(h!, SC_SEL))!.readoutCols).toBeUndefined();
     expect(SSMCS_COMP_DYN.bind(ctxOf(h!, 0))!.readoutCols).toBeUndefined();
+    segment(SC_SEG);
+    expect(h!.box.querySelector<HTMLElement>(".gt-readouts")?.style.getPropertyValue("--gt-ro-cols")).toBe("4");
     // The filter's segment adds exactly one address to the curve's.
     const taps = (sel: number): string[] =>
       SSMCS_COMP_DYN.bind(ctxOf(h!, sel))!
@@ -381,9 +408,9 @@ describe("the COMP face", () => {
     segment(SC_SEG);
     const cells = readouts(h!.box);
     expect(cells.map((c) => c.label)).toEqual([
-      t().dynTuning.comp.tapIn,
+      "PRE COMP",
       t().inspector.ssmcs.sideChain,
-      t().dynTuning.comp.tapOut,
+      "PRE EQ",
       t().dynTuning.comp.tapGr,
     ]);
     expect(cells[1].gr).toBe(false);
@@ -531,7 +558,7 @@ describe("the EQ face", () => {
   });
 
   it("meters the two taps that bracket the EQ", () => {
-    expect(readouts(h!.box).map((r) => r.label)).toEqual([t().dynTuning.comp.tapOut, t().dynTuning.ssmcs.tapOut]);
+    expect(readouts(h!.box).map((r) => r.label)).toEqual(["PRE EQ", "PRE INS FX"]);
   });
 
   it("writes to the band the bar has selected, leaving the others alone", () => {

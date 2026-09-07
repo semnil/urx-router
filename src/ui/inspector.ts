@@ -5,7 +5,7 @@
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
-import { clipNodeName, SSMCS_INITIAL } from "../core/plan";
+import { clipNodeName, processorOn, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
 import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 
@@ -638,7 +638,7 @@ export function renderInspector(
       const eqLocked = channelEqUnavailable(node.id, plan.sampleRate);
       for (const sec of channelSections(model, node.id, compEqType)) {
         const locked = sec.key === "eqOn" && eqLocked;
-        const on = locked ? false : (np[sec.key] ?? sec.key === "eqOn");
+        const on = locked ? false : processorOn(np, sec.key);
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
         body.append(sectionToggle(node.id, sec.key, on, actions, locked ? m.inspector.eqRateLocked : undefined));
         if (sec.key === "gateOn" && dyn) body.append(dynLauncher("gate", node.id, actions, m));
@@ -686,7 +686,7 @@ export function renderInspector(
       // drives the fold, matching the channel EQ section.
       const oeq = outputEq(node.id);
       if (oeq) {
-        const on = np.eqOn ?? true;
+        const on = processorOn(np, "eqOn");
         const { el, body } = section(m.inspector.eqOn, { open: on, on, key: "eqOn" });
         body.append(sectionToggle(node.id, "eqOn", on, actions));
         body.append(dynLauncher("eq", node.id, actions, m));
@@ -1243,9 +1243,9 @@ function mergeFxEffect(actions: InspectorActions, plan: Plan, nodeId: string, pa
   );
 }
 
-// FX-channel EFFECT section: the EFFECT TYPE selector, the effect ON / Mix, then
-// the type-specific parameter controls (raw sliders with a display formatter,
-// toggles, selects) from the fx-effect descriptors. fxIndex = 0 (FX1) / 1 (FX2).
+// FX-channel EFFECT section: the EFFECT TYPE selector, the effect ON toggle and the
+// launcher. Mix and the type's own parameters are the tuning screen's, so nothing here
+// reads a value that screen can move. fxIndex = 0 (FX1) / 1 (FX2).
 function fxEffectSection(
   nodeId: string,
   fxIndex: number,
@@ -1276,7 +1276,7 @@ function fxEffectSection(
 // Ducker node section: the on/off and the control that opens its tuning screen. The
 // ducker source is a key-source connection, edited on the canvas, not here.
 function duckerBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): HTMLElement {
-  const on = np.duckerOn ?? false;
+  const on = processorOn(np, "duckerOn");
   const { el, body } = section(m.inspector.duckerOn, { open: on, on, key: "duckerOn" });
   body.append(sectionToggle(nodeId, "duckerOn", on, actions));
   // The detail sliders moved to the tuning screen, for the reason stated on

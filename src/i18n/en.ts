@@ -300,8 +300,8 @@ export const en = {
       ratio: dev("Ratio"),
       release: dev("Release"),
       autoMakeup: dev("Auto Makeup"),
-      oneKnob: dev("1-Knob"),
-      oneKnobLevel: dev("1-Knob Level"),
+      oneKnob: dev("1-knob"),
+      oneKnobLevel: dev("1-knob Level"),
       freq: dev("Freq"),
       q: dev("Q"),
       bandOn: dev("Band ON"),
@@ -323,7 +323,7 @@ export const en = {
     scope: {
       gate: tr("GATE"),
       comp: tr("COMP"),
-      eq: tr("EQ 1-Knob"),
+      eq: tr("EQ 1-knob"),
       "eq.low": tr("EQ LOW"),
       "eq.lowMid": tr("EQ LOW-MID"),
       "eq.highMid": tr("EQ HIGH-MID"),
@@ -394,9 +394,7 @@ export const en = {
     eqOn: dev("EQ"),
     compOn: dev("COMP"),
     gateOn: dev("GATE"),
-    eqOneKnob: dev("1-knob"),
     eqOneKnobType: dev("1-knob Type"),
-    eqOneKnobLevel: dev("1-knob Level"),
     bandOn: dev("Band"),
     filterType: dev("Type"),
     frequency: dev("Freq"),
@@ -418,8 +416,8 @@ export const en = {
       knee: dev("Knee"),
     },
     autoMakeup: dev("Auto Makeup"),
-    oneKnob: dev("1-Knob"),
-    oneKnobLevel: dev("1-Knob Level"),
+    oneKnob: dev("1-knob"),
+    oneKnobLevel: dev("1-knob Level"),
     ssmcs: {
       title: dev("SSMCS"),
       sweetSpotData: dev("Sweet Spot Data"),
@@ -460,7 +458,6 @@ export const en = {
       bandLow: dev("Low"),
       bandMid: dev("Mid"),
       bandHigh: dev("High"),
-      oneKnob: dev("1-Knob"),
       scale: dev("Scale"),
       // The twelve semitone buttons. Absolute, named from C — the unit stores them that
       // way whatever the Key is.
@@ -514,8 +511,8 @@ export const en = {
         limitLow: dev("Limit Low"),
         limitHigh: dev("Limit High"),
         midiControl: dev("MIDI Control"),
-        oneKnobOn: dev("1-Knob"),
-        oneKnobLevel: dev("1-Knob Level"),
+        oneKnobOn: dev("1-knob"),
+        oneKnobLevel: dev("1-knob Level"),
         xoverLowMid: dev("L-M Xover"),
         xoverMidHigh: dev("M-H Xover"),
       },
@@ -606,9 +603,15 @@ export const en = {
       recPoint: tr("Rec Point tap"),
     },
   },
-  // Dynamics tuning screens (GATE / COMP). The LANE captions carry the device's own tap
-  // vocabulary and stay English in every language, like the CONSOLE meter-point badges that
-  // name the same points. The heading over them does not — see `readouts`.
+  // The channel tuning screens. A lane's CAPTION names the end of the processor it reads
+  // (Input / Output) and stays English in every language, like the CONSOLE meter-point
+  // badges naming the same points; the heading over the tiles does not — see `readouts`.
+  //
+  // A LEVEL tap's name is not here: the readout tile takes it from the tap the lane already
+  // resolved (`core/meters.ts`), which is where a meter address and its device name are
+  // written together and what the CONSOLE's own meter-point badge prints. The names below
+  // are the ones no tap carries — the four reductions, which are their own addresses rather
+  // than points on the strip, and the ducker's key caption, whose source moves with a wire.
   dynTuning: {
     close: tr("Close"),
     display: tr("Display"),
@@ -633,20 +636,21 @@ export const en = {
     peakPrefix: tr("pk"),
     noReading: tr("—"),
     driven: tr("Device-driven"),
+    // Every screen's OFF line, one string rather than one per processor. What it has to
+    // say is the same wherever it appears — the values are the operator's and the unit
+    // keeps them, and none of them is in the signal — and the block it is said about is
+    // already named by the title above it.
+    bypassed: tr("Bypassed — the values are kept and edited here, but nothing they are set to reaches the signal."),
     gate: {
       title: dev("Gate"),
       open: tr("Gate screen"),
-      tapIn: dev("Pre Gate"),
-      tapGr: dev("Gate GR"),
-      tapOut: dev("Pre Comp"),
+      tapGr: dev("GATE GR"),
       curveHint: tr("Drag the curve's knee to set the threshold."),
     },
     comp: {
       title: dev("Comp"),
       open: tr("Comp screen"),
-      tapIn: dev("Pre Comp"),
-      tapGr: dev("Comp GR"),
-      tapOut: dev("Pre EQ"),
+      tapGr: dev("COMP GR"),
       // The second sentence is the whole of what two rejected visual aids were built to
       // say. Measured on a URX44V: a 50 ms burst 11 dB over the corner takes 10 dB of
       // reduction at Attack 0.09 ms and none at 80 ms, while the SETTLED reduction for the
@@ -676,7 +680,6 @@ export const en = {
       faceMain: fixed("Main"),
       faceComp: fixed("Comp"),
       faceEq: fixed("EQ"),
-      tapOut: dev("Pre Ins FX"),
       mainHint: tr(
         "Comp Drive moves the compressor's curve. Sweet Spot Data and Morphing move both, only while Live sync is up.",
       ),
@@ -687,11 +690,9 @@ export const en = {
     ducker: {
       title: dev("Ducker"),
       open: tr("Ducker screen"),
-      tapKey: (label: string): string => `Key · ${label}`,
-      noKey: tr("Key · none"),
-      tapIn: dev("Pre Ducker"),
-      tapGr: dev("Ducker GR"),
-      tapOut: dev("Post"),
+      tapKey: (label: string): string => `KEY · ${label}`,
+      noKey: tr("KEY · NONE"),
+      tapGr: dev("DUCKER GR"),
       hint: tr("The diagonals are times, not the shape of the change. Key is one bar even in stereo: L and R, summed."),
     },
     // One screen for three parameter families: the title names the effect the channel holds,
@@ -704,11 +705,6 @@ export const en = {
       // use (EFFECT TYPE / EFFECT ON). Latin in both languages, like every screen title.
       title: fixed("FX EFFECT"),
       open: tr("FX Effect screen"),
-      // The two taps either side of the effect. The caption above each says which END of
-      // the effect it is; these name the tap itself, as the meter-point selector does.
-      tapIn: dev("Input"),
-      tapOut: dev("Pre Fader"),
-      bypassed: tr("Bypassed — the values are kept and edited here, but nothing they are set to reaches the signal."),
       // While tempo Sync is on the unit computes the delay time from the BPM and the note
       // value and announces the result, so the row reads it rather than setting it.
       syncedTag: tr("Synced"),
@@ -721,10 +717,7 @@ export const en = {
     insfx: {
       title: dev("INS FX"),
       open: tr("Insert FX screen"),
-      tapIn: dev("Pre Ins FX"),
-      tapOut: dev("Pre Fader"),
-      tapOutBus: dev("Post"),
-      tapGr: dev("Ins FX GR"),
+      tapGr: dev("INS FX GR"),
       // The multi-band compressor's first face: what the three bands share, against the
       // three that are one band each. `fixed()` because it is this app's own word for that
       // face rather than a row read off the unit, and one translated segment among four
@@ -733,7 +726,6 @@ export const en = {
       // Speed and Depth on the Clean amp: the selector beside them decides whether they
       // reach anything.
       vibOnly: tr("Vib only"),
-      bypassed: tr("Bypassed — the values are kept and edited here, but nothing they are set to reaches the signal."),
       // The companders' plot, and theirs alone: the amps and Pitch Fix carry no curve.
       // Named for what the shape IS, because this block does three things at once and a
       // reader who only sees the compressor half misreads the fall at the bottom as a
@@ -760,7 +752,7 @@ export const en = {
       // Shown in place of the line above while the unit is driving the panel. It says who
       // owns the values rather than what they do, because that is what changed.
       mbcOneKnob: tr(
-        "1-Knob is on: the unit is setting every value here from its own level, and nothing edited here is sent to it.",
+        "1-knob is on: the unit is setting every value here from its own level, and nothing edited here is sent to it.",
       ),
       // The pill on a row the unit has taken over — Pitch Fix's Scale and its twelve notes
       // while MIDI Control is not Off, which is when the notes the correction aims at come

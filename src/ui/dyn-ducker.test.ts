@@ -343,9 +343,35 @@ describe("on screen", () => {
 
   it("prints the hint the picture cannot say", () => {
     host = dynHost();
+    // A ducker ships off, and an off processor's line says so instead — which is the case
+    // below. Switched on, the line is the picture's.
+    host.plan.nodeParams[DUCKER] = { ...host.plan.nodeParams[DUCKER], duckerOn: true };
     const screen = new DynScreen(host.hooks);
     screen.open(DUCKER_DYN, DUCKER);
     expect(host.box.querySelector(".gt-note")!.textContent).toBe(t().dynTuning.ducker.hint);
+  });
+
+  // Every screen says it the same way, and it outranks the line that would otherwise be
+  // there: a picture explained beside controls that reach nothing is the defect this
+  // replaces.
+  it("says so instead when the ducker is off", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(DUCKER_DYN, DUCKER);
+    expect(host.box.querySelector(".gt-note")!.textContent).toBe(t().dynTuning.bypassed);
+  });
+
+  // The reduction is drawn into the OUTPUT column, not one of its own and not the key's —
+  // the arrangement every screen with a reduction takes. A GR lane draws no level bar, so
+  // the column it landed in is the one carrying a second shade.
+  it("draws the reduction in the output column", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(DUCKER_DYN, DUCKER);
+    const cols = [...host.box.querySelectorAll(".gt-ladderbox .gt-lcol")].slice(1);
+    const withGr = cols.filter((c) => c.querySelector(".gt-shade.gr"));
+    expect(withGr.length).toBe(1);
+    expect(withGr[0].querySelector(".gt-cap-label")?.textContent).toBe(t().dynTuning.laneOut);
   });
 
   it("subscribes the key, the level pair and the reduction", () => {

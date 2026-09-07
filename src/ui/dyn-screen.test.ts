@@ -34,7 +34,7 @@ vi.mock("../core/meters", async (importOriginal) => {
 
 import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
-import { COMP_EQ_SSMCS } from "../core/control/params";
+import { COMP_EQ_SSMCS, COMP_KNEE_OPTIONS } from "../core/control/params";
 import { barLevels, dynHost, pickBand, readouts, rowsByKey, segments } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import { MeterStore } from "../core/meters";
@@ -989,6 +989,128 @@ describe("refresh", () => {
     window.dispatchEvent(new FocusEvent("blur"));
     cv.dispatchEvent(at("pointermove", 500));
     expect(thr()).toBe(moved);
+  });
+});
+
+// The panel reads in the order the unit's own screen reads it, and the 1-knob is a stage
+// above it rather than three rows inside it. Both are rules over every screen; COMP is
+// where they were broken, so it is where they are pinned.
+describe("the compressor's panel", () => {
+  /** The parameter rows' visible labels, in the order they were built. */
+  const labels = (): string[] =>
+    [...host.box.querySelectorAll<HTMLElement>(".prefs-section")]
+      .filter((s) => s.querySelector("h3")?.textContent === t().dynTuning.parameters)
+      .flatMap((s) => [...s.querySelectorAll<HTMLElement>(".prefs-row")])
+      .map((r) => r.querySelector(".lbl")?.textContent ?? "");
+
+  it("puts Knee in front of Attack, where the unit's own COMP screen puts it", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const at = (label: string): number => labels().indexOf(label);
+    expect(at(t().inspector.dyn.gain)).toBeLessThan(at(t().inspector.dyn.knee));
+    expect(at(t().inspector.dyn.knee)).toBeLessThan(at(t().inspector.dyn.attack));
+    screen.close();
+  });
+
+  it("keeps the 1-knob and Auto Makeup together, above the parameters", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const sec = [...host.box.querySelectorAll<HTMLElement>(".prefs-section")].find(
+      (s) => s.querySelector("h3")?.textContent === t().inspector.oneKnob,
+    );
+    expect(sec).toBeDefined();
+    const rows = [...sec!.querySelectorAll<HTMLElement>(".prefs-row")].map((r) => r.querySelector(".lbl")?.textContent);
+    // The switch the section is named for leads, and Auto Makeup rides with it: the two
+    // lock each other, and a lock whose other half is in another section cannot be read.
+    expect(rows).toEqual([t().inspector.on, t().inspector.autoMakeup, t().inspector.oneKnobLevel]);
+    // …and none of the three is left behind in Parameters.
+    expect(labels()).not.toContain(t().inspector.autoMakeup);
+    screen.close();
+  });
+
+  // Moving a row between sections re-wires the callback that carries its value, and a row
+  // that draws correctly while writing nothing looks exactly like one that works. So each
+  // of the four is operated and the plan is read back.
+  it("writes each of its edits into the plan, from whichever section the row is in", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const row = (label: string): HTMLElement =>
+      [...host.box.querySelectorAll<HTMLElement>(".prefs-row")].find(
+        (r) => r.querySelector(".lbl")?.textContent === label,
+      )!;
+    const press = (label: string, text: string): void => {
+      [...row(label).querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === text)!.click();
+    };
+    const comp = (): Record<string, unknown> => (host.plan.nodeParams["ch1"]?.comp ?? {}) as Record<string, unknown>;
+
+    // The order is the one the locks allow: Auto Makeup and Knee cannot be operated while
+    // 1-knob is on (user guide), and the level does nothing while it is off.
+    press(t().inspector.autoMakeup, t().inspector.on);
+    expect(comp().autoMakeup).toBe(true);
+
+    // Knee is the row that MOVED — out of the tail and in front of Attack.
+    const knee = COMP_KNEE_OPTIONS.find((o) => o.value !== comp().knee)!;
+    press(t().inspector.dyn.knee, knee.label);
+    expect(comp().knee).toBe(knee.value);
+
+    press(t().inspector.on, t().inspector.on);
+    expect(comp().oneKnob).toBe(true);
+
+    const level = row(t().inspector.oneKnobLevel).querySelector<HTMLInputElement>("input[type=range]")!;
+    level.value = String(Number(level.value) + Number(level.step || 1));
+    level.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(comp().oneKnobLevel).toBe(Number(level.value));
+    screen.close();
+  });
+});
+
+// The line that says nothing here reaches the signal. It belongs to the host rather than
+// to each descriptor's own hint, and every processor answers one — a screen that hands the
+// operator a live editor for a block another surface calls off is the defect this closes,
+// and it is the same defect whichever block it is.
+describe("the OFF line", () => {
+  it("is answered by every processor", () => {
+    for (const [key, proc] of Object.entries(DYN_PROCESSORS)) {
+      expect(typeof proc.offNote, key).toBe("function");
+    }
+  });
+
+  // Replaces rather than joins: the note's box is three lines and clips what does not fit,
+  // and the two sentences run past that at the narrowest window the app supports.
+  it("stands in front of the hint, and gives it back when the processor is on", () => {
+    host = dynHost();
+    const note = (): string => host.box.querySelector(".gt-note")!.textContent ?? "";
+
+    // A gate ships off, so this is the state a new plan opens in.
+    const off = new DynScreen(host.hooks);
+    off.open(GATE, "ch1");
+    expect(note()).toBe(t().dynTuning.bypassed);
+    expect(note()).not.toContain(t().dynTuning.gate.curveHint);
+    off.close();
+
+    host.plan.nodeParams.ch1 = { ...host.plan.nodeParams.ch1, gateOn: true };
+    const on = new DynScreen(host.hooks);
+    on.open(GATE, "ch1");
+    expect(note()).toBe(t().dynTuning.gate.curveHint);
+    on.close();
+  });
+});
+
+// One tile size across every screen. The count is the binding's, the width is not: the row
+// is held to the control column whichever column the panel is in, or the three screens that
+// put their panel in the flexible track draw the same tile at more than twice the size.
+describe("readout tiles", () => {
+  it("leaves no empty cell on a two-lane rack", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(EQ, "ch1");
+    const cells = host.box.querySelector<HTMLElement>(".gt-readouts")!;
+    expect(cells.children.length).toBe(2);
+    expect(cells.style.getPropertyValue("--gt-ro-cols")).toBe("2");
+    screen.close();
   });
 });
 

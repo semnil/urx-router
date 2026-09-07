@@ -38,14 +38,6 @@ const section = (page: Page, title: RegExp) =>
 
 const readout = (page: Page, label: string) => screenBox(page).locator(".gt-ro", { hasText: label });
 const paramRow = (page: Page, label: string) => screenBox(page).locator(".prefs-row", { hasText: label });
-/** A row by its exact label. `paramRow` matches on a substring, so "1-Knob" also picks up
- *  "1-Knob Level" — and a pin that asserts a row did *not* move would keep passing while
- *  silently measuring the other one. */
-const exactRow = (page: Page, label: string) =>
-  screenBox(page)
-    .locator(".prefs-row")
-    .filter({ has: page.getByText(label, { exact: true }) });
-
 /** Push a device-side parameter change, the way turning a knob on the unit does. */
 const pushParam = (page: Page, paramId: number, x: number, y: number, value: number) =>
   page.evaluate(
@@ -83,6 +75,22 @@ const openFromConsole = async (page: Page, which = 0) => {
  *  per section kind, so this unfolds only when it is actually closed — a second
  *  call in the same session would otherwise fold it again and hide the launcher. */
 const SECTION_OF = { gate: /^GATE$/, comp: /^COMP$/, eq: /^EQ$/, ducker: /^Ducker$/ };
+/** The 1-knob section of whichever screen is open, by its heading. COMP's moved out of
+ *  Parameters into one of these, so its switch is called ON the way the EQ's is and a row
+ *  label no longer names it on its own. */
+const oneKnobSection = (page: Page) =>
+  screenBox(page)
+    .locator(".prefs-section")
+    .filter({ has: page.locator("h3", { hasText: "1-knob" }) });
+
+/** …and the switch itself, by its own label rather than by position: Auto Makeup rides
+ *  above it in that section and is an ON/OFF pair too, so the section's buttons are not
+ *  one control. */
+const oneKnobSwitch = (page: Page) =>
+  oneKnobSection(page)
+    .locator(".prefs-row")
+    .filter({ has: page.locator(".lbl", { hasText: /^ON$/ }) });
+
 const openFromInspector = async (page: Page, id: string, kind: keyof typeof SECTION_OF = "gate") => {
   await node(page, id).click();
   const sec = section(page, SECTION_OF[kind]);
@@ -395,7 +403,7 @@ test("prints — for a tap that has not reported, never a floor value", async ({
   await openFromInspector(page, "ch1");
   // Not live: no frame has arrived, and a GR of 0 dB would claim the gate is
   // passing everything.
-  for (const label of ["Pre Gate", "Gate GR", "Pre Comp"]) {
+  for (const label of ["PRE GATE", "GATE GR", "PRE COMP"]) {
     await expect(readout(page, label).locator(".v")).toHaveText("—");
     await expect(readout(page, label).locator(".p")).toHaveText("pk —");
   }
@@ -433,7 +441,7 @@ test.describe("with a live session", () => {
 
   test("reads both GR idle values as no reduction, and a reduction as itself", async ({ page }) => {
     await openFromInspector(page, "ch1");
-    const gr = readout(page, "Gate GR").locator(".v");
+    const gr = readout(page, "GATE GR").locator(".v");
 
     // Measured: the gate reports 0 while switched off …
     await pushMeters(page, [107, 0, 0]);
@@ -449,9 +457,9 @@ test.describe("with a live session", () => {
   test("keeps the level taps and the reduction on separate readouts", async ({ page }) => {
     await openFromInspector(page, "ch1");
     await pushMeters(page, [106, 0, -153], [107, 0, -239], [108, 0, -153]);
-    await expect(readout(page, "Pre Gate").locator(".v")).toHaveText("-15.3");
-    await expect(readout(page, "Gate GR").locator(".v")).toHaveText("-23.9");
-    await expect(readout(page, "Pre Comp").locator(".v")).toHaveText("-15.3");
+    await expect(readout(page, "PRE GATE").locator(".v")).toHaveText("-15.3");
+    await expect(readout(page, "GATE GR").locator(".v")).toHaveText("-23.9");
+    await expect(readout(page, "PRE COMP").locator(".v")).toHaveText("-15.3");
   });
 
   test("holds the deepest reduction, which the device does not hold itself", async ({ page }) => {
@@ -460,10 +468,10 @@ test.describe("with a live session", () => {
     // the peak keeps the reading that arrived, which is the only trace a gate
     // action shorter than a frame leaves.
     await pushMeters(page, [107, 0, -400]);
-    await expect(readout(page, "Gate GR").locator(".p")).toHaveText("pk -40.0");
+    await expect(readout(page, "GATE GR").locator(".p")).toHaveText("pk -40.0");
     await pushMeters(page, [107, 0, 32767]);
-    await expect(readout(page, "Gate GR").locator(".v")).toHaveText("0.0");
-    await expect(readout(page, "Gate GR").locator(".p")).toHaveText("pk -40.0");
+    await expect(readout(page, "GATE GR").locator(".v")).toHaveText("0.0");
+    await expect(readout(page, "GATE GR").locator(".p")).toHaveText("pk -40.0");
   });
 
   test("keeps its meters when the device is operated under it", async ({ page }) => {
@@ -498,7 +506,7 @@ test.describe("with a live session", () => {
     // The screen still owns its three addresses, so its meters keep updating.
     await expectGateTaps(page);
     await pushMeters(page, [107, 0, -239]);
-    await expect(readout(page, "Gate GR").locator(".v")).toHaveText("-23.9");
+    await expect(readout(page, "GATE GR").locator(".v")).toHaveText("-23.9");
   });
 });
 
@@ -594,7 +602,7 @@ test.describe("comp", () => {
 
     // 1-knob on: the device computes threshold / ratio / gain from one level and
     // announces each recomputation, so they stay on screen and stop being editable.
-    await paramRow(page, "1-Knob").locator("button", { hasText: "On" }).click();
+    await oneKnobSwitch(page).locator("button", { hasText: "ON" }).click();
     await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
     for (const label of ["Threshold", "Ratio", "Gain"]) {
       await expect(paramRow(page, label).locator("input[type=range]")).toBeDisabled();
@@ -603,7 +611,7 @@ test.describe("comp", () => {
     // rather than going, so nothing below it moves; it only stops being editable.
     await expect(paramRow(page, "Auto Makeup")).toHaveClass(/locked/);
 
-    await paramRow(page, "1-Knob").locator("button", { hasText: "Off" }).click();
+    await oneKnobSwitch(page).locator("button", { hasText: "OFF" }).click();
     await expect(paramRow(page, "Threshold").locator("input[type=range]")).toBeEnabled();
 
     // Auto Makeup drives the makeup gain alone.
@@ -614,22 +622,22 @@ test.describe("comp", () => {
 
   test("does not move under the pointer that toggles 1-knob", async ({ page }) => {
     await openFromInspector(page, "ch1", "comp");
-    // Exact label: the toggle's own row, never the "1-Knob Level" row below it.
-    const knob = exactRow(page, "1-Knob");
+    // The switch's own row inside the 1-knob section, never the level row below it.
+    const knob = oneKnobSwitch(page);
     const geo = async () => ({
       panel: await panelHeight(page),
       knobTop: await knob.evaluate((el) => el.getBoundingClientRect().top),
     });
     const before = await geo();
 
-    // Auto Makeup and 1-Knob Level are alternatives of different shapes — a toggle row
+    // Auto Makeup and the level are alternatives of different shapes — a toggle row
     // against a slider row — so swapping them in and out both shortened the panel and
     // lifted the row being clicked. Both stay, so neither figure moves.
-    await knob.locator("button", { hasText: "On" }).click();
+    await knob.locator("button", { hasText: "ON" }).click();
     await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
     expect(await geo()).toEqual(before);
 
-    await knob.locator("button", { hasText: "Off" }).click();
+    await knob.locator("button", { hasText: "OFF" }).click();
     await expect(page.locator("#dyn-oneknob-level")).toBeDisabled();
     expect(await geo()).toEqual(before);
   });
@@ -656,7 +664,7 @@ test.describe("comp", () => {
 
     test("reads the reduction, and both idle values as none", async ({ page }) => {
       await openFromInspector(page, "ch1", "comp");
-      const gr = readout(page, "Comp GR").locator(".v");
+      const gr = readout(page, "COMP GR").locator(".v");
       // Measured: 0 while the compressor is off, the OVER sentinel while it is on
       // with nothing to reduce. Neither is a clip, and neither is a reduction.
       await pushMeters(page, [110, 0, 0]);
@@ -667,7 +675,7 @@ test.describe("comp", () => {
       await expect(gr).toHaveText("-8.0");
       // The makeup gain is not in this figure — measured by sweeping it against a
       // held compression — so the lane reads the same at any makeup setting.
-      await expect(readout(page, "Pre EQ").locator(".v")).toHaveText("—");
+      await expect(readout(page, "PRE EQ").locator(".v")).toHaveText("—");
     });
   });
 });
@@ -685,7 +693,7 @@ test.describe("comp, dragging while the device follows", () => {
     // Rebuilding the column then — or on the slider's own input event — replaces
     // the element under the pointer, and the drag ends after two or three steps.
     await openFromInspector(page, "ch1", "comp");
-    await paramRow(page, "1-Knob").locator("button", { hasText: "On" }).click();
+    await oneKnobSwitch(page).locator("button", { hasText: "ON" }).click();
     const slider = page.locator("#dyn-oneknob-level");
     const box = (await slider.boundingBox()) as { x: number; y: number; width: number; height: number };
 
@@ -891,7 +899,7 @@ test.describe("ducker", () => {
     // carrying this very class, so `.first()` would read the spacer's blank text.
     const keyCaption = screenBox(page).locator(".gt-cap-label:not([aria-hidden])").first();
     // The factory plan keys every ducker from CH 1.
-    await expect(keyCaption).toContainText("Key");
+    await expect(keyCaption).toContainText("KEY");
     await expect(keyCaption).toContainText("CH 1");
     await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
@@ -900,7 +908,7 @@ test.describe("ducker", () => {
     await openDucker(page);
     // A keyless ducker is engaged at unity on the unit, so the lane says there is no
     // key rather than drawing an empty bar that would read as silence.
-    await expect(screenBox(page).locator(".gt-cap-label:not([aria-hidden])").first()).toContainText("none");
+    await expect(screenBox(page).locator(".gt-cap-label:not([aria-hidden])").first()).toContainText("NONE");
   });
 
   test("the key lane draws ONE bar, whatever the key source's width", async ({ page }) => {
@@ -926,7 +934,7 @@ test.describe("ducker", () => {
     await expect(screenBox(page).locator("#dyn-screen-title")).toContainText("Ducker");
     // Opened on the ducker node, so its values are the ducker's: the screen writes
     // through `nodeParams["out.ducker1"].ducker`, not through the strip's channel.
-    await expect(screenBox(page).locator(".gt-cap-label:not([aria-hidden])").first()).toContainText("Key");
+    await expect(screenBox(page).locator(".gt-cap-label:not([aria-hidden])").first()).toContainText("KEY");
   });
 
   test("shows the envelope and the lanes at once, with nothing to choose between them", async ({ page }) => {
@@ -1076,7 +1084,7 @@ test.describe("ducker envelope", () => {
     await openDucker(page);
     const before = await screenBox(page).locator("canvas").screenshot();
     await pushMeters(page, [119, 0, -240], [120, 0, -300], [120, 1, -300]);
-    await expect(readout(page, "Ducker GR").locator(".v")).toHaveText("-24.0");
+    await expect(readout(page, "DUCKER GR").locator(".v")).toHaveText("-24.0");
     // The reduction reached the readout and the meter; the plot is unchanged.
     expect(await screenBox(page).locator("canvas").screenshot()).toEqual(before);
   });
@@ -1084,6 +1092,6 @@ test.describe("ducker envelope", () => {
   test("at unity the readout still separates no reduction from no feed", async ({ page }) => {
     await openDucker(page);
     await pushMeters(page, [119, 0, 0]);
-    await expect(readout(page, "Ducker GR").locator(".v")).toHaveText("0.0");
+    await expect(readout(page, "DUCKER GR").locator(".v")).toHaveText("0.0");
   });
 });

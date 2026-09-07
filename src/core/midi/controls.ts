@@ -874,7 +874,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       // write the plan while the writer is suppressing it.
       const lockedNow = (): boolean =>
         insertFxLockedSlots(insFxFamily, plan.nodeParams[id]?.insertFxParams).has(d.slot);
-      // The slot whose value decides that set: the multi-band compressor's 1-Knob switch. Pitch
+      // The slot whose value decides that set: the multi-band compressor's 1-knob switch. Pitch
       // Fix's MIDI Control decides one too and is NOT here — it is a writable slot with no
       // parameter row, so no mapping can name it, nothing can be ganged to it and nothing waits
       // for it. Which is why the driver is looked up in the list this loop walks rather than

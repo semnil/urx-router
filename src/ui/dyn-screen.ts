@@ -53,7 +53,8 @@ import type { MeterTap } from "../core/meters";
 import { dynFromPos, dynToPos, dynValueText, formatDyn } from "../core/control/translate";
 import type { DynField } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
-import type { NodeParams, Plan } from "../core/plan";
+import { processorOn } from "../core/plan";
+import type { NodeParams, Plan, PROCESSOR_ON_DEFAULT } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
 
 /** Top of every meter ruler: a channel meter cannot read above 0 dBFS. */
@@ -113,12 +114,11 @@ export interface DynLane {
    *  own, and give it no caption. Everything else stays per-lane — its readings, its
    *  peak hold and its readout cell are untouched — so this is placement only.
    *
-   *  Every reduction on every screen is drawn this way: it reads better against the level
-   *  it was taken off than as a column of its own. The DUCKER pairs its reduction with the
-   *  KEY level rather than the output, because there the two are cause and effect — one
-   *  column shows the key rising to the threshold cap while the reduction hangs from the
-   *  top of the same ruler. The cost is that the shared ruler has to span the deeper of the
-   *  two domains, since a merged lane cannot carry a scale of its own. */
+   *  Every reduction on every screen is drawn this way, the DUCKER's included: it reads
+   *  better against the level it was taken off than as a column of its own. The merge is
+   *  into the column built BEFORE it, so a reduction lane follows the output lane in the
+   *  list. The cost is that the shared ruler has to span the deeper of the two domains,
+   *  since a merged lane cannot carry a scale of its own. */
   sameSlot?: true;
   /**
    * dB to take OFF this reduction before drawing it, which makes the BAR a different
@@ -158,10 +158,20 @@ export interface DynLane {
 export interface DynBinding {
   fields: DynField[];
   lanes: DynLane[];
-  /** How many columns the readout tiles take. Declared rather than derived from the
-   *  lane count: the host has no way to know that four tiles want two columns and
-   *  five might not, and a threshold on `lanes.length` is a guess dressed as a rule —
-   *  the same guess `nodeLabel` and the optional `bar` exist to avoid. Absent = 3. */
+  /** How many columns the readout tiles take. The rule the bindings follow is that the row
+   *  ends up with no empty cell — two tiles ask for two, three for three, and four for
+   *  either two (a 2 x 2 block) or four (one row, where a second row would not fit). It is
+   *  still DECLARED rather than derived here: which of the two a rack of four wants is a
+   *  question about that rack's height, and the host cannot answer it.
+   *
+   *  Absent = one column per lane, which is the rule (`no empty cell in the row`) for every
+   *  rack of one to three and was being spelled out by five descriptors that each said the
+   *  same thing. It is declared only where a rack wants otherwise — the two four-lane racks
+   *  that take 2 x 2 rather than a row of four.
+   *
+   *  It decides the tiles' proportions and not their width. The row is held to the control
+   *  column's own width wherever the panel sits, so a tile is the same size on every
+   *  screen (`.gt-readouts` in style.css). */
   readoutCols?: number;
   /** The height a bank reserves for all of its faces, where the stylesheet's own number is
    *  not enough. Declared by the binding, like `readoutCols`, because it is a property of
@@ -274,16 +284,23 @@ export interface DynRowCtx extends DynCtx {
   setValue: (patch: Record<string, number | boolean>) => void;
 }
 
-/** Extra rows a processor renders beside its sliders, in the device's own read
- *  order: `lead` above them (the mode switches), `tail` below (the selectors). */
+/**
+ * Extra rows a processor renders beside its sliders, **in the order the unit's own screen
+ * reads them**. That is the rule for every one of them, and it is the reason `before`
+ * exists: a row is placed where the device puts it rather than by what kind of control it
+ * is. A selector is not a class with a position — the unit lists Knee ahead of Attack on
+ * both compressor screens and the filter type ahead of a band's values, and the panel here
+ * says the same thing in the same order.
+ */
 export interface DynRows {
+  /** Above every slider, for a row the unit's screen puts ahead of the whole list. */
   lead?: HTMLElement[];
+  /** Below every slider, for a row the unit's screen puts after it. */
   tail?: HTMLElement[];
-  /** Rows placed immediately before the slider whose key names them, for a panel whose
-   *  fields fall into groups the device reads in that order. The SSMCS COMP face is the
-   *  one: its side-chain filter's three sliders follow the compressor's, and the Side
-   *  Chain toggle that opens them is what tells the reader where one group ends. `lead`
-   *  would put that toggle above rows it does not govern. */
+  /** Rows placed immediately before the slider whose key names them — the ordinary case,
+   *  since most of these sit inside the list rather than at either end. The SSMCS COMP
+   *  face's Side Chain toggle opens the filter's three sliders and its Knee leads Attack;
+   *  the shipped COMP screen's Knee does the same. */
   before?: Record<string, HTMLElement[]>;
 }
 
@@ -329,6 +346,21 @@ export interface DynProcessor {
   /** One line under the display. Null reserves the space without printing (a plot
    *  needs saying what it shows; a fader cap on a meter explains itself). */
   hint?: (ctx: DynCtx) => string | null;
+  /**
+   * Why nothing this screen sets reaches the signal, or null when something does. The
+   * host prints it INSTEAD of `hint` — saying that the values are inert outranks
+   * describing what they would do — so a descriptor states the two separately rather
+   * than folding the precedence into its own `hint`.
+   *
+   * Every processor answers one: a screen that hands the operator a live editor for a
+   * switched-off block, while another surface says it is off, is the same defect
+   * whichever block it is. What differs is only which flag the descriptor reads.
+   *
+   * The two cannot be shown together. The note's box is three lines and clips what does
+   * not fit, and the concatenation runs past that at the 960px minimum window — so the
+   * precedence is the whole of the arrangement rather than a preference.
+   */
+  offNote: (ctx: DynCtx) => string | null;
   /** The processor's values as one flat record. Where they live is the descriptor's
    *  business — GATE/COMP keep one sub-object, the EQ spreads across `eqBands[i]` and
    *  `eqOneKnob` — and every consumer here reads them by key. */
@@ -352,9 +384,9 @@ export interface DynProcessor {
    *  height whatever is selected. */
   rowStates?: (ctx: DynCtx, vals: Record<string, unknown>) => ReadonlyMap<string, SettingsRowOptions> | null;
   rows?: (ctx: DynRowCtx) => DynRows;
-  /** Sections above the parameters. GATE/COMP put their mode switches in `rows.lead`,
-   *  inside Parameters, because they are that processor's own values; the EQ's 1-knob
-   *  is a stage of its own with its own heading, as the unit prints it. */
+  /** Sections above the parameters. The 1-knob is one wherever a processor has one — COMP,
+   *  the 4-band EQ and the multi-band compressor — because it decides whose the rows below
+   *  it are rather than being one of them, which is how the unit prints it too. */
   sections?: (ctx: DynRowCtx) => HTMLElement[];
   /** A label for a field whose key the shared `inspector.dyn` table does not name (or
    *  names differently — COMP's `gain` is a makeup gain, the EQ's is a band gain). */
@@ -483,13 +515,6 @@ const FRAME_MS = 1000 / 30;
  *  cannot deliver more than 10 new values a second anyway. */
 const READOUT_EVERY = 5;
 
-/** Readout tile columns that are not the stylesheet's own default of three. The class is
- *  what carries the count, so a descriptor asking for a number nothing styles gets the
- *  default rather than a grid with no columns. */
-/** Readout tiles per row, where a descriptor asks for nothing else. Three is what most
- *  racks carry; the stylesheet's own fallback is the same number, and both are stated once. */
-const READOUT_COLS_DEFAULT = 3;
-
 /** Persisted bar selection, per processor. Its own key, like `urx-sends-open` and
  *  `urx-metertap`: this is per-surface UI state, not a Preferences setting. */
 const SEL_STORE = "urx-dyn-display2";
@@ -537,6 +562,14 @@ const NO_STATES: ReadonlyMap<string, SettingsRowOptions> = new Map<string, Setti
  *  element holding only ordinary whitespace lays out no line box at all, and the reserve
  *  is a line box. */
 const BLANK_RESERVE = " ";
+
+/** The OFF line for a processor whose plan carries a plain on/off flag — GATE, COMP, the
+ *  4-band EQ and a ducker. Shared because what the line says does not depend on which
+ *  block it is said about, and what an unset flag means is the plan's own table rather
+ *  than a literal per descriptor. */
+export function flagOffNote(ctx: DynCtx, key: keyof typeof PROCESSOR_ON_DEFAULT): string | null {
+  return processorOn(ctx.plan.nodeParams[ctx.nodeId], key) ? null : ctx.m.dynTuning.bypassed;
+}
 
 /** The 1-knob level row, which COMP and the EQ each own one of. Shared because the two
  *  are the same control on the same scale — including the element id, which the E2E
@@ -629,7 +662,7 @@ export class DynScreen {
   private fields: DynField[] = [];
   private lanes: DynLane[] = [];
   /** What the binding declared about the readouts. Only the column count so far. */
-  private readoutCols = READOUT_COLS_DEFAULT;
+  private readoutCols = 0;
   private paramsFirst = false;
   private knobGrid = false;
   /** The knob grid's column count, as the binding asked for it. 0 = the stylesheet's own. */
@@ -754,7 +787,7 @@ export class DynScreen {
   private applyBinding(bound: DynBinding): void {
     this.fields = bound.fields;
     this.lanes = bound.lanes;
-    this.readoutCols = bound.readoutCols ?? READOUT_COLS_DEFAULT;
+    this.readoutCols = bound.readoutCols ?? bound.lanes.length;
     this.paramsFirst = bound.paramsFirst === true;
     this.knobGrid = bound.knobGrid === true;
     this.knobCols = bound.knobCols ?? 0;
@@ -1511,7 +1544,10 @@ export class DynScreen {
    *  the faced bank included (`style.css`, `.gt-note`). */
   private hintLine(proc: DynProcessor, ctx: DynCtx): HTMLElement {
     const hint = el("p", "gt-note");
-    const text = proc.hint?.(ctx);
+    // `offNote` outranks `hint`, in one place rather than inside each descriptor's own
+    // hint: what the operator has to be told first is that nothing here is reaching the
+    // signal. `DynProcessor.offNote` carries why the two cannot share the line.
+    const text = proc.offNote(ctx) ?? proc.hint?.(ctx);
     if (text) hint.textContent = text;
     else hint.setAttribute("aria-hidden", "true");
     return hint;
@@ -1898,9 +1934,7 @@ export class DynScreen {
     const cells = el("div", "gt-readouts");
     // The count reaches the stylesheet as a VALUE rather than as a class per count, so a
     // descriptor can ask for any number and nothing silently answers with three.
-    if (this.readoutCols !== READOUT_COLS_DEFAULT) {
-      cells.style.setProperty("--gt-ro-cols", String(this.readoutCols));
-    }
+    cells.style.setProperty("--gt-ro-cols", String(this.readoutCols));
     for (const lane of this.lanes) cells.append(this.readoutCell(lane));
     ro.append(cells);
 
@@ -2202,6 +2236,12 @@ export class DynScreen {
 /** The font every plot's tick labels and annotations use. Beside the tokens because both
  *  are "what a plot draws with", and the canvas owner resolves both. */
 export const PLOT_FONT = '9.5px "SF Mono", Menlo, Consolas, monospace';
+/** The same stack at the two other weights a plot draws in. Spelled out rather than
+ *  reached through `var(--mono)`: a canvas font shorthand is parsed with no CSS context,
+ *  so a `var()` in it makes the whole value unparseable, the setter drops it, and the text
+ *  lands in the context's default sans-serif with nothing reporting the miss. */
+export const PLOT_FONT_TAG = '600 9px "SF Mono", Menlo, Consolas, monospace';
+export const PLOT_FONT_READ = '700 11px "SF Mono", Menlo, Consolas, monospace';
 
 /** The token names a plot canvas is handed. A draw naming anything else reads undefined,
  *  which canvas IGNORES rather than refuses — pinned by `palette.contract`. */

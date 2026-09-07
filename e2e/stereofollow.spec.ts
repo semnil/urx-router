@@ -103,7 +103,7 @@ test("a link arriving through a side-effect refetch shows on an already adjacent
   if (!(await comp.evaluate((el) => (el as HTMLDetailsElement).open))) await comp.locator("summary").click();
   await comp.locator("#btn-comp-screen").click();
   await expect(screenBox(page)).toBeVisible();
-  await oneKnob(page).locator("button", { hasText: "On" }).click();
+  await oneKnob(page).locator("button", { hasText: "ON" }).click();
 
   // CH 2 never moved, so the tie appearing is the whole of what this case measures.
   const ch1 = (await node(page, "ch1").boundingBox())!;
@@ -115,12 +115,19 @@ test("a link arriving through a side-effect refetch shows on an already adjacent
   // the half a condition reading only the arriving value would miss.
   await setDeviceValue(page, SIGNAL_TYPE, 0, 0);
   await setDeviceValue(page, SIGNAL_TYPE, 1, 0);
-  await oneKnob(page).locator("button", { hasText: "Off" }).click();
+  await oneKnob(page).locator("button", { hasText: "OFF" }).click();
   await expect(stereoTie(page)).toHaveCount(0, { timeout: 30_000 });
 });
 
-/** The COMP screen's 1-Knob toggle row. Exact-ish: the rack also carries "1-Knob Level". */
-const oneKnob = (page: Page) => screenBox(page).locator(".prefs-row", { hasText: "1-Knob" }).first();
+/** The COMP screen's 1-knob switch. It sits in a section of its own, where its label is ON
+ *  — and Auto Makeup is in there with it and is an ON/OFF pair too, so the row is picked by
+ *  its own label rather than by position. */
+const oneKnob = (page: Page) =>
+  screenBox(page)
+    .locator(".prefs-section")
+    .filter({ has: page.locator("h3", { hasText: "1-knob" }) })
+    .locator(".prefs-row")
+    .filter({ has: page.locator(".lbl", { hasText: /^ON$/ }) });
 
 // Five distinct controls, against MAX_CONCENTRATION = 3 in src/core/control/follow.ts.
 const BURST: ReadonlyArray<[number, number, number]> = [

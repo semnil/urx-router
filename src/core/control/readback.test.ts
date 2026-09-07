@@ -409,7 +409,7 @@ describe("applyDeviceState round-trip", () => {
 describe("applyDeviceState and the other effects a node has held", () => {
   // The stored map is one namespace per family, so a node that has held several effects
   // keeps each one's values. A read answers for ONE of them, and the reader used to build a
-  // fresh map from that answer alone — which deleted the rest. With live sync up, a 1-Knob
+  // fresh map from that answer alone — which deleted the rest. With live sync up, a 1-knob
   // write is enough to trigger a scoped read, and the loss shows only much later, when the
   // operator selects the old effect and finds it at the factory.
   it("keeps a family the read is not about, and takes the unit's values for the one it is", async () => {

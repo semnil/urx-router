@@ -159,7 +159,7 @@ test("the rack is the effect's own input and output, with no reduction lane", as
   // No reduction: a reverb and a delay take no gain off, so a bar there could never move.
   await expect(screenBox(page).locator(".gt-ro.gr")).toHaveCount(0);
   // …and the two tiles name the taps they read.
-  await expect(screenBox(page).locator(".gt-ro .k")).toHaveText(["Input", "Pre Fader"]);
+  await expect(screenBox(page).locator(".gt-ro .k")).toHaveText(["INPUT", "PRE FADER"]);
   await closeScreen(page);
 });
 

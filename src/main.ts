@@ -20,6 +20,7 @@ import {
   ensureFixedConnections,
   normalizeNodeName,
   PlanError,
+  processorOn,
   SDREC_NODE_ID,
   serialize,
   setPlanSampleRate,
@@ -1383,8 +1384,8 @@ function resetCompEqBank(id: string, newType: number): void {
     assignOrDelete(np, "comp", factory.comp);
     assignOrDelete(np, "eqBands", factory.eqBands);
     assignOrDelete(np, "eqOneKnob", factory.eqOneKnob);
-    np.compOn = factory.compOn ?? false;
-    np.eqOn = factory.eqOn ?? true;
+    np.compOn = processorOn(factory, "compOn");
+    np.eqOn = processorOn(factory, "eqOn");
   }
 }
 

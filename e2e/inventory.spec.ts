@@ -475,15 +475,22 @@ test("the channel tuning screens show every processor, both displays and their n
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 
   const box = page.locator("#dyn-screen-box");
-  /** A row by its EXACT label: "1-Knob" substring-matches "1-Knob Level" too, and
-   *  picking by DOM order instead would silently follow a row inserted above it. */
-  const exactRow = (label: string) => box.locator(".prefs-row").filter({ has: page.getByText(label, { exact: true }) });
+  /** The 1-knob switch of whichever screen is open: its section by the heading, then the
+   *  row by its own label — COMP's section carries Auto Makeup above it, and that is an
+   *  ON/OFF pair too. */
+  const oneKnobSwitch = () =>
+    box
+      .locator(".prefs-section")
+      .filter({ has: page.locator("h3", { hasText: "1-knob" }) })
+      .locator(".prefs-row")
+      .filter({ has: page.locator(".lbl", { hasText: /^ON$/ }) });
+
+  const inspectorSection = (kind: keyof typeof SECTION_OF) =>
+    page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: SECTION_OF[kind] }) });
 
   const openFromInspector = async (kind: keyof typeof SECTION_OF, id = "ch1"): Promise<void> => {
     await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
-    const sec = page.locator("#inspector .insp-section", {
-      has: page.locator("summary", { hasText: SECTION_OF[kind] }),
-    });
+    const sec = inspectorSection(kind);
     if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
     // The button that opens the screen is part of the feature's display surface,
     // and it is the only place its "…screen" wording appears.
@@ -492,15 +499,34 @@ test("the channel tuning screens show every processor, both displays and their n
     await expect(box).toBeVisible();
   };
 
+  /** Switch a processor on from the Inspector section that carries its launcher. GATE,
+   *  COMP and a ducker all ship OFF, and an off processor's screen says so on the line
+   *  where its figure would otherwise be explained — so both states have to be driven or
+   *  one of the two messages is never displayed. */
+  const setOn = async (kind: keyof typeof SECTION_OF, id = "ch1"): Promise<void> => {
+    await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
+    const sec = inspectorSection(kind);
+    if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+    await sec.getByRole("button", { name: "ON", exact: true }).first().click();
+  };
+
   for (const kind of ["gate", "comp"] as const) {
-    // One state, not two: the plot and the lane rack are both on screen from the open,
-    // so there is no display mode to walk.
+    // Off, which is how the unit ships them: the line under the display says nothing here
+    // reaches the signal.
+    await openFromInspector(kind);
+    await inv.take(page, "#dyn-screen-modal");
+    await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+
+    // …and on, where the line is the figure's own. One state each beyond that, not two:
+    // the plot and the lane rack are both on screen from the open, so there is no display
+    // mode to walk.
+    await setOn(kind);
     await openFromInspector(kind);
     await inv.take(page, "#dyn-screen-modal");
     // COMP's 1-knob hands three values over to the device, which is the one state
     // that tags a row as device-driven.
     if (kind === "comp") {
-      await exactRow("1-Knob").locator("button", { hasText: "On" }).click();
+      await oneKnobSwitch().locator("button", { hasText: "ON" }).click();
       await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
       await inv.take(page, "#dyn-screen-modal");
     }
@@ -531,6 +557,12 @@ test("the channel tuning screens show every processor, both displays and their n
   // it reports as engaged rather than as silence.
   const openDucker = () => openFromInspector("ducker", "out.ducker1");
 
+  // Off first, which is how a ducker ships, then on — the same pair GATE and COMP take.
+  await openDucker();
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+
+  await setOn("ducker", "out.ducker1");
   await openDucker();
   await inv.take(page, "#dyn-screen-modal");
   await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
@@ -655,7 +687,7 @@ test("the channel tuning screens show every processor, both displays and their n
   await inv.take(page, "#dyn-screen-modal");
   await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
-  // …and with the unit's own 1-Knob on, which is the state that replaces the line under the
+  // …and with the unit's own 1-knob on, which is the state that replaces the line under the
   // display. There is no control for it — the app never writes it — so the plan is what puts
   // it there.
   const oneKnob = {

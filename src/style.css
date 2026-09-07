@@ -1110,7 +1110,7 @@ input[type="range"]:focus-visible,
 }
 
 /* A read-only param row (a value the device drives and only reports back, e.g. the
-   COMP ratio/gain while 1-Knob is on): the label + value with no control, dimmed. */
+   COMP ratio/gain while 1-knob is on): the label + value with no control, dimmed. */
 .param.readonly {
   opacity: 0.6;
 }
@@ -4429,7 +4429,10 @@ button.consent-btn-primary {
    device setup use their halves. The narrow-window rule is restated because the one
    above it matches `.prefs-grid` alone and loses to this selector. */
 #dyn-screen-box .prefs-grid {
-  grid-template-columns: 1fr 400px;
+  /* The control column's width, named so the readout tiles can be held to it wherever
+     that column happens to be. */
+  --gt-ctl-w: 400px;
+  grid-template-columns: 1fr var(--gt-ctl-w);
 }
 /* Reversed: the parameters take the flexible column and the meters a narrow fixed one.
    A guitar amp's panel is a dozen controls and its display is a level rack with nothing
@@ -4550,6 +4553,16 @@ button.consent-btn-primary {
 }
 .gt-splitdisplay > .gt-ladderbox {
   flex: 0 0 auto;
+}
+/* A display that is the lane rack ALONE — a guitar amp, Pitch Fix, an FX channel's effect.
+   The frame hugs its lanes the way it does beside a plot, and the column centres it, so a
+   rack of two is the same object whichever screen it is on and only the number of lanes
+   decides how wide it is. Stretched to the column instead, the same two lanes were framed
+   at 226px here and at 156px on the EQ screen. */
+.prefs-col > .gt-ladderbox {
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
 }
 /* A row (or a heading's tag pill) whose values belong to the device: not shown, but still
    occupying its place, so the panel keeps its height and nothing below it moves under the
@@ -4786,15 +4799,24 @@ button.consent-btn-primary {
 }
 .gt-readouts {
   display: grid;
-  /* The count is the host's, written from the descriptor's own number; three is the
-     fallback for a rack that asks for nothing. Four tiles on three columns wrap to 3 + 1 —
-     ragged, and wider than four need to be — so a rack with four asks for two (a 2 x 2
-     block) or four (one row). One rack asks for four: the SSMCS bank's Side Chain segment,
-     where a second row of tiles measured 64px — enough to push that face past the height
-     its three siblings are held at. */
-  grid-template-columns: repeat(var(--gt-ro-cols, 3), 1fr);
+  /* The count is the host's and it writes one on every rack — the binding's number where
+     there is one, the lane count otherwise — so there is no fallback here to disagree with
+     it. The rule the counts follow is that the row ends with no empty cell: four tiles on
+     three columns wrap to 3 + 1, ragged and wider than four need to be, so a rack of four
+     takes two (a 2 x 2 block) or four (one row). The SSMCS bank's Side Chain segment takes
+     the row of four, where a second row of tiles measured 64px — enough to push that face
+     past the height its three siblings are held at. */
+  grid-template-columns: repeat(var(--gt-ro-cols), 1fr);
   gap: 8px;
-  margin: 10px 0 0 14px;
+  --gt-ro-indent: 14px;
+  margin: 10px 0 0 var(--gt-ro-indent);
+  /* The row is the control column's width wherever it sits, so a tile is the same size on
+     every screen and only the declared count changes it. Without this the three screens
+     that put their panel in the flexible column (a guitar amp, Pitch Fix, an FX channel's
+     effect) divide a track more than twice as wide, and the same tile is drawn at 279px
+     there and at 122px everywhere else. The subtraction is this rule's own indent plus the
+     padding `.prefs-grid > .prefs-col:last-child` keeps. */
+  max-width: calc(var(--gt-ctl-w) - var(--gt-ro-indent) - 4px);
 }
 .gt-ro {
   display: grid;

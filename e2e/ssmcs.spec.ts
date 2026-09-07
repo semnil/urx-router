@@ -312,11 +312,13 @@ test.describe("the tuning screen's three faces", () => {
     // Each segment carries the sliders whose effect is on the plot beside it, and the two
     // sets are four rows each — which is what holds this face at the height its siblings
     // are held at.
+    // Knee leads them, which is where the unit's own SSMCS COMP screen puts it (p.110) and
+    // where the shipped COMP screen puts its own.
     expect(await screenBox(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual([
+      "Knee",
       "Attack",
       "Release",
       "Ratio",
-      "Knee",
     ]);
     await screenBox(page).locator("#dyn-mode-sidechain").click();
     expect(await screenBox(page).locator(".prefs-row .lbl").allInnerTexts()).toEqual([
