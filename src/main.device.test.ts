@@ -135,7 +135,14 @@ const row = (label: string): HTMLElement => {
   return found!;
 };
 
-/** Select a node the way a click does, so the inspector renders for it. */
+/**
+ * Select a node the way a click does, so the inspector renders for it.
+ *
+ * The release is not decoration: a press the board never sees released arms the path-trace
+ * long press (graph.ts `startLongPress`), which fires a few hundred ms later and writes a
+ * status line of its own — so a status a case reads after selecting a node would be racing
+ * that timer, and which one wins is a property of how loaded the machine is.
+ */
 const selectNode = (id: string): void => {
   const face = faceplate($("graph-host"), id)!;
   face.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
@@ -318,6 +325,24 @@ const diffReadsFail = (a: Record<string, unknown>): number => {
     return clockReads(false, 48_000)(a);
   }
   throw new Error("read-refused");
+};
+
+/**
+ * Press a node on the board by its own group, which is how this file's FX cases select one.
+ *
+ * NOT `selectNode` above, and not a completed press either. The board arms a path-trace long
+ * press on the press (graph.ts `startLongPress`) and cancels it on the release, so a press
+ * left open here writes a status line of its own a few hundred ms later — which is a status
+ * assertion racing a timer. Both obvious repairs change what the cases around this read:
+ * releasing it makes the undo in "survives an undo" land one entry further back, and
+ * pressing the faceplate that `selectNode` presses leaves three cases reading the wrong
+ * effect value or an empty screen. So the open press stands, and a case that wants a status
+ * after selecting a node reads it before it selects one.
+ */
+const pressNode = (nodeId: string): void => {
+  $("graph-host")
+    .querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!
+    .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
 };
 
 /** An inspector row by the label it stamps on itself, so "Insert FX" cannot match
@@ -2302,9 +2327,7 @@ describe("a value the unit holds and the app cannot write", () => {
   // selected, its launcher pressed, the readout taken and the screen closed again — reopened
   // per reading so each one is a fresh draw of the plan as it stands.
   const withFxScreen = <T>(nodeId: string, use: (box: HTMLElement) => T): T => {
-    $("graph-host")
-      .querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!
-      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    pressNode(nodeId);
     $<HTMLButtonElement>("btn-fx-screen").click();
     const box = $("dyn-screen-box");
     const out = use(box);
@@ -2329,10 +2352,14 @@ describe("a value the unit holds and the app cannot write", () => {
 
     $("btn-write").click();
     await invoked(shell, "vd_disconnect", 2);
+    // The line the WRITE ended on, read BEFORE the panel is: `shownLpf` selects the node,
+    // and a selection press arms the path trace whose own status line lands a few hundred ms
+    // later over this one (`pressNode`). Read the other way round, this passes or fails on
+    // how loaded the machine is.
+    expect(statusText()).toContain(t().status.paramsBounded(1));
     // …and the write's own value is what the plan ends up holding, so the panel and the unit
     // name the same setting from here on.
     expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
-    expect(statusText()).toContain(t().status.paramsBounded(1));
   });
 
   // The recorder tail runs in a FINALLY, after the write has written its outcome. A read that
