@@ -97,6 +97,12 @@ const REAL_GIT = (() => {
   return r.status === 0 ? r.stdout.trim() : "git";
 })();
 
+/** Where lsof is, read before any shim is on the PATH. */
+const REAL_LSOF = (() => {
+  const r = spawnSync("sh", ["-c", "command -v lsof"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : "lsof";
+})();
+
 /** Whether this machine resolves a shim named `git` ahead of the real one, which is what the race
  *  cases rest on. Asked by putting one there, since a spawn on Windows resolves by extension and
  *  a file with none is not a program however executable its bits say it is. */
@@ -656,6 +662,29 @@ describe("sync-merged, the running-process guard", () => {
       expect(text).toContain("in the worktrees below could not be read");
       expect(text).not.toContain(`pid ${h.pid}`);
       expect(code).toBe(0);
+    } finally {
+      process.env.PATH = realPath;
+      await h.stop();
+    }
+  });
+
+  it.skipIf(!cwdIsReadable)("keeps the answers that did arrive when the reader refuses one pid", async () => {
+    const { down } = fixture();
+    const box = mkdtempSync(join(tmpdir(), "sync-merged-path-"));
+    roots.push(box);
+    // A reader that answers for the pids it found and still exits non-zero — which is what lsof
+    // does when one of the pids it was handed has ended since the listing was taken. The pids come
+    // from a `ps` snapshot and this repository's own test runs are in the word list, so on a busy
+    // machine that is the ordinary case rather than an edge one.
+    writeFileSync(join(box, "lsof"), `#!/bin/sh\n${REAL_LSOF} "$@"\nexit 1\n`, { mode: 0o755 });
+    const h = await holder(down);
+    const realPath = process.env.PATH;
+    try {
+      process.env.PATH = `${box}:${realPath}`;
+      const { code, text } = report(down, true);
+      expect(text).toContain(`pid ${h.pid} runs out of ${realpathSync(down)}`);
+      expect(code).toBe(1);
+      expect(at(down, "main")).not.toBe(at(down, "origin/main"));
     } finally {
       process.env.PATH = realPath;
       await h.stop();

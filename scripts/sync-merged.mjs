@@ -131,18 +131,34 @@ function workingDirs() {
     encoding: "utf8",
     maxBuffer: 1 << 28,
   });
-  // Three answers reach this point and only one of them is "nothing is running there": a reader
-  // that never started leaves stdout unset, and one that started and refused — a directory it may
-  // not read, a process that ended between the two calls — leaves it a string with the answer
-  // missing from it. Both are "the question could not be put", which is not the same as no.
-  if (typeof lsof.stdout !== "string" || lsof.status !== 0) return null;
+  // A reader that never started leaves stdout unset, and there is nothing in it to read.
+  if (typeof lsof.stdout !== "string") return null;
   const cwds = new Map();
   let pid = null;
   for (const line of lsof.stdout.split("\n")) {
     if (line.startsWith("p")) pid = line.slice(1);
     else if (line.startsWith("n") && pid) cwds.set(pid, line.slice(1));
   }
+  // A non-zero status says one of the pids went unanswered, and it is two different things: a
+  // process that has ENDED since the listing was taken is not running out of any tree, which is
+  // an answer, while one that is still there is the question not being put — and that second one
+  // is what the caller has to be told, since the guard then rests on nothing. The listing and the
+  // read are two calls, and this repository's own test runs are in the word list above, so a
+  // candidate ending in between is the ordinary case on a busy machine rather than an edge one:
+  // taken as a refusal it threw away the answers that had arrived for every other process.
+  if (lsof.status !== 0 && candidates.some((c) => !cwds.has(c.pid) && stillThere(c.pid))) return null;
   return candidates.filter((c) => cwds.has(c.pid)).map((c) => ({ ...c, cwd: cwds.get(c.pid) }));
+}
+
+/** Whether a pid is still there. A process this user may not signal is still a process, so the
+ *  refusal is a yes; only "no such process" is a no. */
+function stillThere(pid) {
+  try {
+    process.kill(Number(pid), 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
 }
 
 const under = (path, dir) => path === dir || path.startsWith(dir.endsWith("/") ? dir : dir + "/");
