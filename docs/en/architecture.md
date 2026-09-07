@@ -1406,9 +1406,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   Values cross the boundary normalized (0..1) and are snapped on set to the same grids the surfaces use
   (the level_gain grid in `levels.ts`, the channel's GAIN dB range, PAN ±63, PHONES 0.1 steps). A tuning
   screen's parameter takes its grid from the same `DynField` table its slider is built from, through the
-  shared `dynToPos` / `dynFromPos` in `control/translate.ts` — both resolve a position first, so a MIDI value
-  and a dragged slider cannot land on different values of one grid (an EQ band frequency is logarithmic and
-  carries positions rather than its value). Device locks refuse the write: a FIXED bus's send level, a
+  shared `dynToPos` / `dynFromPos` in `control/translate.ts`; what that grid does and does not put a MIDI
+  value and a dragged slider on is channel-tuning.md "MIDI assignment". Device locks refuse the write: a FIXED bus's send level, a
   Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain and Auto
   Makeup while 1-knob is on (the device computes them), COMP's 1-knob level while it is off, every EQ band
   value while EQ 1-knob is on, and the Q / gain a filter type does not read. The enum selectors (COMP knee,

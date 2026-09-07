@@ -1846,6 +1846,13 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
 - **The grid is the field table's.** A MIDI value and a dragged slider both resolve a position first
   (`dynToPos` / `dynFromPos` in `control/translate.ts`), so the two cannot land on different values of
   one grid.
+- **…and at the very top of a field whose span is not a whole number of steps, the wire reaches one
+  part-step further than the slider.** The step arithmetic overshoots the maximum there, so `linearCodec`
+  bounds its result into the field's own range: a full-scale message lands on `max` (DUCKER decay 5000,
+  GATE hold 1960, GATE decay and COMP release 999) while the slider's own top is the last value ON the grid
+  (4999.3, 1959.02, 998.3 — measured in Chromium and WebKit). Bounding rather than snapping down to that
+  grid value is what keeps a reading the UNIT reports at its own ceiling a fixed point: `vdToHold(196000)`
+  is 1960, and a codec answering 1959.02 for it would let a 14-bit feedback echo move it.
 - **…except where the control is finer than the wire, and then the WIRE's grid wins.** The Mono Delay
   time runs 1..27000 by 1, which is 27000 settings against a 14-bit controller's 16384 positions, so
   several of its values share a position. Its codec snaps the READING to the wire's grid as well as the

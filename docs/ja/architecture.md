@@ -1184,9 +1184,9 @@ macOS ではアームしたコントロールをクリックした瞬間に**メ
 
   値は正規化 (0..1) で越境し、set 時に各サーフェスと同じグリッド (`levels.ts` の level_gain / GAIN の dB 範囲 /
   PAN ±63 / PHONES 0.1 刻み) へスナップする。調整画面のパラメータはスライダーと同じ `DynField` 表からグリッドを
-  得る — `control/translate.ts` の `dynToPos` / `dynFromPos` を共有し、双方が先に「位置」を解決するので、MIDI 値と
-  ドラッグしたスライダーが同じグリッドの別の値に落ちることはない (EQ バンドの周波数は対数なので値ではなく位置を
-  持つ)。デバイスロックは書込みを拒否する: FIXED Bus の送りレベル、Pan Link の送り pan、176.4/192 kHz のステレオ
+  得る (`control/translate.ts` の `dynToPos` / `dynFromPos` を共有)。そのグリッドが MIDI 値とドラッグした
+  スライダーを同じ値に載せる範囲と載せない範囲は channel-tuning.md の「MIDI 割り当て」が持つ。
+  デバイスロックは書込みを拒否する: FIXED Bus の送りレベル、Pan Link の送り pan、176.4/192 kHz のステレオ
   CH EQ、COMP 1-knob 中の threshold / ratio / gain と Auto Makeup (実機が算出する)、1-knob OFF 中の COMP 1-knob
   レベル、EQ 1-knob 中の全バンド値、フィルタタイプが読まない Q / gain。列挙セレクタ (COMP の knee、EQ の
   フィルタタイプと 1-knob タイプ) はコントロール自体を持たない。
