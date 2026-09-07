@@ -373,9 +373,10 @@ carries a one-line map of the same directories and points here.
   consumed: committing under a device read would freeze that read's own writes into the entry, and the retry
   the refusal invites would push them back at the unit. Refused while a device read holds the plan — the
   operator's fetch / Live-sync start, and equally device follow's two reconciles and Live sync's 1-knob
-  refetch, which are tracked by membership in the in-flight set rather than by a flag because the two
-  families overlap; a converge round is not one of them, since it reads the whole write scope but writes
-  nothing back into the plan — or while a file flow does, while a *drag* (a press that has moved — a press
+  refetch, and the silent-address park at the head of a converge, which are tracked by membership in the
+  in-flight set rather than by a flag because the families overlap; a converge ROUND is not one of them,
+  since it reads the whole write scope but writes nothing back into the plan, which makes the park the only
+  part of a converging flush that refuses a press — or while a file flow does, while a *drag* (a press that has moved — a press
   alone cannot gate it, since a wire is selected by a script-dispatched `pointerdown` with no matching
   `pointerup`) is in progress, with a modal open (except the channel tuning screen, the one that edits the
   plan), and for a `sampleRate` patch while live (refused WHOLE — a partial undo would put the plan in a

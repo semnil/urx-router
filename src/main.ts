@@ -2665,9 +2665,10 @@ planHistory = new PlanHistory({
   // from its own copy, and a file flow can replace the plan outright: patching under
   // either acts on a premise that is still moving. Every read that RE-AUTHORS the plan
   // counts — the operator's fetch and Live-sync start, and equally device follow's two
-  // reconciles and Live sync's 1-knob refetch. A converge round is not one of them: it
-  // reads the whole write scope but writes nothing back into the plan, so an undo
-  // during it is answerable. The press itself is never consumed (run() refuses before
+  // reconciles and Live sync's 1-knob refetch, and the silent-address park at the head of
+  // a converge. A converge ROUND is not one of them: it reads the whole write scope but
+  // writes nothing back into the plan, so an undo during one is answerable — which makes
+  // the park the only part of a converging flush that refuses a press. The press itself is never consumed (run() refuses before
   // it commits the open entry, so a retry is exact), but the two reconciles reset the
   // history in their reflect a moment later, so for those a refused press is an entry
   // the operator loses — visibly, rather than an edit that may or may not have reached
