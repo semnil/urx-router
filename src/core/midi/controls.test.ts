@@ -391,7 +391,7 @@ describe("channel tuning screen parameters", () => {
     expect(ids).not.toContain("ch_5_6/threshold@ducker");
   });
 
-  it("snaps to the field table's own grid, so MIDI and the slider agree", () => {
+  it("snaps to the field table's own grid, so MIDI and the slider agree at a grid point", () => {
     // GATE threshold: -72 … 0 dB in 1 dB steps.
     const thr = bindControl(model, plan, "ch1/threshold@gate")!;
     thr.set(0);
@@ -424,12 +424,12 @@ describe("channel tuning screen parameters", () => {
   });
 
   // A full-scale message may not write past the field's own maximum. `min + round(span /
-  // step) * step` lands beyond it wherever the span is not a whole number of steps, and the
-  // plan then holds a value the screen's slider stops short of — the panel and the document
+  // step) * step` lands beyond it wherever the rounded last step overshoots, and the plan
+  // then holds a value the screen's slider stops short of — the panel and the document
   // disagreeing about one control, with nothing on the load path bounding it back
   // (`plan-validate.ts` reads the FX channel's windows and no others). Asked of every field
   // the three flat tables carry, on every model: the rule is the codec's, not these four
-  // fields', and which fields have a ragged span moves with the tables.
+  // fields', and which fields overshoot moves with the tables.
   it.each(["URX22", "URX44", "URX44V"] as const)("writes nothing outside a field's range on %s", (id) => {
     const m = getModel(id);
     const p = defaultPlan(id);
@@ -645,6 +645,76 @@ describe("feedback round trip", () => {
     echo();
     echo();
     expect(raw(), "and no further: the snapped value is on the grid").toBe(settled);
+  });
+
+  // Where a field's span is not a whole number of steps, the top position rounds either way.
+  // FALL SHORT and it is the last value on the grid, like every other position. OVERSHOOT and
+  // `linearCodec` bounds it to the field's own maximum rather than snapping down to that grid
+  // value — and which of the two it lands on is not a detail of the bound: the unit reports its
+  // own ceiling AS that maximum (`vdToHold(196000)` is 1960), so a codec answering the grid
+  // value for it would let a 14-bit echo move a value nobody moved. The sweep below cannot see
+  // that: it only ever offers values `set` produced, and the unit's ceiling is not one of them.
+  it.each(["URX22", "URX44", "URX44V"] as const)("holds a field's own maximum through an echo on %s", (id) => {
+    const m = getModel(id);
+    const p = seeded(id);
+    ensureFixedConnections(m, p);
+    const held = (nodeId: string, scope: string, key: string): number | undefined =>
+      ((p.nodeParams[nodeId] ?? {}) as Record<string, Record<string, number> | undefined>)[scope]?.[key];
+    const seedAt = (nodeId: string, scope: string, key: string, v: number): void => {
+      const np = (p.nodeParams[nodeId] ??= {}) as Record<string, Record<string, number>>;
+      np[scope] = { ...(np[scope] ?? {}), [key]: v };
+    };
+
+    // Derived rather than listed, and split by what the arithmetic actually does: which fields
+    // overshoot moves with the tables, and a table that stops overshooting should take its rows
+    // to the other side rather than fail the case.
+    type Row = { cid: string; node: string; scope: string; f: DynField; top: number; grid: number };
+    const over: Row[] = [];
+    const short: Row[] = [];
+    const collect = (node: string, scope: string, fields: readonly DynField[]): void => {
+      for (const f of fields) {
+        if (f.logSteps !== undefined) continue;
+        const span = f.max - f.min;
+        const cid = controlId(node, f.key as ControlParam, scope);
+        if (!bindControl(m, p, cid)) continue;
+        const top = Number((f.min + Math.round(span / f.step) * f.step).toFixed(4));
+        const grid = Number((f.min + Math.floor(span / f.step) * f.step).toFixed(4));
+        if (top > f.max) over.push({ cid, node, scope, f, top, grid });
+        else if (grid < f.max) short.push({ cid, node, scope, f, top, grid });
+      }
+    };
+    for (const n of m.nodes) {
+      if (n.kind === "ducker") collect(n.id, DUCKER_SCOPE, DUCKER_FIELDS);
+      const dyn = channelDynamics(m, n.id, COMP_EQ_COMP_FIRST);
+      if (!dyn) continue;
+      collect(n.id, GATE_SCOPE, dyn.gate);
+      if (dyn.comp) collect(n.id, COMP_SCOPE, dyn.comp);
+    }
+    // The positive controls: every assertion below is about a population, and an empty one
+    // satisfies all of them. Both halves of the rule need a member to be a rule at all.
+    expect(over.length, "no field on this model overshoots its maximum").toBeGreaterThan(0);
+    expect(short.length, "no field on this model falls short of its maximum").toBeGreaterThan(0);
+
+    for (const { cid, node, scope, f } of over) {
+      const c = bindControl(m, p, cid)!;
+      // Full scale lands on the field's own maximum, not on the last value of the grid.
+      expect(c.set(1), cid).toBe(true);
+      expect(held(node, scope, f.key), cid).toBe(f.max);
+
+      // …and one 14-bit echo of that maximum leaves it there. Seeded directly: this is the
+      // reading the UNIT reports at its ceiling, which does not arrive through `set`.
+      seedAt(node, scope, f.key, f.max);
+      expect(c.set(wireRaw(PAIR, c.get()) / wireSteps(PAIR)), cid).toBe(true);
+      expect(held(node, scope, f.key), `${cid} moved under a 14-bit echo of its own maximum`).toBe(f.max);
+    }
+
+    // The other half, which is what keeps the rule about the ARITHMETIC rather than about a
+    // ragged span: a top position that falls short is the grid value, and the bound is inert.
+    for (const { cid, node, scope, f, grid } of short) {
+      const c = bindControl(m, p, cid)!;
+      expect(c.set(1), cid).toBe(true);
+      expect(held(node, scope, f.key), `${cid} is below its maximum, so nothing bounds it`).toBe(grid);
+    }
   });
 
   it.each(["URX22", "URX44", "URX44V"] as const)("is exact at 14 bits for every %s control", (id) => {

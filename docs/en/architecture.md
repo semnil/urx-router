@@ -146,9 +146,10 @@ carries a one-line map of the same directories and points here.
     bend / `mapping.ts` free-mapping model (address, takeover mode absolute/pickup) + persistence validation
     / `controls.ts` catalog of fixed control ids (`node/param[@scope]`) for every CONSOLE control **and
     every parameter the channel tuning screens edit** — normalized (0..1) get/set snapping to the same grids
-    those surfaces use (a tuning-screen value takes its grid from the same `DynField` table its slider does,
-    through `translate.ts`'s shared `dynToPos`/`dynFromPos`, so MIDI and a drag cannot land on different
-    values of one grid). The id's third component is a **scope**: a send-target bus (`@bus.mix1`) or a
+    those surfaces use (a tuning-screen value takes its grid from the same `DynField` table its slider is
+    built from; which route each side takes to it, and where the two part, is channel-tuning.md "MIDI
+    assignment"). The id's third component is a
+    **scope**: a send-target bus (`@bus.mix1`) or a
     processor / band (`@gate`, `@comp`, `@eq.low`) — a node has one fader but three thresholds, and a band
     is a scope rather than a cursor because a mapping has to work with the screen closed. Device locks
     reject writes (FIXED bus sends, Pan Link send pan, rate-restricted stereo CH EQ, COMP's device-driven
@@ -1405,10 +1406,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
 
   Values cross the boundary normalized (0..1) and are snapped on set to the same grids the surfaces use
   (the level_gain grid in `levels.ts`, the channel's GAIN dB range, PAN ±63, PHONES 0.1 steps). A tuning
-  screen's parameter takes its grid from the same `DynField` table its slider is built from, through the
-  shared `dynToPos` / `dynFromPos` in `control/translate.ts` — both resolve a position first, so a MIDI value
-  and a dragged slider cannot land on different values of one grid (an EQ band frequency is logarithmic and
-  carries positions rather than its value). Device locks refuse the write: a FIXED bus's send level, a
+  screen's parameter takes its grid from the same `DynField` table its slider is built from; which route
+  each side takes to that grid, and what it does and does not put a MIDI value and a dragged slider on, is
+  channel-tuning.md "MIDI assignment". Device locks refuse the write: a FIXED bus's send level, a
   Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain and Auto
   Makeup while 1-knob is on (the device computes them), COMP's 1-knob level while it is off, every EQ band
   value while EQ 1-knob is on, and the Q / gain a filter type does not read. The enum selectors (COMP knee,

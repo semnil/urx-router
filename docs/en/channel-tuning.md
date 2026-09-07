@@ -1843,9 +1843,22 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
   enum selector.
 - **The DUCKER's scope is `@ducker`, and every key it draws is assignable** — it has no locked row and
   no enum selector.
-- **The grid is the field table's.** A MIDI value and a dragged slider both resolve a position first
-  (`dynToPos` / `dynFromPos` in `control/translate.ts`), so the two cannot land on different values of
-  one grid.
+- **The grid is the field table's, and each side reaches it its own way.** The **slider** is a native
+  range built from the field: a linear one carries its own `min` / `max` / `step` and its value, a
+  logarithmic one carries positions (`0..logSteps` by 1) that `dynToPos` / `dynFromPos` convert. **MIDI**
+  resolves a position too — a logarithmic field through those same two functions, a linear one through
+  `linearCodec`, built on the same three numbers rather than on shared code. So the two cannot land on
+  different values of one grid, and where a logarithmic field is concerned they cannot even take different
+  routes to it.
+- **…and where the last step lands PAST the maximum, the wire stops on the maximum while the slider
+  stops short of it.** A span that is not a whole number of steps rounds either way. Fall short and the
+  top position is the last value on the grid, like every other one (GATE attack, 0.092..80 by 0.1, tops
+  out at 79.992). Overshoot and `linearCodec` bounds its result into the field's own range: a full-scale
+  message lands on `max` — DUCKER decay 5000, GATE hold 1960, GATE decay and COMP release 999 — against
+  slider tops of 4999.3, 1959.02 and 998.3 (measured in Chromium and WebKit). Bounding rather than
+  snapping down to that grid value is what keeps a reading the UNIT reports at its own ceiling a fixed
+  point: `vdToHold(196000)` is 1960, and a codec answering 1959.02 for it would let a 14-bit feedback
+  echo move it. `controls.test.ts` holds both halves.
 - **…except where the control is finer than the wire, and then the WIRE's grid wins.** The Mono Delay
   time runs 1..27000 by 1, which is 27000 settings against a 14-bit controller's 16384 positions, so
   several of its values share a position. Its codec snaps the READING to the wire's grid as well as the

@@ -2,8 +2,9 @@
 // CONSOLE view draws, plus every parameter the channel tuning screens edit,
 // addressable by a fixed control id that does not depend on the visible tab or on
 // any screen being open. Values cross this boundary normalized (0..1; toggles
-// 0 | 1) and are snapped to the same grids those surfaces use, so a MIDI edit and
-// an on-screen edit write identical plan values. Kept language-agnostic: labels are
+// 0 | 1) and are snapped to the same grids those surfaces use — and bounded into the
+// field's own range, which the step grid does not give at the top of a field whose
+// last step lands past its maximum. Kept language-agnostic: labels are
 // composed by the UI from the node label + the scope + the param token.
 
 import type { DeviceModel } from "../../models/types";
@@ -267,11 +268,12 @@ function linearCodec(min: number, max: number, step: number): { get(x: number): 
       // toFixed strips the float dust fractional steps accumulate (0.1-step
       // arithmetic yields 2.9000000000000004) — the same snap wireKnob applies.
       const raw = Number((min + Math.round((clamp01(v) * span) / step) * step).toFixed(4));
-      // …and the bound, which the step grid does not give: a span that is not a whole
-      // number of steps puts the top position PAST the field's own maximum, and nothing
-      // on the load path brings it back — plan-validate reads the FX channel's windows and
-      // no others — so the document would keep a value outside the range its own field
-      // declares. The same bound `wireGridCodec` applies.
+      // …and the bound, which the step grid does not give: where the rounded last step
+      // lands PAST the field's own maximum, nothing on the load path brings it back —
+      // plan-validate reads the FX channel's windows and no others — so the document would
+      // keep a value outside the range its own field declares. A span that is not a whole
+      // number of steps rounds either way, and the bound is inert where it rounds down.
+      // The same bound `wireGridCodec` applies.
       return Math.min(max, Math.max(min, raw));
     },
   };
@@ -326,9 +328,11 @@ const oscLevelCodec = linearCodec(-96, 0, 1);
 const oneKnobCodec = linearCodec(0, 100, 1);
 
 /** A tuning-screen parameter's codec, derived from the same field table its slider
- *  is built from: both resolve a position first, so a MIDI value and a dragged
- *  slider cannot land on different values of the same grid. A logarithmic field
- *  (an EQ band frequency) carries positions rather than its value. */
+ *  is built from: both resolve a position first, so the two land on one grid at every
+ *  position the grid holds. The top of a field whose rounded last step lands past its
+ *  maximum is the exception — the wire stops on the maximum there and the slider on the
+ *  last grid value below it, which is less than one step down. A logarithmic field (an
+ *  EQ band frequency) carries positions rather than its value. */
 function dynCodec(f: DynField): { get(x: number): number; set(v: number): number } {
   if (f.logSteps === undefined) return linearCodec(f.min, f.max, f.step);
   const steps = f.logSteps;
