@@ -53,6 +53,7 @@ import { pairPrimary } from "../routing";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   addrKey,
+  cmdAddr,
   busBalance,
   busEqOn,
   busFader,
@@ -62,6 +63,7 @@ import {
   channelSections,
   colorControl,
   nameControl,
+  planToCommands,
   DUCKER_FIELDS,
   duckerControl,
   channelInputSlots,
@@ -308,6 +310,146 @@ export async function applyDeviceState(
 }
 
 /**
+ * A source that answers with the PLAN's own value wherever the unit is still holding what
+ * this session last sent there — see `applySilentState`'s `sent`.
+ *
+ * The plan's side is the emit, which is the one thing that can say what raw the plan means
+ * at an address: taken from `planToCommands`, so the comparison is between two values of
+ * the same encoding rather than between a raw and a plan unit.
+ */
+function sentOverlay(
+  source: ParamSource,
+  model: DeviceModel,
+  plan: Plan,
+  sent?: (paramId: number, x: number, y: number, raw: number) => boolean,
+): ParamSource {
+  if (!sent) return source;
+  const mine = new Map<number, number>();
+  for (const c of planToCommands(model, plan)) mine.set(cmdAddr(c), c.vdValue);
+  return {
+    get: async (paramId, x, y) => {
+      const raw = await source.get(paramId, x, y);
+      if (!sent(paramId, x, y, raw)) return raw;
+      const ours = mine.get(addrKey(paramId, x, y));
+      return ours === undefined ? raw : ours;
+    },
+    getStr: (paramId, x, y) => source.getStr(paramId, x, y),
+  };
+}
+
+/**
+ * Read the addresses the unit does NOT announce, and apply them to the plan.
+ *
+ * Three families emit nothing when the unit's own panel moves them (architecture.md,
+ * "Live sync"): the FX channels' effect arrays, the insert-FX engine arrays, and D.Gain.
+ * Device follow is a push mechanism, so nothing arms a read for them — the plan can hold
+ * a value the unit stopped having, with no event anywhere to say so, until something
+ * pushes the plan back over the unit. This is the park that runs in front of such a push.
+ *
+ * It reads THROUGH the same per-family readers the full pass uses rather than decoding
+ * the same addresses a second time: a park and a full read that disagreed about one of
+ * these would both look right on their own.
+ *
+ * Deliberately narrow. The owner nodes' bodies carry far more than these three families,
+ * and reading a whole node would make the park device-wins on everything it touches —
+ * which is the full reconcile's job, on its own trigger, and not this one's.
+ */
+export async function applySilentState(
+  model: DeviceModel,
+  plan: Plan,
+  signal?: AbortSignal,
+  /** See applyDeviceState: writes the caller made immediately before this read. The park
+   *  runs in front of a write rather than behind the change it is reading, so it can land
+   *  inside the window in which the unit still answers a just-written address with the
+   *  value it replaced. */
+  pending?: PendingWrites,
+  /**
+   * Whether the unit is still holding the value this session last sent to that address
+   * (`live.holdsSent`). What it guards is an edit sitting in the plan waiting for the next
+   * flush: every other read here answers a device-side event, and this one answers a write
+   * the app is about to make — so it arrives with that edit unsent, and reading then puts
+   * the unit's PRE-edit value over it. The merge cannot help: it protects an edit made
+   * DURING a read, and this one was made before it.
+   *
+   * Where the two agree the unit has nothing to say, so the read answers with the plan's
+   * own current value and that address changes nothing. Where they disagree, something
+   * that is not this session moved it, which is exactly what the park exists to find.
+   *
+   * Absent = adopt everything, which is right for a caller with a warrant of its own.
+   */
+  sent?: (paramId: number, x: number, y: number, raw: number) => boolean,
+  /**
+   * Node ids to leave alone. A converge's own head nodes go in it: the head write resets
+   * the families beneath it on the unit, and the converge is what puts them back, so a
+   * value read here would be the reset one and the restore would never go out.
+   */
+  exclude?: ReadonlySet<string>,
+): Promise<ReadbackResult> {
+  const announced = pending
+    ? await writeSettle.settle(pending.written, {
+        mustSettle: pending.mustSettle,
+        mustAnnounce: pending.mustAnnounce,
+        boundaryMarks: pending.boundaryMarks,
+        expected: pending.expected,
+        signal,
+      })
+    : undefined;
+  const source = sentOverlay(writeOverlay(LIVE_SOURCE, announced), model, plan, sent);
+  const errors: string[] = [];
+  const attempted = new Set<string>();
+  const failed = new Set<string>();
+  let applied = 0;
+
+  for (const node of model.nodes) {
+    signal?.throwIfAborted();
+    const fxY = fxChannelIndex(node.id);
+    if (fxY === null || exclude?.has(node.id)) continue;
+    attempted.add(node.id);
+    try {
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], fxEffect: await readFxEffect(source, fxY) };
+      applied++;
+    } catch (e) {
+      failed.add(node.id);
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  for (const node of model.nodes) {
+    signal?.throwIfAborted();
+    const ifx = insertFxControl(model, node.id);
+    if (!ifx || exclude?.has(node.id)) continue;
+    attempted.add(node.id);
+    try {
+      await readInsertFxInto(source, plan, node.id, ifx);
+      applied++;
+    } catch (e) {
+      failed.add(node.id);
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // D.Gain only. `channelControl` answers with A.Gain on a mono channel, and that one is
+  // announced — reading it here would put a second read on an address device follow already
+  // covers, and adopt it on a trigger the operator's own gesture does not share.
+  for (const node of model.nodes) {
+    signal?.throwIfAborted();
+    if (node.kind !== "channel" || !isStereoChannel(node.id) || exclude?.has(node.id)) continue;
+    const cc = channelControl(model, node.id);
+    if (!cc?.gain) continue;
+    attempted.add(node.id);
+    try {
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], gain: await readChannelGain(source, cc.gain) };
+      applied++;
+    } catch (e) {
+      failed.add(node.id);
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  return { applied, errors, unreadNodes: new Set([...attempted].filter((id) => failed.has(id))) };
+}
+
+/**
  * Apply a parsed settings file (.urxf) to the plan, through the same inverse the
  * device read uses. The file cannot supply the model (its header names no variant)
  * or the editing layer (positions / hidden / notes have no parameter), so the
@@ -362,7 +504,7 @@ async function readPass(
       const on = vdToBool(await vdGet(cc.on, 0, cc.y));
       const update: NodeParams = { on };
       // Gain: A.Gain (mono) / D.Gain (stereo, linked L/R — read the first instance).
-      if (cc.gain) update.gain = vdToGain(await vdGet(cc.gain.param, 0, cc.gain.instances[0]));
+      if (cc.gain) update.gain = await readChannelGain(source, cc.gain);
       if (cc.hasHpf) {
         update.hpf = vdToBool(await vdGet(PARAMS.HPF_ON.id, 0, cc.y));
         update.hpfFreq = vdToFreq(await vdGet(PARAMS.HPF_FREQ.id, 0, cc.y));
@@ -621,29 +763,7 @@ async function readPass(
     if (!ifx) continue;
     attempted.add(node.id);
     try {
-      const insertFx = normalizeInsertFx(await vdGet(ifx.param, 0, ifx.instances[0]));
-      const insertFxOn = vdToBool(await vdGet(ifx.onParam, 0, ifx.instances[0]));
-      const fam = insertFxFamilyOf(insertFx);
-      const read: Record<number, number> = {};
-      if (fam) {
-        const engine = insertFxEngine(fam, ifx.isOutput);
-        // Every slot the app can write is one it has to be able to read, the slots the unit
-        // is currently DRIVING included: the emit path skips those, and a refetch after a
-        // write that set the unit computing is the only thing that brings its result back.
-        for (const s of insertFxReadableSlots(fam)) {
-          read[s.slot] = await vdGet(engine, 0, s.slot);
-        }
-      }
-      const was = plan.nodeParams[node.id];
-      // MERGED, not replaced: the map carries one namespace per family so a node that has
-      // held several effects keeps each one's values, and a read answers for one of them.
-      const insertFxParams = mergeReadInsertFxParams(
-        was?.insertFxParams,
-        was?.insertFx === undefined ? null : insertFxFamilyOf(was.insertFx),
-        fam,
-        read,
-      );
-      plan.nodeParams[node.id] = { ...was, insertFx, insertFxOn, insertFxParams };
+      await readInsertFxInto(source, plan, node.id, ifx);
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -1399,6 +1519,55 @@ async function readFxEffect(source: ParamSource, fxIndex: number): Promise<FxEff
     level: await vdGet(arrId, 0, FX_SLOT_LEVEL),
     params,
   };
+}
+
+/** A channel's input gain: A.Gain on a mono channel, D.Gain on a stereo one (linked
+ *  L/R, so the first instance answers for the pair). Shared with the silent-address
+ *  park, which reads the D.Gain half of it — a second copy there could decode the
+ *  same address differently from the full read and neither would be wrong on its own. */
+async function readChannelGain(source: ParamSource, gain: { param: number; instances: number[] }): Promise<number> {
+  const { vdGet } = readers(source);
+  return vdToGain(await vdGet(gain.param, 0, gain.instances[0]));
+}
+
+/**
+ * A node's insert FX — the selector, the bypass and the engine array — applied to the
+ * plan. Shared by the full read and the silent-address park for the reason
+ * `readChannelGain` is: the engine array is the silent half, and the selector is what
+ * says which family's slots those raws belong to.
+ *
+ * Throws on a read failure so the caller keeps the provenance it already tracks.
+ */
+async function readInsertFxInto(
+  source: ParamSource,
+  plan: Plan,
+  nodeId: string,
+  ifx: NonNullable<ReturnType<typeof insertFxControl>>,
+): Promise<void> {
+  const { vdGet } = readers(source);
+  const insertFx = normalizeInsertFx(await vdGet(ifx.param, 0, ifx.instances[0]));
+  const insertFxOn = vdToBool(await vdGet(ifx.onParam, 0, ifx.instances[0]));
+  const fam = insertFxFamilyOf(insertFx);
+  const read: Record<number, number> = {};
+  if (fam) {
+    const engine = insertFxEngine(fam, ifx.isOutput);
+    // Every slot the app can write is one it has to be able to read, the slots the unit
+    // is currently DRIVING included: the emit path skips those, and a refetch after a
+    // write that set the unit computing is the only thing that brings its result back.
+    for (const s of insertFxReadableSlots(fam)) {
+      read[s.slot] = await vdGet(engine, 0, s.slot);
+    }
+  }
+  const was = plan.nodeParams[nodeId];
+  // MERGED, not replaced: the map carries one namespace per family so a node that has
+  // held several effects keeps each one's values, and a read answers for one of them.
+  const insertFxParams = mergeReadInsertFxParams(
+    was?.insertFxParams,
+    was?.insertFx === undefined ? null : insertFxFamilyOf(was.insertFx),
+    fam,
+    read,
+  );
+  plan.nodeParams[nodeId] = { ...was, insertFx, insertFxOn, insertFxParams };
 }
 
 // Read the SSMCS morphing-strip raw values for a MONO IN channel (mirrors

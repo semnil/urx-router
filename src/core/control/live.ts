@@ -120,6 +120,25 @@ export interface LiveSyncHooks {
    *  capture below recorded it as device truth, and the unit's own notify for our write
    *  then failed isEcho and was reconciled as a device-side change. */
   refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>;
+  /**
+   * Read the addresses the unit announces nothing for into the plan, before a converge
+   * pushes the plan over them (`readback.applySilentState`).
+   *
+   * A converge re-reads the whole write scope and re-sends whatever differs, so it is the
+   * one thing that puts the plan's copy on the unit at addresses no edit named. For three
+   * families that copy can be arbitrarily old — the FX effect arrays, the insert-FX engine
+   * arrays and D.Gain announce nothing when the unit's own panel moves them — so without
+   * this a converge fired by ANY head silently discards what the operator tuned there.
+   *
+   * `exclude` names the nodes whose values this converge exists to restore: a sideEffect
+   * head has just made the unit reset its own node's dependents, so reading there would
+   * adopt the reset and throw away the values the converge is about to put back. Everything
+   * else in the scope is untouched by that head and safe to take.
+   *
+   * Called with the plan the converge is about to clone, so what it reads is in the copy.
+   * Absent = no park (the browser build, and the tests that do not exercise it).
+   */
+  parkSilent?: (exclude: ReadonlySet<string>) => Promise<void>;
   /** The follow address set may have moved — re-register against it. Called at the END of a
    *  flush whose capture rebuilt the set, never inside one: a re-registration unsubscribes
    *  before it subscribes, so running it mid-flush would drop the very notifies the refetch's
@@ -254,8 +273,8 @@ export class LiveSync {
   private snapshotEpoch = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
-  // Inside the sideEffect branch of a flush: the converge loop. What device follow holds a
-  // reconcile off (see `isConverging`).
+  // Inside the sideEffect branch of a flush: the silent-address park and the converge
+  // loop. What device follow holds a reconcile off (see `isConverging`).
   private converging = false;
   private pending = false;
   // The last flush had to converge (a sideEffect param went out), which re-reads
@@ -280,8 +299,9 @@ export class LiveSync {
   }
 
   /**
-   * Whether a flush is inside its converge. What device follow holds a reconcile off
-   * (`DeviceFollowHooks` `deferReconcile`).
+   * Whether a flush is inside its converge — the silent-address park and the rounds
+   * behind it. What device follow holds a reconcile off (`DeviceFollowHooks`
+   * `deferReconcile`).
    *
    * The converge and not the whole flush. A round re-reads the WHOLE write scope and
    * sends behind it, over and over: a read taken there reads a unit this app is part-way
@@ -398,6 +418,23 @@ export class LiveSync {
     const out: Record<string, number> = {};
     for (const [k, v] of this.snapshot) out[formatAddrKey(k)] = v;
     return out;
+  }
+
+  /**
+   * Whether the snapshot already holds this value for this address — the unit is still
+   * where we last put it.
+   *
+   * `isEcho`'s question without `isEcho`'s side effect, and the two are not
+   * interchangeable: that one CONSUMES the pending entry it matches, because a notify is
+   * an announcement that belongs to exactly one write. A caller that is not answering a
+   * notify — the silent-address park, which is answering a READ — must not spend one, or
+   * the announcement of that write reaches the follow layer as a device-side change.
+   *
+   * An address the snapshot does not track answers false: we have sent it nothing, so
+   * whatever the unit holds there is news.
+   */
+  holdsSent(paramId: number, x: number, y: number, value: number): boolean {
+    return this.snapshot.get(addrKey(paramId, x, y)) === value;
   }
 
   /** Whether an incoming device notify equals the snapshotted device truth — i.e.
@@ -706,6 +743,9 @@ export class LiveSync {
       // just computed. Scoped to the node, because the same names on another channel are
       // that channel's own and the converge is right about them.
       const driven = new Map<string, Set<string>>();
+      // The nodes whose sideEffect head this flush wrote — what the converge below is for,
+      // and so what the park in front of it must leave alone.
+      const convergeHeads = new Set<string>();
       // Addresses the NAME loop wrote that the refetch may not start before hearing about,
       // each at the mark taken before its own write. Separate from `writes` because that map
       // is numeric and the read overlays answers from it; see the name loop.
@@ -796,8 +836,12 @@ export class LiveSync {
         writes.set(k, { mark, node: c.node, changed: had !== undefined, value });
         this.recentWrites.set(k, { mark, node: c.node, at: Date.now() });
         sent++;
-        if (CONVERGE.has(c.name)) sideEffect = true;
-        else if (REFETCH.has(c.name) && c.node) {
+        if (CONVERGE.has(c.name)) {
+          sideEffect = true;
+          // Whose dependents the unit is resetting. The park below leaves these nodes to
+          // the converge, which is what puts their values back.
+          if (c.node !== undefined) convergeHeads.add(c.node);
+        } else if (REFETCH.has(c.name) && c.node) {
           refetch.add(c.node);
           const drives = DRIVES.get(c.name);
           if (drives) {
@@ -882,6 +926,12 @@ export class LiveSync {
         // would silently drop it). The mark is taken beside the freeze, for the
         // other half of the same window: a direct notify arriving during the
         // converge is device truth this copy is too old to carry.
+        // Ahead of the freeze, so what it reads is in the copy the converge sends from: a
+        // converge re-sends whatever differs across the whole scope, and for the three
+        // silent families the plan's copy can be arbitrarily old. Its own node is left out
+        // — that is the one the head just reset, and the converge is what restores it.
+        await this.hooks.parkSilent?.(convergeHeads);
+        if (this.sessionGen !== gen) return;
         const since = this.directSeq;
         const converged = structuredClone(plan);
         // The loop seeds its own diff by reading the device, and this flush wrote

@@ -133,6 +133,7 @@ import {
   applyDeviceState,
   applyDirect,
   applyNodeState,
+  applySilentState,
   applySourceState,
   formatReadbackReport,
   insertFxHoldKeys,
@@ -491,6 +492,44 @@ const live = DEMO
         requestReflect();
         assertReadComplete(merged, "side-effect refetch issues:");
         return merged.deviceView;
+      },
+      // A converge is about to push the plan across the whole write scope, so the addresses
+      // the unit announces nothing for are read first — see live.ts's `parkSilent`. Its
+      // epilogue is the FX type park's, and for the same reasons: the guard keeps it off an
+      // edit this flush has not sent, `absorb` takes what it authored into the baseline
+      // without spending the operator's open gesture, and a read that FAILS ends the session
+      // rather than letting the converge write over values it could not confirm.
+      parkSilent: async (exclude) => {
+        const merged = await followRead("silent-address park", (into, signal) =>
+          applySilentState(
+            getModel(modelId),
+            into,
+            signal,
+            live?.recentPending(),
+            (id, x, y, raw) => (live ? live.holdsSent(id, x, y, raw) : false),
+            exclude,
+          ),
+        ).catch((err: unknown) => {
+          stopLiveOnError(errorText(err));
+          return null;
+        });
+        if (!merged) return;
+        // Ahead of the empty-patch exit, because a read that could not reach some of these
+        // nodes produces no patch for them: taken second, an incomplete read would look
+        // like a read that found nothing to change and the converge would go out on it.
+        // Ending the session here is what stops it — the flush's own generation check.
+        try {
+          assertReadComplete(merged, "silent-address park issues:");
+        } catch (err) {
+          stopLiveOnError(errorText(err));
+          return;
+        }
+        if (!merged.devicePatch.length) return;
+        traceProbe?.sample("follow-scoped");
+        noteMergeConflicts(merged);
+        planHistory?.absorb(merged.devicePatch);
+        for (const e of merged.devicePatch) if (e.field === "nodeParams") followDirtyNodes.add(e.key);
+        requestReflect();
       },
       // The flush's capture rebuilt the follow address set — re-register against it. Only a
       // STRUCTURAL edit moves that set (a mode change, a wire), so this is a no-op on the
