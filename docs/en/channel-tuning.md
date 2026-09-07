@@ -1505,12 +1505,32 @@ channel keeps every family's values side by side under keys that carry the famil
 `revr3Hpf` / `delayHpf`), so the outgoing effect's settings stay where they are and selecting a type of
 that family back finds them. Within one family the three Rev-X types share those keys, so a swap
 between them shares the values too rather than parking one set and restoring it. On the UNIT the array is refilled, and the writer then puts the plan back over it, so
-the two agree again. What is genuinely lost is **a value the unit holds that the plan has never seen**
-— and that is reachable, because the effect arrays announce nothing when the front panel moves them
-(architecture.md, "Live sync"). An operator who tunes a reverb on the unit itself and then changes the
-type from the app loses that tuning, and nothing on screen says so, because nothing on screen knows.
-Reading the outgoing array into the plan before the selector is written is what would keep it;
-`readback.ts` already reads exactly that pair (the type, then that type's slots).
+the two agree again. What would otherwise be lost is **a value the unit holds that the plan has never
+seen** — and that is reachable, because the effect arrays announce nothing when the front panel moves
+them (architecture.md, "Live sync"): an operator who tunes a reverb on the unit itself and then changes
+the type from the app would lose that tuning with nothing on screen to say so, because nothing on
+screen would know.
+
+**The park is what keeps it.** While a session is live, both EFFECT TYPE selectors — the CONSOLE
+popover and the inspector row — read the FX channel off the unit before the selector is written, and
+only then write it (`main.ts` `parkFxEffect`). It is the scoped reconcile of that one node, the same
+read a device-side change of it takes, so it carries the settle for this session's own recent writes
+and the merge that leaves an edit made meanwhile standing. The unit's values are in the plan by the
+time the type goes out, and the array the writer sends after it is the operator's rather than a stale
+copy. Its cost is one round trip per slot in front of the type write; with no live session there is
+nothing to read and the write is immediate.
+
+Two properties of that arrangement are load-bearing. A read that FAILS writes no type at all — the
+write behind it is the destructive half, so the session goes down and the plan and the unit are left as
+they are (architecture.md, "Aborting on failure"). And the write runs INSIDE the park rather than
+behind an `await` at the selector: it lands outside the `change` event the inspector's rebuild gate
+flushes on, so the park takes the ungated rebuild itself. Left to the gate, the panel kept the outgoing
+effect's controls until the operator pressed something else — and that press was spent releasing the
+hold, which replaced the control under the pointer and was swallowed with it.
+
+**The park is on the two selectors, not on the write path**, so an UNDO of a type change re-types the
+array with no read in front of it. `e2e/race/t2d-shape-change.spec.ts` reads both halves — the park's
+own pass before the selector, and the undo's single one.
 
 ### One face, two groups
 

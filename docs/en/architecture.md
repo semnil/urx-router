@@ -2312,7 +2312,9 @@ report is offered (`formatReadbackReport` / `formatWriteReport`, after the conne
 arms a write on it. **Live sync does not**, because its snapshot would enshrine the plan's defaults as device truth
 and the first sideEffect edit would converge them onto the hardware unconfirmed — so an incomplete read refuses to
 start the session, and a reconcile that cannot read stops following instead of letting the next converge write a
-stale value back over the operator's own edit on the device. A cancelled fetch restores the plan it started from, so
+stale value back over the operator's own edit on the device. The FX EFFECT TYPE park is the same rule with the write
+still ahead of it: a read that fails writes **no type at all**, since the write behind it is what would replace the
+values the read was for (channel-tuning.md, "FX EFFECT"). A cancelled fetch restores the plan it started from, so
 a cancel means nothing happened rather than leaving an unlabelled mixture of old and device values.
 
 An undo whose write fails is not a special case: the flush's failure ends the session as any edit's

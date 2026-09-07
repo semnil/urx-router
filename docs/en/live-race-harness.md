@@ -142,6 +142,15 @@ coming back in another order, and a value **the unit holds** is the quantise cas
 entries from every device read, so disagreeing with the last send proves nothing unless it also disagrees with the
 unit. No existing case supplies it, so none changed verdict.
 
+Invariant 13 has one contested key that is a HAND-OFF rather than a race, and it is the FX channel's
+`fxEffect`. Changing an EFFECT TYPE while a session is live reads the outgoing effect off the unit
+first and writes the type after it (`main.ts` `parkFxEffect`), so a unit that is holding something the
+plan has not seen produces a `follow-scoped` write and a `ui` write on that one key inside one gesture
+— which is exactly the pair the invariant reports. The order is the point of the gesture, and the
+device half runs first by construction. A fake that answers with what it was given writes nothing at
+all there, which is why `t2d-shape-change` sees a single `ui` writer; a case that plants a device-side
+value and then changes the type would see both.
+
 Invariant 6 was originally phrased as "the registration agrees with the emitted set on every flush".
 For most of this harness's life it did not: follow called `subscribe()` at `begin()` and after a
 completed reconcile only, so an app-side structural edit left the registration stale, and that was
