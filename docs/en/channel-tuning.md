@@ -1529,8 +1529,16 @@ effect's controls until the operator pressed something else — and that press w
 hold, which replaced the control under the pointer and was swallowed with it.
 
 **The park is on the two selectors, not on the write path**, so an UNDO of a type change re-types the
-array with no read in front of it. `e2e/race/t2d-shape-change.spec.ts` reads both halves — the park's
-own pass before the selector, and the undo's single one.
+array with no read in front of it. The converge behind that write parks the rest of its scope but leaves the FX
+node itself out, that being the node the head just reset (architecture.md, "Live sync").
+`e2e/race/t2d-shape-change.spec.ts` reads both halves — the park's own pass before the selector, and the undo's
+single one.
+
+**The same read generalises to every converge**, which is where the rest of the silent addresses are covered: a
+converge re-sends whatever differs across its whole write scope, so a head on any node at all would put the plan's
+copy of the FX arrays, the insert-FX engine arrays and D.Gain back onto the unit. The park in front of a converge
+reads them first and leaves the head's own nodes to the converge (architecture.md, "Live sync"); this section's
+park is that same read narrowed to one node, taken in front of one write instead.
 
 ### One face, two groups
 
