@@ -182,6 +182,87 @@ describe("LiveSync sideEffect converge", () => {
     expect(seen[0]!.addrs).toBeInstanceOf(Set);
   });
 
+  // The park in front of the converge. Three families announce nothing when the unit's own
+  // panel moves them, and a converge re-sends whatever differs across the WHOLE write scope
+  // — so with no read first, the plan's copy of those goes back over what the operator
+  // tuned on the unit, and no event anywhere says it happened.
+  it("reads the silent addresses into the plan the converge sends from", async () => {
+    const plan = basePlan();
+    const seen: Plan[] = [];
+    const excluded: ReadonlySet<string>[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      onConfirmed: (_addrs, sent) => void seen.push(sent),
+      parkSilent: async (exclude) => {
+        excluded.push(exclude);
+        // What a read of the unit's D.Gain would have put here.
+        plan.nodeParams.ch_5_6 = { ...plan.nodeParams.ch_5_6, gain: 12 };
+      },
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(excluded, "one park per converging flush").toHaveLength(1);
+    // The head's own node, left to the converge: the unit has just reset its dependents,
+    // so a read there would adopt the reset and the restore would never go out.
+    expect([...excluded[0]!]).toEqual(["ch1"]);
+    // Ahead of the freeze — what the park wrote is in the copy the converge sends from.
+    // Behind it, the read lands in a plan the converge is no longer looking at.
+    expect(seen[0]?.nodeParams.ch_5_6?.gain, "the parked value in the converged copy").toBe(12);
+  });
+
+  it("takes no park on a flush that does not converge", async () => {
+    // The park is a device read, and an ordinary flush is what a drag produces: running it
+    // there would put a whole-device pass inside every window of a fader move.
+    const plan = basePlan();
+    let parks = 0;
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async () => void parks++,
+    });
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    // The positive control: the flush did happen, it just did not converge.
+    expect(vi.mocked(vdSet), "the fader still went out").toHaveBeenCalledTimes(1);
+    expect(parks).toBe(0);
+  });
+
+  it("sends nothing more when the session ends inside the park", async () => {
+    // The park awaits a device read, so a disconnect can land in it — and everything the
+    // converge would do next belongs to a session that has gone.
+    const plan = basePlan();
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async () => live.end(),
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const afterDirect = vi.mocked(vdSet).mock.calls.length;
+    expect(afterDirect, "the direct write went out before the park").toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(vi.mocked(vdSet).mock.calls.length, "no converge round followed").toBe(afterDirect);
+    expect(vi.mocked(vdGet), "and no seed read").not.toHaveBeenCalled();
+  });
+
   it("hands the confirmed addresses over even when a later round's send fails", async () => {
     // The failure ends the session, and what earlier rounds confirmed is the plan's only chance
     // at those values: the write that landed is what stops the address differing, so no later

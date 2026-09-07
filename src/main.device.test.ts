@@ -30,6 +30,7 @@ import { attackToVd, eqFreqToVd } from "./core/control/vd";
 import { formatHz, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
+import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
 import { nameControl } from "./core/control/translate";
 import { getModel } from "./models";
@@ -2984,18 +2985,38 @@ describe("an EFFECT TYPE change while a session is live", () => {
    * again. Modelled that way rather than as a constant, because a constant answer would
    * keep reading back as the tuned value however the app behaved — which is exactly the
    * question.
+   *
+   * `refillsOnType` adds the other half of what the unit does: a selector write refills
+   * the whole engine array. Off by default, and the cases that leave it off say what they
+   * therefore cannot measure — with it on, an address the app reads AFTER the type write
+   * answers a value the operator never chose, which is what the head-node exclusion is for.
    */
-  const stubWithPanel = (): { table: Record<string, unknown>; move: (raw: number) => void } => {
+  const stubWithPanel = (
+    opts: { refillsOnType?: number } = {},
+  ): {
+    table: Record<string, unknown>;
+    move: (raw: number) => void;
+    refuse: (addrPrefix: string) => void;
+  } => {
     const table = deviceCommands({ "plugin:dialog|message": "Ok" }, unitOnRevxHall());
     const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
     const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
     let panel: number | null = null;
-    table.vd_get = (a: Record<string, unknown>) => (panel !== null && at(a) === FX1_HPF ? panel : baseGet(a));
+    let refused: string | null = null;
+    table.vd_get = (a: Record<string, unknown>) => {
+      if (refused !== null && at(a).startsWith(refused)) throw new Error("device-lost");
+      return panel !== null && at(a) === FX1_HPF ? panel : baseGet(a);
+    };
     table.vd_set = (a: Record<string, unknown>) => {
       if (at(a) === FX1_HPF) panel = null;
-      return baseSet(a);
+      const out = baseSet(a);
+      if (opts.refillsOnType !== undefined && at(a) === FX1_TYPE) {
+        panel = null;
+        for (const d of fxParams(0)) baseSet({ paramId: 681, x: 0, y: d.slot, value: opts.refillsOnType });
+      }
+      return out;
     };
-    return { table, move: (raw) => (panel = raw) };
+    return { table, move: (raw) => (panel = raw), refuse: (addrPrefix) => (refused = addrPrefix) };
   };
 
   const pickType = (value: number): void => {
@@ -3056,6 +3077,137 @@ describe("an EFFECT TYPE change while a session is live", () => {
     );
     expect(parkAt, "the park read the outgoing array").toBeGreaterThan(-1);
     expect(parkAt).toBeLessThan(typeAt);
+  });
+
+  /** Wait for the link to stop carrying traffic — a converge is hundreds of reads through
+   *  the stub, and every assertion below is about where it ended up rather than when. The
+   *  quiet window is longer than `SETTLE_TIMEOUT_MS`: a converge round waits out that bound
+   *  before its seed read, and a shorter window ends inside the wait. */
+  const settled = async (shell: TauriShell): Promise<void> => {
+    let quiet = 0;
+    let last = -1;
+    await vi.waitFor(
+      () => {
+        const now = shell.invokes.length;
+        quiet = now === last ? quiet + 1 : 0;
+        last = now;
+        if (quiet * 50 < SETTLE_TIMEOUT_MS * 3) throw new Error(`still talking (${now})`);
+      },
+      { timeout: 30_000, interval: 50 },
+    );
+  };
+
+  // The general form of the same park: a converge re-sends whatever differs across the
+  // WHOLE write scope, so a head on any node at all is what puts the plan's copy of the
+  // silent families back on the unit. Nothing in this gesture names the FX channel.
+  it("keeps a silently moved value through a converge another node fired", SLOW, async () => {
+    const { table, move } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownHpf()).toBe(HPF.format!(HPF.def, {}));
+
+    // The hand on the unit, which announces nothing…
+    move(TUNED);
+    const gesture = shell.invokes.length;
+    // …and then a converge head on CH 1. What it resets is that channel's own bank.
+    pressNode("ch1");
+    const type = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(0), { timeout: 25_000 });
+    await settled(shell);
+
+    // The park read the array in front of the converge, so the plan holds what the operator
+    // tuned rather than the copy it was carrying.
+    expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
+    // The positive control: the converge really ran over this scope, so the write below is
+    // one it would have made.
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_get" && at(shell.args[i]) === FX1_HPF && i >= gesture),
+      "the converge's scope reached the FX array",
+    ).toBe(true);
+    expect(
+      shell.invokes.some(
+        (cmd, i) =>
+          cmd === "vd_set" && at(shell.args[i]) === FX1_HPF && shell.args[i]?.value === HPF.def && i >= gesture,
+      ),
+      "no stale array value went back out",
+    ).toBe(false);
+  });
+
+  // The other side of the exclusion. The type write makes the unit refill FX1's array, and
+  // the converge behind it is what puts the plan's values back — so a park that read that
+  // node would adopt the refill and the restore would never go out.
+  it("leaves the head node's own refilled array to the converge", SLOW, async () => {
+    const REFILLED = 55;
+    expect(REFILLED, "distinguishable from both the plan's copy and the unit's").not.toBe(TUNED);
+    const { table, move } = stubWithPanel({ refillsOnType: REFILLED });
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+
+    move(TUNED);
+    const gesture = shell.invokes.length;
+    pickType(REVX_ROOM);
+    await vi.waitFor(
+      () =>
+        expect(shell.invokes.some((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture)).toBe(
+          true,
+        ),
+      { timeout: 25_000 },
+    );
+
+    // The converge puts the plan's value back on the unit, and that write is what says the
+    // park left this node alone: had it read here, the plan would be holding the refill and
+    // there would be nothing left to restore.
+    await vi.waitFor(
+      () =>
+        expect(
+          shell.invokes.some(
+            (cmd, i) =>
+              cmd === "vd_set" && at(shell.args[i]) === FX1_HPF && shell.args[i]?.value === TUNED && i >= gesture,
+          ),
+          "the converge restored the array",
+        ).toBe(true),
+      { timeout: 30_000 },
+    );
+    // …and what the app holds is the operator's value throughout: the park in front of the
+    // type write took it, and the park in front of the converge left this node alone.
+    expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
+  });
+
+  // The same abort on the converge side, and the reason the completeness check runs in
+  // front of the empty-patch exit: a node the read could not reach contributes no patch, so
+  // an incomplete read otherwise looks exactly like one that found nothing to change.
+  it("stops the session when the converge's park cannot read a node", SLOW, async () => {
+    const { table, refuse } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+
+    // FX2's array alone, so what ends the flush is the park's own completeness check rather
+    // than a link that stopped answering anything.
+    refuse("685:");
+    const gesture = shell.invokes.length;
+    pressNode("ch1");
+    const type = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    // The positive control: the park ran and reached the nodes it could, so the refusal is
+    // what stopped it rather than a flush that never got there.
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_get" && at(shell.args[i]).startsWith("681:") && i >= gesture),
+      "the park read the node it could reach",
+    ).toBe(true);
+    // A.Gain is in the converge's write scope and in no park (readback.test.ts pins that),
+    // so a read of it is the converge having started.
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === PARAMS.HA_GAIN.id && i >= gesture),
+      "no converge round read the write scope",
+    ).toBe(false);
   });
 
   // The abort rule (architecture.md, "Aborting on failure") at the one place where carrying
