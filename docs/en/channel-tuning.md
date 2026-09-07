@@ -1843,10 +1843,13 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
   enum selector.
 - **The DUCKER's scope is `@ducker`, and every key it draws is assignable** — it has no locked row and
   no enum selector.
-- **The grid is the field table's.** A MIDI value and a dragged slider both resolve a position on it
-  before they resolve a value — a logarithmic field through the shared `dynToPos` / `dynFromPos` in
-  `control/translate.ts`, a linear one through `linearCodec` on the same min / max / step — so the two
-  cannot land on different values of one grid.
+- **The grid is the field table's, and each side reaches it its own way.** The **slider** is a native
+  range built from the field: a linear one carries its own `min` / `max` / `step` and its value, a
+  logarithmic one carries positions (`0..logSteps` by 1) that `dynToPos` / `dynFromPos` convert. **MIDI**
+  resolves a position too — a logarithmic field through those same two functions, a linear one through
+  `linearCodec`, built on the same three numbers rather than on shared code. So the two cannot land on
+  different values of one grid, and where a logarithmic field is concerned they cannot even take different
+  routes to it.
 - **…and where the last step lands PAST the maximum, the wire stops on the maximum while the slider
   stops short of it.** A span that is not a whole number of steps rounds either way. Fall short and the
   top position is the last value on the grid, like every other one (GATE attack, 0.092..80 by 0.1, tops
