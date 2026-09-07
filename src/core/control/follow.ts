@@ -94,6 +94,16 @@ export interface DeviceFollowHooks {
   onFollow: () => void;
   /** A reconcile failed; follow is already stopped — the caller drops the link. */
   onError: (message: string) => void;
+  /**
+   * Whether a reconcile must wait. True while Live sync is inside a converge: the app is
+   * rewriting the unit round after round, so a read taken there reads a device it is
+   * changing — and the two readers interleave on the one link for as long as it runs.
+   *
+   * Deferring keeps the window rather than spending it, so every node the burst named is
+   * still re-read once the converge ends. Absent = never defer (the browser build, and
+   * the tests that do not exercise it).
+   */
+  deferReconcile?: () => boolean;
 }
 
 export class DeviceFollow {
@@ -106,6 +116,9 @@ export class DeviceFollow {
   // A full (idle safety net) reconcile arrived while one was in flight: the replay
   // must keep the full scope rather than downgrade to a scoped/no-op pass.
   private pendingFull = false;
+  // The same, for a pass deferred by `deferReconcile`: the retry is armed on the settle
+  // timer, which on its own would run the window as a scoped one.
+  private deferredFull = false;
   // The current settle window's accumulated state: nodes needing a scoped read,
   // distinct logical controls touched (node:name), and whether a full reconcile
   // is forced (an unknown address or too many controls at once).
@@ -392,10 +405,19 @@ export class DeviceFollow {
       if (idle) this.pendingFull = true;
       return;
     }
+    // A converge is rewriting the unit right now. Deferred rather than run: the window is
+    // kept, so every node this burst named is still re-read, on the settle timer's own
+    // re-arm — which is also what ends the wait, since nothing here hears one finish.
+    if (this.hooks.deferReconcile?.()) {
+      if (idle) this.deferredFull = true;
+      this.armSettle();
+      return;
+    }
     // Decide the scope before the await: idle is always a full sweep; otherwise a
     // forced-full window (unknown / too many controls) re-reads everything, and a
     // pure-direct window (no scoped nodes) only needs a snapshot re-base.
-    const full = idle || this.forceFull;
+    const full = idle || this.deferredFull || this.forceFull;
+    this.deferredFull = false;
     const nodes = new Set(this.scopedNodes);
     this.clearWindow();
     if (!full && nodes.size === 0) {

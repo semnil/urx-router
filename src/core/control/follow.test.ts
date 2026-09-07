@@ -102,6 +102,47 @@ describe("DeviceFollow", () => {
     await expect(follow.begin()).rejects.toThrow("subscribe rejected");
   });
 
+  // A reconcile taken inside a converge reads a unit the app is part-way through
+  // rewriting, and its reads interleave with the converge's own on the one link
+  // (invariant 4 in the race harness). What the deferral must NOT do is spend the window:
+  // the nodes the burst named are still owed a read.
+  it("holds a scoped reconcile while a converge is running, then takes it", async () => {
+    const reconcileNodes = vi.fn(async () => {});
+    let converging = true;
+    const follow = followFor({ reconcileNodes, deferReconcile: () => converging });
+    await follow.begin();
+    notify(1);
+    // Past the settle window, so the pass this burst armed has already been refused once
+    // and re-armed. Kept short of the idle threshold: past it the deferred pass is the
+    // full sweep, which is the case below.
+    await vi.advanceTimersByTimeAsync(400);
+    expect(reconcileNodes, "held while the converge runs").not.toHaveBeenCalled();
+
+    converging = false;
+    await vi.advanceTimersByTimeAsync(400);
+    expect(reconcileNodes, "the window was kept, not spent").toHaveBeenCalledTimes(1);
+    expect(reconcileNodes).toHaveBeenCalledWith(new Set(["ch1"]));
+  });
+
+  // The idle safety net is the FULL pass, and the retry runs on the settle timer — which
+  // on its own would take the window as a scoped one and read a fraction of the device.
+  it("keeps a deferred idle reconcile a full one", async () => {
+    const reconcileAll = vi.fn(async () => {});
+    const reconcileNodes = vi.fn(async () => {});
+    let converging = true;
+    const follow = followFor({ reconcileAll, reconcileNodes, deferReconcile: () => converging });
+    await follow.begin();
+    notify(1);
+    // Past the idle threshold, so the deferred pass is the idle one.
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(reconcileAll).not.toHaveBeenCalled();
+
+    converging = false;
+    await vi.advanceTimersByTimeAsync(400);
+    expect(reconcileAll, "still the full sweep").toHaveBeenCalledTimes(1);
+    expect(reconcileNodes, "and not downgraded to the scoped one").not.toHaveBeenCalled();
+  });
+
   it("re-reads the owner node once after a scoped burst settles", async () => {
     const reconcileNodes = vi.fn(async () => {});
     const follow = followFor({ reconcileNodes });

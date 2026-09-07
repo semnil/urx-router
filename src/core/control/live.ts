@@ -254,6 +254,9 @@ export class LiveSync {
   private snapshotEpoch = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
+  // Inside the sideEffect branch of a flush: the converge loop. What device follow holds a
+  // reconcile off (see `isConverging`).
+  private converging = false;
   private pending = false;
   // The last flush had to converge (a sideEffect param went out), which re-reads
   // the whole write scope and settles between rounds — seconds, not milliseconds.
@@ -274,6 +277,20 @@ export class LiveSync {
 
   isActive(): boolean {
     return this.active;
+  }
+
+  /**
+   * Whether a flush is inside its converge. What device follow holds a reconcile off
+   * (`DeviceFollowHooks` `deferReconcile`).
+   *
+   * The converge and not the whole flush. A round re-reads the WHOLE write scope and
+   * sends behind it, over and over: a read taken there reads a unit this app is part-way
+   * through rewriting, and the reads of the two interleave for as long as it runs. An
+   * ordinary flush is a handful of writes and no read at all, so a reconcile beside one
+   * is the app's ordinary two-chain contention rather than a reader of a moving device.
+   */
+  isConverging(): boolean {
+    return this.converging;
   }
 
   private scope(): WriteScope {
@@ -856,6 +873,7 @@ export class LiveSync {
       }
       this.lastFlushConverged = sideEffect;
       if (sideEffect) {
+        this.converging = true;
         // The device reset dependents; converge against its post-reset state and
         // rebuild the snapshot so the next diff measures from the device truth.
         // Converge against a frozen copy, not the live plan: an edit that arrives
@@ -1042,6 +1060,7 @@ export class LiveSync {
       return;
     } finally {
       this.flushing = false;
+      this.converging = false;
     }
     if (this.pending) {
       this.pending = false;
