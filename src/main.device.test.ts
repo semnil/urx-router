@@ -2965,6 +2965,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
   const TUNED = 30;
   const FX1_TYPE = "679:0:0";
   const FX1_HPF = `681:0:${HPF.slot}`;
+  const REVX_HALL = 0;
   const REVX_ROOM = 1;
   const at = (a: Record<string, unknown> | undefined): string => `${a?.paramId}:${a?.x}:${a?.y}`;
 
@@ -3022,6 +3023,12 @@ describe("an EFFECT TYPE change while a session is live", () => {
       return out;
     };
     return { table, move: (raw) => (panel = raw), refuse: (addrPrefix) => (refused = addrPrefix) };
+  };
+
+  /** The EFFECT TYPE the selector is showing — the plan as the Inspector draws it. */
+  const shownType = (): number => {
+    pressNode("bus.fx1");
+    return Number(paramRow(t().inspector.fxEffect.effectType).querySelector<HTMLSelectElement>("select")!.value);
   };
 
   const pickType = (value: number): void => {
@@ -3248,6 +3255,32 @@ describe("an EFFECT TYPE change while a session is live", () => {
     // Read back off the panel rather than from the box just clicked: what the park merged
     // into the plan is what a rebuild draws, and what the next flush sends.
     expect(effectIsOn(), "the operator's own edit, not the value it was made against").toBe(false);
+  });
+
+  // The gesture outlives the wait. A park held for a converge can have the session end under
+  // it, and what is left is the case the browser build is always in: nothing to read, and
+  // nothing the write can damage. Losing the selection there would make a disconnect at the
+  // wrong moment look like a selector that does not work.
+  it("still writes the type when the session ends inside the wait", SLOW, async () => {
+    const { table } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownType(), "the premise: the factory type").toBe(REVX_HALL);
+
+    // A converge on another node, so the FX park below waits for it rather than reading.
+    pressNode("ch1");
+    const compEq = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    compEq.value = String(COMP_EQ_SSMCS);
+    compEq.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(0), { timeout: 20_000 });
+
+    pickType(REVX_ROOM);
+    $("btn-live").click(); // the session goes, with the park still waiting
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).not.toBe("true"), { timeout: 20_000 });
+    await settled(shell);
+
+    expect(shownType(), "the operator's selection, kept").toBe(REVX_ROOM);
   });
 
   // The abort rule (architecture.md, "Aborting on failure") at the one place where carrying
