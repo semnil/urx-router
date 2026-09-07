@@ -210,7 +210,12 @@ describe("the trace file", () => {
       .find((e) => e.kind === "rx");
     if (!rx || !entry) throw new Error("the rx record was not written");
     expect(rx.d).toBe("CH 16 CC 80 = 95");
-    expect(rx.t).toBeCloseTo(entry.t, 3);
+    // The record carries the ring entry's OWN time, rounded to three decimals where it is
+    // written, rather than a second reading of the clock. Asked exactly: a tolerance cannot
+    // separate those two — consecutive readings differ by less than any tolerance wide enough
+    // to cover the rounding — and one of 0.0005 is the rounding step itself, so it fails on
+    // every value whose fourth decimal is a 5.
+    expect(rx.t).toBe(Number(entry.t.toFixed(3)));
     // The epoch stamp is the page's origin plus the entry's offset, which is what makes two
     // page loads comparable. Asked of those two numbers rather than of Date.now(): the
     // stamp rides the monotonic clock, the wall clock is a different one, and a bracket
