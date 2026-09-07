@@ -147,8 +147,9 @@ carries a one-line map of the same directories and points here.
     / `controls.ts` catalog of fixed control ids (`node/param[@scope]`) for every CONSOLE control **and
     every parameter the channel tuning screens edit** — normalized (0..1) get/set snapping to the same grids
     those surfaces use (a tuning-screen value takes its grid from the same `DynField` table its slider does,
-    through `translate.ts`'s shared `dynToPos`/`dynFromPos`, so MIDI and a drag cannot land on different
-    values of one grid). The id's third component is a **scope**: a send-target bus (`@bus.mix1`) or a
+    through `translate.ts`'s shared `dynToPos`/`dynFromPos`; where that puts a MIDI value and a drag on one
+    value and where it does not is channel-tuning.md "MIDI assignment"). The id's third component is a
+    **scope**: a send-target bus (`@bus.mix1`) or a
     processor / band (`@gate`, `@comp`, `@eq.low`) — a node has one fader but three thresholds, and a band
     is a scope rather than a cursor because a mapping has to work with the screen closed. Device locks
     reject writes (FIXED bus sends, Pan Link send pan, rate-restricted stereo CH EQ, COMP's device-driven

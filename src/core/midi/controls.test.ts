@@ -391,7 +391,7 @@ describe("channel tuning screen parameters", () => {
     expect(ids).not.toContain("ch_5_6/threshold@ducker");
   });
 
-  it("snaps to the field table's own grid, so MIDI and the slider agree", () => {
+  it("snaps to the field table's own grid, so MIDI and the slider agree at a grid point", () => {
     // GATE threshold: -72 … 0 dB in 1 dB steps.
     const thr = bindControl(model, plan, "ch1/threshold@gate")!;
     thr.set(0);
