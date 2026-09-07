@@ -1244,4 +1244,40 @@ describe("applySilentState", () => {
     expect(read(dGainParam("URX44V", "ch_7_8")!), "CH 7/8's D.Gain").toBe(true);
     expect(seen.has(`${otherIfx.param}:0:${otherIfx.instances[0]}`), "CH 2's selector").toBe(true);
   });
+
+  // What the caller acts on when a read fails: the park's own completeness check reads
+  // `unreadNodes`, and a session ends rather than letting the write behind it replace
+  // values nobody confirmed. The three families are three separate passes with three
+  // separate catches, so one family's recording says nothing about the other two — and a
+  // park that recorded nothing would look exactly like one that found nothing to change.
+  //
+  // The insert-FX selector is why the refusal is per INSTANCE: one param id carries every
+  // mono channel, so refusing the id alone fails four nodes and says nothing about which
+  // pass recorded them.
+  it.each([
+    ["the FX effect arrays", 681, null, "bus.fx1"],
+    [
+      "the insert-FX engine arrays",
+      insertFxControl(model, "ch1")!.param,
+      insertFxControl(model, "ch1")!.instances[0]!,
+      "ch1",
+    ],
+    ["D.Gain", dGainParam("URX44V", "ch_5_6")!, null, "ch_5_6"],
+  ])("names the node whose read of %s failed", async (_family, paramId, instance, nodeId) => {
+    const plan = defaultPlan("URX44V");
+    const table = deviceTableFor(plan);
+    vi.mocked(vdGet).mockImplementation((id: number, x: number, y: number) => {
+      if (id === paramId && (instance === null || y === instance)) throw new Error("device-lost");
+      return Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0);
+    });
+
+    const r = await applySilentState(model, plan);
+    expect([...r.unreadNodes], "the node the caller may not treat as read").toEqual([nodeId]);
+    expect(r.errors.join(" "), "and the failure says which node it was").toContain(
+      model.nodes.find((n) => n.id === nodeId)!.label,
+    );
+    // The positive control: the other two families still landed, so what the assertions
+    // above describe is one failed pass rather than a park that read nothing at all.
+    expect(r.applied, "every other node this park attempted").toBeGreaterThan(0);
+  });
 });
