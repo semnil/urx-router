@@ -4,18 +4,29 @@ import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
 import { deserialize, ensureFixedConnections, LEVEL_OFF_DB, serialize } from "../plan";
 import { ref } from "../../models/types";
-import { COMP_EQ_SSMCS, EQ_TYPE_PASS, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../control/params";
-import { planToCommands } from "../control/translate";
+import {
+  COMP_EQ_COMP_FIRST,
+  COMP_EQ_SSMCS,
+  EQ_TYPE_PASS,
+  INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
+  PAN_BAL_PAN,
+} from "../control/params";
+import { channelDynamics, planToCommands, DUCKER_FIELDS } from "../control/translate";
+import type { DynField } from "../control/translate";
 import {
   bindControl,
   controlId,
   listControls,
   parseControlId,
   COMP_SCOPE,
+  DUCKER_SCOPE,
   EQ_SCOPE,
   eqBandScope,
   FX_SCOPE,
+  GATE_SCOPE,
   INSFX_SCOPE,
+  type ControlParam,
 } from "./controls";
 import { MidiEngine } from "./engine";
 import { mirrorBalPair, mirrorLinkedInsertFx } from "../routing";
@@ -410,6 +421,46 @@ describe("channel tuning screen parameters", () => {
     duck.set(0.5);
     expect(plan.nodeParams["out.ducker1"]?.ducker?.threshold).toBe(-30);
     expect(duck.get()).toBeCloseTo(0.5, 6);
+  });
+
+  // A full-scale message may not write past the field's own maximum. `min + round(span /
+  // step) * step` lands beyond it wherever the span is not a whole number of steps, and the
+  // plan then holds a value the screen's slider stops short of — the panel and the document
+  // disagreeing about one control, with nothing on the load path bounding it back
+  // (`plan-validate.ts` reads the FX channel's windows and no others). Asked of every field
+  // the three flat tables carry, on every model: the rule is the codec's, not these four
+  // fields', and which fields have a ragged span moves with the tables.
+  it.each(["URX22", "URX44", "URX44V"] as const)("writes nothing outside a field's range on %s", (id) => {
+    const m = getModel(id);
+    const p = defaultPlan(id);
+    ensureFixedConnections(m, p);
+    const outside: string[] = [];
+    let swept = 0;
+    const sweep = (nodeId: string, scope: string, fields: readonly DynField[]): void => {
+      for (const f of fields) {
+        const c = bindControl(m, p, controlId(nodeId, f.key as ControlParam, scope));
+        if (!c || c.kind !== "continuous") continue;
+        for (const v of [0, 0.5, 1]) {
+          c.set(v);
+          swept++;
+          const sub = (p.nodeParams[nodeId] ?? {}) as Record<string, Record<string, number> | undefined>;
+          const held = sub[scope]?.[f.key];
+          if (held === undefined || held < f.min || held > f.max) {
+            outside.push(`${c.id} @${v} = ${held} (${f.min}..${f.max})`);
+          }
+        }
+      }
+    };
+    for (const n of m.nodes) {
+      if (n.kind === "ducker") sweep(n.id, DUCKER_SCOPE, DUCKER_FIELDS);
+      const dyn = channelDynamics(m, n.id, COMP_EQ_COMP_FIRST);
+      if (!dyn) continue;
+      sweep(n.id, GATE_SCOPE, dyn.gate);
+      if (dyn.comp) sweep(n.id, COMP_SCOPE, dyn.comp);
+    }
+    // The positive control: an empty offender list says nothing unless something was read.
+    expect(swept, "no gate / comp / ducker control was swept").toBeGreaterThan(20);
+    expect(outside).toEqual([]);
   });
 
   it("writes one band without disturbing the other three", () => {

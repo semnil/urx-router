@@ -263,9 +263,16 @@ function linearCodec(min: number, max: number, step: number): { get(x: number): 
   const span = max - min;
   return {
     get: (x) => clamp01((x - min) / span),
-    // toFixed strips the float dust fractional steps accumulate (0.1-step
-    // arithmetic yields 2.9000000000000004) — the same snap wireKnob applies.
-    set: (v) => Number((min + Math.round((clamp01(v) * span) / step) * step).toFixed(4)),
+    set: (v) => {
+      // toFixed strips the float dust fractional steps accumulate (0.1-step
+      // arithmetic yields 2.9000000000000004) — the same snap wireKnob applies.
+      const raw = Number((min + Math.round((clamp01(v) * span) / step) * step).toFixed(4));
+      // …and the bound, which the step grid does not give: a span that is not a whole
+      // number of steps puts the top position PAST the field's own maximum, and the
+      // slider stops there, so a full-scale message and a dragged slider would hold
+      // different values. The same bound `wireGridCodec` applies.
+      return Math.min(max, Math.max(min, raw));
+    },
   };
 }
 
