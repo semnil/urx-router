@@ -483,8 +483,9 @@ arrives from somewhere else entirely. Every difference below follows from that.
 - **No display bar.** The envelope and the lanes are both on screen, as the EQ's plot and lanes are,
   so nothing chooses between them and `DynProcessor.bar` is left unset — a heading over a segment
   with no buttons would name a choice that does not exist.
-- **No MIDI ids.** The control catalog carries a ducker's `duckerOn` and nothing else, so returning
-  ids for these four sliders would arm learn against controls that do not exist.
+- **Its MIDI ids bind to the ducker node**, not to the channel it attenuates — the four values and the
+  on/off alike. The assignment list names a hung node by the channel it prints under, so a binding reads
+  `CH 5/6 · DUCKER · Threshold` ("MIDI assignment" carries the scope).
 
 ### Four lanes in three slots
 
@@ -1840,6 +1841,8 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
   Its master ON takes the bare node scope the other section masters take. The two shelves' Q rows and
   the Sweet Spot Data preset are not offered: a shelf has no Q parameter at all, and the preset is an
   enum selector.
+- **The DUCKER's scope is `@ducker`, and every key it draws is assignable** — it has no locked row and
+  no enum selector.
 - **The grid is the field table's.** A MIDI value and a dragged slider both resolve a position first
   (`dynToPos` / `dynFromPos` in `control/translate.ts`), so the two cannot land on different values of
   one grid.

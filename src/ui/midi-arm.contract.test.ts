@@ -31,7 +31,7 @@ import { dynHost } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
-import type { DynCtx } from "./dyn-screen";
+import type { DynCtx, DynProcessor } from "./dyn-screen";
 import { bindControl } from "../core/midi/controls";
 import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS } from "../core/control/params";
 import { defaultPlan } from "../models/initial-state";
@@ -173,11 +173,11 @@ describe("arming surfaces against the control catalog", () => {
   // added to dyn-registry.ts is covered the day it is registered rather than when
   // someone remembers to list it here.
   //
-  // A processor without a `controlId` hook is the other half of the same rule, and
-  // DUCKER is one: the catalog carries a ducker's `duckerOn` and nothing else, so
-  // its four sliders have no id to arm and the screen must mark none of them. Marked
-  // and unarmable is the defect either way round — a control that says "assignable"
-  // and then does nothing is worse than one that never offered.
+  // A processor without a `controlId` hook is the other half of the same rule, and every
+  // registered one names ids — so that half is reached by taking the hook off this one
+  // rather than by waiting for a registry entry that lacks it. Marked and unarmable is the
+  // defect either way round: a control that says "assignable" and then does nothing is
+  // worse than one that never offered.
   it.each(Object.keys(DYN_PROCESSORS) as Array<keyof typeof DYN_PROCESSORS>)(
     "the %s tuning screen marks exactly what it can arm",
     (kind) => {
@@ -226,10 +226,10 @@ describe("arming surfaces against the control catalog", () => {
        *  match on each, and totals let a face that marks nothing hide behind one that
        *  marks twice. */
       const host = dh;
-      const checkFace = (where: string): void => {
+      const checkFace = (p: DynProcessor, where: string): void => {
         armed.length = 0;
         const { marked, ids } = armEverything(host.box, armed);
-        if (proc.controlId) {
+        if (p.controlId) {
           expect(marked, where).toBeGreaterThan(0);
           expect(ids.length, where).toBeGreaterThan(0);
           // Same equality as the CONSOLE case: a screen that marks five rows and arms one
@@ -245,21 +245,30 @@ describe("arming surfaces against the control catalog", () => {
         }
       };
 
-      for (const nodeId of nodeIds) {
+      /** One node, every face. A face is a different set of slots — the multi-band
+       *  compressor's three band faces carry twelve the first one does not — so opening at
+       *  the default `sel` alone leaves those unchecked, which is the same silence this
+       *  file exists to break. A bar item may NAME the descriptor it arrives on, and the
+       *  screen switches to it, so the verdict is asked of that one rather than of the one
+       *  the screen opened with. */
+      const checkNode = (p: DynProcessor, nodeId: string, where: string): void => {
         const screen = new DynScreen(host.hooks);
-        screen.open(proc, nodeId);
+        screen.open(p, nodeId);
         expect(screen.isOpen()).toBe(true);
-        checkFace(nodeId);
-        // …and every OTHER face its bar offers. A face is a different set of slots — the
-        // multi-band compressor's three band faces carry twelve the first one does not —
-        // and opening at the default `sel` alone leaves those unchecked, which is the same
-        // silence this file exists to break.
-        for (const item of proc.bar?.(ctxAt(nodeId))?.items ?? []) {
+        checkFace(p, where);
+        for (const item of p.bar?.(ctxAt(nodeId))?.items ?? []) {
           host.box.querySelector<HTMLElement>(`#${item.id}`)?.click();
-          checkFace(`${nodeId} / ${item.label}`);
+          checkFace(item.face ?? p, `${where} / ${item.label}`);
         }
         screen.close();
-      }
+      };
+
+      for (const nodeId of nodeIds) checkNode(proc, nodeId, nodeId);
+
+      // The same screen with its hook removed: nothing may offer itself. The face it opens
+      // on is the reach of this — a bar item names a REGISTRY face, which the screen swaps
+      // in whole, so a copy cannot take the hook off the one behind the bar.
+      checkNode({ ...proc, controlId: undefined }, nodeIds[0], `${nodeIds[0]} / no controlId`);
     },
   );
 });

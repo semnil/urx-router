@@ -1326,8 +1326,8 @@ one would latch the gate for the rest of the session and the panel would silentl
 ## External MIDI control
 
 The CONSOLE view's controls (faders / send levels / MUTE / PAN-BAL / GAIN / PHONES / the toggles) and every
-parameter the channel tuning screens edit (GATE / COMP / the 4-band PEQ) can be driven from an external MIDI
-controller (desktop app only).
+parameter the channel tuning screens edit can be driven from an external MIDI controller (desktop app
+only); which of a screen's rows are offered, and under which scope, is channel-tuning.md "MIDI assignment".
 
 Configuration lives in a **window of its own** (Device → "MIDI control"), not an overlay. That is what lets it
 stay visible while a tuning screen — which is modal and runs full-bleed — is open, and it is why the assignment

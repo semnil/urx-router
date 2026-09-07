@@ -4,18 +4,29 @@ import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
 import { deserialize, ensureFixedConnections, LEVEL_OFF_DB, serialize } from "../plan";
 import { ref } from "../../models/types";
-import { COMP_EQ_SSMCS, EQ_TYPE_PASS, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../control/params";
-import { planToCommands } from "../control/translate";
+import {
+  COMP_EQ_COMP_FIRST,
+  COMP_EQ_SSMCS,
+  EQ_TYPE_PASS,
+  INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
+  PAN_BAL_PAN,
+} from "../control/params";
+import { channelDynamics, planToCommands, DUCKER_FIELDS } from "../control/translate";
+import type { DynField } from "../control/translate";
 import {
   bindControl,
   controlId,
   listControls,
   parseControlId,
   COMP_SCOPE,
+  DUCKER_SCOPE,
   EQ_SCOPE,
   eqBandScope,
   FX_SCOPE,
+  GATE_SCOPE,
   INSFX_SCOPE,
+  type ControlParam,
 } from "./controls";
 import { MidiEngine } from "./engine";
 import { mirrorBalPair, mirrorLinkedInsertFx } from "../routing";
@@ -360,6 +371,26 @@ describe("channel tuning screen parameters", () => {
     expect(ids).toContain("ch2/threshold@comp");
   });
 
+  // Both spellings sit on one node: the section master in the bare node scope, the values
+  // it tunes under a scope of their own.
+  it("lists a ducker's four values under its own scope, beside its unscoped master", () => {
+    const ids = new Set(listControls(model, plan).map((c) => c.id));
+    // EVERY ducker, not the first: the branch keys on the node KIND, so a case naming one
+    // node passes a catalogue that names one node.
+    const duckers = model.nodes.filter((n) => n.kind === "ducker").map((n) => n.id);
+    expect(duckers.length, "URX44V hangs one ducker under each stereo pair").toBe(4);
+    for (const d of duckers) {
+      for (const id of [`${d}/duckerOn`, ...["range", "attack", "decay", "threshold"].map((k) => `${d}/${k}@ducker`)])
+        expect(ids, id).toContain(id);
+    }
+    // A ducker has no HOLD, and it is not a strip: no fader, no sends. The four ids above
+    // are the positive control for both — a catalogue offering nothing would satisfy these.
+    expect(ids).not.toContain("out.ducker1/hold@ducker");
+    expect(ids).not.toContain("out.ducker1/level");
+    // …and the values stay on the hung node rather than moving to the channel it attenuates.
+    expect(ids).not.toContain("ch_5_6/threshold@ducker");
+  });
+
   it("snaps to the field table's own grid, so MIDI and the slider agree", () => {
     // GATE threshold: -72 … 0 dB in 1 dB steps.
     const thr = bindControl(model, plan, "ch1/threshold@gate")!;
@@ -384,6 +415,62 @@ describe("channel tuning screen parameters", () => {
     freq.set(0.5);
     expect(plan.nodeParams.ch1?.eqBands?.[0]?.freq).toBe(632);
     expect(freq.get()).toBeCloseTo(0.5, 3);
+    // A ducker threshold: -60 … 0 dB in 1 dB steps, a shorter domain than the GATE's
+    // above, and stored on the ducker node rather than on the channel it attenuates.
+    const duck = bindControl(model, plan, "out.ducker1/threshold@ducker")!;
+    duck.set(0.5);
+    expect(plan.nodeParams["out.ducker1"]?.ducker?.threshold).toBe(-30);
+    expect(duck.get()).toBeCloseTo(0.5, 6);
+  });
+
+  // A full-scale message may not write past the field's own maximum. `min + round(span /
+  // step) * step` lands beyond it wherever the span is not a whole number of steps, and the
+  // plan then holds a value the screen's slider stops short of — the panel and the document
+  // disagreeing about one control, with nothing on the load path bounding it back
+  // (`plan-validate.ts` reads the FX channel's windows and no others). Asked of every field
+  // the three flat tables carry, on every model: the rule is the codec's, not these four
+  // fields', and which fields have a ragged span moves with the tables.
+  it.each(["URX22", "URX44", "URX44V"] as const)("writes nothing outside a field's range on %s", (id) => {
+    const m = getModel(id);
+    const p = defaultPlan(id);
+    ensureFixedConnections(m, p);
+    const outside: string[] = [];
+    const unwritten: string[] = [];
+    const swept = new Map<string, number>();
+    const sweep = (nodeId: string, scope: string, fields: readonly DynField[]): void => {
+      for (const f of fields) {
+        const c = bindControl(m, p, controlId(nodeId, f.key as ControlParam, scope));
+        if (!c || c.kind !== "continuous") continue;
+        for (const v of [0, 0.5, 1]) {
+          // A refused write is not an out-of-range one: `subDyn` answers false rather than
+          // writing while a control is locked, and the value it left behind is whatever the
+          // plan already held. Counted separately, or a locked control with no seeded value
+          // reports as a range failure and names the wrong defect.
+          if (!c.set(v)) continue;
+          swept.set(scope, (swept.get(scope) ?? 0) + 1);
+          const sub = (p.nodeParams[nodeId] ?? {}) as Record<string, Record<string, number> | undefined>;
+          const held = sub[scope]?.[f.key];
+          if (held === undefined) unwritten.push(`${c.id} @${v}`);
+          else if (held < f.min || held > f.max) outside.push(`${c.id} @${v} = ${held} (${f.min}..${f.max})`);
+        }
+      }
+    };
+    for (const n of m.nodes) {
+      if (n.kind === "ducker") sweep(n.id, DUCKER_SCOPE, DUCKER_FIELDS);
+      const dyn = channelDynamics(m, n.id, COMP_EQ_COMP_FIRST);
+      if (!dyn) continue;
+      sweep(n.id, GATE_SCOPE, dyn.gate);
+      if (dyn.comp) sweep(n.id, COMP_SCOPE, dyn.comp);
+    }
+    // The positive control, per TABLE: an empty offender list says nothing unless every one
+    // of the three was read, and a floor over the total is satisfied by the other two —
+    // dropping the ducker branch left 60 swept and the case green.
+    for (const scope of [GATE_SCOPE, COMP_SCOPE, DUCKER_SCOPE]) {
+      expect(swept.get(scope) ?? 0, `${scope} contributed no control to the sweep`).toBeGreaterThan(0);
+    }
+    // A write this accepted and did not land is its own defect, and reads as one.
+    expect(unwritten).toEqual([]);
+    expect(outside).toEqual([]);
   });
 
   it("writes one band without disturbing the other three", () => {

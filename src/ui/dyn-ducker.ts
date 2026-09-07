@@ -16,6 +16,8 @@ import { DUCKER_FIELDS, duckerControl, formatDyn } from "../core/control/transla
 import { REC_POINT_DEFAULT } from "../core/control/params";
 import { DYN_ATTACK_MIN_MS, DUCKER_DECAY_MAX_MS } from "../core/control/vd";
 import { duckerKeyDb, grAddr, tapFor, tapsFor } from "../core/meters";
+import { controlId, DUCKER_SCOPE } from "../core/midi/controls";
+import type { ControlParam } from "../core/midi/controls";
 import { incomingConnection } from "../core/plan";
 import type { NodeParams } from "../core/plan";
 import { parseRef, ref } from "../models/types";
@@ -159,12 +161,10 @@ export const DUCKER_DYN: DynPlotProcessor = {
   offNote: (ctx) => flagOffNote(ctx, "duckerOn"),
   read: cur,
   patch: (ctx, patch) => ({ ducker: { ...cur(ctx), ...patch } }) as NodeParams,
-  // No `controlId`. The MIDI catalog carries a ducker's `duckerOn` and nothing else,
-  // so returning ids for these four sliders would arm learn against controls that do
-  // not exist. Making them mappable is a catalog change with its own contract tests,
-  // not something this screen can assert on its own.
-  //
-  // `plotDragsCap` is deliberately unset too. The envelope carries three editable values (range, attack,
+  // Every key here is a slider on one continuous field table, so none is excluded.
+  controlId: (ctx, key) => controlId(ctx.nodeId, key as ControlParam, DUCKER_SCOPE),
+
+  // `plotDragsCap` is deliberately unset. The envelope carries three editable values (range, attack,
   // decay) and its x axis is time, not the threshold's dB — a press has no unambiguous
   // reading, and the cap it would drag is not on this plot's axis at all.
 

@@ -41,6 +41,7 @@ import {
   ssmcsEqBandFields,
   ssmcsEqBandHasQ,
   ssmcsPlanKey,
+  DUCKER_FIELDS,
   EQ_BAND_NAMES,
   SSMCS_EQ_BAND_NAMES,
   ssmcsCompFields,
@@ -85,6 +86,7 @@ export type SendTarget = (typeof SEND_TARGETS)[number];
  */
 export const GATE_SCOPE = "gate";
 export const COMP_SCOPE = "comp";
+export const DUCKER_SCOPE = "ducker";
 export const EQ_SCOPE = "eq";
 export const eqBandScope = (index: number): string => `${EQ_SCOPE}.${EQ_BAND_NAMES[index]}`;
 
@@ -261,9 +263,17 @@ function linearCodec(min: number, max: number, step: number): { get(x: number): 
   const span = max - min;
   return {
     get: (x) => clamp01((x - min) / span),
-    // toFixed strips the float dust fractional steps accumulate (0.1-step
-    // arithmetic yields 2.9000000000000004) — the same snap wireKnob applies.
-    set: (v) => Number((min + Math.round((clamp01(v) * span) / step) * step).toFixed(4)),
+    set: (v) => {
+      // toFixed strips the float dust fractional steps accumulate (0.1-step
+      // arithmetic yields 2.9000000000000004) — the same snap wireKnob applies.
+      const raw = Number((min + Math.round((clamp01(v) * span) / step) * step).toFixed(4));
+      // …and the bound, which the step grid does not give: a span that is not a whole
+      // number of steps puts the top position PAST the field's own maximum, and nothing
+      // on the load path brings it back — plan-validate reads the FX channel's windows and
+      // no others — so the document would keep a value outside the range its own field
+      // declares. The same bound `wireGridCodec` applies.
+      return Math.min(max, Math.max(min, raw));
+    },
   };
 }
 
@@ -476,14 +486,14 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   });
 
   // ---- the channel tuning screens' parameters ------------------------------
-  // GATE and COMP keep their values in one nodeParams sub-object each; the EQ
-  // spreads across `eqBands[i]` and `eqOneKnob`. Each write clones the group it
+  // GATE, COMP and a ducker keep their values in one nodeParams sub-object each; the
+  // EQ spreads across `eqBands[i]` and `eqOneKnob`. Each write clones the group it
   // touches, so the history differ sees the same shape a screen edit produces.
 
-  /** A continuous parameter inside a `gate` / `comp` sub-object, on the field
-   *  table's own grid. */
+  /** A continuous parameter inside a `gate` / `comp` / `ducker` sub-object, on the
+   *  field table's own grid. */
   const subDyn = (
-    sub: "gate" | "comp",
+    sub: "gate" | "comp" | "ducker",
     scope: string,
     f: DynField,
     locked?: () => boolean,
@@ -782,6 +792,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
 
   if (node.kind === "ducker") {
     out.push(boolControl("duckerOn", false));
+    for (const f of DUCKER_FIELDS) out.push(subDyn("ducker", DUCKER_SCOPE, f));
     return out;
   }
 

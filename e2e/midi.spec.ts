@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "./fixtures";
 import { planParamZ } from "./plan-param";
 import { LIVE_COMMANDS } from "./tauri-stub";
-import { pickBand } from "./dyn-helpers";
+import { pickBand, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
 import { selectWire } from "./graph-helpers";
 
@@ -36,6 +36,12 @@ declare global {
 }
 
 const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
+
+/** A tuning screen's parameter row, by the label it prints. */
+const screenRow = (page: Page, label: string) =>
+  screenBox(page)
+    .locator(".prefs-row")
+    .filter({ has: page.getByText(label, { exact: true }) });
 
 /** The strip's set-level readout cell (not the live-meter cell). */
 const readLevel = (page: Page, name: string) => strip(page, name).locator(".con-readout .rd:not(.mtr) .rv");
@@ -1164,10 +1170,9 @@ test("a tuning screen's controls arm under processor and band scopes", async ({ 
 
   // GATE, opened from the CONSOLE strip. The opener still opens while learn is on.
   await strip(page, "CH 1").locator(".con-chip-open").first().click();
-  const box = page.locator("#dyn-screen-box");
+  const box = screenBox(page);
   await expect(box).toBeVisible();
-  const row = (label: string) => box.locator(".prefs-row").filter({ has: page.getByText(label, { exact: true }) });
-  await row("Threshold").locator(".ctl").click();
+  await screenRow(page, "Threshold").locator(".ctl").click();
   await expect(win.locator(".mw-hint")).toContainText("CH 1 · GATE · Threshold");
   await sendMidi(page, [0xb0, 40, 100], [0xb0, 40, 101]);
   await expect(mapRow(win, "ch1/threshold@gate")).toBeVisible();
@@ -1176,7 +1181,37 @@ test("a tuning screen's controls arm under processor and band scopes", async ({ 
   // An incoming value moves the screen's own slider, on the field table's grid.
   await setLearn(page, win, false);
   await sendMidi(page, [0xb0, 40, 0], [0xb0, 40, 0]);
-  await expect(row("Threshold").locator(".gt-val")).toHaveText("-72.0 dB");
+  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-72.0 dB");
+  await box.locator(".consent-btn-secondary").click();
+});
+
+test("the DUCKER screen's sliders arm under the ducker's own scope", async ({ page }) => {
+  // A ducker is a node of its own, hung under a stereo channel, so its screen is where its
+  // four values are edited and the strip's DUCKER chip is its on/off. Threshold stands for
+  // the four in the learn gesture; that all four offer themselves is the count below, which
+  // is what a locked row would take away without moving the contract sweep's equality.
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+
+  // The opener sits on the host channel's strip, since a hung node has no strip of its own.
+  await strip(page, "CH 5/6").locator('.con-chip-open[aria-label="Ducker screen"]').click();
+  const box = screenBox(page);
+  await expect(box).toBeVisible();
+  // Range, Attack, Decay and Threshold — the whole field table, none of them locked.
+  await expect(box.locator(".midi-target")).toHaveCount(4);
+  await screenRow(page, "Threshold").locator(".ctl").click();
+  await expect(win.locator(".mw-hint")).toContainText("CH 5/6 · DUCKER · Threshold");
+  await sendMidi(page, [0xb0, 45, 100], [0xb0, 45, 101]);
+  const bound = mapRow(win, "out.ducker1/threshold@ducker");
+  await expect(bound).toBeVisible();
+  await expect(bound.locator(".mw-ctl")).toHaveText("CH 5/6 · DUCKER · Threshold");
+
+  // An incoming value moves the screen's own slider, on the field table's grid — the
+  // ducker's threshold floor is -60 dB, where the GATE's is -72.
+  await setLearn(page, win, false);
+  await sendMidi(page, [0xb0, 45, 0], [0xb0, 45, 0]);
+  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-60.0 dB");
   await box.locator(".consent-btn-secondary").click();
 });
 
@@ -1190,8 +1225,7 @@ test("an EQ band binds to that band, not to the selected one", async ({ page }) 
   const sec = page.locator("#inspector .insp-section", { has: page.locator("#btn-eq-screen") });
   if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
   await sec.locator("#btn-eq-screen").click();
-  const box = page.locator("#dyn-screen-box");
-  const row = (label: string) => box.locator(".prefs-row").filter({ has: page.getByText(label, { exact: true }) });
+  const row = (label: string) => screenRow(page, label);
 
   // LOW is selected on open and ships as a shelf. The enum row has no control at
   // all, and Q is locked because a shelf does not read it — neither is offered.
@@ -1267,7 +1301,7 @@ test("the FX strip's EFFECT face arms, and its assignment reads as words", async
   // resolved through the catalogue rather than printed.
   await strip(page, "FX 1").locator(".con-fxopen").click();
   await page.locator(".con-ifxpop .iopen").click();
-  const box = page.locator("#dyn-screen-box");
+  const box = screenBox(page);
   await expect(box).toBeVisible();
   await box
     .locator(".gt-knob")
