@@ -46,6 +46,9 @@ export interface ConsoleHost {
   meterErrors: string[];
   /** Tuning screens the view asked the app to open. */
   opened: Array<{ kind: string; id: string }>;
+  /** FX channels the view asked the app to park before writing an EFFECT TYPE, in order.
+   *  Empty unless `park` was supplied — with no hook there is no call to record. */
+  parked: string[];
   /** The strip record for a node id — the view's own `refs` entry. */
   strip: (id: string) => StripHandle;
   /** One send column of a strip, by send target ("bus.mix1", "fx1", …). */
@@ -79,6 +82,13 @@ export interface ConsoleHostOptions {
   headHeight?: (head: HTMLElement) => number;
   /** Skip `show()` — for a test about what an unshown view does. */
   hidden?: boolean;
+  /** The park an EFFECT TYPE press takes in front of itself (`ConsoleHooks.onParkFxEffect`).
+   *  Absent = no hook at all, which is the browser build and what every other suite here
+   *  wants; supplied, the node lands in `parked` and this decides IF and WHEN the press's
+   *  own write runs. It has to be able to refuse as well as agree: not running the write is
+   *  how a failed device read stops the type reaching the plan, and a hook that always runs
+   *  it cannot show that. */
+  park?: (nodeId: string, write: () => void) => void;
 }
 
 /**
@@ -101,6 +111,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
   const plan = opts.plan ?? defaultPlan(modelId);
   const meterErrors: string[] = [];
   const opened: ConsoleHost["opened"] = [];
+  const parked: string[] = [];
   let changes = 0;
 
   // jsdom has no pointer capture. The view calls it on every drag opener, and an
@@ -173,6 +184,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
     onChange: () => void changes++,
     onMeterError: (message) => void meterErrors.push(message),
     onOpenDynScreen: (kind, id) => void opened.push({ kind, id }),
+    onParkFxEffect: opts.park && ((id, write) => (parked.push(id), opts.park!(id, write))),
     midi: opts.midi,
   };
 
@@ -200,6 +212,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
     changes: () => changes,
     meterErrors,
     opened,
+    parked,
     strip,
     sendCol: (id, target) => {
       const col = strip(id).sendCols?.find((c) => c.target === target);

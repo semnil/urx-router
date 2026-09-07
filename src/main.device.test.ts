@@ -2946,6 +2946,142 @@ describe("a value the unit holds and the app cannot write", () => {
   });
 });
 
+// The park in front of an EFFECT TYPE write.
+//
+// The FX effect arrays announce nothing when the unit's own panel moves them, so a value
+// tuned there is one the plan has never seen — and the type write is the one command that
+// replaces slots nobody named: the unit refills the array with the incoming type's factory
+// values, and the writer puts the plan straight back over that. Without a read in front of
+// it, what goes back is the app's stale copy, and nothing on screen knows.
+//
+// Both halves are driven, because either alone passes for the wrong reason: "the read
+// happened" is satisfied by the session's own opening readback, and "the unit ends at the
+// tuned value" is satisfied by an app that wrote nothing to that address at all.
+describe("an EFFECT TYPE change while a session is live", () => {
+  const HPF = fxParams(0).find((d) => d.key === "revxHpf")!;
+  /** Inside the window, and not the factory value — so a write carrying it can only have
+   *  come from the unit, and one carrying `HPF.def` can only have come from the plan. */
+  const TUNED = 30;
+  const FX1_TYPE = "679:0:0";
+  const FX1_HPF = `681:0:${HPF.slot}`;
+  const REVX_ROOM = 1;
+  const at = (a: Record<string, unknown> | undefined): string => `${a?.paramId}:${a?.x}:${a?.y}`;
+
+  /** FX1 on Rev-X Hall with its factory array, and a rate to read. Seeded from the
+   *  catalogue rather than by hand: an address the table has not been told about reads 0,
+   *  and 0 is a legal Rev-X raw, so a partial seed would make the unit hold values nobody
+   *  chose. */
+  const unitOnRevxHall = (): Record<string, number> => {
+    const seed: Record<string, number> = { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
+    seed["679/0/0"] = 0;
+    for (const d of fxParams(0)) seed[`681/0/${d.slot}`] = d.def;
+    return seed;
+  };
+
+  /**
+   * A stub whose FX1 HPF can be moved the way the unit's own panel moves it: the value
+   * stands until the app WRITES that address, after which the table's own map answers
+   * again. Modelled that way rather than as a constant, because a constant answer would
+   * keep reading back as the tuned value however the app behaved — which is exactly the
+   * question.
+   */
+  const stubWithPanel = (): { table: Record<string, unknown>; move: (raw: number) => void } => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" }, unitOnRevxHall());
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+    let panel: number | null = null;
+    table.vd_get = (a: Record<string, unknown>) => (panel !== null && at(a) === FX1_HPF ? panel : baseGet(a));
+    table.vd_set = (a: Record<string, unknown>) => {
+      if (at(a) === FX1_HPF) panel = null;
+      return baseSet(a);
+    };
+    return { table, move: (raw) => (panel = raw) };
+  };
+
+  const pickType = (value: number): void => {
+    pressNode("bus.fx1");
+    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+    sel.value = String(value);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  /** The HPF as the FX EFFECT screen prints it — read off the surface, and reopened per
+   *  reading so each one is a fresh draw of the plan as it stands. */
+  const shownHpf = (): string => {
+    pressNode("bus.fx1");
+    $<HTMLButtonElement>("btn-fx-screen").click();
+    const box = $("dyn-screen-box");
+    const out = box.querySelector<HTMLElement>('[data-dyn-val="fx:revxHpf"]')?.textContent ?? "";
+    box.querySelector<HTMLButtonElement>(".consent-actions button")!.click();
+    return out;
+  };
+
+  // What this tier does NOT model is the unit refilling the array when the selector is
+  // typed (`main.test-util.ts` keeps what is written and nothing else), so the value going
+  // back OUT is not measurable here — that is `pushFxEffectCommands` emitting from the
+  // plan, which the translate suites pin. What IS measurable, and is the whole of the park,
+  // is that the outgoing array reaches the plan before the selector reaches the unit.
+  it("reads the outgoing array into the plan before the selector goes out", SLOW, async () => {
+    const { table, move } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    // The premise: the session read the factory array, and that is what the app is showing.
+    expect(shownHpf()).toBe(HPF.format!(HPF.def, {}));
+
+    // The hand on the unit, after that readback: the app has no way to hear this — the
+    // effect arrays announce nothing when the front panel moves them.
+    move(TUNED);
+    const gesture = shell.invokes.length;
+    pickType(REVX_ROOM);
+
+    // Waited on the WRITE, not on the readout: the read lands a flush window ahead of the
+    // selector, so a wait that ends at the plan returns with nothing having gone out yet.
+    const typeSent = (): number =>
+      shell.invokes.findIndex((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture);
+    await vi.waitFor(() => expect(typeSent()).toBeGreaterThan(-1), { timeout: 20_000 });
+    // The unit's own value is what the app is holding now, and it is what the emit draws
+    // from — the plan is the writer's only source for this slot.
+    expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
+
+    const typeAt = typeSent();
+    // The positive control: the type really went out, so what is asserted about the order
+    // is asserted about a write that happened.
+    expect(typeAt, "the type write went out").toBeGreaterThan(-1);
+    expect(shell.args[typeAt]?.value).toBe(REVX_ROOM);
+    // …and the read is IN FRONT of it, which is the claim: afterwards the unit's array
+    // holds the incoming type's factory values and there is nothing left to read.
+    const parkAt = shell.invokes.findIndex(
+      (cmd, i) => cmd === "vd_get" && at(shell.args[i]) === FX1_HPF && i >= gesture,
+    );
+    expect(parkAt, "the park read the outgoing array").toBeGreaterThan(-1);
+    expect(parkAt).toBeLessThan(typeAt);
+  });
+
+  // The abort rule (architecture.md, "Aborting on failure") at the one place where carrying
+  // on is the destructive option: a park that could not read cannot promise the outgoing
+  // values are in the plan, and the write behind it is what would replace them.
+  it("does not write the type when the park cannot read", SLOW, async () => {
+    const { table } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+
+    const gesture = shell.invokes.length;
+    shell.answer("vd_get", () => {
+      throw new Error("device-lost");
+    });
+    pickType(REVX_ROOM);
+
+    // The session goes down, which is the signal the read failed at all.
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 20_000 });
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture),
+      "no type reached the unit",
+    ).toBe(false);
+  });
+});
+
 describe("the failure report a device action offers", () => {
   /** A write that cancels on its first diff read, which is the cheapest way to a report. */
   const failingWrite = async (over: Record<string, unknown>): Promise<TauriShell> => {
