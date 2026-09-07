@@ -1267,6 +1267,17 @@ describe("applySilentState", () => {
     ).toBe(true);
   });
 
+  // `only` is the other half of the same scope: the EFFECT TYPE park names one channel's
+  // effect family, since that is the one thing the type write is about to replace.
+  it("reads only the family `only` names", async () => {
+    const plan = defaultPlan("URX44V");
+    const seen = new Set(await parkedAddrs(plan, { only: new Set([silentKey("fx", "bus.fx1")]) }));
+    const read = (id: number): boolean => [...seen].some((a) => a.startsWith(`${id}:`));
+    expect(read(681), "FX1's engine array").toBe(true);
+    expect(read(685), "FX2's, which it did not name").toBe(false);
+    expect(read(dGainParam("URX44V", "ch_5_6")!), "and no D.Gain").toBe(false);
+  });
+
   // What the caller acts on when a read fails: the park's own completeness check reads
   // `unreadNodes`, and a session ends rather than letting the write behind it replace
   // values nobody confirmed. The three families are three separate passes with three

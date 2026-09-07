@@ -1512,10 +1512,14 @@ the type from the app would lose that tuning with nothing on screen to say so, b
 screen would know.
 
 **The park is what keeps it.** While a session is live, both EFFECT TYPE selectors — the CONSOLE
-popover and the inspector row — read the FX channel off the unit before the selector is written, and
-only then write it (`main.ts` `parkFxEffect`). It is the scoped reconcile of that one node, the same
-read a device-side change of it takes, so it carries the settle for this session's own recent writes
-and the merge that leaves an edit made meanwhile standing. The unit's values are in the plan by the
+popover and the inspector row — read the FX channel's effect family off the unit before the selector is
+written, and only then write it (`main.ts` `parkFxEffect`). It is the same guarded read the converge
+takes, narrowed by `only` to that one family, so it carries the settle for this session's own recent
+writes, the merge that leaves an edit made meanwhile standing, and the `holdsSent` guard that leaves an
+edit the flush has NOT carried yet standing too. Read as a whole node instead, it also brought back
+every announced value of that channel — device follow's, not this park's — each as the unit's rather
+than as the operator's: an Effect ON toggled a moment earlier and still inside its flush window was
+read back OFF and went out that way. The unit's values are in the plan by the
 time the type goes out, and the array the writer sends after it is the operator's rather than a stale
 copy. Its cost is one round trip per slot in front of the type write; with no live session there is
 nothing to read and the write is immediate.

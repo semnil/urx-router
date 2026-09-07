@@ -389,11 +389,15 @@ export async function applySilentState(
    * rather than per node, since a channel carries a COMP/EQ type and an insert effect at
    * once and only one of them is ever the head's.
    *
-   * Absent = every family on every node.
+   * `only` narrows the pass to what its caller is about to write over — the EFFECT TYPE
+   * park names that channel's `fx` and nothing else. Absent = every family on every node.
    */
-  scope?: { exclude?: ReadonlySet<string> },
+  scope?: { exclude?: ReadonlySet<string>; only?: ReadonlySet<string> },
 ): Promise<ReadbackResult> {
-  const covers = (family: SilentFamily, nodeId: string): boolean => !scope?.exclude?.has(silentKey(family, nodeId));
+  const covers = (family: SilentFamily, nodeId: string): boolean => {
+    const key = silentKey(family, nodeId);
+    return !scope?.exclude?.has(key) && (scope?.only === undefined || scope.only.has(key));
+  };
   const announced = pending
     ? await writeSettle.settle(pending.written, {
         mustSettle: pending.mustSettle,

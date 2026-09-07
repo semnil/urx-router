@@ -27,7 +27,7 @@ import {
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
 import { attackToVd, eqFreqToVd } from "./core/control/vd";
-import { formatHz, fxParams } from "./core/control/fx-effect";
+import { FX_SLOT_LEVEL, FX_SLOT_ON, formatHz, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
@@ -2975,6 +2975,11 @@ describe("an EFFECT TYPE change while a session is live", () => {
   const unitOnRevxHall = (): Record<string, number> => {
     const seed: Record<string, number> = { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
     seed["679/0/0"] = 0;
+    // Slots 1 and 2 are the effect's ON and MIX, which are not tunable descriptors and so
+    // are not in `fxParams`. Seeded anyway: unseeded they read 0, and the session's opening
+    // readback then puts an effect the unit has ON into the plan as OFF.
+    seed[`681/0/${FX_SLOT_ON}`] = 1;
+    seed[`681/0/${FX_SLOT_LEVEL}`] = 100;
     for (const d of fxParams(0)) seed[`681/0/${d.slot}`] = d.def;
     return seed;
   };
@@ -3025,6 +3030,15 @@ describe("an EFFECT TYPE change while a session is live", () => {
     sel.value = String(value);
     sel.dispatchEvent(new Event("change", { bubbles: true }));
   };
+
+  /** The Effect ON row's two buttons, as the Inspector draws them (a segmented toggle, not
+   *  a checkbox) — reopened per reading, so each one is a fresh draw of the plan. */
+  const effectOnRow = (): { on: HTMLButtonElement; off: HTMLButtonElement } => {
+    pressNode("bus.fx1");
+    const [on, off] = [...paramRow(t().inspector.fxEffect.effectOn).querySelectorAll("button")];
+    return { on: on as HTMLButtonElement, off: off as HTMLButtonElement };
+  };
+  const effectIsOn = (): boolean => effectOnRow().on.classList.contains("on");
 
   /** The HPF as the FX EFFECT screen prints it — read off the surface, and reopened per
    *  reading so each one is a fresh draw of the plan as it stands. */
@@ -3208,6 +3222,32 @@ describe("an EFFECT TYPE change while a session is live", () => {
       shell.invokes.some((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === PARAMS.HA_GAIN.id && i >= gesture),
       "no converge round read the write scope",
     ).toBe(false);
+  });
+
+  // An edit the operator has already made and the flush has not carried yet. The park
+  // answers the app's own write rather than a device-side event, so it arrives INSIDE that
+  // window every time — and reading the address the edit is on brings back the value the
+  // edit was made against. What keeps it is the guard both parks read through: where the
+  // unit still holds what this session last sent, the read answers with the plan's own
+  // value, and this edit has not been sent.
+  it("keeps an edit the flush has not carried yet", SLOW, async () => {
+    const { table } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    // The premise: the unit and the plan agree that the effect is ON.
+    expect(effectIsOn(), "the factory value").toBe(true);
+
+    // OFF, and then the type before the 120 ms window closes — no await between them.
+    effectOnRow().off.click();
+    expect(effectIsOn(), "the edit reached the plan").toBe(false);
+    pickType(REVX_ROOM);
+    await vi.waitFor(() => expect(shownHpf()).not.toBe(""), { timeout: 20_000 });
+    await settled(shell);
+
+    // Read back off the panel rather than from the box just clicked: what the park merged
+    // into the plan is what a rebuild draws, and what the next flush sends.
+    expect(effectIsOn(), "the operator's own edit, not the value it was made against").toBe(false);
   });
 
   // The abort rule (architecture.md, "Aborting on failure") at the one place where carrying

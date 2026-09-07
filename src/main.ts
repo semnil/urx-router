@@ -59,6 +59,7 @@ import {
   PARAMS,
   REC_POINT_PRE_COMP,
   REC_POINT_PRE_EQ,
+  silentKey,
 } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
@@ -501,14 +502,9 @@ const live = DEMO
       // rather than letting the converge write over values it could not confirm.
       parkSilent: async (reset) => {
         const merged = await followRead("silent-address park", (into, signal) =>
-          applySilentState(
-            getModel(modelId),
-            into,
-            signal,
-            live?.recentPending(),
-            (id, x, y, raw) => (live ? live.holdsSent(id, x, y, raw) : false),
-            { exclude: reset },
-          ),
+          applySilentState(getModel(modelId), into, signal, live?.recentPending(), holdsSent, {
+            exclude: reset,
+          }),
         ).catch((err: unknown) => {
           stopLiveOnError(errorText(err));
           return null;
@@ -1014,17 +1010,38 @@ function parkFxEffect(nodeId: string, write: () => void): void {
   void parkThenWrite(nodeId, write);
 }
 
+/**
+ * Whether the unit is still holding what this session last sent to an address.
+ *
+ * Both parks read through it (`readback.sentOverlay`), and for the same reason: a park
+ * answers the app's own write rather than a device-side event, so it arrives while an edit
+ * the operator has already made is sitting in the plan waiting for the next flush. Where the
+ * unit agrees with what was last sent it has nothing to say, and the read answers with the
+ * plan's own value — so that edit survives instead of being replaced by the value it was
+ * made against. The merge cannot cover it: what the merge protects is an edit made DURING a
+ * read, and this one was made before it.
+ */
+function holdsSent(paramId: number, x: number, y: number, raw: number): boolean {
+  return live ? live.holdsSent(paramId, x, y, raw) : false;
+}
+
 async function parkThenWrite(nodeId: string, write: () => void): Promise<void> {
   // Taken before the read is issued, for the reason the scoped reconcile takes one: a
   // direct notify landing while it is in flight is device truth the read's private copy
   // predates, and the re-base below rebuilds the snapshot from that copy.
   const since = live?.directMark();
-  const nodes = new Set([nodeId]);
-  const pending = live?.recentPending(nodes);
+  const pending = live?.recentPending(new Set([nodeId]));
   let merged: MergedRead | null;
   try {
+    // This channel's effect family and nothing else — the one thing the type write is about
+    // to replace. Read as a whole node it also brought back every ANNOUNCED value of that
+    // node, which device follow already covers, and each of those arrived as the unit's
+    // rather than as the operator's: an Effect ON toggled a moment earlier and still waiting
+    // for its flush was read back OFF and went out that way.
     merged = await followRead("FX effect park", (into, signal) =>
-      applyNodeState(getModel(modelId), into, nodes, signal, pending),
+      applySilentState(getModel(modelId), into, signal, pending, holdsSent, {
+        only: new Set([silentKey("fx", nodeId)]),
+      }),
     );
   } catch (err) {
     // A park that could not read is a park that cannot promise anything, and the type
