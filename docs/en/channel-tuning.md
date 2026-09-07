@@ -417,7 +417,7 @@ arrives from somewhere else entirely. Every difference below follows from that.
   with no buttons would name a choice that does not exist.
 - **Its MIDI ids bind to the ducker node**, not to the channel it attenuates — the four values and the
   on/off alike. The assignment list names a hung node by the channel it prints under, so a binding reads
-  `CH 5/6 · DUCKER · Threshold` beside that channel's own controls ("MIDI assignment" carries the scope).
+  `CH 5/6 · DUCKER · Threshold` ("MIDI assignment" carries the scope).
 
 ### Four lanes in three slots
 

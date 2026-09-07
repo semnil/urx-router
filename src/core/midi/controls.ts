@@ -485,8 +485,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   });
 
   // ---- the channel tuning screens' parameters ------------------------------
-  // GATE and COMP keep their values in one nodeParams sub-object each; the EQ
-  // spreads across `eqBands[i]` and `eqOneKnob`. Each write clones the group it
+  // GATE, COMP and a ducker keep their values in one nodeParams sub-object each; the
+  // EQ spreads across `eqBands[i]` and `eqOneKnob`. Each write clones the group it
   // touches, so the history differ sees the same shape a screen edit produces.
 
   /** A continuous parameter inside a `gate` / `comp` / `ducker` sub-object, on the
