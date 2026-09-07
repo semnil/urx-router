@@ -424,12 +424,12 @@ describe("channel tuning screen parameters", () => {
   });
 
   // A full-scale message may not write past the field's own maximum. `min + round(span /
-  // step) * step` lands beyond it wherever the span is not a whole number of steps, and the
-  // plan then holds a value the screen's slider stops short of — the panel and the document
+  // step) * step` lands beyond it wherever the rounded last step overshoots, and the plan
+  // then holds a value the screen's slider stops short of — the panel and the document
   // disagreeing about one control, with nothing on the load path bounding it back
   // (`plan-validate.ts` reads the FX channel's windows and no others). Asked of every field
   // the three flat tables carry, on every model: the rule is the codec's, not these four
-  // fields', and which fields have a ragged span moves with the tables.
+  // fields', and which fields overshoot moves with the tables.
   it.each(["URX22", "URX44", "URX44V"] as const)("writes nothing outside a field's range on %s", (id) => {
     const m = getModel(id);
     const p = defaultPlan(id);
