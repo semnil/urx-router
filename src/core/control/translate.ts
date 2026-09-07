@@ -1073,8 +1073,11 @@ export const DUCKER_FIELDS: EmittedDynField[] = [
  * one (an EQ band frequency spans three decades, which a linear slider cannot resolve
  * at the bottom) the position is an index into `logSteps` even divisions of the log
  * range. It lives beside the field table rather than in the screen that draws the
- * slider, because the MIDI catalog has to land on the same values: a normalized MIDI
- * value and a dragged slider both resolve to a position, so the two cannot drift.
+ * slider, because the MIDI catalog has to land on the same values. What shares these
+ * two is the LOGARITHMIC field: its codec resolves through them, so a normalized MIDI
+ * value and a dragged slider cannot drift on one. A linear field's codec is
+ * `linearCodec` on the same min / max / step — it agrees at every position the grid
+ * holds and bounds the top itself, which channel-tuning.md "MIDI assignment" states.
  */
 export function dynToPos(f: DynField, v: number): number {
   if (f.logSteps === undefined) return v;
