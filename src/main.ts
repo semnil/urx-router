@@ -499,7 +499,7 @@ const live = DEMO
       // edit this flush has not sent, `absorb` takes what it authored into the baseline
       // without spending the operator's open gesture, and a read that FAILS ends the session
       // rather than letting the converge write over values it could not confirm.
-      parkSilent: async (exclude) => {
+      parkSilent: async (reset) => {
         const merged = await followRead("silent-address park", (into, signal) =>
           applySilentState(
             getModel(modelId),
@@ -507,7 +507,7 @@ const live = DEMO
             signal,
             live?.recentPending(),
             (id, x, y, raw) => (live ? live.holdsSent(id, x, y, raw) : false),
-            exclude,
+            { exclude: reset },
           ),
         ).catch((err: unknown) => {
           stopLiveOnError(errorText(err));
@@ -1015,11 +1015,11 @@ function parkFxEffect(nodeId: string, write: () => void): void {
 }
 
 async function parkThenWrite(nodeId: string, write: () => void): Promise<void> {
-  const nodes = new Set([nodeId]);
   // Taken before the read is issued, for the reason the scoped reconcile takes one: a
   // direct notify landing while it is in flight is device truth the read's private copy
   // predates, and the re-base below rebuilds the snapshot from that copy.
   const since = live?.directMark();
+  const nodes = new Set([nodeId]);
   const pending = live?.recentPending(nodes);
   let merged: MergedRead | null;
   try {

@@ -10,8 +10,8 @@
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
 import { vdSet, vdSetStr } from "../platform";
-import { PARAMS } from "./params";
-import type { ParamName, ParamSpec } from "./params";
+import { silentKey, PARAMS } from "./params";
+import type { ParamName, ParamSpec, SilentFamily } from "./params";
 import {
   addrKey,
   cmdAddr,
@@ -51,9 +51,14 @@ const REFETCH = new Set<string>();
 // What each refetch head hands to the device, for the flush that carries both repairs
 // (ParamSpec.drives). Empty for a head whose driven addresses the plan stops emitting.
 const DRIVES = new Map<string, readonly string[]>();
+// Which silent family each converge head resets (ParamSpec.resets), read the way DRIVES is
+// — one catalogue entry per head rather than a second list here to keep in step.
+const RESETS = new Map<string, SilentFamily>();
 for (const [name, spec] of Object.entries(PARAMS as Record<string, ParamSpec>)) {
-  if (spec.sideEffect === "converge") CONVERGE.add(name);
-  else if (spec.sideEffect === "refetch") {
+  if (spec.sideEffect === "converge") {
+    CONVERGE.add(name);
+    if (spec.resets) RESETS.set(name, spec.resets);
+  } else if (spec.sideEffect === "refetch") {
     REFETCH.add(name);
     if (spec.drives?.length) DRIVES.set(name, spec.drives);
   }
@@ -130,15 +135,17 @@ export interface LiveSyncHooks {
    * arrays and D.Gain announce nothing when the unit's own panel moves them — so without
    * this a converge fired by ANY head silently discards what the operator tuned there.
    *
-   * `exclude` names the nodes whose values this converge exists to restore: a sideEffect
-   * head has just made the unit reset its own node's dependents, so reading there would
-   * adopt the reset and throw away the values the converge is about to put back. Everything
-   * else in the scope is untouched by that head and safe to take.
+   * `reset` names what this converge exists to restore — `silentKey` entries, one per
+   * family per node, from the heads this flush wrote (`ParamSpec.resets`). Reading there
+   * would adopt the reset and throw away the values the converge is about to put back.
+   * Everything else is untouched by those heads and safe to take, INCLUDING the other
+   * families of a head's own node: a channel carries a COMP/EQ type and an insert effect
+   * at once, and only one of them is ever the head's.
    *
    * Called with the plan the converge is about to clone, so what it reads is in the copy.
    * Absent = no park (the browser build, and the tests that do not exercise it).
    */
-  parkSilent?: (exclude: ReadonlySet<string>) => Promise<void>;
+  parkSilent?: (reset: ReadonlySet<string>) => Promise<void>;
   /** The follow address set may have moved — re-register against it. Called at the END of a
    *  flush whose capture rebuilt the set, never inside one: a re-registration unsubscribes
    *  before it subscribes, so running it mid-flush would drop the very notifies the refetch's
@@ -312,6 +319,7 @@ export class LiveSync {
   isConverging(): boolean {
     return this.converging;
   }
+
 
   private scope(): WriteScope {
     return this.hooks.getScope?.() ?? "all";
@@ -743,9 +751,11 @@ export class LiveSync {
       // just computed. Scoped to the node, because the same names on another channel are
       // that channel's own and the converge is right about them.
       const driven = new Map<string, Set<string>>();
-      // The nodes whose sideEffect head this flush wrote — what the converge below is for,
-      // and so what the park in front of it must leave alone.
-      const convergeHeads = new Set<string>();
+      // What the sideEffect heads this flush wrote have reset on the unit, per family and
+      // node — what the converge below is for, and so what the park in front of it leaves
+      // alone. A head that resets nothing the park reads adds nothing here, so its node's
+      // other families are still parked.
+      const convergeResets = new Set<string>();
       // Addresses the NAME loop wrote that the refetch may not start before hearing about,
       // each at the mark taken before its own write. Separate from `writes` because that map
       // is numeric and the read overlays answers from it; see the name loop.
@@ -838,9 +848,10 @@ export class LiveSync {
         sent++;
         if (CONVERGE.has(c.name)) {
           sideEffect = true;
-          // Whose dependents the unit is resetting. The park below leaves these nodes to
-          // the converge, which is what puts their values back.
-          if (c.node !== undefined) convergeHeads.add(c.node);
+          // Whose values the unit is resetting. The park below leaves exactly these to the
+          // converge, which is what puts them back.
+          const family = RESETS.get(c.name);
+          if (family !== undefined && c.node !== undefined) convergeResets.add(silentKey(family, c.node));
         } else if (REFETCH.has(c.name) && c.node) {
           refetch.add(c.node);
           const drives = DRIVES.get(c.name);
@@ -930,7 +941,7 @@ export class LiveSync {
         // converge re-sends whatever differs across the whole scope, and for the three
         // silent families the plan's copy can be arbitrarily old. Its own node is left out
         // — that is the one the head just reset, and the converge is what restores it.
-        await this.hooks.parkSilent?.(convergeHeads);
+        await this.hooks.parkSilent?.(convergeResets);
         if (this.sessionGen !== gen) return;
         const since = this.directSeq;
         const converged = structuredClone(plan);

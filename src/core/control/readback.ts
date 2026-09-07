@@ -35,6 +35,8 @@ import {
 } from "../plan-history";
 import type { PlanPatch, PlanWriteWitness } from "../plan-history";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
+import { silentKey } from "./params";
+import type { SilentFamily } from "./params";
 import {
   colorIndexToHex,
   COMP_EQ_SSMCS,
@@ -379,12 +381,19 @@ export async function applySilentState(
    */
   sent?: (paramId: number, x: number, y: number, raw: number) => boolean,
   /**
-   * Node ids to leave alone. A converge's own head nodes go in it: the head write resets
-   * the families beneath it on the unit, and the converge is what puts them back, so a
-   * value read here would be the reset one and the restore would never go out.
+   * Which of the three families, on which nodes, this pass covers — `silentKey` entries.
+   *
+   * `exclude` is what a converge's own heads reset (`ParamSpec.resets`): the head write is
+   * what made the unit hold that value, and the converge is what puts the operator's back,
+   * so a read there would adopt the reset and the restore would never go out. Per FAMILY
+   * rather than per node, since a channel carries a COMP/EQ type and an insert effect at
+   * once and only one of them is ever the head's.
+   *
+   * Absent = every family on every node.
    */
-  exclude?: ReadonlySet<string>,
+  scope?: { exclude?: ReadonlySet<string> },
 ): Promise<ReadbackResult> {
+  const covers = (family: SilentFamily, nodeId: string): boolean => !scope?.exclude?.has(silentKey(family, nodeId));
   const announced = pending
     ? await writeSettle.settle(pending.written, {
         mustSettle: pending.mustSettle,
@@ -403,7 +412,7 @@ export async function applySilentState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     const fxY = fxChannelIndex(node.id);
-    if (fxY === null || exclude?.has(node.id)) continue;
+    if (fxY === null || !covers("fx", node.id)) continue;
     attempted.add(node.id);
     try {
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], fxEffect: await readFxEffect(source, fxY) };
@@ -417,7 +426,7 @@ export async function applySilentState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     const ifx = insertFxControl(model, node.id);
-    if (!ifx || exclude?.has(node.id)) continue;
+    if (!ifx || !covers("insertFx", node.id)) continue;
     attempted.add(node.id);
     try {
       await readInsertFxInto(source, plan, node.id, ifx);
@@ -433,7 +442,7 @@ export async function applySilentState(
   // covers, and adopt it on a trigger the operator's own gesture does not share.
   for (const node of model.nodes) {
     signal?.throwIfAborted();
-    if (node.kind !== "channel" || !isStereoChannel(node.id) || exclude?.has(node.id)) continue;
+    if (node.kind !== "channel" || !isStereoChannel(node.id) || !covers("dGain", node.id)) continue;
     const cc = channelControl(model, node.id);
     if (!cc?.gain) continue;
     attempted.add(node.id);

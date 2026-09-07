@@ -1993,13 +1993,17 @@ re-reads its whole write scope and re-sends whatever differs, so it is the one t
 those three families onto the unit at addresses no edit named — and for them that copy can be arbitrarily old,
 since nothing announced the hand that moved them. So a converging flush reads them first (`live.ts` `parkSilent` →
 `readback.applySilentState`), into the plan it is about to clone, and what the converge sends is the unit's own.
-Two things bound it. It leaves the converge's own HEAD nodes out: the head write is what made the unit reset their
-dependents, and the converge is what puts those back, so a read there would adopt the reset and the restore would
-never go out. And it answers with the PLAN's value wherever the unit is still holding what this session last sent
+Two things bound it. It leaves out what the heads this flush wrote have RESET (`ParamSpec.resets`): the head write
+is what made the unit hold that value, and the converge is what puts the operator's back, so a read there would adopt
+the reset and the restore would never go out. Per FAMILY and not per node — a channel carries a COMP/EQ type and an
+insert effect at once and only one of them is ever the head's, so leaving the NODE out took a family the head never
+touched with it, and the converge then wrote the plan's copy of that engine array over whatever the panel had done to
+it. A head that resets an ANNOUNCED bank names nothing at all: COMP/EQ, bus type and pan are device follow's, and the
+park never read them. And it answers with the PLAN's value wherever the unit is still holding what this session last sent
 (`live.holdsSent`), which keeps it off an edit sitting in the plan waiting for the next flush — the merge protects
 an edit made DURING a read, and that one was made before it. A read that fails ends the session rather than letting
 the converge write over values it could not confirm ([Aborting on failure](#aborting-on-failure)). An ordinary
-flush takes no park at all, so a drag pays nothing for it; the FX EFFECT TYPE park is the same read on one node in
+flush takes no park at all, so a drag pays nothing for it; the FX EFFECT TYPE park is the same read, on one family, in
 front of one write (channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not

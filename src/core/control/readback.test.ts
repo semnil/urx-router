@@ -8,7 +8,7 @@ import { ref } from "../../models/types";
 vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdGet, vdGetStr } from "../platform";
-import { COLOR_PALETTE, dGainParam, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
+import { COLOR_PALETTE, dGainParam, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS, silentKey } from "./params";
 import { fxParams } from "./fx-effect";
 import { defaultPlan } from "../../models/initial-state";
 import { applyDeviceState, applySilentState, formatReadbackReport } from "./readback";
@@ -1138,14 +1138,17 @@ describe("applySilentState", () => {
     return ids;
   };
 
-  const parkedAddrs = async (plan: Plan, exclude?: ReadonlySet<string>): Promise<string[]> => {
+  const parkedAddrs = async (
+    plan: Plan,
+    scope?: { exclude?: ReadonlySet<string>; only?: ReadonlySet<string> },
+  ): Promise<string[]> => {
     const seen: string[] = [];
     const table = deviceTableFor(plan);
     vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
       seen.push(`${paramId}:${x}:${y}`);
       return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
     });
-    await applySilentState(model, plan, undefined, undefined, undefined, exclude);
+    await applySilentState(model, plan, undefined, undefined, undefined, scope);
     return seen;
   };
 
@@ -1227,9 +1230,10 @@ describe("applySilentState", () => {
   // dependents and the converge is what puts them back, so what a read there would find is
   // the reset value — adopted, it becomes the plan's, and the restore never goes out.
   // Every OTHER node in the scope is untouched by that head and still read.
-  it("leaves a node named in exclude unread", async () => {
+  it("leaves a family named in exclude unread", async () => {
     const plan = defaultPlan("URX44V");
-    const seen = new Set(await parkedAddrs(plan, new Set(["bus.fx1", "ch_5_6", "ch1"])));
+    const exclude = new Set([silentKey("fx", "bus.fx1"), silentKey("dGain", "ch_5_6"), silentKey("insertFx", "ch1")]);
+    const seen = new Set(await parkedAddrs(plan, { exclude }));
     const read = (id: number): boolean => [...seen].some((a) => a.startsWith(`${id}:`));
     const ifx = insertFxControl(model, "ch1")!;
     const otherIfx = insertFxControl(model, "ch2")!;
@@ -1243,6 +1247,24 @@ describe("applySilentState", () => {
     expect(read(685), "FX2's engine array, which no head named").toBe(true);
     expect(read(dGainParam("URX44V", "ch_7_8")!), "CH 7/8's D.Gain").toBe(true);
     expect(seen.has(`${otherIfx.param}:0:${otherIfx.instances[0]}`), "CH 2's selector").toBe(true);
+  });
+
+  // The reason the key carries a family and not just a node. A converge head and a family it
+  // does not reset share a node — a channel has a COMP/EQ type and an insert effect, an FX
+  // channel could hold either — so a node-wide exclusion took a family the head never
+  // touched out of the park, and the converge then sent the plan's copy of it.
+  it("keeps the other families of an excluded node parked", async () => {
+    const plan = defaultPlan("URX44V");
+    const ifx = insertFxControl(model, "ch1")!;
+    const seen = new Set(await parkedAddrs(plan, { exclude: new Set([silentKey("insertFx", "ch1")]) }));
+    expect(seen.has(`${ifx.param}:0:${ifx.instances[0]}`), "CH 1's insert FX, which the head reset").toBe(false);
+    // Nothing else of CH 1's is the head's, and CH 1 carries no other silent family — so the
+    // reading that separates the two exclusions is the FX channel's, whose own type head is
+    // not this one.
+    expect(
+      [...seen].some((a) => a.startsWith("681:")),
+      "FX1's array, which this head never touched",
+    ).toBe(true);
   });
 
   // What the caller acts on when a read fails: the park's own completeness check reads

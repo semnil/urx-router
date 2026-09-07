@@ -11,7 +11,7 @@ import { clonePlanState } from "../plan-history";
 vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdSet, vdSetStr, vdGet, vdGetStr } from "../platform";
-import { COMP_EQ_SSMCS, PARAMS } from "./params";
+import { COMP_EQ_SSMCS, PARAMS, silentKey } from "./params";
 import { addrKey, cmdAddr, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
@@ -210,12 +210,37 @@ describe("LiveSync sideEffect converge", () => {
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(excluded, "one park per converging flush").toHaveLength(1);
-    // The head's own node, left to the converge: the unit has just reset its dependents,
-    // so a read there would adopt the reset and the restore would never go out.
-    expect([...excluded[0]!]).toEqual(["ch1"]);
+    // A COMP/EQ type resets the channel's COMP/EQ bank, which the unit ANNOUNCES and the
+    // park never read — so it names nothing, and CH 1's insert FX (a family this head does
+    // not touch, on the same node) is still parked. Named per node instead, the converge
+    // sent the plan's copy of that engine array over whatever the panel had done to it.
+    expect([...excluded[0]!]).toEqual([]);
     // Ahead of the freeze — what the park wrote is in the copy the converge sends from.
     // Behind it, the read lands in a plan the converge is no longer looking at.
     expect(seen[0]?.nodeParams.ch_5_6?.gain, "the parked value in the converged copy").toBe(12);
+  });
+
+  // What a head that DOES reset one of the three names, and how narrowly.
+  it("names the family its head reset, on that head's node alone", async () => {
+    const plan = basePlan();
+    const excluded: ReadonlySet<string>[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async (reset) => void excluded.push(reset),
+    });
+    live.begin();
+    // An FX channel's EFFECT TYPE: the one head whose reset IS a family the park reads.
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(excluded).toHaveLength(1);
+    expect([...excluded[0]!], "that channel's effect family and nothing else").toEqual([silentKey("fx", "bus.fx1")]);
   });
 
   it("takes no park on a flush that does not converge", async () => {
