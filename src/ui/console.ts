@@ -424,6 +424,13 @@ export interface ConsoleHooks {
   onMeterError?: (message: string) => void;
   /** Open the GATE tuning screen for a MONO IN channel. */
   onOpenDynScreen?: (kind: DynKind, id: string) => void;
+  /** Read the FX channel's effect off the unit, then run `write` — the EFFECT TYPE edit.
+   *  The read is what puts a value the operator tuned on the unit's own panel, which the
+   *  effect arrays announce to nobody, into the plan before the write refills them. It
+   *  takes the write rather than answering yes or no, so the app decides when it runs and
+   *  what the panel owes it: with no link there is nothing to read and it runs at once.
+   *  `write` does NOT run when the read failed. Absent (browser build) = call it yourself. */
+  onParkFxEffect?: (nodeId: string, write: () => void) => void;
   midi?: ConsoleMidiHooks;
 }
 
@@ -1540,22 +1547,33 @@ export class Console {
    * refills the engine array with the incoming type's factory values — and the writer puts
    * the plan back over that immediately, so the two agree again.
    *
-   * The one thing that is genuinely lost is a value the UNIT holds and the plan has never
-   * seen, because the effect arrays announce nothing when the front panel moves them. See
-   * the note in docs/{en,ja}/channel-tuning.md: reading the outgoing array into the plan
-   * before this write is what would keep it, and this is the single place that would go.
+   * The one thing that would genuinely be lost is a value the UNIT holds and the plan has
+   * never seen, because the effect arrays announce nothing when the front panel moves them.
+   * That is what `onParkFxEffect` reads off the unit first, and the write below then sends
+   * it back. The inspector's own EFFECT TYPE row takes the same read in front of itself;
+   * the two are one gesture written twice, and the app supplies one function for both.
    */
   private setFxType(id: string, value: number): void {
-    const np = this.nodeParamsOf(id);
-    np.fxEffect = { ...np.fxEffect, type: value };
+    // Closed on the press rather than after the park: the popover has answered the press
+    // and the read behind it is a device round trip per slot, which is time to leave a menu
+    // standing open over.
     this.closeTypePop();
-    this.commit(id, ["fxEffect.type"]);
-    this.render();
-    // …and the screen opens on it, which is what the INS FX popover does after a selection.
-    // The two are the app's only Type axis and they are reached the same way, so a press that
-    // means the same thing on both cannot land somewhere different. An FX channel always
-    // holds an effect, so there is no state here where the screen would have nothing to show.
-    this.hooks.onOpenDynScreen?.("fx", id);
+    // Read INSIDE the write, not in front of the park: the park is a device read that
+    // merges into the plan, so an effect captured ahead of it would go back over the unit's
+    // own values.
+    const write = (): void => {
+      const np = this.nodeParamsOf(id);
+      np.fxEffect = { ...np.fxEffect, type: value };
+      this.commit(id, ["fxEffect.type"]);
+      this.render();
+      // …and the screen opens on it, which is what the INS FX popover does after a selection.
+      // The two are the app's only Type axis and they are reached the same way, so a press that
+      // means the same thing on both cannot land somewhere different. An FX channel always
+      // holds an effect, so there is no state here where the screen would have nothing to show.
+      this.hooks.onOpenDynScreen?.("fx", id);
+    };
+    if (this.hooks.onParkFxEffect) this.hooks.onParkFxEffect(id, write);
+    else write();
   }
 
   private closeTypePop(restore = false): void {

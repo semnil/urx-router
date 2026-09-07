@@ -242,7 +242,6 @@ test.describe("T2d shape-change", () => {
     const typeWrite = changeSets.find((s) => s.addr === FX1_TYPE);
     const changeArray = arraySets(trace, changeAt);
     const changeSlots = new Set(changeArray.map(slotOf));
-    const readSlotsAfter = arrayReadSlots(trace, changeAt);
     const depthAfterChange = await depthOf(page);
     const ledger = await ledgerOf(page);
 
@@ -250,9 +249,6 @@ test.describe("T2d shape-change", () => {
     console.log(
       `type change emitted ${FX1_TYPE}=${typeWrite?.value} then array slots ` +
         `[${[...changeSlots].sort((a, b) => a - b).join(", ")}]`,
-    );
-    console.log(
-      `the converge read array slots [${readSlotsAfter.join(", ")}] (Rev-X had [${asc(REVX_SLOTS).join(", ")}])`,
     );
 
     // ORDER. The selector types the array, so it must precede every slot write in the
@@ -266,6 +262,20 @@ test.describe("T2d shape-change", () => {
     expect(changeArray.length).toBeGreaterThan(0);
     expect(Math.min(...changeArray.map((s) => s.seq))).toBeGreaterThan(typeWrite!.seq);
     expect(analyze(from(trace, changeAt), { order: [FX1_TYPE, arr(6)] })).toHaveLength(0);
+
+    // THE PARK, which is why the reads in this window come in two passes and not one.
+    // The effect arrays announce nothing when the unit's own panel moves them, so the app
+    // reads the OUTGOING family into the plan before the selector goes out (main.ts
+    // parkFxEffect); afterwards the unit's array holds the incoming type's factory values
+    // and there is nothing left to read. Split at the selector's own write rather than by
+    // a time, because that write is the boundary the two passes are on either side of.
+    const parkReadSlots = arrayReadSlots(trace, changeAt, typeWrite!.start);
+    const readSlotsAfter = arrayReadSlots(trace, typeWrite!.start);
+    console.log(
+      `the park read array slots [${parkReadSlots.join(", ")}] before the selector, ` +
+        `then the converge read [${readSlotsAfter.join(", ")}] (Rev-X had [${asc(REVX_SLOTS).join(", ")}])`,
+    );
+    expect(parkReadSlots, "the park read the outgoing family, whole").toEqual(asc(REVX_SLOTS));
 
     // THE PREMISE — the switch really did change which addresses exist, computed from
     // the app's own two read passes rather than assumed. The session's opening readback
@@ -304,8 +314,15 @@ test.describe("T2d shape-change", () => {
     // subscribed to what it typed, so the emitted set is inside the registration and the
     // clause has nothing to report.
     // Attributed to the flush: no reconcile landed inside the settle wait, and one would
-    // have re-registered through follow.ts whatever the flush did.
-    expect(deviceReflectsAfter(trace, changeAt)).toBe(0);
+    // have re-registered through follow.ts whatever the flush did. Counted from the
+    // SELECTOR's own write rather than from the mark, because the park in front of it is a
+    // device read and reports itself on the same status line — it re-registers nothing (its
+    // reflect is the fine-grained branch, and the stale flag it sets is consumed at the end
+    // of the flush below), so counting it here would be counting the wrong thing.
+    expect(deviceReflectsAfter(trace, typeWrite!.start)).toBe(0);
+    // …and the park's own is there, which is what makes the line above a narrowing rather
+    // than a reading that lost its subject.
+    expect(deviceReflectsAfter(trace, changeAt)).toBe(1);
     const regAfterChangeAddrs = await paramAddrsOf(page);
     const snapAfterChange = await snapshotOf(page);
     const grownOf = (registration: Array<[number, number, number]>) =>
@@ -436,6 +453,9 @@ test.describe("T2d shape-change", () => {
     // switch put there. The Rev-X-only slots are the control: same array, same undo,
     // and they are all three of written, read and snapshotted.
     for (const s of DELAY_ONLY) expect(undoSlots.has(s)).toBe(false);
+    // One pass here, not the two the type change had: the park is on the two EFFECT TYPE
+    // selectors and not on the write path, so an undo that re-types the array takes no read
+    // in front of itself and what follows it is the converge's own.
     expect(readSlotsAfterUndo).toEqual(asc(REVX_SLOTS));
     for (const s of DELAY_ONLY) expect(snapshot?.[arr(s)]).toBeUndefined();
     for (const s of REVX_ONLY) expect(snapshot?.[arr(s)]).toBeDefined();
