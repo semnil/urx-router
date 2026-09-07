@@ -113,11 +113,21 @@ function worktrees(cwd) {
  *  path carries it too, so a shell was answering as a build. */
 const HOLDERS = /(^|[/\s])(vite|vitest|playwright|tauri|cargo|rustc|esbuild|e2e-serve)([\s/.\-]|$)/i;
 
-/** Each process's working directory, or null where they cannot be read. */
+/**
+ * The working directory of each process that could be read, and whether any could not be.
+ *
+ * The two are separate because they answer different questions and one must not erase the
+ * other: a process READ into `known` is running out of the directory it names, whatever
+ * happened to the rest of the listing, while `incomplete` says the guard is not the whole
+ * story and the caller says so. Folded together — an unreadable pid discarding the whole
+ * reading — one bystander anywhere on the machine turned the guard off for a holder that
+ * had already been seen.
+ */
 function workingDirs() {
-  if (platform() === "win32") return null;
+  const unread = { known: [], incomplete: true };
+  if (platform() === "win32") return unread;
   const ps = spawnSync("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 1 << 28 });
-  if (typeof ps.stdout !== "string" || ps.status !== 0) return null;
+  if (typeof ps.stdout !== "string" || ps.status !== 0) return unread;
   const candidates = [];
   for (const line of ps.stdout.split("\n")) {
     const m = /^\s*(\d+)\s+(.*)$/.exec(line);
@@ -126,28 +136,27 @@ function workingDirs() {
     if (Number(pid) === process.pid || Number(pid) === process.ppid) continue;
     if (HOLDERS.test(command)) candidates.push({ pid, command });
   }
-  if (candidates.length === 0) return [];
+  if (candidates.length === 0) return { known: [], incomplete: false };
   const lsof = spawnSync("lsof", ["-a", "-d", "cwd", "-F", "pn", "-p", candidates.map((c) => c.pid).join(",")], {
     encoding: "utf8",
     maxBuffer: 1 << 28,
   });
   // A reader that never started leaves stdout unset, and there is nothing in it to read.
-  if (typeof lsof.stdout !== "string") return null;
+  if (typeof lsof.stdout !== "string") return unread;
   const cwds = new Map();
   let pid = null;
   for (const line of lsof.stdout.split("\n")) {
     if (line.startsWith("p")) pid = line.slice(1);
     else if (line.startsWith("n") && pid) cwds.set(pid, line.slice(1));
   }
-  // A non-zero status says one of the pids went unanswered, and it is two different things: a
-  // process that has ENDED since the listing was taken is not running out of any tree, which is
-  // an answer, while one that is still there is the question not being put — and that second one
-  // is what the caller has to be told, since the guard then rests on nothing. The listing and the
-  // read are two calls, and this repository's own test runs are in the word list above, so a
-  // candidate ending in between is the ordinary case on a busy machine rather than an edge one:
-  // taken as a refusal it threw away the answers that had arrived for every other process.
-  if (lsof.status !== 0 && candidates.some((c) => !cwds.has(c.pid) && stillThere(c.pid))) return null;
-  return candidates.filter((c) => cwds.has(c.pid)).map((c) => ({ ...c, cwd: cwds.get(c.pid) }));
+  // An unanswered pid is two different things and the exit status alone cannot tell them apart,
+  // since it is non-zero for either. One that has ENDED since the listing was taken is not
+  // running out of any tree, which is an answer and leaves the reading whole; one that is STILL
+  // there is the question not being put about that process, which is what `incomplete` carries.
+  // The listing and the read are two calls, and this repository's own test runs are in the word
+  // list above, so a candidate ending in between is the ordinary case on a busy machine.
+  const incomplete = candidates.some((c) => !cwds.has(c.pid) && stillThere(c.pid));
+  return { known: candidates.filter((c) => cwds.has(c.pid)).map((c) => ({ ...c, cwd: cwds.get(c.pid) })), incomplete };
 }
 
 /** Whether a pid is still there. A process this user may not signal is still a process, so the
@@ -169,7 +178,6 @@ const under = (path, dir) => path === dir || path.startsWith(dir.endsWith("/") ?
  * plain prefix reads every process in every worktree as one in the main checkout.
  */
 export function holdersOf(dir, procs, trees) {
-  if (procs === null) return null;
   const owner = (p) =>
     trees
       .map((t) => t.path)
@@ -324,7 +332,7 @@ function putBack(cwd, dir, local, ahead) {
  * deletions legal, so it stops those too. A run with nothing to fast-forward writes to no tree
  * and is unaffected, which is the cleanup someone else's pull left behind.
  */
-export function decide({ base, remote, local, ahead, fastForward, holder, running, startedIn }) {
+export function decide({ base, remote, local, ahead, fastForward, holder, running, incomplete, startedIn }) {
   if (local === null) return { reason: `${base} does not exist here` };
   if (!holder) return { reason: `${base} is checked out in no worktree` };
   if (local !== ahead && !fastForward) return { reason: `${base} has commits ${remote} does not — not a fast-forward` };
@@ -332,11 +340,14 @@ export function decide({ base, remote, local, ahead, fastForward, holder, runnin
     return {
       reason: `${base} is checked out in ${holder} and this run was started in ${startedIn} — the fast-forward is taken in no tree but the one it was started in, so run it from ${holder}`,
     };
-  if (running !== null && running.length > 0) {
+  if (running.length > 0) {
     return { reason: running.map((c) => `pid ${c.pid} runs out of ${holder}: ${c.command}`).join("\n         ") };
   }
-  const note =
-    running === null ? `what runs in ${holder} could not be read — git's refusals are the only guard here` : undefined;
+  // Said even where a holder was found and reported above, since it is about the reading rather
+  // than about that process: what went unanswered is unanswered whatever else came back.
+  const note = incomplete
+    ? `what runs in ${holder} could not be read in full — git's refusals are the only guard for the rest`
+    : undefined;
   return { act: true, ff: local !== ahead, tree: holder, note };
 }
 
@@ -384,9 +395,8 @@ function whyKeep(cwd, remote, branch, ref, s, at = null) {
   if (tree.locked) return { tree, why: "its worktree is locked — another session is inside" };
   const dirty = unclean(tree.path);
   if (dirty) return { tree, why: dirty };
-  const busy = holdersOf(tree.path, s.procs, s.trees);
-  if (busy && busy.length > 0)
-    return { tree, why: `${busy.length} process(es) run out of its worktree: pid ${busy[0].pid}` };
+  const busy = holdersOf(tree.path, s.procs.known, s.trees);
+  if (busy.length > 0) return { tree, why: `${busy.length} process(es) run out of its worktree: pid ${busy[0].pid}` };
   return { tree, why: null };
 }
 
@@ -438,7 +448,8 @@ function plan(cwd, log) {
     fastForward:
       local !== null && git(["merge-base", "--is-ancestor", `refs/heads/${base}`, remote], cwd, true).status === 0,
     holder: holder?.path ?? null,
-    running: holder ? holdersOf(holder.path, procs, trees) : [],
+    running: holder ? holdersOf(holder.path, procs.known, trees) : [],
+    incomplete: procs.incomplete,
     startedIn: here,
   });
 
@@ -454,8 +465,10 @@ function plan(cwd, log) {
   if (sync.note) log(`note   ${sync.note}`);
   // Said once rather than per worktree: where the machine cannot be asked, it cannot be asked
   // about any of them, and the removals below go ahead on git's own refusals alone.
-  if (procs === null && removals.some((r) => r.tree)) {
-    log("note   what runs in the worktrees below could not be read — git's refusals are the only guard there");
+  if (procs.incomplete && removals.some((r) => r.tree)) {
+    log(
+      "note   what runs in the worktrees below could not be read in full — git's refusals are the only guard for the rest",
+    );
   }
   return { removals, sync, remote, base, ahead, local };
 }

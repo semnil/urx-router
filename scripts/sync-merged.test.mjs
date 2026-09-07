@@ -97,6 +97,12 @@ const REAL_GIT = (() => {
   return r.status === 0 ? r.stdout.trim() : "git";
 })();
 
+/** Where ps is, read before any shim is on the PATH. */
+const REAL_PS = (() => {
+  const r = spawnSync("sh", ["-c", "command -v ps"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : "ps";
+})();
+
 /** Where lsof is, read before any shim is on the PATH. */
 const REAL_LSOF = (() => {
   const r = spawnSync("sh", ["-c", "command -v lsof"], { encoding: "utf8" });
@@ -658,8 +664,8 @@ describe("sync-merged, the running-process guard", () => {
     try {
       process.env.PATH = `${box}:${realPath}`;
       const { code, text } = report(down, true);
-      expect(text).toContain("could not be read — git's refusals are the only guard here");
-      expect(text).toContain("in the worktrees below could not be read");
+      expect(text).toContain("could not be read in full — git's refusals are the only guard for the rest");
+      expect(text).toContain("in the worktrees below could not be read in full");
       expect(text).not.toContain(`pid ${h.pid}`);
       expect(code).toBe(0);
     } finally {
@@ -691,6 +697,63 @@ describe("sync-merged, the running-process guard", () => {
     }
   });
 
+  it.skipIf(!cwdIsReadable)("blocks on the holder it did read while another pid goes unanswered", async () => {
+    const { down } = fixture();
+    const target = await holder(down);
+    // A second process of the same shape, running somewhere else. The reader answers for the
+    // target and not for this one — which is what a process this user may not signal looks
+    // like — and exits non-zero because one of the pids it was handed went unanswered.
+    const elsewhere = mkdtempSync(join(tmpdir(), "sync-merged-bystander-"));
+    roots.push(elsewhere);
+    const bystander = await holder(elsewhere, "vitest-stub.mjs");
+    const box = mkdtempSync(join(tmpdir(), "sync-merged-path-"));
+    roots.push(box);
+    writeFileSync(
+      join(box, "lsof"),
+      `#!/bin/sh\n${REAL_LSOF} "$@" | awk -v skip="p${bystander.pid}" '$0==skip {s=1; next} /^p/ {s=0} !s'\nexit 1\n`,
+      { mode: 0o755 },
+    );
+    const realPath = process.env.PATH;
+    try {
+      process.env.PATH = `${box}:${realPath}`;
+      const { code, text } = report(down, true);
+      expect(text).toContain(`pid ${target.pid} runs out of ${realpathSync(down)}`);
+      expect(code).toBe(1);
+      expect(at(down, "main")).not.toBe(at(down, "origin/main"));
+    } finally {
+      process.env.PATH = realPath;
+      await bystander.stop();
+      await target.stop();
+    }
+  });
+
+  it.skipIf(!cwdIsReadable)("blocks on that holder while an unanswered pid has ended", async () => {
+    const { down } = fixture();
+    const target = await holder(down);
+    // A candidate that ENDED between the listing and the read — the ordinary case on a busy
+    // machine, staged here by listing a pid that is already gone. The reader exits non-zero
+    // for it and answers for the target, whose own answer is what decides.
+    const gone = await holder(mkdtempSync(join(tmpdir(), "sync-merged-gone-")), "vitest-stub.mjs");
+    const gonePid = gone.pid;
+    await gone.stop();
+    const box = mkdtempSync(join(tmpdir(), "sync-merged-path-"));
+    roots.push(box);
+    writeFileSync(join(box, "ps"), `#!/bin/sh\n${REAL_PS} "$@"\necho "  ${gonePid} node /tmp/vitest-stub.mjs"\n`, {
+      mode: 0o755,
+    });
+    const realPath = process.env.PATH;
+    try {
+      process.env.PATH = `${box}:${realPath}`;
+      const { code, text } = report(down, true);
+      expect(text).toContain(`pid ${target.pid} runs out of ${realpathSync(down)}`);
+      expect(text).not.toContain(`pid ${gonePid}`);
+      expect(code).toBe(1);
+    } finally {
+      process.env.PATH = realPath;
+      await target.stop();
+    }
+  });
+
   it("counts a process by the innermost worktree its directory belongs to", () => {
     const outer = { path: "/repo" };
     const inner = { path: "/repo/.claude/worktrees/one" };
@@ -709,8 +772,11 @@ describe("sync-merged, the running-process guard", () => {
       holder: "/repo",
       startedIn: "/repo",
     };
-    expect(decide({ ...facts, running: null })).toMatchObject({ act: true, ff: true, tree: "/repo" });
-    expect(decide({ ...facts, running: null }).note).toContain("could not be read");
+    expect(decide({ ...facts, running: [], incomplete: true })).toMatchObject({ act: true, ff: true, tree: "/repo" });
+    expect(decide({ ...facts, running: [], incomplete: true }).note).toContain("could not be read in full");
+    // A holder that WAS read blocks whether or not the rest of the reading arrived — the two
+    // are separate answers, and an unanswered pid elsewhere does not unsay this one.
+    expect(decide({ ...facts, running: [{ pid: "9", command: "vite" }], incomplete: true }).reason).toContain("pid 9");
     expect(decide({ ...facts, running: [] })).toEqual({ act: true, ff: true, tree: "/repo", note: undefined });
     expect(decide({ ...facts, running: [{ pid: "9", command: "vite" }] }).reason).toContain("pid 9");
     expect(decide({ ...facts, running: [], local: "b" })).toMatchObject({ act: true, ff: false });
