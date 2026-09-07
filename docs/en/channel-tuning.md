@@ -1519,7 +1519,9 @@ writes, the merge that leaves an edit made meanwhile standing, and the `holdsSen
 edit the flush has NOT carried yet standing too. Read as a whole node instead, it also brought back
 every announced value of that channel — device follow's, not this park's — each as the unit's rather
 than as the operator's: an Effect ON toggled a moment earlier and still inside its flush window was
-read back OFF and went out that way. The unit's values are in the plan by the
+read back OFF and went out that way. And it waits for a converge to finish before it reads
+(`live.converged`), because a round is rewriting the whole scope and a read taken beside one can answer
+from an array it is part-way through restoring. The unit's values are in the plan by the
 time the type goes out, and the array the writer sends after it is the operator's rather than a stale
 copy. Its cost is one round trip per slot in front of the type write; with no live session there is
 nothing to read and the write is immediate.

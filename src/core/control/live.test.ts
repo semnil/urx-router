@@ -243,6 +243,51 @@ describe("LiveSync sideEffect converge", () => {
     expect([...excluded[0]!], "that channel's effect family and nothing else").toEqual([silentKey("fx", "bus.fx1")]);
   });
 
+  // What the UI-driven park waits on. A read beside a converge can answer from an array the
+  // round is part-way through restoring, and the park's whole job is to put what it reads
+  // into the plan — so the gesture waits, and the wait ends with the converge rather than on
+  // a timer, since something is holding for it.
+  it("holds `converged` until the round it is in leaves", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    // Nothing converging: the wait is already over.
+    let settledBeforeAny = false;
+    await live.converged().then(() => (settledBeforeAny = true));
+    expect(settledBeforeAny, "no converge, no wait").toBe(true);
+
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(live.isConverging(), "the premise: a round is in flight").toBe(true);
+    let released = false;
+    void live.converged().then(() => (released = true));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(released, "held while it runs").toBe(false);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(live.isConverging()).toBe(false);
+    expect(released, "released when it left").toBe(true);
+  });
+
+  // A round that ends by failing is still a round that ended. Released only on the happy
+  // path, a waiter is parked for ever and the gesture behind it never lands.
+  it("releases `converged` when the round fails", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    let direct = true;
+    vi.mocked(vdSet).mockImplementation(() => (direct ? Promise.resolve() : Promise.reject(new Error("nak"))));
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    direct = false;
+    let released = false;
+    void live.converged().then(() => (released = true));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(released, "the failure ended the round, so the wait is over").toBe(true);
+  });
+
   it("takes no park on a flush that does not converge", async () => {
     // The park is a device read, and an ordinary flush is what a drag produces: running it
     // there would put a whole-device pass inside every window of a fader move.

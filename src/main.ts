@@ -1026,6 +1026,18 @@ function holdsSent(paramId: number, x: number, y: number, raw: number): boolean 
 }
 
 async function parkThenWrite(nodeId: string, write: () => void): Promise<void> {
+  // A converge is writing the whole scope round after round, and a read taken beside one can
+  // answer from an array it is part-way through restoring — which this park would then put
+  // into the plan. Device follow's reconcile is held off the same window (`deferReconcile`);
+  // this is that rule for the path the operator drives. Bounded by the converge, and the
+  // gesture is still the operator's when it ends.
+  await live?.converged();
+  // The wait outlives a session that ended inside it. With no device there is nothing to
+  // read and nothing the write can damage, which is the no-session branch of `parkFxEffect`.
+  if (!live?.isActive()) {
+    write();
+    return;
+  }
   // Taken before the read is issued, for the reason the scoped reconcile takes one: a
   // direct notify landing while it is in flight is device truth the read's private copy
   // predates, and the re-base below rebuilds the snapshot from that copy.

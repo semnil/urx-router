@@ -283,6 +283,10 @@ export class LiveSync {
   // Inside the sideEffect branch of a flush: the silent-address park and the converge
   // loop. What device follow holds a reconcile off (see `isConverging`).
   private converging = false;
+  // Resolved when the converge in flight leaves that branch. `converged()` awaits it, and
+  // it is replaced rather than reused, so a second converge is a second wait.
+  private convergeDone: Promise<void> | null = null;
+  private endConverge: () => void = () => {};
   private pending = false;
   // The last flush had to converge (a sideEffect param went out), which re-reads
   // the whole write scope and settles between rounds — seconds, not milliseconds.
@@ -320,6 +324,22 @@ export class LiveSync {
     return this.converging;
   }
 
+  /**
+   * Resolves once no converge is in flight.
+   *
+   * What a read STARTED FROM THE UI waits on — the EFFECT TYPE park. A converge is writing
+   * the whole scope round after round, so a read taken beside one can answer from an array
+   * the converge is part-way through restoring, and the park's whole job is to put what it
+   * reads into the plan. Device follow's reconcile is held off the same window by
+   * `deferReconcile`; this is the same rule for the path the operator drives, which cannot
+   * defer to a timer because a gesture is waiting on it.
+   *
+   * A loop rather than one await: a flush that converged can be followed by another that
+   * does, and the wait is over only when neither is.
+   */
+  async converged(): Promise<void> {
+    while (this.converging && this.convergeDone) await this.convergeDone;
+  }
 
   private scope(): WriteScope {
     return this.hooks.getScope?.() ?? "all";
@@ -929,6 +949,7 @@ export class LiveSync {
       this.lastFlushConverged = sideEffect;
       if (sideEffect) {
         this.converging = true;
+        this.convergeDone = new Promise<void>((resolve) => (this.endConverge = resolve));
         // The device reset dependents; converge against its post-reset state and
         // rebuild the snapshot so the next diff measures from the device truth.
         // Converge against a frozen copy, not the live plan: an edit that arrives
@@ -1122,6 +1143,10 @@ export class LiveSync {
     } finally {
       this.flushing = false;
       this.converging = false;
+      // Woken whether the converge finished, threw or lost its session — a waiter that is
+      // only released on the happy path is one a failed round leaves parked for ever.
+      this.convergeDone = null;
+      this.endConverge();
     }
     if (this.pending) {
       this.pending = false;
