@@ -1186,9 +1186,10 @@ test("a tuning screen's controls arm under processor and band scopes", async ({ 
 });
 
 test("the DUCKER screen's sliders arm under the ducker's own scope", async ({ page }) => {
-  // A ducker is a node of its own, hung under a stereo channel: its screen carries the
-  // four values, and the strip's DUCKER chip the on/off, which takes the bare node scope.
-  // So the list holds both spellings for one node, named by the channel it prints under.
+  // A ducker is a node of its own, hung under a stereo channel, so its screen is where its
+  // four values are edited and the strip's DUCKER chip is its on/off. Threshold stands for
+  // the four in the learn gesture; that all four offer themselves is the count below, which
+  // is what a locked row would take away without moving the contract sweep's equality.
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
   await setLearn(page, win, true);
@@ -1197,6 +1198,8 @@ test("the DUCKER screen's sliders arm under the ducker's own scope", async ({ pa
   await strip(page, "CH 5/6").locator('.con-chip-open[aria-label="Ducker screen"]').click();
   const box = screenBox(page);
   await expect(box).toBeVisible();
+  // Range, Attack, Decay and Threshold — the whole field table, none of them locked.
+  await expect(box.locator(".midi-target")).toHaveCount(4);
   await screenRow(page, "Threshold").locator(".ctl").click();
   await expect(win.locator(".mw-hint")).toContainText("CH 5/6 · DUCKER · Threshold");
   await sendMidi(page, [0xb0, 45, 100], [0xb0, 45, 101]);

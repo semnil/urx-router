@@ -375,19 +375,19 @@ describe("channel tuning screen parameters", () => {
   // it tunes under a scope of their own.
   it("lists a ducker's four values under its own scope, beside its unscoped master", () => {
     const ids = new Set(listControls(model, plan).map((c) => c.id));
-    for (const id of [
-      "out.ducker1/duckerOn",
-      "out.ducker1/range@ducker",
-      "out.ducker1/attack@ducker",
-      "out.ducker1/decay@ducker",
-      "out.ducker1/threshold@ducker",
-    ])
-      expect(ids, id).toContain(id);
-    // A ducker has no HOLD, and it is not a strip: no fader, no sends, no processors of
-    // the channel it hangs under — that channel keeps its own.
+    // EVERY ducker, not the first: the branch keys on the node KIND, so a case naming one
+    // node passes a catalogue that names one node.
+    const duckers = model.nodes.filter((n) => n.kind === "ducker").map((n) => n.id);
+    expect(duckers.length, "URX44V hangs one ducker under each stereo pair").toBe(4);
+    for (const d of duckers) {
+      for (const id of [`${d}/duckerOn`, ...["range", "attack", "decay", "threshold"].map((k) => `${d}/${k}@ducker`)])
+        expect(ids, id).toContain(id);
+    }
+    // A ducker has no HOLD, and it is not a strip: no fader, no sends. The four ids above
+    // are the positive control for both — a catalogue offering nothing would satisfy these.
     expect(ids).not.toContain("out.ducker1/hold@ducker");
     expect(ids).not.toContain("out.ducker1/level");
-    expect(ids).not.toContain("out.ducker1/threshold@gate");
+    // …and the values stay on the hung node rather than moving to the channel it attenuates.
     expect(ids).not.toContain("ch_5_6/threshold@ducker");
   });
 

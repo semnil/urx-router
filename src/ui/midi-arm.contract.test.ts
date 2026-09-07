@@ -245,29 +245,30 @@ describe("arming surfaces against the control catalog", () => {
         }
       };
 
-      for (const nodeId of nodeIds) {
+      /** One node, every face. A face is a different set of slots — the multi-band
+       *  compressor's three band faces carry twelve the first one does not — so opening at
+       *  the default `sel` alone leaves those unchecked, which is the same silence this
+       *  file exists to break. A bar item may NAME the descriptor it arrives on, and the
+       *  screen switches to it, so the verdict is asked of that one rather than of the one
+       *  the screen opened with. */
+      const checkNode = (p: DynProcessor, nodeId: string, where: string): void => {
         const screen = new DynScreen(host.hooks);
-        screen.open(proc, nodeId);
+        screen.open(p, nodeId);
         expect(screen.isOpen()).toBe(true);
-        checkFace(proc, nodeId);
-        // …and every OTHER face its bar offers. A face is a different set of slots — the
-        // multi-band compressor's three band faces carry twelve the first one does not —
-        // and opening at the default `sel` alone leaves those unchecked, which is the same
-        // silence this file exists to break.
-        for (const item of proc.bar?.(ctxAt(nodeId))?.items ?? []) {
+        checkFace(p, where);
+        for (const item of p.bar?.(ctxAt(nodeId))?.items ?? []) {
           host.box.querySelector<HTMLElement>(`#${item.id}`)?.click();
-          checkFace(proc, `${nodeId} / ${item.label}`);
+          checkFace(item.face ?? p, `${where} / ${item.label}`);
         }
         screen.close();
-      }
+      };
 
-      // The same screen with its hook removed: nothing may offer itself.
-      const hookless: DynProcessor = { ...proc, controlId: undefined };
-      const mutant = new DynScreen(host.hooks);
-      mutant.open(hookless, nodeIds[0]);
-      expect(mutant.isOpen()).toBe(true);
-      checkFace(hookless, `${nodeIds[0]} / no controlId`);
-      mutant.close();
+      for (const nodeId of nodeIds) checkNode(proc, nodeId, nodeId);
+
+      // The same screen with its hook removed: nothing may offer itself. The face it opens
+      // on is the reach of this — a bar item names a REGISTRY face, which the screen swaps
+      // in whole, so a copy cannot take the hook off the one behind the bar.
+      checkNode({ ...proc, controlId: undefined }, nodeIds[0], `${nodeIds[0]} / no controlId`);
     },
   );
 });
