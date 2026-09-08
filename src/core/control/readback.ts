@@ -357,31 +357,45 @@ function sentOverlay(
   };
 }
 
+/** What a family read produced: the head it was read under, and the change it would make to
+ *  the plan. Held rather than made, so an attempt the unit moved a head under can be
+ *  discarded whole — see `readWithStableHead`. The merge inside `apply` reads the plan as it
+ *  stands when it runs, so an edit that arrived while the head was being confirmed stands. */
+interface FamilyRead {
+  head: number;
+  apply: (plan: Plan) => void;
+}
+
 /**
  * Read a family whose layout a HEAD decides, and confirm the head did not move under it.
  *
  * The values behind such a head mean nothing without it: read while the unit was on one
  * type and filed under another's keys, they are a parameter set the unit never had. So the
  * head is read again once the values are in, and a read the unit moved under is taken a
- * SECOND time — against the head the unit holds now, and with no plan substitution, since
- * the emit that guard answers from is laid out by the head the first attempt started from.
- * A head that moves twice fails the node, which is what every other read here does with
- * values it could not complete.
+ * SECOND time — against the head the unit holds now, and with no plan substitution for the
+ * addresses that head lays out, since the emit that guard answers from was laid out by the
+ * head the first attempt started from. A head that moves twice fails the node, which is what
+ * every other read here does with values it could not complete.
  *
- * `read` answers with the head value it used; `onMoved` hands a fresh one back to whatever
- * cached it.
+ * NOTHING reaches the plan until a head has held: the attempts return what they WOULD write
+ * and only the one that held is applied. Written straight into the plan instead, a discarded
+ * attempt left the layout it was read in behind — under the keys that layout owns, which is
+ * some dormant family's own namespace — and a node that failed both attempts arrived at its
+ * caller already carrying half the values the failure is about.
+ *
+ * `onMoved` hands the fresh head back to whatever cached it.
  */
 async function readWithStableHead(
   recheck: ParamSource,
   head: readonly [number, number, number],
   what: string,
-  read: (attempt: number) => Promise<number>,
+  read: (attempt: number) => Promise<FamilyRead>,
   onMoved?: (now: number) => void,
-): Promise<void> {
+): Promise<FamilyRead> {
   for (let attempt = 0; ; attempt++) {
-    const used = await read(attempt);
+    const got = await read(attempt);
     const now = await recheck.get(head[0], head[1], head[2]);
-    if (now === used) return;
+    if (now === got.head) return got;
     if (attempt > 0) throw new Error(`the ${what} kept moving while the values behind it were read`);
     onMoved?.(now);
   }
@@ -528,15 +542,19 @@ export async function applySilentState(
   const plain = sentOverlay(base, model, asUnit, undefined, heads);
   const agrees = (head: readonly [number, number, number]): boolean =>
     sent !== undefined && sent(head[0], head[1], head[2], heads.get(addrKey(head[0], head[1], head[2])) ?? Number.NaN);
-  const staged = (
+  const staged = async (
     head: readonly [number, number, number],
     what: string,
-    read: (src: ParamSource) => Promise<number>,
-  ): Promise<void> =>
+    read: (laidOut: ParamSource) => Promise<FamilyRead>,
+  ): Promise<FamilyRead> =>
     readWithStableHead(
       base,
       head,
       what,
+      // The guard is kept for everything the head does NOT lay out — an FX channel's ON and
+      // MIX, an insert effect's bypass — since a type says nothing about what those mean. It
+      // is the addresses BEHIND the head that a moved one makes incomparable, and on the
+      // second attempt the emit is laid out by the head the first one started from.
       (attempt) => read(attempt === 0 && agrees(head) ? source : plain),
       (now) => heads.set(addrKey(head[0], head[1], head[2]), now),
     );
@@ -547,9 +565,10 @@ export async function applySilentState(
     if (fxY === null || !covers("fx", node.id) || failed.has(node.id)) continue;
     attempted.add(node.id);
     try {
-      await staged([FX_EFFECT_TYPE_PARAM[fxY], 0, 0], "EFFECT TYPE", (src) =>
-        readFxEffectInto(src, plan, node.id, fxY, scope?.keepHeads),
+      const got = await staged([FX_EFFECT_TYPE_PARAM[fxY], 0, 0], "EFFECT TYPE", (laidOut) =>
+        readFxEffectInto(source, node.id, fxY, scope?.keepHeads, laidOut),
       );
+      got.apply(plan);
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -563,9 +582,10 @@ export async function applySilentState(
     if (!ifx || !covers("insertFx", node.id) || failed.has(node.id)) continue;
     attempted.add(node.id);
     try {
-      await staged([ifx.param, 0, ifx.instances[0]], "insert-FX selector", (src) =>
-        readInsertFxInto(src, plan, node.id, ifx, scope?.keepHeads),
+      const got = await staged([ifx.param, 0, ifx.instances[0]], "insert-FX selector", (laidOut) =>
+        readInsertFxInto(source, node.id, ifx, scope?.keepHeads, laidOut),
       );
+      got.apply(plan);
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -770,9 +790,10 @@ async function readPass(
     // read whether or not the FX → STEREO main path is wired.
     attempted.add(node.id);
     try {
-      await readWithStableHead(source, [FX_EFFECT_TYPE_PARAM[fxY], 0, 0], "EFFECT TYPE", () =>
-        readFxEffectInto(source, plan, node.id, fxY),
+      const got = await readWithStableHead(source, [FX_EFFECT_TYPE_PARAM[fxY], 0, 0], "EFFECT TYPE", () =>
+        readFxEffectInto(source, node.id, fxY),
       );
+      got.apply(plan);
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -909,9 +930,10 @@ async function readPass(
     if (!ifx) continue;
     attempted.add(node.id);
     try {
-      await readWithStableHead(source, [ifx.param, 0, ifx.instances[0]], "insert-FX selector", () =>
-        readInsertFxInto(source, plan, node.id, ifx),
+      const got = await readWithStableHead(source, [ifx.param, 0, ifx.instances[0]], "insert-FX selector", () =>
+        readInsertFxInto(source, node.id, ifx),
       );
+      got.apply(plan);
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -1653,13 +1675,20 @@ async function readSsmcsBand(
 
 // Read an FX channel's EFFECT TYPE + parameter array (mirrors pushFxEffectCommands).
 // The type picks the family, then each family slot is read raw. fxIndex 0 / 1.
-async function readFxEffect(source: ParamSource, fxIndex: number): Promise<FxEffectParams & { type: number }> {
+async function readFxEffect(
+  source: ParamSource,
+  fxIndex: number,
+  slots: ParamSource = source,
+): Promise<FxEffectParams & { type: number }> {
   const { vdGet } = readers(source);
+  const laidOut = readers(slots).vdGet;
   const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
   const type = await vdGet(FX_EFFECT_TYPE_PARAM[fxIndex], 0, 0);
   const params: Record<string, number> = {};
+  // The type's own descriptors are what the head lays out; ON and MIX are at fixed slots and
+  // mean the same thing under every type, so they stay on the caller's ordinary source.
   for (const desc of fxParams(type)) {
-    params[desc.key] = await vdGet(arrId, 0, desc.slot);
+    params[desc.key] = await laidOut(arrId, 0, desc.slot);
   }
   return {
     type,
@@ -1682,19 +1711,23 @@ async function readFxEffect(source: ParamSource, fxIndex: number): Promise<FxEff
  */
 async function readFxEffectInto(
   source: ParamSource,
-  plan: Plan,
   nodeId: string,
   fxIndex: number,
   keepHead = false,
-): Promise<number> {
-  const read = await readFxEffect(source, fxIndex);
-  const was = plan.nodeParams[nodeId];
-  const type = keepHead ? (was?.fxEffect?.type ?? read.type) : read.type;
-  plan.nodeParams[nodeId] = {
-    ...was,
-    fxEffect: { ...read, type, params: { ...was?.fxEffect?.params, ...read.params } },
+  slots: ParamSource = source,
+): Promise<FamilyRead> {
+  const read = await readFxEffect(source, fxIndex, slots);
+  return {
+    head: read.type,
+    apply: (plan) => {
+      const was = plan.nodeParams[nodeId];
+      const type = keepHead ? (was?.fxEffect?.type ?? read.type) : read.type;
+      plan.nodeParams[nodeId] = {
+        ...was,
+        fxEffect: { ...read, type, params: { ...was?.fxEffect?.params, ...read.params } },
+      };
+    },
   };
-  return read.type;
 }
 
 /** A channel's input gain: A.Gain on a mono channel, D.Gain on a stereo one (linked
@@ -1716,14 +1749,17 @@ async function readChannelGain(source: ParamSource, gain: { param: number; insta
  */
 async function readInsertFxInto(
   source: ParamSource,
-  plan: Plan,
   nodeId: string,
   ifx: NonNullable<ReturnType<typeof insertFxControl>>,
   keepHead = false,
-): Promise<number> {
+  engineSource: ParamSource = source,
+): Promise<FamilyRead> {
   const { vdGet } = readers(source);
+  const laidOut = readers(engineSource).vdGet;
   const selector = await vdGet(ifx.param, 0, ifx.instances[0]);
   const insertFx = normalizeInsertFx(selector);
+  // The bypass is its own param, not an engine slot: which family the selector names does
+  // not change what it means, so it stays on the caller's ordinary source.
   const insertFxOn = vdToBool(await vdGet(ifx.onParam, 0, ifx.instances[0]));
   const fam = insertFxFamilyOf(insertFx);
   const read: Record<number, number> = {};
@@ -1733,25 +1769,30 @@ async function readInsertFxInto(
     // is currently DRIVING included: the emit path skips those, and a refetch after a
     // write that set the unit computing is the only thing that brings its result back.
     for (const s of insertFxReadableSlots(fam)) {
-      read[s.slot] = await vdGet(engine, 0, s.slot);
+      read[s.slot] = await laidOut(engine, 0, s.slot);
     }
   }
-  const was = plan.nodeParams[nodeId];
-  // MERGED, not replaced: the map carries one namespace per family so a node that has
-  // held several effects keeps each one's values, and a read answers for one of them.
-  const insertFxParams = mergeReadInsertFxParams(
-    was?.insertFxParams,
-    was?.insertFx === undefined ? null : insertFxFamilyOf(was.insertFx),
-    fam,
-    read,
-  );
-  // A read files its values under the BARE slot, which is the namespace the selector's own
-  // family owns. Keeping the plan's selector takes that namespace away from them — they are
-  // the OUTGOING family's — so they are qualified under the family they came off instead.
-  plan.nodeParams[nodeId] = keepHead
-    ? { ...was, insertFxParams: qualifyInsertFxParams(insertFxParams, fam) }
-    : { ...was, insertFx, insertFxOn, insertFxParams };
-  return selector;
+  return {
+    head: selector,
+    apply: (plan) => {
+      const was = plan.nodeParams[nodeId];
+      // MERGED, not replaced: the map carries one namespace per family so a node that has
+      // held several effects keeps each one's values, and a read answers for one of them.
+      const insertFxParams = mergeReadInsertFxParams(
+        was?.insertFxParams,
+        was?.insertFx === undefined ? null : insertFxFamilyOf(was.insertFx),
+        fam,
+        read,
+      );
+      // A read files its values under the BARE slot, which is the namespace the selector's
+      // own family owns. Keeping the plan's selector takes that namespace away from them —
+      // they are the OUTGOING family's — so they are qualified under the family they came
+      // off instead.
+      plan.nodeParams[nodeId] = keepHead
+        ? { ...was, insertFxParams: qualifyInsertFxParams(insertFxParams, fam) }
+        : { ...was, insertFx, insertFxOn, insertFxParams };
+    },
+  };
 }
 
 // Read the SSMCS morphing-strip raw values for a MONO IN channel (mirrors
