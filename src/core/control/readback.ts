@@ -318,25 +318,51 @@ export async function applyDeviceState(
  * The plan's side is the emit, which is the one thing that can say what raw the plan means
  * at an address: taken from `planToCommands`, so the comparison is between two values of
  * the same encoding rather than between a raw and a plan unit.
+ *
+ * `heads` is what makes that emit comparable at all. An emit is LAID OUT by the plan's own
+ * layout heads — an FX channel's EFFECT TYPE, a node's insert-FX selector — so where the
+ * plan holds a head the unit has not been given, every address behind it means one
+ * parameter on the unit and a different one in the plan, and answering there hands the
+ * reader a value of the wrong parameter. The plan handed in therefore wears the unit's
+ * heads, and each head address answers from this map: the unit's own value, read once
+ * (`applySilentState`) ahead of everything it lays out.
  */
 function sentOverlay(
   source: ParamSource,
   model: DeviceModel,
   plan: Plan,
   sent?: (paramId: number, x: number, y: number, raw: number) => boolean,
+  heads?: ReadonlyMap<number, number>,
 ): ParamSource {
-  if (!sent) return source;
+  if (!sent && !heads?.size) return source;
   const mine = new Map<number, number>();
-  for (const c of planToCommands(model, plan)) mine.set(cmdAddr(c), c.vdValue);
+  if (sent) for (const c of planToCommands(model, plan)) mine.set(cmdAddr(c), c.vdValue);
   return {
     get: async (paramId, x, y) => {
+      const addr = addrKey(paramId, x, y);
+      const head = heads?.get(addr);
+      if (head !== undefined) return head;
       const raw = await source.get(paramId, x, y);
-      if (!sent(paramId, x, y, raw)) return raw;
-      const ours = mine.get(addrKey(paramId, x, y));
+      if (!sent || !sent(paramId, x, y, raw)) return raw;
+      const ours = mine.get(addr);
       return ours === undefined ? raw : ours;
     },
     getStr: (paramId, x, y) => source.getStr(paramId, x, y),
   };
+}
+
+/** Read one layout head and record it, so the family read behind it takes this answer
+ *  rather than asking the link for the same address a second time. */
+async function readHead(
+  source: ParamSource,
+  heads: Map<number, number>,
+  paramId: number,
+  x: number,
+  y: number,
+): Promise<number> {
+  const raw = await source.get(paramId, x, y);
+  heads.set(addrKey(paramId, x, y), raw);
+  return raw;
 }
 
 /**
@@ -407,16 +433,55 @@ export async function applySilentState(
         signal,
       })
     : undefined;
-  const source = sentOverlay(writeOverlay(LIVE_SOURCE, announced), model, plan, sent);
+  const base = writeOverlay(LIVE_SOURCE, announced);
   const errors: string[] = [];
   const attempted = new Set<string>();
   const failed = new Set<string>();
   let applied = 0;
 
+  // Every layout head this pass will read through, taken FIRST: each covered FX channel's
+  // EFFECT TYPE and each covered node's insert-FX selector. What a head decides is which
+  // parameter each slot behind it is, so the emit `sentOverlay` compares against is built
+  // from a plan wearing the UNIT's heads rather than the plan's own — a type the operator
+  // has chosen and no flush has carried yet otherwise has the outgoing array read as the
+  // incoming type's, filed under keys the outgoing effect never had and sent back to the
+  // unit as that type's factory values.
+  //
+  // A head that cannot be read fails its node the way the family read below does, and that
+  // node is then left alone: with no head there is nothing to say how to read it.
+  const heads = new Map<number, number>();
+  const asUnit: Plan = { ...plan, nodeParams: { ...plan.nodeParams } };
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     const fxY = fxChannelIndex(node.id);
-    if (fxY === null || !covers("fx", node.id)) continue;
+    const ifx = insertFxControl(model, node.id);
+    const fxHead = fxY !== null && covers("fx", node.id) ? FX_EFFECT_TYPE_PARAM[fxY] : null;
+    const insertHead = ifx && covers("insertFx", node.id) ? ifx : null;
+    if (fxHead === null && insertHead === null) continue;
+    attempted.add(node.id);
+    try {
+      if (fxHead !== null) {
+        const type = await readHead(base, heads, fxHead, 0, 0);
+        asUnit.nodeParams[node.id] = {
+          ...asUnit.nodeParams[node.id],
+          fxEffect: { ...asUnit.nodeParams[node.id]?.fxEffect, type },
+        };
+      }
+      if (insertHead) {
+        const raw = await readHead(base, heads, insertHead.param, 0, insertHead.instances[0]);
+        asUnit.nodeParams[node.id] = { ...asUnit.nodeParams[node.id], insertFx: normalizeInsertFx(raw) };
+      }
+    } catch (e) {
+      failed.add(node.id);
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  const source = sentOverlay(base, model, asUnit, sent, heads);
+
+  for (const node of model.nodes) {
+    signal?.throwIfAborted();
+    const fxY = fxChannelIndex(node.id);
+    if (fxY === null || !covers("fx", node.id) || failed.has(node.id)) continue;
     attempted.add(node.id);
     try {
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], fxEffect: await readFxEffect(source, fxY) };
@@ -430,7 +495,7 @@ export async function applySilentState(
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     const ifx = insertFxControl(model, node.id);
-    if (!ifx || !covers("insertFx", node.id)) continue;
+    if (!ifx || !covers("insertFx", node.id) || failed.has(node.id)) continue;
     attempted.add(node.id);
     try {
       await readInsertFxInto(source, plan, node.id, ifx);
