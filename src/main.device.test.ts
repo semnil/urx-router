@@ -27,7 +27,7 @@ import {
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
 import { attackToVd, eqFreqToVd } from "./core/control/vd";
-import { FX_SLOT_LEVEL, FX_SLOT_ON, formatHz, fxParams } from "./core/control/fx-effect";
+import { FX_SLOT_LEVEL, FX_SLOT_ON, formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
@@ -2967,6 +2967,9 @@ describe("an EFFECT TYPE change while a session is live", () => {
   const FX1_HPF = `681:0:${HPF.slot}`;
   const REVX_HALL = 0;
   const REVX_ROOM = 1;
+  /** The cross-family step. Its parameter layout shares no key with Rev-X, so an array read
+   *  against it files every value under a key the Rev-X emit does not read. */
+  const MONO_DELAY = fxEffectTypes(0).find((o) => o.family === "delay")!.value;
   const at = (a: Record<string, unknown> | undefined): string => `${a?.paramId}:${a?.x}:${a?.y}`;
 
   /** FX1 on Rev-X Hall with its factory array, and a rate to read. Seeded from the
@@ -3098,6 +3101,69 @@ describe("an EFFECT TYPE change while a session is live", () => {
     );
     expect(parkAt, "the park read the outgoing array").toBeGreaterThan(-1);
     expect(parkAt).toBeLessThan(typeAt);
+  });
+
+  // Two EFFECT TYPE selections inside one flush window, the second made while the first is
+  // still on the link. Only the last one goes out — the window coalesces them — so the unit
+  // is still holding the OUTGOING effect when the second park reads its array, while the
+  // plan already holds the type nobody has sent. Read against that one, a Rev-X array
+  // decodes as a delay: every value lands under a delay's key, the Rev-X keys go with it,
+  // and the emit behind the second selection has the incoming type's factory values to send
+  // in their place.
+  it("reads the array against the type the unit holds, not the one the plan is waiting to send", SLOW, async () => {
+    const REFILLED = 55;
+    expect(REFILLED, "distinguishable from both the plan's copy and the unit's").not.toBe(TUNED);
+    const { table, move } = stubWithPanel({ refillsOnType: REFILLED });
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    let open: (() => void) | null = null;
+    let gate: Promise<void> | null = null;
+    // The first park held open on the link, so the second selection is made at a point this
+    // case chooses rather than wherever the flush window happens to fall.
+    table.vd_get = async (a: Record<string, unknown>) => {
+      if (gate) await gate;
+      return baseGet(a);
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownHpf()).toBe(HPF.format!(HPF.def, {}));
+
+    // The hand on the unit, which announces nothing — then the first selection, held at its
+    // own first read.
+    move(TUNED);
+    const gesture = shell.invokes.length;
+    gate = new Promise<void>((r) => (open = r));
+    pickType(MONO_DELAY);
+    await vi.waitFor(
+      () =>
+        expect(shell.invokes.some((cmd, i) => cmd === "vd_get" && at(shell.args[i]) === FX1_TYPE && i >= gesture)).toBe(
+          true,
+        ),
+      { timeout: 20_000 },
+    );
+    // Taken while that read is still waiting, so it queues behind the park rather than
+    // behind whatever the first write arms.
+    pickType(REVX_ROOM);
+    gate = null;
+    open!();
+
+    const sentTo = (addr: string): unknown[] =>
+      shell.invokes.flatMap((cmd, i) =>
+        cmd === "vd_set" && at(shell.args[i]) === addr && i >= gesture ? [shell.args[i]?.value] : [],
+      );
+    // The array goes out with the selector in the same flush, and the converge behind it
+    // sends whatever the refill did not leave standing.
+    await vi.waitFor(() => expect(sentTo(FX1_HPF).length).toBeGreaterThan(0), { timeout: 25_000 });
+    // The premise, asserted rather than assumed: the window coalesced the two selections, so
+    // the array the second park read was the one the operator tuned. Had the first type
+    // reached the unit it would have refilled that array, and this case would be measuring a
+    // different gesture.
+    expect(sentTo(FX1_TYPE), "only the last selection went out").toEqual([REVX_ROOM]);
+    // The unit's own value is what went back to it. Read against the plan's unsent type the
+    // array decodes as a delay, and what this address carries is the incoming type's factory
+    // value instead.
+    expect([...new Set(sentTo(FX1_HPF))], "no value but the unit's own went out").toEqual([TUNED]);
+    expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
   });
 
   /** Wait for the link to stop carrying traffic — a converge is hundreds of reads through
