@@ -484,7 +484,7 @@ export async function applySilentState(
     if (fxY === null || !covers("fx", node.id) || failed.has(node.id)) continue;
     attempted.add(node.id);
     try {
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], fxEffect: await readFxEffect(source, fxY) };
+      await readFxEffectInto(source, plan, node.id, fxY);
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -703,8 +703,7 @@ async function readPass(
     // read whether or not the FX → STEREO main path is wired.
     attempted.add(node.id);
     try {
-      const fxEffect = await readFxEffect(source, fxY);
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], fxEffect };
+      await readFxEffectInto(source, plan, node.id, fxY);
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -1596,6 +1595,26 @@ async function readFxEffect(source: ParamSource, fxIndex: number): Promise<FxEff
     on: vdToBool(await vdGet(arrId, 0, FX_SLOT_ON)),
     level: await vdGet(arrId, 0, FX_SLOT_LEVEL),
     params,
+  };
+}
+
+/**
+ * An FX channel's effect — the type, the two common slots and the selected type's parameter
+ * array — applied to the plan. Shared by the full read and the silent-address park for the
+ * reason `readInsertFxInto` is, and MERGED into what the node already holds for the same
+ * reason: the params map carries one key per FAMILY, so a channel that has held several
+ * effects keeps each one's values and a read answers for the family the type names. Replacing
+ * the map dropped the dormant families with it, and selecting one of them back then sent the
+ * incoming type's factory values rather than what the operator had set.
+ *
+ * Throws on a read failure so the caller keeps the provenance it already tracks.
+ */
+async function readFxEffectInto(source: ParamSource, plan: Plan, nodeId: string, fxIndex: number): Promise<void> {
+  const read = await readFxEffect(source, fxIndex);
+  const was = plan.nodeParams[nodeId];
+  plan.nodeParams[nodeId] = {
+    ...was,
+    fxEffect: { ...read, params: { ...was?.fxEffect?.params, ...read.params } },
   };
 }
 
