@@ -877,50 +877,23 @@ describe("where the focus goes after the INS FX popover closes", () => {
     expect(fxEffectTypes(0).find((o) => o.value === after)?.label, "the row that was activated").toBe(wanted);
   });
 
-  // The read the app takes in front of a type write, held from THIS side: the effect arrays
-  // announce nothing when the unit's own panel moves them, so a value tuned there has to be
-  // read into the plan before the selector refills the array — and the write is what would
-  // replace it. The inspector's own EFFECT TYPE row takes the same read; the two sites are
-  // one gesture written twice, so each is pinned where it lives.
-  //
-  // Both directions, because a hook that only ever agrees cannot show the refusal: an app
-  // whose park failed says so by answering false, and nothing may reach the plan then.
-  describe("the park in front of an FX type write", () => {
-    const pickRow = (): string | null => {
-      fxOpenerOf("bus.fx1")!.click();
-      const rows = [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];
-      const target = rows.find((r) => !r.classList.contains("active")) ?? rows[1];
-      target.click();
-      return target.textContent;
-    };
+  // What a press on a type row does: it writes the type and opens the screen on it. The read
+  // the app takes in front of a type write is no longer between those two — it moved to the
+  // write boundary (`live.ts`), where an undo of this selection and the inspector's own row
+  // are covered by the same one.
+  it("writes the type and opens the screen on it", () => {
+    h = consoleHost();
+    const before = h.plan.nodeParams["bus.fx1"]?.fxEffect?.type;
+    fxOpenerOf("bus.fx1")!.click();
+    const rows = [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];
+    const target = rows.find((r) => !r.classList.contains("active")) ?? rows[1];
+    const wanted = target.textContent;
+    target.click();
 
-    it("hands the write to the park, and the press alone writes nothing", () => {
-      // Held rather than run, which is what a device read does to it: the press is over and
-      // the plan must not have moved until the read the app takes in front of it is done.
-      let held: (() => void) | null = null;
-      h = consoleHost({ park: (_id, write) => void (held = write) });
-      const before = h.plan.nodeParams["bus.fx1"]?.fxEffect?.type;
-      const wanted = pickRow();
-      expect(h.parked, "the park named the FX channel the press was on").toEqual(["bus.fx1"]);
-      expect(h.plan.nodeParams["bus.fx1"]?.fxEffect?.type, "nothing written while the park holds it").toBe(before);
-      expect(h.opened, "nor is the tuning screen opened on a type not yet chosen").toEqual([]);
-
-      held!();
-      const after = h.plan.nodeParams["bus.fx1"]?.fxEffect?.type;
-      expect(fxEffectTypes(0).find((o) => o.value === after)?.label, "the row that was pressed").toBe(wanted);
-      expect(h.opened).toEqual([{ kind: "fx", id: "bus.fx1" }]);
-    });
-
-    it("writes nothing when the park never runs the write", () => {
-      h = consoleHost({ park: () => {} });
-      const before = h.plan.nodeParams["bus.fx1"]?.fxEffect?.type;
-      const changes = h.changes();
-      pickRow();
-      expect(h.parked).toEqual(["bus.fx1"]);
-      expect(h.plan.nodeParams["bus.fx1"]?.fxEffect?.type, "the plan is untouched").toBe(before);
-      expect(h.changes(), "and nothing was scheduled for the device").toBe(changes);
-      expect(h.opened, "nor did the tuning screen open on a type nobody chose").toEqual([]);
-    });
+    const after = h.plan.nodeParams["bus.fx1"]?.fxEffect?.type;
+    expect(after, "the press chose a type").not.toBe(before);
+    expect(fxEffectTypes(0).find((o) => o.value === after)?.label, "the row that was pressed").toBe(wanted);
+    expect(h.opened, "and the screen opens on it").toEqual([{ kind: "fx", id: "bus.fx1" }]);
   });
 
   it("keeps it on the same row when a one-strip repaint re-opens the FX type list", () => {

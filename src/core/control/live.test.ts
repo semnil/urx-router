@@ -16,6 +16,7 @@ import { addrKey, cmdAddr, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
 import { MBC_ONE_KNOB, insertFxParamKey } from "./insert-fx-effect";
+import { fxParams } from "./fx-effect";
 import { applyNodeState } from "./readback";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -197,8 +198,11 @@ describe("LiveSync sideEffect converge", () => {
       onSent: () => {},
       onCollapsed: () => {},
       onConfirmed: (_addrs, sent) => void seen.push(sent),
-      parkSilent: async (exclude) => {
-        excluded.push(exclude);
+      parkSilent: async (scope) => {
+        // The park in front of the CONVERGE. The one in front of the writes names `only`,
+        // and is the case above.
+        if (!scope.exclude) return;
+        excluded.push(scope.exclude);
         // What a read of the unit's D.Gain would have put here.
         plan.nodeParams.ch_5_6 = { ...plan.nodeParams.ch_5_6, gain: 12 };
       },
@@ -209,7 +213,7 @@ describe("LiveSync sideEffect converge", () => {
     await vi.advanceTimersByTimeAsync(120);
     await vi.advanceTimersByTimeAsync(2000);
 
-    expect(excluded, "one park per converging flush").toHaveLength(1);
+    expect(excluded, "one park in front of the converge").toHaveLength(1);
     // A COMP/EQ type resets the channel's COMP/EQ bank, which the unit ANNOUNCES and the
     // park never read — so it names nothing, and CH 1's insert FX (a family this head does
     // not touch, on the same node) is still parked. Named per node instead, the converge
@@ -230,7 +234,7 @@ describe("LiveSync sideEffect converge", () => {
       onError: () => {},
       onSent: () => {},
       onCollapsed: () => {},
-      parkSilent: async (reset) => void excluded.push(reset),
+      parkSilent: async (scope) => void (scope.exclude && excluded.push(scope.exclude)),
     });
     live.begin();
     // An FX channel's EFFECT TYPE: the one head whose reset IS a family the park reads.
@@ -243,125 +247,120 @@ describe("LiveSync sideEffect converge", () => {
     expect([...excluded[0]!], "that channel's effect family and nothing else").toEqual([silentKey("fx", "bus.fx1")]);
   });
 
-  // The link's composite operations may not overlap, and BOTH directions have to hold. The
-  // flag these replace answered only the first, and answered it wrong across a chain: a
-  // flush releases and the next one — started from its own tail — sets the flag only after
-  // its direct writes, so "no converge" was observable in between.
-  //
-  // Driven through `takeLink` directly, which is what both sides call. What a park does
-  // inside it is main.device.test.ts's; what this holds is that the two cannot be inside at
-  // once, in either order.
-  it("holds the link against a converge queued behind the one in flight", async () => {
+  // What the flush reads BEFORE it writes: the families the heads in this flush are about
+  // to reset on the unit. Taken at the boundary every writer passes through rather than at
+  // one control, so both EFFECT TYPE selectors, an undo of either, the insert-FX selector
+  // and a MIDI mapping are covered by the one read.
+  it("reads what its heads are about to reset before the first write goes out", async () => {
     const plan = basePlan();
-    const live = liveFor(plan);
+    const scopes: Array<{ only?: ReadonlySet<string>; exclude?: ReadonlySet<string>; keepHeads?: boolean }> = [];
+    const writesBefore: number[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async (scope) => {
+        scopes.push(scope);
+        writesBefore.push(vi.mocked(vdSet).mock.calls.length);
+      },
+    });
     live.begin();
-
-    // Round one, and a second side-effect edit while it runs — so a flush is pending when
-    // the first one releases, which is the gap the flag left open.
-    setCh1CompEqType(plan, 1);
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
-    expect(live.isConverging(), "the premise: a round is in flight").toBe(true);
-    setCh1CompEqType(plan, 2);
-    live.schedule();
+    await vi.advanceTimersByTimeAsync(2000);
 
-    let held = false;
-    void live.takeLink().then((give) => {
-      held = true;
-      // Whatever else is queued, nothing converges while this holds it.
-      expect(live.isConverging(), "no round runs inside the park's turn").toBe(false);
-      give();
+    expect(scopes, "one park in front of the writes, one in front of the converge").toHaveLength(2);
+    expect([...(scopes[0]?.only ?? [])], "the family this head resets, and nothing else").toEqual([
+      silentKey("fx", "bus.fx1"),
+    ]);
+    // The plan is already holding the selection the write is about to carry; adopting the
+    // unit's would put the outgoing one back and the write would never go out.
+    expect(scopes[0]?.keepHeads, "the plan's own head stays").toBe(true);
+    expect(writesBefore[0], "taken before anything went out").toBe(0);
+    // …and the one behind the writes leaves that family to the converge, which is what puts
+    // the plan's values back over the reset.
+    expect([...(scopes[1]?.exclude ?? [])]).toEqual([silentKey("fx", "bus.fx1")]);
+    expect(writesBefore[1], "taken after them").toBeGreaterThan(0);
+  });
+
+  // The park merges the unit's own values into the plan, so what goes out has to be derived
+  // from the plan AGAIN. Sent from the list the flush opened with, the write behind the head
+  // carries the app's stale copy — which is the whole thing the park is in front of.
+  it("sends what the park merged rather than the list it opened with", async () => {
+    const plan = basePlan();
+    const hpf = fxParams(1).find((d) => d.key === "revxHpf")!;
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async (scope) => {
+        if (!scope.only) return;
+        // What a read of the unit's outgoing array would have put here.
+        const fx = plan.nodeParams["bus.fx1"]?.fxEffect ?? {};
+        plan.nodeParams["bus.fx1"] = {
+          ...plan.nodeParams["bus.fx1"],
+          fxEffect: { ...fx, params: { ...fx.params, [hpf.key]: 30 } },
+        };
+      },
     });
-    await vi.advanceTimersByTimeAsync(200);
-    expect(held, "held while the first round runs").toBe(false);
-
-    await vi.advanceTimersByTimeAsync(6000);
-    expect(held, "and taken once the rounds are done with it").toBe(true);
-  });
-
-  it("holds a flush off while the link is taken", async () => {
-    const plan = basePlan();
-    const live = liveFor(plan);
     live.begin();
-    const give = await live.takeLink();
-
-    // A side-effect edit while the link is held: the flush may not start, so nothing is
-    // written and no round begins under the holder.
-    setCh1CompEqType(plan, 1);
-    live.schedule();
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(vi.mocked(vdSet), "no write went out under the holder").not.toHaveBeenCalled();
-    expect(live.isConverging()).toBe(false);
-
-    give();
-    await vi.advanceTimersByTimeAsync(2000);
-    // The positive control: the flush was held, not dropped.
-    expect(vi.mocked(vdSet).mock.calls.length, "and it ran once the link came back").toBeGreaterThan(0);
-  });
-
-  // Waiting for a turn is a new place for a session to end. The entry guard runs before the
-  // wait, so without a second look a flush takes its turn and writes over a link that is
-  // gone — and it still has to give the turn back, or everyone behind it waits for ever.
-  it("does not run a flush whose session ended while it waited for the link", async () => {
-    const plan = basePlan();
-    const live = liveFor(plan);
-    live.begin();
-    const give = await live.takeLink();
-    setCh1Fader(plan, -6);
-    live.schedule();
-    await vi.advanceTimersByTimeAsync(300);
-    expect(vi.mocked(vdSet), "the premise: held, not yet run").not.toHaveBeenCalled();
-
-    live.end();
-    give();
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(vi.mocked(vdSet), "nothing goes out over a session that ended in the queue").not.toHaveBeenCalled();
-
-    // …and the turn came back, so the queue behind it still moves.
-    let after = false;
-    void live.takeLink().then((g) => {
-      after = true;
-      g();
-    });
-    await vi.advanceTimersByTimeAsync(100);
-    expect(after, "the turn was given back").toBe(true);
-  });
-
-  it("hands the link on in the order it was asked for", async () => {
-    const plan = basePlan();
-    const live = liveFor(plan);
-    live.begin();
-    const order: number[] = [];
-    const first = await live.takeLink();
-    const queued = [1, 2, 3].map((n) =>
-      live.takeLink().then((give) => {
-        order.push(n);
-        give();
-      }),
-    );
-    first();
-    await Promise.all(queued);
-    // Two EFFECT TYPE selections in a row go through here, and the operator's last one has
-    // to be the one that lands — which it is only if the turns keep their order.
-    expect(order).toEqual([1, 2, 3]);
-  });
-
-  it("gives the link back when the flush inside it fails", async () => {
-    const plan = basePlan();
-    const live = liveFor(plan);
-    live.begin();
-    vi.mocked(vdSet).mockRejectedValue(new Error("nak"));
-    setCh1Fader(plan, -6);
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
-
-    let taken = false;
-    void live.takeLink().then((give) => {
-      taken = true;
-      give();
-    });
     await vi.advanceTimersByTimeAsync(2000);
-    expect(taken, "a failed flush leaves nobody queued behind it").toBe(true);
+
+    const sent = vi.mocked(vdSet).mock.calls.find((c) => c[0] === 681 && c[2] === hpf.slot);
+    expect(sent?.[3], "the unit's own value went back to it").toBe(30);
+  });
+
+  // The park is a READ, and two readers on one link is what the harness catches as invariant
+  // 4. Device follow holds its reconcile off while this answers true, so the window has to
+  // open at the park rather than at the converge behind it.
+  it("holds a reconcile off from the outgoing park onward", async () => {
+    const plan = basePlan();
+    const seen: boolean[] = [];
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async () => void seen.push(live.isConverging()),
+    });
+    live.begin();
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(seen[0], "already closed to a reconcile inside the first park").toBe(true);
+    expect(live.isConverging(), "and open again once the flush is done").toBe(false);
+  });
+
+  // A disconnect can land in that read the way it can in the converge's, and everything
+  // behind it — the head write included — belongs to a session that has gone.
+  it("writes nothing when the session ends inside the outgoing park", async () => {
+    const plan = basePlan();
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async () => live.end(),
+    });
+    live.begin();
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(vi.mocked(vdSet), "not even the head that park was taken for").not.toHaveBeenCalled();
   });
 
   it("takes no park on a flush that does not converge", async () => {

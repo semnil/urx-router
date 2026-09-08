@@ -32,7 +32,7 @@ import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/contr
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
-import { nameControl } from "./core/control/translate";
+import { insertFxControl, nameControl } from "./core/control/translate";
 import { getModel } from "./models";
 import { faceplate, press, wireHit } from "./ui/graph.test-util";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
@@ -2955,6 +2955,10 @@ describe("a value the unit holds and the app cannot write", () => {
 // values, and the writer puts the plan straight back over that. Without a read in front of
 // it, what goes back is the app's stale copy, and nothing on screen knows.
 //
+// The read sits at the WRITE boundary (`live.ts`, in front of the head writes a flush is
+// about to send), not at the control that moved the type — so these cases drive the two
+// selectors, an undo of one, and the insert-FX selector, and all four are answered by it.
+//
 // Both halves are driven, because either alone passes for the wrong reason: "the read
 // happened" is satisfied by the session's own opening readback, and "the unit ends at the
 // tuned value" is satisfied by an app that wrote nothing to that address at all.
@@ -3327,7 +3331,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
   // it, and what is left is the case the browser build is always in: nothing to read, and
   // nothing the write can damage. Losing the selection there would make a disconnect at the
   // wrong moment look like a selector that does not work.
-  it("still writes the type when the session ends inside the wait", SLOW, async () => {
+  it("keeps the selection when the session ends before the flush carries it", SLOW, async () => {
     const { table } = stubWithPanel();
     const shell = (await bootApp({ tauri: table }))!;
     $("btn-live").click();
@@ -3341,12 +3345,21 @@ describe("an EFFECT TYPE change while a session is live", () => {
     compEq.dispatchEvent(new Event("change", { bubbles: true }));
     await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(0), { timeout: 20_000 });
 
+    const gesture = shell.invokes.length;
     pickType(REVX_ROOM);
-    $("btn-live").click(); // the session goes, with the park still waiting
+    $("btn-live").click(); // the session goes, before the flush that would carry it
     await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).not.toBe("true"), { timeout: 20_000 });
     await settled(shell);
 
+    // The selection is a plan edit, so it stands whatever the link does — losing it at a
+    // disconnect would make the selector look like a control that does not work.
     expect(shownType(), "the operator's selection, kept").toBe(REVX_ROOM);
+    // …and it never reached the unit, which is what the plan holding it now means: the next
+    // session's own readback is what settles the two.
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture),
+      "and no type went out over a session that was ending",
+    ).toBe(false);
   });
 
   // The abort rule (architecture.md, "Aborting on failure") at the one place where carrying
@@ -3370,6 +3383,85 @@ describe("an EFFECT TYPE change while a session is live", () => {
       shell.invokes.some((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture),
       "no type reached the unit",
     ).toBe(false);
+    // The plan keeps what the operator chose: the read that failed is what stops the WRITE,
+    // and the selection is theirs to see either way.
+    expect(shownType(), "the selection is still on screen").toBe(REVX_ROOM);
+  });
+
+  // The write boundary is what every writer passes through, and an UNDO is the one that used
+  // to have no read in front of it: it re-types the channel from the plan's own copy, which
+  // was made before whatever the panel had done to the array since.
+  it("reads the outgoing array again when an undo re-types the channel", SLOW, async () => {
+    const REFILLED = 55;
+    const { table, move } = stubWithPanel({ refillsOnType: REFILLED });
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+
+    // A type change first, so there is something to undo — and the unit's value at that
+    // moment reaches the plan the way the case above reads.
+    move(TUNED);
+    pickType(REVX_ROOM);
+    await vi.waitFor(() => expect(shownHpf()).toBe(HPF.format!(TUNED, {})), { timeout: 25_000 });
+    await settled(shell);
+
+    // The hand on the unit again, and then the undo, which re-types the channel.
+    const AGAIN = TUNED + 7;
+    move(AGAIN);
+    const gesture = shell.invokes.length;
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID), "the undo was taken").toBe(1);
+    await vi.waitFor(() => expect(shownType()).toBe(REVX_HALL), { timeout: 25_000 });
+    await vi.waitFor(
+      () =>
+        expect(
+          shell.invokes.some(
+            (cmd, i) =>
+              cmd === "vd_set" && at(shell.args[i]) === FX1_HPF && shell.args[i]?.value === AGAIN && i >= gesture,
+          ),
+          "the unit was given back what it was holding when the undo was pressed",
+        ).toBe(true),
+      { timeout: 30_000 },
+    );
+    expect(shownHpf(), "and the app holds it too").toBe(HPF.format!(AGAIN, {}));
+  });
+
+  // The other writer with the same shape. An insert-FX selector refills its engine array on
+  // the unit exactly as an EFFECT TYPE does, and the app used to re-key its own copy and
+  // write it back without reading the outgoing engine at all.
+  it("reads the outgoing insert-FX engine before the selector goes out", SLOW, async () => {
+    const { table } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+
+    const pickInsertFx = (): number => {
+      pressNode("ch1");
+      const sel = paramRow(t().inspector.insertFxType).querySelector<HTMLSelectElement>("select")!;
+      const options = [...sel.options].map((o) => Number(o.value)).filter((v) => v !== INSERT_FX_NONE);
+      const next = options.find((v) => v !== Number(sel.value))!;
+      sel.value = String(next);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      return next;
+    };
+    // Onto an effect first: with the channel holding No Effect there is no engine to read.
+    pickInsertFx();
+    await settled(shell);
+
+    const gesture = shell.invokes.length;
+    pickInsertFx();
+    const ifx = insertFxControl(getModel("URX44V"), "ch1")!;
+    const selectorAt = (): number =>
+      shell.invokes.findIndex(
+        (cmd, i) => cmd === "vd_set" && at(shell.args[i]) === `${ifx.param}:0:${ifx.instances[0]}` && i >= gesture,
+      );
+    await vi.waitFor(() => expect(selectorAt()).toBeGreaterThan(-1), { timeout: 25_000 });
+
+    const engines = new Set([689, 693, 697, 701]);
+    const engineAt = shell.invokes.findIndex(
+      (cmd, i) => cmd === "vd_get" && engines.has(Number(shell.args[i]?.paramId)) && i >= gesture,
+    );
+    expect(engineAt, "the outgoing engine array was read").toBeGreaterThan(-1);
+    expect(engineAt, "before the selector reached the unit").toBeLessThan(selectorAt());
   });
 });
 
