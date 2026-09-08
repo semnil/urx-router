@@ -143,6 +143,32 @@ describe("DeviceFollow", () => {
     expect(reconcileNodes, "and not downgraded to the scoped one").not.toHaveBeenCalled();
   });
 
+  // …and it belongs to the session that deferred it. The converge held an idle sweep, the
+  // link went down before the retry could run, and the flag stayed set: the NEXT session's
+  // first single-control notify then read the whole device instead of that one node — a
+  // reconnect answering a knob with hundreds of round trips.
+  it("does not carry a deferred full sweep into the next session", async () => {
+    const reconcileAll = vi.fn(async () => {});
+    const reconcileNodes = vi.fn(async () => {});
+    let converging = true;
+    const follow = followFor({ reconcileAll, reconcileNodes, deferReconcile: () => converging });
+    await follow.begin();
+    notify(1);
+    // Past the idle threshold, so what is deferred is the full sweep.
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(reconcileAll, "the premise: the sweep was deferred rather than run").not.toHaveBeenCalled();
+
+    follow.end();
+    converging = false;
+    await follow.begin();
+    notify(2);
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(reconcileNodes, "the new session's own scoped pass").toHaveBeenCalledTimes(1);
+    expect(reconcileNodes).toHaveBeenCalledWith(new Set(["ch1"]));
+    expect(reconcileAll, "and not the previous session's sweep").not.toHaveBeenCalled();
+  });
+
   it("re-reads the owner node once after a scoped burst settles", async () => {
     const reconcileNodes = vi.fn(async () => {});
     const follow = followFor({ reconcileNodes });

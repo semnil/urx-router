@@ -203,6 +203,9 @@ export class DeviceFollow {
     this.gen++;
     this.pending = false;
     this.pendingFull = false;
+    // Both promises about a pass that will not run now. The deferred one outlived its
+    // session: the next one's first scoped burst was answered with a whole-device read.
+    this.deferredFull = false;
     this.clearWindow();
     if (this.settleTimer !== null) {
       clearTimeout(this.settleTimer);
