@@ -113,10 +113,16 @@ const setsAfter = (trace: TraceEvent[], at: number): ReturnType<typeof setsOf> =
  * zero while the plan holds a factory default, so the converge round writes it. That is a
  * property of the fake, not a result, so it is excluded rather than reported: the flush is
  * everything issued before the converge's first read.
+ *
+ * Bounded by the first read AFTER the writes rather than the first read at all, because a
+ * flush carrying a reset head opens with one of its own: the park reads what that head is
+ * about to reset before anything goes out (live.ts). Taken as the boundary, that read left
+ * this reporting an empty flush.
  */
 const flushWrites = (trace: TraceEvent[], at: number): ReturnType<typeof setsOf> => {
-  const firstGet = getsOf(trace).find((g) => g.start > at);
-  return setsAfter(trace, at).filter((s) => firstGet === undefined || s.start < firstGet.start);
+  const sets = setsAfter(trace, at);
+  const firstGet = sets.length === 0 ? undefined : getsOf(trace).find((g) => g.start > sets[0]!.start);
+  return sets.filter((s) => firstGet === undefined || s.start < firstGet.start);
 };
 
 /** Put the fake's device state map into a known shape. Unlike `divergeAt` this is a real

@@ -46,6 +46,10 @@ import { chooseOption } from "../choose-option";
 const FX1_TYPE = "679:0:0";
 const FX1_ARRAY = 681;
 const arr = (slot: number): string => `${FX1_ARRAY}:0:${slot}`;
+/** What a hand on the unit's own panel leaves in the Rev-X HPF slot. The effect arrays
+ *  announce nothing when the front panel moves them, so this value exists on the unit alone
+ *  until something reads it. */
+const PANEL_HPF = 21;
 
 /** Rev-X (FX1 factory type 0) array slots: ON / Mix, then the ten REVX_PARAMS
  *  descriptors — reverbTime 7, revxInitialDelay 9, decay 15, roomSize 12, revxDiffusion 8,
@@ -222,6 +226,14 @@ test.describe("T2d shape-change", () => {
     await clearLedger(page);
     await closeFxScreen(page);
 
+    // A hand on the unit's own panel, which announces NOTHING. The park in front of the type
+    // write is the only thing that can find it, and what it finds is what the two assertions
+    // about the reflect line below are counting.
+    await page.evaluate((a: { k: string; v: number }) => void (window.__urxFake.mem[a.k] = a.v), {
+      k: arr(10),
+      v: PANEL_HPF,
+    });
+
     // Phase 2 — the type change. FX_EFFECT_TYPE is sideEffect "converge", so the flush
     // is followed by a whole-scope read-and-resend; its read pass is what enumerates
     // the new slot family.
@@ -321,7 +333,8 @@ test.describe("T2d shape-change", () => {
     // of the flush below), so counting it here would be counting the wrong thing.
     expect(deviceReflectsAfter(trace, typeWrite!.start)).toBe(0);
     // …and the park's own is there, which is what makes the line above a narrowing rather
-    // than a reading that lost its subject.
+    // than a reading that lost its subject. A park says so on that line only when it FOUND
+    // something the plan did not have, which here is the panel move seeded above.
     expect(deviceReflectsAfter(trace, changeAt)).toBe(1);
     const regAfterChangeAddrs = await paramAddrsOf(page);
     const snapAfterChange = await snapshotOf(page);
@@ -453,20 +466,32 @@ test.describe("T2d shape-change", () => {
     // switch put there. The Rev-X-only slots are the control: same array, same undo,
     // and they are all three of written, read and snapshotted.
     for (const s of DELAY_ONLY) expect(undoSlots.has(s)).toBe(false);
-    // One pass here, not the two the type change had: the park is on the two EFFECT TYPE
-    // selectors and not on the write path, so an undo that re-types the array takes no read
-    // in front of itself and what follows it is the converge's own.
-    expect(readSlotsAfterUndo).toEqual(asc(REVX_SLOTS));
+    // The undo takes a park of its own: the read is at the WRITE boundary rather than on the
+    // two selectors, so every writer that re-types the array is in front of one. TWO passes,
+    // over different families — the park reads the one the UNIT is on, which the type change
+    // left as the delay, and the converge reads the one the plan now holds. Reading the
+    // OUTGOING family is the whole of what a park is for, and before the read moved to the
+    // boundary this window carried the converge's pass alone.
+    expect(readSlotsAfterUndo).toEqual(asc([...new Set([...DELAY_SLOTS, ...REVX_SLOTS])]));
     for (const s of DELAY_ONLY) expect(snapshot?.[arr(s)]).toBeUndefined();
     for (const s of REVX_ONLY) expect(snapshot?.[arr(s)]).toBeDefined();
     // …and the two slots that changed owner without changing number are written in both
-    // directions. The address does not move, but the value at it does: each family
-    // authors its own key, so the switch wrote the delay HPF / LPF there and the undo
-    // writes the Rev-X Initial Delay / HPF back over them — both 0, as read from this
-    // zeroed fake. The control is the window before the switch: while Rev-X was selected
-    // neither slot ever differed from what the device already held, so neither was sent.
+    // directions. The address does not move, but the value at it does: each family authors
+    // its own key, so the switch wrote the delay HPF / LPF there and the undo writes the
+    // Rev-X Initial Delay / HPF back over them. Slot 9 is 0, as read from this zeroed fake.
+    // Slot 10 is 0 as well, and that one is PINNED rather than asserted as right: the park in
+    // front of the type write found the panel's own value there and put it in the plan, and
+    // the undo takes it back out with the group it belongs to. The entry was recorded when
+    // the operator chose the type — BEFORE the park landed — so its before-image carries the
+    // app's pre-park copy, and `absorb` reaches the baseline rather than an entry already on
+    // the stack. Closing that means folding a device read's own leaves into the entries
+    // recorded before it, which changes what an undo of a device-authored value does.
     expect(undoVals.get(9)).toBe(0);
     expect(undoVals.get(10)).toBe(0);
+    // That the park DID find it is the reflect asserted in the type-change window above; this
+    // trace has been re-read since, and carries the undo's own park as well.
+    // While Rev-X was selected neither slot ever differed from what the device already held,
+    // so neither was sent — which is what makes the two writes above the undo's own.
     expect(setsOf(trace).filter((s) => (s.addr === arr(9) || s.addr === arr(10)) && s.start < changeAt)).toHaveLength(
       0,
     );
