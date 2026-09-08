@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections, type Plan, type PlanConnection } from "../plan";
+import { emptyPlan, ensureFixedConnections, type FxEffectParams, type Plan, type PlanConnection } from "../plan";
 import { ref } from "../../models/types";
 
 // readback.ts pulls live values through platform.vdGet, so mock that module: the
@@ -9,7 +9,7 @@ vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdGet, vdGetStr } from "../platform";
 import { COLOR_PALETTE, dGainParam, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS, silentKey } from "./params";
-import { fxEffectTypes, fxParams } from "./fx-effect";
+import { FX_SLOT_LEVEL, FX_SLOT_ON, fxEffectTypes, fxParams } from "./fx-effect";
 import { defaultPlan } from "../../models/initial-state";
 import { applyDeviceState, applySilentState, formatReadbackReport } from "./readback";
 import { readableContestKey } from "../plan-history";
@@ -1397,6 +1397,103 @@ describe("applySilentState", () => {
     expect(r.errors.join(" "), "and the failure names the head").toContain("EFFECT TYPE");
     // The positive control: every other node still landed.
     expect(r.applied).toBeGreaterThan(0);
+  });
+
+  // A family read is one TRANSACTION. An attempt the unit moved a head under is discarded,
+  // and a discarded attempt that has already written leaves the layout it was read in behind
+  // — filed under keys that layout owns, which is the dormant family's own namespace.
+  it("leaves nothing behind from an attempt the head moved under", async () => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const hpf = fxParams(0).find((d) => d.key === "revxHpf")!;
+    const KEPT = 33;
+    plan.nodeParams["bus.fx1"]!.fxEffect!.params![hpf.key] = KEPT;
+    const table = deviceTableFor(plan);
+    // The array answers the delay's own value at that slot, which is what the discarded
+    // attempt would file under the Rev-X key.
+    table.set(`681:0:${hpf.slot}`, 110);
+    let flips = 1;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 681 && flips > 0) {
+        flips--;
+        table.set("679:0:0", delay.value); // the panel, inside the first attempt
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await applySilentState(model, plan);
+
+    expect(r.errors, "the retry settled it").toEqual([]);
+    const fx = plan.nodeParams["bus.fx1"]?.fxEffect;
+    expect(fx?.type, "the unit's own type, from the attempt that held").toBe(delay.value);
+    expect(fx?.params?.[hpf.key], "and the dormant family untouched by the discarded one").toBe(KEPT);
+  });
+
+  // …and when neither attempt holds, the family is left exactly as it was: the caller ends
+  // the session on `unreadNodes`, and what is on screen must not already carry the values
+  // that failure is about.
+  it("leaves the family unchanged when no attempt holds", async () => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const before = structuredClone(plan.nodeParams["bus.fx1"]);
+    const table = deviceTableFor(plan);
+    const types = [delay.value, plan.nodeParams["bus.fx1"]!.fxEffect!.type!];
+    let i = 0;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 679) return Promise.resolve(types[i++ % types.length]);
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await applySilentState(model, plan);
+
+    expect([...r.unreadNodes]).toEqual(["bus.fx1"]);
+    expect(plan.nodeParams["bus.fx1"], "not one value of it moved").toEqual(before);
+  });
+
+  // The layout rule reaches the addresses a HEAD lays out, and no further. An FX channel's
+  // ON and MIX sit in the same array and mean the same thing under every type, so a head the
+  // panel moved says nothing about them — and the guard that keeps an unsent edit is the
+  // whole of what stops the app writing its own back over the operator's.
+  it.each([
+    ["the effect ON", FX_SLOT_ON, 0, (fx: FxEffectParams | undefined) => (fx?.on === false ? 0 : 1)],
+    ["the effect level", FX_SLOT_LEVEL, 40, (fx: FxEffectParams | undefined) => fx?.level],
+  ])("keeps an unsent edit to %s when the unit's head moved", async (_what, slot, edited, read) => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const table = deviceTableFor(plan);
+    table.set("679:0:0", delay.value); // the hand on the unit: another type, unannounced
+    const fx = plan.nodeParams["bus.fx1"]!.fxEffect!;
+    plan.nodeParams["bus.fx1"] = {
+      ...plan.nodeParams["bus.fx1"],
+      fxEffect: slot === FX_SLOT_ON ? { ...fx, on: false } : { ...fx, level: edited },
+    };
+
+    mockVdGetFrom(table);
+    // The snapshot holds the type this session last sent — not the one the panel chose —
+    // and holds every other address as it stands.
+    await applySilentState(model, plan, undefined, undefined, (id) => id !== 679);
+
+    const after = plan.nodeParams["bus.fx1"]?.fxEffect;
+    expect(after?.type, "the unit's own type").toBe(delay.value);
+    expect(read(after), "and the operator's own edit, which no type changes the meaning of").toBe(
+      slot === FX_SLOT_ON ? 0 : edited,
+    );
+  });
+
+  // The same address on the other family: the insert-FX bypass is its own param, not an
+  // engine slot, so the selector moving on the panel leaves it meaning what it always did.
+  it("keeps an unsent insert-FX bypass when the unit's selector moved", async () => {
+    const plan = defaultPlan("URX44V");
+    const was = plan.nodeParams["bus.stereo"];
+    plan.nodeParams["bus.stereo"] = { ...was, insertFx: 1792, insertFxOn: true };
+    const table = deviceTableFor(plan);
+    const ifx = insertFxControl(model, "bus.stereo")!;
+    table.set(`${ifx.param}:0:${ifx.instances[0]}`, 1793); // the panel chose another effect
+    plan.nodeParams["bus.stereo"] = { ...plan.nodeParams["bus.stereo"], insertFxOn: false };
+
+    mockVdGetFrom(table);
+    await applySilentState(model, plan, undefined, undefined, (id) => id !== ifx.param);
+
+    expect(plan.nodeParams["bus.stereo"]?.insertFx, "the unit's own selector").toBe(1793);
+    expect(plan.nodeParams["bus.stereo"]?.insertFxOn, "and the operator's own bypass edit").toBe(false);
   });
 
   it("takes a value the unit moved with nothing announced", async () => {
