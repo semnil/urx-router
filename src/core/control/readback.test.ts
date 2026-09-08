@@ -1275,6 +1275,43 @@ describe("applySilentState", () => {
     ).toBe(90);
   });
 
+  // The params map carries one key per FAMILY, so a channel that has held several effects
+  // keeps each one's values and the emit sends whichever the type names — which is what
+  // makes a type change reversible in the PLAN even though it is not on the unit. A read
+  // answers for one family, so what it brings back is MERGED into what the node holds:
+  // replacing the map took the dormant families with it, and selecting one of them back then
+  // sent the incoming type's factory values rather than what the operator had set. Both
+  // readers apply it, since either one alone leaves the other free to drop them.
+  it.each([
+    ["the silent-address park", (plan: Plan) => applySilentState(model, plan)],
+    ["a full device read", (plan: Plan) => applyDeviceState(model, plan)],
+  ])("keeps a dormant family's values through %s", async (_name, read) => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const delayHpf = fxParams(delay.value).find((d) => d.key === "delayHpf")!;
+    const revxHpf = fxParams(0).find((d) => d.key === "revxHpf")!;
+    const DORMANT = delayHpf.def + 31;
+    const fx = plan.nodeParams["bus.fx1"]!.fxEffect!;
+    // The channel has been on the delay, was set there, and is on Rev-X now. The unit holds
+    // one array, so the delay's own value is the plan's alone.
+    plan.nodeParams["bus.fx1"] = {
+      ...plan.nodeParams["bus.fx1"],
+      fxEffect: { ...fx, params: { ...fx.params, [delayHpf.key]: DORMANT } },
+    };
+    const table = deviceTableFor(plan);
+    table.set(`681:0:${revxHpf.slot}`, 30); // the hand on the unit; no notify exists for it
+
+    mockVdGetFrom(table);
+    const r = await read(plan);
+
+    expect(r.errors).toEqual([]);
+    const params = plan.nodeParams["bus.fx1"]?.fxEffect?.params;
+    // The positive control: the family the type names took the unit's value, so the read
+    // reached this node rather than leaving it untouched.
+    expect(params?.[revxHpf.key], "the active family, read off the unit").toBe(30);
+    expect(params?.[delayHpf.key], "and the dormant family's own value").toBe(DORMANT);
+  });
+
   it("takes a value the unit moved with nothing announced", async () => {
     const plan = defaultPlan("URX44V");
     const hpf = fxParams(0).find((d) => d.key === "revxHpf")!;
