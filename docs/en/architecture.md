@@ -2007,8 +2007,19 @@ read from the unit ahead of the raws behind it and the emit is taken from a plan
 disagree, one address means one parameter on the unit and another in the plan, and answering there hands the read a
 value of the wrong parameter. A read that fails ends the session rather than letting
 the converge write over values it could not confirm ([Aborting on failure](#aborting-on-failure)). An ordinary
-flush takes no park at all, so a drag pays nothing for it; the FX EFFECT TYPE park is the same read, on one family, in
-front of one write (channel-tuning.md, "FX EFFECT").
+flush takes no park at all, so a drag pays nothing for it.
+
+**A flush takes a SECOND park, in front of its own head writes.** The one above is behind them and exists for
+the converge; this one is for the write itself — a head that resets a silent family refills it with the incoming
+type's factory values, so what the unit is holding is the outgoing effect and nothing announces it. The flush
+reads exactly the families its heads reset (`ParamSpec.resets` again, `only` this time), then derives its
+commands from the plan again, so what goes out carries what the read merged. Taken at the boundary rather than
+at the control that moved the head, one read covers every writer: both EFFECT TYPE selectors, an undo of either,
+the insert-FX selector, a MIDI mapping, a plan load. The plan's own heads are left standing there (`keepHeads`)
+— the operator has already chosen the incoming type, and the values are filed under the keys the head the UNIT
+is on owns. Both parks and the converge are one reading phase for device follow, which holds its reconcile off
+across all of it (`live.isConverging`): two readers on one link is what the race harness catches as invariant 4
+(channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
