@@ -283,10 +283,8 @@ export class LiveSync {
   // Inside the sideEffect branch of a flush: the silent-address park and the converge
   // loop. What device follow holds a reconcile off (see `isConverging`).
   private converging = false;
-  // Resolved when the converge in flight leaves that branch. `converged()` awaits it, and
-  // it is replaced rather than reused, so a second converge is a second wait.
-  private convergeDone: Promise<void> | null = null;
-  private endConverge: () => void = () => {};
+  // The tail of the link's composite-operation queue. One holder at a time — see `takeLink`.
+  private linkTail: Promise<void> = Promise.resolve();
   private pending = false;
   // The last flush had to converge (a sideEffect param went out), which re-reads
   // the whole write scope and settles between rounds — seconds, not milliseconds.
@@ -325,20 +323,34 @@ export class LiveSync {
   }
 
   /**
-   * Resolves once no converge is in flight.
+   * Take the link for one COMPOSITE operation, and return what gives it back.
    *
-   * What a read STARTED FROM THE UI waits on — the EFFECT TYPE park. A converge is writing
-   * the whole scope round after round, so a read taken beside one can answer from an array
-   * the converge is part-way through restoring, and the park's whole job is to put what it
-   * reads into the plan. Device follow's reconcile is held off the same window by
-   * `deferReconcile`; this is the same rule for the path the operator drives, which cannot
-   * defer to a timer because a gesture is waiting on it.
+   * Two of them exist and they may not overlap: a flush (its writes, the settle behind them
+   * and the converge those can trigger) and the EFFECT TYPE park (its read, and the write
+   * that read is taken for). A converge rewrites the whole scope round after round, so a
+   * read beside one answers from an array it is part-way through restoring — and the park's
+   * whole job is to put what it reads into the plan. The park's own read is the same hazard
+   * from the other side: a head written while it is in flight resets a family it has already
+   * read, and the value it hands the type write is then the pre-reset one.
    *
-   * A loop rather than one await: a flush that converged can be followed by another that
-   * does, and the wait is over only when neither is.
+   * A QUEUE and not a flag, because both directions have to hold. Asked "is a converge
+   * running", a park found the answer false in the gap between one flush releasing and the
+   * next one — chained from its own tail, and setting the flag only after its direct writes
+   * — reaching its converge; and a flush was never asked at all, so an edit landing mid-park
+   * started a round underneath it. Whoever asked first goes first, so neither starves the
+   * other, and a park that lands between two converges reads a unit that is between them
+   * rather than inside one.
+   *
+   * Given back in the holder's own `finally`, so a round that threw, or one whose session
+   * ended, leaves no one queued behind it.
    */
-  async converged(): Promise<void> {
-    while (this.converging && this.convergeDone) await this.convergeDone;
+  async takeLink(): Promise<() => void> {
+    let give: () => void = () => {};
+    const held = new Promise<void>((resolve) => (give = resolve));
+    const ahead = this.linkTail;
+    this.linkTail = ahead.then(() => held);
+    await ahead;
+    return give;
   }
 
   private scope(): WriteScope {
@@ -754,6 +766,16 @@ export class LiveSync {
       return;
     }
     this.flushing = true;
+    // Held for the whole flush rather than for the converge alone: the head write is what
+    // makes the unit reset, so a park reading between that write and the converge that
+    // restores it reads the reset. `flushing` already serializes flush against flush; this
+    // is the same exclusion against the one composite operation it does not cover.
+    const giveLink = await this.takeLink();
+    if (!this.active) {
+      this.flushing = false;
+      giveLink();
+      return;
+    }
     try {
       // The session this flush is for. `model` and `plan` below are captured once and the
       // re-take at the head of the loop reads those captures, so once the generation moves
@@ -949,7 +971,6 @@ export class LiveSync {
       this.lastFlushConverged = sideEffect;
       if (sideEffect) {
         this.converging = true;
-        this.convergeDone = new Promise<void>((resolve) => (this.endConverge = resolve));
         // The device reset dependents; converge against its post-reset state and
         // rebuild the snapshot so the next diff measures from the device truth.
         // Converge against a frozen copy, not the live plan: an edit that arrives
@@ -1143,10 +1164,9 @@ export class LiveSync {
     } finally {
       this.flushing = false;
       this.converging = false;
-      // Woken whether the converge finished, threw or lost its session — a waiter that is
-      // only released on the happy path is one a failed round leaves parked for ever.
-      this.convergeDone = null;
-      this.endConverge();
+      // Given back whether the flush finished, threw or lost its session: a queue only
+      // drained on the happy path is one a failed round leaves every waiter parked behind.
+      giveLink();
     }
     if (this.pending) {
       this.pending = false;

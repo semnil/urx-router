@@ -1026,14 +1026,23 @@ function holdsSent(paramId: number, x: number, y: number, raw: number): boolean 
 }
 
 async function parkThenWrite(nodeId: string, write: () => void): Promise<void> {
-  // A converge is writing the whole scope round after round, and a read taken beside one can
-  // answer from an array it is part-way through restoring — which this park would then put
-  // into the plan. Device follow's reconcile is held off the same window (`deferReconcile`);
-  // this is that rule for the path the operator drives. Bounded by the converge, and the
-  // gesture is still the operator's when it ends.
-  await live?.converged();
-  // The wait outlives a session that ended inside it. With no device there is nothing to
-  // read and nothing the write can damage, which is the no-session branch of `parkFxEffect`.
+  // The read and the write it is taken for are ONE composite operation on the link, and a
+  // flush is the other: this holds the link across both, so a converge cannot start under
+  // the read and the read cannot start inside one. Queued rather than gated on a flag —
+  // `live.takeLink` says what each direction costs. Given back in the `finally` below,
+  // whichever way this returns.
+  const giveLink = await live?.takeLink();
+  try {
+    await parkedWrite(nodeId, write);
+  } finally {
+    giveLink?.();
+  }
+}
+
+async function parkedWrite(nodeId: string, write: () => void): Promise<void> {
+  // The queue outlives a session that ended while this was in it. With no device there is
+  // nothing to read and nothing the write can damage, which is `parkFxEffect`'s own
+  // no-session branch.
   if (!live?.isActive()) {
     write();
     return;

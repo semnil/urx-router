@@ -243,49 +243,97 @@ describe("LiveSync sideEffect converge", () => {
     expect([...excluded[0]!], "that channel's effect family and nothing else").toEqual([silentKey("fx", "bus.fx1")]);
   });
 
-  // What the UI-driven park waits on. A read beside a converge can answer from an array the
-  // round is part-way through restoring, and the park's whole job is to put what it reads
-  // into the plan — so the gesture waits, and the wait ends with the converge rather than on
-  // a timer, since something is holding for it.
-  it("holds `converged` until the round it is in leaves", async () => {
+  // The link's composite operations may not overlap, and BOTH directions have to hold. The
+  // flag these replace answered only the first, and answered it wrong across a chain: a
+  // flush releases and the next one — started from its own tail — sets the flag only after
+  // its direct writes, so "no converge" was observable in between.
+  //
+  // Driven through `takeLink` directly, which is what both sides call. What a park does
+  // inside it is main.device.test.ts's; what this holds is that the two cannot be inside at
+  // once, in either order.
+  it("holds the link against a converge queued behind the one in flight", async () => {
     const plan = basePlan();
     const live = liveFor(plan);
     live.begin();
-    // Nothing converging: the wait is already over.
-    let settledBeforeAny = false;
-    await live.converged().then(() => (settledBeforeAny = true));
-    expect(settledBeforeAny, "no converge, no wait").toBe(true);
 
+    // Round one, and a second side-effect edit while it runs — so a flush is pending when
+    // the first one releases, which is the gap the flag left open.
     setCh1CompEqType(plan, 1);
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
     expect(live.isConverging(), "the premise: a round is in flight").toBe(true);
-    let released = false;
-    void live.converged().then(() => (released = true));
-    await vi.advanceTimersByTimeAsync(200);
-    expect(released, "held while it runs").toBe(false);
+    setCh1CompEqType(plan, 2);
+    live.schedule();
 
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(live.isConverging()).toBe(false);
-    expect(released, "released when it left").toBe(true);
+    let held = false;
+    void live.takeLink().then((give) => {
+      held = true;
+      // Whatever else is queued, nothing converges while this holds it.
+      expect(live.isConverging(), "no round runs inside the park's turn").toBe(false);
+      give();
+    });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(held, "held while the first round runs").toBe(false);
+
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(held, "and taken once the rounds are done with it").toBe(true);
   });
 
-  // A round that ends by failing is still a round that ended. Released only on the happy
-  // path, a waiter is parked for ever and the gesture behind it never lands.
-  it("releases `converged` when the round fails", async () => {
+  it("holds a flush off while the link is taken", async () => {
     const plan = basePlan();
     const live = liveFor(plan);
     live.begin();
-    let direct = true;
-    vi.mocked(vdSet).mockImplementation(() => (direct ? Promise.resolve() : Promise.reject(new Error("nak"))));
+    const give = await live.takeLink();
+
+    // A side-effect edit while the link is held: the flush may not start, so nothing is
+    // written and no round begins under the holder.
     setCh1CompEqType(plan, 1);
     live.schedule();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(vi.mocked(vdSet), "no write went out under the holder").not.toHaveBeenCalled();
+    expect(live.isConverging()).toBe(false);
+
+    give();
+    await vi.advanceTimersByTimeAsync(2000);
+    // The positive control: the flush was held, not dropped.
+    expect(vi.mocked(vdSet).mock.calls.length, "and it ran once the link came back").toBeGreaterThan(0);
+  });
+
+  it("hands the link on in the order it was asked for", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    const order: number[] = [];
+    const first = await live.takeLink();
+    const queued = [1, 2, 3].map((n) =>
+      live.takeLink().then((give) => {
+        order.push(n);
+        give();
+      }),
+    );
+    first();
+    await Promise.all(queued);
+    // Two EFFECT TYPE selections in a row go through here, and the operator's last one has
+    // to be the one that lands — which it is only if the turns keep their order.
+    expect(order).toEqual([1, 2, 3]);
+  });
+
+  it("gives the link back when the flush inside it fails", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    vi.mocked(vdSet).mockRejectedValue(new Error("nak"));
+    setCh1Fader(plan, -6);
+    live.schedule();
     await vi.advanceTimersByTimeAsync(120);
-    direct = false;
-    let released = false;
-    void live.converged().then(() => (released = true));
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(released, "the failure ended the round, so the wait is over").toBe(true);
+
+    let taken = false;
+    void live.takeLink().then((give) => {
+      taken = true;
+      give();
+    });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(taken, "a failed flush leaves nobody queued behind it").toBe(true);
   });
 
   it("takes no park on a flush that does not converge", async () => {
