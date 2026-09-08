@@ -299,6 +299,34 @@ describe("LiveSync sideEffect converge", () => {
     expect(vi.mocked(vdSet).mock.calls.length, "and it ran once the link came back").toBeGreaterThan(0);
   });
 
+  // Waiting for a turn is a new place for a session to end. The entry guard runs before the
+  // wait, so without a second look a flush takes its turn and writes over a link that is
+  // gone — and it still has to give the turn back, or everyone behind it waits for ever.
+  it("does not run a flush whose session ended while it waited for the link", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    const give = await live.takeLink();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(vi.mocked(vdSet), "the premise: held, not yet run").not.toHaveBeenCalled();
+
+    live.end();
+    give();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(vi.mocked(vdSet), "nothing goes out over a session that ended in the queue").not.toHaveBeenCalled();
+
+    // …and the turn came back, so the queue behind it still moves.
+    let after = false;
+    void live.takeLink().then((g) => {
+      after = true;
+      g();
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(after, "the turn was given back").toBe(true);
+  });
+
   it("hands the link on in the order it was asked for", async () => {
     const plan = basePlan();
     const live = liveFor(plan);
