@@ -2001,7 +2001,11 @@ touched with it, and the converge then wrote the plan's copy of that engine arra
 it. A head that resets an ANNOUNCED bank names nothing at all: COMP/EQ, bus type and pan are device follow's, and the
 park never read them. And it answers with the PLAN's value wherever the unit is still holding what this session last sent
 (`live.holdsSent`), which keeps it off an edit sitting in the plan waiting for the next flush — the merge protects
-an edit made DURING a read, and that one was made before it. A read that fails ends the session rather than letting
+an edit made DURING a read, and that one was made before it. That answer is the plan's own emit, and an emit is LAID
+OUT by the plan's copy of the layout heads — an FX channel's EFFECT TYPE, a node's insert-FX selector. So each head is
+read from the unit ahead of the raws behind it and the emit is taken from a plan wearing the unit's: where the two
+disagree, one address means one parameter on the unit and another in the plan, and answering there hands the read a
+value of the wrong parameter. A read that fails ends the session rather than letting
 the converge write over values it could not confirm ([Aborting on failure](#aborting-on-failure)). An ordinary
 flush takes no park at all, so a drag pays nothing for it; the FX EFFECT TYPE park is the same read, on one family, in
 front of one write (channel-tuning.md, "FX EFFECT").

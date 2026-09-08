@@ -1529,6 +1529,14 @@ time the type goes out, and the array the writer sends after it is the operator'
 copy. Its cost is one round trip per slot in front of the type write; with no live session there is
 nothing to read and the write is immediate.
 
+**The array is read against the type the UNIT holds**, never the plan's copy of it. Two selections inside
+one flush window leave the plan holding a type the unit has not been given — the window coalesces them, so
+only the last one goes out — and the guard above answers from the plan's own emit, which is laid out by that
+unsent type. Read against it, a Rev-X array decodes as a delay: every value filed under a key the outgoing
+effect never had, and the emit behind the second selection sends the incoming type's factory values in their
+place. So the layout head is read from the unit first and the emit is taken from a plan wearing it
+(`readback.applySilentState`), which is the same read the insert-FX selector gets on the other family.
+
 Two properties of that arrangement are load-bearing. A read that FAILS writes no type at all — the
 write behind it is the destructive half, so the session goes down and the plan and the unit are left as
 they are (architecture.md, "Aborting on failure"). And the write runs INSIDE the park rather than
