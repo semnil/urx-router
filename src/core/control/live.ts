@@ -145,7 +145,11 @@ export interface LiveSyncHooks {
    * Called with the plan the converge is about to clone, so what it reads is in the copy.
    * Absent = no park (the browser build, and the tests that do not exercise it).
    */
-  parkSilent?: (reset: ReadonlySet<string>) => Promise<void>;
+  parkSilent?: (scope: {
+    exclude?: ReadonlySet<string>;
+    only?: ReadonlySet<string>;
+    keepHeads?: boolean;
+  }) => Promise<void>;
   /** The follow address set may have moved — re-register against it. Called at the END of a
    *  flush whose capture rebuilt the set, never inside one: a re-registration unsubscribes
    *  before it subscribes, so running it mid-flush would drop the very notifies the refetch's
@@ -280,11 +284,10 @@ export class LiveSync {
   private snapshotEpoch = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
-  // Inside the sideEffect branch of a flush: the silent-address park and the converge
-  // loop. What device follow holds a reconcile off (see `isConverging`).
+  // Inside a flush's reading phases: the park in front of its head writes, the park ahead
+  // of its converge, and the converge loop. What device follow holds a reconcile off (see
+  // `isConverging`).
   private converging = false;
-  // The tail of the link's composite-operation queue. One holder at a time — see `takeLink`.
-  private linkTail: Promise<void> = Promise.resolve();
   private pending = false;
   // The last flush had to converge (a sideEffect param went out), which re-reads
   // the whole write scope and settles between rounds — seconds, not milliseconds.
@@ -308,49 +311,18 @@ export class LiveSync {
   }
 
   /**
-   * Whether a flush is inside its converge — the silent-address park and the rounds
-   * behind it. What device follow holds a reconcile off (`DeviceFollowHooks`
-   * `deferReconcile`).
+   * Whether a flush is READING the unit — the park in front of its head writes, the park
+   * ahead of its converge, and the converge's own rounds. What device follow holds a
+   * reconcile off (`DeviceFollowHooks` `deferReconcile`).
    *
-   * The converge and not the whole flush. A round re-reads the WHOLE write scope and
-   * sends behind it, over and over: a read taken there reads a unit this app is part-way
-   * through rewriting, and the reads of the two interleave for as long as it runs. An
-   * ordinary flush is a handful of writes and no read at all, so a reconcile beside one
+   * Those phases and not the whole flush. A converge round re-reads the WHOLE write scope
+   * and sends behind it, over and over: a read taken there reads a unit this app is
+   * part-way through rewriting, and the reads of the two interleave for as long as it runs.
+   * An ordinary flush is a handful of writes and no read at all, so a reconcile beside one
    * is the app's ordinary two-chain contention rather than a reader of a moving device.
    */
   isConverging(): boolean {
     return this.converging;
-  }
-
-  /**
-   * Take the link for one COMPOSITE operation, and return what gives it back.
-   *
-   * Two of them exist and they may not overlap: a flush (its writes, the settle behind them
-   * and the converge those can trigger) and the EFFECT TYPE park (its read, and the write
-   * that read is taken for). A converge rewrites the whole scope round after round, so a
-   * read beside one answers from an array it is part-way through restoring — and the park's
-   * whole job is to put what it reads into the plan. The park's own read is the same hazard
-   * from the other side: a head written while it is in flight resets a family it has already
-   * read, and the value it hands the type write is then the pre-reset one.
-   *
-   * A QUEUE and not a flag, because both directions have to hold. Asked "is a converge
-   * running", a park found the answer false in the gap between one flush releasing and the
-   * next one — chained from its own tail, and setting the flag only after its direct writes
-   * — reaching its converge; and a flush was never asked at all, so an edit landing mid-park
-   * started a round underneath it. Whoever asked first goes first, so neither starves the
-   * other, and a park that lands between two converges reads a unit that is between them
-   * rather than inside one.
-   *
-   * Given back in the holder's own `finally`, so a round that threw, or one whose session
-   * ended, leaves no one queued behind it.
-   */
-  async takeLink(): Promise<() => void> {
-    let give: () => void = () => {};
-    const held = new Promise<void>((resolve) => (give = resolve));
-    const ahead = this.linkTail;
-    this.linkTail = ahead.then(() => held);
-    await ahead;
-    return give;
   }
 
   private scope(): WriteScope {
@@ -766,16 +738,6 @@ export class LiveSync {
       return;
     }
     this.flushing = true;
-    // Held for the whole flush rather than for the converge alone: the head write is what
-    // makes the unit reset, so a park reading between that write and the converge that
-    // restores it reads the reset. `flushing` already serializes flush against flush; this
-    // is the same exclusion against the one composite operation it does not cover.
-    const giveLink = await this.takeLink();
-    if (!this.active) {
-      this.flushing = false;
-      giveLink();
-      return;
-    }
     try {
       // The session this flush is for. `model` and `plan` below are captured once and the
       // re-take at the head of the loop reads those captures, so once the generation moves
@@ -832,7 +794,7 @@ export class LiveSync {
       // command that puts a node into `refetch` may come after the ones that wrote it.
       const writes = new Map<number, { mark: number; node?: string; changed: boolean; value: number }>();
       const scope = this.scope();
-      const commands = planToCommands(model, plan, scope);
+      let commands = planToCommands(model, plan, scope);
       // The set can only be rebuilt by a capture, and a flush reaches one only through a
       // `sideEffect` param's converge or refetch epilogue — so an edit that moves the set
       // with no such head in it would leave the registration behind until something
@@ -843,6 +805,36 @@ export class LiveSync {
       // Taken before the first await so the rebuild cannot interleave with a capture, and
       // the snapshot is left alone — nothing has been read.
       if (!this.followSetMatches(commands)) this.rebuildFollowSet(model, plan, scope, commands);
+      // What the heads in THIS flush are about to reset on the unit, read BEFORE the first
+      // write goes out. A head write refills those families with the incoming type's factory
+      // values, and the plan is already holding the incoming selection — so the outgoing
+      // effect exists on the unit alone, and nothing announces it (params.ts). Taken here
+      // rather than at the control that moved the head, every writer is covered by one
+      // boundary: both EFFECT TYPE selectors, an undo of one, the insert-FX selector, a MIDI
+      // mapping, a plan load.
+      //
+      // `keepHeads`: the values are filed under the keys the head the UNIT is on owns, and
+      // the selection this flush is about to carry stays the operator's. What the park
+      // leaves in the plan is a DIFF against the snapshot, which is what puts those values
+      // back on the unit after the head write resets them — the converge's own job for
+      // everything else.
+      const outgoing = new Set<string>();
+      for (const c of commands) {
+        const family = RESETS.get(c.name);
+        if (family === undefined || c.node === undefined) continue;
+        if (this.snapshot.get(cmdAddr(c)) === c.vdValue) continue;
+        outgoing.add(silentKey(family, c.node));
+      }
+      if (outgoing.size) {
+        // A read on the link, so device follow holds its reconcile off from here rather than
+        // from the converge: two readers on one link is what invariant 4 catches, and this
+        // one is in front of the writes instead of behind them.
+        this.converging = true;
+        await this.hooks.parkSilent?.({ only: outgoing, keepHeads: true });
+        if (this.sessionGen !== gen) return;
+        // Derived again: the park merged the unit's own values into the plan.
+        commands = planToCommands(model, plan, scope);
+      }
       // Both lists below are frozen at flush start; the snapshots they are diffed against
       // are not. Any await can let a device-side change land (noteDirect's one entry, or a
       // reconcile's whole capture), and what a frozen list carries is then older than what
@@ -983,7 +975,7 @@ export class LiveSync {
         // converge re-sends whatever differs across the whole scope, and for the three
         // silent families the plan's copy can be arbitrarily old. Its own node is left out
         // — that is the one the head just reset, and the converge is what restores it.
-        await this.hooks.parkSilent?.(convergeResets);
+        await this.hooks.parkSilent?.({ exclude: convergeResets });
         if (this.sessionGen !== gen) return;
         const since = this.directSeq;
         const converged = structuredClone(plan);
@@ -1164,9 +1156,6 @@ export class LiveSync {
     } finally {
       this.flushing = false;
       this.converging = false;
-      // Given back whether the flush finished, threw or lost its session: a queue only
-      // drained on the happy path is one a failed round leaves every waiter parked behind.
-      giveLink();
     }
     if (this.pending) {
       this.pending = false;

@@ -50,7 +50,13 @@ import type { ParamName } from "./params";
 import { writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_LEVEL, FX_SLOT_ON, fxParams } from "./fx-effect";
-import { insertFxEngine, insertFxFamilyOf, insertFxReadableSlots, mergeReadInsertFxParams } from "./insert-fx-effect";
+import {
+  insertFxEngine,
+  insertFxFamilyOf,
+  insertFxReadableSlots,
+  mergeReadInsertFxParams,
+  qualifyInsertFxParams,
+} from "./insert-fx-effect";
 import { pairPrimary } from "../routing";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
@@ -445,10 +451,17 @@ export async function applySilentState(
    * rather than per node, since a channel carries a COMP/EQ type and an insert effect at
    * once and only one of them is ever the head's.
    *
-   * `only` narrows the pass to what its caller is about to write over — the EFFECT TYPE
-   * park names that channel's `fx` and nothing else. Absent = every family on every node.
+   * `only` narrows the pass to what its caller is about to write over — the park in front
+   * of a head write names the families that head resets and nothing else. Absent = every
+   * family on every node.
+   *
+   * `keepHeads` leaves the plan's own layout heads standing, and belongs to that same
+   * caller: the plan is holding the selection the write is about to carry while the unit is
+   * still on the outgoing one, so the values are read under the UNIT's head and filed under
+   * the keys that head owns, and the head itself stays the operator's. Adopting it there
+   * would put the outgoing selection back and the write would never go out.
    */
-  scope?: { exclude?: ReadonlySet<string>; only?: ReadonlySet<string> },
+  scope?: { exclude?: ReadonlySet<string>; only?: ReadonlySet<string>; keepHeads?: boolean },
 ): Promise<ReadbackResult> {
   const covers = (family: SilentFamily, nodeId: string): boolean => {
     const key = silentKey(family, nodeId);
@@ -535,7 +548,7 @@ export async function applySilentState(
     attempted.add(node.id);
     try {
       await staged([FX_EFFECT_TYPE_PARAM[fxY], 0, 0], "EFFECT TYPE", (src) =>
-        readFxEffectInto(src, plan, node.id, fxY),
+        readFxEffectInto(src, plan, node.id, fxY, scope?.keepHeads),
       );
       applied++;
     } catch (e) {
@@ -551,7 +564,7 @@ export async function applySilentState(
     attempted.add(node.id);
     try {
       await staged([ifx.param, 0, ifx.instances[0]], "insert-FX selector", (src) =>
-        readInsertFxInto(src, plan, node.id, ifx),
+        readInsertFxInto(src, plan, node.id, ifx, scope?.keepHeads),
       );
       applied++;
     } catch (e) {
@@ -1667,12 +1680,19 @@ async function readFxEffect(source: ParamSource, fxIndex: number): Promise<FxEff
  *
  * Throws on a read failure so the caller keeps the provenance it already tracks.
  */
-async function readFxEffectInto(source: ParamSource, plan: Plan, nodeId: string, fxIndex: number): Promise<number> {
+async function readFxEffectInto(
+  source: ParamSource,
+  plan: Plan,
+  nodeId: string,
+  fxIndex: number,
+  keepHead = false,
+): Promise<number> {
   const read = await readFxEffect(source, fxIndex);
   const was = plan.nodeParams[nodeId];
+  const type = keepHead ? (was?.fxEffect?.type ?? read.type) : read.type;
   plan.nodeParams[nodeId] = {
     ...was,
-    fxEffect: { ...read, params: { ...was?.fxEffect?.params, ...read.params } },
+    fxEffect: { ...read, type, params: { ...was?.fxEffect?.params, ...read.params } },
   };
   return read.type;
 }
@@ -1699,6 +1719,7 @@ async function readInsertFxInto(
   plan: Plan,
   nodeId: string,
   ifx: NonNullable<ReturnType<typeof insertFxControl>>,
+  keepHead = false,
 ): Promise<number> {
   const { vdGet } = readers(source);
   const selector = await vdGet(ifx.param, 0, ifx.instances[0]);
@@ -1724,7 +1745,12 @@ async function readInsertFxInto(
     fam,
     read,
   );
-  plan.nodeParams[nodeId] = { ...was, insertFx, insertFxOn, insertFxParams };
+  // A read files its values under the BARE slot, which is the namespace the selector's own
+  // family owns. Keeping the plan's selector takes that namespace away from them — they are
+  // the OUTGOING family's — so they are qualified under the family they came off instead.
+  plan.nodeParams[nodeId] = keepHead
+    ? { ...was, insertFxParams: qualifyInsertFxParams(insertFxParams, fam) }
+    : { ...was, insertFx, insertFxOn, insertFxParams };
   return selector;
 }
 

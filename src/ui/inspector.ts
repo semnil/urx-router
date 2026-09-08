@@ -115,7 +115,6 @@ export interface InspectorActions {
    *  takes the write rather than answering yes or no, so the app decides when it runs and
    *  what the panel owes it: with no link there is nothing to read and it runs at once.
    *  `write` does NOT run when the read failed. Absent (browser build) = call it yourself. */
-  onParkFxEffect?: (nodeId: string, write: () => void) => void;
   onClose: () => void;
 }
 
@@ -1251,22 +1250,17 @@ function mergeFxEffect(actions: InspectorActions, plan: Plan, nodeId: string, pa
 }
 
 /**
- * Write an FX channel's EFFECT TYPE, with the park in front of it.
+ * Write an FX channel's EFFECT TYPE.
  *
  * The selector is the one command the writer emits that replaces slots nobody named — the
  * unit refills the engine array with the incoming type's factory values — and the writer
  * then puts the plan straight back over that. A value the operator tuned on the unit's own
- * panel is one the plan has never seen, because the effect arrays announce nothing, so
- * `onParkFxEffect` reads it into the plan first and the write sends it back.
- *
- * The group is rebuilt INSIDE the write, through `mergeFxEffect`, which reads the stored
- * effect at edit time: the park merges the unit's values into it, and a copy taken in front
- * of the read would write the pre-read effect back over them.
+ * panel is one the plan has never seen, because the effect arrays announce nothing. What
+ * reads it first is the park at the WRITE boundary (`live.ts`), which is why this is an
+ * ordinary plan edit: the read covers this row, the CONSOLE popover and an undo of either.
  */
 function setFxEffectType(actions: InspectorActions, plan: Plan, nodeId: string, type: number): void {
-  const write = (): void => mergeFxEffect(actions, plan, nodeId, { type });
-  if (actions.onParkFxEffect) actions.onParkFxEffect(nodeId, write);
-  else write();
+  mergeFxEffect(actions, plan, nodeId, { type });
 }
 
 // FX-channel EFFECT section: the EFFECT TYPE selector, the effect ON toggle and the

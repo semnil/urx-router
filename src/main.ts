@@ -59,7 +59,6 @@ import {
   PARAMS,
   REC_POINT_PRE_COMP,
   REC_POINT_PRE_EQ,
-  silentKey,
 } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { LabelSource, Selection, ThemeName } from "./ui/graph";
@@ -500,11 +499,9 @@ const live = DEMO
       // edit this flush has not sent, `absorb` takes what it authored into the baseline
       // without spending the operator's open gesture, and a read that FAILS ends the session
       // rather than letting the converge write over values it could not confirm.
-      parkSilent: async (reset) => {
+      parkSilent: async (scope) => {
         const merged = await followRead("silent-address park", (into, signal) =>
-          applySilentState(getModel(modelId), into, signal, live?.recentPending(), holdsSent, {
-            exclude: reset,
-          }),
+          applySilentState(getModel(modelId), into, signal, live?.recentPending(), holdsSent, scope),
         ).catch((err: unknown) => {
           stopLiveOnError(errorText(err));
           return null;
@@ -525,7 +522,24 @@ const live = DEMO
         noteMergeConflicts(merged);
         planHistory?.absorb(merged.devicePatch);
         for (const e of merged.devicePatch) if (e.field === "nodeParams") followDirtyNodes.add(e.key);
-        requestReflect();
+        // Drained here rather than left on `requestReflect`'s timer. That timer is for
+        // coalescing a 20 Hz stream and this is one read — and its arrival AFTER the rebuild
+        // below is what makes the difference: a reflect landing then asks the panel to
+        // rebuild, the gate holds that for the select the operator chose in, and their next
+        // press anywhere is spent releasing the hold.
+        reflectFollow();
+        // Said on the same line a reconcile says it on, and by the park that runs inside the
+        // operator's OWN gesture: they moved a head, and what this found is the unit's answer
+        // to it — a reverb tuned on the panel appearing in the app. The park the converge
+        // takes is not that gesture, and the flush reports what it sends on the same line, so
+        // saying it there would announce one repair twice.
+        if (scope.only) setStatus(t().status.liveFollowed(merged.applied));
+        // Past the gate, because this arrives inside the operator's OWN gesture: a park runs
+        // in front of a head write, and the head is a selector they have just chosen in — so
+        // the control the gate would hold the rebuild for is the one showing the stale value,
+        // and their next press elsewhere is spent releasing the hold rather than doing what
+        // they pressed for.
+        rebuildInspectorNow();
       },
       // The flush's capture rebuilt the follow address set — re-register against it. Only a
       // STRUCTURAL edit moves that set (a mode change, a wire), so this is a no-op on the
@@ -587,8 +601,6 @@ const consoleView = new Console(consoleHost, {
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
   onOpenDynScreen: (kind, id) => dynScreen.open(DYN_PROCESSORS[kind], id),
-  // The read an EFFECT TYPE press takes in front of itself (parkFxEffect).
-  onParkFxEffect: parkFxEffect,
   // MIDI learn: while learn mode is on, console controls arm for binding instead
   // of editing.
   midi: midiLearnHooks,
@@ -974,43 +986,6 @@ async function followRead(
 }
 
 /**
- * Read an FX channel off the unit, then write its EFFECT TYPE — the park the two EFFECT
- * TYPE selectors (the CONSOLE popover and the inspector row) both take.
- *
- * The effect arrays announce nothing when the unit's own panel moves them, so a reverb
- * tuned there is a value the plan has never seen. Writing the type refills the array on
- * the unit with the incoming type's factory values, and the writer puts the plan straight
- * back over that — the plan's copy of the outgoing effect, not the operator's. This read
- * puts the unit's own values into the plan first, so what the write sends back is what the
- * unit is holding. Its cost is one round trip per slot in front of the type write.
- *
- * A scoped reconcile of that one node, rather than a read of the array alone: it carries
- * the settle for this session's own recent writes (a slot written 40 ms ago still answers
- * with the value it replaced) and the merge that leaves an edit made meanwhile standing,
- * and both are already spelled once here.
- *
- * The write is handed OVER rather than left to a caller behind an `await`, and that is not
- * a style choice. With no session there is nothing to read, so it runs at once and the
- * gesture stays synchronous — which is what the browser build and every path with no link
- * get. With one, it runs after a read, OUTSIDE the `change` event the inspector's rebuild
- * gate flushes on, so the rebuild it asks for has to be taken here (the ungated one, at the
- * end). Behind a caller's `await` that flush had already run by the time the write landed,
- * the gate then held the rebuild for a select that still had focus, and the panel kept the
- * OUTGOING effect's controls until the operator pressed something else — a press that
- * released the hold, replaced the control under the pointer, and was swallowed with it.
- *
- * Nothing is written when the read failed: the session is going down with it, or the plan
- * it read into is no longer the open document.
- */
-function parkFxEffect(nodeId: string, write: () => void): void {
-  if (!live?.isActive()) {
-    write();
-    return;
-  }
-  void parkThenWrite(nodeId, write);
-}
-
-/**
  * Whether the unit is still holding what this session last sent to an address.
  *
  * Both parks read through it (`readback.sentOverlay`), and for the same reason: a park
@@ -1023,84 +998,6 @@ function parkFxEffect(nodeId: string, write: () => void): void {
  */
 function holdsSent(paramId: number, x: number, y: number, raw: number): boolean {
   return live ? live.holdsSent(paramId, x, y, raw) : false;
-}
-
-async function parkThenWrite(nodeId: string, write: () => void): Promise<void> {
-  // The read and the write it is taken for are ONE composite operation on the link, and a
-  // flush is the other: this holds the link across both, so a converge cannot start under
-  // the read and the read cannot start inside one. Queued rather than gated on a flag —
-  // `live.takeLink` says what each direction costs. Given back in the `finally` below,
-  // whichever way this returns.
-  const giveLink = await live?.takeLink();
-  try {
-    await parkedWrite(nodeId, write);
-  } finally {
-    giveLink?.();
-  }
-}
-
-async function parkedWrite(nodeId: string, write: () => void): Promise<void> {
-  // The queue outlives a session that ended while this was in it. With no device there is
-  // nothing to read and nothing the write can damage, which is `parkFxEffect`'s own
-  // no-session branch.
-  if (!live?.isActive()) {
-    write();
-    return;
-  }
-  // Taken before the read is issued, for the reason the scoped reconcile takes one: a
-  // direct notify landing while it is in flight is device truth the read's private copy
-  // predates, and the re-base below rebuilds the snapshot from that copy.
-  const since = live?.directMark();
-  const pending = live?.recentPending(new Set([nodeId]));
-  let merged: MergedRead | null;
-  try {
-    // This channel's effect family and nothing else — the one thing the type write is about
-    // to replace. Read as a whole node it also brought back every ANNOUNCED value of that
-    // node, which device follow already covers, and each of those arrived as the unit's
-    // rather than as the operator's: an Effect ON toggled a moment earlier and still waiting
-    // for its flush was read back OFF and went out that way.
-    merged = await followRead("FX effect park", (into, signal) =>
-      applySilentState(getModel(modelId), into, signal, pending, holdsSent, {
-        only: new Set([silentKey("fx", nodeId)]),
-      }),
-    );
-  } catch (err) {
-    // A park that could not read is a park that cannot promise anything, and the type
-    // write behind it is the destructive half. Take the link down and leave the plan —
-    // and the unit — as they are.
-    stopLiveOnError(errorText(err));
-    return;
-  }
-  if (!merged) return;
-  traceProbe?.sample("follow-scoped");
-  noteMergeConflicts(merged);
-  live?.resync(merged.deviceView, since);
-  // absorb, not reset: this read is the first half of the operator's own gesture and the
-  // type write is the second, so a reset would drop the entry that gesture is about to
-  // make. What it authored is the unit's, and no earlier entry describes a state the plan
-  // can return to.
-  planHistory?.absorb(merged.devicePatch);
-  followDirtyNodes.add(nodeId);
-  // Drained here rather than left on `requestReflect`'s timer. That timer exists to
-  // coalesce a 20 Hz stream and there is one read here, and its arrival AFTER the two calls
-  // below is what makes the difference: a reflect landing then asks the panel to rebuild,
-  // the gate holds that for the select the operator chose in, and the next press anywhere
-  // is spent releasing the hold — it replaces the control under the pointer and is
-  // swallowed with it. Ahead of them, the ungated rebuild is the last word.
-  reflectFollow();
-  try {
-    assertReadComplete(merged, "FX effect park issues:");
-  } catch (err) {
-    stopLiveOnError(errorText(err));
-    return;
-  }
-  reapplyHeld(merged);
-  write();
-  // The write landed outside the `change` event whose own listener flushes the panel's
-  // rebuild gate, so the rebuild it just asked for is held for a select that still has
-  // focus and would wait for whatever the operator did next. This is a change the OPERATOR
-  // made, which is what the ungated rebuild is for.
-  rebuildInspectorNow();
 }
 
 const follow =
@@ -1568,9 +1465,6 @@ function assignOrDelete<K extends keyof NodeParams>(np: NodeParams, key: K, valu
 
 const inspectorActions = {
   onDeleteConnection: (from: string, to: string) => graph.deleteConnection(from, to),
-  // The read an EFFECT TYPE selection takes in front of itself (parkFxEffect). The same
-  // function the CONSOLE popover takes, because the two write the same value.
-  onParkFxEffect: parkFxEffect,
   // Mutate params in place without re-rendering, so the slider keeps focus while dragging.
   onUpdateParams: (from: string, to: string, patch: ConnParams) => {
     const conn = plan.connections.find((c) => c.from === from && c.to === to);
