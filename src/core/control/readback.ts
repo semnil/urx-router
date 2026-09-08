@@ -351,6 +351,36 @@ function sentOverlay(
   };
 }
 
+/**
+ * Read a family whose layout a HEAD decides, and confirm the head did not move under it.
+ *
+ * The values behind such a head mean nothing without it: read while the unit was on one
+ * type and filed under another's keys, they are a parameter set the unit never had. So the
+ * head is read again once the values are in, and a read the unit moved under is taken a
+ * SECOND time — against the head the unit holds now, and with no plan substitution, since
+ * the emit that guard answers from is laid out by the head the first attempt started from.
+ * A head that moves twice fails the node, which is what every other read here does with
+ * values it could not complete.
+ *
+ * `read` answers with the head value it used; `onMoved` hands a fresh one back to whatever
+ * cached it.
+ */
+async function readWithStableHead(
+  recheck: ParamSource,
+  head: readonly [number, number, number],
+  what: string,
+  read: (attempt: number) => Promise<number>,
+  onMoved?: (now: number) => void,
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    const used = await read(attempt);
+    const now = await recheck.get(head[0], head[1], head[2]);
+    if (now === used) return;
+    if (attempt > 0) throw new Error(`the ${what} kept moving while the values behind it were read`);
+    onMoved?.(now);
+  }
+}
+
 /** Read one layout head and record it, so the family read behind it takes this answer
  *  rather than asking the link for the same address a second time. */
 async function readHead(
@@ -477,6 +507,26 @@ export async function applySilentState(
     }
   }
   const source = sentOverlay(base, model, asUnit, sent, heads);
+  // The same source with the guard off. What the guard answers with is the plan's emit, and
+  // an emit is comparable to the unit only while the unit's head is the one this session
+  // last sent there: moved on the panel, the SNAPSHOT it is judged against holds the
+  // previous layout's raws, so a slot whose two layouts happen to agree on a number reads
+  // as "still what we sent" and the unit's own value is replaced by the plan's.
+  const plain = sentOverlay(base, model, asUnit, undefined, heads);
+  const agrees = (head: readonly [number, number, number]): boolean =>
+    sent !== undefined && sent(head[0], head[1], head[2], heads.get(addrKey(head[0], head[1], head[2])) ?? Number.NaN);
+  const staged = (
+    head: readonly [number, number, number],
+    what: string,
+    read: (src: ParamSource) => Promise<number>,
+  ): Promise<void> =>
+    readWithStableHead(
+      base,
+      head,
+      what,
+      (attempt) => read(attempt === 0 && agrees(head) ? source : plain),
+      (now) => heads.set(addrKey(head[0], head[1], head[2]), now),
+    );
 
   for (const node of model.nodes) {
     signal?.throwIfAborted();
@@ -484,7 +534,9 @@ export async function applySilentState(
     if (fxY === null || !covers("fx", node.id) || failed.has(node.id)) continue;
     attempted.add(node.id);
     try {
-      await readFxEffectInto(source, plan, node.id, fxY);
+      await staged([FX_EFFECT_TYPE_PARAM[fxY], 0, 0], "EFFECT TYPE", (src) =>
+        readFxEffectInto(src, plan, node.id, fxY),
+      );
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -498,7 +550,9 @@ export async function applySilentState(
     if (!ifx || !covers("insertFx", node.id) || failed.has(node.id)) continue;
     attempted.add(node.id);
     try {
-      await readInsertFxInto(source, plan, node.id, ifx);
+      await staged([ifx.param, 0, ifx.instances[0]], "insert-FX selector", (src) =>
+        readInsertFxInto(src, plan, node.id, ifx),
+      );
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -703,7 +757,9 @@ async function readPass(
     // read whether or not the FX → STEREO main path is wired.
     attempted.add(node.id);
     try {
-      await readFxEffectInto(source, plan, node.id, fxY);
+      await readWithStableHead(source, [FX_EFFECT_TYPE_PARAM[fxY], 0, 0], "EFFECT TYPE", () =>
+        readFxEffectInto(source, plan, node.id, fxY),
+      );
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -840,7 +896,9 @@ async function readPass(
     if (!ifx) continue;
     attempted.add(node.id);
     try {
-      await readInsertFxInto(source, plan, node.id, ifx);
+      await readWithStableHead(source, [ifx.param, 0, ifx.instances[0]], "insert-FX selector", () =>
+        readInsertFxInto(source, plan, node.id, ifx),
+      );
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -1582,7 +1640,7 @@ async function readSsmcsBand(
 
 // Read an FX channel's EFFECT TYPE + parameter array (mirrors pushFxEffectCommands).
 // The type picks the family, then each family slot is read raw. fxIndex 0 / 1.
-async function readFxEffect(source: ParamSource, fxIndex: number): Promise<FxEffectParams> {
+async function readFxEffect(source: ParamSource, fxIndex: number): Promise<FxEffectParams & { type: number }> {
   const { vdGet } = readers(source);
   const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
   const type = await vdGet(FX_EFFECT_TYPE_PARAM[fxIndex], 0, 0);
@@ -1609,13 +1667,14 @@ async function readFxEffect(source: ParamSource, fxIndex: number): Promise<FxEff
  *
  * Throws on a read failure so the caller keeps the provenance it already tracks.
  */
-async function readFxEffectInto(source: ParamSource, plan: Plan, nodeId: string, fxIndex: number): Promise<void> {
+async function readFxEffectInto(source: ParamSource, plan: Plan, nodeId: string, fxIndex: number): Promise<number> {
   const read = await readFxEffect(source, fxIndex);
   const was = plan.nodeParams[nodeId];
   plan.nodeParams[nodeId] = {
     ...was,
     fxEffect: { ...read, params: { ...was?.fxEffect?.params, ...read.params } },
   };
+  return read.type;
 }
 
 /** A channel's input gain: A.Gain on a mono channel, D.Gain on a stereo one (linked
@@ -1640,9 +1699,10 @@ async function readInsertFxInto(
   plan: Plan,
   nodeId: string,
   ifx: NonNullable<ReturnType<typeof insertFxControl>>,
-): Promise<void> {
+): Promise<number> {
   const { vdGet } = readers(source);
-  const insertFx = normalizeInsertFx(await vdGet(ifx.param, 0, ifx.instances[0]));
+  const selector = await vdGet(ifx.param, 0, ifx.instances[0]);
+  const insertFx = normalizeInsertFx(selector);
   const insertFxOn = vdToBool(await vdGet(ifx.onParam, 0, ifx.instances[0]));
   const fam = insertFxFamilyOf(insertFx);
   const read: Record<number, number> = {};
@@ -1665,6 +1725,7 @@ async function readInsertFxInto(
     read,
   );
   plan.nodeParams[nodeId] = { ...was, insertFx, insertFxOn, insertFxParams };
+  return selector;
 }
 
 // Read the SSMCS morphing-strip raw values for a MONO IN channel (mirrors
