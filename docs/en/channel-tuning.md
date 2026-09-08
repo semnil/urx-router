@@ -1504,7 +1504,11 @@ Putting it on a face of knobs would make those two edits look alike.
 channel keeps every family's values side by side under keys that carry the family name (`revxHpf` /
 `revr3Hpf` / `delayHpf`), so the outgoing effect's settings stay where they are and selecting a type of
 that family back finds them. Within one family the three Rev-X types share those keys, so a swap
-between them shares the values too rather than parking one set and restoring it. On the UNIT the array is refilled, and the writer then puts the plan back over it, so
+between them shares the values too rather than parking one set and restoring it. A device read of that
+channel MERGES into the map rather than replacing it — a read answers for the family the type names, and
+replacing took the dormant families out with it, so selecting one of them back sent the incoming type's
+factory values rather than what the operator had set (`readback.readFxEffectInto`, both the park and the
+full read). On the UNIT the array is refilled, and the writer then puts the plan back over it, so
 the two agree again. What would otherwise be lost is **a value the unit holds that the plan has never
 seen** — and that is reachable, because the effect arrays announce nothing when the front panel moves
 them (architecture.md, "Live sync"): an operator who tunes a reverb on the unit itself and then changes
