@@ -1567,9 +1567,10 @@ spent releasing the hold rather than doing what they pressed for.
 than at the selectors — and it gives back what the park found rather than the copy the app held before
 it. The entry was recorded when the operator chose the type, BEFORE that park landed, so its own
 before-image carried the pre-park value; what stops an undo sending that is `absorb` folding the read's
-own leaves into the entries recorded before it, wherever the entry would put back exactly what the read
-measured from (architecture.md, "Undo / redo"). A leaf the gesture itself moved is untouched, and the
-undo takes it back as it always did. `e2e/race/t2d-shape-change.spec.ts` pins the read in front of the
+own leaves into the entries recorded before it — a nested leaf whose `before` AND `after` both hold what
+the read measured from, which is what says the gesture never touched it, and both sides then take the
+unit's value (architecture.md, "Undo / redo"). A leaf the gesture moved differs on one of those sides,
+so it is left alone and the undo takes it back as it always did. `e2e/race/t2d-shape-change.spec.ts` pins the read in front of the
 selector, the read in front of the undo, and the panel value the undo hands back.
 
 **The same read generalises to every converge**, which is where the rest of the silent addresses are covered: a

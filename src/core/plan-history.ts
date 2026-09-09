@@ -545,9 +545,10 @@ function narrowGroup(current: unknown, before: Slot<unknown>, after: Slot<unknow
  *
  * Both sides of the entry are what applying it would put back — the `before` an undo writes,
  * the `after` a redo does — and `p` is the read's own entry for the same field and key. A
- * value the entry would restore to exactly what the read measured FROM is one the device has
- * since corrected, so the entry takes the read's own value there; anything else is what the
- * gesture moved, and stays the operator's.
+ * nested leaf BOTH sides hold what the read measured from is one the gesture did not touch
+ * and the device has since corrected, so both sides take the read's own value there. Anything
+ * either side moves is the gesture's and stays the operator's, and a whole field is never
+ * folded at all.
  */
 function foldAuthored(e: PlanPatchEntry, p: PlanPatchEntry): void {
   // The params records and nothing else. Every other field a patch carries is whole, and a
@@ -945,15 +946,18 @@ export class PlanHistoryStack {
    *  agrees with is one the app has moved since — the device is only echoing the app's
    *  own write back on it — and that key is skipped. Both stacks stand.
    *
-   *  The ENTRIES take it too, wherever they would put the read's own `before` side back.
-   *  The baseline alone is enough while every read lands inside the gesture that scheduled
-   *  it; the park in front of a head write does not — the plan edit that triggers its flush
-   *  is recorded first, so the entry's before-image still carries the value the unit has
-   *  since corrected, and undoing it sends the app's stale copy back to the unit. Which is
-   *  the one thing that park exists to stop. Per LEAF and only where the entry holds what
-   *  the read measured from: a leaf the gesture itself moved is the operator's and stays
-   *  theirs. Both sides of both stacks, since a redo applies the `after` side and the same
-   *  stale value sits there. */
+   *  The ENTRIES take it too, under one condition. The baseline alone is enough while every
+   *  read lands inside the gesture that scheduled it; the park in front of a head write does
+   *  not — the plan edit that triggers its flush is recorded first, so the entry's
+   *  before-image still carries the value the unit has since corrected, and undoing it sends
+   *  the app's stale copy back to the unit. Which is the one thing that park exists to stop.
+   *
+   *  The condition: for a NESTED leaf of a `nodeParams` / `connParams` entry, where the
+   *  entry's `before` AND its `after` both hold what the read measured from, both sides take
+   *  the read's own value. Nothing else — a leaf either side moves is the gesture's, and a
+   *  whole-field entry is never folded, since a field is in a patch because the gesture moved
+   *  it. Both stacks, since a redo applies the `after` side and the same stale value sits
+   *  there. See `foldUntouched` for why one side is no evidence. */
   absorb(patch: PlanPatch): void {
     if (!patch.length) return;
     applyPatchInContext(this.baseline, patch);
