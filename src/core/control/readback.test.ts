@@ -16,6 +16,7 @@ import { readableContestKey } from "../plan-history";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { addrKey, insertFxControl, planToCommands } from "./translate";
+import { insertFxReadableSlots } from "./insert-fx-effect";
 
 const model = getModel("URX44V");
 
@@ -1165,10 +1166,12 @@ describe("applySilentState", () => {
     // nothing at all, and by one that never found a D.Gain.
     expect([...ids].filter((id) => FX_ARRAY.has(id)).length, "both FX channels' arrays").toBe(2);
     expect([...ids].filter((id) => dGainIds().has(id)).length, "every stereo channel's D.Gain").toBe(4);
-    // Every address once, and the layout heads twice — the second reading is what says the
-    // unit did not move the head under the values it lays out. Nothing else may repeat: the
-    // park stands between the operator's gesture and the write it precedes, so every read it
-    // takes is latency in that gesture.
+    // How many times each address is asked for, which is latency in the operator's own
+    // gesture: the park stands between it and the write it precedes. A family a HEAD lays out
+    // is read TWICE — the pair that has to agree before anything is applied, which is the
+    // only thing that can see a head taken away and brought back — and each head once more
+    // than that, ahead of the pass and behind each of the two readings. D.Gain has no head
+    // and no pair: one read.
     const heads = new Set([
       "679:0:0",
       "683:0:0",
@@ -1177,9 +1180,13 @@ describe("applySilentState", () => {
         return ifx ? [`${ifx.param}:0:${ifx.instances[0]}`] : [];
       }),
     ]);
-    const repeated = seen.filter((a, i) => seen.indexOf(a) !== i);
-    expect(new Set(repeated), "read twice: the layout heads, and nothing else").toEqual(heads);
-    expect(seen.length - new Set(seen).size, "each of them exactly once more").toBe(heads.size);
+    const counts = new Map<string, number>();
+    for (const a of seen) counts.set(a, (counts.get(a) ?? 0) + 1);
+    const wrong = [...counts].filter(([addr, n]) => {
+      const want = heads.has(addr) ? 3 : dGainIds().has(Number(addr.split(":")[0])) ? 1 : 2;
+      return n !== want;
+    });
+    expect(wrong, "each address read the number of times its family needs").toEqual([]);
   });
 
   // What "narrow" is worth saying at all: these are addresses the OWNER NODES carry and a
@@ -1494,6 +1501,97 @@ describe("applySilentState", () => {
 
     expect(plan.nodeParams["bus.stereo"]?.insertFx, "the unit's own selector").toBe(1793);
     expect(plan.nodeParams["bus.stereo"]?.insertFxOn, "and the operator's own bypass edit").toBe(false);
+  });
+
+  // A head that is back where it started says nothing about what happened in between. The
+  // values are read one address at a time, so a selector taken to another effect and back
+  // inside that run leaves the two readings of it equal while the raws between them came off
+  // the OTHER layout — and they are then filed under the keys of the one the unit ended on.
+  // Both readers, and both callers, since the four share one helper.
+  it.each([
+    ["the silent park", (plan: Plan) => applySilentState(model, plan)],
+    ["a full device read", (plan: Plan) => applyDeviceState(model, plan)],
+  ])("refuses an FX array whose type went away and came back during %s", async (_name, read) => {
+    const plan = defaultPlan("URX44V");
+    const time = fxParams(0).find((d) => d.key === "reverbTime")!;
+    const table = deviceTableFor(plan);
+    const STEADY = table.get(`681:0:${time.slot}`)!;
+    const DURING = STEADY + 37;
+    // One pass' worth of array reads answer the OTHER layout's values while both readings of
+    // the head answer the type the unit started and ended on.
+    let contaminated = fxParams(0).length + 2;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 681 && contaminated > 0) {
+        contaminated--;
+        return Promise.resolve(DURING);
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await read(plan);
+
+    expect(r.errors).toEqual([]);
+    expect(
+      plan.nodeParams["bus.fx1"]?.fxEffect?.params?.[time.key],
+      "the value the unit held either side of the excursion",
+    ).toBe(STEADY);
+  });
+
+  // …and the pair is compared on the VALUES, not on the head alone. With the excursion in the
+  // SECOND reading rather than the first, a rule that pairs two readings by their head takes
+  // the dirty one — it is the later of the two, and the later one is what gets applied.
+  it.each([
+    ["the silent park", (plan: Plan) => applySilentState(model, plan)],
+    ["a full device read", (plan: Plan) => applyDeviceState(model, plan)],
+  ])("pairs two readings by what they saw, not by the head alone, during %s", async (_name, read) => {
+    const plan = defaultPlan("URX44V");
+    const time = fxParams(0).find((d) => d.key === "reverbTime")!;
+    const table = deviceTableFor(plan);
+    const STEADY = table.get(`681:0:${time.slot}`)!;
+    const DURING = STEADY + 41;
+    // The first reading is clean; the excursion lands inside the second.
+    const perPass = fxParams(0).length + 2;
+    let arrayReads = 0;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 681) {
+        arrayReads++;
+        if (arrayReads > perPass && arrayReads <= perPass * 2) return Promise.resolve(DURING);
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await read(plan);
+
+    expect(r.errors).toEqual([]);
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect?.params?.[time.key], "the value two agreeing readings saw").toBe(
+      STEADY,
+    );
+  });
+
+  it.each([
+    ["the silent park", (plan: Plan) => applySilentState(model, plan)],
+    ["a full device read", (plan: Plan) => applyDeviceState(model, plan)],
+  ])("refuses an insert-FX engine whose selector went away and came back during %s", async (_name, read) => {
+    const plan = defaultPlan("URX44V");
+    const was = plan.nodeParams["bus.stereo"];
+    plan.nodeParams["bus.stereo"] = { ...was, insertFx: 1792, insertFxOn: true, insertFxParams: { "mbc:14": 97 } };
+    const table = deviceTableFor(plan);
+    const ifx = insertFxControl(model, "bus.stereo")!;
+    const engine = 693;
+    const STEADY = table.get(`${engine}:0:14`)!;
+    const DURING = STEADY + 13;
+    let contaminated = insertFxReadableSlots("mbc").length;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === engine && contaminated > 0) {
+        contaminated--;
+        return Promise.resolve(DURING);
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await read(plan);
+
+    expect(r.errors).toEqual([]);
+    expect(plan.nodeParams["bus.stereo"]?.insertFx, "the selector either side of the excursion").toBe(1792);
+    expect(plan.nodeParams["bus.stereo"]?.insertFxParams?.["14"], "and the value that family really held").toBe(STEADY);
+    void ifx;
   });
 
   it("takes a value the unit moved with nothing announced", async () => {
