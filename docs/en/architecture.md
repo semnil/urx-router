@@ -2102,7 +2102,7 @@ just grew is absent from the clone and is left out of the snapshot entirely, for
 | --- | --- | --- |
 | Session start | `begin` from the starting read's clone | `reset` |
 | App edit, `markChanged` | per address, as its own write returns | entry opened, closed at the gesture boundary |
-| Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands |
+| Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands, and the entries already recorded take those keys wherever they would put back exactly what the read measured from |
 | Reconcile readback, scoped or full | `resync` from the read's clone, then the direct journal's entries stamped after the read was issued | `reset`, in the reflect |
 | EQ 1-knob refetch | `capture` from the read's clone, then the same journal replay | `absorb` of the device-authored keys only |
 | Converge round | `capture` from the frozen clone | untouched |

@@ -1564,10 +1564,13 @@ would hold the rebuild for is the one showing the stale value — so their next 
 spent releasing the hold rather than doing what they pressed for.
 
 **An undo of a type change is parked like any other write**, since the read is at the boundary rather
-than at the selectors. What it cannot recover is a value the park had already put in the plan: the undo
-entry was recorded when the operator chose the type, before that park landed, so its before-image
-carries the app's pre-park copy and the undo sends that. `e2e/race/t2d-shape-change.spec.ts` pins both
-halves — the read in front of the selector, and the read in front of the undo.
+than at the selectors — and it gives back what the park found rather than the copy the app held before
+it. The entry was recorded when the operator chose the type, BEFORE that park landed, so its own
+before-image carried the pre-park value; what stops an undo sending that is `absorb` folding the read's
+own leaves into the entries recorded before it, wherever the entry would put back exactly what the read
+measured from (architecture.md, "Undo / redo"). A leaf the gesture itself moved is untouched, and the
+undo takes it back as it always did. `e2e/race/t2d-shape-change.spec.ts` pins the read in front of the
+selector, the read in front of the undo, and the panel value the undo hands back.
 
 **The same read generalises to every converge**, which is where the rest of the silent addresses are covered: a
 converge re-sends whatever differs across its whole write scope, so a head on any node at all would put the plan's
