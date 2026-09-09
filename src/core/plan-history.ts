@@ -540,6 +540,48 @@ function narrowGroup(current: unknown, before: Slot<unknown>, after: Slot<unknow
   return { present: true, value: merged };
 }
 
+/**
+ * Fold what a device read authored into one entry already on a stack, in place.
+ *
+ * Both sides of the entry are what applying it would put back — the `before` an undo writes,
+ * the `after` a redo does — and `p` is the read's own entry for the same field and key. A
+ * value the entry would restore to exactly what the read measured FROM is one the device has
+ * since corrected, so the entry takes the read's own value there; anything else is what the
+ * gesture moved, and stays the operator's.
+ */
+function foldAuthored(e: PlanPatchEntry, p: PlanPatchEntry): void {
+  if (e.field !== p.field) return;
+  if ("key" in e && "key" in p && e.key !== p.key) return;
+  if (e.field === "nodeParams" || e.field === "connParams") {
+    const read = p as Extract<PlanPatchEntry, { field: "nodeParams" }>;
+    foldAuthoredSlots(e.before, read.before, read.after);
+    foldAuthoredSlots(e.after, read.before, read.after);
+    return;
+  }
+  const mine = e as { before: unknown; after: unknown };
+  const read = p as { before: unknown; after: unknown };
+  if (deepEqual(mine.before, read.before)) mine.before = read.after;
+  if (deepEqual(mine.after, read.before)) mine.after = read.after;
+}
+
+/** The same per key of one params record: the whole slot where the entry holds what the read
+ *  measured from, and otherwise the LEAVES of a nested group that do — the same contest one
+ *  level down that the merge itself runs, since the app moving one field of a group and the
+ *  device moving another is two authors and not one key. */
+function foldAuthoredSlots(mine: KeySlots, was: KeySlots, now: KeySlots): void {
+  for (const [key, wasSlot] of Object.entries(was)) {
+    const nowSlot = now[key];
+    const mineSlot = mine[key];
+    if (nowSlot === undefined || mineSlot === undefined) continue;
+    if (deepEqual(mineSlot, wasSlot)) {
+      mine[key] = nowSlot;
+      continue;
+    }
+    const narrowed = mineSlot.present ? narrowGroup(mineSlot.value, wasSlot, nowSlot) : null;
+    if (narrowed) mine[key] = narrowed;
+  }
+}
+
 /** The part of `e` whose `before` side `plan` still holds: the whole entry, a subset of
  *  its keys, or nothing. Where the two disagree the plan's value was authored after the
  *  patch was taken, and that authorship is what the caller must not overwrite. */
@@ -883,10 +925,23 @@ export class PlanHistoryStack {
    *  readback landing inside a gesture is not a boundary of it. The patch measures from
    *  the plan as it stood when the read was ISSUED, so a key the baseline no longer
    *  agrees with is one the app has moved since — the device is only echoing the app's
-   *  own write back on it — and that key is skipped. Both stacks stand. */
+   *  own write back on it — and that key is skipped. Both stacks stand.
+   *
+   *  The ENTRIES take it too, wherever they would put the read's own `before` side back.
+   *  The baseline alone is enough while every read lands inside the gesture that scheduled
+   *  it; the park in front of a head write does not — the plan edit that triggers its flush
+   *  is recorded first, so the entry's before-image still carries the value the unit has
+   *  since corrected, and undoing it sends the app's stale copy back to the unit. Which is
+   *  the one thing that park exists to stop. Per LEAF and only where the entry holds what
+   *  the read measured from: a leaf the gesture itself moved is the operator's and stays
+   *  theirs. Both sides of both stacks, since a redo applies the `after` side and the same
+   *  stale value sits there. */
   absorb(patch: PlanPatch): void {
     if (!patch.length) return;
     applyPatchInContext(this.baseline, patch);
+    for (const entry of [...this.undoStack, ...this.redoStack]) {
+      for (const e of entry) for (const p of patch) foldAuthored(e, p);
+    }
   }
 
   /** Re-take the baseline and drop both stacks: a different document, or every
