@@ -132,7 +132,11 @@ export interface LiveSyncHooks {
    * Three families announce nothing when the unit's own panel moves them — the FX effect
    * arrays, the insert-FX engine arrays and D.Gain — so the plan's copy of them can be
    * arbitrarily old, and a write derived from that copy discards what the operator tuned
-   * there. A flush calls this TWICE, once for each write that would.
+   * there. There are TWO boundaries where such a write goes out and this is called at each
+   * under its own condition, so one flush calls it 0, 1 or 2 times: in front of the head
+   * writes where some head this flush is MOVING declares `ParamSpec.resets`, and in front
+   * of the converge where the flush converges at all. An ordinary edit takes neither, and a
+   * converging head that resets no silent family takes only the second.
    *
    * In front of its own HEAD writes, `only` names the families those heads reset —
    * `silentKey` entries, one per family per node, from `ParamSpec.resets`. The head refills
@@ -152,8 +156,9 @@ export interface LiveSyncHooks {
    *
    * Called with the plan the write about to go out is derived from, so what it reads is in
    * that copy. A read that FAILS ends the session, and the flush's own generation check is
-   * what stops the write behind it. Absent = no park (the browser build, and the tests that
-   * do not exercise it).
+   * what stops the write behind it — which write that is depends on the call: the head
+   * writes are still ahead of the first, and only the converge is ahead of the second.
+   * Absent = no park (the browser build, and the tests that do not exercise it).
    */
   parkSilent?: (scope: {
     exclude?: ReadonlySet<string>;

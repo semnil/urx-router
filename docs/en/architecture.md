@@ -373,11 +373,11 @@ carries a one-line map of the same directories and points here.
   consumed: committing under a device read would freeze that read's own writes into the entry, and the retry
   the refusal invites would push them back at the unit. Refused while a device read holds the plan — the
   operator's fetch / Live-sync start, and equally device follow's two reconciles and Live sync's 1-knob
-  refetch, and BOTH silent-address parks a flush takes — the one in front of its head writes and the one in
-  front of its converge — which are tracked by membership in the in-flight set rather than by a flag because
-  the families overlap; a converge ROUND is not one of them, since it reads the whole write scope but writes
-  nothing back into the plan, which makes those two parks the only parts of a converging flush that refuse a
-  press — or while a file flow does, while a *drag* (a press that has moved — a press
+  refetch, and EVERY silent-address park a flush takes — the one in front of its head writes and the one in
+  front of its converge, each under its own condition, so a given flush has 0, 1 or 2 of them — which are
+  tracked by membership in the in-flight set rather than by a flag because the families overlap; a converge
+  ROUND is not one of them, since it reads the whole write scope but writes nothing back into the plan, which
+  makes the parks the only part of a converging flush that refuses a press — or while a file flow does, while a *drag* (a press that has moved — a press
   alone cannot gate it, since a wire is selected by a script-dispatched `pointerdown` with no matching
   `pointerup`) is in progress, with a modal open (except the channel tuning screen, the one that edits the
   plan), and for a `sampleRate` patch while live (refused WHOLE — a partial undo would put the plan in a
@@ -2010,17 +2010,25 @@ value of the wrong parameter. A read that fails ends the session rather than let
 the converge write over values it could not confirm ([Aborting on failure](#aborting-on-failure)). An ordinary
 flush takes no park at all, so a drag pays nothing for it.
 
-**A flush takes a SECOND park, in front of its own head writes.** The one above is behind them and exists for
-the converge; this one is for the write itself — a head that resets a silent family refills it with the incoming
-type's factory values, so what the unit is holding is the outgoing effect and nothing announces it. The flush
-reads exactly the families its heads reset (`ParamSpec.resets` again, `only` this time), then derives its
-commands from the plan again, so what goes out carries what the read merged. Taken at the boundary rather than
-at the control that moved the head, one read covers every writer: both EFFECT TYPE selectors, an undo of either,
-the insert-FX selector, a MIDI mapping, a plan load. The plan's own heads are left standing there (`keepHeads`)
-— the operator has already chosen the incoming type, and the values are filed under the keys the head the UNIT
-is on owns. Both parks and the converge are one reading phase for device follow, which holds its reconcile off
-across all of it (`live.isConverging`): two readers on one link is what the race harness catches as invariant 4
-(channel-tuning.md, "FX EFFECT").
+**A flush takes a SECOND park, in front of its own head writes, where one of the heads it is MOVING resets a
+silent family.** The one above is behind them and exists for the converge; this one is for the write itself — a
+head that resets a silent family refills it with the incoming type's factory values, so what the unit is holding
+is the outgoing effect and nothing announces it. The flush reads exactly the families its heads reset
+(`ParamSpec.resets` again, `only` this time), then derives its commands from the plan again, so what goes out
+carries what the read merged. Taken at the boundary rather than at the control that moved the head, one read
+covers every writer: both EFFECT TYPE selectors, an undo of either, the insert-FX selector, a MIDI mapping, a
+plan load. The plan's own heads are left standing there (`keepHeads`) — the operator has already chosen the
+incoming type, and the values are filed under the keys the head the UNIT is on owns.
+
+**How many parks a flush takes is 0, 1 or 2**, the two conditions being independent: the converge's runs where
+the flush converges at all (`sideEffect`), this one where a head it is moving declares `ParamSpec.resets`. An
+ordinary edit takes neither. A converging head that resets no silent family takes the converge's alone — a
+COMP/EQ type, a bus type, a Signal Type and a PAN/BAL are the converging heads whose banks device follow already
+hears — and the head write is then already on the unit by the time that park runs, which is what decides what a
+failure there costs ([Aborting on failure](#aborting-on-failure)). An FX EFFECT TYPE or an insert-FX selector
+takes both. Whichever it takes, they and the converge are one reading phase for device follow, which holds its
+reconcile off across all of it (`live.isConverging`): two readers on one link is what the race harness catches
+as invariant 4 (channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
@@ -2358,12 +2366,15 @@ report is offered (`formatReadbackReport` / `formatWriteReport`, after the conne
 arms a write on it. **Live sync does not**, because its snapshot would enshrine the plan's defaults as device truth
 and the first sideEffect edit would converge them onto the hardware unconfirmed — so an incomplete read refuses to
 start the session, and a reconcile that cannot read stops following instead of letting the next converge write a
-stale value back over the operator's own edit on the device. **A flush's two silent-address parks are the same rule
-with the write still ahead of it**: a read that fails ends the session, and it is the flush's own generation check
-that stops the write behind it — so a head write sends **no type at all**, and a converge sends no copy of the values
-it could not confirm. In both, the write behind the read is what would replace what the read was for
-(channel-tuning.md, "FX EFFECT"; the parks' own scope is under
-[Event timing while Live sync is up](#event-timing-while-live-sync-is-up)). A cancelled fetch restores the plan it started from, so
+stale value back over the operator's own edit on the device. **A silent-address park is the same rule with the write
+still ahead of it**: a read that fails ends the session, and it is the flush's own generation check that stops the
+write behind it, the read being for exactly what that write would replace (channel-tuning.md, "FX EFFECT"; which
+parks a flush takes is under [Event timing while Live sync is up](#event-timing-while-live-sync-is-up)). **What the
+failure costs is therefore the park's, not the flush's.** The head-write park has the head itself behind it, so a
+failure there sends **no type at all** — and that is the guarantee for a head that resets a silent family, which is
+the only kind that park runs for. The converge park has only the converge behind it, so a failure there sends no copy
+of the values it could not confirm; where the flush took no head-write park, the head write has already reached the
+unit by then and is not what is being stopped. A cancelled fetch restores the plan it started from, so
 a cancel means nothing happened rather than leaving an unlabelled mixture of old and device values.
 
 An undo whose write fails is not a special case: the flush's failure ends the session as any edit's

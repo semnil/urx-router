@@ -493,13 +493,13 @@ const live = DEMO
         assertReadComplete(merged, "side-effect refetch issues:");
         return merged.deviceView;
       },
-      // A converge is about to push the plan across the whole write scope, so the addresses
-      // the unit announces nothing for are read first — see live.ts's `parkSilent`, which
-      // calls this for both of a flush's parks. The epilogue is one for both: the guard
-      // keeps the merge off an edit this flush has not sent, `absorb` takes what it authored
-      // into the baseline without spending the operator's open gesture, and a read that
-      // FAILS ends the session rather than letting the write behind it go out over values it
-      // could not confirm.
+      // A write is about to push the plan over addresses the unit announces nothing for, so
+      // they are read first — see live.ts's `parkSilent`, which calls this at either of its
+      // two boundaries, each under its own condition. The epilogue is one for all of them:
+      // the guard keeps the merge off an edit this flush has not sent, `absorb` takes what
+      // it authored into the baseline without spending the operator's open gesture, and a
+      // read that FAILS ends the session rather than letting the write behind it go out over
+      // values it could not confirm.
       parkSilent: async (scope) => {
         const merged = await followRead("silent-address park", (into, signal) =>
           applySilentState(getModel(modelId), into, signal, live?.recentPending(), holdsSent, scope),
@@ -2598,11 +2598,12 @@ planHistory = new PlanHistory({
   // from its own copy, and a file flow can replace the plan outright: patching under
   // either acts on a premise that is still moving. Every read that RE-AUTHORS the plan
   // counts — the operator's fetch and Live-sync start, and equally device follow's two
-  // reconciles and Live sync's 1-knob refetch, and BOTH silent-address parks a flush takes
-  // — the one in front of its head writes and the one in front of its converge. A converge
-  // ROUND is not one of them: it reads the whole write scope but writes nothing back into
-  // the plan, so an undo during one is answerable — which makes those two parks the only
-  // parts of a converging flush that refuse a press. The press itself is never consumed
+  // reconciles and Live sync's 1-knob refetch, and EVERY silent-address park a flush takes
+  // — the one in front of its head writes and the one in front of its converge, each under
+  // its own condition, so a given flush has 0, 1 or 2 of them. A converge ROUND is not one:
+  // it reads the whole write scope but writes nothing back into the plan, so an undo during
+  // one is answerable — which makes the parks the only part of a converging flush that
+  // refuses a press. The press itself is never consumed
   // (run() refuses before it commits the open entry, so a retry is exact), but the two
   // reconciles reset the history in their reflect a moment later, so for those a refused
   // press is an entry the operator loses — visibly, rather than an edit that may or may
