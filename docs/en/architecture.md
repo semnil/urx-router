@@ -2357,11 +2357,12 @@ report is offered (`formatReadbackReport` / `formatWriteReport`, after the conne
 arms a write on it. **Live sync does not**, because its snapshot would enshrine the plan's defaults as device truth
 and the first sideEffect edit would converge them onto the hardware unconfirmed — so an incomplete read refuses to
 start the session, and a reconcile that cannot read stops following instead of letting the next converge write a
-stale value back over the operator's own edit on the device. **The two parks are the same rule with the write still
-ahead of it**: the FX EFFECT TYPE park writes **no type at all** when its read fails, and the silent-address park in
-front of a converge ends the session rather than letting that converge send the plan's copy over values it could not
-confirm — in both, the write behind the read is what would replace what the read was for (channel-tuning.md,
-"FX EFFECT"; the park's own scope is under [Event timing while Live sync is up](#event-timing-while-live-sync-is-up)). A cancelled fetch restores the plan it started from, so
+stale value back over the operator's own edit on the device. **A flush's two silent-address parks are the same rule
+with the write still ahead of it**: a read that fails ends the session, and it is the flush's own generation check
+that stops the write behind it — so a head write sends **no type at all**, and a converge sends no copy of the values
+it could not confirm. In both, the write behind the read is what would replace what the read was for
+(channel-tuning.md, "FX EFFECT"; the parks' own scope is under
+[Event timing while Live sync is up](#event-timing-while-live-sync-is-up)). A cancelled fetch restores the plan it started from, so
 a cancel means nothing happened rather than leaving an unlabelled mixture of old and device values.
 
 An undo whose write fails is not a special case: the flush's failure ends the session as any edit's
