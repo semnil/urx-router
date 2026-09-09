@@ -224,6 +224,34 @@ describe("LiveSync sideEffect converge", () => {
     expect(seen[0]?.nodeParams.ch_5_6?.gain, "the parked value in the converged copy").toBe(12);
   });
 
+  // …and how MANY parks such a flush takes. The two calls are guarded independently — the
+  // converge's by `sideEffect`, the head-write one by whether a head this flush is MOVING
+  // declares a reset family — so a converging head that resets none of the three takes the
+  // converge's alone, and the count for one flush is 0, 1 or 2 rather than a fixed pair.
+  // Counted rather than read off the case above, which filters for `exclude` and is
+  // satisfied by a run taking both.
+  it("takes the converge's park alone where its head resets no silent family", async () => {
+    const plan = basePlan();
+    const scopes: Array<{ only?: ReadonlySet<string>; exclude?: ReadonlySet<string>; keepHeads?: boolean }> = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async (scope) => void scopes.push(scope),
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(scopes, "one park, not a pair").toHaveLength(1);
+    expect(scopes[0]?.only, "and it is the converge's, not the head writes'").toBeUndefined();
+    expect(scopes[0]?.exclude).toBeDefined();
+  });
+
   // What a head that DOES reset one of the three names, and how narrowly.
   it("names the family its head reset, on that head's node alone", async () => {
     const plan = basePlan();
