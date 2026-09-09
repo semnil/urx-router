@@ -357,31 +357,45 @@ function sentOverlay(
   };
 }
 
-/** What a family read produced: the head it was read under, and the change it would make to
- *  the plan. Held rather than made, so an attempt the unit moved a head under can be
- *  discarded whole — see `readWithStableHead`. The merge inside `apply` reads the plan as it
- *  stands when it runs, so an edit that arrived while the head was being confirmed stands. */
+/** What a family read produced: the head it was read under, everything it saw, and the change
+ *  it would make to the plan. Held rather than made, so an attempt the unit moved a head under
+ *  can be discarded whole — see `readWithStableHead`. The merge inside `apply` reads the plan
+ *  as it stands when it runs, so an edit that arrived while the head was being confirmed
+ *  stands. `seen` is what two attempts are compared by, and carries every raw the read took. */
 interface FamilyRead {
   head: number;
+  seen: string;
   apply: (plan: Plan) => void;
 }
 
+/** How many attempts a family gets before its node is failed. Three is the shortest run that
+ *  absorbs one excursion — the attempt it lands in, and the two clean ones that agree. */
+const FAMILY_READ_ATTEMPTS = 4;
+
 /**
- * Read a family whose layout a HEAD decides, and confirm the head did not move under it.
+ * Read a family whose layout a HEAD decides, and apply it only once two readings agree.
  *
- * The values behind such a head mean nothing without it: read while the unit was on one
- * type and filed under another's keys, they are a parameter set the unit never had. So the
- * head is read again once the values are in, and a read the unit moved under is taken a
- * SECOND time — against the head the unit holds now, and with no plan substitution for the
- * addresses that head lays out, since the emit that guard answers from was laid out by the
- * head the first attempt started from. A head that moves twice fails the node, which is what
- * every other read here does with values it could not complete.
+ * The values behind such a head mean nothing without it: read while the unit was on one type
+ * and filed under another's keys, they are a parameter set the unit never had. So the head is
+ * read again once the values are in — and that alone is not enough. A head at the same value
+ * either side of a read says nothing about the middle: taken to another effect and back while
+ * the raws were being read, it leaves both readings equal and the values between them off the
+ * OTHER layout. What closes that is a second full reading: the attempt is applied only when
+ * it MATCHES the one before it, head and every raw alike, so a set that landed in the plan
+ * was observed twice with nothing moving in between.
  *
- * NOTHING reaches the plan until a head has held: the attempts return what they WOULD write
- * and only the one that held is applied. Written straight into the plan instead, a discarded
- * attempt left the layout it was read in behind — under the keys that layout owns, which is
- * some dormant family's own namespace — and a node that failed both attempts arrived at its
- * caller already carrying half the values the failure is about.
+ * An attempt whose head moved under it is discarded outright and stops being a candidate for
+ * the pair — the next one is read against the head the unit holds now, and with no plan
+ * substitution for the addresses that head lays out, since the emit that guard answers from
+ * was laid out by the head this started on. A family that never produces a matching pair
+ * inside its budget fails the node, which is what every other read here does with values it
+ * could not complete.
+ *
+ * NOTHING reaches the plan until a pair agrees: the attempts return what they WOULD write.
+ * Written straight into the plan instead, a discarded attempt left the layout it was read in
+ * behind — under the keys that layout owns, which is some dormant family's own namespace —
+ * and a node that failed every attempt arrived at its caller already carrying half the values
+ * the failure is about.
  *
  * `onMoved` hands the fresh head back to whatever cached it.
  */
@@ -389,16 +403,23 @@ async function readWithStableHead(
   recheck: ParamSource,
   head: readonly [number, number, number],
   what: string,
-  read: (attempt: number) => Promise<FamilyRead>,
+  read: () => Promise<FamilyRead>,
   onMoved?: (now: number) => void,
 ): Promise<FamilyRead> {
-  for (let attempt = 0; ; attempt++) {
-    const got = await read(attempt);
+  let prev: FamilyRead | null = null;
+  for (let attempt = 0; attempt < FAMILY_READ_ATTEMPTS; attempt++) {
+    const got = await read();
     const now = await recheck.get(head[0], head[1], head[2]);
-    if (now === got.head) return got;
-    if (attempt > 0) throw new Error(`the ${what} kept moving while the values behind it were read`);
-    onMoved?.(now);
+    // An attempt the head moved under is no candidate, and it needs no bookkeeping of its
+    // own: `seen` opens with the head, so nothing read under another one can pair with it.
+    if (now !== got.head) {
+      onMoved?.(now);
+      continue;
+    }
+    if (prev && prev.seen === got.seen) return got;
+    prev = got;
   }
+  throw new Error(`the ${what} did not hold still while the values behind it were read`);
 }
 
 /** Read one layout head and record it, so the family read behind it takes this answer
@@ -553,9 +574,10 @@ export async function applySilentState(
       what,
       // The guard is kept for everything the head does NOT lay out — an FX channel's ON and
       // MIX, an insert effect's bypass — since a type says nothing about what those mean. It
-      // is the addresses BEHIND the head that a moved one makes incomparable, and on the
-      // second attempt the emit is laid out by the head the first one started from.
-      (attempt) => read(attempt === 0 && agrees(head) ? source : plain),
+      // is the addresses BEHIND the head that a moved one makes incomparable, and `agrees`
+      // asks that of the head the unit holds NOW, which is what an attempt whose head moved
+      // leaves behind for the next one.
+      () => read(agrees(head) ? source : plain),
       (now) => heads.set(addrKey(head[0], head[1], head[2]), now),
     );
 
@@ -1719,6 +1741,7 @@ async function readFxEffectInto(
   const read = await readFxEffect(source, fxIndex, slots);
   return {
     head: read.type,
+    seen: JSON.stringify([read.type, read.on, read.level, read.params]),
     apply: (plan) => {
       const was = plan.nodeParams[nodeId];
       const type = keepHead ? (was?.fxEffect?.type ?? read.type) : read.type;
@@ -1774,6 +1797,7 @@ async function readInsertFxInto(
   }
   return {
     head: selector,
+    seen: JSON.stringify([selector, insertFxOn, read]),
     apply: (plan) => {
       const was = plan.nodeParams[nodeId];
       // MERGED, not replaced: the map carries one namespace per family so a node that has
