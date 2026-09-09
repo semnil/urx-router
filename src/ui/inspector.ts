@@ -109,12 +109,6 @@ export interface InspectorActions {
   onHideNode: (id: string) => void;
   /** Open the GATE tuning screen for a MONO IN channel. */
   onOpenDynScreen: (kind: DynKind, id: string) => void;
-  /** Read the FX channel's effect off the unit, then run `write` — the EFFECT TYPE edit.
-   *  The read is what puts a value the operator tuned on the unit's own panel, which the
-   *  effect arrays announce to nobody, into the plan before the write refills them. It
-   *  takes the write rather than answering yes or no, so the app decides when it runs and
-   *  what the panel owes it: with no link there is nothing to read and it runs at once.
-   *  `write` does NOT run when the read failed. Absent (browser build) = call it yourself. */
   onClose: () => void;
 }
 

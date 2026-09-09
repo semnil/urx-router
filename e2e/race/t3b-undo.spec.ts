@@ -1204,9 +1204,11 @@ test.describe("T3b undo", () => {
     await settleHistory(page);
     const depthArmed = await undoDepth(page);
 
-    // The FIRST reads of a converging flush are the silent-address park (live.ts
-    // `parkSilent`), which MERGES into the plan — so an undo pressed there is refused,
-    // like one pressed inside any other follow read. What the refusal is not is a loss:
+    // A converging flush takes TWO silent-address parks (live.ts `parkSilent`) — one in
+    // front of its head writes, scoped to the families this selector resets, and one in
+    // front of the converge — and both MERGE into the plan, so an undo pressed inside
+    // either is refused like one pressed inside any other follow read. The barrier's count
+    // reaches past the first and lands in the second. What the refusal is not is a loss:
     // the press is answered before the open entry is committed, so the entry stands and
     // the next press applies it.
     await mark(page, "undo-in-park");

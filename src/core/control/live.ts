@@ -126,23 +126,38 @@ export interface LiveSyncHooks {
    *  then failed isEcho and was reconciled as a device-side change. */
   refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>;
   /**
-   * Read the addresses the unit announces nothing for into the plan, before a converge
-   * pushes the plan over them (`readback.applySilentState`).
+   * Read the addresses the unit announces nothing for into the plan, in front of a write
+   * that would go out over them (`readback.applySilentState`).
    *
-   * A converge re-reads the whole write scope and re-sends whatever differs, so it is the
-   * one thing that puts the plan's copy on the unit at addresses no edit named. For three
-   * families that copy can be arbitrarily old — the FX effect arrays, the insert-FX engine
-   * arrays and D.Gain announce nothing when the unit's own panel moves them — so without
-   * this a converge fired by ANY head silently discards what the operator tuned there.
+   * Three families announce nothing when the unit's own panel moves them — the FX effect
+   * arrays, the insert-FX engine arrays and D.Gain — so the plan's copy of them can be
+   * arbitrarily old, and a write derived from that copy discards what the operator tuned
+   * there. There are TWO boundaries where such a write goes out and this is called at each
+   * under its own condition, so one flush calls it 0, 1 or 2 times: in front of the head
+   * writes where some head this flush is MOVING declares `ParamSpec.resets`, and in front
+   * of the converge where the flush converges at all. An ordinary edit takes neither, and a
+   * converging head that resets no silent family takes only the second.
    *
-   * `reset` names what this converge exists to restore — `silentKey` entries, one per
-   * family per node, from the heads this flush wrote (`ParamSpec.resets`). Reading there
-   * would adopt the reset and throw away the values the converge is about to put back.
-   * Everything else is untouched by those heads and safe to take, INCLUDING the other
-   * families of a head's own node: a channel carries a COMP/EQ type and an insert effect
+   * In front of its own HEAD writes, `only` names the families those heads reset —
+   * `silentKey` entries, one per family per node, from `ParamSpec.resets`. The head refills
+   * them with the incoming type's factory values, so what the unit is holding is the
+   * outgoing effect and this is the last moment it can be read. `keepHeads` leaves the
+   * plan's own heads standing, the operator having already chosen the incoming type, and
+   * files the values under the keys the head the UNIT is on owns. The flush derives its
+   * commands again afterwards, so what goes out carries what this merged.
+   *
+   * In front of the CONVERGE, `exclude` names those same reset entries and everything else
+   * is taken. A converge re-reads the whole write scope and re-sends whatever differs, so
+   * it is the one thing that puts the plan's copy on the unit at addresses no edit named;
+   * reading the reset entries there would adopt the reset and throw away the values the
+   * converge is about to put back. Per FAMILY and not per node, so the other families of a
+   * head's own node are still taken: a channel carries a COMP/EQ type and an insert effect
    * at once, and only one of them is ever the head's.
    *
-   * Called with the plan the converge is about to clone, so what it reads is in the copy.
+   * Called with the plan the write about to go out is derived from, so what it reads is in
+   * that copy. A read that FAILS ends the session, and the flush's own generation check is
+   * what stops the write behind it — which write that is depends on the call: the head
+   * writes are still ahead of the first, and only the converge is ahead of the second.
    * Absent = no park (the browser build, and the tests that do not exercise it).
    */
   parkSilent?: (scope: {
