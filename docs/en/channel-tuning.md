@@ -1541,10 +1541,14 @@ against the incoming one, a Rev-X array decodes as a delay, every value filed un
 effect never had. So the head is read from the unit first and the emit is taken from a plan wearing it,
 and the head is read AGAIN once the values are in — a hand on the unit's own panel between the two
 leaves the values belonging to one layout and the keys they are filed under to another, so that family
-is taken a second time and a head that moves twice fails its node. **Nothing reaches the plan until a
-head has held**: an attempt answers with what it WOULD write and only the one that held is applied, so
-a discarded attempt leaves none of its layout behind and a node that fails both arrives at its caller
-holding exactly what it held before. The guard itself is dropped, while the unit's head is not the one
+is taken a second time and a head that moves twice fails its node. A head at the same value either side says nothing about the
+middle, though — taken to another effect and back while the raws were being read, it leaves both
+readings equal and the values between them off the other layout — so a family is read TWICE and applied
+only when the two agree, head and every raw alike. That is what the cost buys: 83 reads on a URX22's
+factory plan and 93 on a URX44 / URX44V, against a converge scope of 618 / 782 commands. **Nothing
+reaches the plan until a pair agrees**: an attempt answers with what it WOULD write and only the
+matching one is applied, so a discarded attempt leaves none of its layout behind and a node that fails
+every attempt arrives at its caller holding exactly what it held before. The guard itself is dropped, while the unit's head is not the one
 the SNAPSHOT holds, for the addresses that head LAYS OUT and no others: moved on the panel, the
 snapshot's raws describe the previous layout there, and a slot whose two layouts agree on a number read
 as "still what this session sent". An FX channel's ON and MIX and an insert effect's bypass are not
