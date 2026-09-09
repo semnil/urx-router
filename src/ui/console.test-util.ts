@@ -46,8 +46,6 @@ export interface ConsoleHost {
   meterErrors: string[];
   /** Tuning screens the view asked the app to open. */
   opened: Array<{ kind: string; id: string }>;
-  /** FX channels the view asked the app to park before writing an EFFECT TYPE, in order.
-   *  Empty unless `park` was supplied — with no hook there is no call to record. */
   /** The strip record for a node id — the view's own `refs` entry. */
   strip: (id: string) => StripHandle;
   /** One send column of a strip, by send target ("bus.mix1", "fx1", …). */

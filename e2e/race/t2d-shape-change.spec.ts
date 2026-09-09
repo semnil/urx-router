@@ -277,10 +277,11 @@ test.describe("T2d shape-change", () => {
 
     // THE PARK, which is why the reads in this window come in two passes and not one.
     // The effect arrays announce nothing when the unit's own panel moves them, so the app
-    // reads the OUTGOING family into the plan before the selector goes out (main.ts
-    // parkFxEffect); afterwards the unit's array holds the incoming type's factory values
-    // and there is nothing left to read. Split at the selector's own write rather than by
-    // a time, because that write is the boundary the two passes are on either side of.
+    // reads the OUTGOING family into the plan before the selector goes out (live.ts
+    // `parkSilent`, in front of the flush's head writes); afterwards the unit's array holds
+    // the incoming type's factory values and there is nothing left to read. Split at the
+    // selector's own write rather than by a time, because that write is the boundary the
+    // two passes are on either side of.
     const parkReadSlots = arrayReadSlots(trace, changeAt, typeWrite!.start);
     const readSlotsAfter = arrayReadSlots(trace, typeWrite!.start);
     console.log(

@@ -494,11 +494,12 @@ const live = DEMO
         return merged.deviceView;
       },
       // A converge is about to push the plan across the whole write scope, so the addresses
-      // the unit announces nothing for are read first — see live.ts's `parkSilent`. Its
-      // epilogue is the FX type park's, and for the same reasons: the guard keeps it off an
-      // edit this flush has not sent, `absorb` takes what it authored into the baseline
-      // without spending the operator's open gesture, and a read that FAILS ends the session
-      // rather than letting the converge write over values it could not confirm.
+      // the unit announces nothing for are read first — see live.ts's `parkSilent`, which
+      // calls this for both of a flush's parks. The epilogue is one for both: the guard
+      // keeps the merge off an edit this flush has not sent, `absorb` takes what it authored
+      // into the baseline without spending the operator's open gesture, and a read that
+      // FAILS ends the session rather than letting the write behind it go out over values it
+      // could not confirm.
       parkSilent: async (scope) => {
         const merged = await followRead("silent-address park", (into, signal) =>
           applySilentState(getModel(modelId), into, signal, live?.recentPending(), holdsSent, scope),
