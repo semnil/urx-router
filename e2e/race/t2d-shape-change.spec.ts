@@ -479,15 +479,15 @@ test.describe("T2d shape-change", () => {
     // directions. The address does not move, but the value at it does: each family authors
     // its own key, so the switch wrote the delay HPF / LPF there and the undo writes the
     // Rev-X Initial Delay / HPF back over them. Slot 9 is 0, as read from this zeroed fake.
-    // Slot 10 is 0 as well, and that one is PINNED rather than asserted as right: the park in
-    // front of the type write found the panel's own value there and put it in the plan, and
-    // the undo takes it back out with the group it belongs to. The entry was recorded when
-    // the operator chose the type — BEFORE the park landed — so its before-image carries the
-    // app's pre-park copy, and `absorb` reaches the baseline rather than an entry already on
-    // the stack. Closing that means folding a device read's own leaves into the entries
-    // recorded before it, which changes what an undo of a device-authored value does.
+    // Slot 10 is what the PANEL was holding when the type went out: the park in front of that
+    // write found it and put it in the plan, and the undo gives it back. The entry was
+    // recorded when the operator chose the type — BEFORE the park landed — so its own
+    // before-image carried the app's pre-park copy, and what stops the undo sending that is
+    // `absorb` folding the read's leaves into the entries recorded before it. Nothing else in
+    // this run could carry the value: the app never read it before, and the fake announced
+    // nothing when it changed.
     expect(undoVals.get(9)).toBe(0);
-    expect(undoVals.get(10)).toBe(0);
+    expect(undoVals.get(10)).toBe(PANEL_HPF);
     // That the park DID find it is the reflect asserted in the type-change window above; this
     // trace has been re-read since, and carries the undo's own park as well.
     // While Rev-X was selected neither slot ever differed from what the device already held,
