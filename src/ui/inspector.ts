@@ -109,6 +109,12 @@ export interface InspectorActions {
   onHideNode: (id: string) => void;
   /** Open the GATE tuning screen for a MONO IN channel. */
   onOpenDynScreen: (kind: DynKind, id: string) => void;
+  /** Read the FX channel's effect off the unit, then run `write` — the EFFECT TYPE edit.
+   *  The read is what puts a value the operator tuned on the unit's own panel, which the
+   *  effect arrays announce to nobody, into the plan before the write refills them. It
+   *  takes the write rather than answering yes or no, so the app decides when it runs and
+   *  what the panel owes it: with no link there is nothing to read and it runs at once.
+   *  `write` does NOT run when the read failed. Absent (browser build) = call it yourself. */
   onClose: () => void;
 }
 
@@ -1243,6 +1249,20 @@ function mergeFxEffect(actions: InspectorActions, plan: Plan, nodeId: string, pa
   );
 }
 
+/**
+ * Write an FX channel's EFFECT TYPE.
+ *
+ * The selector is the one command the writer emits that replaces slots nobody named — the
+ * unit refills the engine array with the incoming type's factory values — and the writer
+ * then puts the plan straight back over that. A value the operator tuned on the unit's own
+ * panel is one the plan has never seen, because the effect arrays announce nothing. What
+ * reads it first is the park at the WRITE boundary (`live.ts`), which is why this is an
+ * ordinary plan edit: the read covers this row, the CONSOLE popover and an undo of either.
+ */
+function setFxEffectType(actions: InspectorActions, plan: Plan, nodeId: string, type: number): void {
+  mergeFxEffect(actions, plan, nodeId, { type });
+}
+
 // FX-channel EFFECT section: the EFFECT TYPE selector, the effect ON toggle and the
 // launcher. Mix and the type's own parameters are the tuning screen's, so nothing here
 // reads a value that screen can move. fxIndex = 0 (FX1) / 1 (FX2).
@@ -1260,9 +1280,7 @@ function fxEffectSection(
   const type = resolveFxEffectType(fxIndex, fx.type);
   const { el, body } = section(t.title, { key: "fxEffect" });
 
-  body.append(
-    enumSelect(t.effectType, fxEffectTypes(fxIndex), type, (v) => mergeFxEffect(actions, plan, nodeId, { type: v })),
-  );
+  body.append(enumSelect(t.effectType, fxEffectTypes(fxIndex), type, (v) => setFxEffectType(actions, plan, nodeId, v)));
   body.append(boolToggle(t.effectOn, fx.on ?? true, (v) => mergeFxEffect(actions, plan, nodeId, { on: v })));
   // Mix and the type's own parameters moved to the tuning screen, for the reason stated on
   // `dynLauncher`: they belong beside the meters either side of the effect, and a second

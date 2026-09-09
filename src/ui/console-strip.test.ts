@@ -877,6 +877,25 @@ describe("where the focus goes after the INS FX popover closes", () => {
     expect(fxEffectTypes(0).find((o) => o.value === after)?.label, "the row that was activated").toBe(wanted);
   });
 
+  // What a press on a type row does: it writes the type and opens the screen on it. The read
+  // the app takes in front of a type write is no longer between those two — it moved to the
+  // write boundary (`live.ts`), where an undo of this selection and the inspector's own row
+  // are covered by the same one.
+  it("writes the type and opens the screen on it", () => {
+    h = consoleHost();
+    const before = h.plan.nodeParams["bus.fx1"]?.fxEffect?.type;
+    fxOpenerOf("bus.fx1")!.click();
+    const rows = [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];
+    const target = rows.find((r) => !r.classList.contains("active")) ?? rows[1];
+    const wanted = target.textContent;
+    target.click();
+
+    const after = h.plan.nodeParams["bus.fx1"]?.fxEffect?.type;
+    expect(after, "the press chose a type").not.toBe(before);
+    expect(fxEffectTypes(0).find((o) => o.value === after)?.label, "the row that was pressed").toBe(wanted);
+    expect(h.opened, "and the screen opens on it").toEqual([{ kind: "fx", id: "bus.fx1" }]);
+  });
+
   it("keeps it on the same row when a one-strip repaint re-opens the FX type list", () => {
     h = consoleHost();
     fxOpenerOf("bus.fx1")!.click();

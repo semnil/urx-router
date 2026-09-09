@@ -1504,13 +1504,76 @@ Putting it on a face of knobs would make those two edits look alike.
 channel keeps every family's values side by side under keys that carry the family name (`revxHpf` /
 `revr3Hpf` / `delayHpf`), so the outgoing effect's settings stay where they are and selecting a type of
 that family back finds them. Within one family the three Rev-X types share those keys, so a swap
-between them shares the values too rather than parking one set and restoring it. On the UNIT the array is refilled, and the writer then puts the plan back over it, so
-the two agree again. What is genuinely lost is **a value the unit holds that the plan has never seen**
-— and that is reachable, because the effect arrays announce nothing when the front panel moves them
-(architecture.md, "Live sync"). An operator who tunes a reverb on the unit itself and then changes the
-type from the app loses that tuning, and nothing on screen says so, because nothing on screen knows.
-Reading the outgoing array into the plan before the selector is written is what would keep it;
-`readback.ts` already reads exactly that pair (the type, then that type's slots).
+between them shares the values too rather than parking one set and restoring it. A device read of that
+channel MERGES into the map rather than replacing it — a read answers for the family the type names, and
+replacing took the dormant families out with it, so selecting one of them back sent the incoming type's
+factory values rather than what the operator had set (`readback.readFxEffectInto`, both the park and the
+full read). On the UNIT the array is refilled, and the writer then puts the plan back over it, so
+the two agree again. What would otherwise be lost is **a value the unit holds that the plan has never
+seen** — and that is reachable, because the effect arrays announce nothing when the front panel moves
+them (architecture.md, "Live sync"): an operator who tunes a reverb on the unit itself and then changes
+the type from the app would lose that tuning with nothing on screen to say so, because nothing on
+screen would know.
+
+**The park is what keeps it, and it sits at the WRITE boundary.** A flush that is about to send a head
+which resets one of the silent families reads that family off the unit first, holding the link, and
+derives its commands again from what the read merged (`live.ts`, `readback.applySilentState` with
+`only`). Every writer therefore passes one read: both EFFECT TYPE selectors, an UNDO of either, the
+insert-FX selector, a MIDI mapping, a plan load. On the two selectors alone — where this began — an undo
+re-typed the array with nothing in front of it, and an insert-FX selection re-keyed the app's own copy
+and wrote it back without ever looking at the outgoing engine.
+
+It is the same guarded read the converge takes, narrowed by `only` to the families the head resets, so
+it carries the settle for this session's own recent writes, the merge that leaves an edit made meanwhile
+standing, and the `holdsSent` guard that leaves an edit the flush has NOT carried yet standing too. Read
+as a whole node instead, it also brought back every announced value of that channel — device follow's,
+not this park's — each as the unit's rather than as the operator's: an Effect ON toggled a moment
+earlier and still inside its flush window was read back OFF and went out that way. The plan's own heads
+are left standing (`keepHeads`): the operator has already chosen the incoming type, so the values are
+filed under the keys the head the UNIT is on owns, and the selection the flush is about to carry is not
+undone by the read taken for it. What the park leaves in the plan is a DIFF against the snapshot, which
+is what puts those values back on the unit after the head write resets them.
+
+**The array is read against the type the UNIT holds**, never the plan's copy of it — and between two
+readings of that head. The plan holds the incoming type by the time the park runs, and the guard above
+answers from the plan's own emit, which is laid out by whatever head that emit was built from: read
+against the incoming one, a Rev-X array decodes as a delay, every value filed under a key the outgoing
+effect never had. So the head is read from the unit first and the emit is taken from a plan wearing it,
+and the head is read AGAIN once the values are in — a hand on the unit's own panel between the two
+leaves the values belonging to one layout and the keys they are filed under to another, so that family
+is taken a second time and a head that moves twice fails its node. A head at the same value either side says nothing about the
+middle, though — taken to another effect and back while the raws were being read, it leaves both
+readings equal and the values between them off the other layout — so a family is read TWICE and applied
+only when the two agree, head and every raw alike. That is what the cost buys: 83 reads on a URX22's
+factory plan and 93 on a URX44 / URX44V, against a converge scope of 618 / 782 commands. **Nothing
+reaches the plan until a pair agrees**: an attempt answers with what it WOULD write and only the
+matching one is applied, so a discarded attempt leaves none of its layout behind and a node that fails
+every attempt arrives at its caller holding exactly what it held before. The guard itself is dropped, while the unit's head is not the one
+the SNAPSHOT holds, for the addresses that head LAYS OUT and no others: moved on the panel, the
+snapshot's raws describe the previous layout there, and a slot whose two layouts agree on a number read
+as "still what this session sent". An FX channel's ON and MIX and an insert effect's bypass are not
+laid out by anything — they mean the same under every type — so they keep it, and an unsent edit to one
+of them survives a type the operator changed on the unit.
+
+Two properties of that arrangement are load-bearing. A read that FAILS sends nothing — the head write
+behind it is the destructive half, so the session goes down and the unit is left as it is
+(architecture.md, "Aborting on failure"); the plan keeps the selection, which the next session's own
+readback settles. And what the park finds takes the rebuild PAST the inspector's gate: it arrives inside
+the operator's own gesture, the head is a selector they have just chosen in, and the control the gate
+would hold the rebuild for is the one showing the stale value — so their next press anywhere else is
+spent releasing the hold rather than doing what they pressed for.
+
+**An undo of a type change is parked like any other write**, since the read is at the boundary rather
+than at the selectors. What it cannot recover is a value the park had already put in the plan: the undo
+entry was recorded when the operator chose the type, before that park landed, so its before-image
+carries the app's pre-park copy and the undo sends that. `e2e/race/t2d-shape-change.spec.ts` pins both
+halves — the read in front of the selector, and the read in front of the undo.
+
+**The same read generalises to every converge**, which is where the rest of the silent addresses are covered: a
+converge re-sends whatever differs across its whole write scope, so a head on any node at all would put the plan's
+copy of the FX arrays, the insert-FX engine arrays and D.Gain back onto the unit. The park in front of a converge
+reads them first and leaves the head's own nodes to the converge (architecture.md, "Live sync"); this section's
+park is that same read narrowed to one node, taken in front of one write instead.
 
 ### One face, two groups
 

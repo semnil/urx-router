@@ -373,9 +373,10 @@ carries a one-line map of the same directories and points here.
   consumed: committing under a device read would freeze that read's own writes into the entry, and the retry
   the refusal invites would push them back at the unit. Refused while a device read holds the plan — the
   operator's fetch / Live-sync start, and equally device follow's two reconciles and Live sync's 1-knob
-  refetch, which are tracked by membership in the in-flight set rather than by a flag because the two
-  families overlap; a converge round is not one of them, since it reads the whole write scope but writes
-  nothing back into the plan — or while a file flow does, while a *drag* (a press that has moved — a press
+  refetch, and the silent-address park at the head of a converge, which are tracked by membership in the
+  in-flight set rather than by a flag because the families overlap; a converge ROUND is not one of them,
+  since it reads the whole write scope but writes nothing back into the plan, which makes the park the only
+  part of a converging flush that refuses a press — or while a file flow does, while a *drag* (a press that has moved — a press
   alone cannot gate it, since a wire is selected by a script-dispatched `pointerdown` with no matching
   `pointerup`) is in progress, with a modal open (except the channel tuning screen, the one that edits the
   plan), and for a `sampleRate` patch while live (refused WHOLE — a partial undo would put the plan in a
@@ -1824,6 +1825,17 @@ that cannot read **stops following** instead of leaving the plan claiming values
 notify already fired and nothing re-triggers the read, so the next converge would write the stale value back
 over the operator's own move on the hardware.
 
+**A reconcile waits while a converge is running** (`DeviceFollowHooks` `deferReconcile` → `live.isConverging`).
+Two reasons, and the first is the one that would still hold with one link and infinite bandwidth: a converge
+rewrites the whole write scope round after round, so a read taken there is a read of a device the app is part-way
+through changing. The second is the link itself — the two readers interleave on it for as long as the round runs,
+which is what the race harness reports as invariant 4. **The converge and not the whole flush**: an ordinary
+flush is a handful of writes and no read at all, and a reconcile beside one is the app's ordinary two-chain
+contention rather than a reader of a moving device. The window is **kept, not spent**: every node the burst named
+is still re-read, on the settle timer's own re-arm, which is also what ends the wait — nothing in `follow.ts`
+hears a converge finish. A pass deferred past `IDLE_FULL_MS` stays the full sweep rather than being downgraded by
+the timer that retries it.
+
 #### A write is not readable when it is acked
 
 The broker acks a write before the unit will answer for it. **Measured on a URX44V (System V1.3.1.0), and the
@@ -1975,6 +1987,39 @@ Count turn would take a scoped read that never touches 839: the follow runs, the
 not change. The opposite mistake — leaving the owner node off — works, at a whole-device read per turn. Sample
 rate keeps `only === undefined` because `plan.sampleRate` is a plan-level scalar no node owns, which is a
 difference in kind rather than a convention to copy.
+
+**What covers the addresses that stay silent is a read in front of the write, not a registration.** A converge
+re-reads its whole write scope and re-sends whatever differs, so it is the one thing that puts the plan's copy of
+those three families onto the unit at addresses no edit named — and for them that copy can be arbitrarily old,
+since nothing announced the hand that moved them. So a converging flush reads them first (`live.ts` `parkSilent` →
+`readback.applySilentState`), into the plan it is about to clone, and what the converge sends is the unit's own.
+Two things bound it. It leaves out what the heads this flush wrote have RESET (`ParamSpec.resets`): the head write
+is what made the unit hold that value, and the converge is what puts the operator's back, so a read there would adopt
+the reset and the restore would never go out. Per FAMILY and not per node — a channel carries a COMP/EQ type and an
+insert effect at once and only one of them is ever the head's, so leaving the NODE out took a family the head never
+touched with it, and the converge then wrote the plan's copy of that engine array over whatever the panel had done to
+it. A head that resets an ANNOUNCED bank names nothing at all: COMP/EQ, bus type and pan are device follow's, and the
+park never read them. And it answers with the PLAN's value wherever the unit is still holding what this session last sent
+(`live.holdsSent`), which keeps it off an edit sitting in the plan waiting for the next flush — the merge protects
+an edit made DURING a read, and that one was made before it. That answer is the plan's own emit, and an emit is LAID
+OUT by the plan's copy of the layout heads — an FX channel's EFFECT TYPE, a node's insert-FX selector. So each head is
+read from the unit ahead of the raws behind it and the emit is taken from a plan wearing the unit's: where the two
+disagree, one address means one parameter on the unit and another in the plan, and answering there hands the read a
+value of the wrong parameter. A read that fails ends the session rather than letting
+the converge write over values it could not confirm ([Aborting on failure](#aborting-on-failure)). An ordinary
+flush takes no park at all, so a drag pays nothing for it.
+
+**A flush takes a SECOND park, in front of its own head writes.** The one above is behind them and exists for
+the converge; this one is for the write itself — a head that resets a silent family refills it with the incoming
+type's factory values, so what the unit is holding is the outgoing effect and nothing announces it. The flush
+reads exactly the families its heads reset (`ParamSpec.resets` again, `only` this time), then derives its
+commands from the plan again, so what goes out carries what the read merged. Taken at the boundary rather than
+at the control that moved the head, one read covers every writer: both EFFECT TYPE selectors, an undo of either,
+the insert-FX selector, a MIDI mapping, a plan load. The plan's own heads are left standing there (`keepHeads`)
+— the operator has already chosen the incoming type, and the values are filed under the keys the head the UNIT
+is on owns. Both parks and the converge are one reading phase for device follow, which holds its reconcile off
+across all of it (`live.isConverging`): two readers on one link is what the race harness catches as invariant 4
+(channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
@@ -2312,7 +2357,11 @@ report is offered (`formatReadbackReport` / `formatWriteReport`, after the conne
 arms a write on it. **Live sync does not**, because its snapshot would enshrine the plan's defaults as device truth
 and the first sideEffect edit would converge them onto the hardware unconfirmed — so an incomplete read refuses to
 start the session, and a reconcile that cannot read stops following instead of letting the next converge write a
-stale value back over the operator's own edit on the device. A cancelled fetch restores the plan it started from, so
+stale value back over the operator's own edit on the device. **The two parks are the same rule with the write still
+ahead of it**: the FX EFFECT TYPE park writes **no type at all** when its read fails, and the silent-address park in
+front of a converge ends the session rather than letting that converge send the plan's copy over values it could not
+confirm — in both, the write behind the read is what would replace what the read was for (channel-tuning.md,
+"FX EFFECT"; the park's own scope is under [Event timing while Live sync is up](#event-timing-while-live-sync-is-up)). A cancelled fetch restores the plan it started from, so
 a cancel means nothing happened rather than leaving an unlabelled mixture of old and device values.
 
 An undo whose write fails is not a special case: the flush's failure ends the session as any edit's

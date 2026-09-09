@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections, type Plan, type PlanConnection } from "../plan";
+import { emptyPlan, ensureFixedConnections, type FxEffectParams, type Plan, type PlanConnection } from "../plan";
 import { ref } from "../../models/types";
 
 // readback.ts pulls live values through platform.vdGet, so mock that module: the
@@ -8,12 +8,15 @@ import { ref } from "../../models/types";
 vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdGet, vdGetStr } from "../platform";
-import { COLOR_PALETTE, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
-import { applyDeviceState, formatReadbackReport } from "./readback";
+import { COLOR_PALETTE, dGainParam, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS, silentKey } from "./params";
+import { FX_SLOT_LEVEL, FX_SLOT_ON, fxEffectTypes, fxParams } from "./fx-effect";
+import { defaultPlan } from "../../models/initial-state";
+import { applyDeviceState, applySilentState, formatReadbackReport } from "./readback";
 import { readableContestKey } from "../plan-history";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
-import { addrKey, planToCommands } from "./translate";
+import { addrKey, insertFxControl, planToCommands } from "./translate";
+import { insertFxReadableSlots } from "./insert-fx-effect";
 
 const model = getModel("URX44V");
 
@@ -1106,5 +1109,594 @@ describe("formatReadbackReport", () => {
     });
     expect(md).not.toMatch(/no longer in the plan/i);
     expect(md).toMatch(/edited here while the read was in flight/i);
+  });
+});
+
+// The park over the addresses the unit announces nothing for. Its whole value rests on
+// being NARROW — a pass that read whole nodes would make the plan device-wins on
+// everything those nodes carry, which is the full reconcile's job and not this one's — so
+// what it reads is asserted as a SET rather than as a count.
+describe("applySilentState", () => {
+  const FX_TYPE = new Set([679, 683]);
+  const FX_ARRAY = new Set([681, 685]);
+  const dGainIds = (): Set<number> =>
+    new Set(model.nodes.map((n) => dGainParam("URX44V", n.id)).filter((p): p is number => p !== undefined));
+  /**
+   * Every param id the park may touch.
+   *
+   * The engine arrays are the silent half; the insert-FX SELECTOR and its bypass are in
+   * here as well, and deliberately: the engine's raws mean nothing without knowing which
+   * family they belong to, and taking that from the plan would read the wrong engine
+   * whenever the plan's own copy is what went stale. Two reads per holder buys the
+   * question being asked of the unit.
+   */
+  const allowedIds = (): Set<number> => {
+    const ids = new Set<number>([...FX_TYPE, ...FX_ARRAY, ...dGainIds(), 689, 693, 697, 701]);
+    for (const node of model.nodes) {
+      const ifx = insertFxControl(model, node.id);
+      if (ifx) ids.add(ifx.param).add(ifx.onParam);
+    }
+    return ids;
+  };
+
+  const parkedAddrs = async (
+    plan: Plan,
+    scope?: { exclude?: ReadonlySet<string>; only?: ReadonlySet<string> },
+  ): Promise<string[]> => {
+    const seen: string[] = [];
+    const table = deviceTableFor(plan);
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      seen.push(`${paramId}:${x}:${y}`);
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    await applySilentState(model, plan, undefined, undefined, undefined, scope);
+    return seen;
+  };
+
+  it("reads the three silent families and nothing else", async () => {
+    const plan = defaultPlan("URX44V");
+    const seen = await parkedAddrs(plan);
+    const ids = new Set(seen.map((a) => Number(a.split(":")[0])));
+    const allowed = allowedIds();
+    expect(
+      [...ids].filter((id) => !allowed.has(id)),
+      "nothing outside the silent families",
+    ).toEqual([]);
+    // The positive control: an emptiness assertion is also satisfied by a park that read
+    // nothing at all, and by one that never found a D.Gain.
+    expect([...ids].filter((id) => FX_ARRAY.has(id)).length, "both FX channels' arrays").toBe(2);
+    expect([...ids].filter((id) => dGainIds().has(id)).length, "every stereo channel's D.Gain").toBe(4);
+    // How many times each address is asked for, which is latency in the operator's own
+    // gesture: the park stands between it and the write it precedes. A family a HEAD lays out
+    // is read TWICE — the pair that has to agree before anything is applied, which is the
+    // only thing that can see a head taken away and brought back — and each head once more
+    // than that, ahead of the pass and behind each of the two readings. D.Gain has no head
+    // and no pair: one read.
+    const heads = new Set([
+      "679:0:0",
+      "683:0:0",
+      ...model.nodes.flatMap((n) => {
+        const ifx = insertFxControl(model, n.id);
+        return ifx ? [`${ifx.param}:0:${ifx.instances[0]}`] : [];
+      }),
+    ]);
+    const counts = new Map<string, number>();
+    for (const a of seen) counts.set(a, (counts.get(a) ?? 0) + 1);
+    const wrong = [...counts].filter(([addr, n]) => {
+      const want = heads.has(addr) ? 3 : dGainIds().has(Number(addr.split(":")[0])) ? 1 : 2;
+      return n !== want;
+    });
+    expect(wrong, "each address read the number of times its family needs").toEqual([]);
+  });
+
+  // What "narrow" is worth saying at all: these are addresses the OWNER NODES carry and a
+  // node-scoped read would take. Reading them here would make the plan device-wins on them
+  // at every converge — which is the full reconcile's job, on its own trigger.
+  it("leaves the rest of the owner nodes' bodies alone", async () => {
+    const plan = defaultPlan("URX44V");
+    const seen = new Set(await parkedAddrs(plan));
+    const read = (id: number): boolean => [...seen].some((a) => a.startsWith(`${id}:`));
+    // A.Gain is `channelControl(...).gain` on a MONO channel — the same field D.Gain fills
+    // on a stereo one, and the reason this park selects by node rather than by the field
+    // being present. The unit announces it.
+    expect(read(PARAMS.HA_GAIN.id), "A.Gain").toBe(false);
+    expect(read(PARAMS.HPF_ON.id), "the channel HPF").toBe(false);
+    expect(read(PARAMS.PHANTOM.id), "phantom power").toBe(false);
+    expect(read(PARAMS.SSMCS_ON.id), "the SSMCS bank").toBe(false);
+  });
+
+  // The guard this read needs and no other read here does. Every other read answers a
+  // device-side event; this one answers a write the app is about to make, so it arrives
+  // while an operator edit is sitting in the plan waiting for the next flush — and reading
+  // then puts the unit's PRE-edit value over it. The merge cannot help: it protects an edit
+  // made DURING a read, and this one was made before it.
+  //
+  // What it costs when it is missing is not the value alone: the park's own patch is then
+  // absorbed into the history baseline as something the device authored, so the undo of
+  // that edit lands on the edited value instead of on the one before it.
+  it("leaves an edit the plan has not sent yet alone", async () => {
+    const plan = defaultPlan("URX44V");
+    const hpf = fxParams(0).find((d) => d.key === "revxHpf")!;
+    // What the unit is holding is what this session last sent; the plan has moved on and
+    // the flush carrying it has not run.
+    const onTheUnit = hpf.def;
+    const table = deviceTableFor(plan);
+    plan.nodeParams["bus.fx1"]!.fxEffect!.params![hpf.key] = 44;
+
+    mockVdGetFrom(table);
+    await applySilentState(model, plan, undefined, undefined, (id, _x, y, raw) =>
+      id === 681 && y === hpf.slot ? raw === onTheUnit : true,
+    );
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect?.params?.[hpf.key], "the operator's edit").toBe(44);
+  });
+
+  // The other half of that guard, and the one that says WHICH parameter each raw is. A
+  // family's raws are laid out by its head — an FX channel's EFFECT TYPE, a node's
+  // insert-FX selector — and the emit answered with above is laid out by the PLAN's copy of
+  // that head. So a selection the operator has made and no flush has carried yet had the
+  // outgoing array read as the incoming effect's: every value filed under a key the
+  // outgoing one never had, and the write behind the park sending the incoming type's
+  // factory values in their place.
+  it("reads an FX array against the type the unit holds, not the plan's unsent one", async () => {
+    const plan = defaultPlan("URX44V");
+    const hpf = fxParams(0).find((d) => d.key === "revxHpf")!;
+    const onTheUnit = plan.nodeParams["bus.fx1"]!.fxEffect!.type!;
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    expect(
+      fxEffectTypes(0).find((o) => o.value === onTheUnit)!.family,
+      "the premise: the selection crosses families, so the slots mean different parameters",
+    ).not.toBe(delay.family);
+    const table = deviceTableFor(plan);
+    // The plan's own value for this parameter, and then the selection whose flush is still
+    // to come — which is the state every EFFECT TYPE park in front of a second selection is
+    // in.
+    plan.nodeParams["bus.fx1"]!.fxEffect!.params![hpf.key] = 44;
+    plan.nodeParams["bus.fx1"]!.fxEffect!.type = delay.value;
+
+    mockVdGetFrom(table);
+    // The unit is holding what this session last sent it everywhere, so what lands below is
+    // the emit's — which is the arrangement that has to be laid out the unit's way.
+    await applySilentState(model, plan, undefined, undefined, () => true);
+
+    const fx = plan.nodeParams["bus.fx1"]?.fxEffect;
+    expect(fx?.type, "the unit's own type").toBe(onTheUnit);
+    expect(fx?.params?.[hpf.key], "and each slot read as the parameter the unit has there").toBe(44);
+  });
+
+  // The same head on the other family, where it decides which ENGINE the raws come from —
+  // and where both halves of that show: read against the plan's unsent selector, a node's
+  // values are taken off one engine and filed under another's namespace, and the guard
+  // above has no value of the unit's family to answer with, so an edit the flush has not
+  // carried is replaced by the value it was made against.
+  it("reads an insert-FX engine against the selector the unit holds", async () => {
+    const plan = defaultPlan("URX44V");
+    const was = plan.nodeParams["bus.stereo"];
+    // MBC on the unit, holding what this session last sent it.
+    plan.nodeParams["bus.stereo"] = { ...was, insertFx: 1792, insertFxOn: true, insertFxParams: { "mbc:14": 97 } };
+    const table = deviceTableFor(plan);
+    // The operator moves that slot and then picks the compander; neither has gone out.
+    plan.nodeParams["bus.stereo"] = {
+      ...plan.nodeParams["bus.stereo"],
+      insertFx: 1793,
+      insertFxParams: { "mbc:14": 90 },
+    };
+
+    mockVdGetFrom(table);
+    await applySilentState(model, plan, undefined, undefined, () => true);
+
+    expect(plan.nodeParams["bus.stereo"]?.insertFx, "the unit's own selector").toBe(1792);
+    // Filed under the bare slot, which is the namespace a read writes: by construction the
+    // family the selector named. Read against the plan's selector, this slot comes off the
+    // other engine, which is holding nothing.
+    expect(
+      plan.nodeParams["bus.stereo"]?.insertFxParams?.["14"],
+      "the operator's own edit, under the family the unit is on",
+    ).toBe(90);
+  });
+
+  // The params map carries one key per FAMILY, so a channel that has held several effects
+  // keeps each one's values and the emit sends whichever the type names — which is what
+  // makes a type change reversible in the PLAN even though it is not on the unit. A read
+  // answers for one family, so what it brings back is MERGED into what the node holds:
+  // replacing the map took the dormant families with it, and selecting one of them back then
+  // sent the incoming type's factory values rather than what the operator had set. Both
+  // readers apply it, since either one alone leaves the other free to drop them.
+  it.each([
+    ["the silent-address park", (plan: Plan) => applySilentState(model, plan)],
+    ["a full device read", (plan: Plan) => applyDeviceState(model, plan)],
+  ])("keeps a dormant family's values through %s", async (_name, read) => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const delayHpf = fxParams(delay.value).find((d) => d.key === "delayHpf")!;
+    const revxHpf = fxParams(0).find((d) => d.key === "revxHpf")!;
+    const DORMANT = delayHpf.def + 31;
+    const fx = plan.nodeParams["bus.fx1"]!.fxEffect!;
+    // The channel has been on the delay, was set there, and is on Rev-X now. The unit holds
+    // one array, so the delay's own value is the plan's alone.
+    plan.nodeParams["bus.fx1"] = {
+      ...plan.nodeParams["bus.fx1"],
+      fxEffect: { ...fx, params: { ...fx.params, [delayHpf.key]: DORMANT } },
+    };
+    const table = deviceTableFor(plan);
+    table.set(`681:0:${revxHpf.slot}`, 30); // the hand on the unit; no notify exists for it
+
+    mockVdGetFrom(table);
+    const r = await read(plan);
+
+    expect(r.errors).toEqual([]);
+    const params = plan.nodeParams["bus.fx1"]?.fxEffect?.params;
+    // The positive control: the family the type names took the unit's value, so the read
+    // reached this node rather than leaving it untouched.
+    expect(params?.[revxHpf.key], "the active family, read off the unit").toBe(30);
+    expect(params?.[delayHpf.key], "and the dormant family's own value").toBe(DORMANT);
+  });
+
+  // The guard compares an ADDRESS and a raw, and the snapshot it compares against was taken
+  // under whatever layout the unit was on then. So a head the panel moved leaves the two
+  // sides describing different parameters at the same address, and a slot whose layouts
+  // happen to agree on a number reads as "still what this session sent" — the unit's own
+  // value replaced by a plan value belonging to a parameter it is not.
+  it("takes the unit's own values where its head is not the one this session sent", async () => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const lpf = fxParams(delay.value).find((d) => d.key === "delayLpf")!;
+    const table = deviceTableFor(plan);
+    // The hand on the unit: it is on the delay now, and the app was never told.
+    table.set("679:0:0", delay.value);
+    table.set(`681:0:${lpf.slot}`, 40);
+    plan.nodeParams["bus.fx1"]!.fxEffect!.params![lpf.key] = 3;
+
+    mockVdGetFrom(table);
+    // The snapshot still holds the type this session last sent, and holds this slot's raw —
+    // which under the OUTGOING layout was a different parameter.
+    await applySilentState(model, plan, undefined, undefined, (id) => id !== 679);
+
+    const fx = plan.nodeParams["bus.fx1"]?.fxEffect;
+    expect(fx?.type, "the unit's own type").toBe(delay.value);
+    expect(fx?.params?.[lpf.key], "and its own value, not the plan's").toBe(40);
+  });
+
+  // The head and the values behind it are read one address at a time, so the unit can move
+  // the head in between: the values then belong to the incoming layout and the keys they
+  // are filed under to the outgoing one, which is a parameter set the unit never had.
+  it("takes a family again when the unit moves its head under the read", async () => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const was = plan.nodeParams["bus.fx1"]!.fxEffect!.type!;
+    expect(was, "the premise: the read starts on another family").not.toBe(delay.value);
+    const table = deviceTableFor(plan);
+    let flips = 1;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 681 && flips > 0) {
+        flips--;
+        table.set("679:0:0", delay.value); // the panel, mid-read
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await applySilentState(model, plan);
+
+    expect(r.errors, "the retry settled it").toEqual([]);
+    expect([...r.unreadNodes]).toEqual([]);
+    // One layout throughout: the type the unit ended on, and the keys that type owns.
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect?.type).toBe(delay.value);
+    expect(Object.keys(plan.nodeParams["bus.fx1"]?.fxEffect?.params ?? {})).toEqual(
+      expect.arrayContaining(fxParams(delay.value).map((d) => d.key)),
+    );
+  });
+
+  // …and a head that will not settle is a family this read cannot answer for. Failing the
+  // node is what the caller acts on — the write behind the park is the destructive half.
+  it("fails the node when its head will not settle", async () => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const table = deviceTableFor(plan);
+    const types = [delay.value, plan.nodeParams["bus.fx1"]!.fxEffect!.type!];
+    let i = 0;
+    // A hand that is still moving: the head answers something else every time it is asked,
+    // so neither attempt's values belong to the type the one behind them ended on.
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 679) return Promise.resolve(types[i++ % types.length]);
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await applySilentState(model, plan);
+
+    expect([...r.unreadNodes], "the node the caller may not treat as read").toEqual(["bus.fx1"]);
+    expect(r.errors.join(" "), "and the failure names the head").toContain("EFFECT TYPE");
+    // The positive control: every other node still landed.
+    expect(r.applied).toBeGreaterThan(0);
+  });
+
+  // A family read is one TRANSACTION. An attempt the unit moved a head under is discarded,
+  // and a discarded attempt that has already written leaves the layout it was read in behind
+  // — filed under keys that layout owns, which is the dormant family's own namespace.
+  it("leaves nothing behind from an attempt the head moved under", async () => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const hpf = fxParams(0).find((d) => d.key === "revxHpf")!;
+    const KEPT = 33;
+    plan.nodeParams["bus.fx1"]!.fxEffect!.params![hpf.key] = KEPT;
+    const table = deviceTableFor(plan);
+    // The array answers the delay's own value at that slot, which is what the discarded
+    // attempt would file under the Rev-X key.
+    table.set(`681:0:${hpf.slot}`, 110);
+    let flips = 1;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 681 && flips > 0) {
+        flips--;
+        table.set("679:0:0", delay.value); // the panel, inside the first attempt
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await applySilentState(model, plan);
+
+    expect(r.errors, "the retry settled it").toEqual([]);
+    const fx = plan.nodeParams["bus.fx1"]?.fxEffect;
+    expect(fx?.type, "the unit's own type, from the attempt that held").toBe(delay.value);
+    expect(fx?.params?.[hpf.key], "and the dormant family untouched by the discarded one").toBe(KEPT);
+  });
+
+  // …and when neither attempt holds, the family is left exactly as it was: the caller ends
+  // the session on `unreadNodes`, and what is on screen must not already carry the values
+  // that failure is about.
+  it("leaves the family unchanged when no attempt holds", async () => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const before = structuredClone(plan.nodeParams["bus.fx1"]);
+    const table = deviceTableFor(plan);
+    const types = [delay.value, plan.nodeParams["bus.fx1"]!.fxEffect!.type!];
+    let i = 0;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 679) return Promise.resolve(types[i++ % types.length]);
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await applySilentState(model, plan);
+
+    expect([...r.unreadNodes]).toEqual(["bus.fx1"]);
+    expect(plan.nodeParams["bus.fx1"], "not one value of it moved").toEqual(before);
+  });
+
+  // The layout rule reaches the addresses a HEAD lays out, and no further. An FX channel's
+  // ON and MIX sit in the same array and mean the same thing under every type, so a head the
+  // panel moved says nothing about them — and the guard that keeps an unsent edit is the
+  // whole of what stops the app writing its own back over the operator's.
+  it.each([
+    ["the effect ON", FX_SLOT_ON, 0, (fx: FxEffectParams | undefined) => (fx?.on === false ? 0 : 1)],
+    ["the effect level", FX_SLOT_LEVEL, 40, (fx: FxEffectParams | undefined) => fx?.level],
+  ])("keeps an unsent edit to %s when the unit's head moved", async (_what, slot, edited, read) => {
+    const plan = defaultPlan("URX44V");
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const table = deviceTableFor(plan);
+    table.set("679:0:0", delay.value); // the hand on the unit: another type, unannounced
+    const fx = plan.nodeParams["bus.fx1"]!.fxEffect!;
+    plan.nodeParams["bus.fx1"] = {
+      ...plan.nodeParams["bus.fx1"],
+      fxEffect: slot === FX_SLOT_ON ? { ...fx, on: false } : { ...fx, level: edited },
+    };
+
+    mockVdGetFrom(table);
+    // The snapshot holds the type this session last sent — not the one the panel chose —
+    // and holds every other address as it stands.
+    await applySilentState(model, plan, undefined, undefined, (id) => id !== 679);
+
+    const after = plan.nodeParams["bus.fx1"]?.fxEffect;
+    expect(after?.type, "the unit's own type").toBe(delay.value);
+    expect(read(after), "and the operator's own edit, which no type changes the meaning of").toBe(
+      slot === FX_SLOT_ON ? 0 : edited,
+    );
+  });
+
+  // The same address on the other family: the insert-FX bypass is its own param, not an
+  // engine slot, so the selector moving on the panel leaves it meaning what it always did.
+  it("keeps an unsent insert-FX bypass when the unit's selector moved", async () => {
+    const plan = defaultPlan("URX44V");
+    const was = plan.nodeParams["bus.stereo"];
+    plan.nodeParams["bus.stereo"] = { ...was, insertFx: 1792, insertFxOn: true };
+    const table = deviceTableFor(plan);
+    const ifx = insertFxControl(model, "bus.stereo")!;
+    table.set(`${ifx.param}:0:${ifx.instances[0]}`, 1793); // the panel chose another effect
+    plan.nodeParams["bus.stereo"] = { ...plan.nodeParams["bus.stereo"], insertFxOn: false };
+
+    mockVdGetFrom(table);
+    await applySilentState(model, plan, undefined, undefined, (id) => id !== ifx.param);
+
+    expect(plan.nodeParams["bus.stereo"]?.insertFx, "the unit's own selector").toBe(1793);
+    expect(plan.nodeParams["bus.stereo"]?.insertFxOn, "and the operator's own bypass edit").toBe(false);
+  });
+
+  // A head that is back where it started says nothing about what happened in between. The
+  // values are read one address at a time, so a selector taken to another effect and back
+  // inside that run leaves the two readings of it equal while the raws between them came off
+  // the OTHER layout — and they are then filed under the keys of the one the unit ended on.
+  // Both readers, and both callers, since the four share one helper.
+  it.each([
+    ["the silent park", (plan: Plan) => applySilentState(model, plan)],
+    ["a full device read", (plan: Plan) => applyDeviceState(model, plan)],
+  ])("refuses an FX array whose type went away and came back during %s", async (_name, read) => {
+    const plan = defaultPlan("URX44V");
+    const time = fxParams(0).find((d) => d.key === "reverbTime")!;
+    const table = deviceTableFor(plan);
+    const STEADY = table.get(`681:0:${time.slot}`)!;
+    const DURING = STEADY + 37;
+    // One pass' worth of array reads answer the OTHER layout's values while both readings of
+    // the head answer the type the unit started and ended on.
+    let contaminated = fxParams(0).length + 2;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 681 && contaminated > 0) {
+        contaminated--;
+        return Promise.resolve(DURING);
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await read(plan);
+
+    expect(r.errors).toEqual([]);
+    expect(
+      plan.nodeParams["bus.fx1"]?.fxEffect?.params?.[time.key],
+      "the value the unit held either side of the excursion",
+    ).toBe(STEADY);
+  });
+
+  // …and the pair is compared on the VALUES, not on the head alone. With the excursion in the
+  // SECOND reading rather than the first, a rule that pairs two readings by their head takes
+  // the dirty one — it is the later of the two, and the later one is what gets applied.
+  it.each([
+    ["the silent park", (plan: Plan) => applySilentState(model, plan)],
+    ["a full device read", (plan: Plan) => applyDeviceState(model, plan)],
+  ])("pairs two readings by what they saw, not by the head alone, during %s", async (_name, read) => {
+    const plan = defaultPlan("URX44V");
+    const time = fxParams(0).find((d) => d.key === "reverbTime")!;
+    const table = deviceTableFor(plan);
+    const STEADY = table.get(`681:0:${time.slot}`)!;
+    const DURING = STEADY + 41;
+    // The first reading is clean; the excursion lands inside the second.
+    const perPass = fxParams(0).length + 2;
+    let arrayReads = 0;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 681) {
+        arrayReads++;
+        if (arrayReads > perPass && arrayReads <= perPass * 2) return Promise.resolve(DURING);
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await read(plan);
+
+    expect(r.errors).toEqual([]);
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect?.params?.[time.key], "the value two agreeing readings saw").toBe(
+      STEADY,
+    );
+  });
+
+  it.each([
+    ["the silent park", (plan: Plan) => applySilentState(model, plan)],
+    ["a full device read", (plan: Plan) => applyDeviceState(model, plan)],
+  ])("refuses an insert-FX engine whose selector went away and came back during %s", async (_name, read) => {
+    const plan = defaultPlan("URX44V");
+    const was = plan.nodeParams["bus.stereo"];
+    plan.nodeParams["bus.stereo"] = { ...was, insertFx: 1792, insertFxOn: true, insertFxParams: { "mbc:14": 97 } };
+    const table = deviceTableFor(plan);
+    const ifx = insertFxControl(model, "bus.stereo")!;
+    const engine = 693;
+    const STEADY = table.get(`${engine}:0:14`)!;
+    const DURING = STEADY + 13;
+    let contaminated = insertFxReadableSlots("mbc").length;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === engine && contaminated > 0) {
+        contaminated--;
+        return Promise.resolve(DURING);
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const r = await read(plan);
+
+    expect(r.errors).toEqual([]);
+    expect(plan.nodeParams["bus.stereo"]?.insertFx, "the selector either side of the excursion").toBe(1792);
+    expect(plan.nodeParams["bus.stereo"]?.insertFxParams?.["14"], "and the value that family really held").toBe(STEADY);
+    void ifx;
+  });
+
+  it("takes a value the unit moved with nothing announced", async () => {
+    const plan = defaultPlan("URX44V");
+    const hpf = fxParams(0).find((d) => d.key === "revxHpf")!;
+    const before = plan.nodeParams["bus.fx1"]?.fxEffect?.params?.[hpf.key];
+    expect(before, "the premise: the plan holds the factory value").toBe(hpf.def);
+
+    const table = deviceTableFor(plan);
+    table.set(`681:0:${hpf.slot}`, 30); // the hand on the unit; no notify exists for it
+    mockVdGetFrom(table);
+    const r = await applySilentState(model, plan);
+
+    expect(r.errors).toEqual([]);
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect?.params?.[hpf.key]).toBe(30);
+  });
+
+  // The converge's own head nodes. The head write made the unit reset that node's
+  // dependents and the converge is what puts them back, so what a read there would find is
+  // the reset value — adopted, it becomes the plan's, and the restore never goes out.
+  // Every OTHER node in the scope is untouched by that head and still read.
+  it("leaves a family named in exclude unread", async () => {
+    const plan = defaultPlan("URX44V");
+    const exclude = new Set([silentKey("fx", "bus.fx1"), silentKey("dGain", "ch_5_6"), silentKey("insertFx", "ch1")]);
+    const seen = new Set(await parkedAddrs(plan, { exclude }));
+    const read = (id: number): boolean => [...seen].some((a) => a.startsWith(`${id}:`));
+    const ifx = insertFxControl(model, "ch1")!;
+    const otherIfx = insertFxControl(model, "ch2")!;
+    // One per family, since the three are separate passes and each has its own guard.
+    expect(read(679), "FX1's effect type").toBe(false);
+    expect(read(681), "FX1's engine array").toBe(false);
+    expect(read(dGainParam("URX44V", "ch_5_6")!), "CH 5/6's D.Gain").toBe(false);
+    expect(seen.has(`${ifx.param}:0:${ifx.instances[0]}`), "CH 1's insert-FX selector").toBe(false);
+    // The positive control, one per family: an emptiness assertion is also satisfied by a
+    // park that read nothing at all, or by one `exclude` emptied.
+    expect(read(685), "FX2's engine array, which no head named").toBe(true);
+    expect(read(dGainParam("URX44V", "ch_7_8")!), "CH 7/8's D.Gain").toBe(true);
+    expect(seen.has(`${otherIfx.param}:0:${otherIfx.instances[0]}`), "CH 2's selector").toBe(true);
+  });
+
+  // The reason the key carries a family and not just a node. A converge head and a family it
+  // does not reset share a node — a channel has a COMP/EQ type and an insert effect, an FX
+  // channel could hold either — so a node-wide exclusion took a family the head never
+  // touched out of the park, and the converge then sent the plan's copy of it.
+  it("keeps the other families of an excluded node parked", async () => {
+    const plan = defaultPlan("URX44V");
+    const ifx = insertFxControl(model, "ch1")!;
+    const seen = new Set(await parkedAddrs(plan, { exclude: new Set([silentKey("insertFx", "ch1")]) }));
+    expect(seen.has(`${ifx.param}:0:${ifx.instances[0]}`), "CH 1's insert FX, which the head reset").toBe(false);
+    // Nothing else of CH 1's is the head's, and CH 1 carries no other silent family — so the
+    // reading that separates the two exclusions is the FX channel's, whose own type head is
+    // not this one.
+    expect(
+      [...seen].some((a) => a.startsWith("681:")),
+      "FX1's array, which this head never touched",
+    ).toBe(true);
+  });
+
+  // `only` is the other half of the same scope: the EFFECT TYPE park names one channel's
+  // effect family, since that is the one thing the type write is about to replace.
+  it("reads only the family `only` names", async () => {
+    const plan = defaultPlan("URX44V");
+    const seen = new Set(await parkedAddrs(plan, { only: new Set([silentKey("fx", "bus.fx1")]) }));
+    const read = (id: number): boolean => [...seen].some((a) => a.startsWith(`${id}:`));
+    expect(read(681), "FX1's engine array").toBe(true);
+    expect(read(685), "FX2's, which it did not name").toBe(false);
+    expect(read(dGainParam("URX44V", "ch_5_6")!), "and no D.Gain").toBe(false);
+  });
+
+  // What the caller acts on when a read fails: the park's own completeness check reads
+  // `unreadNodes`, and a session ends rather than letting the write behind it replace
+  // values nobody confirmed. The three families are three separate passes with three
+  // separate catches, so one family's recording says nothing about the other two — and a
+  // park that recorded nothing would look exactly like one that found nothing to change.
+  //
+  // The insert-FX selector is why the refusal is per INSTANCE: one param id carries every
+  // mono channel, so refusing the id alone fails four nodes and says nothing about which
+  // pass recorded them.
+  it.each([
+    ["the FX effect arrays", 681, null, "bus.fx1"],
+    [
+      "the insert-FX engine arrays",
+      insertFxControl(model, "ch1")!.param,
+      insertFxControl(model, "ch1")!.instances[0]!,
+      "ch1",
+    ],
+    ["D.Gain", dGainParam("URX44V", "ch_5_6")!, null, "ch_5_6"],
+  ])("names the node whose read of %s failed", async (_family, paramId, instance, nodeId) => {
+    const plan = defaultPlan("URX44V");
+    const table = deviceTableFor(plan);
+    vi.mocked(vdGet).mockImplementation((id: number, x: number, y: number) => {
+      if (id === paramId && (instance === null || y === instance)) throw new Error("device-lost");
+      return Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0);
+    });
+
+    const r = await applySilentState(model, plan);
+    expect([...r.unreadNodes], "the node the caller may not treat as read").toEqual([nodeId]);
+    expect(r.errors.join(" "), "and the failure says which node it was").toContain(
+      model.nodes.find((n) => n.id === nodeId)!.label,
+    );
+    // Once. A node whose layout head is what could not be read is left alone rather than
+    // asked again by the family pass behind it, which has no head to read it against.
+    expect(r.errors, "named once").toHaveLength(1);
+    // The positive control: the other two families still landed, so what the assertions
+    // above describe is one failed pass rather than a park that read nothing at all.
+    expect(r.applied, "every other node this park attempted").toBeGreaterThan(0);
   });
 });

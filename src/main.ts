@@ -133,6 +133,7 @@ import {
   applyDeviceState,
   applyDirect,
   applyNodeState,
+  applySilentState,
   applySourceState,
   formatReadbackReport,
   insertFxHoldKeys,
@@ -491,6 +492,54 @@ const live = DEMO
         requestReflect();
         assertReadComplete(merged, "side-effect refetch issues:");
         return merged.deviceView;
+      },
+      // A converge is about to push the plan across the whole write scope, so the addresses
+      // the unit announces nothing for are read first — see live.ts's `parkSilent`. Its
+      // epilogue is the FX type park's, and for the same reasons: the guard keeps it off an
+      // edit this flush has not sent, `absorb` takes what it authored into the baseline
+      // without spending the operator's open gesture, and a read that FAILS ends the session
+      // rather than letting the converge write over values it could not confirm.
+      parkSilent: async (scope) => {
+        const merged = await followRead("silent-address park", (into, signal) =>
+          applySilentState(getModel(modelId), into, signal, live?.recentPending(), holdsSent, scope),
+        ).catch((err: unknown) => {
+          stopLiveOnError(errorText(err));
+          return null;
+        });
+        if (!merged) return;
+        // Ahead of the empty-patch exit, because a read that could not reach some of these
+        // nodes produces no patch for them: taken second, an incomplete read would look
+        // like a read that found nothing to change and the converge would go out on it.
+        // Ending the session here is what stops it — the flush's own generation check.
+        try {
+          assertReadComplete(merged, "silent-address park issues:");
+        } catch (err) {
+          stopLiveOnError(errorText(err));
+          return;
+        }
+        if (!merged.devicePatch.length) return;
+        traceProbe?.sample("follow-scoped");
+        noteMergeConflicts(merged);
+        planHistory?.absorb(merged.devicePatch);
+        for (const e of merged.devicePatch) if (e.field === "nodeParams") followDirtyNodes.add(e.key);
+        // Drained here rather than left on `requestReflect`'s timer. That timer is for
+        // coalescing a 20 Hz stream and this is one read — and its arrival AFTER the rebuild
+        // below is what makes the difference: a reflect landing then asks the panel to
+        // rebuild, the gate holds that for the select the operator chose in, and their next
+        // press anywhere is spent releasing the hold.
+        reflectFollow();
+        // Said on the same line a reconcile says it on, and by the park that runs inside the
+        // operator's OWN gesture: they moved a head, and what this found is the unit's answer
+        // to it — a reverb tuned on the panel appearing in the app. The park the converge
+        // takes is not that gesture, and the flush reports what it sends on the same line, so
+        // saying it there would announce one repair twice.
+        if (scope.only) setStatus(t().status.liveFollowed(merged.applied));
+        // Past the gate, because this arrives inside the operator's OWN gesture: a park runs
+        // in front of a head write, and the head is a selector they have just chosen in — so
+        // the control the gate would hold the rebuild for is the one showing the stale value,
+        // and their next press elsewhere is spent releasing the hold rather than doing what
+        // they pressed for.
+        rebuildInspectorNow();
       },
       // The flush's capture rebuilt the follow address set — re-register against it. Only a
       // STRUCTURAL edit moves that set (a mode change, a wire), so this is a no-op on the
@@ -936,6 +985,21 @@ async function followRead(
   }
 }
 
+/**
+ * Whether the unit is still holding what this session last sent to an address.
+ *
+ * Both parks read through it (`readback.sentOverlay`), and for the same reason: a park
+ * answers the app's own write rather than a device-side event, so it arrives while an edit
+ * the operator has already made is sitting in the plan waiting for the next flush. Where the
+ * unit agrees with what was last sent it has nothing to say, and the read answers with the
+ * plan's own value — so that edit survives instead of being replaced by the value it was
+ * made against. The merge cannot cover it: what the merge protects is an edit made DURING a
+ * read, and this one was made before it.
+ */
+function holdsSent(paramId: number, x: number, y: number, raw: number): boolean {
+  return live ? live.holdsSent(paramId, x, y, raw) : false;
+}
+
 const follow =
   DEMO || !live
     ? null
@@ -943,6 +1007,9 @@ const follow =
         // The plan's follow set plus Follow USB, which the plan deliberately does
         // not carry (params.ts) but the badge has to keep in step with the device.
         addrs: () => [...(live?.followAddrs() ?? []), FOLLOW_USB_ADDR],
+        // Held off while a converge runs: it is rewriting the unit round after round,
+        // and its reads and this one otherwise interleave on the one link.
+        deferReconcile: () => live?.isConverging() ?? false,
         intercept: (p) => {
           const [id, x, y] = FOLLOW_USB_ADDR;
           if (p.paramId !== id || p.x !== x || p.y !== y) return false;
@@ -2530,9 +2597,10 @@ planHistory = new PlanHistory({
   // from its own copy, and a file flow can replace the plan outright: patching under
   // either acts on a premise that is still moving. Every read that RE-AUTHORS the plan
   // counts — the operator's fetch and Live-sync start, and equally device follow's two
-  // reconciles and Live sync's 1-knob refetch. A converge round is not one of them: it
-  // reads the whole write scope but writes nothing back into the plan, so an undo
-  // during it is answerable. The press itself is never consumed (run() refuses before
+  // reconciles and Live sync's 1-knob refetch, and the silent-address park at the head of
+  // a converge. A converge ROUND is not one of them: it reads the whole write scope but
+  // writes nothing back into the plan, so an undo during one is answerable — which makes
+  // the park the only part of a converging flush that refuses a press. The press itself is never consumed (run() refuses before
   // it commits the open entry, so a retry is exact), but the two reconciles reset the
   // history in their reflect a moment later, so for those a refused press is an entry
   // the operator loses — visibly, rather than an edit that may or may not have reached

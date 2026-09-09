@@ -29,6 +29,17 @@ export type ParamEncoding =
   | "insertFx"
   | "raw";
 
+/**
+ * The three families the unit announces nothing for when its own panel moves them, as the
+ * park that reads them names them (`readback.applySilentState`). One key per family per
+ * node, so a head and a family it does not touch can share a node without one taking the
+ * other out.
+ */
+export type SilentFamily = "fx" | "insertFx" | "dGain";
+
+/** How a silent family is named for one node — the one spelling producer and reader share. */
+export const silentKey = (family: SilentFamily, nodeId: string): string => `${family}:${nodeId}`;
+
 export interface ParamSpec {
   /** Broker param_id (first field of the "{id}:{x}:{y}" address). */
   id: number;
@@ -68,6 +79,24 @@ export interface ParamSpec {
    * Scoped to the flush that wrote the head, and to that head's own node.
    */
   drives?: readonly string[];
+  /**
+   * For a `"converge"` head: which of the three silent families this write resets on the
+   * unit, when it resets one at all.
+   *
+   * The park in front of a converge reads those families so the round does not send the
+   * plan's stale copy of them, and it leaves out what the head has just reset — the one
+   * place the unit's value is the reset rather than the operator's, and the converge is what
+   * puts the operator's back. Named per FAMILY rather than per node because a head and a
+   * family it does not touch share one: a channel carries both a COMP/EQ type and an insert
+   * effect, so leaving the NODE out took the insert-FX engine array with it, and the
+   * converge then wrote the plan's copy over whatever the panel had done to it.
+   *
+   * A head that resets an ANNOUNCED bank names nothing — COMP/EQ, bus type and pan are
+   * device follow's, and the park never read them. SIGNAL_TYPE names nothing either: what it
+   * clears is the pair's insert-FX selector and ON, which `applyPairTransition` clears in the
+   * plan at the same edit, and the engine array's own values survive on the unit.
+   */
+  resets?: SilentFamily;
   /**
    * Device-follow application strategy. "direct" marks a node-local scalar whose
    * incoming notify value can be decoded and written straight into the plan with
@@ -288,7 +317,7 @@ export const PARAMS = {
    *  sideEffect: selecting an effect (re)binds + repopulates its engine parameter
    *  array on the device, so live must converge (re-read then re-apply the plan's
    *  effect params). See control/insert-fx-effect.ts. */
-  INSERT_FX: { id: 135, encoding: "insertFx", sideEffect: "converge" },
+  INSERT_FX: { id: 135, encoding: "insertFx", sideEffect: "converge", resets: "insertFx" },
   /** Input channel insert FX ON/OFF (bypass) — independent of the selector (135).
    *  The device auto-engages it whenever an effect is (re)selected, so translate
    *  emits it after the selector and after the engine values it applies to, to
@@ -305,11 +334,11 @@ export const PARAMS = {
   REC_POINT_STEREO: { id: 264, encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. sideEffect:
    *  rebinds + repopulates the output engine array (see INSERT_FX). */
-  OUTPUT_INSERT_FX_STEREO: { id: 578, encoding: "insertFx", sideEffect: "converge" },
+  OUTPUT_INSERT_FX_STEREO: { id: 578, encoding: "insertFx", sideEffect: "converge", resets: "insertFx" },
   /** STEREO master insert FX ON/OFF (single; bypass, auto-engaged on selection — see INSERT_FX_ON). */
   OUTPUT_INSERT_FX_ON_STEREO: { id: 577, encoding: "bool" },
   /** MIX bus insert FX (L/R-linked). Enum from output_insert_fx. sideEffect: as above. */
-  OUTPUT_INSERT_FX_MIX: { id: 671, encoding: "insertFx", sideEffect: "converge" },
+  OUTPUT_INSERT_FX_MIX: { id: 671, encoding: "insertFx", sideEffect: "converge", resets: "insertFx" },
   /** MIX bus insert FX ON/OFF (L/R-linked; bypass, auto-engaged on selection — see INSERT_FX_ON). */
   OUTPUT_INSERT_FX_ON_MIX: { id: 670, encoding: "bool" },
   // Analog mic-strip toggles (CH1-4 only). Confirmed by live scan.
@@ -481,7 +510,7 @@ export const PARAMS = {
    *  the device repopulate the effect parameter array with that effect's defaults,
    *  so it is a sideEffect (live converges + re-reads). Per-FX id resolved in
    *  translate.ts; values are the fx1_insert_fx / fx2_insert_fx enums. */
-  FX_EFFECT_TYPE: { id: 679, encoding: "enum", sideEffect: "converge" },
+  FX_EFFECT_TYPE: { id: 679, encoding: "enum", sideEffect: "converge", resets: "fx" },
   /** FX channel effect parameter array (anchor = FX1 681; FX2 685). Addressed by
    *  SLOT on the y axis (not an instance); slot meaning depends on the effect type.
    *  Raw broker integers (see control/fx-effect.ts). Per-FX id + slot resolved in

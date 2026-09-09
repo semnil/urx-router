@@ -142,6 +142,18 @@ coming back in another order, and a value **the unit holds** is the quantise cas
 entries from every device read, so disagreeing with the last send proves nothing unless it also disagrees with the
 unit. No existing case supplies it, so none changed verdict.
 
+Invariant 13 has one contested key that is a HAND-OFF rather than a race, and it is the FX channel's
+`fxEffect`. Changing an EFFECT TYPE while a session is live reads the outgoing effect off the unit
+first and writes the type after it (`live.ts`, the park in front of a flush's head writes), so a unit that is holding something the
+plan has not seen produces a `follow-scoped` write and a `ui` write on that one key inside one gesture
+— which is exactly the pair the invariant reports. The order is the point of the gesture, and the
+device half runs first by construction. A fake that answers with what it was given writes nothing at
+all there, which is why `t2d-shape-change` sees a single `ui` writer; a case that plants a device-side
+value and then changes the type would see both. **Every converge takes the same read over the rest of
+its scope** (`live.ts` `parkSilent`), so the hand-off can appear on any node the flush covers rather
+than only on the one the gesture named — the device half first there too, and the head's own node left
+out, since that is the one the converge exists to restore.
+
 Invariant 6 was originally phrased as "the registration agrees with the emitted set on every flush".
 For most of this harness's life it did not: follow called `subscribe()` at `begin()` and after a
 completed reconcile only, so an app-side structural edit left the registration stale, and that was
@@ -1362,6 +1374,25 @@ One measurement had to change with it. A plan edit is written up to one flush wi
 carries a set a few milliseconds past the detachment that belongs to an edit the gesture had already
 made; the invariant-10 cases bound their window at `detachAt + 300 ms` rather than at `detachAt`, which
 still excludes the seconds of pointer movement where every write used to be.
+
+### 12. Holding a reconcile off a converge (`follow.ts` / `live.ts`)
+
+A device-follow reconcile and a converge round read the link at the same time, interleaved. The
+reconcile is armed by the notifies the converge's own writes provoke on the unit, so it fires
+`RECONCILE_DEBOUNCE_MS` after the round's echoes stop — which is inside the next round. Nothing held the
+two apart, and invariant 4 reports the result: `vd_get 139:0:0 issued inside an in-flight vd_get 31:0:0`.
+
+It surfaced in `t1-overtake`'s converge counter-example when the silent-address park went in front of the
+converge and shifted the round by its own reads. That is a latency the case can produce three other ways,
+and the A/B says so: with the park removed the case is green, and with the park in place but reading
+nothing it is green too — the reads are what moves the round, and what the round moves into was already
+there. Every value assertion in the case passed throughout, so what invariant 4 caught was the structure
+rather than a loss.
+
+The fix is in `follow.ts`: a reconcile is deferred while `live.isConverging()`, and the window is kept
+rather than spent, so the nodes the burst named are still re-read on the settle timer's own re-arm.
+Deliberately the converge and not the whole flush — an ordinary flush is a handful of writes and no read,
+and a reconcile beside one is the two-chain contention `t8-stress` asserts as its own precondition.
 
 ## What the harness itself got wrong
 

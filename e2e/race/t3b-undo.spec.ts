@@ -40,6 +40,9 @@ const NOTHING_TO_UNDO = "Nothing to undo";
  *  which one appears depends on whether the patch touched a node or a wire. */
 const UNDO_APPLIED = /^(Undone|Undid the change to .+)$/;
 const DRAG_REFUSAL = "Finish the current drag before undoing";
+/** What a press lands on while a device read is merging into the plan (main.ts's
+ *  `blocked`). A deferral, not a loss: the open entry is not committed. */
+const BUSY_REFUSAL = "Busy with the device — undo is unavailable until it finishes";
 
 const statusOf = (page: Page) => page.locator("#statusbar");
 const nameInput = (page: Page) => page.locator("#inspector input[type='text']").first();
@@ -1201,6 +1204,24 @@ test.describe("T3b undo", () => {
     await settleHistory(page);
     const depthArmed = await undoDepth(page);
 
+    // The FIRST reads of a converging flush are the silent-address park (live.ts
+    // `parkSilent`), which MERGES into the plan — so an undo pressed there is refused,
+    // like one pressed inside any other follow read. What the refusal is not is a loss:
+    // the press is answered before the open entry is committed, so the entry stands and
+    // the next press applies it.
+    await mark(page, "undo-in-park");
+    const parkStatus = await undoOnce(page);
+    const depthAfterPark = await undoDepth(page);
+    const afterPark = await (await insertFxSelect(page)).inputValue();
+
+    // Past the park and into the converge's own read, which merges nothing into the plan
+    // — the barrier's count restarts at the re-arm, and the round reads the whole write
+    // scope, so any number well past the park lands inside it. Landing short of it turns
+    // this into a second copy of the case above, loudly: the status reads as the refusal.
+    await releaseBarrier(page);
+    await blockAt(page, "vd_get", 120);
+    await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 20_000 });
+
     await mark(page, "undo-in-converge");
     const status = await undoOnce(page);
     const justAfter = await (await insertFxSelect(page)).inputValue();
@@ -1225,12 +1246,19 @@ test.describe("T3b undo", () => {
     console.log(timeline(trace, { from: markTime(trace, "converge-trigger")! - 50, limit: 60 }));
     console.log(report("undo during converge", findings));
     console.log(
-      `status="${status}" selector "${before}" → "${armed}" → "${justAfter}" → "${after}"; depth ${depthArmed}`,
+      `park="${parkStatus}" status="${status}" selector "${before}" → "${armed}" → "${afterPark}" → ` +
+        `"${justAfter}" → "${after}"; depth ${depthArmed} → ${depthAfterPark}`,
     );
     console.log(`writes on 135:0:0: ${sets.map((s) => `${s.start.toFixed(0)}ms=${s.value}`).join(", ")}`);
     console.log(`device holds 135:0:0 = ${(await memOf(page))["135:0:0"]}`);
 
-    // A converge await is invisible to the refusal gate, exactly as a refetch is.
+    // The park at the head of the converge is a follow read like any other, so the press
+    // there is refused — and refused is all it is: the entry is still on the stack and the
+    // screen still shows what the gesture armed.
+    expect(parkStatus).toBe(BUSY_REFUSAL);
+    expect(depthAfterPark, "the refused press consumed nothing").toBe(depthArmed);
+    expect(afterPark).toBe(armed);
+    // The converge's own await is invisible to the refusal gate, exactly as a refetch is.
     expect(status).toMatch(UNDO_APPLIED);
     expect(armed).not.toBe(before);
     expect(depthArmed).toBeGreaterThan(0);

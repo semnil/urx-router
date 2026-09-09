@@ -27,11 +27,12 @@ import {
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
 import { attackToVd, eqFreqToVd } from "./core/control/vd";
-import { formatHz, fxParams } from "./core/control/fx-effect";
+import { FX_SLOT_LEVEL, FX_SLOT_ON, formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
+import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
-import { nameControl } from "./core/control/translate";
+import { insertFxControl, nameControl } from "./core/control/translate";
 import { getModel } from "./models";
 import { faceplate, press, wireHit } from "./ui/graph.test-util";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
@@ -135,7 +136,14 @@ const row = (label: string): HTMLElement => {
   return found!;
 };
 
-/** Select a node the way a click does, so the inspector renders for it. */
+/**
+ * Select a node the way a click does, so the inspector renders for it.
+ *
+ * The release is not decoration: a press the board never sees released arms the path-trace
+ * long press (graph.ts `startLongPress`), which fires a few hundred ms later and writes a
+ * status line of its own — so a status a case reads after selecting a node would be racing
+ * that timer, and which one wins is a property of how loaded the machine is.
+ */
 const selectNode = (id: string): void => {
   const face = faceplate($("graph-host"), id)!;
   face.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
@@ -318,6 +326,24 @@ const diffReadsFail = (a: Record<string, unknown>): number => {
     return clockReads(false, 48_000)(a);
   }
   throw new Error("read-refused");
+};
+
+/**
+ * Press a node on the board by its own group, which is how this file's FX cases select one.
+ *
+ * NOT `selectNode` above, and not a completed press either. The board arms a path-trace long
+ * press on the press (graph.ts `startLongPress`) and cancels it on the release, so a press
+ * left open here writes a status line of its own a few hundred ms later — which is a status
+ * assertion racing a timer. Both obvious repairs change what the cases around this read:
+ * releasing it makes the undo in "survives an undo" land one entry further back, and
+ * pressing the faceplate that `selectNode` presses leaves three cases reading the wrong
+ * effect value or an empty screen. So the open press stands, and a case that wants a status
+ * after selecting a node reads it before it selects one.
+ */
+const pressNode = (nodeId: string): void => {
+  $("graph-host")
+    .querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!
+    .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
 };
 
 /** An inspector row by the label it stamps on itself, so "Insert FX" cannot match
@@ -2302,9 +2328,7 @@ describe("a value the unit holds and the app cannot write", () => {
   // selected, its launcher pressed, the readout taken and the screen closed again — reopened
   // per reading so each one is a fresh draw of the plan as it stands.
   const withFxScreen = <T>(nodeId: string, use: (box: HTMLElement) => T): T => {
-    $("graph-host")
-      .querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!
-      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    pressNode(nodeId);
     $<HTMLButtonElement>("btn-fx-screen").click();
     const box = $("dyn-screen-box");
     const out = use(box);
@@ -2329,10 +2353,14 @@ describe("a value the unit holds and the app cannot write", () => {
 
     $("btn-write").click();
     await invoked(shell, "vd_disconnect", 2);
+    // The line the WRITE ended on, read BEFORE the panel is: `shownLpf` selects the node,
+    // and a selection press arms the path trace whose own status line lands a few hundred ms
+    // later over this one (`pressNode`). Read the other way round, this passes or fails on
+    // how loaded the machine is.
+    expect(statusText()).toContain(t().status.paramsBounded(1));
     // …and the write's own value is what the plan ends up holding, so the panel and the unit
     // name the same setting from here on.
     expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
-    expect(statusText()).toContain(t().status.paramsBounded(1));
   });
 
   // The recorder tail runs in a FINALLY, after the write has written its outcome. A read that
@@ -2916,6 +2944,524 @@ describe("a value the unit holds and the app cannot write", () => {
     await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(sets), { timeout: 20_000 });
     await new Promise((r) => setTimeout(r, 300));
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+  });
+});
+
+// The park in front of an EFFECT TYPE write.
+//
+// The FX effect arrays announce nothing when the unit's own panel moves them, so a value
+// tuned there is one the plan has never seen — and the type write is the one command that
+// replaces slots nobody named: the unit refills the array with the incoming type's factory
+// values, and the writer puts the plan straight back over that. Without a read in front of
+// it, what goes back is the app's stale copy, and nothing on screen knows.
+//
+// The read sits at the WRITE boundary (`live.ts`, in front of the head writes a flush is
+// about to send), not at the control that moved the type — so these cases drive the two
+// selectors, an undo of one, and the insert-FX selector, and all four are answered by it.
+//
+// Both halves are driven, because either alone passes for the wrong reason: "the read
+// happened" is satisfied by the session's own opening readback, and "the unit ends at the
+// tuned value" is satisfied by an app that wrote nothing to that address at all.
+describe("an EFFECT TYPE change while a session is live", () => {
+  const HPF = fxParams(0).find((d) => d.key === "revxHpf")!;
+  /** Inside the window, and not the factory value — so a write carrying it can only have
+   *  come from the unit, and one carrying `HPF.def` can only have come from the plan. */
+  const TUNED = 30;
+  const FX1_TYPE = "679:0:0";
+  const FX1_HPF = `681:0:${HPF.slot}`;
+  const REVX_HALL = 0;
+  const REVX_ROOM = 1;
+  /** The cross-family step. Its parameter layout shares no key with Rev-X, so an array read
+   *  against it files every value under a key the Rev-X emit does not read. */
+  const MONO_DELAY = fxEffectTypes(0).find((o) => o.family === "delay")!.value;
+  const at = (a: Record<string, unknown> | undefined): string => `${a?.paramId}:${a?.x}:${a?.y}`;
+
+  /** FX1 on Rev-X Hall with its factory array, and a rate to read. Seeded from the
+   *  catalogue rather than by hand: an address the table has not been told about reads 0,
+   *  and 0 is a legal Rev-X raw, so a partial seed would make the unit hold values nobody
+   *  chose. */
+  const unitOnRevxHall = (): Record<string, number> => {
+    const seed: Record<string, number> = { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
+    seed["679/0/0"] = 0;
+    // Slots 1 and 2 are the effect's ON and MIX, which are not tunable descriptors and so
+    // are not in `fxParams`. Seeded anyway: unseeded they read 0, and the session's opening
+    // readback then puts an effect the unit has ON into the plan as OFF.
+    seed[`681/0/${FX_SLOT_ON}`] = 1;
+    seed[`681/0/${FX_SLOT_LEVEL}`] = 100;
+    for (const d of fxParams(0)) seed[`681/0/${d.slot}`] = d.def;
+    return seed;
+  };
+
+  /**
+   * A stub whose FX1 HPF can be moved the way the unit's own panel moves it: the value
+   * stands until the app WRITES that address, after which the table's own map answers
+   * again. Modelled that way rather than as a constant, because a constant answer would
+   * keep reading back as the tuned value however the app behaved — which is exactly the
+   * question.
+   *
+   * `refillsOnType` adds the other half of what the unit does: a selector write refills
+   * the whole engine array. Off by default, and the cases that leave it off say what they
+   * therefore cannot measure — with it on, an address the app reads AFTER the type write
+   * answers a value the operator never chose, which is what the head-node exclusion is for.
+   */
+  const stubWithPanel = (
+    opts: { refillsOnType?: number } = {},
+  ): {
+    table: Record<string, unknown>;
+    move: (raw: number) => void;
+    refuse: (addrPrefix: string) => void;
+  } => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" }, unitOnRevxHall());
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+    let panel: number | null = null;
+    let refused: string | null = null;
+    table.vd_get = (a: Record<string, unknown>) => {
+      if (refused !== null && at(a).startsWith(refused)) throw new Error("device-lost");
+      return panel !== null && at(a) === FX1_HPF ? panel : baseGet(a);
+    };
+    table.vd_set = (a: Record<string, unknown>) => {
+      if (at(a) === FX1_HPF) panel = null;
+      const out = baseSet(a);
+      if (opts.refillsOnType !== undefined && at(a) === FX1_TYPE) {
+        panel = null;
+        for (const d of fxParams(0)) baseSet({ paramId: 681, x: 0, y: d.slot, value: opts.refillsOnType });
+      }
+      return out;
+    };
+    return { table, move: (raw) => (panel = raw), refuse: (addrPrefix) => (refused = addrPrefix) };
+  };
+
+  /** The EFFECT TYPE the selector is showing — the plan as the Inspector draws it. */
+  const shownType = (): number => {
+    pressNode("bus.fx1");
+    return Number(paramRow(t().inspector.fxEffect.effectType).querySelector<HTMLSelectElement>("select")!.value);
+  };
+
+  const pickType = (value: number): void => {
+    pressNode("bus.fx1");
+    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+    sel.value = String(value);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  /** The Effect ON row's two buttons, as the Inspector draws them (a segmented toggle, not
+   *  a checkbox) — reopened per reading, so each one is a fresh draw of the plan. */
+  const effectOnRow = (): { on: HTMLButtonElement; off: HTMLButtonElement } => {
+    pressNode("bus.fx1");
+    const [on, off] = [...paramRow(t().inspector.fxEffect.effectOn).querySelectorAll("button")];
+    return { on: on as HTMLButtonElement, off: off as HTMLButtonElement };
+  };
+  const effectIsOn = (): boolean => effectOnRow().on.classList.contains("on");
+
+  /** The HPF as the FX EFFECT screen prints it — read off the surface, and reopened per
+   *  reading so each one is a fresh draw of the plan as it stands. */
+  const shownHpf = (): string => {
+    pressNode("bus.fx1");
+    $<HTMLButtonElement>("btn-fx-screen").click();
+    const box = $("dyn-screen-box");
+    const out = box.querySelector<HTMLElement>('[data-dyn-val="fx:revxHpf"]')?.textContent ?? "";
+    box.querySelector<HTMLButtonElement>(".consent-actions button")!.click();
+    return out;
+  };
+
+  // What this tier does NOT model is the unit refilling the array when the selector is
+  // typed (`main.test-util.ts` keeps what is written and nothing else), so the value going
+  // back OUT is not measurable here — that is `pushFxEffectCommands` emitting from the
+  // plan, which the translate suites pin. What IS measurable, and is the whole of the park,
+  // is that the outgoing array reaches the plan before the selector reaches the unit.
+  it("reads the outgoing array into the plan before the selector goes out", SLOW, async () => {
+    const { table, move } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    // The premise: the session read the factory array, and that is what the app is showing.
+    expect(shownHpf()).toBe(HPF.format!(HPF.def, {}));
+
+    // The hand on the unit, after that readback: the app has no way to hear this — the
+    // effect arrays announce nothing when the front panel moves them.
+    move(TUNED);
+    const gesture = shell.invokes.length;
+    pickType(REVX_ROOM);
+
+    // Waited on the WRITE, not on the readout: the read lands a flush window ahead of the
+    // selector, so a wait that ends at the plan returns with nothing having gone out yet.
+    const typeSent = (): number =>
+      shell.invokes.findIndex((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture);
+    await vi.waitFor(() => expect(typeSent()).toBeGreaterThan(-1), { timeout: 20_000 });
+    // The unit's own value is what the app is holding now, and it is what the emit draws
+    // from — the plan is the writer's only source for this slot.
+    expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
+
+    const typeAt = typeSent();
+    // The positive control: the type really went out, so what is asserted about the order
+    // is asserted about a write that happened.
+    expect(typeAt, "the type write went out").toBeGreaterThan(-1);
+    expect(shell.args[typeAt]?.value).toBe(REVX_ROOM);
+    // …and the read is IN FRONT of it, which is the claim: afterwards the unit's array
+    // holds the incoming type's factory values and there is nothing left to read.
+    const parkAt = shell.invokes.findIndex(
+      (cmd, i) => cmd === "vd_get" && at(shell.args[i]) === FX1_HPF && i >= gesture,
+    );
+    expect(parkAt, "the park read the outgoing array").toBeGreaterThan(-1);
+    expect(parkAt).toBeLessThan(typeAt);
+  });
+
+  // Two EFFECT TYPE selections inside one flush window, the second made while the first is
+  // still on the link. Only the last one goes out — the window coalesces them — so the unit
+  // is still holding the OUTGOING effect when the second park reads its array, while the
+  // plan already holds the type nobody has sent. Read against that one, a Rev-X array
+  // decodes as a delay: every value lands under a delay's key, the Rev-X keys go with it,
+  // and the emit behind the second selection has the incoming type's factory values to send
+  // in their place.
+  it("reads the array against the type the unit holds, not the one the plan is waiting to send", SLOW, async () => {
+    const REFILLED = 55;
+    expect(REFILLED, "distinguishable from both the plan's copy and the unit's").not.toBe(TUNED);
+    const { table, move } = stubWithPanel({ refillsOnType: REFILLED });
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    let open: (() => void) | null = null;
+    let gate: Promise<void> | null = null;
+    // The first park held open on the link, so the second selection is made at a point this
+    // case chooses rather than wherever the flush window happens to fall.
+    table.vd_get = async (a: Record<string, unknown>) => {
+      if (gate) await gate;
+      return baseGet(a);
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownHpf()).toBe(HPF.format!(HPF.def, {}));
+
+    // The hand on the unit, which announces nothing — then the first selection, held at its
+    // own first read.
+    move(TUNED);
+    const gesture = shell.invokes.length;
+    gate = new Promise<void>((r) => (open = r));
+    pickType(MONO_DELAY);
+    await vi.waitFor(
+      () =>
+        expect(shell.invokes.some((cmd, i) => cmd === "vd_get" && at(shell.args[i]) === FX1_TYPE && i >= gesture)).toBe(
+          true,
+        ),
+      { timeout: 20_000 },
+    );
+    // Taken while that read is still waiting, so it queues behind the park rather than
+    // behind whatever the first write arms.
+    pickType(REVX_ROOM);
+    gate = null;
+    open!();
+
+    const sentTo = (addr: string): unknown[] =>
+      shell.invokes.flatMap((cmd, i) =>
+        cmd === "vd_set" && at(shell.args[i]) === addr && i >= gesture ? [shell.args[i]?.value] : [],
+      );
+    // The array goes out with the selector in the same flush, and the converge behind it
+    // sends whatever the refill did not leave standing.
+    await vi.waitFor(() => expect(sentTo(FX1_HPF).length).toBeGreaterThan(0), { timeout: 25_000 });
+    // The premise, asserted rather than assumed: the window coalesced the two selections, so
+    // the array the second park read was the one the operator tuned. Had the first type
+    // reached the unit it would have refilled that array, and this case would be measuring a
+    // different gesture.
+    expect(sentTo(FX1_TYPE), "only the last selection went out").toEqual([REVX_ROOM]);
+    // The unit's own value is what went back to it. Read against the plan's unsent type the
+    // array decodes as a delay, and what this address carries is the incoming type's factory
+    // value instead.
+    expect([...new Set(sentTo(FX1_HPF))], "no value but the unit's own went out").toEqual([TUNED]);
+    expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
+  });
+
+  /** Wait for the link to stop carrying traffic — a converge is hundreds of reads through
+   *  the stub, and every assertion below is about where it ended up rather than when. The
+   *  quiet window is longer than `SETTLE_TIMEOUT_MS`: a converge round waits out that bound
+   *  before its seed read, and a shorter window ends inside the wait. */
+  const settled = async (shell: TauriShell): Promise<void> => {
+    let quiet = 0;
+    let last = -1;
+    await vi.waitFor(
+      () => {
+        const now = shell.invokes.length;
+        quiet = now === last ? quiet + 1 : 0;
+        last = now;
+        if (quiet * 50 < SETTLE_TIMEOUT_MS * 3) throw new Error(`still talking (${now})`);
+      },
+      { timeout: 30_000, interval: 50 },
+    );
+  };
+
+  // The general form of the same park: a converge re-sends whatever differs across the
+  // WHOLE write scope, so a head on any node at all is what puts the plan's copy of the
+  // silent families back on the unit. Nothing in this gesture names the FX channel.
+  it("keeps a silently moved value through a converge another node fired", SLOW, async () => {
+    const { table, move } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownHpf()).toBe(HPF.format!(HPF.def, {}));
+
+    // The hand on the unit, which announces nothing…
+    move(TUNED);
+    const gesture = shell.invokes.length;
+    // …and then a converge head on CH 1. What it resets is that channel's own bank.
+    pressNode("ch1");
+    const type = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(0), { timeout: 25_000 });
+    await settled(shell);
+
+    // The park read the array in front of the converge, so the plan holds what the operator
+    // tuned rather than the copy it was carrying.
+    expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
+    // The positive control: the converge really ran over this scope, so the write below is
+    // one it would have made.
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_get" && at(shell.args[i]) === FX1_HPF && i >= gesture),
+      "the converge's scope reached the FX array",
+    ).toBe(true);
+    expect(
+      shell.invokes.some(
+        (cmd, i) =>
+          cmd === "vd_set" && at(shell.args[i]) === FX1_HPF && shell.args[i]?.value === HPF.def && i >= gesture,
+      ),
+      "no stale array value went back out",
+    ).toBe(false);
+  });
+
+  // The other side of the exclusion. The type write makes the unit refill FX1's array, and
+  // the converge behind it is what puts the plan's values back — so a park that read that
+  // node would adopt the refill and the restore would never go out.
+  it("leaves the head node's own refilled array to the converge", SLOW, async () => {
+    const REFILLED = 55;
+    expect(REFILLED, "distinguishable from both the plan's copy and the unit's").not.toBe(TUNED);
+    const { table, move } = stubWithPanel({ refillsOnType: REFILLED });
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+
+    move(TUNED);
+    const gesture = shell.invokes.length;
+    pickType(REVX_ROOM);
+    await vi.waitFor(
+      () =>
+        expect(shell.invokes.some((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture)).toBe(
+          true,
+        ),
+      { timeout: 25_000 },
+    );
+
+    // The converge puts the plan's value back on the unit, and that write is what says the
+    // park left this node alone: had it read here, the plan would be holding the refill and
+    // there would be nothing left to restore.
+    await vi.waitFor(
+      () =>
+        expect(
+          shell.invokes.some(
+            (cmd, i) =>
+              cmd === "vd_set" && at(shell.args[i]) === FX1_HPF && shell.args[i]?.value === TUNED && i >= gesture,
+          ),
+          "the converge restored the array",
+        ).toBe(true),
+      { timeout: 30_000 },
+    );
+    // …and what the app holds is the operator's value throughout: the park in front of the
+    // type write took it, and the park in front of the converge left this node alone.
+    expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
+  });
+
+  // The same abort on the converge side, and the reason the completeness check runs in
+  // front of the empty-patch exit: a node the read could not reach contributes no patch, so
+  // an incomplete read otherwise looks exactly like one that found nothing to change.
+  it("stops the session when the converge's park cannot read a node", SLOW, async () => {
+    const { table, refuse } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+
+    // FX2's array alone, so what ends the flush is the park's own completeness check rather
+    // than a link that stopped answering anything.
+    refuse("685:");
+    const gesture = shell.invokes.length;
+    pressNode("ch1");
+    const type = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    // The positive control: the park ran and reached the nodes it could, so the refusal is
+    // what stopped it rather than a flush that never got there.
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_get" && at(shell.args[i]).startsWith("681:") && i >= gesture),
+      "the park read the node it could reach",
+    ).toBe(true);
+    // A.Gain is in the converge's write scope and in no park (readback.test.ts pins that),
+    // so a read of it is the converge having started.
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === PARAMS.HA_GAIN.id && i >= gesture),
+      "no converge round read the write scope",
+    ).toBe(false);
+  });
+
+  // An edit the operator has already made and the flush has not carried yet. The park
+  // answers the app's own write rather than a device-side event, so it arrives INSIDE that
+  // window every time — and reading the address the edit is on brings back the value the
+  // edit was made against. What keeps it is the guard both parks read through: where the
+  // unit still holds what this session last sent, the read answers with the plan's own
+  // value, and this edit has not been sent.
+  it("keeps an edit the flush has not carried yet", SLOW, async () => {
+    const { table } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    // The premise: the unit and the plan agree that the effect is ON.
+    expect(effectIsOn(), "the factory value").toBe(true);
+
+    // OFF, and then the type before the 120 ms window closes — no await between them.
+    effectOnRow().off.click();
+    expect(effectIsOn(), "the edit reached the plan").toBe(false);
+    pickType(REVX_ROOM);
+    await vi.waitFor(() => expect(shownHpf()).not.toBe(""), { timeout: 20_000 });
+    await settled(shell);
+
+    // Read back off the panel rather than from the box just clicked: what the park merged
+    // into the plan is what a rebuild draws, and what the next flush sends.
+    expect(effectIsOn(), "the operator's own edit, not the value it was made against").toBe(false);
+  });
+
+  // The gesture outlives the wait. A park held for a converge can have the session end under
+  // it, and what is left is the case the browser build is always in: nothing to read, and
+  // nothing the write can damage. Losing the selection there would make a disconnect at the
+  // wrong moment look like a selector that does not work.
+  it("keeps the selection when the session ends before the flush carries it", SLOW, async () => {
+    const { table } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownType(), "the premise: the factory type").toBe(REVX_HALL);
+
+    // A converge on another node, so the FX park below waits for it rather than reading.
+    pressNode("ch1");
+    const compEq = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    compEq.value = String(COMP_EQ_SSMCS);
+    compEq.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(0), { timeout: 20_000 });
+
+    const gesture = shell.invokes.length;
+    pickType(REVX_ROOM);
+    $("btn-live").click(); // the session goes, before the flush that would carry it
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).not.toBe("true"), { timeout: 20_000 });
+    await settled(shell);
+
+    // The selection is a plan edit, so it stands whatever the link does — losing it at a
+    // disconnect would make the selector look like a control that does not work.
+    expect(shownType(), "the operator's selection, kept").toBe(REVX_ROOM);
+    // …and it never reached the unit, which is what the plan holding it now means: the next
+    // session's own readback is what settles the two.
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture),
+      "and no type went out over a session that was ending",
+    ).toBe(false);
+  });
+
+  // The abort rule (architecture.md, "Aborting on failure") at the one place where carrying
+  // on is the destructive option: a park that could not read cannot promise the outgoing
+  // values are in the plan, and the write behind it is what would replace them.
+  it("does not write the type when the park cannot read", SLOW, async () => {
+    const { table } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+
+    const gesture = shell.invokes.length;
+    shell.answer("vd_get", () => {
+      throw new Error("device-lost");
+    });
+    pickType(REVX_ROOM);
+
+    // The session goes down, which is the signal the read failed at all.
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 20_000 });
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture),
+      "no type reached the unit",
+    ).toBe(false);
+    // The plan keeps what the operator chose: the read that failed is what stops the WRITE,
+    // and the selection is theirs to see either way.
+    expect(shownType(), "the selection is still on screen").toBe(REVX_ROOM);
+  });
+
+  // The write boundary is what every writer passes through, and an UNDO is the one that used
+  // to have no read in front of it: it re-types the channel from the plan's own copy, which
+  // was made before whatever the panel had done to the array since.
+  it("reads the outgoing array again when an undo re-types the channel", SLOW, async () => {
+    const REFILLED = 55;
+    const { table, move } = stubWithPanel({ refillsOnType: REFILLED });
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+
+    // A type change first, so there is something to undo — and the unit's value at that
+    // moment reaches the plan the way the case above reads.
+    move(TUNED);
+    pickType(REVX_ROOM);
+    await vi.waitFor(() => expect(shownHpf()).toBe(HPF.format!(TUNED, {})), { timeout: 25_000 });
+    await settled(shell);
+
+    // The hand on the unit again, and then the undo, which re-types the channel.
+    const AGAIN = TUNED + 7;
+    move(AGAIN);
+    const gesture = shell.invokes.length;
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID), "the undo was taken").toBe(1);
+    await vi.waitFor(() => expect(shownType()).toBe(REVX_HALL), { timeout: 25_000 });
+    await vi.waitFor(
+      () =>
+        expect(
+          shell.invokes.some(
+            (cmd, i) =>
+              cmd === "vd_set" && at(shell.args[i]) === FX1_HPF && shell.args[i]?.value === AGAIN && i >= gesture,
+          ),
+          "the unit was given back what it was holding when the undo was pressed",
+        ).toBe(true),
+      { timeout: 30_000 },
+    );
+    expect(shownHpf(), "and the app holds it too").toBe(HPF.format!(AGAIN, {}));
+  });
+
+  // The other writer with the same shape. An insert-FX selector refills its engine array on
+  // the unit exactly as an EFFECT TYPE does, and the app used to re-key its own copy and
+  // write it back without reading the outgoing engine at all.
+  it("reads the outgoing insert-FX engine before the selector goes out", SLOW, async () => {
+    const { table } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+
+    const pickInsertFx = (): number => {
+      pressNode("ch1");
+      const sel = paramRow(t().inspector.insertFxType).querySelector<HTMLSelectElement>("select")!;
+      const options = [...sel.options].map((o) => Number(o.value)).filter((v) => v !== INSERT_FX_NONE);
+      const next = options.find((v) => v !== Number(sel.value))!;
+      sel.value = String(next);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      return next;
+    };
+    // Onto an effect first: with the channel holding No Effect there is no engine to read.
+    pickInsertFx();
+    await settled(shell);
+
+    const gesture = shell.invokes.length;
+    pickInsertFx();
+    const ifx = insertFxControl(getModel("URX44V"), "ch1")!;
+    const selectorAt = (): number =>
+      shell.invokes.findIndex(
+        (cmd, i) => cmd === "vd_set" && at(shell.args[i]) === `${ifx.param}:0:${ifx.instances[0]}` && i >= gesture,
+      );
+    await vi.waitFor(() => expect(selectorAt()).toBeGreaterThan(-1), { timeout: 25_000 });
+
+    const engines = new Set([689, 693, 697, 701]);
+    const engineAt = shell.invokes.findIndex(
+      (cmd, i) => cmd === "vd_get" && engines.has(Number(shell.args[i]?.paramId)) && i >= gesture,
+    );
+    expect(engineAt, "the outgoing engine array was read").toBeGreaterThan(-1);
+    expect(engineAt, "before the selector reached the unit").toBeLessThan(selectorAt());
   });
 });
 

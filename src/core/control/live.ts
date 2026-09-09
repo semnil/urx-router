@@ -10,8 +10,8 @@
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
 import { vdSet, vdSetStr } from "../platform";
-import { PARAMS } from "./params";
-import type { ParamName, ParamSpec } from "./params";
+import { silentKey, PARAMS } from "./params";
+import type { ParamName, ParamSpec, SilentFamily } from "./params";
 import {
   addrKey,
   cmdAddr,
@@ -51,9 +51,14 @@ const REFETCH = new Set<string>();
 // What each refetch head hands to the device, for the flush that carries both repairs
 // (ParamSpec.drives). Empty for a head whose driven addresses the plan stops emitting.
 const DRIVES = new Map<string, readonly string[]>();
+// Which silent family each converge head resets (ParamSpec.resets), read the way DRIVES is
+// — one catalogue entry per head rather than a second list here to keep in step.
+const RESETS = new Map<string, SilentFamily>();
 for (const [name, spec] of Object.entries(PARAMS as Record<string, ParamSpec>)) {
-  if (spec.sideEffect === "converge") CONVERGE.add(name);
-  else if (spec.sideEffect === "refetch") {
+  if (spec.sideEffect === "converge") {
+    CONVERGE.add(name);
+    if (spec.resets) RESETS.set(name, spec.resets);
+  } else if (spec.sideEffect === "refetch") {
     REFETCH.add(name);
     if (spec.drives?.length) DRIVES.set(name, spec.drives);
   }
@@ -120,6 +125,31 @@ export interface LiveSyncHooks {
    *  capture below recorded it as device truth, and the unit's own notify for our write
    *  then failed isEcho and was reconciled as a device-side change. */
   refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>;
+  /**
+   * Read the addresses the unit announces nothing for into the plan, before a converge
+   * pushes the plan over them (`readback.applySilentState`).
+   *
+   * A converge re-reads the whole write scope and re-sends whatever differs, so it is the
+   * one thing that puts the plan's copy on the unit at addresses no edit named. For three
+   * families that copy can be arbitrarily old — the FX effect arrays, the insert-FX engine
+   * arrays and D.Gain announce nothing when the unit's own panel moves them — so without
+   * this a converge fired by ANY head silently discards what the operator tuned there.
+   *
+   * `reset` names what this converge exists to restore — `silentKey` entries, one per
+   * family per node, from the heads this flush wrote (`ParamSpec.resets`). Reading there
+   * would adopt the reset and throw away the values the converge is about to put back.
+   * Everything else is untouched by those heads and safe to take, INCLUDING the other
+   * families of a head's own node: a channel carries a COMP/EQ type and an insert effect
+   * at once, and only one of them is ever the head's.
+   *
+   * Called with the plan the converge is about to clone, so what it reads is in the copy.
+   * Absent = no park (the browser build, and the tests that do not exercise it).
+   */
+  parkSilent?: (scope: {
+    exclude?: ReadonlySet<string>;
+    only?: ReadonlySet<string>;
+    keepHeads?: boolean;
+  }) => Promise<void>;
   /** The follow address set may have moved — re-register against it. Called at the END of a
    *  flush whose capture rebuilt the set, never inside one: a re-registration unsubscribes
    *  before it subscribes, so running it mid-flush would drop the very notifies the refetch's
@@ -254,6 +284,10 @@ export class LiveSync {
   private snapshotEpoch = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
+  // Inside a flush's reading phases: the park in front of its head writes, the park ahead
+  // of its converge, and the converge loop. What device follow holds a reconcile off (see
+  // `isConverging`).
+  private converging = false;
   private pending = false;
   // The last flush had to converge (a sideEffect param went out), which re-reads
   // the whole write scope and settles between rounds — seconds, not milliseconds.
@@ -274,6 +308,21 @@ export class LiveSync {
 
   isActive(): boolean {
     return this.active;
+  }
+
+  /**
+   * Whether a flush is READING the unit — the park in front of its head writes, the park
+   * ahead of its converge, and the converge's own rounds. What device follow holds a
+   * reconcile off (`DeviceFollowHooks` `deferReconcile`).
+   *
+   * Those phases and not the whole flush. A converge round re-reads the WHOLE write scope
+   * and sends behind it, over and over: a read taken there reads a unit this app is
+   * part-way through rewriting, and the reads of the two interleave for as long as it runs.
+   * An ordinary flush is a handful of writes and no read at all, so a reconcile beside one
+   * is the app's ordinary two-chain contention rather than a reader of a moving device.
+   */
+  isConverging(): boolean {
+    return this.converging;
   }
 
   private scope(): WriteScope {
@@ -381,6 +430,23 @@ export class LiveSync {
     const out: Record<string, number> = {};
     for (const [k, v] of this.snapshot) out[formatAddrKey(k)] = v;
     return out;
+  }
+
+  /**
+   * Whether the snapshot already holds this value for this address — the unit is still
+   * where we last put it.
+   *
+   * `isEcho`'s question without `isEcho`'s side effect, and the two are not
+   * interchangeable: that one CONSUMES the pending entry it matches, because a notify is
+   * an announcement that belongs to exactly one write. A caller that is not answering a
+   * notify — the silent-address park, which is answering a READ — must not spend one, or
+   * the announcement of that write reaches the follow layer as a device-side change.
+   *
+   * An address the snapshot does not track answers false: we have sent it nothing, so
+   * whatever the unit holds there is news.
+   */
+  holdsSent(paramId: number, x: number, y: number, value: number): boolean {
+    return this.snapshot.get(addrKey(paramId, x, y)) === value;
   }
 
   /** Whether an incoming device notify equals the snapshotted device truth — i.e.
@@ -689,6 +755,11 @@ export class LiveSync {
       // just computed. Scoped to the node, because the same names on another channel are
       // that channel's own and the converge is right about them.
       const driven = new Map<string, Set<string>>();
+      // What the sideEffect heads this flush wrote have reset on the unit, per family and
+      // node — what the converge below is for, and so what the park in front of it leaves
+      // alone. A head that resets nothing the park reads adds nothing here, so its node's
+      // other families are still parked.
+      const convergeResets = new Set<string>();
       // Addresses the NAME loop wrote that the refetch may not start before hearing about,
       // each at the mark taken before its own write. Separate from `writes` because that map
       // is numeric and the read overlays answers from it; see the name loop.
@@ -723,7 +794,7 @@ export class LiveSync {
       // command that puts a node into `refetch` may come after the ones that wrote it.
       const writes = new Map<number, { mark: number; node?: string; changed: boolean; value: number }>();
       const scope = this.scope();
-      const commands = planToCommands(model, plan, scope);
+      let commands = planToCommands(model, plan, scope);
       // The set can only be rebuilt by a capture, and a flush reaches one only through a
       // `sideEffect` param's converge or refetch epilogue — so an edit that moves the set
       // with no such head in it would leave the registration behind until something
@@ -734,6 +805,36 @@ export class LiveSync {
       // Taken before the first await so the rebuild cannot interleave with a capture, and
       // the snapshot is left alone — nothing has been read.
       if (!this.followSetMatches(commands)) this.rebuildFollowSet(model, plan, scope, commands);
+      // What the heads in THIS flush are about to reset on the unit, read BEFORE the first
+      // write goes out. A head write refills those families with the incoming type's factory
+      // values, and the plan is already holding the incoming selection — so the outgoing
+      // effect exists on the unit alone, and nothing announces it (params.ts). Taken here
+      // rather than at the control that moved the head, every writer is covered by one
+      // boundary: both EFFECT TYPE selectors, an undo of one, the insert-FX selector, a MIDI
+      // mapping, a plan load.
+      //
+      // `keepHeads`: the values are filed under the keys the head the UNIT is on owns, and
+      // the selection this flush is about to carry stays the operator's. What the park
+      // leaves in the plan is a DIFF against the snapshot, which is what puts those values
+      // back on the unit after the head write resets them — the converge's own job for
+      // everything else.
+      const outgoing = new Set<string>();
+      for (const c of commands) {
+        const family = RESETS.get(c.name);
+        if (family === undefined || c.node === undefined) continue;
+        if (this.snapshot.get(cmdAddr(c)) === c.vdValue) continue;
+        outgoing.add(silentKey(family, c.node));
+      }
+      if (outgoing.size) {
+        // A read on the link, so device follow holds its reconcile off from here rather than
+        // from the converge: two readers on one link is what invariant 4 catches, and this
+        // one is in front of the writes instead of behind them.
+        this.converging = true;
+        await this.hooks.parkSilent?.({ only: outgoing, keepHeads: true });
+        if (this.sessionGen !== gen) return;
+        // Derived again: the park merged the unit's own values into the plan.
+        commands = planToCommands(model, plan, scope);
+      }
       // Both lists below are frozen at flush start; the snapshots they are diffed against
       // are not. Any await can let a device-side change land (noteDirect's one entry, or a
       // reconcile's whole capture), and what a frozen list carries is then older than what
@@ -779,8 +880,13 @@ export class LiveSync {
         writes.set(k, { mark, node: c.node, changed: had !== undefined, value });
         this.recentWrites.set(k, { mark, node: c.node, at: Date.now() });
         sent++;
-        if (CONVERGE.has(c.name)) sideEffect = true;
-        else if (REFETCH.has(c.name) && c.node) {
+        if (CONVERGE.has(c.name)) {
+          sideEffect = true;
+          // Whose values the unit is resetting. The park below leaves exactly these to the
+          // converge, which is what puts them back.
+          const family = RESETS.get(c.name);
+          if (family !== undefined && c.node !== undefined) convergeResets.add(silentKey(family, c.node));
+        } else if (REFETCH.has(c.name) && c.node) {
           refetch.add(c.node);
           const drives = DRIVES.get(c.name);
           if (drives) {
@@ -856,6 +962,7 @@ export class LiveSync {
       }
       this.lastFlushConverged = sideEffect;
       if (sideEffect) {
+        this.converging = true;
         // The device reset dependents; converge against its post-reset state and
         // rebuild the snapshot so the next diff measures from the device truth.
         // Converge against a frozen copy, not the live plan: an edit that arrives
@@ -864,6 +971,12 @@ export class LiveSync {
         // would silently drop it). The mark is taken beside the freeze, for the
         // other half of the same window: a direct notify arriving during the
         // converge is device truth this copy is too old to carry.
+        // Ahead of the freeze, so what it reads is in the copy the converge sends from: a
+        // converge re-sends whatever differs across the whole scope, and for the three
+        // silent families the plan's copy can be arbitrarily old. Its own node is left out
+        // — that is the one the head just reset, and the converge is what restores it.
+        await this.hooks.parkSilent?.({ exclude: convergeResets });
+        if (this.sessionGen !== gen) return;
         const since = this.directSeq;
         const converged = structuredClone(plan);
         // The loop seeds its own diff by reading the device, and this flush wrote
@@ -1042,6 +1155,7 @@ export class LiveSync {
       return;
     } finally {
       this.flushing = false;
+      this.converging = false;
     }
     if (this.pending) {
       this.pending = false;

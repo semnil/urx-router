@@ -11,11 +11,12 @@ import { clonePlanState } from "../plan-history";
 vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdSet, vdSetStr, vdGet, vdGetStr } from "../platform";
-import { COMP_EQ_SSMCS, PARAMS } from "./params";
+import { COMP_EQ_SSMCS, PARAMS, silentKey } from "./params";
 import { addrKey, cmdAddr, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
 import { MBC_ONE_KNOB, insertFxParamKey } from "./insert-fx-effect";
+import { fxParams } from "./fx-effect";
 import { applyNodeState } from "./readback";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -180,6 +181,231 @@ describe("LiveSync sideEffect converge", () => {
     // What the set CONTAINS is the device flow's question (main.device.test.ts) — this mock's
     // converge re-reads a device that already agrees, so it sends nothing and confirms nothing.
     expect(seen[0]!.addrs).toBeInstanceOf(Set);
+  });
+
+  // The park in front of the converge. Three families announce nothing when the unit's own
+  // panel moves them, and a converge re-sends whatever differs across the WHOLE write scope
+  // — so with no read first, the plan's copy of those goes back over what the operator
+  // tuned on the unit, and no event anywhere says it happened.
+  it("reads the silent addresses into the plan the converge sends from", async () => {
+    const plan = basePlan();
+    const seen: Plan[] = [];
+    const excluded: ReadonlySet<string>[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      onConfirmed: (_addrs, sent) => void seen.push(sent),
+      parkSilent: async (scope) => {
+        // The park in front of the CONVERGE. The one in front of the writes names `only`,
+        // and is the case above.
+        if (!scope.exclude) return;
+        excluded.push(scope.exclude);
+        // What a read of the unit's D.Gain would have put here.
+        plan.nodeParams.ch_5_6 = { ...plan.nodeParams.ch_5_6, gain: 12 };
+      },
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(excluded, "one park in front of the converge").toHaveLength(1);
+    // A COMP/EQ type resets the channel's COMP/EQ bank, which the unit ANNOUNCES and the
+    // park never read — so it names nothing, and CH 1's insert FX (a family this head does
+    // not touch, on the same node) is still parked. Named per node instead, the converge
+    // sent the plan's copy of that engine array over whatever the panel had done to it.
+    expect([...excluded[0]!]).toEqual([]);
+    // Ahead of the freeze — what the park wrote is in the copy the converge sends from.
+    // Behind it, the read lands in a plan the converge is no longer looking at.
+    expect(seen[0]?.nodeParams.ch_5_6?.gain, "the parked value in the converged copy").toBe(12);
+  });
+
+  // What a head that DOES reset one of the three names, and how narrowly.
+  it("names the family its head reset, on that head's node alone", async () => {
+    const plan = basePlan();
+    const excluded: ReadonlySet<string>[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async (scope) => void (scope.exclude && excluded.push(scope.exclude)),
+    });
+    live.begin();
+    // An FX channel's EFFECT TYPE: the one head whose reset IS a family the park reads.
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(excluded).toHaveLength(1);
+    expect([...excluded[0]!], "that channel's effect family and nothing else").toEqual([silentKey("fx", "bus.fx1")]);
+  });
+
+  // What the flush reads BEFORE it writes: the families the heads in this flush are about
+  // to reset on the unit. Taken at the boundary every writer passes through rather than at
+  // one control, so both EFFECT TYPE selectors, an undo of either, the insert-FX selector
+  // and a MIDI mapping are covered by the one read.
+  it("reads what its heads are about to reset before the first write goes out", async () => {
+    const plan = basePlan();
+    const scopes: Array<{ only?: ReadonlySet<string>; exclude?: ReadonlySet<string>; keepHeads?: boolean }> = [];
+    const writesBefore: number[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async (scope) => {
+        scopes.push(scope);
+        writesBefore.push(vi.mocked(vdSet).mock.calls.length);
+      },
+    });
+    live.begin();
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(scopes, "one park in front of the writes, one in front of the converge").toHaveLength(2);
+    expect([...(scopes[0]?.only ?? [])], "the family this head resets, and nothing else").toEqual([
+      silentKey("fx", "bus.fx1"),
+    ]);
+    // The plan is already holding the selection the write is about to carry; adopting the
+    // unit's would put the outgoing one back and the write would never go out.
+    expect(scopes[0]?.keepHeads, "the plan's own head stays").toBe(true);
+    expect(writesBefore[0], "taken before anything went out").toBe(0);
+    // …and the one behind the writes leaves that family to the converge, which is what puts
+    // the plan's values back over the reset.
+    expect([...(scopes[1]?.exclude ?? [])]).toEqual([silentKey("fx", "bus.fx1")]);
+    expect(writesBefore[1], "taken after them").toBeGreaterThan(0);
+  });
+
+  // The park merges the unit's own values into the plan, so what goes out has to be derived
+  // from the plan AGAIN. Sent from the list the flush opened with, the write behind the head
+  // carries the app's stale copy — which is the whole thing the park is in front of.
+  it("sends what the park merged rather than the list it opened with", async () => {
+    const plan = basePlan();
+    const hpf = fxParams(1).find((d) => d.key === "revxHpf")!;
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async (scope) => {
+        if (!scope.only) return;
+        // What a read of the unit's outgoing array would have put here.
+        const fx = plan.nodeParams["bus.fx1"]?.fxEffect ?? {};
+        plan.nodeParams["bus.fx1"] = {
+          ...plan.nodeParams["bus.fx1"],
+          fxEffect: { ...fx, params: { ...fx.params, [hpf.key]: 30 } },
+        };
+      },
+    });
+    live.begin();
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const sent = vi.mocked(vdSet).mock.calls.find((c) => c[0] === 681 && c[2] === hpf.slot);
+    expect(sent?.[3], "the unit's own value went back to it").toBe(30);
+  });
+
+  // The park is a READ, and two readers on one link is what the harness catches as invariant
+  // 4. Device follow holds its reconcile off while this answers true, so the window has to
+  // open at the park rather than at the converge behind it.
+  it("holds a reconcile off from the outgoing park onward", async () => {
+    const plan = basePlan();
+    const seen: boolean[] = [];
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async () => void seen.push(live.isConverging()),
+    });
+    live.begin();
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(seen[0], "already closed to a reconcile inside the first park").toBe(true);
+    expect(live.isConverging(), "and open again once the flush is done").toBe(false);
+  });
+
+  // A disconnect can land in that read the way it can in the converge's, and everything
+  // behind it — the head write included — belongs to a session that has gone.
+  it("writes nothing when the session ends inside the outgoing park", async () => {
+    const plan = basePlan();
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async () => live.end(),
+    });
+    live.begin();
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(vi.mocked(vdSet), "not even the head that park was taken for").not.toHaveBeenCalled();
+  });
+
+  it("takes no park on a flush that does not converge", async () => {
+    // The park is a device read, and an ordinary flush is what a drag produces: running it
+    // there would put a whole-device pass inside every window of a fader move.
+    const plan = basePlan();
+    let parks = 0;
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async () => void parks++,
+    });
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    // The positive control: the flush did happen, it just did not converge.
+    expect(vi.mocked(vdSet), "the fader still went out").toHaveBeenCalledTimes(1);
+    expect(parks).toBe(0);
+  });
+
+  it("sends nothing more when the session ends inside the park", async () => {
+    // The park awaits a device read, so a disconnect can land in it — and everything the
+    // converge would do next belongs to a session that has gone.
+    const plan = basePlan();
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async () => live.end(),
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const afterDirect = vi.mocked(vdSet).mock.calls.length;
+    expect(afterDirect, "the direct write went out before the park").toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(vi.mocked(vdSet).mock.calls.length, "no converge round followed").toBe(afterDirect);
+    expect(vi.mocked(vdGet), "and no seed read").not.toHaveBeenCalled();
   });
 
   it("hands the confirmed addresses over even when a later round's send fails", async () => {
