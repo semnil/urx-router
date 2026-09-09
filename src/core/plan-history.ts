@@ -550,35 +550,53 @@ function narrowGroup(current: unknown, before: Slot<unknown>, after: Slot<unknow
  * gesture moved, and stays the operator's.
  */
 function foldAuthored(e: PlanPatchEntry, p: PlanPatchEntry): void {
-  if (e.field !== p.field) return;
-  if ("key" in e && "key" in p && e.key !== p.key) return;
-  if (e.field === "nodeParams" || e.field === "connParams") {
-    const read = p as Extract<PlanPatchEntry, { field: "nodeParams" }>;
-    foldAuthoredSlots(e.before, read.before, read.after);
-    foldAuthoredSlots(e.after, read.before, read.after);
-    return;
-  }
-  const mine = e as { before: unknown; after: unknown };
-  const read = p as { before: unknown; after: unknown };
-  if (deepEqual(mine.before, read.before)) mine.before = read.after;
-  if (deepEqual(mine.after, read.before)) mine.after = read.after;
+  // The params records and nothing else. Every other field a patch carries is whole, and a
+  // whole field is in a patch because the gesture moved it — there is no sibling beside it
+  // for a read to have authored, and an undo of a rename putting the name back is what an
+  // undo IS.
+  if (e.field !== "nodeParams" && e.field !== "connParams") return;
+  if (p.field !== e.field || p.key !== e.key) return;
+  foldUntouched(e.before, e.after, p.before, p.after);
 }
 
-/** The same per key of one params record: the whole slot where the entry holds what the read
- *  measured from, and otherwise the LEAVES of a nested group that do — the same contest one
- *  level down that the merge itself runs, since the app moving one field of a group and the
- *  device moving another is two authors and not one key. */
-function foldAuthoredSlots(mine: KeySlots, was: KeySlots, now: KeySlots): void {
+/**
+ * Per key of one params record: the LEAVES of a nested group that the entry does not move and
+ * the read does — the same contest one level down that the merge itself runs, since the app
+ * moving one field of a group and the device moving another is two authors and not one key.
+ *
+ * BOTH sides have to hold what the read measured from, and that is the whole of what says the
+ * gesture did not touch the leaf. A read measures from the plan as it stands, which is
+ * whatever the last gesture left — so its own `before` equals that gesture's `after`, and one
+ * side is no evidence at all: asking only the side being applied took the operator's own
+ * chosen value out of a redo, and their own starting value out of the undo one entry deeper,
+ * wherever a value they had passed through happened to be the one the read measured from.
+ */
+function foldUntouched(before: KeySlots, after: KeySlots, was: KeySlots, now: KeySlots): void {
   for (const [key, wasSlot] of Object.entries(was)) {
     const nowSlot = now[key];
-    const mineSlot = mine[key];
-    if (nowSlot === undefined || mineSlot === undefined) continue;
-    if (deepEqual(mineSlot, wasSlot)) {
-      mine[key] = nowSlot;
-      continue;
+    const mineBefore = before[key];
+    const mineAfter = after[key];
+    if (!wasSlot.present || !nowSlot?.present || !mineBefore?.present || !mineAfter?.present) continue;
+    if (!sameKindGroup(mineBefore.value, wasSlot.value) || !sameKindGroup(mineAfter.value, wasSlot.value)) continue;
+    const read = diffLeaves(wasSlot.value as AnyRecord, nowSlot.value as AnyRecord);
+    if (!read) continue;
+    const keep: KeySlots = {};
+    let any = false;
+    for (const [path, slot] of Object.entries(read[1])) {
+      const from = read[0][path];
+      if (from === undefined) continue;
+      if (!slotHolds(mineBefore.value as AnyRecord, path, from)) continue;
+      if (!slotHolds(mineAfter.value as AnyRecord, path, from)) continue;
+      keep[path] = slot;
+      any = true;
     }
-    const narrowed = mineSlot.present ? narrowGroup(mineSlot.value, wasSlot, nowSlot) : null;
-    if (narrowed) mine[key] = narrowed;
+    if (!any) continue;
+    const nextBefore = structuredClone(mineBefore.value) as Record<string, unknown>;
+    const nextAfter = structuredClone(mineAfter.value) as Record<string, unknown>;
+    applySlots(nextBefore, keep);
+    applySlots(nextAfter, keep);
+    before[key] = { present: true, value: nextBefore };
+    after[key] = { present: true, value: nextAfter };
   }
 }
 
