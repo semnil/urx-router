@@ -233,12 +233,96 @@ describe("insertFxMenu", () => {
         const plan = planAt(48000);
         plan.nodeParams["ch1"] = { stereoLink: true, panBal, insertFx: options[0].value };
         plan.nodeParams["ch2"] = { insertFx: options[0].value };
-        expect(insertFxMenu(u44v, plan, "ch1").every((e) => e.lock === null)).toBe(true);
-        expect(insertFxMenu(u44v, plan, "ch2").every((e) => e.lock === null)).toBe(true);
+        // The slot lock is the one this is about: whatever else a linked pair refuses,
+        // it never refuses its own claim. A mono-only family is refused as "link" here
+        // and is covered on its own below.
+        expect(insertFxMenu(u44v, plan, "ch1").some((e) => e.lock === "slot")).toBe(false);
+        expect(insertFxMenu(u44v, plan, "ch2").some((e) => e.lock === "slot")).toBe(false);
         // The pair still holds the slot against an unrelated channel.
         expect(lockOf(insertFxMenu(u44v, plan, "ch3"), options[0].label)).toBe("slot");
       }
     }
+  });
+
+  // Signal Type = STEREO leaves the pair the two companders and nothing else: the guitar
+  // amps and Pitch Fix are mono-channel effects (user guide, Appendix > Effect list —
+  // "Cannot be used when Signal Type is stereo"), while a compander inserted on such a
+  // pair runs in stereo across it. Both of a model's MONO IN pairs answer alike.
+  describe("a STEREO-linked pair", () => {
+    const linkedPlan = (primary: string, panBal = PAN_BAL_BAL): ReturnType<typeof emptyPlan> => {
+      const plan = planAt(48000);
+      plan.nodeParams[primary] = { stereoLink: true, panBal };
+      return plan;
+    };
+
+    it("locks the mono-only effects on both members of either pair, in PAN and in BAL", () => {
+      for (const panBal of [PAN_BAL_BAL, PAN_BAL_PAN]) {
+        for (const [primary, members] of [
+          ["ch1", ["ch1", "ch2"]],
+          ["ch3", ["ch3", "ch4"]],
+        ] as const) {
+          const plan = linkedPlan(primary, panBal);
+          for (const member of members) {
+            const menu = insertFxMenu(u44v, plan, member);
+            for (const e of menu) expect(e.lock).toBe(e.option.monoOnly ? "link" : null);
+            // Named, so a catalog that stopped flagging one of them cannot pass by
+            // agreeing with the loop above.
+            expect(lockOf(menu, "Pitch Fix")).toBe("link");
+            expect(lockOf(menu, "Clean")).toBe("link");
+            expect(lockOf(menu, "Compander-H")).toBeNull();
+            expect(lockOf(menu, "Compander-S")).toBeNull();
+            // Giving the slot back is what a locked strip needs most.
+            expect(lockOf(menu, "No Effect")).toBeNull();
+            expect(insertFxFree(menu).map((o) => o.label)).toEqual(["Compander-H", "Compander-S"]);
+          }
+        }
+      }
+    });
+
+    it("leaves the other pair and the unlinked state alone", () => {
+      const plan = linkedPlan("ch1");
+      for (const nodeId of ["ch3", "ch4"]) {
+        expect(insertFxMenu(u44v, plan, nodeId).every((e) => e.lock === null)).toBe(true);
+      }
+      expect(insertFxMenu(u44v, planAt(48000), "ch1").every((e) => e.lock === null)).toBe(true);
+    });
+
+    it("answers the rate first, so its menu is still entirely rate-locked above every ceiling", () => {
+      const plan = linkedPlan("ch1");
+      plan.sampleRate = 192000;
+      const menu = insertFxMenu(u44v, plan, "ch1");
+      for (const e of menu) expect(e.lock).toBe(e.option.value === INSERT_FX_NONE ? null : "rate");
+      expect(insertFxAllRateLocked(menu)).toBe(true);
+    });
+
+    it("locks them on the URX22 pair too", () => {
+      const u22 = getModel("URX22");
+      const plan = urx22PlanAt(48000);
+      plan.nodeParams["ch1"] = { stereoLink: true, panBal: PAN_BAL_BAL };
+      for (const nodeId of ["ch1", "ch2"]) {
+        const menu = insertFxMenu(u22, plan, nodeId);
+        expect(lockOf(menu, "Pitch Fix")).toBe("link");
+        expect(insertFxFree(menu).map((o) => o.label)).toEqual(["Compander-H", "Compander-S"]);
+      }
+    });
+
+    it("does not reach an output bus, which has no Signal Type", () => {
+      const plan = linkedPlan("ch1");
+      plan.nodeParams["bus.mix1"] = {};
+      for (const nodeId of ["bus.stereo", "bus.mix1", "bus.mix2"]) {
+        expect(insertFxMenu(u44v, plan, nodeId).every((e) => e.lock === null)).toBe(true);
+      }
+    });
+
+    it("still reports the slot when the companders are held elsewhere", () => {
+      const plan = linkedPlan("ch1");
+      plan.nodeParams["ch3"] = { insertFx: INSERT_FX_OPTIONS.find((o) => o.slot === "compander")!.value };
+      const menu = insertFxMenu(u44v, plan, "ch1");
+      expect(lockOf(menu, "Compander-H")).toBe("slot");
+      expect(lockOf(menu, "Compander-S")).toBe("slot");
+      expect(lockOf(menu, "Clean")).toBe("link");
+      expect(insertFxFree(menu)).toEqual([]);
+    });
   });
 
   it("shares the out-dyn slot across the output buses without touching the channel menus", () => {

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "./fixtures";
 import { faceplate, selectWire, stereoTie } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
+import { openInsertFxSection } from "./insert-fx-section";
 import { planParam } from "./plan-param";
 
 // Positions below are compared with node(), pointer grabs measured with
@@ -10,6 +11,7 @@ import { planParam } from "./plan-param";
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 const sigSelect = (page: Page) => param(page, "Signal Type").locator("select");
+const insertSelect = (page: Page) => param(page, "EFFECT TYPE").locator("select");
 const panBalSelect = (page: Page) => param(page, "PAN / BAL").locator("select");
 
 // Save the plan and parse it back. The pan readers below are pure selectors over
@@ -56,6 +58,61 @@ test("mono pair gets a Signal Type select; STEREO reveals PAN/BAL and a heart li
   // The partner channel shows the same Signal Type (stored on the primary).
   await node(page, "ch2").click();
   await expect(sigSelect(page)).toHaveValue("1");
+});
+
+// A STEREO-linked MONO IN pair may hold a compander and nothing else: the guitar amps and
+// Pitch Fix are mono-channel effects, and the unit offers neither while the pair is linked.
+// The transition itself clears whatever the pair was holding, in EITHER direction, so the
+// two are one case — leaving STEREO with a compander held is the half that reads as a loss
+// rather than as a rule, and it is the unit's own behaviour.
+test("STEREO leaves the pair the companders, and either transition clears what it held", async ({ page }) => {
+  await node(page, "ch1").click();
+  await openInsertFxSection(page);
+  await chooseOption(insertSelect(page), { label: "Clean" });
+  await expect(insertSelect(page).locator("option:disabled")).toHaveCount(0);
+
+  await chooseOption(sigSelect(page), "1"); // STEREO
+  await openInsertFxSection(page);
+  // The whole list, in order: naming the disabled ones is also what says the two
+  // companders and No Effect are still live.
+  await expect(insertSelect(page).locator("option:disabled")).toHaveText([
+    "Clean",
+    "Crunch",
+    "Lead",
+    "Drive",
+    "Pitch Fix",
+  ]);
+  // …and the transition took the amp with it rather than leaving a selection the pair
+  // cannot hold.
+  await expect(insertSelect(page)).toHaveValue("-1");
+
+  // The partner reads the same menu — the pair holds one effect between them.
+  await node(page, "ch2").click();
+  await openInsertFxSection(page);
+  await expect(insertSelect(page).locator("option:disabled")).toHaveCount(5);
+  await chooseOption(insertSelect(page), { label: "Compander-H" });
+  await expect(insertSelect(page)).toHaveValue("1793");
+
+  // Back to MONO x 2: the compander goes, and the mono-only families come back.
+  await chooseOption(sigSelect(page), "0");
+  await openInsertFxSection(page);
+  await expect(insertSelect(page)).toHaveValue("-1");
+  await expect(insertSelect(page).locator("option:disabled")).toHaveCount(0);
+  await node(page, "ch1").click();
+  await openInsertFxSection(page);
+  await expect(insertSelect(page)).toHaveValue("-1");
+});
+
+// The other pair is untouched by the first one's Signal Type: the rule is per pair, and
+// a gate written against the model rather than the pair would take both.
+test("STEREO on one pair leaves the other pair's whole menu", async ({ page }) => {
+  await node(page, "ch1").click();
+  await chooseOption(sigSelect(page), "1");
+  await node(page, "ch3").click();
+  await openInsertFxSection(page);
+  await expect(insertSelect(page).locator("option:disabled")).toHaveCount(0);
+  await chooseOption(insertSelect(page), { label: "Pitch Fix" });
+  await expect(insertSelect(page)).toHaveValue("512");
 });
 
 test("BAL mode labels a send from the linked channel as BALANCE", async ({ page }) => {
