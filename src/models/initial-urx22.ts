@@ -99,7 +99,6 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
     fxEffect: {
       type: 0,
       on: true,
-      level: 100,
       params: {
         reverbTime: 23,
         revxInitialDelay: 2,
@@ -119,7 +118,6 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
     fxEffect: {
       type: 1024,
       on: true,
-      level: 100,
       params: {
         delay: 5000,
         delayFeedback: 20,

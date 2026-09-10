@@ -1305,11 +1305,11 @@ test("the FX strip's EFFECT face arms, and its assignment reads as words", async
   await expect(box).toBeVisible();
   await box
     .locator(".gt-knob")
-    .filter({ has: page.getByText("Mix", { exact: true }) })
+    .filter({ has: page.getByText("Rev.Time", { exact: true }) })
     .locator(".midi-target")
     .first()
     .click();
-  await expect(win.locator(".mw-hint")).toContainText("FX 1 · FX EFFECT · Mix");
+  await expect(win.locator(".mw-hint")).toContainText("FX 1 · FX EFFECT · Rev.Time");
   await box.locator(".consent-btn-secondary").click();
 });
 

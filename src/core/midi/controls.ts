@@ -102,6 +102,10 @@ export const FX_SCOPE = "fx";
  *  addressed by. Named here because three surfaces spell them — this catalog, the CONSOLE
  *  chip that arms the first, and the label an assignment prints. */
 export const FX_ON_SCOPE = `${FX_SCOPE}.on`;
+/** The effect array's slot 2, which no surface offers: it carries no id here and no row on
+ *  the tuning screen. Kept as a name so a mapping saved by a build that DID offer it still
+ *  resolves to a word in the MIDI window instead of to its own token — `bindControl` answers
+ *  null for it, so such a row is inert. */
 export const FX_LEVEL_SCOPE = `${FX_SCOPE}.level`;
 export const SSMCS_SCOPE = "ssmcs";
 export const SSMCS_COMP_SCOPE = `${SSMCS_SCOPE}.comp`;
@@ -961,8 +965,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     };
     // EFFECT ON: the CONSOLE strip draws it as a face and the Inspector as a two-button
     // switch, so it is a toggle this catalog owes an id the same way it owes one to every
-    // other chip in that row. It sits at the top of `fxEffect` beside Mix, not in the params
-    // map, and it has no catalogue descriptor either.
+    // other chip in that row. It sits at the top of `fxEffect`, not in the params map, and it
+    // has no catalogue descriptor either.
     out.push({
       id: controlId(id, "fx", FX_ON_SCOPE),
       node: id,
@@ -972,21 +976,6 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       get: () => ((plan.nodeParams[id]?.fxEffect?.on ?? true) ? 1 : 0),
       set: (v) => {
         mergeFx({ on: v >= 0.5 });
-        return true;
-      },
-    });
-    // Mix lives at the top of `fxEffect` rather than in the params map, so it is written
-    // through its own path — the one row here with no catalogue descriptor.
-    const mixCodec = linearCodec(0, 100, 1);
-    out.push({
-      id: controlId(id, "fx", FX_LEVEL_SCOPE),
-      node: id,
-      param: "fx",
-      scope: FX_LEVEL_SCOPE,
-      kind: "continuous",
-      get: () => mixCodec.get(plan.nodeParams[id]?.fxEffect?.level ?? 100),
-      set: (v) => {
-        mergeFx({ level: mixCodec.set(v) });
         return true;
       },
     });

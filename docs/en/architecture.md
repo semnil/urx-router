@@ -3536,12 +3536,12 @@ otherwise reach an inverting encoder.
 Once the section is present the whole channel is authored — **there is no partial FX write**. The
 selector goes out whether or not the document names a type (an absent one resolves to the channel's
 factory type), and every parameter slot goes with it at that type's defaults, because a type write would
-refill the slots the plan left out anyway. So `{ "level": 80 }` resets the effect exactly as a document
+refill the slots the plan left out anyway. So `{ "on": true }` resets the effect exactly as a document
 naming a type does, and omitting only `fxEffect.params` preserves nothing.
 
 **The panel and the wire agree on a document the loader completed.** `inspector.ts` reads an absent
-`fxEffect` as `{}` and draws the resolved type, ON, level 100 and each descriptor's own default; the fill
-puts those same values into the plan, so the row and the command carry one number. Aligning the *emit* to
+`fxEffect` as `{}` and draws the resolved type and ON, and the tuning screen each descriptor's own
+default; the fill puts those same values into the plan, so the row and the command carry one number. Aligning the *emit* to
 the panel is the other way to close that gap and it is the destructive one — it was written, measured and
 reverted — which is why the plan is completed at the LOAD, where the operator can be told what it means.
 Where the fill does not run the two still diverge: a node a device read could not answer for stays sparse
@@ -3614,7 +3614,7 @@ selected type's own default applies rather than one type's guessed in), a `type`
 `fxEffect` or `params` that is not an object. That last pair is why the class reaches past the leaves — the
 sanitiser above keeps a boolean and a non-empty object under any key, so an unreadable effect object loads
 and every reader below reads it as absent, and a truthy one is worse still, since the write path then sends
-thirteen factory defaults over whatever the unit holds. Both actions are reported (`plan-validate.ts`), in
+that channel's factory defaults over whatever the unit holds. Both actions are reported (`plan-validate.ts`), in
 two sentences rather than one count. Here: a **node name** is cut to
 **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on

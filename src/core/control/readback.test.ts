@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections, type FxEffectParams, type Plan, type PlanConnection } from "../plan";
+import { emptyPlan, ensureFixedConnections, type Plan, type PlanConnection } from "../plan";
 import { ref } from "../../models/types";
 
 // readback.ts pulls live values through platform.vdGet, so mock that module: the
@@ -9,7 +9,7 @@ vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdGet, vdGetStr } from "../platform";
 import { COLOR_PALETTE, dGainParam, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS, silentKey } from "./params";
-import { FX_SLOT_LEVEL, FX_SLOT_ON, fxEffectTypes, fxParams } from "./fx-effect";
+import { FX_SLOT_ON, fxEffectTypes, fxParams } from "./fx-effect";
 import { defaultPlan } from "../../models/initial-state";
 import { applyDeviceState, applySilentState, formatReadbackReport } from "./readback";
 import { readableContestKey } from "../plan-history";
@@ -1456,22 +1456,16 @@ describe("applySilentState", () => {
   });
 
   // The layout rule reaches the addresses a HEAD lays out, and no further. An FX channel's
-  // ON and MIX sit in the same array and mean the same thing under every type, so a head the
-  // panel moved says nothing about them — and the guard that keeps an unsent edit is the
-  // whole of what stops the app writing its own back over the operator's.
-  it.each([
-    ["the effect ON", FX_SLOT_ON, 0, (fx: FxEffectParams | undefined) => (fx?.on === false ? 0 : 1)],
-    ["the effect level", FX_SLOT_LEVEL, 40, (fx: FxEffectParams | undefined) => fx?.level],
-  ])("keeps an unsent edit to %s when the unit's head moved", async (_what, slot, edited, read) => {
+  // ON sits in the same array and means the same thing under every type, so a head the panel
+  // moved says nothing about it — and the guard that keeps an unsent edit is the whole of
+  // what stops the app writing its own back over the operator's.
+  it("keeps an unsent edit to the effect ON when the unit's head moved", async () => {
     const plan = defaultPlan("URX44V");
     const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
     const table = deviceTableFor(plan);
     table.set("679:0:0", delay.value); // the hand on the unit: another type, unannounced
     const fx = plan.nodeParams["bus.fx1"]!.fxEffect!;
-    plan.nodeParams["bus.fx1"] = {
-      ...plan.nodeParams["bus.fx1"],
-      fxEffect: slot === FX_SLOT_ON ? { ...fx, on: false } : { ...fx, level: edited },
-    };
+    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { ...fx, on: false } };
 
     mockVdGetFrom(table);
     // The snapshot holds the type this session last sent — not the one the panel chose —
@@ -1480,9 +1474,27 @@ describe("applySilentState", () => {
 
     const after = plan.nodeParams["bus.fx1"]?.fxEffect;
     expect(after?.type, "the unit's own type").toBe(delay.value);
-    expect(read(after), "and the operator's own edit, which no type changes the meaning of").toBe(
-      slot === FX_SLOT_ON ? 0 : edited,
-    );
+    expect(after?.on, "and the operator's own edit, which no type changes the meaning of").toBe(false);
+  });
+
+  // Slot 2 of the effect array is asked for NOWHERE. No control of the unit's own reaches it,
+  // so the app neither writes it nor reads it, and a read that carried it back would put plan
+  // state behind a value no surface shows and no command sends. Asked of the addresses the
+  // park actually requests, with slot 1 — the effect ON, which IS read — as the control: a run
+  // that requested nothing from these arrays would satisfy the absence on its own.
+  it("asks the effect array for the ON and never for slot 2", async () => {
+    const plan = defaultPlan("URX44V");
+    mockVdGetFrom(deviceTableFor(plan));
+    await applySilentState(model, plan);
+    const asked = vi.mocked(vdGet).mock.calls.filter(([id]) => id === 681 || id === 685);
+    expect(
+      asked.some(([, , y]) => y === FX_SLOT_ON),
+      "the effect ON was not read",
+    ).toBe(true);
+    expect(
+      asked.filter(([, , y]) => y === 2),
+      "slot 2 was read",
+    ).toEqual([]);
   });
 
   // The same address on the other family: the insert-FX bypass is its own param, not an
@@ -1549,7 +1561,8 @@ describe("applySilentState", () => {
     const STEADY = table.get(`681:0:${time.slot}`)!;
     const DURING = STEADY + 41;
     // The first reading is clean; the excursion lands inside the second.
-    const perPass = fxParams(0).length + 2;
+    // Every descriptor slot, plus the effect ON. Slot 2 is not among them.
+    const perPass = fxParams(0).length + 1;
     let arrayReads = 0;
     vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
       if (paramId === 681) {

@@ -1,4 +1,4 @@
-import { test, expect, colorToken, type Page } from "./fixtures";
+import { test, expect, colorToken, scrollsByWheel, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
 import { planParamZ } from "./plan-param";
 import { getModel } from "../src/models";
@@ -130,15 +130,15 @@ test("the Inspector's FX section keeps three controls and no raw sliders", async
   await expect(section.locator("select")).toHaveCount(1); // EFFECT TYPE
   await expect(section.locator(".toggle")).toHaveCount(1); // Effect ON
   await expect(section.locator("#btn-fx-screen")).toBeVisible();
-  // The parameters moved to the screen whole — Mix included. A slider left here would sit
-  // at the position it was drawn at and write that stale value back on the next drag.
+  // The parameters moved to the screen whole. A slider left here would sit at the position
+  // it was drawn at and write that stale value back on the next drag.
   await expect(section.locator('input[type="range"]')).toHaveCount(0);
 });
 
 test("the screen names the effect and shows the REV-X face", async ({ page }) => {
   await openFromConsole(page, "FX 1");
   await expect(screenBox(page)).toContainText("FX EFFECT — Rev-X Hall");
-  for (const label of ["Mix", "Reverb Time", "Room Size", "Initial Delay", "Hi Ratio", "Low Freq", "HPF", "LPF"]) {
+  for (const label of ["Rev.Time", "Room Size", "Ini.Delay", "Hi.Ratio", "Lo.Freq.", "HPF", "LPF"]) {
     await expect(screenRow(page, label)).toBeVisible();
   }
   // The selection stays outside: this screen adjusts, and a type write is the one edit that
@@ -163,9 +163,9 @@ test("the rack is the effect's own input and output, with no reduction lane", as
   await closeScreen(page);
 });
 
-test("Room Size moves the Reverb Time readout on the same input", async ({ page }) => {
+test("Room Size moves the Rev.Time readout on the same input", async ({ page }) => {
   await openFromConsole(page, "FX 1");
-  const before = await readout(page, "Reverb Time").innerText();
+  const before = await readout(page, "Rev.Time").innerText();
   const roomSize = screenRow(page, "Room Size").locator('input[type="range"]');
   // The keyboard rather than a drag: the point is that ANOTHER card's number follows this
   // edit, and an arrow key is the same input event a drag fires without a pointer to lose.
@@ -173,30 +173,84 @@ test("Room Size moves the Reverb Time readout on the same input", async ({ page 
   for (let i = 0; i < 6; i++) await roomSize.press("ArrowDown");
   await expect(readout(page, "Room Size")).not.toHaveText("29");
   // The seconds are `base(raw) x 3^(RoomSize/31)`, so this card has to have moved too.
-  await expect(readout(page, "Reverb Time")).not.toHaveText(before);
+  await expect(readout(page, "Rev.Time")).not.toHaveText(before);
   // …and the sibling's CONTROL says the number its card does. A reader who cannot see the
   // card is told the value by `aria-valuetext`, and this is the one row whose number moves
   // without its own input being touched — so it is where the two can part company, and the
   // reading left behind is one the visible panel never showed.
-  const reverbTime = screenRow(page, "Reverb Time").locator('input[type="range"]');
-  await expect(reverbTime).toHaveAttribute("aria-valuetext", await readout(page, "Reverb Time").innerText());
+  const reverbTime = screenRow(page, "Rev.Time").locator('input[type="range"]');
+  await expect(reverbTime).toHaveAttribute("aria-valuetext", await readout(page, "Rev.Time").innerText());
   // The row that WAS touched keeps them in step too, which is what says the sweep rewrote
   // each row from its own value rather than putting one string on every control.
   await expect(roomSize).toHaveAttribute("aria-valuetext", await readout(page, "Room Size").innerText());
   await closeScreen(page);
 });
 
-test("Rev-X Plate reads longer than Hall at the same Reverb Time", async ({ page }) => {
+// The faces are in the unit's own order, and the column count is what decides where that
+// order WRAPS. Four is the unit's own row width, and on these three faces it is also what
+// leaves each group whole: the delays' tempo group, the filters that end each reverb face,
+// and REV-X's three per-band values. On six — the count these faces carried before — Sync
+// ended the first row and BPM and Note opened the second, which is the split this pins.
+//
+// The GROUPING is the assertion rather than the number: a width that keeps the groups
+// together passes, and a case pinning "four" would fail a change that left the face
+// correct. Row membership is read off the top edges. The viewport is set, since the
+// stylesheet drops to three columns under 1100px.
+test("each face keeps its groups on one row", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const rowOf = async (label: string): Promise<number> => {
+    const box = await screenRow(page, label).boundingBox();
+    expect(box, `${label} has no box`).not.toBeNull();
+    return Math.round(box!.y);
+  };
+  const sharesARow = async (group: string[]): Promise<number> => {
+    const tops: number[] = [];
+    for (const label of group) tops.push(await rowOf(label));
+    expect(new Set(tops).size, `${group.join(" / ")} share a row`).toBe(1);
+    return tops[0]!;
+  };
+
+  // Mono Delay, the face the split was on.
+  await openFromInspector(page, "bus.fx2");
+  await expect(screenBox(page)).toContainText("Mono Delay");
+  const tempo = await sharesARow(["Sync", "BPM", "Note"]);
+  // …above it, the row the unit opens the face with, which is also the positive control: the
+  // face wraps at all, so "share a row" is a claim about the wrap rather than about a face
+  // that never had a second row.
+  expect(await sharesARow(["HPF", "LPF", "Delay", "FB.Gain"])).toBeLessThan(tempo);
+  await closeScreen(page);
+
+  // REV-X: the three per-band values, and the filters that end the face.
+  await openFromInspector(page, "bus.fx1");
+  await expect(screenBox(page)).toContainText("Rev-X Hall");
+  const band = await sharesARow(["Hi.Ratio", "Lo.Ratio", "Lo.Freq."]);
+  const filters = await sharesARow(["HPF", "LPF"]);
+  expect(filters).toBeGreaterThan(band);
+  await closeScreen(page);
+
+  // Rev.R3, whose own pair is the two early-reflection values. On FX 2, which is the channel
+  // whose menu carries the Rev.R3 reverbs at all — FX 1's are Rev-X.
+  const sec = await fxSection(page, "bus.fx2");
+  await chooseOption(typeSelect(page), { label: "Rev.R3 Hall" });
+  await sec.locator("#btn-fx-screen").click();
+  await expect(screenBox(page)).toBeVisible();
+  await sharesARow(["ER/Delay", "E/R Bal."]);
+  const r3Filters = await sharesARow(["HPF", "LPF"]);
+  expect(r3Filters).toBeGreaterThan(await rowOf("Density"));
+  await closeScreen(page);
+});
+
+test("Rev-X Plate reads longer than Hall at the same Rev.Time", async ({ page }) => {
   // The unit scales REV-X's Reverb Time per type — its own maxima are the ratio — so the
   // three types print three different numbers for one raw. Reading Hall's on all of them is
   // the defect this pins, and it is 1.7x short on Plate.
   await openFromInspector(page, "bus.fx1");
-  const hall = await readout(page, "Reverb Time").innerText();
+  const hall = await readout(page, "Rev.Time").innerText();
   await closeScreen(page);
   await chooseOption(typeSelect(page), { label: "Rev-X Plate" });
   await page.locator("#btn-fx-screen").click();
   await expect(screenBox(page)).toBeVisible();
-  const plate = await readout(page, "Reverb Time").innerText();
+  const plate = await readout(page, "Rev.Time").innerText();
   const secs = (s: string): number => Number(s.replace(/[^\d.]/g, ""));
   expect(secs(plate)).toBeGreaterThan(secs(hall));
   await closeScreen(page);
@@ -258,7 +312,7 @@ test("the screen opens bypassed and says so", async ({ page }) => {
   await openFromConsole(page, "FX 1");
   // Editable, metered and open — the plan holds the values and the unit stores them.
   await expect(screenBox(page)).toContainText("Bypassed");
-  await expect(screenRow(page, "Reverb Time").locator('input[type="range"]')).toBeEnabled();
+  await expect(screenRow(page, "Rev.Time").locator('input[type="range"]')).toBeEnabled();
   await closeScreen(page);
 });
 
@@ -372,19 +426,19 @@ test("switching EFFECT TYPE shows the new type's own factory values", async ({ p
 // type change moves the readout while the slider stays put. The plan CARRIES the value,
 // which is what holds the slider still; with the key absent the row follows the new type's
 // own factory default and the thumb does move, which is the case below.
-test("a REV-X type change moves the Reverb Time readout without moving its slider", async ({ page }) => {
+test("a REV-X type change moves the Rev.Time readout without moving its slider", async ({ page }) => {
   const held = planWith("bus.fx1", { type: 0, params: { reverbTime: 69, roomSize: 0 } });
   await page.goto(`/?plan=${planParamZ(held)}`);
   await openFromInspector(page, "bus.fx1");
-  const slider = screenRow(page, "Reverb Time").locator("input[type=range]");
+  const slider = screenRow(page, "Rev.Time").locator("input[type=range]");
   await expect(slider).toHaveValue("69");
-  const hallShown = await readout(page, "Reverb Time").textContent();
+  const hallShown = await readout(page, "Rev.Time").textContent();
   await closeScreen(page);
 
   await chooseOption(typeSelect(page), { label: "Rev-X Plate" });
   await page.locator("#btn-fx-screen").click();
-  await expect(screenRow(page, "Reverb Time").locator("input[type=range]")).toHaveValue("69");
-  await expect(readout(page, "Reverb Time")).not.toHaveText(hallShown!);
+  await expect(screenRow(page, "Rev.Time").locator("input[type=range]")).toHaveValue("69");
+  await expect(readout(page, "Rev.Time")).not.toHaveText(hallShown!);
   await closeScreen(page);
 });
 
@@ -396,12 +450,12 @@ test("a type change moves an unheld value to the new type's own default", async 
   await closeScreen(page);
   await chooseOption(typeSelect(page), { label: "Rev-X Hall" });
   await page.locator("#btn-fx-screen").click();
-  const hallRaw = await screenRow(page, "Reverb Time").locator("input[type=range]").inputValue();
+  const hallRaw = await screenRow(page, "Rev.Time").locator("input[type=range]").inputValue();
   await closeScreen(page);
 
   await chooseOption(typeSelect(page), { label: "Rev-X Plate" });
   await page.locator("#btn-fx-screen").click();
-  await expect(screenRow(page, "Reverb Time").locator("input[type=range]")).not.toHaveValue(hallRaw);
+  await expect(screenRow(page, "Rev.Time").locator("input[type=range]")).not.toHaveValue(hallRaw);
   await closeScreen(page);
 });
 
@@ -574,5 +628,54 @@ test("a card's tag is drawn the same whichever kind of card carries it", async (
   expect(outsideTheGrid.border).toBe(`1px dashed ${await colorToken(page, "--ctl-border")} 999px`);
   expect(outsideTheGrid.padding).toBe("1px 7px");
   expect(outsideTheGrid).not.toEqual(onARowCard);
+  await closeScreen(page);
+});
+
+// The reverb faces are three rows of cards where they were two, and this project has the
+// same growth going wrong on record: the guitar amp's row break made its panel a row taller
+// than the modal had, and the level rack fell below the fold (src/style.css, `.gt-knobs`).
+//
+// What holds here is not that the face fits — at the smallest window the app allows
+// (tauri.conf.json's 960 x 640) the panel is already 178px taller than its column, whatever
+// the column count, since the stylesheet clamps to three there. What holds is WHERE that
+// overflow goes: `.prefs-grid` owns it and the operator can reach it, while the modal itself
+// does not scroll and the two things they have to reach stay on screen. Clipping the grid
+// instead leaves every height assertion true and the bottom rows unreachable, which is why
+// the reach is asked with a wheel rather than with `scrollHeight` (e2e/fixtures.ts).
+//
+// @webkit because that is the class: containment and overflow are what the two engines do
+// not implement alike, and the macOS build renders in WebKit.
+test("@webkit the tallest face hands its overflow to the panel, at the smallest window", async ({ page }) => {
+  await page.setViewportSize({ width: 960, height: 640 });
+  await openFromInspector(page, "bus.fx1");
+  await expect(screenBox(page)).toContainText("FX EFFECT — Rev-X Hall");
+  // The premise: this is the face that grew, and at this width it really does overflow.
+  await expect(screenBox(page).locator(".gt-knobs > .gt-knob")).toHaveCount(10);
+  const grid = screenBox(page).locator(".prefs-grid");
+  expect(
+    await grid.evaluate((el) => el.scrollHeight - el.clientHeight),
+    "the premise: the panel is taller than its column",
+  ).toBeGreaterThan(0);
+
+  // The panel owns it and the operator can reach it…
+  await scrollsByWheel(page, grid, "y");
+  // …the modal itself does not scroll…
+  const chrome = await page.evaluate(() => {
+    const box = document.querySelector("#dyn-screen-box")!.closest(".consent-box") as HTMLElement;
+    const rack = document.querySelector("#dyn-screen-box .gt-ladders") as HTMLElement | null;
+    const close = document.querySelector("#dyn-screen-modal .consent-actions button") as HTMLElement | null;
+    return {
+      boxOverflow: box.scrollHeight - box.clientHeight,
+      rackBottom: rack ? rack.getBoundingClientRect().bottom : null,
+      closeBottom: close ? close.getBoundingClientRect().bottom : null,
+      viewport: window.innerHeight,
+    };
+  });
+  expect(chrome.boxOverflow, "the modal scrolls instead of the panel").toBeLessThanOrEqual(1);
+  // …and the level rack and the way out stay on screen.
+  expect(chrome.rackBottom, "the level rack is not drawn").not.toBeNull();
+  expect(chrome.rackBottom!).toBeLessThanOrEqual(chrome.viewport);
+  expect(chrome.closeBottom, "the Close button is not drawn").not.toBeNull();
+  expect(chrome.closeBottom!).toBeLessThanOrEqual(chrome.viewport);
   await closeScreen(page);
 });

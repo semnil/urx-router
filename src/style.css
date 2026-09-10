@@ -3136,6 +3136,12 @@ input[type="range"]:focus-visible,
      made the panel a row taller than the modal had — the level rack fell below the fold
      and the face needed scrolling to read. On seven they are one row.
 
+     Pitch Fix rides the same number for its own reason: its twelve cards carry three
+     groups — MIDI Control with the Key and Scale it decides, Limit Low with Limit High,
+     Speed with Tolerance — and seven is the SMALLEST width that leaves each of them on a
+     row of its own. Six splits the Key from the Scale, five splits MIDI Control from both,
+     and four — what the unit itself puts on a row — splits the two Limits. `e2e/insertfx.spec.ts` pins that grouping.
+
      The track minimum is what the column can actually give: four tracks and their gaps fit
      the 400px control column at 88px and overflowed it at 96, and an overflowing grid takes
      a HORIZONTAL scrollbar here, because the face's own vertical one forces one. It is a

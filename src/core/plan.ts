@@ -233,7 +233,6 @@ export const SSMCS_INITIAL = {
 export interface FxEffectParams {
   type?: number; // EFFECT TYPE enum (679 / 683 value); absent = FX default
   on?: boolean; // effect ON (array slot 1); absent or true = on
-  level?: number; // effect level / mix 0..100 (array slot 2); absent = 100
   params?: Record<string, number>; // raw per-parameter values keyed by descriptor key
 }
 
@@ -411,7 +410,14 @@ export const PLAN_FORMAT = "urx-router-plan";
 //
 // The last two landed before any version-2 writer shipped, which is why they are not
 // a version of their own: nothing ever wrote a document that needed telling apart.
-export const PLAN_VERSION = 2;
+//
+// 3 is the effect array's slot 2 leaving the app. The key it was stored under is gone and
+// the write path no longer sends that address, so a document this build writes carries no
+// such key — and to a version-2 build an absent one is not silence: its writer sends the
+// catalogue's 100 there. Tagged 2, a file written here would load in that build and move a
+// unit that holds anything else at that address, which is the write this version exists to
+// stop. Tagged 3 it is refused there instead, with the reason on screen.
+export const PLAN_VERSION = 3;
 
 // Language-agnostic load failures. The UI maps the code to a localized message.
 export type PlanErrorCode = "notPlanFile" | "missingModel" | "planUrlUnsupported" | "planVersionUnsupported";

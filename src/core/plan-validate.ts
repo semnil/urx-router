@@ -8,14 +8,7 @@
 
 import type { DeviceModel } from "../models/types";
 import { insertFxCensus } from "./constraints";
-import {
-  FX_CHANNEL_NODE_INDEX,
-  FX_LEVEL_MAX,
-  FX_LEVEL_MIN,
-  fxEffectTypes,
-  fxParams,
-  fxRawForDesc,
-} from "./control/fx-effect";
+import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import { isPlainRecord } from "./plan";
 import type { Plan } from "./plan";
@@ -140,8 +133,8 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     const fx: unknown = plan.nodeParams[node]?.fxEffect;
     if (fx === undefined) continue;
     // The effect OBJECT. The sanitiser keeps a boolean and a non-empty array of objects, and
-    // every reader of the plan treats one as no effect at all — thirteen addresses the write
-    // path then never sends, with the document still holding what it holds.
+    // every reader of the plan treats one as no effect at all — that channel's whole address
+    // set the write path then never sends, with the document still holding what it holds.
     if (!isPlainRecord(fx)) {
       out.push({ reason: "paramRange", node, where: "effect", key: "fxEffect", stored: fx, action: "drop" });
       continue;
@@ -150,13 +143,6 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     if (fx.type !== undefined && !fxEffectTypes(fxIndex).some((o) => o.value === fx.type)) {
       out.push({ reason: "paramRange", node, where: "field", key: "type", stored: fx.type, action: "drop" });
     }
-    // The effect's own level, which `pushFxEffectCommands` bounds two lines ABOVE the
-    // parameter loop and by a literal rather than by a descriptor. Named here because the
-    // sentence this section opens with says every FX slot, and a slot bounded by a literal
-    // is no less bounded.
-    take(node, "field", "level", fx.level as number | undefined, (v) =>
-      Math.min(Math.max(Math.round(v), FX_LEVEL_MIN), FX_LEVEL_MAX),
-    );
     // The parameter MAP, which the readers below and the write path both skip when it is not
     // an object — the same silent loss as an unreadable effect, one channel's worth of raws.
     if (fx.params !== undefined && !isPlainRecord(fx.params)) {
@@ -194,10 +180,13 @@ export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void
     }
     const fx = np.fxEffect!;
     if (p.where === "field") {
-      // `level` is the only field carrying a window, so a bound here is that field and a
-      // drop is any of the three.
-      if (p.action === "drop") delete (fx as unknown as Record<string, unknown>)[p.key];
-      else fx.level = p.bound;
+      // Every field problem reported today is a drop — the effect TYPE is checked against the
+      // channel's menu and the parameter map against its own shape, and neither carries a
+      // window — but the bound is applied rather than assumed away, so a field that gains one
+      // is repaired instead of being silently removed.
+      const rec = fx as unknown as Record<string, unknown>;
+      if (p.action === "drop") delete rec[p.key];
+      else rec[p.key] = p.bound;
     } else if (p.action === "drop") {
       delete fx.params![p.key];
     } else {

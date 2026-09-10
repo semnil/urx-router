@@ -27,7 +27,7 @@ import {
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
 import { attackToVd, eqFreqToVd } from "./core/control/vd";
-import { FX_SLOT_LEVEL, FX_SLOT_ON, formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
+import { FX_SLOT_ON, formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
@@ -2345,11 +2345,12 @@ describe("a value the unit holds and the app cannot write", () => {
   const shownFx = (nodeId: string, planKey: string): string =>
     withFxScreen(nodeId, (box) => box.querySelector<HTMLElement>(`[data-dyn-val="fx:${planKey}"]`)?.textContent ?? "");
   const shownLpf = (): string => shownFx("bus.fx2", "delayLpf");
-  /** The screen's Mix slider, which is where an ordinary operator edit to an FX channel is
-   *  made now. Read and written through the same open, since the controls draw a captured
-   *  snapshot and a handle kept across a write would be answering for the plan as it was. */
-  const fxLevel = (nodeId: string): HTMLInputElement =>
-    withFxScreen(nodeId, (box) => box.querySelector<HTMLInputElement>('input[data-dyn="fx:level"]')!);
+  /** The screen's Hi.Ratio slider, which is where an ordinary operator edit to an FX channel
+   *  is made here — a row of the delay face that is NOT the LPF these cases are about. Read
+   *  and written through the same open, since the controls draw a captured snapshot and a
+   *  handle kept across a write would be answering for the plan as it was. */
+  const fxEdit = (nodeId: string): HTMLInputElement =>
+    withFxScreen(nodeId, (box) => box.querySelector<HTMLInputElement>('input[data-dyn="fx:delayHiRatio"]')!);
 
   // What the status assertions after a selection rest on: `pressNode` completes the press, so
   // the board's path-trace line does not land over the line a case is reading.
@@ -2887,17 +2888,17 @@ describe("a value the unit holds and the app cannot write", () => {
     await invoked(shell, "vd_disconnect");
 
     // An ordinary app edit first, so the undo has something of the operator's to spend.
-    const before = fxLevel("bus.fx2").value;
+    const before = fxEdit("bus.fx2").value;
     withFxScreen("bus.fx2", (box) => {
-      const level = box.querySelector<HTMLInputElement>('input[data-dyn="fx:level"]')!;
-      // To an END of its own range rather than by a fixed step: the seeded unit leaves this
-      // control at its minimum, and a step DOWN from there is clamped back to where it was —
-      // an edit that never happened, which the undo below then has nothing to spend.
-      level.value = level.value === level.max ? level.min : level.max;
-      level.dispatchEvent(new Event("input", { bubbles: true }));
-      level.dispatchEvent(new Event("change", { bubbles: true }));
+      const row = box.querySelector<HTMLInputElement>('input[data-dyn="fx:delayHiRatio"]')!;
+      // To an END of its own range rather than by a fixed step, whatever the seed left it at:
+      // a step from a value already AT an end is clamped back to where it was — an edit that
+      // never happened, which the undo below then has nothing to spend.
+      row.value = row.value === row.max ? row.min : row.max;
+      row.dispatchEvent(new Event("input", { bubbles: true }));
+      row.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    expect(fxLevel("bus.fx2").value).not.toBe(before);
+    expect(fxEdit("bus.fx2").value).not.toBe(before);
 
     $("btn-write").click();
     await invoked(shell, "vd_disconnect", 2);
@@ -2906,7 +2907,7 @@ describe("a value the unit holds and the app cannot write", () => {
     // The chord goes to the focused range input otherwise (ui/history.ts routes it there).
     (document.activeElement as HTMLElement | null)?.blur();
     shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID);
-    await vi.waitFor(() => expect(fxLevel("bus.fx2").value).toBe(before), { timeout: 10_000 });
+    await vi.waitFor(() => expect(fxEdit("bus.fx2").value).toBe(before), { timeout: 10_000 });
     // …and the adopted value is still there: the undo did not hand the unwritable raw back.
     expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
   });
@@ -3017,11 +3018,10 @@ describe("an EFFECT TYPE change while a session is live", () => {
   const unitOnRevxHall = (): Record<string, number> => {
     const seed: Record<string, number> = { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
     seed["679/0/0"] = 0;
-    // Slots 1 and 2 are the effect's ON and MIX, which are not tunable descriptors and so
-    // are not in `fxParams`. Seeded anyway: unseeded they read 0, and the session's opening
-    // readback then puts an effect the unit has ON into the plan as OFF.
+    // Slot 1 is the effect's ON, which is not a tunable descriptor and so is not in
+    // `fxParams`. Seeded anyway: unseeded it reads 0, and the session's opening readback then
+    // puts an effect the unit has ON into the plan as OFF.
     seed[`681/0/${FX_SLOT_ON}`] = 1;
-    seed[`681/0/${FX_SLOT_LEVEL}`] = 100;
     for (const d of fxParams(0)) seed[`681/0/${d.slot}`] = d.def;
     return seed;
   };

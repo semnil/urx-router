@@ -977,3 +977,44 @@ test("every semitone button meets the desktop minimum target, at the smallest wi
   expect(rows).toHaveLength(2);
   for (const top of rows) expect(tops.filter((t) => t === top)).toHaveLength(6);
 });
+
+// Pitch Fix carries three groups, and each has to stay on a row of its own: MIDI Control
+// with the Key and Scale it decides, Limit Low with Limit High, and Speed with Tolerance.
+// The face names no column count — it takes the stylesheet's default — so what holds the
+// grouping is that number, which the guitar amps chose for their own reason and which the
+// FX EFFECT screen overrides for its own. Nothing else here would notice it moving: every
+// other case on this face reads labels and values, which a re-wrap leaves untouched.
+//
+// The GROUPING is the assertion rather than the count: a width that keeps the three
+// together is a width that passes, and a case pinning "seven" would fail a change that
+// left the face correct. Row membership is read off the top edges, as the note strip's
+// own case does. The viewport is set, since the stylesheet drops to three columns under
+// 1100px and the default is not wide enough to say which side of that a run landed on.
+test("Pitch Fix keeps each of its three groups on one row", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await node(page, "ch1").click();
+  await chooseOption(insertSelect(page), { label: "Pitch Fix" });
+  await openScreen(page);
+  const rowOf = async (label: string): Promise<number> => {
+    const box = await screenRow(page, label).boundingBox();
+    expect(box, `${label} has no box`).not.toBeNull();
+    return Math.round(box!.y);
+  };
+  const groups = [
+    ["MIDI Control", "Key", "Scale"],
+    ["Limit Low", "Limit High"],
+    ["Speed", "Tolerance"],
+  ];
+  const tops: number[][] = [];
+  for (const group of groups) {
+    const rows: number[] = [];
+    for (const label of group) rows.push(await rowOf(label));
+    expect(new Set(rows).size, `${group.join(" / ")} share a row`).toBe(1);
+    tops.push(rows);
+  }
+  // The positive control: the face really does wrap. Without it a single row of twelve —
+  // or a column of twelve — satisfies every assertion above.
+  const distinct = new Set([...tops.flat(), await rowOf("Correction")]);
+  expect(distinct.size, "the face wraps at all").toBeGreaterThan(1);
+  await closeScreen(page);
+});

@@ -28,13 +28,8 @@ import {
   FX_CHANNEL_NODE_INDEX,
   FX_EFFECT_ARRAY_PARAM,
   FX_EFFECT_TYPE_PARAM,
-  FX_LEVEL_DEFAULT,
-  FX_LEVEL_MAX,
-  FX_LEVEL_MIN,
-  FX_SLOT_LEVEL,
   FX_SLOT_ON,
   fxDescRawToSend,
-  fxRawToSend,
   fxRowOwners,
   resolveFxEffectType,
   fxParams,
@@ -837,8 +832,8 @@ export type InsertFxFieldKey = `ifx:${string}:${number}`;
  *  it was set to. The catalogue's own keys already carry a family name exactly where two
  *  families collide (`revxHpf` / `revr3Hpf` / `delayHpf`, `delay` / `pingPongDelay`) and
  *  share one where the parameter really is one (`reverbTime` is slot 7 of both reverbs), so
- *  they are unique and they mean the right thing. `fx:level` is the Mix, which lives at the
- *  top of `fxEffect` rather than in its params map.
+ *  they are unique and they mean the right thing. The keys are the params map's, which is
+ *  every value the FX EFFECT screen edits.
  *
  *  The purpose is `InsertFxFieldKey`'s: a device follow can replace the effect while a knob
  *  is under the pointer, and the drag goes on firing at a row that is already detached —
@@ -1212,8 +1207,9 @@ function pushFxEffectCommands(
   const type = resolveFxEffectType(fxIndex, fx.type);
   out.push(rawCommand("FX_EFFECT_TYPE", typeId, "enum", 0, type));
   out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx.on ?? true) ? 1 : 0));
-  const level = fxRawToSend(fx.level, FX_LEVEL_DEFAULT, FX_LEVEL_MIN, FX_LEVEL_MAX);
-  out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_LEVEL, level));
+  // Slot 2 is NOT sent. No control of the unit's own reaches it — its effect screen does not
+  // show it and the effect guide lists it for none of the five types — so what a value there
+  // does is unestablished, and this app writes only what it has confirmed on the unit.
   // The slot the unit is computing for itself, skipped for the reason the insert-FX loop
   // below skips its own: while tempo Sync is on the unit derives the delay time from the BPM
   // and the note value, and it ACCEPTS a write to that slot and holds it — so re-sending the
@@ -1690,7 +1686,6 @@ export function paramRangeAddrs(model: DeviceModel, plan: Plan, problems: ParamR
     if (c.name === "FX_EFFECT_PARAM" && c.node !== undefined) byNodeSlot.set(`${c.node}/${c.y}`, cmdAddr(c));
   }
   return problems.map((p) => {
-    if (p.where === "field" && p.key === "level") return byNodeSlot.get(`${p.node}/${FX_SLOT_LEVEL}`);
     if (p.where !== "params") return undefined;
     const fxIndex = FX_CHANNEL_NODE_INDEX[p.node];
     if (fxIndex === undefined) return undefined;

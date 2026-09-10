@@ -17,10 +17,11 @@
 
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PLAN_VERSION } from "../src/core/plan";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TOOL = join(ROOT, ".claude/skills/urx-routing-planner/scripts/plan_tool.py");
@@ -33,7 +34,7 @@ const python = (() => {
 
 const doc = (fx) => ({
   format: "urx-router-plan",
-  version: 2,
+  version: PLAN_VERSION,
   modelId: "URX44V",
   positions: {},
   connections: [],
@@ -99,13 +100,16 @@ const leavesOf = (value, path = [], out = new Map()) => {
 // Rev-X Hall's own LPF starts well above 0, and no channel offers type 12345 — the two the
 // tool cannot answer without the app's effect catalogue.
 const CASES = [
-  ["a document the app writes itself", { on: true, type: 0, level: 50, params: { revxLpf: 40 } }, false, false],
+  ["a document the app writes itself", { on: true, type: 0, params: { revxLpf: 40 } }, false, false],
   ["an empty effect object, whose key the app removes", {}, true, true],
-  ["a boolean where a number belongs", { type: 0, level: false }, true, true],
+  ["a boolean where a number belongs", { type: 0, params: { revxLpf: false } }, true, true],
+  // Array slot 2, which the app removes at the load whatever the value is. A finite number in
+  // its old window is the shape that reads as valid, so it is the one asked here.
+  ["the effect array's slot 2, which the app no longer carries", { type: 0, level: 80 }, true, true],
   ["a boolean type", { type: false }, true, true],
   ["a boolean parameter map", { type: 0, params: false }, true, true],
   ["an object where a parameter belongs", { type: 0, params: { revxLpf: { x: 1 } } }, true, true],
-  ["a string, which the sanitiser drops", { type: 0, level: "x" }, true, true],
+  ["a string, which the sanitiser drops", { type: 0, params: { revxLpf: "x" } }, true, true],
   ["a null parameter, which the sanitiser drops", { type: 0, params: { revxLpf: null } }, true, true],
   ["an effect object that is not an object", false, true, true],
   ["an effect object that is an array", [{}], true, true],
@@ -114,6 +118,20 @@ const CASES = [
 ];
 
 // Skipped BY NAME where python3 is absent, rather than passing over a tool it never ran.
+// The two carry the format version separately — one in TypeScript, one in Python — and the
+// tool REFUSES a document tagged higher than its own. Left behind by a bump, it would report
+// `planVersionUnsupported` for every document the app now writes, which is the opposite of a
+// missed drop and just as wrong. Read out of the file rather than run, so it holds whether or
+// not python3 is here.
+describe("the version the two halves read", () => {
+  it("is one number", () => {
+    const src = readFileSync(TOOL, "utf8");
+    const declared = /^PLAN_VERSION = (\d+)$/m.exec(src);
+    expect(declared, "plan_tool.py declares no PLAN_VERSION").not.toBeNull();
+    expect(Number(declared[1])).toBe(PLAN_VERSION);
+  });
+});
+
 describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", () => {
   const dir = mkdtempSync(join(tmpdir(), "urx-plan-tool-"));
 
@@ -276,7 +294,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
   // how a plan preserved a channel; a document that names none of these three now writes the
   // factory value over whatever the unit holds, and the insert-FX one CLEARS the effect.
   it("names each selector a document leaves out", () => {
-    const bare = { format: "urx-router-plan", version: 2, modelId: "URX44V", connections: [] };
+    const bare = { format: "urx-router-plan", version: PLAN_VERSION, modelId: "URX44V", connections: [] };
     const out = toolWarnings(dir, bare);
     expect(out).toContain("carry no usable fxEffect");
     expect(out).toContain("carry no usable insertFx");

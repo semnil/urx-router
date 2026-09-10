@@ -650,19 +650,18 @@ describe("moving between the faces", () => {
     screen.close();
   });
 
-  it("puts Pitch Fix on one face, Correction first, with the level rack beside it", () => {
+  it("puts Pitch Fix on one face, in the unit's own order, with the level rack beside it", () => {
     // Its display column used to carry a READ-ONLY copy of the controls next to it — the
     // Key, the Scale and the twelve notes, drawn twice on one face — and no lane rack at
-    // all. Correction leads because it is the switch the whole effect hangs off: everything
-    // under it describes a correction that is not happening while it is off.
+    // all.
     holding("ch1", "Pitch Fix");
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_DYN, "ch1");
     const m = t().inspector.insertFxEffect;
-    // Everything both former faces carried, on this one, in the order the unit lists it:
-    // the switch, what the correction does to a note, then what it is aimed at — MIDI
-    // Control in front of the Key, because it decides where those notes come from — and
-    // then the range it works over and how fast it gets there.
+    // Everything both former faces carried, on this one, in the order the unit's own screen
+    // shows the rows — which is not the catalogue's, since the catalogue lists the device's
+    // READ order and puts Correction fourth and Mix fifth. MIDI Control and the Scale are
+    // not in that catalogue at all and are built around the Key, where the unit shows them.
     expect(rowLabels()).toEqual([
       m.params.correction,
       m.params.coarse,
@@ -671,9 +670,9 @@ describe("moving between the faces", () => {
       m.params.midiControl,
       m.params.key,
       m.scale,
-      m.params.mix,
       m.params.limitLow,
       m.params.limitHigh,
+      m.params.mix,
       m.params.speed,
       m.params.tolerance,
       m.scaleNotes,
