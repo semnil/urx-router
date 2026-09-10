@@ -329,21 +329,19 @@ const diffReadsFail = (a: Record<string, unknown>): number => {
 };
 
 /**
- * Press a node on the board by its own group, which is how this file's FX cases select one.
+ * Press a node on the board by its own GROUP — the same completed press `selectNode` above
+ * makes, aimed elsewhere. What separates the two is where it lands: `selectNode` presses the
+ * faceplate, and the FX cases below need the group, or the tuning screen they open draws
+ * another node's values or nothing at all.
  *
- * NOT `selectNode` above, and not a completed press either. The board arms a path-trace long
- * press on the press (graph.ts `startLongPress`) and cancels it on the release, so a press
- * left open here writes a status line of its own a few hundred ms later — which is a status
- * assertion racing a timer. Both obvious repairs change what the cases around this read:
- * releasing it makes the undo in "survives an undo" land one entry further back, and
- * pressing the faceplate that `selectNode` presses leaves three cases reading the wrong
- * effect value or an empty screen. So the open press stands, and a case that wants a status
- * after selecting a node reads it before it selects one.
+ * The release carries the same weight it carries there, for the reason written there. On a
+ * press that never moved it is all `onPointerUp` does that matters: the drag it drops reports
+ * nothing, and the connect branch is not one a node press enters.
  */
 const pressNode = (nodeId: string): void => {
-  $("graph-host")
-    .querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!
-    .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+  const node = $("graph-host").querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!;
+  node.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+  node.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
 };
 
 /** An inspector row by the label it stamps on itself, so "Insert FX" cannot match
@@ -2344,6 +2342,33 @@ describe("a value the unit holds and the app cannot write", () => {
   const fxLevel = (nodeId: string): HTMLInputElement =>
     withFxScreen(nodeId, (box) => box.querySelector<HTMLInputElement>('input[data-dyn="fx:level"]')!);
 
+  // What the status assertions after a selection rest on: `pressNode` completes the press, so
+  // the board's path-trace line does not land over the line a case is reading.
+  it("completes the node press, so the path trace never writes over the line", SLOW, async () => {
+    const shell = await bootDevice({}, true, unitHoldingLowLpf());
+    const fx2 = (): SVGGElement => $("graph-host").querySelector<SVGGElement>('g.node[data-id="bus.fx2"]')!;
+
+    // The control first, because it is what bounds the wait below. An OPEN press holds and
+    // then writes the trace line, and the hold is TAKEN here rather than restated from the
+    // board's own constant — a hold that grows carries this case with it instead of leaving
+    // a copy behind to go stale.
+    const armed = performance.now();
+    fx2().dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.pathNone("FX 2")), { timeout: 20_000 });
+    const hold = performance.now() - armed;
+
+    // …and the completed press does not, twice that hold later. The fetch supplies a line the
+    // trace cannot be mistaken for, so an overwrite is visible rather than indistinguishable.
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    const line = statusText();
+    expect(line).not.toBe(t().status.pathNone("FX 2"));
+
+    pressNode("bus.fx2");
+    await new Promise((resolve) => setTimeout(resolve, hold * 2));
+    expect(statusText()).toBe(line);
+  });
+
   it("reads it verbatim, then takes the sent value once the device has confirmed it", SLOW, async () => {
     const shell = await bootDevice({}, true, unitHoldingLowLpf());
     $("btn-fetch").click();
@@ -2353,10 +2378,7 @@ describe("a value the unit holds and the app cannot write", () => {
 
     $("btn-write").click();
     await invoked(shell, "vd_disconnect", 2);
-    // The line the WRITE ended on, read BEFORE the panel is: `shownLpf` selects the node,
-    // and a selection press arms the path trace whose own status line lands a few hundred ms
-    // later over this one (`pressNode`). Read the other way round, this passes or fails on
-    // how loaded the machine is.
+    // The line the WRITE ended on.
     expect(statusText()).toContain(t().status.paramsBounded(1));
     // …and the write's own value is what the plan ends up holding, so the panel and the unit
     // name the same setting from here on.
@@ -2908,9 +2930,7 @@ describe("a value the unit holds and the app cannot write", () => {
 
     // An unrelated control on an unrelated node, driven the way the operator drives it.
     const sets = shell.count("vd_set");
-    $("graph-host")
-      .querySelector<SVGGElement>('g.node[data-id="bus.stereo"]')!
-      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    pressNode("bus.stereo");
     const fader = paramRow(t().inspector.level).querySelector<HTMLInputElement>("input[type=range]")!;
     fader.value = String(Number(fader.value) - 3);
     fader.dispatchEvent(new Event("input", { bubbles: true }));
@@ -2933,9 +2953,7 @@ describe("a value the unit holds and the app cannot write", () => {
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
 
     const sets = shell.count("vd_set");
-    $("graph-host")
-      .querySelector<SVGGElement>('g.node[data-id="bus.fx1"]')!
-      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    pressNode("bus.fx1");
     const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
     sel.value = "1";
     sel.dispatchEvent(new Event("input", { bubbles: true }));
