@@ -362,6 +362,14 @@ Source selection for the analog outputs (MAIN / LINE).
   the pan). In BAL mode the pan is the pair's single shared balance, so both channels read the same value
   (the re-init above seeds it centred); the Signal Type / PAN-BAL flags live on the primary alone. In PAN
   mode the two channels stay independent (pan included — no mirroring).
+- **A STEREO pair may hold a compander as its insert FX, and nothing else.** COMPANDER-H / COMPANDER-S
+  are the only channel effects the user guide's Effect list marks as running on such a pair (where they
+  run in stereo across it); the four GUITAR AMP CLASSICS and PITCH FIX say "Cannot be used when Signal
+  Type is stereo". The tool locks those five in the insert-FX menu of both members while the pair is
+  linked, on either pair and on every model that has one, and the Signal Type transition itself clears
+  whatever the pair was holding — in **either** direction, so leaving STEREO with a compander held
+  releases it. This is a per-effect rule and not a rate one; the ceilings below are asked first, so a
+  linked pair above every ceiling reports the rate.
 - **Every channel / FX-channel send is fixed** (the STEREO main path plus every MIX 1–2 / FX 1–2 send), as is
   **MIX 1/2 → STEREO (TO ST)**: always wired, shown pre-connected, and non-removable. Unlike the items above
   they *are* drawn as wires (between visible nodes) since their LEVEL/PAN/PRE-POST/ON (SEND_ON; TO ST is ON/OFF

@@ -676,6 +676,13 @@ The constraint core (`core/routing.ts`):
   the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
   linked pair as a single holder — the app follows what the device does instead of modelling a second copy of
   the rule ([What the app models, and what it leaves to the unit](#what-the-app-models-and-what-it-leaves-to-the-unit)).
+  **What a linked pair may take is the companders and nothing else.** The guitar amps and Pitch Fix are
+  mono-channel effects (`monoOnly` in `INSERT_FX_OPTIONS`, from the user guide's Effect list) and
+  `insertFxMenu` locks them as `"link"` on both members while the pair is linked. It is the second of the
+  three lock kinds and it is asked SECOND, after the rate: a linked pair above every ceiling has to report
+  the rate on every entry, or `insertFxAllRateLocked` stops answering for it and the rate warning and the
+  forced-off bypass go with it. Like the other two it is UI-only — a plan that carries such a value (a file,
+  a `?plan=` link, a device read) still emits it, since the value is one the unit holds.
   The transition also **names every key it wrote** to the edit funnel's write witness, because none of them
   has to move: the three deletions land on a member that carried no effect, and unlinking a BAL pair re-centres
   pans that are already centred. A device read in flight arbitrates by authorship for exactly that reason, and

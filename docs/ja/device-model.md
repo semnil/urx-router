@@ -348,6 +348,14 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   (ノードパラメーター全般 + 各 Send の LEVEL/PRE-POST/ON、および pan)。pan は BAL モードではペア共有の
   バランス 1 値なので両 ch で一致する (上記の初期化が中央を起点として与える)。Signal Type / PAN-BAL
   フラグは primary のみ保持。PAN モードでは両 ch は独立のまま (pan も含めミラーしない)。
+- **STEREO のペアが Insert FX に持てるのは Compander だけ**。ユーザーガイドのエフェクトリストで
+  STEREO のチャンネルペアへのインサートを認めているチャンネルエフェクトは COMPANDER-H /
+  COMPANDER-S のみ (ペアに挿すとステレオ動作になる) で、GUITAR AMP CLASSICS 4 種と PITCH FIX は
+  「Signal Type が STEREO の場合は使用できません」。ツールはリンク中、ペア両メンバーの Insert FX
+  メニューでこの 5 つをロックする (どちらのペアでも、ペアを持つ全機種で)。Signal Type の遷移自体が
+  ペアの保持していたエフェクトを**どちらの向きでも**クリアするので、Compander を持ったまま STEREO を
+  解除すると解除される。これはレートではなくエフェクト個別の規則で、下記のレート上限を先に判定する
+  ため、全上限を超えたレートではリンク中でもレートを理由として報告する。
 - **全チャンネル/FX チャンネルの Send (STEREO 主経路 + MIX 1–2 / FX 1–2 Send)、および MIX 1/2 → STEREO の
   TO ST は固定**。常時結線され初期接続済みで表示し、削除不可。上記の要素と異なり LEVEL/PAN/PRE-POST/ON
   (SEND_ON、TO ST は ON/OFF のみ) を編集できるため、(表示ノード間の) 配線として描画する。固定なのは経路のみで、
