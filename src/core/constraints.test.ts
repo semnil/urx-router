@@ -19,7 +19,7 @@ import {
   outputMono,
 } from "./constraints";
 import type { InsertFxMenuEntry } from "./constraints";
-import { directOutTarget } from "./routing";
+import { directOutTarget, isStereoLinkedPair } from "./routing";
 import { emptyPlan } from "./plan";
 import { getModel } from "../models";
 import { ref } from "../models/types";
@@ -228,6 +228,11 @@ describe("insertFxMenu", () => {
   // own menu must not lock against what the app itself wrote. The gate is Signal Type:
   // the unit was measured mirroring in PAN mode too.
   it("does not hold a linked partner's mirrored selection against either member", () => {
+    // While the pair is linked a mono-only option reports "link" before the slot is asked,
+    // so only a family with no mono-only member can show a slot lock here at all. Without a
+    // family like that the loop below asserts the absence of something that could not have
+    // appeared — the same emptiness guard `INPUT_SLOTS.size` carries above.
+    expect([...INPUT_SLOTS.values()].some((options) => options.every((o) => !o.monoOnly))).toBe(true);
     for (const panBal of [PAN_BAL_BAL, PAN_BAL_PAN]) {
       for (const [, options] of INPUT_SLOTS) {
         const plan = planAt(48000);
@@ -249,21 +254,32 @@ describe("insertFxMenu", () => {
   // "Cannot be used when Signal Type is stereo"), while a compander inserted on such a
   // pair runs in stereo across it. Both of a model's MONO IN pairs answer alike.
   describe("a STEREO-linked pair", () => {
-    const linkedPlan = (primary: string, panBal = PAN_BAL_BAL): ReturnType<typeof emptyPlan> => {
-      const plan = planAt(48000);
+    const linkedPlan = (
+      primary: string,
+      panBal = PAN_BAL_BAL,
+      modelId: "URX44V" | "URX44" = "URX44V",
+    ): ReturnType<typeof emptyPlan> => {
+      const plan = emptyPlan(modelId);
+      plan.sampleRate = 48000;
       plan.nodeParams[primary] = { stereoLink: true, panBal };
       return plan;
     };
 
     it("locks the mono-only effects on both members of either pair, in PAN and in BAL", () => {
       for (const panBal of [PAN_BAL_BAL, PAN_BAL_PAN]) {
-        for (const [primary, members] of [
-          ["ch1", ["ch1", "ch2"]],
-          ["ch3", ["ch3", "ch4"]],
+        for (const [modelId, primary, members] of [
+          ["URX44V", "ch1", ["ch1", "ch2"]],
+          ["URX44V", "ch3", ["ch3", "ch4"]],
+          // URX44 has the same two pairs and the rule is stated of every model that has
+          // one, so it runs the same loop rather than being taken on trust from the
+          // model-independent code path.
+          ["URX44", "ch1", ["ch1", "ch2"]],
+          ["URX44", "ch3", ["ch3", "ch4"]],
         ] as const) {
-          const plan = linkedPlan(primary, panBal);
+          const model = getModel(modelId);
+          const plan = linkedPlan(primary, panBal, modelId);
           for (const member of members) {
-            const menu = insertFxMenu(u44v, plan, member);
+            const menu = insertFxMenu(model, plan, member);
             for (const e of menu) expect(e.lock).toBe(e.option.monoOnly ? "link" : null);
             // Named, so a catalog that stopped flagging one of them cannot pass by
             // agreeing with the loop above.
@@ -307,11 +323,35 @@ describe("insertFxMenu", () => {
     });
 
     it("does not reach an output bus, which has no Signal Type", () => {
+      // Two independent things keep a bus out of this rule, and the case says which: no
+      // output effect is mono-only, and a bus is on no pair. Asserting only the menu leaves
+      // it green under a gate that read the whole plan rather than the node's own pair —
+      // and green on the revision before the lock existed at all.
+      expect(OUTPUT_INSERT_FX_OPTIONS.every((o) => !o.monoOnly)).toBe(true);
       const plan = linkedPlan("ch1");
-      plan.nodeParams["bus.mix1"] = {};
+      // A bus carrying the flag itself: it belongs to no pair, so the flag names nothing.
+      plan.nodeParams["bus.mix1"] = { stereoLink: true };
       for (const nodeId of ["bus.stereo", "bus.mix1", "bus.mix2"]) {
+        expect(isStereoLinkedPair(u44v, plan, nodeId), nodeId).toBe(false);
         expect(insertFxMenu(u44v, plan, nodeId).every((e) => e.lock === null)).toBe(true);
       }
+    });
+
+    // The OTHER order in the chain, and the one nothing was reading: with the amp slot
+    // taken by an unrelated channel, a mono-only entry is refused for BOTH reasons at once
+    // and only the order decides which the operator is shown. Asking the slot first sends
+    // them to release an effect whose release changes nothing here, which is the very
+    // sentence this branch exists to stop showing.
+    it("names the pair's rule, not the slot, where a mono-only family is held elsewhere", () => {
+      const plan = linkedPlan("ch1");
+      plan.nodeParams["ch4"] = { insertFx: INSERT_FX_OPTIONS.find((o) => o.slot === "amp")!.value };
+      const menu = insertFxMenu(u44v, plan, "ch1");
+      expect(lockOf(menu, "Clean")).toBe("link");
+      // The control: the same channel's compander is NOT mono-only, so a slot taken there
+      // still reports the slot — without it, a chain that answered "link" for everything
+      // would pass the line above.
+      plan.nodeParams["ch3"] = { insertFx: INSERT_FX_OPTIONS.find((o) => o.slot === "compander")!.value };
+      expect(lockOf(insertFxMenu(u44v, plan, "ch1"), "Compander-H")).toBe("slot");
     });
 
     it("still reports the slot when the companders are held elsewhere", () => {
