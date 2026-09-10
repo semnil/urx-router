@@ -17,6 +17,11 @@ export interface SkillModel {
   name: string;
   nodes: Record<string, { kind: NodeKind; label: string }>;
   rules: [string, string, ConnectionKind, boolean][];
+  /** The MONO IN pairs, primary first. Carried because a pair whose Signal Type is
+   *  STEREO holds one insert effect between its two channels, so the validator has to
+   *  collapse it to one slot holder the way `insertFxCensus` does — a rule it cannot
+   *  reach from the routing data, and one it would otherwise have to spell out itself. */
+  channelPairs: [string, string][];
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -26,6 +31,7 @@ function skillModel(model: DeviceModel): SkillModel {
     name: model.name,
     nodes,
     rules: model.rules.map((r) => [r.from, r.to, r.kind, Boolean(r.fixed)]),
+    channelPairs: model.channelPairs.map(([a, b]) => [a, b]),
   };
 }
 

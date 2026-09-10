@@ -154,7 +154,7 @@ def validate(plan, models):
         seen.add(key)
 
     warnings.extend(collection_warnings(plan))
-    warnings.extend(node_param_warnings(plan, nodes))
+    warnings.extend(node_param_warnings(plan, nodes, model.get("channelPairs")))
     return problems, warnings
 
 
@@ -329,6 +329,26 @@ def insert_fx_slot(node_id, params, nodes):
     return None
 
 
+def pair_of(node_id, pairs):
+    """The MONO IN pair `node_id` belongs to, primary first, or None. The pairs come from
+    the bundled model data, so this tool does not carry a second copy of which channels
+    pair with which."""
+    for pair in pairs or []:
+        if isinstance(pair, list) and len(pair) == 2 and node_id in pair:
+            return pair
+    return None
+
+
+def pair_is_linked(node_id, pairs, node_params):
+    """True when `node_id` is on a MONO IN pair whose Signal Type is STEREO. The flag lives
+    on the pair's primary, so it is read there whichever member is asked."""
+    pair = pair_of(node_id, pairs)
+    if pair is None:
+        return False
+    primary = node_params.get(pair[0])
+    return isinstance(primary, dict) and primary.get("stereoLink") is True
+
+
 def fx_effect_warnings(node_id, fx, out):
     """Collect everything the app removes from one node's fxEffect (path, why).
 
@@ -412,7 +432,7 @@ def dropped_values(value, path, out):
         out.append((path, f"{value!r} is neither a boolean nor a finite number"))
 
 
-def node_param_warnings(plan, nodes):
+def node_param_warnings(plan, nodes, pairs):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
@@ -447,7 +467,18 @@ def node_param_warnings(plan, nodes):
             out.append(f"node {node_id}: {SELECTOR_KEYS['insertFx']} resets that effect's parameters on the device")
         slot = insert_fx_slot(node_id, params, nodes)
         if slot:
-            slot_holders.setdefault(slot, []).append(node_id)
+            held = slot_holders.setdefault(slot, [])
+            # A STEREO-linked pair holds one insert effect between its two channels — the unit
+            # mirrors the selector across them and both point at one engine — so the pair claims
+            # the slot once, as the app's own census counts it. Without this the tool reports the
+            # document plan-schema.md tells an author to write (the same effect on both members)
+            # as a collision the app does not raise.
+            pair = pair_of(node_id, pairs)
+            partner = None
+            if pair is not None and pair_is_linked(node_id, pairs, node_params or {}):
+                partner = pair[1] if pair[0] == node_id else pair[0]
+            if partner is None or partner not in held:
+                held.append(node_id)
         # The section's PRESENCE, not the `type` key: the selector is emitted whether or not
         # the document names a type (an absent one resolves to the channel's factory type),
         # and every parameter slot goes with it. There is no partial FX write, so a plan

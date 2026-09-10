@@ -334,6 +334,49 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     expect(out.includes(needle)).toBe(warned);
   });
 
+  // A STEREO-linked MONO IN pair holds ONE insert effect between its two channels, and
+  // plan-schema.md tells an author to put the same value on both members for exactly that
+  // reason — the app fills an omitted one with No Effect and the write would then clear the
+  // pair. So the pair has to claim its slot once here, as `insertFxCensus` counts it, or the
+  // tool scolds the document the skill just asked for and points at a fix that breaks it.
+  // The unlinked pair is the control: without it, a census that stopped reporting collisions
+  // at all would satisfy the first half.
+  it("counts a STEREO-linked pair as one holder of the insert-FX slot", () => {
+    const pair = (ch1) => ({
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch1, ch2: { insertFx: 1793 } },
+    });
+    const slot = "select into the one device-wide compander slot";
+    expect(toolWarnings(dir, pair({ stereoLink: true, insertFx: 1793 }))).not.toContain(slot);
+    expect(toolWarnings(dir, pair({ insertFx: 1793 })), "the control: an unlinked pair").toContain(slot);
+    // The flag is the pair's, held on the primary — set on the SECOND member it names no
+    // pair state at all, so the two still collide.
+    expect(
+      toolWarnings(dir, {
+        format: "urx-router-plan",
+        version: 2,
+        modelId: "URX44V",
+        connections: [],
+        nodeParams: { ch1: { insertFx: 1793 }, ch2: { stereoLink: true, insertFx: 1793 } },
+      }),
+      "stereoLink on the partner is not the pair's flag",
+    ).toContain(slot);
+    // …and an unrelated channel is still held against the pair.
+    expect(
+      toolWarnings(dir, {
+        format: "urx-router-plan",
+        version: 2,
+        modelId: "URX44V",
+        connections: [],
+        nodeParams: { ch1: { stereoLink: true, insertFx: 1793 }, ch2: { insertFx: 1793 }, ch3: { insertFx: 1794 } },
+      }),
+      "the pair holds the slot against ch3",
+    ).toContain(slot);
+  });
+
   // `True == 1` in Python, and the app's own comparison is `===` — so a boolean comp/EQ type
   // falls back to the COMP-first order and sends no SSMCS at all.
   it("does not read a boolean as the SSMCS comp/EQ order", () => {
