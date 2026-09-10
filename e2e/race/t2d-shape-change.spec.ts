@@ -51,13 +51,14 @@ const arr = (slot: number): string => `${FX1_ARRAY}:0:${slot}`;
  *  until something reads it. */
 const PANEL_HPF = 21;
 
-/** Rev-X (FX1 factory type 0) array slots: ON / Mix, then the ten REVX_PARAMS
- *  descriptors — reverbTime 7, revxInitialDelay 9, decay 15, roomSize 12, revxDiffusion 8,
- *  revxHpf 10, revxLpf 11, revxHiRatio 13, lowRatio 14, lowFreq 18 (core/control/fx-effect.ts). */
-const REVX_SLOTS = [1, 2, 7, 9, 15, 12, 8, 10, 11, 13, 14, 18];
-/** Mono Delay (type 1024) array slots: ON / Mix, then DELAY_PARAMS — delay 6,
- *  delayFeedback 7, delayHiRatio 8, delayHpf 9, delayLpf 10, sync 4, bpm 3, note 11. */
-const DELAY_SLOTS = [1, 2, 6, 7, 8, 9, 10, 4, 3, 11];
+/** Rev-X (FX1 factory type 0) array slots: ON, then the ten REVX_PARAMS descriptors —
+ *  reverbTime 7, revxInitialDelay 9, decay 15, roomSize 12, revxDiffusion 8, revxHpf 10,
+ *  revxLpf 11, revxHiRatio 13, lowRatio 14, lowFreq 18 (core/control/fx-effect.ts). Slot 2 is
+ *  not one of them: the app neither reads it nor writes it, so it appears in neither pass. */
+const REVX_SLOTS = [1, 7, 9, 15, 12, 8, 10, 11, 13, 14, 18];
+/** Mono Delay (type 1024) array slots: ON, then DELAY_PARAMS — delay 6, delayFeedback 7,
+ *  delayHiRatio 8, delayHpf 9, delayLpf 10, sync 4, bpm 3, note 11. */
+const DELAY_SLOTS = [1, 6, 7, 8, 9, 10, 4, 3, 11];
 /** Slots only one family has. Computed, not spelled out, so the two tables above are
  *  the single statement of the catalog and this cannot drift away from them. */
 const REVX_ONLY = REVX_SLOTS.filter((s) => !DELAY_SLOTS.includes(s)).sort((a, b) => a - b);
