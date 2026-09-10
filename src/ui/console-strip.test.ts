@@ -541,6 +541,41 @@ describe("the INS FX chip", () => {
     }
   });
 
+  // The face beside the disclosure carries the reason when the strip can take nothing at
+  // all, and on a linked pair the slot sentence is false of five of the seven: they are
+  // refused for Signal Type and nobody is holding them. The state needs BOTH — the pair
+  // linked and the compander slot taken elsewhere — since with the slot free the pair still
+  // has the two companders to take and the face carries no reason at all.
+  it("names the pair's own reason on a vacant chip, not the slot", () => {
+    h = consoleHost();
+    const face = (): HTMLElement => h.strip("ch1").root.querySelector<HTMLElement>(".con-ifxface")!;
+    h.plan.nodeParams["ch1"] = { ...h.plan.nodeParams["ch1"], stereoLink: true };
+    h.view.refresh();
+    // Linked with the slot free: two companders left, so nothing is said.
+    expect(face().title).toBe("");
+
+    pick("ch3", "Compander-H");
+    expect(face().classList.contains("vacant"), "CH 1 still holds nothing").toBe(true);
+    expect(face().title).toBe(t().inspector.insFxLinkLocked);
+    // Its partner is on the same pair and reads the same reason.
+    expect(h.strip("ch2").root.querySelector<HTMLElement>(".con-ifxface")!.title).toBe(t().inspector.insFxLinkLocked);
+  });
+
+  // The control for the case above, and it takes a different arrangement rather than the
+  // same one unlinked: with the pair apart, CH 1 still has the five mono-only effects to
+  // take, so nothing is said at all. Emptying an UNLINKED strip's menu means holding all
+  // three families elsewhere — which is what shows the branch reads the pair rather than
+  // just the empty menu.
+  it("keeps the slot reason where the menu is empty and no pair is linked", () => {
+    h = consoleHost();
+    pick("ch2", "Clean");
+    pick("ch3", "Pitch Fix");
+    pick("ch4", "Compander-H");
+    const face = h.strip("ch1").root.querySelector<HTMLElement>(".con-ifxface")!;
+    expect(face.classList.contains("vacant")).toBe(true);
+    expect(face.title).toBe(t().inspector.insFxSlotLocked);
+  });
+
   // The screen shows what is selected, so there is nothing for it to show until something
   // is — and a bypassed or rate-stopped effect is still an effect to tune.
   it("offers the tuning screen only once an effect is held", () => {

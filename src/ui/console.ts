@@ -1327,7 +1327,8 @@ export class Console {
    * that is not reversible, so it is offered as a list of named things with their reasons
    * beside them rather than as something a press cycles through. No Effect leads the list
    * and is never disabled: a strip has to be able to give a slot back from every state,
-   * including the two — rate ceiling, slot taken — that make everything else unpickable.
+   * including the three — rate ceiling, STEREO-linked pair, slot taken — that make
+   * everything else unpickable.
    */
   private openInsFxPop(id: string, anchor: HTMLElement): void {
     this.closePopovers();
@@ -1362,8 +1363,8 @@ export class Console {
       nm.textContent = entry.option.label;
       row.append(nm);
       // Why it cannot be picked, in the width of a row — or, for No Effect, what picking
-      // it does. The full sentence goes on the row's tooltip, which is where the same two
-      // facts are already said at the width of a panel in the Inspector.
+      // it does. The full sentence goes on the row's tooltip, which is where the same three
+      // facts are said at the width of a panel.
       if (disabled) {
         const why = el("span", "why");
         if (entry.lock === "rate") {
@@ -2594,12 +2595,20 @@ export class Console {
         proc.append(
           this.insFxVacantChip(
             m.id,
-            // Only where nothing at all can be taken, and the two reasons are not
+            // Only where nothing at all can be taken, and the three reasons are not
             // interchangeable: above every ceiling it is the rate and not the slots, and
-            // the rate question has to be asked of a strip holding nothing too. A
-            // STEREO-linked pair adds no third reason here — the companders are all it
-            // may take, so a linked strip with nothing free is one whose slot is held.
-            free.length ? undefined : rateLocked ? t().inspector.insFxRateLocked : t().inspector.insFxSlotLocked,
+            // the rate question has to be asked of a strip holding nothing too. On a
+            // STEREO-linked pair the slot sentence is FALSE of most of the menu — the
+            // companders are the only entries a slot could be holding, and the five the
+            // link refuses are not in use by anyone — so the pair's own reason is named
+            // instead, which is the same thing the popover's rows say one by one.
+            free.length
+              ? undefined
+              : rateLocked
+                ? t().inspector.insFxRateLocked
+                : menu.some((e) => e.lock === "link")
+                  ? t().inspector.insFxLinkLocked
+                  : t().inspector.insFxSlotLocked,
             noneAtThisRate,
           ),
         );
