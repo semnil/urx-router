@@ -2595,20 +2595,20 @@ export class Console {
         proc.append(
           this.insFxVacantChip(
             m.id,
-            // Only where nothing at all can be taken, and the three reasons are not
-            // interchangeable: above every ceiling it is the rate and not the slots, and
-            // the rate question has to be asked of a strip holding nothing too. On a
-            // STEREO-linked pair the slot sentence is FALSE of most of the menu — the
-            // companders are the only entries a slot could be holding, and the five the
-            // link refuses are not in use by anyone — so the pair's own reason is named
-            // instead, which is the same thing the popover's rows say one by one.
+            // Only where nothing at all can be taken, and only where ONE sentence is true
+            // of the whole menu: every entry above its ceiling, or every entry held by
+            // another node. A menu refused for two reasons at once — five entries the
+            // STEREO link refuses beside two a slot holds, or Pitch Fix over its ceiling
+            // beside amps another strip is holding — has no such sentence, and each of the
+            // two that fit says something false about the other's entries. It gets none:
+            // the face still opens, and the popover gives every row its own reason.
             free.length
               ? undefined
               : rateLocked
                 ? t().inspector.insFxRateLocked
-                : menu.some((e) => e.lock === "link")
-                  ? t().inspector.insFxLinkLocked
-                  : t().inspector.insFxSlotLocked,
+                : menu.every((e) => e.option.value === INSERT_FX_NONE || e.lock === "slot")
+                  ? t().inspector.insFxSlotLocked
+                  : undefined,
             noneAtThisRate,
           ),
         );

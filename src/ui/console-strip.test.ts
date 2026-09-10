@@ -541,32 +541,36 @@ describe("the INS FX chip", () => {
     }
   });
 
-  // The face beside the disclosure carries the reason when the strip can take nothing at
-  // all, and on a linked pair the slot sentence is false of five of the seven: they are
-  // refused for Signal Type and nobody is holding them. The state needs BOTH — the pair
-  // linked and the compander slot taken elsewhere — since with the slot free the pair still
-  // has the two companders to take and the face carries no reason at all.
-  it("names the pair's own reason on a vacant chip, not the slot", () => {
+  // The face beside the disclosure carries a reason only where ONE sentence is true of the
+  // whole menu. A STEREO-linked pair whose menu is empty never is: it is empty exactly when
+  // the companders are held by another node, so five entries are refused for Signal Type and
+  // two are in use, and each of the app's two sentences says something false about the
+  // other's entries. The row-by-row reasons in the popover are where that state is read.
+  it("says nothing on a vacant chip whose menu is refused for two reasons at once", () => {
     h = consoleHost();
     const face = (): HTMLElement => h.strip("ch1").root.querySelector<HTMLElement>(".con-ifxface")!;
     h.plan.nodeParams["ch1"] = { ...h.plan.nodeParams["ch1"], stereoLink: true };
     h.view.refresh();
-    // Linked with the slot free: two companders left, so nothing is said.
+    // Linked with the compander slot free: two entries are still takeable, so there is no
+    // "nothing can be taken" to explain in the first place.
     expect(face().title).toBe("");
 
     pick("ch3", "Compander-H");
     expect(face().classList.contains("vacant"), "CH 1 still holds nothing").toBe(true);
-    expect(face().title).toBe(t().inspector.insFxLinkLocked);
-    // Its partner is on the same pair and reads the same reason.
-    expect(h.strip("ch2").root.querySelector<HTMLElement>(".con-ifxface")!.title).toBe(t().inspector.insFxLinkLocked);
+    expect(face().title, "neither sentence is true of this menu").toBe("");
+    expect(h.strip("ch2").root.querySelector<HTMLElement>(".con-ifxface")!.title).toBe("");
+    // The face still opens the list, which is what carries the per-row reasons — without
+    // this the case above is satisfied by a strip that says nothing AND offers nothing.
+    openerOf("ch1").click();
+    expect(popRow("Clean").querySelector(".why")?.textContent).toBe(t().console.insFxMonoOnly);
+    expect(popRow("Compander-H").querySelector(".why")?.textContent).toBe(t().console.insFxInUse);
   });
 
-  // The control for the case above, and it takes a different arrangement rather than the
-  // same one unlinked: with the pair apart, CH 1 still has the five mono-only effects to
-  // take, so nothing is said at all. Emptying an UNLINKED strip's menu means holding all
-  // three families elsewhere — which is what shows the branch reads the pair rather than
-  // just the empty menu.
-  it("keeps the slot reason where the menu is empty and no pair is linked", () => {
+  // The positive control, and it takes a different arrangement rather than the same one
+  // unlinked: with the pair apart CH 1 still has the five mono-only effects, so its menu is
+  // not empty at all. Emptying an UNLINKED strip's menu means holding all three families
+  // elsewhere — and THAT menu has one true sentence, so the reason comes back.
+  it("keeps the slot reason where every entry is held by another node", () => {
     h = consoleHost();
     pick("ch2", "Clean");
     pick("ch3", "Pitch Fix");
@@ -574,6 +578,21 @@ describe("the INS FX chip", () => {
     const face = h.strip("ch1").root.querySelector<HTMLElement>(".con-ifxface")!;
     expect(face.classList.contains("vacant")).toBe(true);
     expect(face.title).toBe(t().inspector.insFxSlotLocked);
+  });
+
+  // The same compound shape without a pair in it, which the app has had all along: at
+  // 96 kHz Pitch Fix is over its own ceiling while the amps and companders are merely held,
+  // so "every insert effect is in use" is false about Pitch Fix. Not a STEREO case at all —
+  // the rule is about the menu, not about the link.
+  it("says nothing where a rate ceiling and a held slot empty the menu together", () => {
+    h = consoleHost();
+    pick("ch2", "Clean");
+    pick("ch3", "Compander-H");
+    h.plan.sampleRate = 96000;
+    h.view.refresh();
+    const face = h.strip("ch1").root.querySelector<HTMLElement>(".con-ifxface")!;
+    expect(face.classList.contains("vacant")).toBe(true);
+    expect(face.title).toBe("");
   });
 
   // The screen shows what is selected, so there is nothing for it to show until something
