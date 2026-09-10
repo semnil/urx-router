@@ -344,6 +344,15 @@ const pressNode = (nodeId: string): void => {
   node.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
 };
 
+/** The stable head of a status or confirm line that carries counts: the message built with
+ *  its counts at 0, cut at the first digit. Refused when that leaves nothing, since every
+ *  line starts with the empty string and a caller would then be asserting nothing. */
+const countedHead = (line: string): string => {
+  const head = line.split(/\d/)[0]!;
+  if (head === "") throw new Error(`no head in front of the counts, so matching it asserts nothing: ${line}`);
+  return head;
+};
+
 /** An inspector row by the label it stamps on itself, so "Insert FX" cannot match
  *  "Insert FX ON" — two rows carrying two different addresses. */
 const paramRow = (label: string): HTMLElement =>
@@ -2586,7 +2595,7 @@ describe("a value the unit holds and the app cannot write", () => {
   // has already taken is no longer a problem the next one reports.
   /** What a retry offer says, whatever numbers it carries — the confirm has to be told apart
    *  from the write's own, and the stub sees only the message. */
-  const RETRY_PHRASE = t().confirm.writeRetry(0, 0).split("0")[0]!;
+  const RETRY_PHRASE = countedHead(t().confirm.writeRetry(0, 0));
 
   /**
    * A write whose FIRST attempt takes a value back and then stops, with the retry accepted —
@@ -2772,7 +2781,7 @@ describe("a value the unit holds and the app cannot write", () => {
   it("still reports it when the retry stops as well", SLOW, async () => {
     await retryAfterStop((n) => (n === 1 ? "drop" : "refuse"));
     await vi.waitFor(() => expect(statusText().endsWith(BOUNDED_ONE)).toBe(true));
-    expect(statusText().startsWith(t().status.writeStopped(0, 0).split("0")[0]!)).toBe(true);
+    expect(statusText().startsWith(countedHead(t().status.writeStopped(0, 0)))).toBe(true);
     expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
   });
 
@@ -2818,6 +2827,9 @@ describe("a value the unit holds and the app cannot write", () => {
     // nothing from a write it cannot vouch for.
     await writeStoppedBySelector("device-lost");
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+    // The line the write ended on, named before the negative below reads it: a `not` alone is
+    // satisfied by any other line, this one included, and by no line at all.
+    expect(statusText().startsWith(countedHead(t().status.writeStopped(0, 0)))).toBe(true);
     expect(statusText()).not.toContain(t().status.paramsBounded(1));
   });
 
@@ -2837,7 +2849,11 @@ describe("a value the unit holds and the app cannot write", () => {
     // `total === 0` forced, it goes green in a tenth of the time and asserts nothing.
     expect(shell.count("vd_set")).toBeGreaterThan(sets);
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
-    expect(statusText()).not.toContain(t().status.paramsBounded(1));
+    // The line the write ended on, named rather than denied: a `not` alone is satisfied by any
+    // other line and by no line at all. One residual — the single address this case makes the
+    // unit decline to keep — and naming the whole line is also what says no bounded note rode
+    // along on it, so there is nothing left for a `not` to add.
+    expect(statusText()).toBe(t().status.writeResidual(1));
   });
 
   // Two nodes and two keys on one of them. Every flow case above carries exactly one problem,
