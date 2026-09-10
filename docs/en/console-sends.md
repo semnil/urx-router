@@ -118,9 +118,14 @@ still claims is given back — and that is the state an operator most needs to r
   Double-click = factory reset. Scroll wheel = 1 detent per notch (mirrors Arrow; the main fader,
   the head knob, and the inspector sliders share the same `onWheelStep` wiring in `src/ui/dom.ts`).
 - No numeric column. While a column is hovered / dragged / focused, the rack header swaps its
-  `SENDS` label for a value readout — `MIX 1 PRE -3.2` (destination, tap when PRE, level). The
-  header has a fixed height so the swap never reflows the rack. Exact values are also exposed via
-  `aria-valuetext` (`"PRE, -3.2 dB"` / `"off (-∞)"`).
+  `SENDS` label for a value readout — `MIX 1 -3.2` (destination and level). The header has a fixed
+  height so the swap never reflows the rack, and the readout gets what the collapse arrow and the
+  flex gap leave of the header — itself the strip less its border and the rack's padding — which the
+  longest reading has to fit: it neither wraps nor ellipsises, so an over-wide one is clipped into a
+  shorter level that still reads as a real value. The tap stays off it — the column's own PRE
+  button, whose `aria-pressed` is the tap's accessible form, is where that is read. The fader's
+  `aria-valuetext` carries the level, prefixed `"PRE, "` when the send is pre-fader and above the
+  floor (`"PRE, -3.2 dB"`); a post-fader send reads `"-3.2 dB"` and one at the floor `"off (-∞)"`.
 
 ### Collapse
 

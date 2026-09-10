@@ -211,18 +211,46 @@ describe("the header readout", () => {
     expect(sh.classList.contains("readout")).toBe(false);
   });
 
-  it("names the PRE tap in the readout while the column is pre-fader", () => {
+  // The tap is left out of the readout: the column's own PRE button already carries it,
+  // and spelling it here as well made the longest reading wider than the header's share of
+  // the strip, clipping the level off its right edge. So this is a set — the word goes, and
+  // the two places that do carry the tap have to still carry it (the button here, whose
+  // `aria-pressed` is its accessible form, and `aria-valuetext`'s PRE prefix below).
+  it("leaves the tap out of the readout and lights the column's PRE button instead", () => {
     h = consoleHost();
-    const col = h.sendCol("ch1", "bus.mix1");
-    const conn = sendConnection(h.plan, "ch1", "bus.mix1")!;
-    conn.params = { ...conn.params, tap: "pre" };
-    col.fader.dispatchEvent(new PointerEvent("pointerenter"));
-    expect(header("ch1").querySelector(".rdout")!.textContent).toContain(t().console.pre);
+    seedLevel("ch1", "bus.mix1", -3.2);
+    const preBtn = colOf("ch1", "M1").querySelector<HTMLElement>(".con-slp")!;
+    preBtn.click();
+    expect(preBtn.classList.contains("on")).toBe(true);
+
+    h.sendCol("ch1", "bus.mix1").fader.dispatchEvent(new PointerEvent("pointerenter"));
+    const sh = header("ch1");
+    // The state the swap is keyed on. This host loads no stylesheet, so nothing here is
+    // laid out and whether the reading is drawn belongs to the E2E case's own measurement.
+    expect(sh.classList.contains("readout")).toBe(true);
+    const text = sh.querySelector(".rdout")!.textContent;
+    expect(text).toBe("MIX 1 -3.2");
+    expect(text).not.toContain(t().console.pre);
   });
 
-  // aria-valuetext is the accessible half of the same fact, and it carries the tap.
-  // Only above the floor: an OFF send reads "off (-∞)" and says nothing about its tap,
-  // which is why this seeds a level first.
+  // The other half of the same claim. A marker added on the POST side reads exactly like
+  // the tap word that came off, and nothing else would see it: the case above drives PRE
+  // only, and the E2E width pin presses PRE before it measures. It is also the state a
+  // send ships in, so this is the reading an operator meets first.
+  it("reads the same in POST, so neither tap state puts a word in the readout", () => {
+    h = consoleHost();
+    seedLevel("ch1", "bus.mix1", -3.2);
+    const preBtn = colOf("ch1", "M1").querySelector<HTMLElement>(".con-slp")!;
+    expect(preBtn.classList.contains("on")).toBe(false);
+
+    h.sendCol("ch1", "bus.mix1").fader.dispatchEvent(new PointerEvent("pointerenter"));
+    expect(header("ch1").querySelector(".rdout")!.textContent).toBe("MIX 1 -3.2");
+  });
+
+  // aria-valuetext is the accessible half of the same fact. It marks one of the two taps:
+  // a pre-fader send above the floor is prefixed "PRE, ", a post-fader one is the bare
+  // level, and an OFF send reads "off (-∞)" whichever tap it holds — which is why this
+  // seeds a level first, and why the post-fader half below is an absence.
   it("puts the tap into the fader's accessible value", () => {
     h = consoleHost();
     seedLevel("ch1", "bus.mix1", -10);

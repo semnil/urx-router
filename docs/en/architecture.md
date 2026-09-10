@@ -1196,7 +1196,8 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   (`params.level`, relative drag snapped to the level_gain grid; FIXED BUS Type locks it read-only). A strip
   with no sends (MIX / MONITOR / STEREO / OSCILLATOR / STREAMING) renders a dimmed `SENDS` header only, and
   meter-only strips get the same spacer, so fader tops stay aligned. The header swaps its `SENDS` label for a
-  value readout (`MIX 1 PRE -3.2`) while a column is touched, and a full-width **PAN ▾** button opens the
+  value readout (`MIX 1 -3.2` — the tap is read off the column's own PRE button) while a column is
+  touched, and a full-width **PAN ▾** button opens the
   **SEND PAN popover** below it — the MIX sends' pan as rotary knobs (FX sends are mono; Pan Link locks a knob
   read-only). Clicking any `SENDS` header collapses/expands every rack together (a `sends-collapsed` host
   class, persisted in `localStorage` `urx-sends-open`), showing one amber dot per active send when collapsed.

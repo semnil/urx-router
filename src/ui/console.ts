@@ -1044,10 +1044,13 @@ export class Console {
     zero.style.setProperty("--zero", (1 - dbToFrac(0, range)) * 100 + "%");
     fader.append(el("div", "track"), zero, cap);
     const ref: SendColRef = { target, fader, cap };
-    const readoutText = (): string => {
-      const pre = c?.params?.tap === "pre" ? " " + t().console.pre : "";
-      return SEND_LABEL[target] + pre + " " + fmtDb(c?.params?.level ?? LEVEL_OFF_DB, range).text;
-    };
+    // Destination and level only. The tap is already on screen — this column's own PRE
+    // button, lit while pre-fader — and naming it here as well takes the longest readings
+    // past the header's share of the strip, which clips the value the readout exists to
+    // show. The button's `aria-pressed` is the tap's accessible form; the fader's
+    // `aria-valuetext` says "PRE, " in front of a level above the floor and nothing in
+    // front of a post-fader one.
+    const readoutText = (): string => SEND_LABEL[target] + " " + fmtDb(c?.params?.level ?? LEVEL_OFF_DB, range).text;
 
     // enable chip
     const chip = this.buildChip(
@@ -1082,7 +1085,7 @@ export class Console {
       () => {
         const next = c?.params?.tap !== "pre";
         if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
-        this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, next); // refresh PRE prefix
+        this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, next); // aria-valuetext's PRE prefix
         return next;
       },
       rateOff
