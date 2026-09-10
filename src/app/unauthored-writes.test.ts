@@ -244,33 +244,46 @@ it("names a strip whose unauthored value sits at the end of its range", () => {
   expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(gain.map(cmdAddr)))).toEqual(["ch1"]);
 });
 
-// An FX channel's level is emitted with the descriptor's own default when the plan carries
-// none, and the fill puts exactly that default — 100, the top of its range — into the plan. So
-// the value is unauthored while nothing about the emit distinguishes it from a plan that never
-// named it, and a write moving the unit's 80 back to 100 has to be named for what it is.
-it.each(["bus.fx1", "bus.fx2"])("names %s when the fill supplied its level", (node) => {
+// An FX channel's parameters are emitted with the descriptor's own defaults when the plan
+// carries none, and the fill puts exactly those defaults into the plan. So the value is
+// unauthored while nothing about the emit distinguishes it from a plan that never named it,
+// and a write moving the unit's own setting back to the factory one has to be named for what
+// it is. Asked on BOTH channels, and on a key of each one's own factory type — FX 1 ships a
+// Rev-X and FX 2 a Mono Delay, so one key would reach one channel and fall through the other.
+it.each([
+  ["bus.fx1", "revxHpf", 9],
+  ["bus.fx2", "delayHiRatio", 3],
+])("names %s when the fill supplied its %s", (node, key, held) => {
   const plan = filledPlan();
-  for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
-  const level = nodeParamContestPath(node, "fxEffect.level");
-  expect(plan.paramSource!.get(level), "the premise: the fill carries it").toBe("manual");
-  expect(plan.nodeParams[node]?.fxEffect?.level, "the premise: at the top of its range").toBe(100);
-  plan.paramSource!.set(level, "default");
+  for (const k of plan.paramSource!.keys()) plan.paramSource!.set(k, "manual");
+  const path = nodeParamContestPath(node, `fxEffect.params.${key}`);
+  expect(plan.paramSource!.get(path), "the premise: the fill carries it").toBe("manual");
+  const filled = plan.nodeParams[node]?.fxEffect?.params?.[key];
+  expect(filled, "the premise: the fill supplied a value").toBeTypeOf("number");
+  expect(filled, "the premise: the unit's value below differs from it").not.toBe(held);
+  plan.paramSource!.set(path, "default");
 
   const at = planToCommands(MODEL, plan, "all");
   const moved = {
     ...plan,
     nodeParams: {
       ...plan.nodeParams,
-      [node]: { ...plan.nodeParams[node], fxEffect: { ...plan.nodeParams[node]!.fxEffect, level: 80 } },
+      [node]: {
+        ...plan.nodeParams[node],
+        fxEffect: {
+          ...plan.nodeParams[node]!.fxEffect,
+          params: { ...plan.nodeParams[node]!.fxEffect!.params, [key]: held },
+        },
+      },
     },
   } as typeof plan;
-  const held = new Map(planToCommands(MODEL, moved, "all").map((c) => [cmdAddr(c), c.vdValue]));
-  const changing = at.filter((c) => held.get(cmdAddr(c)) !== c.vdValue);
+  const heldNow = new Map(planToCommands(MODEL, moved, "all").map((c) => [cmdAddr(c), c.vdValue]));
+  const changing = at.filter((c) => heldNow.get(cmdAddr(c)) !== c.vdValue);
   expect(changing, "the premise: the unit differs in that one value").toHaveLength(1);
 
   expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(changing.map(cmdAddr)))).toEqual([node]);
-  // The control: the same address, with the level the operator's own.
-  plan.paramSource!.set(level, "manual");
+  // The control: the same address, with the value the operator's own.
+  plan.paramSource!.set(path, "manual");
   expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(changing.map(cmdAddr)))).toEqual([]);
 });
 

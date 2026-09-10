@@ -92,7 +92,7 @@ const regKeys = (addrs: Array<[number, number, number]>): Set<string> => new Set
 
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 /** The FX Effect section of the inspector, and one labelled row inside it. Scoped to
- *  the section because the effect labels ("Delay", "HPF", "Feedback Gain") are not
+ *  the section because the effect labels ("Delay", "HPF", "FB.Gain") are not
  *  unique across the whole panel once another section is unfolded. */
 const fxSection = (page: Page) =>
   page.locator("#inspector .insp-section", { has: page.locator(".sec-title", { hasText: /^FX Effect$/ }) });
@@ -204,7 +204,7 @@ test.describe("T2d shape-change", () => {
     await mark(page, "author-revx");
     await stepSlider(page, screenRow(page, "Decay"), 3);
     await stepSlider(page, screenRow(page, "Room Size"), 3);
-    await stepSlider(page, screenRow(page, "Reverb Time"), 3);
+    await stepSlider(page, screenRow(page, "Rev.Time"), 3);
     await settleAfter(page, "author-revx", 1200);
 
     let trace = await traceOf(page);

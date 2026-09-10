@@ -1276,7 +1276,7 @@ function fxEffectSection(
 
   body.append(enumSelect(t.effectType, fxEffectTypes(fxIndex), type, (v) => setFxEffectType(actions, plan, nodeId, v)));
   body.append(boolToggle(t.effectOn, fx.on ?? true, (v) => mergeFxEffect(actions, plan, nodeId, { on: v })));
-  // Mix and the type's own parameters moved to the tuning screen, for the reason stated on
+  // The type's own parameters moved to the tuning screen, for the reason stated on
   // `dynLauncher`: they belong beside the meters either side of the effect, and a second
   // copy here would sit at the position it was drawn at — these sliders read a captured
   // snapshot and do not redraw when a value changes — and write that stale value back on

@@ -3540,8 +3540,8 @@ refill the slots the plan left out anyway. So `{ "level": 80 }` resets the effec
 naming a type does, and omitting only `fxEffect.params` preserves nothing.
 
 **The panel and the wire agree on a document the loader completed.** `inspector.ts` reads an absent
-`fxEffect` as `{}` and draws the resolved type, ON, level 100 and each descriptor's own default; the fill
-puts those same values into the plan, so the row and the command carry one number. Aligning the *emit* to
+`fxEffect` as `{}` and draws the resolved type and ON, and the tuning screen each descriptor's own
+default; the fill puts those same values into the plan, so the row and the command carry one number. Aligning the *emit* to
 the panel is the other way to close that gap and it is the destructive one — it was written, measured and
 reverted — which is why the plan is completed at the LOAD, where the operator can be told what it means.
 Where the fill does not run the two still diverge: a node a device read could not answer for stays sparse

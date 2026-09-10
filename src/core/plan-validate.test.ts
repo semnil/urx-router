@@ -247,19 +247,6 @@ describe("paramRangeProblems", () => {
     expect(offenders).toEqual([]);
   });
 
-  // The effect level is a field of its own, bounded two lines above the parameter loop and
-  // by a literal rather than by a descriptor — so a walk over descriptors alone misses it
-  // while the file's own sentence claims every FX slot.
-  it("covers the effect level, which no descriptor describes", () => {
-    const plan = emptyPlan("URX44V");
-    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, level: 500 } };
-    expect(paramRangeProblems(plan)).toEqual([
-      { reason: "paramRange", node: "bus.fx2", where: "field", key: "level", stored: 500, action: "bound", bound: 100 },
-    ]);
-    applyParamRange(plan, paramRangeProblems(plan));
-    expect(plan.nodeParams["bus.fx2"]?.fxEffect?.level).toBe(100);
-  });
-
   // A key the SELECTED type does not own. The migration leaves it exactly where it is, so a
   // walk over the selected type's descriptors alone never sees it — and selecting that type
   // later brings the unwritable raw back, with the load already past.
@@ -420,8 +407,8 @@ describe("paramRangeProblems", () => {
     const cases: [string, unknown, unknown, string, boolean][] = [
       ["a falsy effect object", false, undefined, "fxEffect", false],
       ["a truthy effect object", [{}], undefined, "fxEffect", true],
-      ["the parameter map", { type: 0, level: 50, params: false }, { type: 0, level: 50 }, "params", false],
-      ["the type", { type: 999, level: 50 }, { level: 50 }, "type", false],
+      ["the parameter map", { type: 0, on: true, params: false }, { type: 0, on: true }, "params", false],
+      ["the type", { type: 999, on: true }, { on: true }, "type", false],
     ];
     for (const [name, bad, good, key, movesWire] of cases) {
       const plan = control(bad);

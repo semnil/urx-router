@@ -286,9 +286,10 @@ describe("the deep link", () => {
   // one, which is a different event and a different number on screen.
   it("says a dropped value was dropped, and shows the default it fell back to", async () => {
     const { encodePlanParam, emptyPlan } = await import("./core/plan");
-    const { FX_LEVEL_DEFAULT } = await import("./core/control/fx-effect");
+    const { fxParams } = await import("./core/control/fx-effect");
+    const hiRatio = fxParams(1024).find((d) => d.key === "delayHiRatio")!;
     const plan = emptyPlan("URX44V");
-    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, level: false } } as never;
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayHiRatio: false } } } as never;
 
     history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
     await boot();
@@ -296,7 +297,7 @@ describe("the deep link", () => {
     await vi.waitFor(() => expect(status()).toContain(t().status.paramsDropped(1)), APP_SETTLE);
     expect(status()).not.toContain(t().status.paramsBounded(1));
     // …and the screen shows the effect's own default rather than the boolean's numeric shadow.
-    expect(fxScreenValue("bus.fx2", t().inspector.fxEffect.level)).toContain(String(FX_LEVEL_DEFAULT));
+    expect(fxScreenValue("bus.fx2", t().inspector.fxEffect.params.hiRatio)).toContain(hiRatio.format!(hiRatio.def, {}));
   });
 
   // Both at once, which neither case above can see: the line has to carry two sentences, and
@@ -306,7 +307,7 @@ describe("the deep link", () => {
     const { fxParams } = await import("./core/control/fx-effect");
     const delayLpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
     const plan = emptyPlan("URX44V");
-    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, level: false } } as never;
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0, params: { revxHpf: false } } } as never;
     plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: delayLpf.rawMin! - 1 } } };
 
     history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);

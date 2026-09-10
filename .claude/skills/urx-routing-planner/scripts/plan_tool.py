@@ -363,9 +363,11 @@ def fx_effect_warnings(node_id, fx, out):
     # `on` is the one field read as a flag, so a number works there by truthiness.
     if "on" in fx and not isinstance(fx["on"], bool) and not is_number(fx["on"]):
         out.append((f"{node_id}.fxEffect.on", f"{fx['on']!r} is neither a boolean nor a finite number"))
-    for field in ("type", "level"):
-        if field in fx and not is_number(fx[field]):
-            out.append((f"{node_id}.fxEffect.{field}", f"{fx[field]!r} is not a finite number"))
+    # `type` alone. Array slot 2 is not a field of this section: no control of the unit's own
+    # reaches it, so the app neither reads it nor writes it and a document naming it names
+    # nothing.
+    if "type" in fx and not is_number(fx["type"]):
+        out.append((f"{node_id}.fxEffect.type", f"{fx['type']!r} is not a finite number"))
     params = fx.get("params")
     if params is None and "params" not in fx:
         return
@@ -439,7 +441,7 @@ def node_param_warnings(plan, nodes):
         # The section's PRESENCE, not the `type` key: the selector is emitted whether or not
         # the document names a type (an absent one resolves to the channel's factory type),
         # and every parameter slot goes with it. There is no partial FX write, so a plan
-        # carrying `{"level": 80}` resets the effect exactly as one naming a type does. Leaving
+        # carrying `{"on": true}` resets the effect exactly as one naming a type does. Leaving
         # the whole section out does not keep the unit's effect either — the app completes a
         # document from the model's factory values and sends that — so the only plan that keeps
         # it is one carrying the unit's own values, which is what this line has to say. Paired

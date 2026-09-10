@@ -1014,8 +1014,8 @@ level rack below the fold and made the face scroll to read. On seven they are on
 modal is 661px (measured at 1101–1600px wide; the tightest track is then 99px, above the 88px
 floor, so nothing overflows sideways). **Seven is the stylesheet's number** — `--gt-knob-cols` on
 `.gt-knobs` — and a grid declares `knobCols` only where seven is not what its cards mean: the
-multi-band compressor says three, for the reason below, and each FX EFFECT family says six. That
-number decides the card width and where the face's row break falls. The amps and Pitch Fix want the
+multi-band compressor says three, for the reason below, and each FX EFFECT family says four. That
+number decides the card width and, on a face that has a row break, where it falls. The amps and Pitch Fix want the
 seven above and so name nothing — restating it in a descriptor is a second copy of a value the
 stylesheet already owns. What shrank is 154px to 116px, which is the gap between the label and the
 knob (the .gt-knob min-height); the knob face stays clamp(48px, 5vw, 56px).
@@ -1490,13 +1490,13 @@ FX arrangement, for the INS FX reason.
 
 ### What it owns, and what it does not
 
-It owns the selected effect's parameters, Mix included, and the meter subscription for its FX channel.
+It owns the selected effect's parameters and the meter subscription for its FX channel.
 It does not own EFFECT TYPE, EFFECT ON, the channel fader, the FX send amounts or the sample rate.
 Two of those are on the strip beside it and in the inspector; the rest are where they already were.
 
 **No EFFECT TYPE row, deliberately.** Count what the writer emits and the selector is the odd one out:
-every other command names ONE slot — ON is slot 1, Mix is slot 2, one slot per descriptor — so the
-value it overwrites is the knob the operator is looking at. The selector alone replaces the contents of
+every other command names ONE slot — ON is slot 1, one slot per descriptor — so the value it
+overwrites is the knob the operator is looking at. The selector alone replaces the contents of
 slots nobody named, because the unit refills the engine array with the incoming type's factory values.
 Putting it on a face of knobs would make those two edits look alike.
 
@@ -1579,22 +1579,31 @@ copy of the FX arrays, the insert-FX engine arrays and D.Gain back onto the unit
 reads them first and leaves the head's own nodes to the converge (architecture.md, "Live sync"); this section's
 park is that same read narrowed to one node, taken in front of one write instead.
 
-### One face, two groups
+### One face
 
-Every family is 9-11 continuous values with no second axis to split them on — no bands, no modes — so
-the face is one panel and the segmented bar reserves its space without drawing. What the panel has
-instead is a single full-width break: **time** above it, **band and balance** below.
+Every family is 8-10 continuous values with no second axis to split them on — no bands, no modes — so
+the face is one panel and the segmented bar reserves its space without drawing.
 
-Mix leads because slot 2 is where the device's own array puts it. Room Size sits beside Reverb Time on
-the REV-X face rather than at the guide's table position, because the two are one value: the seconds
-printed on Reverb Time are `base(raw) x 3^(RoomSize/31)`, so turning Room Size moves the number on the
-other card. Hi Ratio and Low Ratio are lengths of reverb and so are times, but WHICH BAND each is the
-length of is decided by Low Freq, and the HPF and LPF ride the same axis — the per-band values are read
-together.
+**Every family follows the unit's own screen**, row for row.
 
-**Six columns**, which is what puts each family's first group on one row, drops the break on a row
-boundary, and makes the three faces the same height at every width where the modal still has two
-columns of its own.
+| Family | Row 1 | Row 2 | Row 3 |
+| --- | --- | --- | --- |
+| REV-X (Hall / Room / Plate) | Diffusion, Hi.Ratio, Lo.Ratio, Lo.Freq. | Rev.Time, Ini.Delay, Decay, Room Size | HPF, LPF |
+| Rev.R3 (Hall / Room / Plate) | Density, FB.Gain, ER/Delay, E/R Bal. | Rev.Time, Ini.Delay, Hi.Ratio, Diffusion | HPF, LPF |
+| Mono Delay / Ping Pong | HPF, LPF, Delay, FB.Gain | Hi.Ratio, Sync, BPM, Note | — |
+
+**The effect array's slot 2 is nowhere in the app.** No control of the unit's own reaches it: its
+effect screen does not show it, and the effect guide's parameter tables for REV-X, REV R3, Mono Delay
+and Ping Pong Delay list it for none of them. What a value there does to the signal is therefore
+unestablished, and this app writes only what it has confirmed on the unit — so the slot has no card, no
+readout, no MIDI id, no field in the plan, no place in a read and no command. The unit keeps whatever it
+holds there, and a document naming it names nothing.
+
+**Four columns**, which is what the unit puts on a row — and, the orders above being the unit's, what
+keeps each face's groups on rows of their own: the delays' tempo group (Sync, BPM, Note) shares the
+second row, the filters end each reverb face together, and Hi Ratio sits with Lo Ratio and Lo Freq on
+REV-X. On six, Sync ended the first row and BPM and Note opened the second. The reverbs are three rows
+and the delays two.
 
 ### The rack is the effect's own input and output
 

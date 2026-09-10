@@ -17,9 +17,6 @@
 
 import {
   FX_CHANNEL_NODE_INDEX,
-  FX_LEVEL_DEFAULT,
-  FX_LEVEL_MAX,
-  FX_LEVEL_MIN,
   fxEffectTypes,
   fxFamilyOf,
   fxParams,
@@ -33,27 +30,16 @@ import type { DynField, FxFieldKey } from "../core/control/translate";
 import { tapFor } from "../core/meters";
 import type { FxEffectParams, NodeParams } from "../core/plan";
 import type { DynBinding, DynCtx, DynLane, DynProcessor } from "./dyn-screen";
-import { enumRow, levelLane, rowBreak } from "./dyn-chan";
+import { enumRow, levelLane } from "./dyn-chan";
 import { onOffButton, settingsRow } from "./dom";
 import type { Messages } from "../i18n/en";
 
-/** Lane ruler floor. Not one value on this screen is a level — Mix is 0–100, the times are
- *  ms and seconds, the filters Hz, the ratios dimensionless — and no lane carries a fader
+/** Lane ruler floor. Not one value on this screen is a level — the times are ms and
+ *  seconds, the filters Hz, the ratios dimensionless — and no lane carries a fader
  *  cap, so nothing rides this ruler and only legibility decides where it stops. That is the
  *  same position the three screens whose values are likewise off the ruler take. */
 const LO_DB = -60;
 const TICK_STEP = 6;
-
-/** Mix is slot 2 of every effect array and lives in `fxEffect.level` rather than in the
- *  per-type params map, so it is the one row with no catalogue descriptor. It is a field
- *  here all the same: it is a continuous value the operator sets on this screen, and the
- *  device's own array order puts it in front of everything the type brings.
- *
- *  Its window comes from the catalogue like every other row's. Spelled out here it was a
- *  third copy — the writer and the MIDI codec take theirs from `fx-effect.ts` — and the
- *  three would drift silently in both directions: a MIDI move landing somewhere a drag
- *  cannot, and a readout showing a default the writer does not send. */
-const MIX_KEY = "level";
 
 /** A field's key is the plan key it edits, under one prefix.
  *
@@ -72,75 +58,58 @@ const fieldKey = (planKey: string): FxFieldKey => `fx:${planKey}`;
 const planKeyOf = (key: string): string | null => (key.startsWith("fx:") ? key.slice(3) : null);
 
 /**
- * Each family on ONE face, in TWO groups with a row break between them.
+ * Each family on ONE face, carrying the rows the unit's own screen carries, in its order.
  *
- * Above the break is TIME — what the effect does to the signal over time, in the order the
- * device's own array holds it: Mix first, because slot 2 is where the array puts it and it
- * is the amount of all of this that is heard. Below the break is BAND AND BALANCE — the
- * values that decide which part of the spectrum the group above applies to, and how the
- * parts are weighed against each other.
- *
- * Room Size sits beside Reverb Time on the REV-X face although the official guide's table
- * order puts it fourth: the two are one value. The seconds printed on Reverb Time are
- * `base(raw) × 3^(RoomSize/31)`, so turning Room Size moves the number on the OTHER card,
- * and cards that do that to each other are read together.
- *
- * Hi Ratio and Low Ratio are lengths of reverb and so belong to time, but WHICH BAND each
- * one is the length of is set by Low Freq below the break, and the HPF and LPF ride the
- * same axis. The per-band values are read as one group.
+ * `fxEffect.level` — the effect array's slot 2 — is not one of them. It has no row here, no
+ * readout and no MIDI id; the plan keeps whatever a device read or a document supplies and
+ * the write path sends it back unchanged.
  *
  * Every row of every family is named here. A row the catalogue gains and these lists do not
  * name still appears, after the ones they do, rather than disappearing from the face.
  */
+
+/** REV-X, in the order the unit's own screen puts the rows in. */
 const REVX_ORDER: readonly string[] = [
-  MIX_KEY,
-  "reverbTime",
-  "roomSize",
-  "revxInitialDelay",
-  "decay",
   "revxDiffusion",
-  // ── the break ──
   "revxHiRatio",
   "lowRatio",
   "lowFreq",
+  "reverbTime",
+  "revxInitialDelay",
+  "decay",
+  "roomSize",
   "revxHpf",
   "revxLpf",
 ];
+
+/** Rev.R3, in the order the unit's own screen puts the rows in. */
 const REVR3_ORDER: readonly string[] = [
-  MIX_KEY,
+  "density",
+  "revr3Feedback",
+  "erRevDelay",
+  "erRevBalance",
   "reverbTime",
   "revr3InitialDelay",
-  "erRevDelay",
-  "revr3Diffusion",
-  "density",
-  // ── the break ──
   "revr3HiRatio",
-  "erRevBalance",
-  "revr3Feedback",
+  "revr3Diffusion",
   "revr3Hpf",
   "revr3Lpf",
 ];
+
+/** Both delays, in the order the unit's own screen puts the rows in. The two types hold the
+ *  delay time under their own keys, so this list names both and a face carries the one its
+ *  own type brings. */
 const DELAY_ORDER: readonly string[] = [
-  MIX_KEY,
-  "delay",
-  "pingPongDelay",
-  "sync",
-  "note",
-  "bpm",
-  // ── the break ──
-  "delayFeedback",
-  "delayHiRatio",
   "delayHpf",
   "delayLpf",
+  "delay",
+  "pingPongDelay",
+  "delayFeedback",
+  "delayHiRatio",
+  "sync",
+  "bpm",
+  "note",
 ];
-
-/** The row each family's SECOND group opens on. The break is placed in front of it rather
- *  than counted into the list, so moving a row across the boundary is one edit. */
-const BREAK_AT: Record<FxFamily, string> = {
-  revx: "revxHiRatio",
-  revr3: "revr3HiRatio",
-  delay: "delayFeedback",
-};
 
 const ORDER: Record<FxFamily, readonly string[]> = {
   revx: REVX_ORDER,
@@ -148,10 +117,12 @@ const ORDER: Record<FxFamily, readonly string[]> = {
   delay: DELAY_ORDER,
 };
 
-/** Six columns on every family. It is what puts each family's first group on one row and
- *  drops the break on a row boundary, and it is what makes the three faces the same height
- *  at every width where the modal has two columns of its own. */
-const KNOB_COLS = 6;
+/** Four columns on every family, which is what the unit's own screen puts on a row — and
+ *  what keeps each face's groups on rows of their own, since the orders above are the unit's.
+ *  On the delays that is the tempo group: Sync, BPM and Note share the second row here, and
+ *  on a wider grid Sync ends the first row and the other two open the second. The filters end
+ *  each reverb face together, and Hi Ratio sits with Lo Ratio and Lo Freq on REV-X. */
+const KNOB_COLS = 4;
 
 /** Which FX channel a node is, or null where it is not one. */
 function fxIndexOf(ctx: DynCtx): number | null {
@@ -259,6 +230,10 @@ const labelOf = (d: FxParamDesc, m: Messages): string =>
  * key the moment the type changed would print the token exactly where the name is most needed.
  * The catalogue shares a key wherever two families really are one parameter and separates the
  * ones that only look alike, so the first descriptor found under a key is the right label.
+ *
+ * The effect array's slot 2 is answered too, though no surface offers it any more: a mapping
+ * saved against a build that did offer it is still in the operator's file, and a row naming
+ * its own token would read as a defect rather than as an assignment to remove.
  */
 export function fxControlLabel(scope: string | undefined, m: Messages): string | null {
   if (scope === undefined || !scope.startsWith(`${FX_SCOPE}.`)) return null;
@@ -296,16 +271,6 @@ function fxFace(): DynProcessor {
       const type = typeOf(ctx);
       if (type === null) return null;
       const fields: DynField[] = [];
-      for (const key of [MIX_KEY]) {
-        fields.push({
-          key: fieldKey(key),
-          min: FX_LEVEL_MIN,
-          max: FX_LEVEL_MAX,
-          step: 1,
-          def: FX_LEVEL_DEFAULT,
-          unit: "raw",
-        });
-      }
       for (const d of rowsOf(type)) {
         if (d.control !== "slider") continue;
         fields.push({
@@ -341,8 +306,7 @@ function fxFace(): DynProcessor {
     read: (ctx) => {
       const type = typeOf(ctx);
       if (type === null) return {};
-      const fx = fxOf(ctx);
-      const out: Record<string, unknown> = { [fieldKey(MIX_KEY)]: fx.level ?? FX_LEVEL_DEFAULT };
+      const out: Record<string, unknown> = {};
       for (const d of fxParams(type)) out[fieldKey(d.key)] = rawOf(ctx, d);
       return out;
     },
@@ -360,10 +324,6 @@ function fxFace(): DynProcessor {
         const planKey = planKeyOf(key);
         if (!planKey) continue;
         const raw = typeof v === "boolean" ? (v ? 1 : 0) : v;
-        if (planKey === MIX_KEY) {
-          next.level = raw;
-          continue;
-        }
         params = { ...(params ?? fx.params ?? {}), [planKey]: raw };
       }
       if (params) next.params = params;
@@ -372,18 +332,15 @@ function fxFace(): DynProcessor {
 
     // `patch` rebuilds the whole `fxEffect` group, so the funnel would either claim every
     // sibling it copied or fall back to a diff that cannot see a write landing on the value
-    // already there. Both halves are named: Mix sits at the top level and the rest inside
-    // `params`.
+    // already there. Every row this screen writes lives inside `params`.
     written: (_ctx, patch) =>
       Object.keys(patch).flatMap((key) => {
         const planKey = planKeyOf(key);
-        if (!planKey) return [];
-        return planKey === MIX_KEY ? [`fxEffect.${MIX_KEY}`] : [`fxEffect.params.${planKey}`];
+        return planKey ? [`fxEffect.params.${planKey}`] : [];
       }),
 
     fieldLabel: (f, m, ctx) => {
       const planKey = planKeyOf(f.key);
-      if (planKey === MIX_KEY) return m.inspector.fxEffect.level;
       const type = typeOf(ctx);
       const d = type === null ? undefined : fxParams(type).find((x) => x.key === planKey);
       return d && labelOf(d, m);
@@ -393,7 +350,6 @@ function fxFace(): DynProcessor {
     // hertz and the THRU at a filter's end all come from the one place they are defined.
     fieldText: (f, v, ctx) => {
       const planKey = planKeyOf(f.key);
-      if (planKey === MIX_KEY) return String(v);
       const type = typeOf(ctx);
       if (type === null) return undefined;
       const d = fxParams(type).find((x) => x.key === planKey);
@@ -414,25 +370,22 @@ function fxFace(): DynProcessor {
 
     // Everything that is not a knob — the delay's Sync switch and its Note value. Placed in
     // front of the knob that follows them in the face's order, so the panel reads in one
-    // order rather than knobs-then-the-rest, and the row break rides in front of whatever
-    // row opens the second group.
+    // order rather than knobs-then-the-rest.
     rows: (ctx) => {
       const type = typeOf(ctx);
       if (type === null) return {};
       const before: Record<string, HTMLElement[]> = {};
       const tail: HTMLElement[] = [];
       let pending: HTMLElement[] = [];
-      const breakKey = BREAK_AT[fxFamilyOf(type)];
       for (const d of rowsOf(type)) {
-        if (d.key === breakKey) pending.push(rowBreak());
+        const key = fieldKey(d.key);
         if (d.control === "slider") {
           if (pending.length) {
-            before[fieldKey(d.key)] = pending;
+            before[key] = pending;
             pending = [];
           }
           continue;
         }
-        const key = fieldKey(d.key);
         const cur = rawOf(ctx, d);
         const label = labelOf(d, ctx.m);
         // What `rowStates` said about this row. The host applies that answer to the FIELDS
@@ -467,7 +420,6 @@ function fxFace(): DynProcessor {
     controlId: (ctx, key) => {
       const planKey = planKeyOf(key);
       if (!planKey) return null;
-      if (planKey === MIX_KEY) return controlId(ctx.nodeId, "fx", FX_LEVEL_SCOPE);
       const type = typeOf(ctx);
       const d = type === null ? undefined : fxParams(type).find((x) => x.key === planKey);
       // An enum answers null — a select has no normalized domain, which is the treatment

@@ -9,6 +9,7 @@ import { diffPlans, nodeParamContestPath, patchContestNames } from "../core/plan
 import { defaultPlan } from "../models/initial-state";
 import { getModel } from "../models";
 import { setLang, t } from "../i18n";
+import type { Messages } from "../i18n/en";
 import { DynScreen } from "./dyn-screen";
 import { dynHost } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
@@ -33,11 +34,8 @@ const ctxFor = (plan: Plan, nodeId: string): DynCtx => ({
 });
 
 describe("the FX screen's write witness", () => {
-  it("names the leaf the differ names, for a parameter and for Mix", () => {
-    for (const [key, value] of [
-      ["fx:revxHpf", 12],
-      ["fx:level", 40],
-    ] as const) {
+  it("names the leaf the differ names", () => {
+    for (const [key, value] of [["fx:revxHpf", 12]] as const) {
       const before = defaultPlan("URX44V");
       const ctx = ctxFor(before, "bus.fx1");
       const patch = { [key]: value };
@@ -98,8 +96,6 @@ describe("what the screen prints for a stored raw", () => {
     // Counted, or a filter that matched nothing would satisfy every assertion above.
     expect(compared).toBe(descs.filter((d) => d.control === "slider").length);
     expect(compared).toBeGreaterThan(4);
-    // …and Mix, which has no catalogue descriptor of its own.
-    expect(shown(plan, "bus.fx1", "level")).toBe("100");
   });
 });
 
@@ -136,49 +132,100 @@ describe("the delay time over MIDI", () => {
   });
 });
 
-// The face's ORDER and its one row break, for every type — including the two no other test
-// opens. FX2 ships Mono Delay and FX1 has no Rev.R3 in its menu, so Rev.R3 and Ping Pong are
-// reachable only by seeding a type; without this, three of the five types' row lists, both
-// of their `ORDER` tables and two of the three `BREAK_AT` entries were never read at all.
-describe("the row order and the break", () => {
+// The face's ORDER, for every type — including the two no other test opens. FX2 ships Mono
+// Delay and FX1 has no Rev.R3 in its menu, so Rev.R3 and Ping Pong are reachable only by
+// seeding a type; without this, three of the five types' row lists and both of the other
+// two `ORDER` tables were never read at all.
+//
+// The sequence is asked in full rather than as a property of it. What the lists claim is
+// that the operator reads the same rows in the same order here as on the unit's own screen,
+// and a rule over the sequence — one break, Mix at an end — is satisfied by orders that are
+// not that one. The expected rows are the message catalog's own values, so this pins the
+// ORDER and leaves the spelling to `dev()`.
+describe("the row order", () => {
   const planHolding = (nodeId: string, type: number): Plan => {
     const plan = defaultPlan("URX44V");
     plan.nodeParams[nodeId] = { ...plan.nodeParams[nodeId], fxEffect: { type } };
     return plan;
   };
-  /** The face as the operator reads it: the knob cards in order, with the break where the
-   *  host would draw one. Built from the same two calls the host makes. */
+  /** The face as the operator reads it: the cards in order, the rows that are not knobs
+   *  named by their own labels, and the break where the host would draw one. Built from the
+   *  same two calls the host makes — including the TAIL, which is where a row that fell off
+   *  the end of the order lands. */
   const face = (nodeId: string, type: number): string[] => {
     const ctx = ctxFor(planHolding(nodeId, type), nodeId);
     // The row context the host supplies, reduced to what `rows` reaches: the delay families
     // build a switch and a select through it, so a bare ctx throws before the break is placed.
     const rowCtx = { ...ctx, states: new Map(), midi: (row: HTMLElement) => row, set: () => {}, setValue: () => {} };
-    const before = FX_DYN.rows!(rowCtx as never).before ?? {};
+    const rows = FX_DYN.rows!(rowCtx as never);
+    const before = rows.before ?? {};
+    const named = (el: HTMLElement): string =>
+      el.classList.contains("gt-break") ? "BREAK" : (el.querySelector(".lbl")?.textContent ?? "(unnamed)");
     const out: string[] = [];
     for (const f of FX_DYN.bind(ctx)!.fields) {
-      for (const el of before[f.key] ?? []) out.push(el.classList.contains("gt-break") ? "BREAK" : "row");
+      for (const el of before[f.key] ?? []) out.push(named(el));
       out.push(FX_DYN.fieldLabel!(f, t(), ctx) ?? f.key);
     }
+    for (const el of rows.tail ?? []) out.push(named(el));
     return out;
   };
+  const g = (): Messages["inspector"]["fxEffect"] => t().inspector.fxEffect;
 
   it.each([
     ["bus.fx1", 0, "Rev-X Hall"],
+    ["bus.fx1", 1, "Rev-X Room"],
     ["bus.fx1", 2, "Rev-X Plate"],
-    ["bus.fx2", 768, "Rev.R3 Hall"],
+  ])("shows %s type %i (%s) in the unit's own order", (nodeId, type) => {
+    const p = g().params;
+    expect(face(nodeId as string, type as number)).toEqual([
+      p.diffusion,
+      p.hiRatio,
+      p.lowRatio,
+      p.lowFreq,
+      p.reverbTime,
+      p.initialDelay,
+      p.decay,
+      p.roomSize,
+      p.hpf,
+      p.lpf,
+    ]);
+  });
+
+  it.each([
     ["bus.fx2", 1024, "Mono Delay"],
     ["bus.fx1", 1025, "Ping Pong"],
-  ])("puts one break between the two groups on %s type %i (%s)", (nodeId, type) => {
-    const seq = face(nodeId as string, type as number);
-    expect(
-      seq.filter((x) => x === "BREAK"),
-      `exactly one break on ${seq.join(" ")}`,
-    ).toEqual(["BREAK"]);
-    // Mix leads every family — the device's own array order — and the break never lands at
-    // either end, which is what a mistyped BREAK_AT key or a row missing from ORDER produces.
-    expect(seq[0]).toBe(t().inspector.fxEffect.level);
-    expect(seq.indexOf("BREAK")).toBeGreaterThan(1);
-    expect(seq.indexOf("BREAK")).toBeLessThan(seq.length - 1);
+  ])("shows %s type %i (%s) in the unit's own order", (nodeId, type) => {
+    const p = g().params;
+    expect(face(nodeId as string, type as number)).toEqual([
+      p.hpf,
+      p.lpf,
+      p.delayTime,
+      p.feedback,
+      p.hiRatio,
+      p.sync,
+      p.bpm,
+      p.note,
+    ]);
+  });
+
+  it.each([
+    ["bus.fx2", 768, "Rev.R3 Hall"],
+    ["bus.fx2", 769, "Rev.R3 Room"],
+    ["bus.fx2", 770, "Rev.R3 Plate"],
+  ])("shows %s type %i (%s) in the unit's own order", (nodeId, type) => {
+    const p = g().params;
+    expect(face(nodeId as string, type as number)).toEqual([
+      p.density,
+      p.feedback,
+      p.erRevDelay,
+      p.erRevBalance,
+      p.reverbTime,
+      p.initialDelay,
+      p.hiRatio,
+      p.diffusion,
+      p.hpf,
+      p.lpf,
+    ]);
   });
 
   it("names every slider of every type in its family's order", () => {
@@ -241,7 +288,10 @@ describe("the words a MIDI assignment prints for an FX control", () => {
     // that enumerated nothing would satisfy every assertion below.
     expect(scopes.length, "the catalogue offered no FX control at all").toBeGreaterThan(10);
     expect(scopes, "EFFECT ON is one of them").toContain(FX_ON_SCOPE);
-    expect(scopes, "…and so is Mix").toContain(FX_LEVEL_SCOPE);
+    // …and the effect array's slot 2 is NOT: no surface offers it, so the catalogue must not
+    // list an id nothing can arm. The label below still answers for it, for a mapping saved
+    // against a build that did.
+    expect(scopes, "the effect level is offered by nothing").not.toContain(FX_LEVEL_SCOPE);
     for (const scope of scopes) {
       const label = fxControlLabel(scope, t());
       expect(label, `${scope} names nothing`).not.toBeNull();
@@ -257,6 +307,21 @@ describe("the words a MIDI assignment prints for an FX control", () => {
   // later build no longer carries reaches the resolver as an FX scope whose key matches no
   // descriptor of any type — and the answer has to be "I cannot name this", so the caller
   // falls back to printing the id rather than to a label belonging to some other row.
+  // The one scope the catalogue no longer offers, and therefore the one nothing else here
+  // reaches: the loop above walks `listControls`, which no longer lists it, and the case
+  // below asks about a key no type carries. A mapping made against a build that DID offer it
+  // is still in the operator's file, and `src/ui/midi.ts` asks this function for its words
+  // whether or not the id binds. Without this, deleting that branch leaves the whole suite
+  // green and the row reads "FX 1 · fx.level · fx" — the three tokens this describe exists
+  // to keep off the screen.
+  it("still names a mapping saved against the effect level", () => {
+    setLang("en");
+    const label = fxControlLabel(FX_LEVEL_SCOPE, t());
+    expect(label).toContain(t().dynTuning.fx.title);
+    expect(label).toContain(t().inspector.fxEffect.level);
+    expect(label).not.toContain(FX_LEVEL_SCOPE.slice(FX_SCOPE.length + 1));
+  });
+
   it("declines an FX scope whose key no type carries", () => {
     setLang("en");
     expect(fxControlLabel(`${FX_SCOPE}.aKeyNoCatalogueHas`, t())).toBeNull();

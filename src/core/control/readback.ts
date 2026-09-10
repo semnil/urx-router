@@ -49,7 +49,7 @@ import {
 import type { ParamName } from "./params";
 import { writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
-import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_LEVEL, FX_SLOT_ON, fxParams } from "./fx-effect";
+import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_ON, fxParams } from "./fx-effect";
 import {
   insertFxEngine,
   insertFxFamilyOf,
@@ -1714,8 +1714,9 @@ async function readFxEffect(
   }
   return {
     type,
+    // Slot 2 is not read either: nothing writes it, so a value carried back would be plan
+    // state no surface shows and no command sends.
     on: vdToBool(await vdGet(arrId, 0, FX_SLOT_ON)),
-    level: await vdGet(arrId, 0, FX_SLOT_LEVEL),
     params,
   };
 }
@@ -1741,7 +1742,7 @@ async function readFxEffectInto(
   const read = await readFxEffect(source, fxIndex, slots);
   return {
     head: read.type,
-    seen: JSON.stringify([read.type, read.on, read.level, read.params]),
+    seen: JSON.stringify([read.type, read.on, read.params]),
     apply: (plan) => {
       const was = plan.nodeParams[nodeId];
       const type = keepHead ? (was?.fxEffect?.type ?? read.type) : read.type;

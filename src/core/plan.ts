@@ -233,7 +233,6 @@ export const SSMCS_INITIAL = {
 export interface FxEffectParams {
   type?: number; // EFFECT TYPE enum (679 / 683 value); absent = FX default
   on?: boolean; // effect ON (array slot 1); absent or true = on
-  level?: number; // effect level / mix 0..100 (array slot 2); absent = 100
   params?: Record<string, number>; // raw per-parameter values keyed by descriptor key
 }
 

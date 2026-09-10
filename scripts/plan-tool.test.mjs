@@ -99,13 +99,13 @@ const leavesOf = (value, path = [], out = new Map()) => {
 // Rev-X Hall's own LPF starts well above 0, and no channel offers type 12345 — the two the
 // tool cannot answer without the app's effect catalogue.
 const CASES = [
-  ["a document the app writes itself", { on: true, type: 0, level: 50, params: { revxLpf: 40 } }, false, false],
+  ["a document the app writes itself", { on: true, type: 0, params: { revxLpf: 40 } }, false, false],
   ["an empty effect object, whose key the app removes", {}, true, true],
-  ["a boolean where a number belongs", { type: 0, level: false }, true, true],
+  ["a boolean where a number belongs", { type: 0, params: { revxLpf: false } }, true, true],
   ["a boolean type", { type: false }, true, true],
   ["a boolean parameter map", { type: 0, params: false }, true, true],
   ["an object where a parameter belongs", { type: 0, params: { revxLpf: { x: 1 } } }, true, true],
-  ["a string, which the sanitiser drops", { type: 0, level: "x" }, true, true],
+  ["a string, which the sanitiser drops", { type: 0, params: { revxLpf: "x" } }, true, true],
   ["a null parameter, which the sanitiser drops", { type: 0, params: { revxLpf: null } }, true, true],
   ["an effect object that is not an object", false, true, true],
   ["an effect object that is an array", [{}], true, true],

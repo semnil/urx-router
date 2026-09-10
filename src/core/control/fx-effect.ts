@@ -23,9 +23,9 @@ import { preferredNumber, R20, R40 } from "./preferred-numbers";
 export const FX_EFFECT_TYPE_PARAM = [679, 683] as const;
 /** Effect-parameter array param_id per FX channel index. Addressed by slot on y. */
 export const FX_EFFECT_ARRAY_PARAM = [681, 685] as const;
-/** Array slots common to every effect type. */
+/** The array slot every effect type shares. Slot 2 is deliberately absent: no control of
+ *  the unit's own reaches it, so this app neither reads it nor writes it. */
 export const FX_SLOT_ON = 1;
-export const FX_SLOT_LEVEL = 2;
 
 /** Effect families: the three distinct parameter layouts. */
 export type FxFamily = "revx" | "revr3" | "delay";

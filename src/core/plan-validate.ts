@@ -8,14 +8,7 @@
 
 import type { DeviceModel } from "../models/types";
 import { insertFxCensus } from "./constraints";
-import {
-  FX_CHANNEL_NODE_INDEX,
-  FX_LEVEL_MAX,
-  FX_LEVEL_MIN,
-  fxEffectTypes,
-  fxParams,
-  fxRawForDesc,
-} from "./control/fx-effect";
+import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import { isPlainRecord } from "./plan";
 import type { Plan } from "./plan";
@@ -150,13 +143,6 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     if (fx.type !== undefined && !fxEffectTypes(fxIndex).some((o) => o.value === fx.type)) {
       out.push({ reason: "paramRange", node, where: "field", key: "type", stored: fx.type, action: "drop" });
     }
-    // The effect's own level, which `pushFxEffectCommands` bounds two lines ABOVE the
-    // parameter loop and by a literal rather than by a descriptor. Named here because the
-    // sentence this section opens with says every FX slot, and a slot bounded by a literal
-    // is no less bounded.
-    take(node, "field", "level", fx.level as number | undefined, (v) =>
-      Math.min(Math.max(Math.round(v), FX_LEVEL_MIN), FX_LEVEL_MAX),
-    );
     // The parameter MAP, which the readers below and the write path both skip when it is not
     // an object — the same silent loss as an unreadable effect, one channel's worth of raws.
     if (fx.params !== undefined && !isPlainRecord(fx.params)) {
@@ -194,10 +180,9 @@ export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void
     }
     const fx = np.fxEffect!;
     if (p.where === "field") {
-      // `level` is the only field carrying a window, so a bound here is that field and a
-      // drop is any of the three.
-      if (p.action === "drop") delete (fx as unknown as Record<string, unknown>)[p.key];
-      else fx.level = p.bound;
+      // No field carries a window any more — the effect TYPE is checked against the channel's
+      // menu and the parameter map against its own shape — so a field problem is a drop.
+      delete (fx as unknown as Record<string, unknown>)[p.key];
     } else if (p.action === "drop") {
       delete fx.params![p.key];
     } else {
