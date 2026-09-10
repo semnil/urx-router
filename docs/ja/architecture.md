@@ -1000,7 +1000,8 @@ EQ バンドゲインと COMP ゲインのスライダーは 0.1 dB 刻み (通�
   [known-issues.md](known-issues.md) 参照)・**縦ミニフェーダー** (`params.level`・相対ドラッグで level_gain
   グリッドにスナップ・FIXED BUS Type は read-only ロック) からなる。送りを持たないストリップ (MIX / MONITOR /
   STEREO / OSCILLATOR / STREAMING) は減光した `SENDS` ヘッダのみを描き、メーター専用ストリップにも同じ
-  スペーサーを与えてフェーダー上端を揃える。ヘッダは列操作中 `SENDS` ラベルを値読み値 (`MIX 1 PRE -3.2`) に
+  スペーサーを与えてフェーダー上端を揃える。ヘッダは列操作中 `SENDS` ラベルを値読み値
+  (`MIX 1 -3.2` — タップは列自身の PRE ボタンで読む) に
   差し替え、最下部の全幅 **PAN ▾** ボタンが直下に **SEND PAN ポップオーバー**を開く (MIX 送りの pan を
   回転ノブで・FX 送りはモノ・Pan Link はノブを read-only ロック)。どの `SENDS` ヘッダをクリックしても全ラックを
   一括開閉し (`sends-collapsed` ホストクラス・`localStorage` `urx-sends-open` に永続化)、格納中は ON 中の
