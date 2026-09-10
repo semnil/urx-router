@@ -1047,8 +1047,9 @@ export class Console {
     // Destination and level only. The tap is already on screen — this column's own PRE
     // button, lit while pre-fader — and naming it here as well takes the longest readings
     // past the header's share of the strip, which clips the value the readout exists to
-    // show. The fader's `aria-valuetext` names the tap as well, above the floor; an off
-    // send reads "off (-∞)" there and names no tap.
+    // show. The button's `aria-pressed` is the tap's accessible form; the fader's
+    // `aria-valuetext` says "PRE, " in front of a level above the floor and nothing in
+    // front of a post-fader one.
     const readoutText = (): string => SEND_LABEL[target] + " " + fmtDb(c?.params?.level ?? LEVEL_OFF_DB, range).text;
 
     // enable chip

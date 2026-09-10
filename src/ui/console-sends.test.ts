@@ -244,9 +244,10 @@ describe("the header readout", () => {
     expect(header("ch1").querySelector(".rdout")!.textContent).toBe("MIX 1 -3.2");
   });
 
-  // aria-valuetext is the accessible half of the same fact, and it carries the tap.
-  // Only above the floor: an OFF send reads "off (-∞)" and says nothing about its tap,
-  // which is why this seeds a level first.
+  // aria-valuetext is the accessible half of the same fact. It marks one of the two taps:
+  // a pre-fader send above the floor is prefixed "PRE, ", a post-fader one is the bare
+  // level, and an OFF send reads "off (-∞)" whichever tap it holds — which is why this
+  // seeds a level first, and why the post-fader half below is an absence.
   it("puts the tap into the fader's accessible value", () => {
     h = consoleHost();
     seedLevel("ch1", "bus.mix1", -10);
