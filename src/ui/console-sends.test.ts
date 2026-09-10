@@ -211,13 +211,37 @@ describe("the header readout", () => {
     expect(sh.classList.contains("readout")).toBe(false);
   });
 
-  it("names the PRE tap in the readout while the column is pre-fader", () => {
+  // The tap is left out of the readout: the column's own PRE button already carries it,
+  // and spelling it here as well made the longest reading wider than the strip, clipping
+  // the level off its right edge. So this is a set — the word goes, and the two places
+  // that do carry the tap have to still carry it (the button here, `aria-valuetext` below).
+  it("leaves the tap out of the readout and lights the column's PRE button instead", () => {
     h = consoleHost();
-    const col = h.sendCol("ch1", "bus.mix1");
-    const conn = sendConnection(h.plan, "ch1", "bus.mix1")!;
-    conn.params = { ...conn.params, tap: "pre" };
-    col.fader.dispatchEvent(new PointerEvent("pointerenter"));
-    expect(header("ch1").querySelector(".rdout")!.textContent).toContain(t().console.pre);
+    seedLevel("ch1", "bus.mix1", -3.2);
+    const preBtn = colOf("ch1", "M1").querySelector<HTMLElement>(".con-slp")!;
+    preBtn.click();
+    expect(preBtn.classList.contains("on")).toBe(true);
+
+    h.sendCol("ch1", "bus.mix1").fader.dispatchEvent(new PointerEvent("pointerenter"));
+    const sh = header("ch1");
+    expect(sh.classList.contains("readout")).toBe(true); // on screen, not merely written
+    const text = sh.querySelector(".rdout")!.textContent;
+    expect(text).toBe("MIX 1 -3.2");
+    expect(text).not.toContain(t().console.pre);
+  });
+
+  // The other half of the same claim. A marker added on the POST side reads exactly like
+  // the tap word that came off, and nothing else would see it: the case above drives PRE
+  // only, and the E2E width pin presses PRE before it measures. It is also the state a
+  // send ships in, so this is the reading an operator meets first.
+  it("reads the same in POST, so neither tap state puts a word in the readout", () => {
+    h = consoleHost();
+    seedLevel("ch1", "bus.mix1", -3.2);
+    const preBtn = colOf("ch1", "M1").querySelector<HTMLElement>(".con-slp")!;
+    expect(preBtn.classList.contains("on")).toBe(false);
+
+    h.sendCol("ch1", "bus.mix1").fader.dispatchEvent(new PointerEvent("pointerenter"));
+    expect(header("ch1").querySelector(".rdout")!.textContent).toBe("MIX 1 -3.2");
   });
 
   // aria-valuetext is the accessible half of the same fact, and it carries the tap.
