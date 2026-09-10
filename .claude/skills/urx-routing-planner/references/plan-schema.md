@@ -165,6 +165,12 @@ the device default. The full set:
   nodes selecting into the same slot is a plan the unit cannot run — the app warns
   on load and `plan_tool.py` warns too. Stereo input channels have no insert FX at
   all, so an `insertFx` on one is ignored.
+  **A MONO IN pair whose `stereoLink` is `true` takes a compander and nothing
+  else** (same Effect list: the guitar amps and Pitch Fix "cannot be used when
+  Signal Type is stereo"), and the pair holds one effect between its two channels —
+  author the same `insertFx` on both members or on neither. Changing `stereoLink`
+  in either direction clears the pair's insert effect on the unit. Nothing
+  validates this: `plan_tool.py` reads no effect catalogue.
 - `insertFxOn` — insert-effect ON/OFF (bypass), `true`/`false`. The device
   re-engages it whenever an effect is (re)selected; it only applies (and is only
   written) while an effect is selected.

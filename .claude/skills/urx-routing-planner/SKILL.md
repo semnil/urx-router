@@ -76,6 +76,17 @@ node, or fall back to the node's own GATE / COMP / EQ, which are per-node and no
 shared. A plan that gives one slot to two nodes loads with a warning from the app,
 and `scripts/plan_tool.py` warns about it too.
 
+**A STEREO MONO IN pair can only hold a compander.** The same Effect list says the
+guitar amps and Pitch Fix "cannot be used when Signal Type is stereo", while a
+compander inserted on such a pair runs in stereo across it. So a pair whose
+`stereoLink` is `true` (CH1/2 or CH3/4) takes COMPANDER-H or COMPANDER-S and
+nothing else, on either member — the app locks the rest of the menu there — and a
+pair holds one effect between the two channels rather than one each. Changing
+Signal Type in **either** direction clears the pair's insert effect on the unit, so
+a plan that links a pair and gives it a guitar amp describes a state the unit will
+not be in. Neither the bundled route table nor `plan_tool.py` can see this one:
+check it by reading `stereoLink` beside `insertFx` yourself.
+
 **High sample rates drop features.** Above 96 kHz (i.e. at 176.4 / 192 kHz) the
 insert FX and the FX2 bus are unavailable and the stereo channels' EQ is forced
 off. The plan still loads — the app warns and disables FX2 — but flag this when a
