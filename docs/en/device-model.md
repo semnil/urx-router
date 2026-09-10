@@ -361,7 +361,9 @@ Source selection for the analog outputs (MAIN / LINE).
   channel is auto-mirrored to the other (node params in general plus each send's LEVEL / PRE-POST / ON and
   the pan). In BAL mode the pan is the pair's single shared balance, so both channels read the same value
   (the re-init above seeds it centred); the Signal Type / PAN-BAL flags live on the primary alone. In PAN
-  mode the two channels stay independent (pan included — no mirroring).
+  mode the two channels stay independent (pan included — no mirroring). **The metering is the one thing
+  that answers to Signal Type rather than to the mode**: the unit's channel tuning screens meter such a pair
+  as one channel in either mode, which [channel-tuning.md](channel-tuning.md) carries.
 - **Every channel / FX-channel send is fixed** (the STEREO main path plus every MIX 1–2 / FX 1–2 send), as is
   **MIX 1/2 → STEREO (TO ST)**: always wired, shown pre-connected, and non-removable. Unlike the items above
   they *are* drawn as wires (between visible nodes) since their LEVEL/PAN/PRE-POST/ON (SEND_ON; TO ST is ON/OFF

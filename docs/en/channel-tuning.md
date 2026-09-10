@@ -63,6 +63,35 @@ reference notes; the parts that constrain this design:
 The asymmetry in the last two rows is visible in use: an input transient can show on the IN and OUT
 lanes with no matching GR, because the GR sample missed it. That is the device, not a defect.
 
+### A MONO IN pair whose Signal Type is STEREO
+
+Such a pair is one channel to these screens. The unit draws **two bars on every level lane and one on
+the reduction**, and either member opens the same screen with the same parameters; the app matches
+that, so a level lane carries the primary member's address as L and the partner's as R — in that order
+whichever member the screen was opened on — while the reduction lane stays a single bar.
+
+Measured on a URX44V, System firmware 1.3.1.0, 2026-09-11, with CH1/2 sourced from USB MAIN A so each
+side could be driven alone at a level this end set:
+
+| Reading | Consequence for the screen |
+| --- | --- |
+| With the pair linked, a 1 kHz tone in one side alone moved that member's whole strip (`100` / `106` / `108` / `109` / `111` / `112` / `113` / `115` at its own x) and left the other member's at the floor; two sides 12 dB apart read 12 dB apart | The two bars are the two members' own taps at one stage — not one value drawn twice, and not a separate address family that only a linked pair lights. A sweep of all 161 meter addresses the unit declares found no other address following the pair |
+| The **gate's** reduction meter went from -128 (shut) to the OVER sentinel on **both** members when **either** side alone carried the tone | One detector for the pair, so both members' GR addresses carry one figure |
+| The **compressor's** reduction read the same figure on both members with one side driven, both members having been given identical compressor values first | The same, and it is why the reduction lane is not widened with the level lanes |
+| Switching PAN/BAL to PAN left the unit drawing four bars | The rule keys on Signal Type alone, not on the pair's PAN/BAL mode |
+| A ducker keyed off one member ducked when that member was driven and not when its partner was | The DUCKER screen's KEY lane is **unaffected**: it reads the key source channel's own tap, and the sum-the-sides rule that a stereo key gets does not extend to a linked MONO IN pair |
+
+The resolver is `pairTap` in `src/ui/dyn-chan.ts`, which every level lane on GATE / COMP / EQ / the
+SSMCS bank / INS FX goes through. It takes a resolver rather than a tap key because one caller's
+address does not come from the tap table.
+
+**The SSMCS side-chain lane is the exception, and it is one bar.** The unit's COMP Side Chain screen
+(user guide, "SC meter") draws a single column there while its input/output meter draws two, read off
+a linked pair. Its two addresses are not one figure the way the reduction's are: in SSMCS with the
+strip's compressor and its side chain both on, a tone in one side moved that member's `109` and left
+the other's at the floor. So the lane cannot carry both and cannot carry the member the screen was
+opened on either — either member opens the same screen — and it takes `pairNode`, the pair's primary.
+
 ## Layout
 
 A modal on the Preferences / Device setup shell (`.consent-box` + `.prefs-box`, two columns).
@@ -384,7 +413,9 @@ where the taps differ, since the EQ sits at a different point in each chain:
 
 A stereo node's taps carry L and R, which the rack draws as **two bars in one lane** under one
 caption — the console's own treatment, and for its reason: two half-width bars read as one point
-metered in stereo, where two lanes would read as two points in the signal path.
+metered in stereo, where two lanes would read as two points in the signal path. The mono row gets the
+same two bars when its pair's Signal Type is STEREO, built from the two members' own addresses —
+[A MONO IN pair whose Signal Type is STEREO](#a-mono-in-pair-whose-signal-type-is-stereo).
 
 **The mono channel's HPF is deliberately not drawn** on the response. It sits upstream of the
 compressor, whose gain varies with frequency content, so it does not add to this stage's curve in any
@@ -512,6 +543,11 @@ not 0 dB (a louder-side pick). The cap can only ride a ruler in its own coordina
 summed display the threshold's onset held to -3.0 ±0.5 dB where against `max(L,R)` it spread 7 dB.
 So the lane folds to what the detector reads (`duckerKeyDb`), the cap sits on it unmodified, and the
 -3.0 dB is a sine's peak-to-RMS: these meters read peak and the detector reads RMS.
+
+**That sum is a STEREO node's rule and it stops there.** A MONO IN pair whose Signal Type is STEREO
+is metered as one channel by every other screen, and this one is the exception: keyed off one member,
+the ducker fired on that member's signal and not at all on its partner's. So the KEY lane goes on
+reading the key source node's own tap, with no side to fold in.
 
 **The cap is a guide, not a calibrated marker,** and the reason is that -3.0 is a sine's figure
 rather than a constant. Measured with a tone on one side and preamp noise on the other, the onset

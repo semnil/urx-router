@@ -664,6 +664,10 @@ The constraint core (`core/routing.ts`):
   stay on the primary). Called from each edit funnel: `main.ts` `onUpdateParams` / `onUpdateNodeParams` for the
   graph / inspector, and `console.ts` `commit` for CONSOLE — both views share the one function so they behave
   identically. No mirroring in PAN mode. See [device-model.md](device-model.md).
+- **The channel tuning screens meter such a pair as one channel**, on Signal Type alone rather than on PAN/BAL:
+  every level lane carries both members' addresses and the reduction lane stays one bar. The rule, the readings
+  behind it and the one screen it does not reach (the DUCKER's KEY lane) are in
+  [channel-tuning.md](channel-tuning.md), "A MONO IN pair whose Signal Type is STEREO".
 - **The insert FX is the one thing a link does not carry, and it answers to Signal Type alone.** Measured on the
   unit: the Signal Type transition itself — in **either** direction — clears the selector and its ON on **both**
   members, whichever member was holding one, and the engine array keeps its values (only a selector write

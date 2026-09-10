@@ -347,7 +347,9 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   **BAL モード時のみ**、ペアは 1 つのステレオ ch として動作し、片 ch への編集をもう一方へ自動ミラーする
   (ノードパラメーター全般 + 各 Send の LEVEL/PRE-POST/ON、および pan)。pan は BAL モードではペア共有の
   バランス 1 値なので両 ch で一致する (上記の初期化が中央を起点として与える)。Signal Type / PAN-BAL
-  フラグは primary のみ保持。PAN モードでは両 ch は独立のまま (pan も含めミラーしない)。
+  フラグは primary のみ保持。PAN モードでは両 ch は独立のまま (pan も含めミラーしない)。**モードではなく
+  Signal Type に応答する唯一のものがメーターで**、実機のチャンネル調整画面はどちらのモードでもこのペアを
+  1 チャンネルとして測る ([channel-tuning.md](channel-tuning.md))。
 - **全チャンネル/FX チャンネルの Send (STEREO 主経路 + MIX 1–2 / FX 1–2 Send)、および MIX 1/2 → STEREO の
   TO ST は固定**。常時結線され初期接続済みで表示し、削除不可。上記の要素と異なり LEVEL/PAN/PRE-POST/ON
   (SEND_ON、TO ST は ON/OFF のみ) を編集できるため、(表示ノード間の) 配線として描画する。固定なのは経路のみで、
