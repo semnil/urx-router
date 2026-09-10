@@ -221,9 +221,11 @@ describe("the deep link", () => {
    *  The effect's parameters are drawn there rather than in the Inspector, so a case about
    *  what the app SHOWS for a stored raw has to open it. */
   const fxScreenValue = (nodeId: string, label: string): string => {
-    $("graph-host")
-      .querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!
-      .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    // Completed, for the reason `selectNode` in main.device.test.ts gives: a press the board
+    // never sees released arms its path-trace hold, which writes a status line of its own.
+    const node = $("graph-host").querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!;
+    node.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    node.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
     $("btn-fx-screen").click();
     const card = [...$("dyn-screen-box").querySelectorAll<HTMLElement>(".gt-knob")].find(
       (c) => c.querySelector(".lbl")?.textContent === label,
