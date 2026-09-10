@@ -10,7 +10,7 @@ import {
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
 import { planToCommands } from "./control/translate";
 import { validatePlan } from "./routing";
-import { deserialize, emptyPlan } from "./plan";
+import { deserialize, emptyPlan, PLAN_VERSION, serialize } from "./plan";
 import type { Plan } from "./plan";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
@@ -254,7 +254,29 @@ describe("paramRangeProblems", () => {
   // read. Asked of the whole funnel rather than of the migration alone, since what has to hold
   // is that a document loses it, and asked with a sibling as the control: the drop is that key
   // and not the section.
+  // …and what a build that still carries the field would do with the result. A version-2
+  // writer sends the catalogue's 100 to slot 2 for an ABSENT level, so a file written here and
+  // tagged 2 would load in such a build and move a unit holding anything else at that address.
+  // The version is what stops it: that build refuses a document tagged higher than its own.
+  it("writes a version this change's own removal is safe under", () => {
+    expect(PLAN_VERSION).toBe(3);
+    const doc = JSON.parse(serialize(defaultPlan("URX44V"))) as {
+      version: number;
+      nodeParams: Record<string, { fxEffect?: Record<string, unknown> }>;
+    };
+    expect(doc.version, "a fresh save carries it").toBe(PLAN_VERSION);
+    // …and neither FX section it writes carries the key, which is what makes the tag the only
+    // signal a version-2 reader gets. Read per section rather than over the whole document:
+    // `level` is a live key elsewhere — every bus fader, the oscillator, each 1-knob EQ.
+    for (const node of ["bus.fx1", "bus.fx2"]) {
+      const fx = doc.nodeParams[node]?.fxEffect;
+      expect(fx, `the premise: ${node} carries a section`).toBeTypeOf("object");
+      expect(fx, node).not.toHaveProperty("level");
+    }
+  });
+
   it("drops the effect array's slot 2 from a loaded document, and nothing beside it", () => {
+    // Tagged 2 — the version a build that still wrote the key produced.
     const doc = JSON.stringify({
       format: "urx-router-plan",
       version: 2,

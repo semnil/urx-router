@@ -60,9 +60,8 @@ const planKeyOf = (key: string): string | null => (key.startsWith("fx:") ? key.s
 /**
  * Each family on ONE face, carrying the rows the unit's own screen carries, in its order.
  *
- * `fxEffect.level` — the effect array's slot 2 — is not one of them. It has no row here, no
- * readout and no MIDI id; the plan keeps whatever a device read or a document supplies and
- * the write path sends it back unchanged.
+ * The effect array's slot 2 is not one of them, and is nowhere else either: no row here, no
+ * readout, no MIDI id, no plan key, no read and no command.
  *
  * Every row of every family is named here. A row the catalogue gains and these lists do not
  * name still appears, after the ones they do, rather than disappearing from the face.

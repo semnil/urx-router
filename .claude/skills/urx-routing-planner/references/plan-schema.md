@@ -10,7 +10,7 @@ any private protocol knowledge.
 ```json
 {
   "format": "urx-router-plan",
-  "version": 2,
+  "version": 3,
   "modelId": "URX44V",
   "sampleRate": 48000,
   "connections": [ ... ],

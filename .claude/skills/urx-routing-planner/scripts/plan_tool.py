@@ -44,7 +44,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MODELS_PATH = os.path.join(HERE, "models.json")
 DEFAULT_BASE = "https://urx-router.semnil.com/"
 PLAN_FORMAT = "urx-router-plan"
-PLAN_VERSION = 2
+PLAN_VERSION = 3
 
 SINGLE_INPUT_KINDS = {"source", "patch", "key", "record"}
 KNOWN_KINDS = {"source", "patch", "send", "sendSwitch", "key", "record"}
@@ -363,9 +363,19 @@ def fx_effect_warnings(node_id, fx, out):
     # `on` is the one field read as a flag, so a number works there by truthiness.
     if "on" in fx and not isinstance(fx["on"], bool) and not is_number(fx["on"]):
         out.append((f"{node_id}.fxEffect.on", f"{fx['on']!r} is neither a boolean nor a finite number"))
-    # `type` alone. Array slot 2 is not a field of this section: no control of the unit's own
-    # reaches it, so the app neither reads it nor writes it and a document naming it names
-    # nothing.
+    # Array slot 2 is not a field of this section: no control of the unit's own reaches it, so
+    # the app neither reads it nor writes it. A document naming it loses the key at the load,
+    # whatever its value, so the removal is reported here rather than the value being checked
+    # — a warning about the window would say the value is wrong, and it is the KEY that is.
+    if "level" in fx:
+        out.append(
+            (
+                f"{node_id}.fxEffect.level",
+                "array slot 2 is not a parameter this app carries — no control of the unit's "
+                "own reaches it, so the app neither reads it nor writes it and the load removes "
+                "the key. The unit keeps whatever it holds at that address",
+            )
+        )
     if "type" in fx and not is_number(fx["type"]):
         out.append((f"{node_id}.fxEffect.type", f"{fx['type']!r} is not a finite number"))
     params = fx.get("params")
