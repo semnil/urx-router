@@ -184,8 +184,11 @@ const SURFACES: Record<SurfaceName, Surface> = {
       // The INS FX type popover. `insFxInUse` and `insFxRemove` need a state to be true
       // in — one strip has to be holding an effect before another can be told the slot
       // is taken, and before releasing is a thing to offer — so the run below takes one.
+      // `insFxMonoOnly` needs a STEREO-linked pair, and one of its OWN: linking the pair
+      // those two are said with would take the effect they are said about.
       "console.insFxType",
       "console.insFxInUse",
+      "console.insFxMonoOnly",
       "console.insFxRemove",
     ],
     // Said on whichever of the two inert controls under the list is hovered, and only
@@ -960,6 +963,26 @@ test("the console popovers name what they set", async ({ page }) => {
 
   const ch2 = page.locator(".con-strip", { has: page.getByText("CH 2", { exact: true }) });
   await ch2.locator(".con-ifxopen").click();
+  await expect(ifx).toBeVisible();
+  await inv.take(page, ".con-ifxpop");
+
+  // The third reason a row can be refused: a STEREO-linked MONO IN pair takes a compander
+  // and nothing else. Seeded rather than clicked together, because Signal Type is set in
+  // the Inspector and this case is about the CONSOLE's popover — and on CH 3/4, so the
+  // amp CH 1 is holding above stays the thing "in use" is said about.
+  await page.goto(
+    `/?plan=${planParamZ({
+      format: "urx-router-plan",
+      version: 3,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch3: { stereoLink: true } },
+    })}`,
+  );
+  await page.click("#btn-view-console");
+  await expect(page.locator("#console-host")).toBeVisible();
+  const ch3 = page.locator(".con-strip", { has: page.getByText("CH 3", { exact: true }) });
+  await ch3.locator(".con-ifxopen").click();
   await expect(ifx).toBeVisible();
   await inv.take(page, ".con-ifxpop");
 

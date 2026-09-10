@@ -86,6 +86,7 @@ export const ja: Messages = {
     insFxType: "EFFECT TYPE",
     insFxInUse: "使用中",
     insFxMax: (maxRate: string): string => `上限 ${maxRate}`,
+    insFxMonoOnly: "MONO 専用",
     insFxRemove: "解除",
     insFxPickFirst: "先に上のリストからエフェクトを選んでください。",
   },
@@ -281,6 +282,7 @@ export const ja: Messages = {
     insFxRateLockedAt: (effect: string, maxRate: string): string =>
       `${maxRate} 超では ${effect} は使用不可 — 強制的に OFF。`,
     fx2RateLocked: "FX2 バスは 96 kHz を超えると使用できません。",
+    insFxLinkLocked: "Signal Type が STEREO の間は Compander のみ使用可。",
     insFxSlotLocked: "Insert FX はすべて使用中 — 各エフェクトは本体全体で 1 スロットを占有。",
     channelOn: "チャンネル",
     sendOn: "Send",

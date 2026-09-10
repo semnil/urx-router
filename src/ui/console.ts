@@ -1373,6 +1373,9 @@ export class Console {
             entry.option.maxRate !== undefined
               ? t().inspector.insFxRateLockedAt(entry.option.label, formatRate(entry.option.maxRate))
               : t().inspector.insFxRateLocked;
+        } else if (entry.lock === "link") {
+          why.textContent = t().console.insFxMonoOnly;
+          row.title = t().inspector.insFxLinkLocked;
         } else {
           why.textContent = t().console.insFxInUse;
           row.title = t().inspector.insFxSlotLocked;
@@ -2593,7 +2596,9 @@ export class Console {
             m.id,
             // Only where nothing at all can be taken, and the two reasons are not
             // interchangeable: above every ceiling it is the rate and not the slots, and
-            // the rate question has to be asked of a strip holding nothing too.
+            // the rate question has to be asked of a strip holding nothing too. A
+            // STEREO-linked pair adds no third reason here — the companders are all it
+            // may take, so a linked strip with nothing free is one whose slot is held.
             free.length ? undefined : rateLocked ? t().inspector.insFxRateLocked : t().inspector.insFxSlotLocked,
             noneAtThisRate,
           ),

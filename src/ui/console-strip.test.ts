@@ -520,6 +520,27 @@ describe("the INS FX chip", () => {
     expect(popRow("No Effect").classList.contains("off")).toBe(false);
   });
 
+  // A STEREO-linked MONO IN pair may hold a compander and nothing else — the guitar amps
+  // and Pitch Fix are mono-channel effects. Said on the entries themselves, with their own
+  // reason: the slot sentence would tell the operator to go and release something, which
+  // releases nothing here.
+  it("greys the mono-only effects on a STEREO-linked pair, and names why", () => {
+    h = consoleHost();
+    h.plan.nodeParams["ch1"] = { ...h.plan.nodeParams["ch1"], stereoLink: true };
+    h.view.refresh();
+    openerOf("ch1").click();
+    for (const label of ["Clean", "Crunch", "Lead", "Drive", "Pitch Fix"]) {
+      const row = popRow(label);
+      expect(row.classList.contains("off"), label).toBe(true);
+      expect(row.getAttribute("aria-disabled"), label).toBe("true");
+      expect(row.title, label).toBe(t().inspector.insFxLinkLocked);
+      expect(row.querySelector(".why")?.textContent, label).toBe(t().console.insFxMonoOnly);
+    }
+    for (const label of ["Compander-H", "Compander-S", "No Effect"]) {
+      expect(popRow(label).classList.contains("off"), label).toBe(false);
+    }
+  });
+
   // The screen shows what is selected, so there is nothing for it to show until something
   // is — and a bypassed or rate-stopped effect is still an effect to tune.
   it("offers the tuning screen only once an effect is held", () => {
