@@ -214,6 +214,65 @@ test("a send column fader edits the send level and drives the header readout", a
   await expect(s.locator(".con-sh")).not.toHaveClass(/readout/); // reverts to SENDS
 });
 
+// Every reading the rack can put in its header has to be readable there. The readout gets
+// what the collapse arrow and the flex gap leave of the strip's width, does not wrap and
+// shows no ellipsis, so an over-wide one is clipped rather than reported: the level loses
+// its last characters and what is left reads as a real value.
+//
+// Four measurements, because each way that breaks is invisible to the other three — the
+// text can overrun its own box; the box can grow a second line the fixed-height header
+// hides; it can run under the collapse arrow; or it can push that arrow out of the header
+// rather than shrinking. Each is placed against a mutation the other three pass.
+//
+// Every column in both tap states rather than the one that broke: the tap word this
+// replaced could come back on the POST side, and a longer destination label would clip
+// only its own column.
+test("every send reading fits the rack header, in both tap states", async ({ page }) => {
+  const s = strip(page, "CH 1");
+  const sh = s.locator(".con-sh");
+  const cols = s.locator(".con-scol:not(.empty)");
+  // A rack with no columns satisfies every assertion below without measuring one.
+  await expect(cols).toHaveCount(4);
+
+  for (let i = 0; i < 4; i++) {
+    const c = cols.nth(i);
+    const pre = c.locator(".con-slp");
+    for (const tap of ["post", "pre"] as const) {
+      if (tap === "pre") await pre.click();
+      // The state this says it is measuring. Without it a click that stops landing leaves
+      // the run measuring POST twice, green.
+      await expect(pre).toHaveAttribute("aria-pressed", String(tap === "pre"));
+      for (const key of ["Home", "End"]) {
+        await c.locator(".con-vfad").focus();
+        await page.keyboard.press(key);
+        // The label swapped for a reading — otherwise what gets measured is "SENDS".
+        await expect(sh).toHaveClass(/readout/);
+        const m = await sh.evaluate((el) => {
+          const rd = el.querySelector<HTMLElement>(".rdout")!;
+          const ar = el.querySelector<HTMLElement>(".ar")!;
+          const head = el.getBoundingClientRect();
+          const read = rd.getBoundingClientRect();
+          const arrow = ar.getBoundingClientRect();
+          const EPS = 0.5; // subpixel layout, not room for a character
+          return {
+            text: rd.textContent ?? "",
+            textInsideItsBox: rd.scrollWidth <= rd.clientWidth,
+            boxInsideHeader: read.right <= head.right + EPS && read.bottom <= head.bottom + EPS,
+            clearOfTheArrow: read.right <= arrow.left + EPS,
+            arrowInsideHeader: arrow.right <= head.right + EPS,
+          };
+        });
+        const at = `"${m.text}" — column ${i}, ${tap}, ${key}`;
+        expect(m.text, at).not.toBe("");
+        expect(m.textInsideItsBox, at).toBe(true);
+        expect(m.boxInsideHeader, at).toBe(true);
+        expect(m.clearOfTheArrow, at).toBe(true);
+        expect(m.arrowInsideHeader, at).toBe(true);
+      }
+    }
+  }
+});
+
 test("a send column's groove runs the cap's full travel, so the cap never leaves its slot", async ({ page }) => {
   const fader = col(page, "CH 1", "M1").locator(".con-vfad");
   const centre = async () => {
