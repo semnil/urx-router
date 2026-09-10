@@ -10,7 +10,7 @@ import {
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
 import { planToCommands } from "./control/translate";
 import { validatePlan } from "./routing";
-import { emptyPlan } from "./plan";
+import { deserialize, emptyPlan } from "./plan";
 import type { Plan } from "./plan";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
@@ -247,6 +247,32 @@ describe("paramRangeProblems", () => {
     expect(offenders).toEqual([]);
   });
 
+  // Array slot 2 leaves a document at the LOAD, at every version. The app neither reads it nor
+  // writes it, so a value there addresses nothing — and left in place it would survive the load
+  // unreported (no window checks it any more), be written back into every later save, and then
+  // be dropped without a word by the first device read, which rebuilds the section from what it
+  // read. Asked of the whole funnel rather than of the migration alone, since what has to hold
+  // is that a document loses it, and asked with a sibling as the control: the drop is that key
+  // and not the section.
+  it("drops the effect array's slot 2 from a loaded document, and nothing beside it", () => {
+    const doc = JSON.stringify({
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { "bus.fx1": { fxEffect: { type: 0, on: false, level: 100, params: { revxHpf: 9 } } } },
+    });
+    const fx = deserialize(doc).nodeParams["bus.fx1"]?.fxEffect as Record<string, unknown> | undefined;
+    expect(fx, "the premise: the section survives the load").toBeTypeOf("object");
+    expect(fx).not.toHaveProperty("level");
+    // The control: the keys beside it are untouched, so the drop is that key rather than the
+    // section being rebuilt or emptied.
+    expect(fx).toMatchObject({ type: 0, on: false, params: { revxHpf: 9 } });
+    // …and no problem is reported for it, because there is nothing to report: the value
+    // addressed nothing and the document is not being repaired, it is being read.
+    expect(paramRangeProblems(deserialize(doc))).toEqual([]);
+  });
+
   // A key the SELECTED type does not own. The migration leaves it exactly where it is, so a
   // walk over the selected type's descriptors alone never sees it — and selecting that type
   // later brings the unwritable raw back, with the load already past.
@@ -385,13 +411,13 @@ describe("paramRangeProblems", () => {
   // its type. The sanitiser keeps a boolean and a non-empty object or array under any key —
   // node params legitimately carry toggles and groups — and every reader below then treats the
   // effect, or its whole parameter map, as absent. So a document can lose a channel's worth of
-  // raws, or all thirteen of its addresses, with the load saying nothing. Each is measured
+  // raws, or that channel's whole address set, with the load saying nothing. Each is measured
   // against the SAME document with the key simply left out: the repair has to land on the plan
   // that says what this one turned out to say.
   //
   // One of them moves the wire, in the safe direction: an unreadable effect object that happens
-  // to be TRUTHY reaches the emit and writes thirteen factory defaults over whatever the unit
-  // holds, from a value that says nothing. Dropping it leaves the channel alone, which is what
+  // to be TRUTHY reaches the emit and writes that channel's factory defaults over whatever the
+  // unit holds, from a value that says nothing. Dropping it leaves the channel alone, which is what
   // the plan format's silence means. The other three land on the same wire they were already on.
   it("reports an unreadable effect, parameter map or type, and repairs to the plan without it", () => {
     const model = getModel("URX44V");
@@ -407,8 +433,8 @@ describe("paramRangeProblems", () => {
     const cases: [string, unknown, unknown, string, boolean][] = [
       ["a falsy effect object", false, undefined, "fxEffect", false],
       ["a truthy effect object", [{}], undefined, "fxEffect", true],
-      ["the parameter map", { type: 0, on: true, params: false }, { type: 0, on: true }, "params", false],
-      ["the type", { type: 999, on: true }, { on: true }, "type", false],
+      ["the parameter map", { type: 0, on: false, params: false }, { type: 0, on: false }, "params", false],
+      ["the type", { type: 999, on: false }, { on: false }, "type", false],
     ];
     for (const [name, bad, good, key, movesWire] of cases) {
       const plan = control(bad);

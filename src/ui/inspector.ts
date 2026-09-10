@@ -1258,8 +1258,8 @@ function setFxEffectType(actions: InspectorActions, plan: Plan, nodeId: string, 
 }
 
 // FX-channel EFFECT section: the EFFECT TYPE selector, the effect ON toggle and the
-// launcher. Mix and the type's own parameters are the tuning screen's, so nothing here
-// reads a value that screen can move. fxIndex = 0 (FX1) / 1 (FX2).
+// launcher. The type's own parameters are the tuning screen's, so nothing here reads a
+// value that screen can move. fxIndex = 0 (FX1) / 1 (FX2).
 function fxEffectSection(
   nodeId: string,
   fxIndex: number,

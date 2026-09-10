@@ -1558,9 +1558,9 @@ matching one is applied, so a discarded attempt leaves none of its layout behind
 every attempt arrives at its caller holding exactly what it held before. The guard itself is dropped, while the unit's head is not the one
 the SNAPSHOT holds, for the addresses that head LAYS OUT and no others: moved on the panel, the
 snapshot's raws describe the previous layout there, and a slot whose two layouts agree on a number read
-as "still what this session sent". An FX channel's ON and MIX and an insert effect's bypass are not
-laid out by anything — they mean the same under every type — so they keep it, and an unsent edit to one
-of them survives a type the operator changed on the unit.
+as "still what this session sent". An FX channel's ON and an insert effect's bypass are not laid out by
+anything — they mean the same under every type — so they keep it, and an unsent edit to either survives
+a type the operator changed on the unit.
 
 Two properties of that arrangement are load-bearing. A read that FAILS sends nothing — the head write
 behind it is the destructive half, so the session goes down and the unit is left as it is

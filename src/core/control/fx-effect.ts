@@ -708,38 +708,6 @@ export function fxParams(type: number): FxParamDesc[] {
   return out;
 }
 
-/** The FX effect LEVEL's own bounds and default, which the emit spells as literals because no
- *  descriptor describes that slot. */
-export const FX_LEVEL_MIN = 0;
-export const FX_LEVEL_MAX = 100;
-export const FX_LEVEL_DEFAULT = 100;
-
-/** The raw the write path sends for one FX value: a leaf that is not a finite NUMBER takes the
- *  catalogue default, then the window bounds it.
- *
- *  `Number.isFinite` is the load-bearing half, and specifically NOT the global `isFinite`,
- *  which coerces: a plan may hold a boolean under a numeric key — the document sanitiser keeps
- *  booleans, since node params have toggles — and plain arithmetic reads `false` as 0, so a
- *  bound computed without this lands on the window's floor where the emit substitutes the
- *  default — for an FX level that is the difference between 0 and 100, which is the effect
- *  going silent. The `typeof` in front of it narrows `unknown` for the compiler and decides
- *  nothing at run time.
- *
- *  A FRACTIONAL value is rounded rather than sent as it stands: a raw is a broker integer, so
- *  35.6 names no setting the unit has. The readout rounds it the same way, and the loader's
- *  repair writes that rounded value into the plan — the three have to agree or the panel, the
- *  document and the wire name different settings.
- *
- *  ONE seat, because the loader repairs a document to exactly what the emit would send, and two
- *  spellings of that rule are two answers to the same question. This form takes the bounds
- *  directly and is for the effect LEVEL, which no descriptor describes; everything a descriptor
- *  DOES describe goes through `fxRawForDesc`, since a window is not the only shape a valid set
- *  comes in. */
-export function fxRawToSend(stored: unknown, def: number, lo?: number, hi?: number): number {
-  const v = typeof stored === "number" && Number.isFinite(stored) ? Math.round(stored) : def;
-  return Math.min(Math.max(v, lo ?? v), hi ?? v);
-}
-
 /** The raw this descriptor's own control admits, nearest to `raw`.
  *
  *  A window is only the SLIDER's answer. A toggle admits 0 and 1 and carries no bounds at all,
@@ -816,6 +784,11 @@ export function migrateFxEffectParams(
   fxIndex: number,
   version: number,
 ): void {
+  // Array slot 2, at EVERY version: the app neither reads nor writes it, so a document
+  // carrying one holds a value no build addresses. Left in place it would survive the load
+  // unreported, be written back into every later save, and then be dropped without a word by
+  // the first device read, which rebuilds the section from what it read.
+  delete (fx as unknown as Record<string, unknown>).level;
   const params = fx.params;
   if (!params) return;
   const type = resolveFxEffectType(fxIndex, fx.type);

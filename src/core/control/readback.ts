@@ -1707,8 +1707,8 @@ async function readFxEffect(
   const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
   const type = await vdGet(FX_EFFECT_TYPE_PARAM[fxIndex], 0, 0);
   const params: Record<string, number> = {};
-  // The type's own descriptors are what the head lays out; ON and MIX are at fixed slots and
-  // mean the same thing under every type, so they stay on the caller's ordinary source.
+  // The type's own descriptors are what the head lays out; ON is at a fixed slot and means the
+  // same thing under every type, so it stays on the caller's ordinary source.
   for (const desc of fxParams(type)) {
     params[desc.key] = await laidOut(arrId, 0, desc.slot);
   }
@@ -1722,8 +1722,8 @@ async function readFxEffect(
 }
 
 /**
- * An FX channel's effect — the type, the two common slots and the selected type's parameter
- * array — applied to the plan. Shared by the full read and the silent-address park for the
+ * An FX channel's effect — the type, the ON slot every type shares and the selected type's
+ * parameter array — applied to the plan. Shared by the full read and the silent-address park for the
  * reason `readInsertFxInto` is, and MERGED into what the node already holds for the same
  * reason: the params map carries one key per FAMILY, so a channel that has held several
  * effects keeps each one's values and a read answers for the family the type names. Replacing

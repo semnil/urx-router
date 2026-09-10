@@ -133,8 +133,8 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
     const fx: unknown = plan.nodeParams[node]?.fxEffect;
     if (fx === undefined) continue;
     // The effect OBJECT. The sanitiser keeps a boolean and a non-empty array of objects, and
-    // every reader of the plan treats one as no effect at all — thirteen addresses the write
-    // path then never sends, with the document still holding what it holds.
+    // every reader of the plan treats one as no effect at all — that channel's whole address
+    // set the write path then never sends, with the document still holding what it holds.
     if (!isPlainRecord(fx)) {
       out.push({ reason: "paramRange", node, where: "effect", key: "fxEffect", stored: fx, action: "drop" });
       continue;
@@ -180,9 +180,13 @@ export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void
     }
     const fx = np.fxEffect!;
     if (p.where === "field") {
-      // No field carries a window any more — the effect TYPE is checked against the channel's
-      // menu and the parameter map against its own shape — so a field problem is a drop.
-      delete (fx as unknown as Record<string, unknown>)[p.key];
+      // Every field problem reported today is a drop — the effect TYPE is checked against the
+      // channel's menu and the parameter map against its own shape, and neither carries a
+      // window — but the bound is applied rather than assumed away, so a field that gains one
+      // is repaired instead of being silently removed.
+      const rec = fx as unknown as Record<string, unknown>;
+      if (p.action === "drop") delete rec[p.key];
+      else rec[p.key] = p.bound;
     } else if (p.action === "drop") {
       delete fx.params![p.key];
     } else {

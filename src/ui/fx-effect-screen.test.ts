@@ -139,8 +139,8 @@ describe("the delay time over MIDI", () => {
 //
 // The sequence is asked in full rather than as a property of it. What the lists claim is
 // that the operator reads the same rows in the same order here as on the unit's own screen,
-// and a rule over the sequence — one break, Mix at an end — is satisfied by orders that are
-// not that one. The expected rows are the message catalog's own values, so this pins the
+// and a rule over the sequence — the filters at the end, say — is satisfied by orders that
+// are not that one. The expected rows are the message catalog's own values, so this pins the
 // ORDER and leaves the spelling to `dev()`.
 describe("the row order", () => {
   const planHolding = (nodeId: string, type: number): Plan => {

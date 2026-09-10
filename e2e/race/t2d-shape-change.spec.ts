@@ -177,9 +177,9 @@ test.describe("T2d shape-change", () => {
 
   // shape-fx-effect-type-slot-family. The FX EFFECT TYPE selector is the only
   // parameter whose write changes which SLOTS of an array param exist rather than the
-  // value at a fixed id. The two families share seven slots, of which two (1 = ON,
-  // 2 = Mix) are the array's family-independent header and five (7, 8, 9, 10, 11)
-  // carry a different parameter on either side of the switch. Three things are
+  // value at a fixed id. The two families share six slots, of which one (1 = ON) is the
+  // array's family-independent header and five (7, 8, 9, 10, 11) carry a different
+  // parameter on either side of the switch. Three things are
   // measured in one run: the send ORDER (the selector must reach the device before the
   // array it types), the address SET on either side of the switch (read out of the
   // app's own two read passes — the opening readback before, the converge after), and
