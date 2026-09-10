@@ -132,10 +132,12 @@ export const en = {
     // launcher under it. The heading and the switch are the device's words, taken from
     // the Inspector row that names the same two things.
     insFxType: dev("EFFECT TYPE"),
-    // Why an entry cannot be picked, said in the width of a list row. The Inspector's
-    // sentences (`insFxRateLockedAt` / `insFxLinkLocked` / `insFxSlotLocked`) are the same
-    // three facts said at the width of a panel; these are what fits beside a name, and the
-    // row's title carries the sentence for anyone who hovers it.
+    // Why an entry cannot be picked, said in the width of a list row. The sentences beside
+    // them (`insFxRateLockedAt` / `insFxLinkLocked` / `insFxSlotLocked`) are the same three
+    // facts at the width of a panel; these are what fits beside a name, and the row's title
+    // carries the sentence for anyone who hovers it. Only the rate one is also said in the
+    // Inspector, on the bypass switch it forces off — the other two have no Inspector
+    // surface, since a locked option there is disabled without a reason beside it.
     insFxInUse: tr("in use"),
     insFxMax: (maxRate: string): string => `max ${maxRate}`,
     insFxMonoOnly: tr("mono only"),

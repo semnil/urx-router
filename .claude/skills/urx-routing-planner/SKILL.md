@@ -83,8 +83,8 @@ compander inserted on such a pair runs in stereo across it. So a pair whose
 nothing else, on either member — the app locks the rest of the menu there — and a
 pair holds one effect between the two channels rather than one each. Changing
 Signal Type in **either** direction clears the pair's insert effect on the unit, so
-a plan that links a pair and gives it a guitar amp describes a state the unit will
-not be in. Neither the bundled route table nor `plan_tool.py` can see this one:
+a plan that links a pair and gives it a guitar amp describes a state the unit's own
+panel will not produce. Neither the bundled route table nor `plan_tool.py` can see this one:
 check it by reading `stereoLink` beside `insertFx` yourself.
 
 **High sample rates drop features.** Above 96 kHz (i.e. at 176.4 / 192 kHz) the

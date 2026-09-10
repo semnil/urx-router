@@ -1223,9 +1223,10 @@ chip re-took the effect CH 2 had claimed one gesture earlier, putting `135:0:2` 
 while CH 3's own inspector was greying that option out.
 
 `constraints.ts` now owns `insertFxMenu(model, plan, nodeId)`, returning every option with the reason it
-is locked (`"rate" | "slot" | null`). The inspector renders it directly and the console's candidate list
-is defined over it (`insertFxFree`), so a third lock reason later reaches both surfaces without either
-UI file being edited. `params.ts` is pure data with zero imports, and `translate.ts` is the emit path —
+is locked (`"rate" | "link" | "slot" | null`). The inspector renders it directly and the console's candidate
+list is defined over it (`insertFxFree`), so a lock reason added later reaches the inspector with no edit —
+it disables a locked option whatever the reason — while the console, which names each reason in the row,
+takes a branch and a message. `params.ts` is pure data with zero imports, and `translate.ts` is the emit path —
 a UI-only availability rule beside it invites consulting it while emitting, which must never happen.
 
 Two sub-decisions. The bypass toggle at a rate that locks every effect is **locked and displayed OFF**,

@@ -94,8 +94,11 @@ carries a one-line map of the same directories and points here.
   bus the unit is not running, and every send column aimed at it). These are **UI-only**: the device accepts and holds writes to
   the "unavailable" params at 192 kHz (measured), so the write set is never gated by rate — see "Sample rate
   and Follow USB". It also owns the insert-FX menu (`insertFxMenu` returns every option with its lock
-  reason, `"rate" | "slot" | null`, so the inspector and the console are both defined over the one table and
-  a third lock reason reaches them without either UI file being edited; a caller rendering many menus at
+  reason, `"rate" | "link" | "slot" | null`, so the inspector and the console are both defined over the one
+  table. What that buys was measured when the third reason arrived: the inspector took it with no edit at all,
+  since it renders a locked option as disabled whatever the reason, while the console names each reason in a
+  row and so needed a branch and a message of its own. A surface that only has to know THAT an entry is locked
+  follows for free; one that says WHY does not. A caller rendering many menus at
   once passes in one `insertFxCensus` sweep instead of paying it per node). And Ducker bypass detection
   (`channelDuckerOn` = PRE-send notes, `duckerBypassWarnings` = pre-fader tap warnings for USB direct outs;
   microSD Rec intentionally excluded; `duckerBypassCandidates` is that warning's own predicate without the
@@ -681,8 +684,12 @@ The constraint core (`core/routing.ts`):
   `insertFxMenu` locks them as `"link"` on both members while the pair is linked. It is the second of the
   three lock kinds and it is asked SECOND, after the rate: a linked pair above every ceiling has to report
   the rate on every entry, or `insertFxAllRateLocked` stops answering for it and the rate warning and the
-  forced-off bypass go with it. Like the other two it is UI-only — a plan that carries such a value (a file,
-  a `?plan=` link, a device read) still emits it, since the value is one the unit holds.
+  forced-off bypass go with it. Like the other two it is UI-only, and here that is a measurement rather than
+  a convention: the unit **accepts** a mono-only selector on a linked pair, mirrors it to both members and
+  binds the engine, which is how the pair's mirror was established in the first place. Its own panel offers
+  no such entry, so the state is one only software can put it in — and a plan that carries such a value
+  (a file, a `?plan=` link, a device read of a unit some earlier build wrote to) still emits it, rather than
+  being silently rewritten on the way out. What the unit's DSP does with it is not measured.
   The transition also **names every key it wrote** to the edit funnel's write witness, because none of them
   has to move: the three deletions land on a member that carried no effect, and unlinking a BAL pair re-centres
   pans that are already centred. A device read in flight arbitrates by authorship for exactly that reason, and
