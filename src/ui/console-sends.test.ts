@@ -212,9 +212,10 @@ describe("the header readout", () => {
   });
 
   // The tap is left out of the readout: the column's own PRE button already carries it,
-  // and spelling it here as well made the longest reading wider than the strip, clipping
-  // the level off its right edge. So this is a set — the word goes, and the two places
-  // that do carry the tap have to still carry it (the button here, `aria-valuetext` below).
+  // and spelling it here as well made the longest reading wider than the header's share of
+  // the strip, clipping the level off its right edge. So this is a set — the word goes, and
+  // the two places that do carry the tap have to still carry it (the button here, whose
+  // `aria-pressed` is its accessible form, and `aria-valuetext`'s PRE prefix below).
   it("leaves the tap out of the readout and lights the column's PRE button instead", () => {
     h = consoleHost();
     seedLevel("ch1", "bus.mix1", -3.2);
@@ -224,7 +225,9 @@ describe("the header readout", () => {
 
     h.sendCol("ch1", "bus.mix1").fader.dispatchEvent(new PointerEvent("pointerenter"));
     const sh = header("ch1");
-    expect(sh.classList.contains("readout")).toBe(true); // on screen, not merely written
+    // The state the swap is keyed on. This host loads no stylesheet, so nothing here is
+    // laid out and whether the reading is drawn belongs to the E2E case's own measurement.
+    expect(sh.classList.contains("readout")).toBe(true);
     const text = sh.querySelector(".rdout")!.textContent;
     expect(text).toBe("MIX 1 -3.2");
     expect(text).not.toContain(t().console.pre);
