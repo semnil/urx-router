@@ -215,9 +215,10 @@ test("a send column fader edits the send level and drives the header readout", a
 });
 
 // Every reading the rack can put in its header has to be readable there. The readout gets
-// what the collapse arrow and the flex gap leave of the strip's width, does not wrap and
-// shows no ellipsis, so an over-wide one is clipped rather than reported: the level loses
-// its last characters and what is left reads as a real value.
+// what the collapse arrow and the flex gap leave of the header, which is itself the strip
+// less its border and the rack's padding; it does not wrap and shows no ellipsis, so an
+// over-wide reading is clipped rather than reported — the level loses its last characters
+// and what is left reads as a real value.
 //
 // Four measurements, because each way that breaks is invisible to the other three — the
 // text can overrun its own box; the box can grow a second line the fixed-height header
@@ -242,11 +243,19 @@ test("every send reading fits the rack header, in both tap states", async ({ pag
       // The state this says it is measuring. Without it a click that stops landing leaves
       // the run measuring POST twice, green.
       await expect(pre).toHaveAttribute("aria-pressed", String(tap === "pre"));
-      for (const key of ["Home", "End"]) {
+      // Home is the top of travel and End the bottom, so the two ends of the value
+      // vocabulary get measured: the five-character +10.0 and the two-character -∞.
+      for (const [key, value] of [
+        ["Home", "+10.0"],
+        ["End", "-∞"],
+      ]) {
         await c.locator(".con-vfad").focus();
         await page.keyboard.press(key);
-        // The label swapped for a reading — otherwise what gets measured is "SENDS".
+        // The label swapped for a reading — otherwise what gets measured is "SENDS" —
+        // and the reading the key asked for, since a key that stops landing leaves every
+        // measurement below on whatever the send already held.
         await expect(sh).toHaveClass(/readout/);
+        await expect(sh.locator(".rdout")).toContainText(value);
         const m = await sh.evaluate((el) => {
           const rd = el.querySelector<HTMLElement>(".rdout")!;
           const ar = el.querySelector<HTMLElement>(".ar")!;
@@ -256,6 +265,9 @@ test("every send reading fits the rack header, in both tap states", async ({ pag
           const EPS = 0.5; // subpixel layout, not room for a character
           return {
             text: rd.textContent ?? "",
+            // A readout that is not laid out at all has a zero box, and zero is inside
+            // every bound below — so this is what makes the four measurements measure.
+            drawn: read.width > 0 && read.height > 0,
             textInsideItsBox: rd.scrollWidth <= rd.clientWidth,
             boxInsideHeader: read.right <= head.right + EPS && read.bottom <= head.bottom + EPS,
             clearOfTheArrow: read.right <= arrow.left + EPS,
@@ -263,7 +275,7 @@ test("every send reading fits the rack header, in both tap states", async ({ pag
           };
         });
         const at = `"${m.text}" — column ${i}, ${tap}, ${key}`;
-        expect(m.text, at).not.toBe("");
+        expect(m.drawn, at).toBe(true);
         expect(m.textInsideItsBox, at).toBe(true);
         expect(m.boxInsideHeader, at).toBe(true);
         expect(m.clearOfTheArrow, at).toBe(true);
