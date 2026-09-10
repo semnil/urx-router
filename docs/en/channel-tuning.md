@@ -80,17 +80,19 @@ side could be driven alone at a level this end set:
 | The **compressor's** reduction read the same figure on both members with one side driven, both members having been given identical compressor values first | The same, and it is why the reduction lane is not widened with the level lanes |
 | Switching PAN/BAL to PAN left the unit drawing four bars | The rule keys on Signal Type alone, not on the pair's PAN/BAL mode |
 | A ducker keyed off one member ducked when that member was driven and not when its partner was | The DUCKER screen's KEY lane is **unaffected**: it reads the key source channel's own tap, and the sum-the-sides rule that a stereo key gets does not extend to a linked MONO IN pair |
+| The gate opens at the same threshold with one side driven and with both driven at that same level, correlated — no shift, where a sum would move it about 6 dB | The pair's detector takes the **louder side**, which is the fold the rack already applies to a two-sided lane's readout. So the threshold cap the GATE and COMP screens hang on the input lane keeps its coordinate on a linked pair, and neither lane needs a `foldSides` |
 
-The resolver is `pairTap` in `src/ui/dyn-chan.ts`, which every level lane on GATE / COMP / EQ / the
-SSMCS bank / INS FX goes through. It takes a resolver rather than a tap key because one caller's
-address does not come from the tap table.
+The resolver is `pairTap` in `src/ui/dyn-chan.ts`, and every level lane on GATE / COMP / EQ / the
+SSMCS bank / INS FX goes through it.
 
-**The SSMCS side-chain lane is the exception, and it is one bar.** The unit's COMP Side Chain screen
+**The SSMCS side-chain lane is the exception, and it is one bar** — the unit's COMP Side Chain screen
 (user guide, "SC meter") draws a single column there while its input/output meter draws two, read off
 a linked pair. Its two addresses are not one figure the way the reduction's are: in SSMCS with the
 strip's compressor and its side chain both on, a tone in one side moved that member's `109` and left
-the other's at the floor. So the lane cannot carry both and cannot carry the member the screen was
-opened on either — either member opens the same screen — and it takes `pairNode`, the pair's primary.
+the other's at the floor. **Which of the two the unit's own column draws has not been read off it**,
+so the lane keeps the member the screen was opened on. The alternative — the pair's primary on both
+members' screens — puts the partner's meter under this channel's filter controls, and with signal on
+the partner alone it would sit at the floor beside a reduction that is visibly working.
 
 ## Layout
 

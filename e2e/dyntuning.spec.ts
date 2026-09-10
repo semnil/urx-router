@@ -449,6 +449,36 @@ test.describe("with a live session", () => {
     await expectGateTaps(page);
   });
 
+  test("paints each member's own level on its own bar", async ({ page }) => {
+    // The bar count and the subscribed addresses are both satisfied by a rack that draws
+    // the primary's level twice, which is the defect this pair of bars exists to prevent.
+    // So drive the two addresses apart and read the bars back.
+    await linkPair(page);
+    await openFromInspector(page, "ch1");
+    await pushMeters(page, [106, 0, -60], [106, 1, -300]);
+
+    // Both sides in ONE reading: a snapshot of the other side taken before the poll starts
+    // is the value from before the push, and comparing against it passes on a rack that
+    // never moved.
+    const louder = () =>
+      screenBox(page)
+        .locator(".gt-slot.stereo")
+        .first()
+        .locator(".gt-side .gt-shade")
+        .evaluateAll((els) => {
+          const [l, r] = els.map((el) => Number(getComputedStyle(el).getPropertyValue("--lvl")));
+          return l === r ? "same" : l > r ? "L" : "R";
+        });
+    await expect.poll(louder).toBe("L");
+    // The shared readout prints the louder side, which is the coordinate the pair's own
+    // detector works in — so it is CH1's here and CH2's once the two are swapped.
+    await expect(readout(page, "PRE GATE").locator(".v")).toHaveText("-6.0");
+
+    await pushMeters(page, [106, 0, -300], [106, 1, -60]);
+    await expect.poll(louder).toBe("R");
+    await expect(readout(page, "PRE GATE").locator(".v")).toHaveText("-6.0");
+  });
+
   test("streams both members of a STEREO-linked pair, from either member's screen", async ({ page }) => {
     // The bar count says the rack drew two; this says which addresses they are, and that
     // the reduction is still one. Both members open the same pair, in the same order.

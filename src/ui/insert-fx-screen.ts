@@ -51,7 +51,7 @@ import { insertFxSelected } from "../core/control/params";
 import { controlId, INSFX_SCOPE } from "../core/midi/controls";
 import { effectiveInsertFx, insertFxControl } from "../core/control/translate";
 import type { DynField, InsertFxFieldKey } from "../core/control/translate";
-import { insertFxInGrAddr, insertFxOutGrAddr, tapFor } from "../core/meters";
+import { insertFxInGrAddr, insertFxOutGrAddr } from "../core/meters";
 import type { NodeParams, Plan } from "../core/plan";
 import type { DeviceModel } from "../models/types";
 import { el, onOff, onOffButton, settingsRow, settingsSection, sliderRow } from "./dom";
@@ -541,8 +541,8 @@ const rawOf = (ctx: DynCtx, fam: InsertFxFamily, d: InsertFxParamDesc): number =
  */
 function lanesOf(ctx: DynCtx, isOutput: boolean): DynLane[] {
   const g = ctx.m.dynTuning;
-  const inTap = pairTap(ctx, (id) => tapFor(id, "preinsfx", ctx.model.id));
-  const outTap = pairTap(ctx, (id) => tapFor(id, isOutput ? "post" : "prefader", ctx.model.id));
+  const inTap = pairTap(ctx, "preinsfx");
+  const outTap = pairTap(ctx, isOutput ? "post" : "prefader");
   const fam = familyOf(ctx);
   const lanes: DynLane[] = [levelLane("in", inTap, g.laneIn), levelLane("out", outTap, g.laneOut)];
   // The multi-band compressor is metered per BAND, and a band face carries the one that

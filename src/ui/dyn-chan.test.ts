@@ -14,7 +14,9 @@ import { EQ_DYN } from "./dyn-eq";
 import { GATE_DYN } from "./dyn-gate";
 import { INSFX_DYN } from "./insert-fx-screen";
 import { SC_SEL, SSMCS_COMP_DYN, SSMCS_DYN, SSMCS_EQ_DYN } from "./dyn-ssmcs";
+import { DUCKER_DYN } from "./dyn-ducker";
 import { getModel } from "../models";
+import { ref } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
 import { setLang, t } from "../i18n";
 import { COMP_EQ_SSMCS, PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
@@ -115,19 +117,22 @@ describe("a MONO IN pair whose Signal Type is STEREO", () => {
     }
   });
 
-  it("keeps the SSMCS side-chain lane at one bar, on the pair's own node", () => {
-    const plan = ssmcs(linkedPlan());
+  it("keeps the SSMCS side-chain lane at one bar, on the member the screen was opened on", () => {
     // The unit draws one bar there while the lanes around it carry two, and its two
-    // addresses hold each member's own filter output — so the lane cannot take both, and
-    // which one it takes has to be the same from either member's screen.
-    for (const id of ["ch1", "ch2"]) {
-      expect(sides(laneOf(SSMCS_COMP_DYN, ctxFor(id, plan, SC_SEL), "sc"))).toEqual([[109, 0]]);
-    }
+    // addresses hold each member's own filter output. Which of the two the unit's own bar
+    // is has not been read off it, so the lane reads the opened member — where it cannot
+    // put one channel's meter under the other channel's controls.
+    const plan = ssmcs(linkedPlan());
+    expect(sides(laneOf(SSMCS_COMP_DYN, ctxFor("ch1", plan, SC_SEL), "sc"))).toEqual([[109, 0]]);
+    expect(sides(laneOf(SSMCS_COMP_DYN, ctxFor("ch2", plan, SC_SEL), "sc"))).toEqual([[109, 1]]);
   });
 
-  it("leaves an unlinked channel's side-chain lane on its own node", () => {
-    const plan = ssmcs(defaultPlan("URX44V"));
-    expect(sides(laneOf(SSMCS_COMP_DYN, ctxFor("ch2", plan, SC_SEL), "sc"))).toEqual([[109, 1]]);
+  it("draws both members on the SSMCS MAIN face's third level lane", () => {
+    const plan = ssmcs(linkedPlan());
+    expect(sides(laneOf(SSMCS_DYN, ctxFor("ch1", plan), "post"))).toEqual([
+      [112, 0],
+      [112, 1],
+    ]);
   });
 
   it("draws both members on the INS FX screen's level lanes", () => {
@@ -151,14 +156,24 @@ describe("a MONO IN pair whose Signal Type is STEREO", () => {
     }
   });
 
-  it("keeps the reduction lane at one bar", () => {
-    const ctx = ctxFor("ch1", linkedPlan());
-    for (const proc of [GATE_DYN, COMP_DYN]) {
-      const gr = laneOf(proc, ctx, "gr");
-      expect(gr.kind).toBe("gr");
-      // A reduction lane carries no tap at all, which is what holds it to one bar however
-      // the level lanes beside it are drawn.
-      expect(gr.tap).toBeUndefined();
+  it("keeps the reduction lane at one bar, on the member the screen was opened on", () => {
+    // The bar count is not the whole claim: a lane moved onto the primary's address would
+    // still carry no tap and still draw one bar, so the ADDRESS is what this asks for.
+    for (const [proc, meterId] of [
+      [GATE_DYN, 107],
+      [COMP_DYN, 110],
+    ] as const) {
+      for (const [id, x] of [
+        ["ch1", 0],
+        ["ch2", 1],
+      ] as const) {
+        const gr = laneOf(proc, ctxFor(id, linkedPlan()), "gr");
+        expect(gr.kind).toBe("gr");
+        // A reduction lane carries no tap at all, which is what holds it to one bar however
+        // the level lanes beside it are drawn.
+        expect(gr.tap).toBeUndefined();
+        expect(gr.gr).toEqual([meterId, x]);
+      }
     }
   });
 
@@ -178,6 +193,46 @@ describe("a MONO IN pair whose Signal Type is STEREO", () => {
       [106, 2],
       [106, 3],
     ]);
+  });
+});
+
+describe("models other than the one the rule was measured on", () => {
+  it("takes URX22's own pair and its own addresses", () => {
+    // URX22 carries two MONO IN channels and one pair, and its tap table is its own — a
+    // rule gated on the model would pass every URX44V case and reach nothing here.
+    const plan = defaultPlan("URX22");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true, panBal: PAN_BAL_BAL };
+    const ctx: DynCtx = { model: getModel("URX22"), plan, nodeId: "ch2", sel: 0, m: t() };
+    expect(sides(laneOf(GATE_DYN, ctx, "in"))).toEqual([
+      [106, 0],
+      [106, 1],
+    ]);
+  });
+});
+
+describe("the nodes a screen declares it draws", () => {
+  it("names the pair, so a change on either member reaches the screen", () => {
+    const plan = linkedPlan();
+    for (const proc of [GATE_DYN, COMP_DYN, EQ_DYN]) {
+      expect(new Set(proc.ownNodes!(ctxFor("ch2", plan)))).toEqual(new Set(["ch1", "ch2"]));
+    }
+  });
+
+  it("names only itself off a pair", () => {
+    expect(GATE_DYN.ownNodes!(ctxFor("ch2", defaultPlan("URX44V")))).toEqual(["ch2"]);
+  });
+});
+
+describe("the DUCKER's key lane", () => {
+  it("stays on the key source member, which the unit keys off alone", () => {
+    // The pair's own detectors are shared, but a ducker keyed off one member fires on that
+    // member's signal and not on its partner's, so this lane is not widened with the rest.
+    const plan = linkedPlan();
+    const conn = plan.connections.find((c) => c.kind === "key" && c.to === ref("out.ducker1", "in"))!;
+    conn.from = ref("ch2", "out");
+    const key = laneOf(DUCKER_DYN, ctxFor("out.ducker1", plan), "key");
+    expect(sides(key)).toHaveLength(1);
+    expect(key.tap!.l[1]).toBe(1);
   });
 });
 
