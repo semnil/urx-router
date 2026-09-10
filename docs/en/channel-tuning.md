@@ -1088,11 +1088,18 @@ column is for on every other screen is a live reading, and this one had none to 
 
 | Rows, in order |
 | --- |
-| Correction, Coarse, Fine, Formant, **MIDI Control**, Key, Scale, Mix, Limit Low, Limit High, Speed, Tolerance — then the twelve notes, spanning the panel |
+| Correction, Coarse, Fine, Formant, **MIDI Control**, Key, Scale, Limit Low, Limit High, Mix, Speed, Tolerance — then the twelve notes, spanning the panel |
 
-**Correction leads.** It is the switch the whole effect hangs off: everything under it describes a
-correction that is not happening while it is off. That is a departure from the unit's own read order,
-which puts it fourth, and it is the only row here that departs from it.
+**The order is the unit's own screen**, which is not the catalogue's: the catalogue lists the device's
+READ order, and that puts Correction fourth and Mix fifth.
+
+**Seven columns — the stylesheet's own default — because that is where the groups fall.** This face has
+three of them: MIDI Control with the Key and Scale it decides, Limit Low with Limit High, and Speed with
+Tolerance. At seven each lands on a row of its own. The unit puts FOUR on a row, and taken here that
+splits Limit Low from Limit High; three, five, six and eight each split that pair or split MIDI Control
+from the Key and Scale beside it. So the face names no count and the width the FX EFFECT screen sets for
+itself does not reach it. `e2e/insertfx.spec.ts` pins the grouping rather than the number, since what
+has to hold is which rows the cards share.
 
 **MIDI Control is in front of the Key**, which is where the unit puts it: it decides where the notes
 the correction aims at come from, and from Setting on the Key's own Scale is the unit's rather than

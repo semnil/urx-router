@@ -149,17 +149,14 @@ const GUITAR_ORDER: readonly string[] = [
 const GUITAR_AFTER_BREAK: ReadonlySet<string> = new Set(GUITAR_ORDER.slice(GUITAR_ORDER.indexOf("mod")));
 
 /**
- * Pitch Fix on ONE face, Correction first.
+ * Pitch Fix on ONE face, in the order the unit's own screen puts the rows in — which is not
+ * the catalogue's, since the catalogue lists the device's READ order and puts Correction
+ * fourth.
  *
- * Correction leads because it is the switch the whole effect hangs off — everything below
- * it describes a correction that is not happening while it is off — so it holds the first
- * card, which is the first thing read and the first thing reachable. That is a departure
- * from the unit's own read order, which puts it fourth, and it is the only row here that
- * departs from it.
- *
- * Then what the correction DOES to a note, then what it is aimed at. MIDI Control, the
- * Scale and the twelve notes are not in the flat catalogue at all and are built beside the
- * Key: the mode decides where the notes come from, and the Scale is rooted at the Key.
+ * MIDI Control, the Scale and the twelve notes are not in the flat catalogue at all and are
+ * built beside the Key: the mode decides where the notes come from, and the Scale is rooted
+ * at the Key. The unit shows the three in that same run, MIDI Control ahead of the Key and
+ * the Scale behind it.
  */
 const PITCH_ORDER: readonly string[] = [
   "correction",
@@ -167,9 +164,9 @@ const PITCH_ORDER: readonly string[] = [
   "fine",
   "formant",
   "key",
-  "mix",
   "limitLow",
   "limitHigh",
+  "mix",
   "speed",
   "tolerance",
 ];

@@ -955,11 +955,17 @@ Scale セレクト・同じ MIDI Control 行・同じ 12 個のボタンがあ�
 
 | 行の順序 |
 | --- |
-| Correction・Coarse・Fine・Formant・**MIDI Control**・Key・Scale・Mix・Limit Low・Limit High・Speed・Tolerance — 最後に 12 音をパネル幅いっぱいで |
+| Correction・Coarse・Fine・Formant・**MIDI Control**・Key・Scale・Limit Low・Limit High・Mix・Speed・Tolerance — 最後に 12 音をパネル幅いっぱいで |
 
-**Correction を先頭に置く。**エフェクト全体がぶら下がるスイッチであり、それが OFF の間、下にあるすべては
-「起きていない補正」を記述しているにすぎない。実機の読み順 (4 番目) からの逸脱であり、ここで逸脱している行は
-これだけである。
+**並びは実機の画面のもの**であり、カタログのものではない: カタログが並べるのは実機の**読み**順で、そちらは
+Correction を 4 番目・Mix を 5 番目に置く。
+
+**列数は 7 (スタイルシート自身の既定) — そこにグループの切れ目が来るからである。**この面はグループを
+3 つ持つ: MIDI Control とそれが決める Key・Scale、Limit Low と Limit High、Speed と Tolerance。7 列では
+それぞれが 1 段に収まる。実機は 1 段に **4 つ**並べるが、この面をそれで折り返すと Limit Low と Limit High が
+分かれ、3・5・6・8 列はいずれもその対か、MIDI Control とその隣の Key・Scale のどちらかを分ける。よって
+この面は列数を宣言せず、FX EFFECT 画面が自分に設定する列数もここには届かない。`e2e/insertfx.spec.ts` が
+数ではなく**グループ分け**を固定する — 保たれるべきなのはどのカードが同じ段に来るかだからである。
 
 **MIDI Control は Key の手前に置く。**実機がそう並べており、補正が狙う音がどこから来るかを決めるのはこの
 モードで、Setting 以降は Key に紐づく Scale もプラン側ではなく実機のものになる。
