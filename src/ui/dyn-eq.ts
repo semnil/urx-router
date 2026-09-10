@@ -48,7 +48,7 @@ import { tapFor } from "../core/meters";
 import type { EqBand, NodeParams } from "../core/plan";
 import { el, onOff, settingsRow, settingsSection } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { enumRow, levelLane } from "./dyn-chan";
+import { enumRow, levelLane, pairTap } from "./dyn-chan";
 import { bandMarkers, drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo, pickBandMarker } from "./dyn-freq-plot";
 import type { BandMarker } from "./dyn-freq-plot";
 import { flagOffNote, oneKnobLevelRow, splitDisplay } from "./dyn-screen";
@@ -111,7 +111,11 @@ export const EQ_DYN: DynPlotProcessor = {
     // already get while 1-knob is off.
     const fields = eqBandFields(ctx.sel);
     const lane = (key: string, tapKey: string, caption: string): DynLane =>
-      levelLane(key, tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null, caption);
+      levelLane(
+        key,
+        pairTap(ctx, (id) => tapFor(id, tapKey, ctx.model.id)),
+        caption,
+      );
     return {
       fields,
       lanes: [lane("in", keys.in, ctx.m.dynTuning.laneIn), lane("out", keys.out, ctx.m.dynTuning.laneOut)],

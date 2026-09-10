@@ -56,7 +56,7 @@ import type { NodeParams, Plan } from "../core/plan";
 import type { DeviceModel } from "../models/types";
 import { el, onOff, onOffButton, settingsRow, settingsSection, sliderRow } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { enumRow, levelLane, rowBreak } from "./dyn-chan";
+import { enumRow, levelLane, pairTap, rowBreak } from "./dyn-chan";
 import { curveMarks, drawTransferCurve, transferPlot } from "./dyn-plot";
 import { PLOT_FONT_TAG, splitDisplay } from "./dyn-screen";
 import type { DynPlotGeo } from "./dyn-screen";
@@ -541,8 +541,8 @@ const rawOf = (ctx: DynCtx, fam: InsertFxFamily, d: InsertFxParamDesc): number =
  */
 function lanesOf(ctx: DynCtx, isOutput: boolean): DynLane[] {
   const g = ctx.m.dynTuning;
-  const inTap = tapFor(ctx.nodeId, "preinsfx", ctx.model.id) ?? null;
-  const outTap = tapFor(ctx.nodeId, isOutput ? "post" : "prefader", ctx.model.id) ?? null;
+  const inTap = pairTap(ctx, (id) => tapFor(id, "preinsfx", ctx.model.id));
+  const outTap = pairTap(ctx, (id) => tapFor(id, isOutput ? "post" : "prefader", ctx.model.id));
   const fam = familyOf(ctx);
   const lanes: DynLane[] = [levelLane("in", inTap, g.laneIn), levelLane("out", outTap, g.laneOut)];
   // The multi-band compressor is metered per BAND, and a band face carries the one that
