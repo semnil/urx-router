@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deserialize, PLAN_VERSION } from "../src/core/plan";
-import { insertFxPairProblems } from "../src/core/plan-validate";
+import { insertFxPairProblems, paramRangeProblems } from "../src/core/plan-validate";
 import { getModel, MODEL_IDS } from "../src/models";
 import { INSERT_FX_OPTIONS } from "../src/core/control/params";
 import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
@@ -101,8 +101,11 @@ const leavesOf = (value, path = [], out = new Map()) => {
   return out;
 };
 
-// Rev-X Hall's own LPF starts well above 0, and no channel offers type 12345 — the two the
-// tool cannot answer without the app's effect catalogue.
+// Rev-X Hall's own LPF starts well above 0, and no channel offers type 12345. These were the
+// two the tool could not answer while models.json carried routing alone; it carries the FX
+// channels' menus and admitted sets now, so both are answered and the rows say so. What they
+// pin is that the tool's warning and the app's repair agree per document, which is the same
+// question every other row asks.
 const CASES = [
   ["a document the app writes itself", { on: true, type: 0, params: { revxLpf: 40 } }, false, false],
   ["an empty effect object, whose key the app removes", {}, true, true],
@@ -117,8 +120,8 @@ const CASES = [
   ["a null parameter, which the sanitiser drops", { type: 0, params: { revxLpf: null } }, true, true],
   ["an effect object that is not an object", false, true, true],
   ["an effect object that is an array", [{}], true, true],
-  ["a number outside its parameter's window", { type: 0, params: { revxLpf: 0 } }, true, false],
-  ["a type no channel offers", { type: 12345 }, true, false],
+  ["a number outside its parameter's window", { type: 0, params: { revxLpf: 0 } }, true, true],
+  ["a type no channel offers", { type: 12345 }, true, true],
 ];
 
 // Skipped BY NAME where python3 is absent, rather than passing over a tool it never ran.
@@ -265,13 +268,14 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     );
   });
 
-  // The gap, as a count. Two documents the app rewrites and the tool cannot see — both need
-  // the effect catalogue, which the bundled data does not carry.
-  it("has exactly two blind spots, both needing the effect catalogue", () => {
-    expect(CASES.filter(([, , changes, warns]) => changes && !warns).map(([name]) => name)).toEqual([
-      "a number outside its parameter's window",
-      "a type no channel offers",
-    ]);
+  // The gap, as a count. It was two — a number outside its parameter's window and a type no
+  // channel offers, both needing the FX channel's catalogue — and models.json carries that
+  // catalogue now, so it is NONE. Asserted as a number rather than deleted: a table of cases
+  // where the app rewrites and the tool says nothing is exactly what the whole file exists to
+  // keep at zero, and a row that stops warning tomorrow has to land here rather than passing
+  // as one more green case.
+  it("has no blind spots left", () => {
+    expect(CASES.filter(([, , changes, warns]) => changes && !warns).map(([name]) => name)).toEqual([]);
   });
 
   // The third stage the answers above rest on. `appChanges` asks what the SANITISER does to a
@@ -817,6 +821,80 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     // What the APP did with it, which is what the warning is a claim about.
     expect(loaded.nodeParams.ch1?.insertFxParams === undefined, `the app dropped it: ${_name}`).toBe(dropped);
     expect(r.stderr.includes("node param ch1.insertFxParams:"), `the tool says so: ${_name}`).toBe(dropped);
+  });
+
+  // The FX channel's own two repairs, which the tool could not see until models.json carried
+  // the channel's menu and what each control admits. Both sides are asked the same documents
+  // and have to name the same paths: the app REPORTS them (`paramRangeProblems`) and the tool
+  // WARNS about them, and a plan the tool calls clean must not be one the app repairs.
+  //
+  // The admitted set is the CONTROL's, so the rows walk all three kinds — a slider's window,
+  // a select's option list and a toggle's two states — because bounding everything against a
+  // range is the mistake the app's own note records.
+  it("agrees with the app about the FX repairs that need the channel's catalogue", () => {
+    const FX = JSON.parse(readFileSync(join(ROOT, ".claude/skills/urx-routing-planner/scripts/models.json"), "utf8"))
+      .URX44V.fxChannels["bus.fx1"];
+    expect(FX, "the generated data carries the channel").toBeDefined();
+
+    const slider = Object.entries(FX.params).find(([, p]) => p.control === "slider" && p.rawMax !== undefined);
+    const select = Object.entries(FX.params).find(([, p]) => p.control === "select" && (p.options ?? []).length > 1);
+    const toggle = Object.entries(FX.params).find(([, p]) => p.control === "toggle");
+    expect(slider, "a slider key").toBeDefined();
+    expect(select, "a select key").toBeDefined();
+    expect(toggle, "a toggle key").toBeDefined();
+
+    const ask = (fxEffect) => {
+      const plan = {
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: "URX44V",
+        connections: [],
+        nodeParams: { "bus.fx1": { fxEffect } },
+      };
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const loaded = deserialize(JSON.stringify(plan));
+      expect(loaded).not.toBeNull();
+      return { app: paramRangeProblems(loaded), tool: r.stderr };
+    };
+
+    // A type the menu does not offer: the app DROPS it.
+    const badType = ask({ type: 4242 });
+    expect(
+      badType.app.some((p) => p.key === "type" && p.action === "drop"),
+      "the app drops the type",
+    ).toBe(true);
+    expect(badType.tool, "the tool names the type").toContain("bus.fx1.fxEffect.type");
+    // …and a type it DOES offer is not reported, or the row above passes on a checker that
+    // objects to every type.
+    expect(
+      ask({ type: FX.types[0] }).app.some((p) => p.key === "type"),
+      "a legal type",
+    ).toBe(false);
+    expect(ask({ type: FX.types[0] }).tool).not.toContain("bus.fx1.fxEffect.type");
+
+    // Each control kind, past what it admits and then inside it.
+    for (const [name, [key, spec], past, inside] of [
+      ["slider", slider, slider[1].rawMax + 1, slider[1].rawMax],
+      ["select", select, Math.max(...select[1].options) + 1, select[1].options[0]],
+      ["toggle", toggle, 2, 1],
+    ]) {
+      const over = ask({ type: FX.types[0], params: { [key]: past } });
+      expect(
+        over.app.some((p) => p.key === key && p.action === "bound"),
+        `the app bounds ${name} ${key}=${past}`,
+      ).toBe(true);
+      expect(over.tool, `the tool names ${name} ${key}`).toContain(`bus.fx1.fxEffect.params.${key}`);
+
+      const ok = ask({ type: FX.types[0], params: { [key]: inside } });
+      expect(
+        ok.app.some((p) => p.key === key),
+        `the app leaves ${name} ${key}=${inside}`,
+      ).toBe(false);
+      expect(ok.tool, `the tool leaves ${name} ${key}`).not.toContain(`bus.fx1.fxEffect.params.${key}`);
+      void spec;
+    }
   });
 
   // The one family whose write set MOVES with its own values: Pitch Fix stops sending the

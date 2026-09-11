@@ -10,6 +10,7 @@ import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
 import { INSERT_FX_OPTIONS } from "../core/control/params";
+import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
 import {
   insertFxDeviceDriven,
   insertFxDriverSlots,
@@ -39,6 +40,23 @@ export interface SkillModel {
    *  slot's own name ("guitar amp") is a display word matching no namespace, a value outside
    *  its slot's range reaches the unit as the end of that range, and a slot the unit is
    *  driving itself is not sent at all. */
+  /** Per FX-channel node id: the effect types its menu offers, and what each parameter key
+   *  ADMITS. Both are what `plan_tool.py` needs to answer the two questions it could not:
+   *  a `type` the menu does not offer (dropped on load, since a menu has no nearest member)
+   *  and a finite number outside what its control admits (bounded on load).
+   *
+   *  The admitted set is the CONTROL's rather than a window, because that is what the app
+   *  normalises against: a toggle takes 0 and 1 with no bounds written down, a select takes
+   *  its option values, and only a slider has a window. A key is listed ONCE per channel —
+   *  the catalogue pins that one channel never gives a key two different windows, which is
+   *  why the app can bound a key whichever of its types named it. */
+  fxChannels: Record<
+    string,
+    {
+      types: number[];
+      params: Record<string, { control: string; rawMin?: number; rawMax?: number; options?: number[] }>;
+    }
+  >;
   insertFxParamSpace: Record<
     string,
     {
@@ -63,7 +81,29 @@ function skillModel(model: DeviceModel): SkillModel {
     rules: model.rules.map((r) => [r.from, r.to, r.kind, Boolean(r.fixed)]),
     channelPairs: model.channelPairs.map(([a, b]) => [a, b]),
     insertFxParamSpace: insertFxParamSpaceBySelector(),
+    fxChannels: fxChannelCatalogue(),
   };
+}
+
+/** The FX channels' menus and admitted sets, derived from the app's own catalogue. */
+function fxChannelCatalogue(): SkillModel["fxChannels"] {
+  const out: SkillModel["fxChannels"] = {};
+  for (const [nodeId, fxIndex] of Object.entries(FX_CHANNEL_NODE_INDEX)) {
+    const params: SkillModel["fxChannels"][string]["params"] = {};
+    for (const type of fxEffectTypes(fxIndex)) {
+      for (const d of fxParams(type.value)) {
+        if (params[d.key]) continue;
+        params[d.key] = {
+          control: d.control,
+          ...(d.rawMin !== undefined ? { rawMin: d.rawMin } : {}),
+          ...(d.rawMax !== undefined ? { rawMax: d.rawMax } : {}),
+          ...(d.options ? { options: d.options.map((o) => o.value).sort((a, b) => a - b) } : {}),
+        };
+      }
+    }
+    out[nodeId] = { types: fxEffectTypes(fxIndex).map((o) => o.value), params };
+  }
+  return out;
 }
 
 /**

@@ -154,7 +154,7 @@ def validate(plan, models):
         seen.add(key)
 
     warnings.extend(collection_warnings(plan))
-    warnings.extend(node_param_warnings(plan, nodes, model.get("channelPairs")))
+    warnings.extend(node_param_warnings(plan, nodes, model.get("channelPairs"), model.get("fxChannels")))
     problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
 
     return problems, warnings
@@ -254,8 +254,9 @@ def name_warnings(plan):
 # Its own advisory is emitted below.
 #
 # For the two that ARE here, this tool does NOT say whether omitting a key keeps the
-# unit's value, and the omission is the point. It carries routing data and no model of
-# the write path, and the answer depends on things only that path knows: whether the
+# unit's value, and the omission is the point. What it carries is routing plus the
+# insert-FX param space (`insertFxParamSpace`), and no model of the write path beyond it,
+# and the answer depends on things only that path knows: whether the
 # channel is in the mode that sends SSMCS at all, which effect family the selector names
 # (a slot keyed under another family is never sent), what the loader normalizes a bare
 # slot number into, and which slots the unit recomputes for itself. A conditional version
@@ -509,6 +510,64 @@ def insert_fx_pair_problems(plan, pairs, param_space):
     return out
 
 
+def fx_admitted(spec, value):
+    """The nearest value an FX control admits, which is the value the write will send.
+
+    The admitted set is the CONTROL's, not a window: a toggle takes 0 and 1 with no bounds
+    written down, a select takes its option values, and only a slider has a range. Bounding
+    everything against a range instead left 2 on a two-state control and a value past a
+    menu's last option on the menu — the app's own note on `paramRangeProblems`.
+
+    Rounded first, by the same rule every control there uses, so a value halfway between two
+    settings resolves the same way whichever control holds it.
+    """
+    v = int(math.floor(value + 0.5)) if value >= 0 else -int(math.floor(-value + 0.5))
+    control = spec.get("control")
+    if control == "toggle":
+        return 0 if v <= 0 else 1
+    if control == "select":
+        options = sorted(spec.get("options") or [])
+        if not options:
+            return v
+        # The TOP is answered before any distance is measured, as the app does: every
+        # distance from a far-outside value is the same double, so a nearest-of search would
+        # keep whichever option it started with.
+        if v >= options[-1]:
+            return options[-1]
+        return min(options, key=lambda o: (abs(o - v), o))
+    lo, hi = spec.get("rawMin"), spec.get("rawMax")
+    if lo is not None and v < lo:
+        return lo
+    if hi is not None and v > hi:
+        return hi
+    return v
+
+
+def fx_catalogue_warnings(node_id, fx, channel, out):
+    """The two FX repairs that need the channel's own catalogue: a `type` its menu does not
+    offer, which the app DROPS (a menu has no nearest member to move to), and a finite number
+    outside what its control admits, which the app BOUNDS.
+
+    Both come from `fxChannels` in models.json, generated from the app's catalogue — the two
+    questions this tool could not answer before it carried them."""
+    if not isinstance(channel, dict) or not isinstance(fx, dict):
+        return
+    types = channel.get("types")
+    if isinstance(types, list) and "type" in fx and is_number(fx["type"]) and fx["type"] not in types:
+        out.append((f"{node_id}.fxEffect.type", f"{fx['type']!r} is not a type this channel offers"))
+    params = fx.get("params")
+    specs = channel.get("params")
+    if not isinstance(params, dict) or not isinstance(specs, dict):
+        return
+    for key, raw in params.items():
+        spec = specs.get(key)
+        if not isinstance(spec, dict) or not is_number(raw):
+            continue
+        admitted = fx_admitted(spec, raw)
+        if admitted != raw:
+            out.append((f"{node_id}.fxEffect.params.{key}", f"{raw!r} is bounded to {admitted!r}"))
+
+
 def fx_effect_warnings(node_id, fx, out):
     """Collect everything the app removes from one node's fxEffect (path, why).
 
@@ -519,11 +578,9 @@ def fx_effect_warnings(node_id, fx, out):
     that holds a number, an effect object or a parameter map that is not an object. The
     effect then runs on its own factory default and the app says so on the status line.
 
-    NOT covered, because both need the app's effect catalogue and the data bundled here
-    carries routing only: a finite number outside its own parameter window, and a `type`
-    the channel's menu does not offer (the app drops that one too, since a menu has no
-    nearest member to move to). Exporting the windows and the menus beside models.json is
-    what would settle it."""
+    The other two repairs — a `type` the channel's menu does not offer, and a finite number
+    outside what its control admits — need the channel's own catalogue and are reported by
+    `fx_catalogue_warnings`, from the `fxChannels` entry models.json carries."""
     if not isinstance(fx, dict):
         out.append((f"{node_id}.fxEffect", f"{fx!r} is not an object, which drops the whole effect"))
         return
@@ -618,17 +675,16 @@ def dropped_values(value, path, out):
         out.append((path, f"{value!r} is neither a boolean nor a finite number"))
 
 
-def node_param_warnings(plan, nodes, pairs):
+def node_param_warnings(plan, nodes, pairs, fx_channels):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
     claim at once.
 
-    NOT covered: a finite FX value outside the window its own parameter admits, and a
-    `type` the channel's menu does not offer. The app bounds the first on load and drops
-    the second, reporting the count; this tool cannot see either, because both need the
-    app's effect catalogue and the data bundled here carries routing only. What it CAN
-    see without one is a value that is not a number at all, which is fx_effect_warnings."""
+    A finite FX value outside what its control admits, and a `type` the channel's menu does
+    not offer, are covered too — by `fx_catalogue_warnings`, which reads the `fxChannels`
+    entry models.json carries. What needs no catalogue at all is a value that is not a number,
+    which is fx_effect_warnings."""
     out = []
     slot_holders = {}
     node_params = plan.get("nodeParams")
@@ -646,6 +702,8 @@ def node_param_warnings(plan, nodes, pairs):
         scalar_only_drops(node_id, params, dropped)
         if "fxEffect" in params:
             fx_effect_warnings(node_id, params["fxEffect"], dropped)
+            fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped)
+
         for path, why in dropped:
             out.append(f"node param {path}: the app drops this value on load — {why}")
         if any(k in params for k in DUCKER_KEYS) and nodes.get(node_id, {}).get("kind") != "ducker":
