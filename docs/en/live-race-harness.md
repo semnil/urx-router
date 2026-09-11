@@ -833,7 +833,7 @@ undo entries cannot disagree about what a gesture touched. Writers name themselv
 
 **The eighth writer has no `WriteSource` of its own, deliberately.** Constraints / integrity never
 writes on a schedule of its own: `constraints.ts` only reads, `routing.ts`'s mirrors
-(`mirrorBalPair` / `applyPairTransition` / `mirrorLinkedInsertFx`) run inside the UI and MIDI funnels
+(`mirrorLinkedPair` / `applyPairTransition` / `mirrorLinkedInsertFx`) run inside the UI and MIDI funnels
 before their `markChanged(source)`, and `scene-scope.ts`'s `applySceneExternal` runs at two sites that
 are both *outside* the shared plan — into the readback's private clone in `applyDeviceStateScoped`,
 and into the incoming document in `loadFromText` before `loadPlan` installs it. Both reach the plan

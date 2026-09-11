@@ -783,7 +783,7 @@ ref ではなく `github.run_id` にしてある理由は同ファイルのヘ�
 
 **8 番目の書き手だけは意図的に固有の `WriteSource` を持たない**。制約 / 整合性の書き手は自分のタイミングで
 書くことがない。`constraints.ts` は読むだけ、`routing.ts` のミラー
-(`mirrorBalPair` / `applyPairTransition` / `mirrorLinkedInsertFx`) は UI / MIDI のファネル内で
+(`mirrorLinkedPair` / `applyPairTransition` / `mirrorLinkedInsertFx`) は UI / MIDI のファネル内で
 `markChanged(source)` より前に走り、`scene-scope.ts` の `applySceneExternal` が走る 2 箇所はどちらも
 共有プランの外側 — `applyDeviceStateScoped` では readback の私的コピーへ、`loadFromText` では
 `loadPlan` が差し替える前の受け入れ文書へ書く。いずれもその後のマージまたは差し替えを通ってはじめて

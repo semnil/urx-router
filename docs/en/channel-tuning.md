@@ -2111,8 +2111,8 @@ panel IS takes `set`.
 
 Identical to the inspector's: `onUpdateNodeParams` merges the patch into the processor's own corner of
 `plan.nodeParams[id]` and calls `markChanged()`, which flags the plan dirty, schedules the live mirror
-and feeds MIDI feedback. A STEREO-linked pair in BAL mode mirrors the group to its partner like any
-other node parameter. Where those values live is the descriptor's business: GATE and COMP keep one
+and feeds MIDI feedback. A STEREO-linked pair mirrors the group to its partner like any other node
+parameter, in either PAN/BAL mode. Where those values live is the descriptor's business: GATE and COMP keep one
 sub-object each, the EQ spreads across `eqBands[i]` and `eqOneKnob` and routes a patch by key, and the
 SSMCS faces flatten a nested shape (`ssmcs`, `ssmcs.comp`, `ssmcs.sc`, `ssmcs.eq.<band>`) onto one
 record and split a patch back apart by key — which is why its side-chain filter's three values are

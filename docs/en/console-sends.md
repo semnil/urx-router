@@ -209,7 +209,7 @@ exactly one home.
 ### Live sync / follow
 
 All rack edits go through the shared `markChanged` funnel (identical to the graph / inspector),
-BAL-linked pairs mirror via `mirrorBalPair`, and device-side changes arrive through `follow` →
+STEREO-linked pairs mirror via `mirrorLinkedPair`, and device-side changes arrive through `follow` →
 `refreshStrip`, which rebuilds the whole strip including the rack. If the strip's SEND PAN popover
 is open, `refreshStrip` re-opens it against the fresh strip's PAN ▾ button, so the knobs re-read
 the plan and the trigger keeps its open marking (device follow and external MIDI alike). Sends

@@ -205,7 +205,7 @@ STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップ�
 ### ライブ同期 / follow
 
 ラックの編集はすべて共有の `markChanged` ファネルを通る (グラフ / インスペクタと同一)。
-BAL リンクペアは `mirrorBalPair` でミラーし、デバイス側の変更は `follow` → `refreshStrip`
+STEREO リンクペアは `mirrorLinkedPair` でミラーし、デバイス側の変更は `follow` → `refreshStrip`
 (ラックを含むストリップ全体の再構築) で反映される。そのストリップの SEND PAN ポップオーバーが
 開いていれば `refreshStrip` は再構築後のストリップの PAN ▾ ボタンに対して開き直す — ノブは
 plan を読み直し、トリガーの open 表示も維持される (デバイス follow・外部 MIDI とも同じ)。
