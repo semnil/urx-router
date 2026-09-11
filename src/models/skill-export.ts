@@ -9,6 +9,8 @@
 import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
+import { INSERT_FX_OPTIONS } from "../core/control/params";
+import { insertFxFamilyOf, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 
 // Compact, machine-readable shape consumed by scripts/plan_tool.py. A rule is a
 // [from, to, kind, fixed] tuple; nodes keep array order so the JSON mirrors the
@@ -22,6 +24,10 @@ export interface SkillModel {
    *  collapse it to one slot holder the way `insertFxCensus` does — a rule it cannot
    *  reach from the routing data, and one it would otherwise have to spell out itself. */
   channelPairs: [string, string][];
+  /** Engine slots a write SENDS, per channel insert-FX selector. Model-INDEPENDENT — it is
+   *  carried per model because the file is keyed by model id, and a key beside those would
+   *  read as a fourth model to anything that asks `modelId in models`. */
+  insertFxWritableSlots: Record<string, number[]>;
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -32,7 +38,33 @@ function skillModel(model: DeviceModel): SkillModel {
     nodes,
     rules: model.rules.map((r) => [r.from, r.to, r.kind, Boolean(r.fixed)]),
     channelPairs: model.channelPairs.map(([a, b]) => [a, b]),
+    insertFxWritableSlots: insertFxWritableSlotsBySelector(),
   };
+}
+
+/**
+ * Which engine slots a write actually SENDS, per channel insert-FX selector.
+ *
+ * `plan_tool.py` compares the two members of a STEREO-linked pair by the state a write would
+ * leave, and an engine value the write skips is not part of that state — slot 0 is the
+ * engine's own type id, for one. Without this the tool refuses a document the app loads,
+ * which is the worse direction for a pre-flight check: it sends the author to fix something
+ * that is not broken. Derived rather than listed, so a slot added to a family arrives here
+ * with it.
+ *
+ * Keyed by SELECTOR rather than by family because that is what a document carries; the four
+ * guitar amps are four selectors over one slot set.
+ */
+function insertFxWritableSlotsBySelector(): Record<string, number[]> {
+  const out: Record<string, number[]> = {};
+  for (const option of INSERT_FX_OPTIONS) {
+    const family = insertFxFamilyOf(option.value);
+    if (!family) continue;
+    out[String(option.value)] = insertFxWritableSlots(family)
+      .map((s) => s.slot)
+      .sort((a, b) => a - b);
+  }
+  return out;
 }
 
 /** The full models.json payload (every supported model), in registry order. */

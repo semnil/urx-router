@@ -21,7 +21,9 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PLAN_VERSION } from "../src/core/plan";
+import { deserialize, PLAN_VERSION } from "../src/core/plan";
+import { insertFxPairProblems } from "../src/core/plan-validate";
+import { getModel } from "../src/models";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TOOL = join(ROOT, ".claude/skills/urx-routing-planner/scripts/plan_tool.py");
@@ -400,9 +402,11 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       ["the selector", { stereoLink: true, insertFx: 1793 }, { insertFx: 1794 }],
       ["the bypass", { stereoLink: true, insertFx: 1793, insertFxOn: true }, { insertFx: 1793, insertFxOn: false }],
       [
+        // Slot 6 is the compander's Threshold. Slot 0 is the engine's type id, which the
+        // write never sends, so a pair differing only there is one the unit can satisfy.
         "the engine values",
-        { stereoLink: true, insertFx: 1793, insertFxParams: { 0: 12 } },
-        { insertFx: 1793, insertFxParams: { 0: 13 } },
+        { stereoLink: true, insertFx: 1793, insertFxParams: { 6: -1200 } },
+        { insertFx: 1793, insertFxParams: { 6: -1300 } },
       ],
       ["one side omitted", { stereoLink: true, insertFx: 1793, insertFxOn: true }, {}],
     ]) {
@@ -419,6 +423,105 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     expect(run(pair({ stereoLink: true, insertFx: 1793 }, { insertFx: 1794 })).stderr).toContain(
       "select into the one device-wide compander slot",
     );
+  });
+
+  // The pair verdict is a JUDGEMENT about the written state, and the two implementations
+  // reach it independently — one over the sanitised plan through the emit path, one over raw
+  // JSON. So they are asked the same corpus and have to agree case by case, which is the only
+  // thing that catches a divergence at a JSON type boundary: `null` against an omitted key,
+  // `true` against `1`, an off-menu selector against No Effect. Each of those is a pair the
+  // unit CAN satisfy or cannot, and a checker that answers differently from the app either
+  // refuses a document the app loads or clears one the app refuses.
+  const PAIR_CORPUS = [
+    // — the unit cannot satisfy these —
+    ["two selectors", { stereoLink: true, insertFx: 1793 }, { insertFx: 1794 }, false],
+    [
+      "two bypasses",
+      { stereoLink: true, insertFx: 1793, insertFxOn: true },
+      { insertFx: 1793, insertFxOn: false },
+      false,
+    ],
+    // Slot 6 is the compander's Threshold — a slot the family actually WRITES. Slot 0 is the
+    // engine's type id and the write skips it, so a document differing only there is one the
+    // unit can satisfy; picking it here would have asserted the opposite of the rule.
+    [
+      "two engine values",
+      { stereoLink: true, insertFx: 1793, insertFxParams: { 6: -1200 } },
+      { insertFx: 1793, insertFxParams: { 6: -1300 } },
+      false,
+    ],
+    [
+      "an engine value the write skips",
+      { stereoLink: true, insertFx: 1793, insertFxParams: { 0: 12 } },
+      { insertFx: 1793, insertFxParams: { 0: 13 } },
+      true,
+    ],
+    ["one side omitted", { stereoLink: true, insertFx: 1793, insertFxOn: true }, {}, false],
+    // — the unit CAN satisfy these, so neither may refuse —
+    // An off-menu selector is No Effect on the wire, which is what the partner holds.
+    ["an off-menu selector beside No Effect", { stereoLink: true, insertFx: 4242 }, { insertFx: -1 }, true],
+    // The bypass is sent as `? 1 : 0`, so every truthy value is one bypass.
+    ["true against 1", { stereoLink: true, insertFx: 1793, insertFxOn: true }, { insertFx: 1793, insertFxOn: 1 }, true],
+    [
+      "false against 0",
+      { stereoLink: true, insertFx: 1793, insertFxOn: false },
+      { insertFx: 1793, insertFxOn: 0 },
+      true,
+    ],
+    // `null` is dropped by the load-time sanitiser, which leaves the factory value — the
+    // same thing an omitted key leaves.
+    ["null against omitted", { stereoLink: true, insertFxOn: null }, {}, true],
+    ["null against the factory value", { stereoLink: true, insertFxOn: null }, { insertFxOn: false }, true],
+    // The boundary that `null` does NOT reach: a leaf the sanitiser drops but that is TRUTHY
+    // if it is read raw. The app drops it and the factory false stands; anything comparing
+    // the JSON as written calls it a bypass that is on.
+    [
+      "a dropped truthy bypass against the factory value",
+      { stereoLink: true, insertFx: 1793, insertFxOn: "on" },
+      { insertFx: 1793, insertFxOn: false },
+      true,
+    ],
+    // With No Effect selected the unit ignores the switch, so the bypass is never sent and
+    // the two members cannot disagree about it.
+    [
+      "two bypasses under No Effect",
+      { stereoLink: true, insertFx: -1, insertFxOn: true },
+      { insertFx: -1, insertFxOn: false },
+      true,
+    ],
+    // Engine values under a family the selector does not name are not sent either.
+    [
+      "engine values of another family",
+      { stereoLink: true, insertFx: 1793, insertFxParams: { "amp:3": 12 } },
+      { insertFx: 1793, insertFxParams: { "amp:3": 99 } },
+      true,
+    ],
+    ["both agree", { stereoLink: true, insertFx: 1793, insertFxOn: true }, { insertFx: 1793, insertFxOn: true }, true],
+    ["neither names one", { stereoLink: true }, {}, true],
+    // The control for the whole table: unlinked, the two channels are independent.
+    ["unlinked and different", { insertFx: 1793 }, { insertFx: 1794 }, true],
+  ];
+
+  it.each(PAIR_CORPUS)("agrees with the app about %s", (_name, ch1, ch2, ok) => {
+    const plan = {
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch1, ch2 },
+    };
+    const file = join(dir, "plan.json");
+    writeFileSync(file, JSON.stringify(plan));
+    const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    const toolSaysOk = r.status === 0;
+    // The app's own answer, over the document as the loader hands it on: deserialize applies
+    // the same sanitiser the tool has to stand in for.
+    const loaded = deserialize(JSON.stringify(plan));
+    expect(loaded, "the document has to load at all for the comparison to mean anything").not.toBeNull();
+    const appSaysOk = insertFxPairProblems(getModel("URX44V"), loaded).length === 0;
+
+    expect(appSaysOk, `the app: ${_name}`).toBe(ok);
+    expect(toolSaysOk, `the tool: ${_name}\n${r.stdout}`).toBe(ok);
   });
 
   // `True == 1` in Python, and the app's own comparison is `===` — so a boolean comp/EQ type

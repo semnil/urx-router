@@ -155,7 +155,7 @@ def validate(plan, models):
 
     warnings.extend(collection_warnings(plan))
     warnings.extend(node_param_warnings(plan, nodes, model.get("channelPairs")))
-    problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs")))
+    problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs"), model.get("insertFxWritableSlots") or {}))
 
     return problems, warnings
 
@@ -331,8 +331,8 @@ def insert_fx_slot(node_id, params, nodes):
     return None
 
 
-INSERT_FX_PAIR_KEYS = ("insertFx", "insertFxOn", "insertFxParams")
-FACTORY_PAIR_VALUES = {"insertFx": -1, "insertFxOn": False, "insertFxParams": None}
+FACTORY_INSERT_FX = -1
+FACTORY_INSERT_FX_ON = False
 
 
 def pair_of(node_id, pairs):
@@ -355,23 +355,88 @@ def pair_is_linked(node_id, pairs, node_params):
     return isinstance(primary, dict) and primary.get("stereoLink") is True
 
 
-def pair_value(node_params, node_id, key):
-    """One member's value for a pair key as the WRITE will see it: what the document
-    carries, or the factory value the app's load-time fill supplies for an absent one.
-    Compared raw, a document naming the effect once and leaving the partner to the fill
-    would read as a disagreement although both members end up sending the same value."""
+def sanitized(node_params, node_id, key):
+    """One member's stored value AFTER the app's load-time sanitiser, or None where the key
+    is absent or the app drops it. The app keeps a leaf that is a boolean or a finite number
+    and drops everything else, so `null` and an omitted key are the same thing to the write
+    — comparing the raw JSON instead makes them differ."""
     carried = node_params.get(node_id)
-    if isinstance(carried, dict) and key in carried:
-        return carried[key]
-    return FACTORY_PAIR_VALUES[key]
+    if not isinstance(carried, dict) or key not in carried:
+        return None
+    value = carried[key]
+    if isinstance(value, bool) or is_number(value):
+        return value
+    return None
 
 
-def insert_fx_pair_problems(plan, pairs):
+def insert_fx_wire_state(node_params, node_id, writable):
+    """The insert-FX state a write would leave on the unit for one member of a pair, in the
+    terms the WIRE sees — the same projection `insertFxWireState` makes in the app, so the
+    two agree about which documents differ in a way that matters.
+
+    Stored values answer the wrong question: an off-menu selector and No Effect reach the
+    unit as one value, `true` and `1` are one bypass, and a bypass beside No Effect is never
+    sent at all. `None` for the engine values means the selector carries no family, which is
+    what No Effect is.
+    """
+    stored = sanitized(node_params, node_id, "insertFx")
+    selector = stored if stored in INSERT_FX_SLOTS or stored == FACTORY_INSERT_FX else FACTORY_INSERT_FX
+    if stored is None:
+        selector = FACTORY_INSERT_FX
+    on = sanitized(node_params, node_id, "insertFxOn")
+    if on is None:
+        on = FACTORY_INSERT_FX_ON
+    # `bool(1) is True`, which is the point: the app sends `np.insertFxOn ? 1 : 0`, so every
+    # truthy value is one bypass. Python's own `==` would also call `True == 1`, but it calls
+    # `1 == 1.0` and `False == 0` too, and none of those is the question being asked.
+    wire_on = None if selector == FACTORY_INSERT_FX else bool(on)
+    return selector, wire_on, insert_fx_pair_params(node_params, node_id, selector, writable)
+
+
+def insert_fx_pair_params(node_params, node_id, selector, writable):
+    """The engine values the write would send for one member.
+
+    Two things decide that and neither is guessable: WHICH slots the selected effect writes
+    (slot 0 is the engine's own type id and never goes out, for one), and which namespace a
+    key is in — the app re-keys a bare slot under the selected family on load, so `"6"` and
+    `"compander:6"` are the same value while `"amp:6"` belongs to an effect that is not
+    selected. The slot list is generated into models.json from the app's own catalogue
+    (`insertFxWritableSlots`), so a slot added to a family arrives here with it.
+    """
+    family = INSERT_FX_SLOTS.get(selector)
+    carried = node_params.get(node_id)
+    if family is None or not isinstance(carried, dict):
+        return None
+    params = carried.get("insertFxParams")
+    if not isinstance(params, dict):
+        return None
+    slots = writable.get(str(selector))
+    if slots is None:
+        return None
+    prefix = family + ":"
+    out = {}
+    for key, value in params.items():
+        if not (isinstance(value, bool) or is_number(value)):
+            continue
+        name = str(key)
+        slot = name if name.isdigit() else (name[len(prefix) :] if name.startswith(prefix) else None)
+        if slot is None or not slot.isdigit() or int(slot) not in slots:
+            continue
+        # A bare key is re-keyed under the family on load, so the qualified one wins where a
+        # document carries both — which is what `qualifyInsertFxParams` does.
+        if name.isdigit():
+            out.setdefault(int(slot), value)
+        else:
+            out[int(slot)] = value
+    return tuple(sorted(out.items()))
+
+
+def insert_fx_pair_problems(plan, pairs, writable):
     """A STEREO-linked pair whose two members disagree about their one insert effect.
 
     The unit keeps ONE selector, one bypass and one engine for a linked pair and mirrors a
     write to either member onto the other, so a document giving the two members different
-    values describes no state the unit can be in: the app emits both, the unit keeps
+    WRITTEN states describes no state the unit can be in: the app emits both, the unit keeps
     whichever landed last, and its converging write re-sends them to its round limit and
     gives up. The app refuses such a document, so this is a problem rather than a warning.
     """
@@ -385,7 +450,9 @@ def insert_fx_pair_problems(plan, pairs):
         primary = node_params.get(pair[0])
         if not (isinstance(primary, dict) and primary.get("stereoLink") is True):
             continue
-        keys = [k for k in INSERT_FX_PAIR_KEYS if pair_value(node_params, pair[0], k) != pair_value(node_params, pair[1], k)]
+        a = insert_fx_wire_state(node_params, pair[0], writable)
+        b = insert_fx_wire_state(node_params, pair[1], writable)
+        keys = [k for k, x, y in zip(("insertFx", "insertFxOn", "insertFxParams"), a, b) if x != y]
         if keys:
             out.append(("insertFxPair", f"{pair[0]} / {pair[1]}: {', '.join(keys)}", ""))
     return out
@@ -519,9 +586,7 @@ def node_param_warnings(plan, nodes, pairs):
             partner = None
             if pair is not None and pair_is_linked(node_id, pairs, node_params or {}):
                 candidate = pair[1] if pair[0] == node_id else pair[0]
-                other = (node_params or {}).get(candidate)
-                mine = (node_params or {}).get(node_id)
-                if isinstance(other, dict) and isinstance(mine, dict) and other.get("insertFx") == mine.get("insertFx"):
+                if insert_fx_wire_state(node_params or {}, candidate, {})[0] == insert_fx_wire_state(node_params or {}, node_id, {})[0]:
                     partner = candidate
             if partner is None or partner not in held:
                 held.append(node_id)
