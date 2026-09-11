@@ -12,7 +12,7 @@ import {
   isStereoLinkedPair,
   legalSources,
   legalTargets,
-  mirrorBalPair,
+  mirrorLinkedPair,
   mirrorLinkedInsertFx,
   partnerChannel,
   possibleSources,
@@ -366,7 +366,7 @@ describe("applyPairTransition", () => {
   });
 });
 
-describe("isBalLinkedPair / mirrorBalPair", () => {
+describe("isBalLinkedPair / mirrorLinkedPair", () => {
   let plan: Plan;
   const stereoSend = (id: string): PlanConnection | undefined =>
     plan.connections.find((c) => c.from === ref(id, "out") && c.to === ref("bus.stereo", "in") && c.kind === "send");
@@ -385,16 +385,39 @@ describe("isBalLinkedPair / mirrorBalPair", () => {
     expect(isBalLinkedPair(u44, plan, "ch3")).toBe(false); // other pair untouched
   });
 
-  it("does not mirror in PAN mode or when unlinked", () => {
+  it("does not mirror when the pair is unlinked", () => {
     const before = plan.nodeParams.ch2?.gain;
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_PAN, gain: 12 };
-    expect(mirrorBalPair(u44, plan, "ch1")).toBe(false);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, gain: 12 };
+    expect(mirrorLinkedPair(u44, plan, "ch1")).toBe(false);
     expect(plan.nodeParams.ch2?.gain).toBe(before); // partner untouched
+  });
+
+  it("mirrors node params in PAN mode too, which is what the unit does", () => {
+    plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_PAN, gain: 12, on: false, eqOn: false };
+    expect(mirrorLinkedPair(u44, plan, "ch1")).toBe(true);
+    expect(plan.nodeParams.ch2?.gain).toBe(12);
+    expect(plan.nodeParams.ch2?.on).toBe(false);
+    expect(plan.nodeParams.ch2?.eqOn).toBe(false);
+  });
+
+  it("carries a send's level / PRE-POST / ON in PAN, and leaves the partner's own pan", () => {
+    // The pan is the one thing PAN mode keeps per member — which is what PAN means, and
+    // what the unit was measured doing while everything around it moved together.
+    plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_PAN };
+    const a = stereoSend("ch1")!;
+    const b = stereoSend("ch2")!;
+    a.params = { ...a.params, level: -6, tap: "pre", on: false, pan: -63 };
+    b.params = { ...b.params, pan: 63 };
+    expect(mirrorLinkedPair(u44, plan, "ch1")).toBe(true);
+    expect(stereoSend("ch2")?.params?.level).toBe(-6);
+    expect(stereoSend("ch2")?.params?.tap).toBe("pre");
+    expect(stereoSend("ch2")?.params?.on).toBe(false);
+    expect(stereoSend("ch2")?.params?.pan).toBe(63); // its own, not the source's -63
   });
 
   it("mirrors node params to the partner, dropping the pair-level fields", () => {
     plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_BAL, gain: 12, on: false, eqOn: false };
-    expect(mirrorBalPair(u44, plan, "ch1")).toBe(true);
+    expect(mirrorLinkedPair(u44, plan, "ch1")).toBe(true);
     expect(plan.nodeParams.ch2?.gain).toBe(12);
     expect(plan.nodeParams.ch2?.on).toBe(false);
     expect(plan.nodeParams.ch2?.eqOn).toBe(false);
@@ -406,7 +429,7 @@ describe("isBalLinkedPair / mirrorBalPair", () => {
   it("preserves the primary's pair flags when mirroring from the secondary", () => {
     plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_BAL };
     plan.nodeParams.ch2 = { gain: 5 };
-    expect(mirrorBalPair(u44, plan, "ch2")).toBe(true);
+    expect(mirrorLinkedPair(u44, plan, "ch2")).toBe(true);
     expect(plan.nodeParams.ch1?.gain).toBe(5);
     expect(plan.nodeParams.ch1?.stereoLink).toBe(true);
     expect(plan.nodeParams.ch1?.panBal).toBe(PAN_BAL_BAL);
@@ -418,7 +441,7 @@ describe("isBalLinkedPair / mirrorBalPair", () => {
     const b = stereoSend("ch2")!;
     a.params = { ...a.params, level: -6, tap: "pre", on: false, pan: -40 };
     b.params = { ...b.params, pan: 40 };
-    expect(mirrorBalPair(u44, plan, "ch1")).toBe(true);
+    expect(mirrorLinkedPair(u44, plan, "ch1")).toBe(true);
     expect(stereoSend("ch2")?.params?.level).toBe(-6);
     expect(stereoSend("ch2")?.params?.tap).toBe("pre");
     expect(stereoSend("ch2")?.params?.on).toBe(false);
@@ -428,7 +451,7 @@ describe("isBalLinkedPair / mirrorBalPair", () => {
 
 // Measured on the unit: the insert FX mirrors on Signal Type alone — a selector write on
 // either member reached the other in PAN mode as well as in BAL, both pointing at one
-// engine instance. Everything else the pair shares stays BAL-only (mirrorBalPair above).
+// engine instance. Everything else the pair shares stays BAL-only (mirrorLinkedPair above).
 describe("isStereoLinkedPair / mirrorLinkedInsertFx", () => {
   let plan: Plan;
   const link = (panBal: number): void => {
@@ -489,7 +512,7 @@ describe("isStereoLinkedPair / mirrorLinkedInsertFx", () => {
   it("agrees with the BAL mirror when both run", () => {
     link(PAN_BAL_BAL);
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX, insertFxOn: false };
-    expect(mirrorBalPair(u44, plan, "ch1")).toBe(true);
+    expect(mirrorLinkedPair(u44, plan, "ch1")).toBe(true);
     const afterBal = structuredClone(plan.nodeParams.ch2);
     expect(mirrorLinkedInsertFx(u44, plan, "ch1")).toBe(true);
     expect(plan.nodeParams.ch2).toEqual(afterBal);

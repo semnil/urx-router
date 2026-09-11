@@ -29,7 +29,7 @@ import {
   type ControlParam,
 } from "./controls";
 import { MidiEngine } from "./engine";
-import { mirrorBalPair, mirrorLinkedInsertFx } from "../routing";
+import { mirrorLinkedPair, mirrorLinkedInsertFx } from "../routing";
 import { planProblems } from "../plan-validate";
 import {
   COMPANDER_H,
@@ -1183,7 +1183,7 @@ describe("a governor across a BAL-linked pair", () => {
       refused: () => {},
       // The funnel's own mirrors, which are what make the pair one governor.
       applied: (c) => {
-        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedPair(model, plan, c.node);
         mirrorLinkedInsertFx(model, plan, c.node);
       },
       send: () => {},
@@ -1261,7 +1261,7 @@ describe("a gang holding both members of a mirrored pair", () => {
       gate: () => null,
       refused: () => {},
       applied: (c) => {
-        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedPair(model, plan, c.node);
         mirrorLinkedInsertFx(model, plan, c.node);
       },
       send: () => {},
@@ -1320,7 +1320,7 @@ describe("what a mirrored pair covers, by link mode", () => {
       gate: () => null,
       refused: () => {},
       applied: (c) => {
-        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedPair(model, plan, c.node);
         mirrorLinkedInsertFx(model, plan, c.node);
       },
       send: () => {},
@@ -1357,12 +1357,15 @@ describe("what a mirrored pair covers, by link mode", () => {
     expect(a.ch1, "the primary's value is the one that moved").toBe(false);
   });
 
-  // The negative condition, and the reason the declaration cannot simply be "a linked pair":
-  // PAN keeps each channel's own CH ON, so these are two values and each flips its own.
-  it("PAN: CH ON is each channel's own, and stays two values", () => {
+  // PAN carries CH ON too — the unit moves both members' ONs in either mode, and only the
+  // pan stays per member there. So this is the same claim as the BAL case above, asked in
+  // the mode that used to answer differently.
+  it("PAN: CH ON is one value as well, so the learn order cannot pick it either", () => {
     const a = press("ch1", PAN_BAL_PAN, true, false);
-    expect(a).toEqual({ ch1: false, ch2: true });
-    expect(press("ch2", PAN_BAL_PAN, true, false), "and the order still decides nothing").toEqual(a);
+    const b = press("ch2", PAN_BAL_PAN, true, false);
+    expect(b, "the learn order decided the outcome").toEqual(a);
+    expect(a.ch1, "the pair agrees afterwards").toBe(a.ch2);
+    expect(a.ch1, "the primary's value is the one that moved").toBe(false);
   });
 });
 
@@ -1385,7 +1388,7 @@ describe("a mirrored gang whose members read the press differently", () => {
       gate: () => null,
       refused: () => {},
       applied: (c) => {
-        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedPair(model, plan, c.node);
         mirrorLinkedInsertFx(model, plan, c.node);
       },
       send: () => {},
@@ -1434,7 +1437,7 @@ describe("a mirrored pair bound to two different addresses", () => {
       gate: () => null,
       refused: () => {},
       applied: (c) => {
-        mirrorBalPair(model, plan, c.node);
+        mirrorLinkedPair(model, plan, c.node);
         mirrorLinkedInsertFx(model, plan, c.node);
       },
       send: () => {},

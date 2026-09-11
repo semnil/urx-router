@@ -16,7 +16,7 @@ import {
   pairPrimary,
   sendHasOn,
   sendHasTap,
-  mirrorBalPair,
+  mirrorLinkedPair,
 } from "./routing";
 import { emptyPlan, setExclusiveConnection } from "./plan";
 import { rateConstraints, SAMPLE_RATES } from "./constraints";
@@ -321,14 +321,14 @@ describe("no input port mixes a single-input rule with a summing rule", () => {
   });
 });
 
-// AUDIT (routing.ts mirrorBalPair, S4 latent — FIXED): the mirror used to shallow-spread
+// AUDIT (routing.ts mirrorLinkedPair, S4 latent — FIXED): the mirror used to shallow-spread
 // the source channel's nodeParams onto the partner, sharing the NESTED param objects
 // (gate / comp / eqBands / ssmcs / osc / eqOneKnob) by reference. That was benign under
 // the standard edit path (onUpdateNodeParams rebuilds the top-level object and every
 // linked edit re-mirrors), but an in-place mutation bled into the partner — and the alias
 // outlived the link, persisting until a replace-style edit or a JSON round-trip broke it.
 // The mirror now deep-copies; these tests pin that so a regression to sharing is caught.
-describe("mirrorBalPair deep-copies nested param objects", () => {
+describe("mirrorLinkedPair deep-copies nested param objects", () => {
   it("gives the partner its own nested gate/eqBands, with equal values", () => {
     const plan = defaultPlan("URX44");
     plan.nodeParams.ch1 = {
@@ -337,7 +337,7 @@ describe("mirrorBalPair deep-copies nested param objects", () => {
       gate: { threshold: -20 },
       eqBands: [{ gain: 3 }],
     };
-    expect(mirrorBalPair(MODELS.URX44, plan, "ch1")).toBe(true);
+    expect(mirrorLinkedPair(MODELS.URX44, plan, "ch1")).toBe(true);
     // Mirrored by value, not by identity.
     expect(plan.nodeParams.ch2!.gate).toEqual(plan.nodeParams.ch1!.gate);
     expect(plan.nodeParams.ch2!.gate).not.toBe(plan.nodeParams.ch1!.gate);

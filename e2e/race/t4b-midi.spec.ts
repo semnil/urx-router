@@ -263,7 +263,7 @@ test.describe("T4b midi", () => {
 
   // ===========================================================================
   // midi-bal-mirror-clobbers-partner — the only collision mediated by a mirror.
-  // mirrorBalPair structuredClones the WHOLE source node's params onto the linked
+  // mirrorLinkedPair structuredClones the WHOLE source node's params onto the linked
   // partner on every applied message, so a fader move on ch1 republishes every
   // other parameter of ch2 as well.
   // ===========================================================================
@@ -331,7 +331,7 @@ test.describe("T4b midi", () => {
 
   test("a UI edit to the partner survives the same message — the app funnel mirrors it first", async ({ page }) => {
     // The differential. The catalog's own wording has the destroyed value come from
-    // the tuning screen, and it does not: every app-side funnel calls mirrorBalPair
+    // the tuning screen, and it does not: every app-side funnel calls mirrorLinkedPair
     // itself, so a UI edit to ch2 is copied onto ch1 before the message arrives and
     // the message's mirror finds the two already equal. What the mirror destroys is
     // whatever did NOT go through a mirroring funnel — the run above.

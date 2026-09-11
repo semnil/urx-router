@@ -43,7 +43,7 @@ import {
   type MidiMapping,
 } from "../core/midi/mapping";
 import { midiProbe, startMidiTrace } from "./midi-probe";
-import { mirrorBalPair, mirrorLinkedInsertFx } from "../core/routing";
+import { mirrorLinkedPair, mirrorLinkedInsertFx } from "../core/routing";
 import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
@@ -54,7 +54,7 @@ export interface MidiHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
   /** An incoming MIDI message edited the plan through `control` (`mirrored` =
-   *  the BAL-linked partner was updated too): dirty + live sync + repaint. */
+   *  the linked partner was updated too): dirty + live sync + repaint. */
   onApplied: (control: BoundControl, mirrored: boolean) => void;
   /** A localized refusal, or null when an incoming message may edit the plan
    *  (a device read mutating it across awaits, a file flow that can replace it). */
@@ -180,18 +180,18 @@ export class MidiControl {
       // Once per gated window — the engine decides that, so this is a plain status write.
       refused: (reason) => hooks.onStatus(reason),
       applied: (control) => {
-        // Same funnel as a console edit, and BOTH of its mirrors. The BAL one is a no-op in
-        // PAN mode, while an insert effect is shared by a linked pair in EITHER mode — one
-        // effect, one device slot — so a write mirrored only the first way splits the pair:
-        // the plan holds two answers and the next flush emits both, one per instance.
+        // Same funnel as a console edit, and BOTH of its mirrors. A linked pair holds one
+        // insert effect — one effect, one device slot — so a write that skipped that mirror
+        // splits the pair: the plan holds two answers and the next flush emits both, one per
+        // instance.
         const model = hooks.getModel();
         const plan = hooks.getPlan();
-        const balMirrored = mirrorBalPair(model, plan, control.node);
+        const pairMirrored = mirrorLinkedPair(model, plan, control.node);
         // The insert-FX half runs for every control, not only the new bypass: the effect's
         // own parameter mappings write the same shared values and were splitting the pair
         // the same way.
         const insFxMirrored = mirrorLinkedInsertFx(model, plan, control.node);
-        hooks.onApplied(control, balMirrored || insFxMirrored);
+        hooks.onApplied(control, pairMirrored || insFxMirrored);
         this.scheduleFeedback();
       },
       send: (bytes) => {

@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
 import type { ConsoleMidiHooks } from "./console";
 import { sendConnection } from "../core/plan";
-import { PAN_BAL_BAL } from "../core/control/params";
+import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, insertFxSelected } from "../core/control/params";
 import { insertFxControl, planToCommands } from "../core/control/translate";
 import { getModel } from "../models";
@@ -677,9 +677,9 @@ describe("the INS FX chip", () => {
   });
 });
 
-describe("a BAL-linked pair", () => {
-  const linkPair = (): void => {
-    Object.assign((h.plan.nodeParams["ch1"] ??= {}), { stereoLink: true, panBal: PAN_BAL_BAL });
+describe("a STEREO-linked pair", () => {
+  const linkPair = (mode: number = PAN_BAL_BAL): void => {
+    Object.assign((h.plan.nodeParams["ch1"] ??= {}), { stereoLink: true, panBal: mode });
     h.view.refresh();
   };
 
@@ -705,6 +705,32 @@ describe("a BAL-linked pair", () => {
   it("rebuilds after a knob edit so the partner's head catches up", () => {
     h = consoleHost();
     linkPair();
+    const before = h.strip("ch2").root;
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-gain .con-knob")!, "ArrowRight");
+    expect(h.strip("ch2").root).not.toBe(before);
+  });
+
+  // PAN mirrors as well: the unit holds one fader for the pair in either mode, so the
+  // partner strip has to keep up there too. The CAP is what says the strip was repainted —
+  // the plan's value moves either way (`mirrorLinkedPair` is Signal Type's), and a case
+  // reading only that passes with the partner's fader left where it was drawn.
+  it("mirrors the main fader onto the partner in PAN as well", () => {
+    h = consoleHost();
+    linkPair(PAN_BAL_PAN);
+    const partner = h.strip("ch2").fader!;
+    const cap = partner.parentElement!.querySelector<HTMLElement>(".cap")!;
+    const before = main("ch2");
+    const drawn = cap.style.getPropertyValue("--pos");
+    key(h.strip("ch1").fader!, "ArrowDown");
+    expect(main("ch2")).not.toBe(before);
+    expect(main("ch2")).toBe(main("ch1"));
+    expect(cap.style.getPropertyValue("--pos")).not.toBe(drawn);
+    expect(h.strip("ch2").fader).toBe(partner); // in place, as in BAL
+  });
+
+  it("rebuilds after a knob edit in PAN too, so the partner's head catches up", () => {
+    h = consoleHost();
+    linkPair(PAN_BAL_PAN);
     const before = h.strip("ch2").root;
     key(h.strip("ch1").root.querySelector<HTMLElement>(".con-gain .con-knob")!, "ArrowRight");
     expect(h.strip("ch2").root).not.toBe(before);

@@ -619,7 +619,7 @@ test.describe("T2d shape-change", () => {
 
     // One gesture, one undo entry, spanning two plan fields — both written by the same
     // funnel BEFORE it commits: main.ts onUpdateNodeParams assigns nodeParams[ch1],
-    // then calls applyPairTransition over the pair's sends, then mirrorBalPair, and
+    // then calls applyPairTransition over the pair's sends, then mirrorLinkedPair, and
     // only then markChanged(). The entry covers both because the diff is taken at the
     // commit, which is after all three.
     //

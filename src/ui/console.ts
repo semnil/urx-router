@@ -69,7 +69,8 @@ import {
   INSERT_FX_PAIR_KEYS,
   isBalLinkedPair,
   isNodeInactive,
-  mirrorBalPair,
+  isStereoLinkedPair,
+  mirrorLinkedPair,
   mirrorLinkedInsertFx,
   mixSendLocks,
   partnerChannel,
@@ -372,7 +373,7 @@ interface StripRef {
 }
 
 // One send column's fader in a strip's SENDS rack, keyed by send target so a
-// BAL-linked partner strip can mirror the matching column live (mirrorPartnerSend).
+// linked partner strip can mirror the matching column live (mirrorPartnerSend).
 interface SendColRef {
   target: SendTarget;
   fader: HTMLElement;
@@ -1282,8 +1283,8 @@ export class Console {
         factory,
         panLinked ? t().inspector.panLinked : undefined,
       );
-      // partnerSync off: a BAL-linked mirror is handled by commit; a re-render would
-      // tear down this popover, and no partner send-pan control is on screen.
+      // partnerSync off: the mirror is handled by commit; a re-render would tear down
+      // this popover, and no partner send-pan control is on screen.
       const { knob, val } = this.buildKnob(
         spec,
         SEND_LABEL[target],
@@ -2841,7 +2842,7 @@ export class Console {
       const written = this.setMain(r.m, db);
       this.updateStripLevel(r, db);
       this.commit(r.m.id, written);
-      this.mirrorPartnerLevel(r.m.id); // a BAL-linked partner tracks the fader live
+      this.mirrorPartnerLevel(r.m.id); // a linked partner tracks the fader live
     };
     fader.addEventListener("pointerdown", (e) => {
       e.preventDefault();
@@ -3178,17 +3179,16 @@ export class Console {
     return (plan.nodeParams[id] ??= {});
   }
 
-  /** Apply a console edit to `id`: mirror it onto the linked partner when the pair
-   *  is in BAL mode — plus the insert FX, which the unit mirrors on Signal Type alone
-   *  (PAN mode included) — then run the shared change funnel. Returns whether it
-   *  mirrored (the caller rebuilds so the partner strip catches up). */
+  /** Apply a console edit to `id`: mirror it onto the linked partner — plus the insert
+   *  FX, which the pair holds one of — then run the shared change funnel. Returns whether
+   *  it mirrored (the caller rebuilds so the partner strip catches up). */
   private commit(id: string, written: readonly string[] = []): boolean {
     const model = this.hooks.getModel();
     const plan = this.hooks.getPlan();
-    const mirrored = mirrorBalPair(model, plan, id);
+    const mirrored = mirrorLinkedPair(model, plan, id);
     const insFxMirrored = mirrorLinkedInsertFx(model, plan, id);
     // Each mirror names only what IT wrote, the same rule the inspector's funnel
-    // follows: the BAL mirror carries THIS edit's keys onto the partner, and the
+    // follows: the pair mirror carries THIS edit's keys onto the partner, and the
     // insert-FX mirror the three-key pair state it copies whenever the pair is linked.
     // A key no mirror wrote stays the device's to answer for.
     const keys = written.map((k) => nodeParamContestPath(id, k));
@@ -3201,27 +3201,27 @@ export class Console {
     return mirrored || insFxMirrored;
   }
 
-  /** Rebuild once after editing a BAL-linked strip so the mirrored partner strip
+  /** Rebuild once after editing a STEREO-linked strip so the mirrored partner strip
    *  catches up — a live drag/keypress updates only the dragged strip. Used by the
    *  chips / knobs, where the partner's whole head may change. */
   private syncPartnerStrip(id: string): void {
-    if (isBalLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id)) this.render();
+    if (isStereoLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id)) this.render();
   }
 
-  /** Push a BAL-linked strip's mirrored fader level onto the partner strip's level
+  /** Push a STEREO-linked strip's mirrored fader level onto the partner strip's level
    *  DOM in place, so a linked fader tracks live without a rebuild (keeps focus). */
   private mirrorPartnerLevel(id: string): void {
-    if (!isBalLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id)) return;
+    if (!isStereoLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id)) return;
     const partner = partnerChannel(this.hooks.getModel(), id);
     const pr = partner ? this.refs.get(partner) : undefined;
     if (!pr) return;
     this.updateStripLevel(pr, this.getMain(pr.m));
   }
 
-  /** Mirror a BAL-linked strip's send-column fader onto the partner strip's matching
+  /** Mirror a STEREO-linked strip's send-column fader onto the partner strip's matching
    *  column DOM in place, so a linked send fader tracks live without a rebuild. */
   private mirrorPartnerSend(id: string, target: SendTarget): void {
-    if (!isBalLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id)) return;
+    if (!isStereoLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id)) return;
     const partner = partnerChannel(this.hooks.getModel(), id);
     const pr = partner ? this.refs.get(partner) : undefined;
     const col = pr?.sendCols?.find((c) => c.target === target);
@@ -3396,7 +3396,7 @@ export class Console {
   // Rotary knob: vertical drag (≈ full range over 150px) and arrow keys edit the
   // value (snapped to `step`); the indicator rotates over a 270° sweep; a
   // double-click resets to `reset`. Reads/writes via the spec's get/set.
-  // `partnerSync` (default on) re-renders after a BAL-linked edit so the partner
+  // `partnerSync` (default on) re-renders after a linked-pair edit so the partner
   // strip's head knob catches up; the SEND PAN popover knob turns it OFF, since a
   // render would tear the popover down and no partner send-pan control is on screen
   // (the plan mirror via `commit` is enough).

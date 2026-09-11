@@ -207,17 +207,16 @@ export interface ControlDesc {
    */
   governedBy?: string;
   /**
-   * This control's identity for that ordering, when it is not its own id. A BAL-linked pair
-   * mirrors its whole node params, so CH 1's 1-knob and CH 2's are ONE governor — a gang that
-   * names either has to be ordered against the values on both. Both halves normalise to the
-   * pair's primary, so they meet whichever channel each was learned on.
+   * This control's identity for that ordering, when it is not its own id. A STEREO-linked
+   * pair mirrors its whole node params, so CH 1's 1-knob and CH 2's are ONE governor — a gang
+   * that names either has to be ordered against the values on both. Both halves normalise to
+   * the pair's primary, so they meet whichever channel each was learned on.
    *
-   * BAL only, and asked of the plan: PAN keeps each channel's own EQ and COMP, so the knob on
-   * one governs nothing on the other. The insert effect mirrors in PAN as well, and is not an
-   * exception here — no family a linked CH pair can hold has a driver among its controls, so
-   * there is no insert-FX governor for a pair to share. Amps and companders drive nothing,
-   * Pitch Fix's MIDI Control has no parameter row, and the multi-band compressor is offered on
-   * outputs, which are not pairs.
+   * Asked of the plan, and of Signal Type alone: the pair's EQ and COMP are one set in either
+   * PAN/BAL mode, so the knob on one channel governs the other's slots as well. The insert
+   * effect needs no seat of its own here — no family a linked CH pair can hold has a driver
+   * among its controls. Amps and companders drive nothing, Pitch Fix's MIDI Control has no
+   * parameter row, and the multi-band compressor is offered on outputs, which are not pairs.
    */
   lockId?: string;
   /**
@@ -229,9 +228,8 @@ export interface ControlDesc {
    * wherever the learn order put them. Carrying no `mirrorId` is therefore how a member says it
    * IS the primary, which is how the seat is decided.
    *
-   * What a mirror covers differs by mode. BAL replaces the partner's node params entirely, so
-   * every control on the pair is one; PAN keeps each channel's own everything EXCEPT the insert
-   * effect, which the unit holds as one instance for the pair.
+   * A linked pair is one value for every control but the PAN, which is the member's own in
+   * PAN mode and the pair's one shared balance in BAL.
    */
   mirrorId?: string;
 }
@@ -380,11 +378,12 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   if (!node) return [];
   const out: BoundControl[] = [];
   const np = (): NodeParams => (plan.nodeParams[id] ??= {});
-  /** The node a lock relationship is keyed by: a BAL-linked pair mirrors its node params, so
-   *  its two channels lock as one and both answer with the primary. Identity everywhere else,
-   *  which is what lets one spelling serve the processors that mirror and those that do not. */
+  /** The node a lock relationship is keyed by: a STEREO-linked pair mirrors its node params in
+   *  either PAN/BAL mode, so its two channels lock as one and both answer with the primary.
+   *  Identity everywhere else, which is what lets one spelling serve the processors that mirror
+   *  and those that do not. */
   const lockNode = (nodeId: string): string =>
-    isBalLinkedPair(model, plan, nodeId) ? (pairPrimary(model, nodeId) ?? nodeId) : nodeId;
+    isStereoLinkedPair(model, plan, nodeId) ? (pairPrimary(model, nodeId) ?? nodeId) : nodeId;
   const conn = (toId: string): PlanConnection | undefined => sendConnection(plan, id, toId);
 
   // A continuous control persisted on a send connection's params (level / pan);
@@ -1115,17 +1114,18 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   // The mirror identity, stamped ONCE over the finished list rather than at each site that
   // builds a control. What a mirror covers is a property of the NODE and the link mode, not of
   // any one parameter, and put at the sites it was the insert effect's alone while
-  // `mirrorBalPair` was copying the whole node params and every send — so a BAL pair's CH ON,
+  // `mirrorLinkedPair` was copying the whole node params and every send — so the pair's CH ON,
   // its sends and everything else stayed several decisions and the learn order picked the value.
   //
-  // BAL replaces the partner's node params entirely, so every control on the pair is one value.
-  // PAN keeps each channel's own, EXCEPT the insert effect: a linked pair holds one instance
-  // between them, on the unit and here (`mirrorLinkedInsertFx` runs in both modes).
+  // A linked pair is one value for every control but the PAN, which PAN mode keeps per member:
+  // both members' node params, faders, ONs and send levels move together in either mode, and
+  // each member's own pan stays where PAN put it. So the identity is stamped on everything,
+  // minus that one parameter outside BAL.
   const primary = pairPrimary(model, id);
   if (primary !== null && primary !== id && isStereoLinkedPair(model, plan, id)) {
-    const bal = isBalLinkedPair(model, plan, id);
+    const sharedPan = isBalLinkedPair(model, plan, id);
     for (const c of out) {
-      if (!bal && c.param !== "insfx" && c.param !== "insertFxOn") continue;
+      if (!sharedPan && c.param === "pan") continue;
       c.mirrorId = controlId(primary, c.param, c.scope);
     }
   }
