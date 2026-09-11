@@ -659,8 +659,9 @@ The constraint core (`core/routing.ts`):
   A ducker key source is the `key` kind, not `source`, so it never enters this mirroring — guaranteed by the
   kind rather than by the incidental fact that duckers are not in `channelPairs`.
 - `isStereoLinkedPair(model, plan, id)` / `mirrorLinkedPair(model, plan, id)` — when a MONO IN pair's Signal Type
-  is STEREO, an edit to one channel is mirrored onto the partner (node params in general plus each send's
-  LEVEL / PRE-POST / ON; the Signal Type / PAN-BAL flags stay on the primary). **The gate is Signal Type, not the
+  is STEREO, an edit to one channel is mirrored onto the partner (the node params except the head amp — the
+  gain, Clip Safe and the polarity invert are each member's own — plus each send's LEVEL / PRE-POST / ON; the
+  Signal Type / PAN-BAL flags stay on the primary). **The gate is Signal Type, not the
   PAN/BAL mode**, which is what the unit does — the readings are in [device-model.md](device-model.md). What the
   mode decides is the one parameter on top: `isBalLinkedPair` gates the PAN, which is the pair's one shared
   balance in BAL and the member's own in PAN, and it is the same question the BALANCE label asks. Called from
@@ -670,8 +671,8 @@ The constraint core (`core/routing.ts`):
   every level lane carries both members' addresses and the reduction lane stays one bar. The rule, the readings
   behind it and the one screen it does not reach (the DUCKER's KEY lane) are in
   [channel-tuning.md](channel-tuning.md), "A MONO IN pair whose Signal Type is STEREO".
-- **The insert FX is the one thing a link does not carry, and it answers to Signal Type alone.** Measured on the
-  unit: the Signal Type transition itself — in **either** direction — clears the selector and its ON on **both**
+- **A Signal Type transition is the one thing that clears the pair's insert FX, and nothing else does.** Measured
+  on the unit: the transition itself — in **either** direction — clears the selector and its ON on **both**
   members, whichever member was holding one, and the engine array keeps its values (only a selector write
   re-seeds it). While the pair *is* linked the selector mirrors both ways and both members point at one engine
   instance, so a linked pair holds one insert effect between them rather than one each. That mirror does **not**
