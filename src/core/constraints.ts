@@ -168,7 +168,14 @@ export function insertFxCensus(model: DeviceModel, plan: Plan): InsertFxCensus {
     if (!slot) continue;
     const held = holders.get(slot) ?? [];
     const partner = isStereoLinkedPair(model, plan, node.id) ? partnerChannel(model, node.id) : undefined;
-    if (partner !== undefined && held.includes(partner)) continue;
+    // …and only where the two members hold the SAME effect. A linked pair holding two
+    // different ones is not one holder: the unit keeps one selector between them, so the
+    // document is one it cannot take, and collapsing it here would hide the collision
+    // instead of reporting it (plan-validate's `insertFxPairProblems` names the mismatch
+    // itself). The selector alone decides this — the slot is a function of it, and a
+    // member the document leaves out claims no slot to begin with.
+    const shares = partner !== undefined && plan.nodeParams[partner]?.insertFx === plan.nodeParams[node.id]?.insertFx;
+    if (shares && held.includes(partner)) continue;
     holders.set(slot, [...held, node.id]);
   }
   return holders;

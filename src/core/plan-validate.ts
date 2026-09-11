@@ -6,13 +6,14 @@
 // dependency chain — so they live here. Language-agnostic: the UI maps codes to
 // messages. Nothing here runs on a device readback (see insertFxSlotProblems).
 
-import type { DeviceModel } from "../models/types";
+import type { DeviceModel, ModelId } from "../models/types";
+import { factoryNodeParams } from "../models/initial-state";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import { isPlainRecord } from "./plan";
 import type { Plan } from "./plan";
-import { validatePlan } from "./routing";
+import { INSERT_FX_PAIR_KEYS, validatePlan } from "./routing";
 import type { PlanProblem } from "./routing";
 
 /** One device-wide 1-of insert-FX slot claimed by more than one node. Not a wire,
@@ -36,6 +37,58 @@ export function insertFxSlotProblems(model: DeviceModel, plan: Plan): InsertFxSl
   return [...insertFxCensus(model, plan)]
     .filter(([, nodes]) => nodes.length > 1)
     .map(([slot, nodes]) => ({ reason: "insertFxSlot" as const, slot, nodes: [...nodes] }));
+}
+
+/** A STEREO-linked MONO IN pair whose two members do not agree about their one insert
+ *  effect. Carries the pair and which of `INSERT_FX_PAIR_KEYS` disagree. */
+export interface InsertFxPairProblem {
+  reason: "insertFxPair";
+  /** The pair, primary first. */
+  nodes: [string, string];
+  /** The disagreeing keys, in `INSERT_FX_PAIR_KEYS` order. */
+  keys: string[];
+}
+
+/** One member's value for a pair key as the WRITE will see it: what the document carries,
+ *  or the factory value the load-time fill supplies for an absent one. Compared raw, a
+ *  document that names the effect once and leaves the partner to the fill would read as a
+ *  disagreement although both members end up sending the same value. */
+function pairValue(modelId: ModelId, plan: Plan, nodeId: string, key: string): unknown {
+  const carried = (plan.nodeParams[nodeId] as Record<string, unknown> | undefined)?.[key];
+  return carried !== undefined ? carried : (factoryNodeParams(modelId, nodeId) as Record<string, unknown>)?.[key];
+}
+
+/** `insertFxParams` is a flat slot->raw map, so equality is its entries; everything else
+ *  here is a scalar. */
+function samePairValue(a: unknown, b: unknown): boolean {
+  if (!isPlainRecord(a) || !isPlainRecord(b)) return a === b;
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+}
+
+/**
+ * A STEREO-linked pair holds ONE insert effect between its two channels: the unit keeps a
+ * single selector, one bypass and one engine for the pair and mirrors a write to either
+ * member onto the other. The app's own edit funnels keep the two sides equal
+ * (`mirrorLinkedInsertFx`), but a document built elsewhere is under no such discipline, and
+ * nothing downstream repairs it — `translate` emits each channel from its own params, so a
+ * disagreeing pair sends two different selectors, the unit keeps whichever landed last, and
+ * `sendConverging` re-sends both to its round limit and finishes unconverged.
+ *
+ * So it is a refusal rather than a warning: there is no state of the unit that satisfies the
+ * document, and the operator has nothing to decide. The comparison is made against the
+ * values the write will see, which is why an omitted member is filled in first.
+ */
+export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPairProblem[] {
+  const out: InsertFxPairProblem[] = [];
+  for (const [a, b] of model.channelPairs) {
+    if (plan.nodeParams[a]?.stereoLink !== true) continue;
+    const keys = INSERT_FX_PAIR_KEYS.filter(
+      (key) => !samePairValue(pairValue(model.id, plan, a, key), pairValue(model.id, plan, b, key)),
+    );
+    if (keys.length > 0) out.push({ reason: "insertFxPair", nodes: [a, b], keys: [...keys] });
+  }
+  return out;
 }
 
 /** One stored parameter outside the range its own control admits. `translate.ts` bounds
@@ -197,14 +250,19 @@ export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void
 
 /** Everything a plan load reports: an illegal wire (refused), a slot claimed twice (the
  *  operator decides), or a value outside its range (normalized, then reported). */
-export type LoadProblem = PlanProblem | InsertFxSlotProblem | ParamRangeProblem;
+export type LoadProblem = PlanProblem | InsertFxSlotProblem | InsertFxPairProblem | ParamRangeProblem;
 
 // Every violation the plan loader reports on a file / ?plan= link / drop, in one
 // list so a load path cannot pick up half of them. The caller splits them by
 // reason — a wire violation refuses the document, a slot collision only warns.
 // Both halves check a plan built elsewhere; neither runs on a device readback.
 export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
-  return [...validatePlan(model, plan), ...insertFxSlotProblems(model, plan), ...paramRangeProblems(plan)];
+  return [
+    ...validatePlan(model, plan),
+    ...insertFxPairProblems(model, plan),
+    ...insertFxSlotProblems(model, plan),
+    ...paramRangeProblems(plan),
+  ];
 }
 
 /** Which side of that split a problem falls on: true refuses the document, false warns

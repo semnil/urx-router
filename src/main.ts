@@ -2111,6 +2111,7 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
     "",
     ...problems.map((p) => {
       if (p.reason === "insertFxSlot") return `[${p.reason}] ${p.slot}: ${p.nodes.join(", ")}`;
+      if (p.reason === "insertFxPair") return `[${p.reason}] ${p.nodes.join(" / ")}: ${p.keys.join(", ")}`;
       if (p.reason === "paramRange") {
         // JSON rather than String(): a stored value is a number in the ordinary case but can be
         // a boolean or an object, and `[object Object]` names neither what was there nor why.

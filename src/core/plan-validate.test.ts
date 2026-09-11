@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   applyParamRange,
+  insertFxPairProblems,
   insertFxSlotProblems,
   isRefusal,
   needsDecision,
@@ -89,6 +90,102 @@ describe("insertFxSlotProblems", () => {
         expect([...problems[0].nodes].sort()).toEqual(["ch1", "ch3"]);
       }
     }
+  });
+
+  // A linked pair holds ONE insert effect between its two channels. A document that gives
+  // the two members different values describes no state the unit can be in — it keeps one
+  // selector, one bypass and one engine for the pair — and nothing downstream repairs it:
+  // `translate` emits each channel from its own params. So it is refused, not warned about.
+  describe("a STEREO-linked pair that disagrees with itself", () => {
+    const linked = (ch1: Record<string, unknown>, ch2: Record<string, unknown>): Plan => {
+      const plan = emptyPlan("URX44V");
+      plan.nodeParams["ch1"] = { stereoLink: true, ...ch1 };
+      plan.nodeParams["ch2"] = { ...ch2 };
+      return plan;
+    };
+    const AMP = INSERT_FX_OPTIONS.find((o) => o.label === "Clean")!.value;
+    const COMP_H = INSERT_FX_OPTIONS.find((o) => o.label === "Compander-H")!.value;
+    const COMP_S = INSERT_FX_OPTIONS.find((o) => o.label === "Compander-S")!.value;
+
+    it.each([
+      ["the selector", { insertFx: COMP_H }, { insertFx: COMP_S }, ["insertFx"]],
+      ["the bypass", { insertFx: COMP_H, insertFxOn: true }, { insertFx: COMP_H, insertFxOn: false }, ["insertFxOn"]],
+      [
+        "the engine values",
+        { insertFx: COMP_H, insertFxParams: { "0": 12 } },
+        { insertFx: COMP_H, insertFxParams: { "0": 13 } },
+        ["insertFxParams"],
+      ],
+      // The member the document leaves out is filled with the factory value, so omitting
+      // one side is a disagreement too — and the report has to say so, since "I only set
+      // it on one channel" is the likeliest way to author this by hand.
+      ["one side omitted", { insertFx: COMP_H, insertFxOn: true }, {}, ["insertFx", "insertFxOn"]],
+      // Several at once: every disagreeing key is named, not just the first.
+      [
+        "all three",
+        { insertFx: AMP, insertFxOn: true, insertFxParams: { "0": 1 } },
+        { insertFx: COMP_H },
+        ["insertFx", "insertFxOn", "insertFxParams"],
+      ],
+    ])("refuses the document when %s disagrees", (_name, ch1, ch2, keys) => {
+      const problems = insertFxPairProblems(u44v, linked(ch1, ch2));
+      expect(problems).toHaveLength(1);
+      expect(problems[0].nodes).toEqual(["ch1", "ch2"]);
+      expect(problems[0].keys).toEqual(keys);
+      // A refusal, not a decision: there is no state of the unit that satisfies it.
+      expect(isRefusal(problems[0])).toBe(true);
+      expect(needsDecision(problems[0])).toBe(false);
+      expect(planProblems(u44v, linked(ch1, ch2))).toContainEqual(problems[0]);
+    });
+
+    it.each([
+      ["both members agree", { insertFx: COMP_H, insertFxOn: true }, { insertFx: COMP_H, insertFxOn: true }],
+      // Both omitted: the fill gives each the same factory value, so there is nothing to
+      // disagree about — the everyday plan that simply says nothing about insert FX.
+      ["neither member names one", {}, {}],
+      // One side omitted and the other holds exactly what the fill would supply.
+      ["the named side matches the factory value", { insertFx: INSERT_FX_NONE, insertFxOn: false }, {}],
+      [
+        "the engine values match",
+        { insertFx: COMP_H, insertFxParams: { "0": 12 } },
+        { insertFx: COMP_H, insertFxParams: { "0": 12 } },
+      ],
+    ])("says nothing when %s", (_name, ch1, ch2) => {
+      expect(insertFxPairProblems(u44v, linked(ch1, ch2))).toEqual([]);
+    });
+
+    // The control for every case above: an UNLINKED pair holding two different effects is
+    // two independent channels. Without it a check that fired on any pair would pass them.
+    it("says nothing about a pair that is not linked", () => {
+      const plan = emptyPlan("URX44V");
+      plan.nodeParams["ch1"] = { insertFx: COMP_H, insertFxOn: true };
+      plan.nodeParams["ch2"] = { insertFx: COMP_S, insertFxOn: false };
+      expect(insertFxPairProblems(u44v, plan)).toEqual([]);
+    });
+
+    // …and the OTHER pair of the same model is judged on its own flag.
+    it("judges each pair by its own Signal Type", () => {
+      const plan = emptyPlan("URX44V");
+      plan.nodeParams["ch3"] = { stereoLink: true, insertFx: COMP_H };
+      plan.nodeParams["ch4"] = { insertFx: COMP_S };
+      const problems = insertFxPairProblems(u44v, plan);
+      expect(problems).toHaveLength(1);
+      expect(problems[0].nodes).toEqual(["ch3", "ch4"]);
+    });
+
+    it("covers every model that has a pair", () => {
+      for (const id of MODEL_IDS) {
+        const model = getModel(id);
+        const [a, b] = model.channelPairs[0];
+        const plan = emptyPlan(id);
+        plan.nodeParams[a] = { stereoLink: true, insertFx: COMP_H };
+        plan.nodeParams[b] = { insertFx: COMP_S };
+        expect(
+          insertFxPairProblems(model, plan).map((p) => p.nodes),
+          id,
+        ).toEqual([[a, b]]);
+      }
+    });
   });
 
   it("ignores No Effect and an unset selection", () => {

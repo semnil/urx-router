@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  insertFxCensus,
   rateConstraints,
   formatRate,
   SAMPLE_RATES,
@@ -352,6 +353,23 @@ describe("insertFxMenu", () => {
       // would pass the line above.
       plan.nodeParams["ch3"] = { insertFx: INSERT_FX_OPTIONS.find((o) => o.slot === "compander")!.value };
       expect(lockOf(insertFxMenu(u44v, plan, "ch1"), "Compander-H")).toBe("slot");
+    });
+
+    // The pair is one holder because it holds ONE effect. Two different ones is a document
+    // the unit cannot take, and collapsing it would hide the collision rather than report
+    // it — the slot warning is what surfaced this state before the collapse existed.
+    it("counts a pair holding two different effects as two holders", () => {
+      const plan = linkedPlan("ch1");
+      const [h, s] = ["Compander-H", "Compander-S"].map(
+        (label) => INSERT_FX_OPTIONS.find((o) => o.label === label)!.value,
+      );
+      plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], insertFx: h };
+      plan.nodeParams["ch2"] = { insertFx: s };
+      expect(insertFxCensus(u44v, plan).get("compander")).toEqual(["ch1", "ch2"]);
+      // The control: the same pair agreeing collapses to one, which is what the collapse
+      // was added for — without it this case passes on a census that never collapses.
+      plan.nodeParams["ch2"] = { insertFx: h };
+      expect(insertFxCensus(u44v, plan).get("compander")).toEqual(["ch1"]);
     });
 
     it("still reports the slot when the companders are held elsewhere", () => {

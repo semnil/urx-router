@@ -1276,9 +1276,15 @@ describe("a gang holding both members of a mirrored pair", () => {
     return { ch1: plan.nodeParams.ch1?.insertFxOn, ch2: plan.nodeParams.ch2?.insertFxOn };
   };
 
-  // The reachable state this exists for: a plan holding the two disagreeing survives a round trip
-  // with nothing reported, so nothing upstream makes them equal before a press arrives.
-  it("is a state a plan can hold", () => {
+  // The reachable state this exists for, and WHICH path still reaches it. Nothing in the
+  // plan codec equalises the two members, so the state survives a round trip — but a
+  // DOCUMENT carrying it is now refused on load (`insertFxPairProblems`), because no state
+  // of the unit satisfies it. What remains is the device readback, which plan-validate
+  // deliberately does not check: the unit is the authority for what it is actually running,
+  // and refusing there would leave the operator unable to read the hardware at all. So the
+  // engine still has to cope with a split pair, and the cases below are still about a state
+  // it can be handed.
+  it("survives the plan codec, and is refused as a document while a device read still brings it", () => {
     plan.nodeParams.ch1 = {
       ...plan.nodeParams.ch1,
       stereoLink: true,
@@ -1289,6 +1295,12 @@ describe("a gang holding both members of a mirrored pair", () => {
     plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX_OPTIONS[1].value, insertFxOn: false };
     const back = deserialize(serialize(plan));
     expect([back.nodeParams.ch1?.insertFxOn, back.nodeParams.ch2?.insertFxOn]).toEqual([true, false]);
+
+    const problems = planProblems(model, back);
+    expect(problems.map((p) => p.reason)).toEqual(["insertFxPair"]);
+    // The control: the same pair AGREEING is not refused, so the refusal is about the
+    // disagreement rather than about the link.
+    back.nodeParams.ch2 = { ...back.nodeParams.ch2, insertFxOn: true };
     expect(planProblems(model, back)).toEqual([]);
   });
 
