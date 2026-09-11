@@ -167,10 +167,16 @@ the device default. The full set:
   all, so an `insertFx` on one is ignored.
   **A MONO IN pair whose `stereoLink` is `true` takes a compander and nothing
   else** (same Effect list: the guitar amps and Pitch Fix "cannot be used when
-  Signal Type is stereo"), and the pair holds one effect between its two channels —
-  author the same `insertFx` on both members or on neither. Changing `stereoLink`
-  in either direction clears the pair's insert effect on the unit. Nothing
-  validates this: `plan_tool.py` reads no effect catalogue.
+  Signal Type is stereo"), and the pair holds one effect between its two channels.
+  The unit keeps ONE selector, one bypass and one engine for such a pair, so
+  **`insertFx`, `insertFxOn` and `insertFxParams` must all three match across the two
+  members** — author them on both or on neither. Omitting one side is not "on
+  neither": the app fills the absent member with the factory value (No Effect) and
+  the write then clears the pair. A pair that disagrees describes no state the unit
+  can be in, so the app REFUSES the document and `plan_tool.py validate` exits
+  non-zero naming the keys. Which effect is legal there it still cannot see —
+  `plan_tool.py` reads no effect catalogue.
+  Changing `stereoLink` in either direction clears the pair's insert effect on the unit.
 - `insertFxOn` — insert-effect ON/OFF (bypass), `true`/`false`. The device
   re-engages it whenever an effect is (re)selected; it only applies (and is only
   written) while an effect is selected.

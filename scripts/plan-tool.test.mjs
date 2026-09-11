@@ -377,6 +377,50 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     ).toContain(slot);
   });
 
+  // The pair collapse above must not swallow a pair that disagrees with ITSELF. The unit
+  // keeps one selector, one bypass and one engine for a linked pair, so two different values
+  // describe no state it can be in — the app refuses such a document, and the tool whose whole
+  // claim is "clean here means the app loads it unchanged" has to refuse it too, with a
+  // non-zero exit rather than a warning.
+  it("fails a STEREO-linked pair whose two members disagree", () => {
+    const pair = (ch1, ch2) => ({
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch1, ch2 },
+    });
+    const run = (plan) => {
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      return spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    };
+
+    for (const [name, ch1, ch2] of [
+      ["the selector", { stereoLink: true, insertFx: 1793 }, { insertFx: 1794 }],
+      ["the bypass", { stereoLink: true, insertFx: 1793, insertFxOn: true }, { insertFx: 1793, insertFxOn: false }],
+      [
+        "the engine values",
+        { stereoLink: true, insertFx: 1793, insertFxParams: { 0: 12 } },
+        { insertFx: 1793, insertFxParams: { 0: 13 } },
+      ],
+      ["one side omitted", { stereoLink: true, insertFx: 1793, insertFxOn: true }, {}],
+    ]) {
+      const r = run(pair(ch1, ch2));
+      expect(r.status, `${name}: ${r.stdout}`).not.toBe(0);
+      expect(r.stdout, name).toContain("[insertFxPair] ch1 / ch2");
+    }
+
+    // The controls, both directions: an agreeing pair passes, and an UNLINKED pair holding
+    // two different effects is two channels rather than a contradiction.
+    expect(run(pair({ stereoLink: true, insertFx: 1793 }, { insertFx: 1793 })).status).toBe(0);
+    expect(run(pair({ insertFx: 1793 }, { insertFx: 1794 })).status).toBe(0);
+    // …and a disagreeing pair gets its slot collision back, which the collapse had removed.
+    expect(run(pair({ stereoLink: true, insertFx: 1793 }, { insertFx: 1794 })).stderr).toContain(
+      "select into the one device-wide compander slot",
+    );
+  });
+
   // `True == 1` in Python, and the app's own comparison is `===` — so a boolean comp/EQ type
   // falls back to the COMP-first order and sends no SSMCS at all.
   it("does not read a boolean as the SSMCS comp/EQ order", () => {

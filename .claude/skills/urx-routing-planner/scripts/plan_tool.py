@@ -155,6 +155,8 @@ def validate(plan, models):
 
     warnings.extend(collection_warnings(plan))
     warnings.extend(node_param_warnings(plan, nodes, model.get("channelPairs")))
+    problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs")))
+
     return problems, warnings
 
 
@@ -329,6 +331,10 @@ def insert_fx_slot(node_id, params, nodes):
     return None
 
 
+INSERT_FX_PAIR_KEYS = ("insertFx", "insertFxOn", "insertFxParams")
+FACTORY_PAIR_VALUES = {"insertFx": -1, "insertFxOn": False, "insertFxParams": None}
+
+
 def pair_of(node_id, pairs):
     """The MONO IN pair `node_id` belongs to, primary first, or None. The pairs come from
     the bundled model data, so this tool does not carry a second copy of which channels
@@ -347,6 +353,42 @@ def pair_is_linked(node_id, pairs, node_params):
         return False
     primary = node_params.get(pair[0])
     return isinstance(primary, dict) and primary.get("stereoLink") is True
+
+
+def pair_value(node_params, node_id, key):
+    """One member's value for a pair key as the WRITE will see it: what the document
+    carries, or the factory value the app's load-time fill supplies for an absent one.
+    Compared raw, a document naming the effect once and leaving the partner to the fill
+    would read as a disagreement although both members end up sending the same value."""
+    carried = node_params.get(node_id)
+    if isinstance(carried, dict) and key in carried:
+        return carried[key]
+    return FACTORY_PAIR_VALUES[key]
+
+
+def insert_fx_pair_problems(plan, pairs):
+    """A STEREO-linked pair whose two members disagree about their one insert effect.
+
+    The unit keeps ONE selector, one bypass and one engine for a linked pair and mirrors a
+    write to either member onto the other, so a document giving the two members different
+    values describes no state the unit can be in: the app emits both, the unit keeps
+    whichever landed last, and its converging write re-sends them to its round limit and
+    gives up. The app refuses such a document, so this is a problem rather than a warning.
+    """
+    out = []
+    node_params = plan.get("nodeParams")
+    if not isinstance(node_params, dict):
+        return out
+    for pair in pairs or []:
+        if not (isinstance(pair, list) and len(pair) == 2):
+            continue
+        primary = node_params.get(pair[0])
+        if not (isinstance(primary, dict) and primary.get("stereoLink") is True):
+            continue
+        keys = [k for k in INSERT_FX_PAIR_KEYS if pair_value(node_params, pair[0], k) != pair_value(node_params, pair[1], k)]
+        if keys:
+            out.append(("insertFxPair", f"{pair[0]} / {pair[1]}: {', '.join(keys)}", ""))
+    return out
 
 
 def fx_effect_warnings(node_id, fx, out):
@@ -476,7 +518,11 @@ def node_param_warnings(plan, nodes, pairs):
             pair = pair_of(node_id, pairs)
             partner = None
             if pair is not None and pair_is_linked(node_id, pairs, node_params or {}):
-                partner = pair[1] if pair[0] == node_id else pair[0]
+                candidate = pair[1] if pair[0] == node_id else pair[0]
+                other = (node_params or {}).get(candidate)
+                mine = (node_params or {}).get(node_id)
+                if isinstance(other, dict) and isinstance(mine, dict) and other.get("insertFx") == mine.get("insertFx"):
+                    partner = candidate
             if partner is None or partner not in held:
                 held.append(node_id)
         # The section's PRESENCE, not the `type` key: the selector is emitted whether or not
