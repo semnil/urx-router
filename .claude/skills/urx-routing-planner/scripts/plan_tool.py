@@ -154,7 +154,11 @@ def validate(plan, models):
         seen.add(key)
 
     warnings.extend(collection_warnings(plan))
-    warnings.extend(node_param_warnings(plan, nodes, model.get("channelPairs")))
+    warnings.extend(
+        node_param_warnings(
+            plan, nodes, model.get("channelPairs"), model.get("fxChannels"), model.get("insertFxParamSpace")
+        )
+    )
     problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
 
     return problems, warnings
@@ -198,6 +202,12 @@ def collection_warnings(plan):
             continue
         entries = v.items() if container is dict else enumerate(v)
         for label, el in entries:
+            # The app builds these records key by key and never copies a `__proto__` one, so
+            # the entry is gone whatever it holds — a well-formed value included, which is why
+            # asking `ok(el)` alone said nothing about it.
+            if container is dict and label == "__proto__":
+                out.append(f"{key}[{label}]: the app drops this on load — {PROTO_REMOVED}")
+                continue
             if not ok(el):
                 out.append(f"{key}[{label}]: the app drops this on load — {why}")
     out.extend(name_warnings(plan))
@@ -254,8 +264,9 @@ def name_warnings(plan):
 # Its own advisory is emitted below.
 #
 # For the two that ARE here, this tool does NOT say whether omitting a key keeps the
-# unit's value, and the omission is the point. It carries routing data and no model of
-# the write path, and the answer depends on things only that path knows: whether the
+# unit's value, and the omission is the point. What it carries is routing plus the
+# insert-FX param space (`insertFxParamSpace`), and no model of the write path beyond it,
+# and the answer depends on things only that path knows: whether the
 # channel is in the mode that sends SSMCS at all, which effect family the selector names
 # (a slot keyed under another family is never sent), what the loader normalizes a bare
 # slot number into, and which slots the unit recomputes for itself. A conditional version
@@ -509,8 +520,87 @@ def insert_fx_pair_problems(plan, pairs, param_space):
     return out
 
 
+def fx_admitted(spec, value):
+    """The nearest value an FX control admits, which is the value the write will send.
+
+    The admitted set is the CONTROL's, not a window: a toggle takes 0 and 1 with no bounds
+    written down, a select takes its option values, and only a slider has a range. Bounding
+    everything against a range instead left 2 on a two-state control and a value past a
+    menu's last option on the menu — the app's own note on `paramRangeProblems`.
+
+    Rounded first, by the same rule every control there uses, so a value halfway between two
+    settings resolves the same way whichever control holds it. That rule is JavaScript's
+    `Math.round`: the nearest integer, with a TIE going to +infinity, so -2.5 is -2 and not
+    -3. Written with a sign branch it rounds away from zero on the negative side, which the
+    three keys with a negative rawMin (the two delay feedbacks and Rev-R3's) then disagree
+    with the app about at every half-integer.
+
+    Spelled as the tie rather than as floor(x + 0.5), which is NOT the same function: adding
+    0.5 rounds a second time, and at the largest double below a half that carry takes the sum
+    to exactly 1.0 — so 0.49999999999999994 goes to 1 while `Math.round` gives 0.
+    """
+    floor = math.floor(value)
+    v = floor if value - floor < 0.5 else floor + 1
+    control = spec.get("control")
+    if control == "toggle":
+        return 0 if v <= 0 else 1
+    if control == "select":
+        options = sorted(spec.get("options") or [])
+        if not options:
+            return v
+        # The TOP is answered before any distance is measured, as the app does: every
+        # distance from a far-outside value is the same double, so a nearest-of search would
+        # keep whichever option it started with.
+        if v >= options[-1]:
+            return options[-1]
+        return min(options, key=lambda o: (abs(o - v), o))
+    lo, hi = spec.get("rawMin"), spec.get("rawMax")
+    if lo is not None and v < lo:
+        return lo
+    if hi is not None and v > hi:
+        return hi
+    return v
+
+
+def fx_catalogue_warnings(node_id, fx, channel, out, bounded):
+    """The two FX repairs that need the channel's own catalogue: a `type` its menu does not
+    offer, which the app DROPS (a menu has no nearest member to move to), and a finite number
+    outside what its control admits, which the app BOUNDS.
+
+    Both come from `fxChannels` in models.json, generated from the app's catalogue — the two
+    questions this tool could not answer before it carried them.
+
+    They go to DIFFERENT lists because the app does different things with them, and the
+    sentence each is printed under says which: a dropped value is gone and the effect runs on
+    its own default, while a bounded one is still sent — as the bound. Printed under one
+    heading, every bound announced itself as a deletion."""
+    if not isinstance(channel, dict) or not isinstance(fx, dict):
+        return
+    types = channel.get("types")
+    if isinstance(types, list) and "type" in fx and is_number(fx["type"]) and fx["type"] not in types:
+        out.append((f"{node_id}.fxEffect.type", f"{fx['type']!r} is not a type this channel offers"))
+    params = fx.get("params")
+    specs = channel.get("params")
+    if not isinstance(params, dict) or not isinstance(specs, dict):
+        return
+    for key, raw in params.items():
+        spec = specs.get(key)
+        if not isinstance(spec, dict) or not is_number(raw):
+            continue
+        admitted = fx_admitted(spec, raw)
+        if admitted != raw:
+            bounded.append((f"{node_id}.fxEffect.params.{key}", f"{raw!r} is bounded to {admitted!r}"))
+
+
+# The keys `fx_effect_warnings` answers for itself; every other one goes to the general walk.
+FX_EFFECT_KEYS = ("on", "level", "type", "params")
+
+
 def fx_effect_warnings(node_id, fx, out):
     """Collect everything the app removes from one node's fxEffect (path, why).
+
+    Returns True when the WHOLE section goes, so the caller asks the channel's catalogue
+    nothing about values the load has already deleted.
 
     Two stages remove a value and this owns both, because at this path they mean the
     same thing to the author. The document sanitiser drops a leaf that is neither a
@@ -519,14 +609,12 @@ def fx_effect_warnings(node_id, fx, out):
     that holds a number, an effect object or a parameter map that is not an object. The
     effect then runs on its own factory default and the app says so on the status line.
 
-    NOT covered, because both need the app's effect catalogue and the data bundled here
-    carries routing only: a finite number outside its own parameter window, and a `type`
-    the channel's menu does not offer (the app drops that one too, since a menu has no
-    nearest member to move to). Exporting the windows and the menus beside models.json is
-    what would settle it."""
+    The other two repairs — a `type` the channel's menu does not offer, and a finite number
+    outside what its control admits — need the channel's own catalogue and are reported by
+    `fx_catalogue_warnings`, from the `fxChannels` entry models.json carries."""
     if not isinstance(fx, dict):
         out.append((f"{node_id}.fxEffect", f"{fx!r} is not an object, which drops the whole effect"))
-        return
+        return True
     # An empty group sanitizes to nothing and the key is removed, which is not a harmless
     # difference: the document as written authors the whole channel at the factory defaults,
     # while the loaded plan leaves the channel alone.
@@ -539,7 +627,14 @@ def fx_effect_warnings(node_id, fx, out):
                 "supplied by the loader and sent by the write",
             )
         )
-        return
+        return True
+    # Nothing in it survives, so the KEY goes and the effect runs on the channel's factory
+    # values — the same removal the empty object above is a special case of. Reported at the
+    # section, because naming a leaf inside a section the app deleted sends a plan author to
+    # repair a path that no longer exists.
+    if not survives_sanitizer(fx):
+        out.append((f"{node_id}.fxEffect", GROUP_REMOVED))
+        return True
     # `on` is the one field read as a flag, so a number works there by truthiness.
     if "on" in fx and not isinstance(fx["on"], bool) and not is_number(fx["on"]):
         out.append((f"{node_id}.fxEffect.on", f"{fx['on']!r} is neither a boolean nor a finite number"))
@@ -558,13 +653,41 @@ def fx_effect_warnings(node_id, fx, out):
         )
     if "type" in fx and not is_number(fx["type"]):
         out.append((f"{node_id}.fxEffect.type", f"{fx['type']!r} is not a finite number"))
+    # Every key this function does not recognise is an ordinary node-param value: the app
+    # keeps a well-formed one and removes the rest, exactly as it does anywhere else. Asked
+    # by NAME for four of them, a sibling key holding a container, a string or a bad array was
+    # removed at the load with nothing reporting it — which is the same class the group rule
+    # was written for, one section further in.
+    for k, v in fx.items():
+        if k in FX_EFFECT_KEYS:
+            continue
+        dropped_child(k, v, f"{node_id}.fxEffect", out)
     params = fx.get("params")
     if params is None and "params" not in fx:
-        return
+        return False
     if not isinstance(params, dict):
         out.append((f"{node_id}.fxEffect.params", f"{params!r} is not an object, which drops every parameter"))
-        return
+        return False
+    # An empty map is removed the way any emptied group is. Reported because the tool's whole
+    # claim is that a document it passes loads unchanged, and this one does not — the key goes.
+    if not params:
+        out.append(
+            (
+                f"{node_id}.fxEffect.params",
+                "an empty parameter map carries nothing and the app removes the key",
+            )
+        )
+        return False
+    # …and a map whose keys all go is removed just as whole, so it is named at the MAP. Asked
+    # per key instead, a document whose only parameter is a container was answered with that
+    # parameter's path while the app had deleted the map around it.
+    if not survives_sanitizer(params):
+        out.append((f"{node_id}.fxEffect.params", GROUP_REMOVED))
+        return False
     for k, v in params.items():
+        if k == "__proto__":
+            out.append((f"{node_id}.fxEffect.params.{k}", PROTO_REMOVED))
+            continue
         # NOT recursed into: a parameter is one number, so an object here is a malformed
         # parameter rather than a group whose leaves could be read one at a time.
         if not is_number(v):
@@ -577,7 +700,90 @@ def fx_effect_warnings(node_id, fx, out):
 # finite leaf INSIDE one as a value the app keeps. The app does not: the load-time repair
 # removes a container from either of these outright, and an author who is not told watches
 # the setting disappear after this tool said the document was clean.
-def scalar_only_drops(node_id, params, out):
+def insert_fx_family(selector, param_space):
+    """The namespace a selector's engine values live under, or None when it has none.
+
+    The app answers this with a `switch` over the selector VALUE, so only a value the
+    catalogue names exactly has a family: no selector written, No Effect, an unknown number,
+    and a NON-INTEGER all answer None. Truncating to an int instead put `1793.5` in the
+    compander's namespace, where the app puts it nowhere and deletes the map."""
+    if selector is None or not is_number(selector) or float(selector) != int(selector):
+        return None
+    space = (param_space or {}).get(str(int(selector)))
+    return (space or {}).get("family")
+
+
+# A BARE slot is what the app's own test accepts, which is ASCII digits and nothing else.
+# Python's `str.isdigit()` is true of other scripts' digits as well, so a full-width `６` was
+# read as a slot number the app keeps as an ordinary key.
+BARE_SLOT = re.compile(r"^[0-9]+$")
+
+
+def js_key_order(keys):
+    """The order JavaScript walks an object's own keys: canonical array indices first, in
+    ascending numeric order, then everything else in insertion order.
+
+    It decides which of two bare aliases reaches the family's key first and which is dropped
+    for colliding with it — `{"06": 9, "6": 5}` is walked `6` then `06` however it was
+    written, so the value that survives is 5."""
+
+    def is_index(k):
+        return BARE_SLOT.match(k) is not None and str(int(k)) == k and int(k) < 2**32 - 1
+
+    indices = sorted((k for k in keys if is_index(k)), key=int)
+    return indices + [k for k in keys if not is_index(k)]
+
+
+# What the app does with one key the document wrote. Everything but `keep` and `rekey` means
+# the key is gone; they are told apart because each is a different sentence to the author.
+KEEP, REKEY, DROP_PROTO, DROP_SCALAR, DROP_UNQUALIFIED, DROP_COLLISION = (
+    "keep",
+    "rekey",
+    "proto",
+    "scalar",
+    "unqualified",
+    "collision",
+)
+
+
+def insert_fx_dispositions(slots, family):
+    """What becomes of each key the document wrote, by SOURCE key.
+
+    A set of surviving keys cannot answer this: two keys can normalise onto one destination,
+    and then the set says the destination is there while one of the two values is gone. The
+    app keeps the qualified key and drops the bare one that collides with it, so the author's
+    value silently becomes the other one's.
+
+    Mirrors `qualifyInsertFxParams`: every non-bare key is copied first, then each bare key is
+    re-keyed onto the family unless that destination is already taken."""
+    if not isinstance(slots, dict):
+        return {}
+    out = {}
+    for k, v in slots.items():
+        if k == "__proto__":
+            out[k] = DROP_PROTO
+        elif not (isinstance(v, bool) or is_number(v)):
+            out[k] = DROP_SCALAR
+        elif not BARE_SLOT.match(k):
+            out[k] = KEEP
+    taken = {k for k, d in out.items() if d == KEEP}
+    for k in js_key_order(list(slots)):
+        if k in out:
+            continue
+        if not family:
+            out[k] = DROP_UNQUALIFIED
+            continue
+        # `Number("06")` is 6, so a leading zero names the same slot as its plain spelling.
+        dest = f"{family}:{int(k)}"
+        if dest in taken:
+            out[k] = DROP_COLLISION
+        else:
+            taken.add(dest)
+            out[k] = REKEY
+    return out
+
+
+def scalar_only_drops(node_id, params, out, param_space=None):
     """Report the scalar-only paths the load-time repair removes."""
     on = params.get("insertFxOn")
     if "insertFxOn" in params and not (isinstance(on, bool) or is_number(on)):
@@ -591,9 +797,99 @@ def scalar_only_drops(node_id, params, out):
     if not isinstance(slots, dict):
         out.append((f"{node_id}.insertFxParams", f"{slots!r} is not an object of engine slots"))
         return
+    # Empty, it is removed the way any emptied group is. Held out of the general walk for the
+    # container it keeps, this field needs the clause said there as well — its own rule reports
+    # per slot, and a map with no slots has nothing for that to report.
+    if not slots:
+        out.append(
+            (
+                f"{node_id}.insertFxParams",
+                "an empty engine map carries nothing and the app removes the key",
+            )
+        )
+        return
+    # What is LEFT once the app has finished, which is what decides whether the map goes or
+    # only some of its slots. The generic survival rule answers a different question and got
+    # this wrong in both directions: an empty array survives it and is not a scalar, and a bare
+    # slot survives it and belongs to no family unless the selector names one.
+    family = insert_fx_family(params.get("insertFx"), param_space)
+    how = insert_fx_dispositions(slots, family)
+    # Nothing is left, so the map itself goes rather than each key in it.
+    if not any(d in (KEEP, REKEY) for d in how.values()):
+        out.append((f"{node_id}.insertFxParams", GROUP_REMOVED))
+        return
     for slot, raw in slots.items():
-        if not (isinstance(raw, bool) or is_number(raw)):
-            out.append((f"{node_id}.insertFxParams.{slot}", f"{raw!r} is not a boolean or a finite number"))
+        path = f"{node_id}.insertFxParams.{slot}"
+        what = how.get(slot)
+        if what == DROP_PROTO:
+            out.append((path, PROTO_REMOVED))
+        elif what == DROP_SCALAR:
+            out.append((path, f"{raw!r} is not a boolean or a finite number"))
+        elif what == DROP_UNQUALIFIED:
+            out.append(
+                (
+                    path,
+                    "a bare slot number belongs to the family this node's selector names, and this "
+                    "plan names none — so the app drops it rather than re-keying it",
+                )
+            )
+        elif what == DROP_COLLISION:
+            out.append(
+                (
+                    path,
+                    f"this slot re-keys onto {family}:{int(slot)}, which the plan already carries — the "
+                    "key that names its own family wins, so THIS value is the one the app drops",
+                )
+            )
+
+
+def survives_sanitizer(value):
+    """Whether the app's document sanitiser leaves anything of `value` behind.
+
+    A leaf survives when it is a boolean or a finite number. An ARRAY survives when every
+    element is an object, one bad element dropping the whole array — so an empty array and an
+    array of empty objects both survive, vacuously. A GROUP survives only while at least one
+    of its own leaves does, which is the clause a walk over leaves alone cannot reach: the app
+    removes a group that sanitises to nothing rather than keeping an empty husk, so the key is
+    gone and the node falls back to the device default. `__proto__` is not a key the app keeps,
+    so it cannot be what holds a group up.
+    """
+    if isinstance(value, bool) or is_number(value):
+        return True
+    if isinstance(value, list):
+        return all(isinstance(el, dict) for el in value)
+    if isinstance(value, dict):
+        return any(survives_sanitizer(v) for k, v in value.items() if k != "__proto__")
+    return False
+
+
+GROUP_REMOVED = (
+    "this group sanitises to nothing and the app removes the key, so the node "
+    "falls back to the device default rather than holding an empty group"
+)
+
+PROTO_REMOVED = "the app never keeps a `__proto__` key, so this one is removed whatever it holds"
+
+
+def dropped_child(key, value, path, out):
+    """One child of a container, decided once for every walk site.
+
+    Two of the app's rules live here rather than in the leaf walk, because neither is a
+    statement about a leaf. A `__proto__` key is removed whatever it holds, at every level.
+    A group nothing survives is removed WHOLE, so the removal is reported at the group rather
+    than at its leaves — the same distinction `fxEffect.level` draws: a leaf warning says the
+    value is wrong, and here it is the KEY that is gone. Descending anyway would name paths
+    that no longer exist to be repaired.
+
+    Written once and called from each site, because spelling it per site is what left the
+    `fxEffect` section answering for four key names and nothing else."""
+    if key == "__proto__":
+        out.append((f"{path}.{key}", PROTO_REMOVED))
+        return
+    if isinstance(value, dict) and not survives_sanitizer(value):
+        out.append((f"{path}.{key}", GROUP_REMOVED))
+        return
+    dropped_values(value, f"{path}.{key}", out)
 
 
 def dropped_values(value, path, out):
@@ -607,7 +903,7 @@ def dropped_values(value, path, out):
     reason and reported by `scalar_only_drops`."""
     if isinstance(value, dict):
         for k, v in value.items():
-            dropped_values(v, f"{path}.{k}", out)
+            dropped_child(k, v, path, out)
     elif isinstance(value, list):
         if all(isinstance(el, dict) for el in value):
             for i, el in enumerate(value):
@@ -618,23 +914,25 @@ def dropped_values(value, path, out):
         out.append((path, f"{value!r} is neither a boolean nor a finite number"))
 
 
-def node_param_warnings(plan, nodes, pairs):
+def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
     claim at once.
 
-    NOT covered: a finite FX value outside the window its own parameter admits, and a
-    `type` the channel's menu does not offer. The app bounds the first on load and drops
-    the second, reporting the count; this tool cannot see either, because both need the
-    app's effect catalogue and the data bundled here carries routing only. What it CAN
-    see without one is a value that is not a number at all, which is fx_effect_warnings."""
+    A finite FX value outside what its control admits, and a `type` the channel's menu does
+    not offer, are covered too — by `fx_catalogue_warnings`, which reads the `fxChannels`
+    entry models.json carries. What needs no catalogue at all is a value that is not a number,
+    which is fx_effect_warnings."""
     out = []
     slot_holders = {}
     node_params = plan.get("nodeParams")
     if node_params is not None and not isinstance(node_params, dict):
         return ["nodeParams is not an object — the app loads the plan with no node params at all"]
     for node_id, params in (node_params or {}).items():
+        if node_id == "__proto__":
+            out.append(f"node param {node_id}: the app drops this value on load — {PROTO_REMOVED}")
+            continue
         if not isinstance(params, dict):
             out.append(f"node {node_id}: the app drops this node's params on load — nodeParams entries must be objects")
             continue
@@ -643,11 +941,16 @@ def node_param_warnings(plan, nodes, pairs):
         # their own rule: it keeps a container, theirs does not.
         walked = {k: v for k, v in params.items() if k not in ("fxEffect", "insertFxOn", "insertFxParams")}
         dropped_values(walked, node_id, dropped)
-        scalar_only_drops(node_id, params, dropped)
+        scalar_only_drops(node_id, params, dropped, param_space)
+        bounded = []
         if "fxEffect" in params:
-            fx_effect_warnings(node_id, params["fxEffect"], dropped)
+            gone = fx_effect_warnings(node_id, params["fxEffect"], dropped)
+            if not gone:
+                fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
         for path, why in dropped:
             out.append(f"node param {path}: the app drops this value on load — {why}")
+        for path, why in bounded:
+            out.append(f"node param {path}: the app bounds this value on load — {why}")
         if any(k in params for k in DUCKER_KEYS) and nodes.get(node_id, {}).get("kind") != "ducker":
             duckers = ", ".join(i for i, n in nodes.items() if n.get("kind") == "ducker")
             out.append(

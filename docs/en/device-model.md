@@ -376,7 +376,9 @@ Source selection for the analog outputs (MAIN / LINE).
   are the only channel effects the user guide's Effect list marks as running on such a pair (where they
   run in stereo across it); the four GUITAR AMP CLASSICS and PITCH FIX say "Cannot be used when Signal
   Type is stereo". The tool locks those five in the insert-FX menu of both members while the pair is
-  linked, on either pair and on every model that has one, and the Signal Type transition itself clears
+  linked, on either pair and on every model that has one — the Effect list states this per EFFECT and names
+  no model, in a guide that covers all three, and a URX22 has MONO IN channels and a Signal Type like the
+  others — and the Signal Type transition itself clears
   whatever the pair was holding — in **either** direction, so leaving STEREO with a compander held
   releases it. This is a per-effect rule and not a rate one; the ceilings below are asked first, so a
   linked pair above every ceiling reports the rate.

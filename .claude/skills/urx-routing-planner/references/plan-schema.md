@@ -174,8 +174,9 @@ the device default. The full set:
   neither": the app fills the absent member with the factory value (No Effect) and
   the write then clears the pair. A pair that disagrees describes no state the unit
   can be in, so the app REFUSES the document and `plan_tool.py validate` exits
-  non-zero naming the keys. Which effect is legal there it still cannot see —
-  `plan_tool.py` reads no effect catalogue.
+  non-zero naming the keys. WHICH effect is legal there it still cannot see: the bundled
+  data carries each selector's engine slots, not the menu a node or a linked pair may
+  choose from.
   Changing `stereoLink` in either direction clears the pair's insert effect on the unit.
 - `insertFxOn` — insert-effect ON/OFF (bypass), `true`/`false`. The device
   re-engages it whenever an effect is (re)selected; it only applies (and is only
@@ -283,15 +284,49 @@ this is layout, not a repair — and it is one more reason to omit `positions` e
 let the app arrange the board. `plan_tool.py validate` does not see it: it happens after the
 checks above, in the view, and this tool mirrors the loader.
 
-**`plan_tool.py validate` warns about every row that needs no effect catalogue** —
-the non-numeric leaf, the non-object `params`, the non-object `fxEffect` — and
-CANNOT see the two that do: a finite number outside its window, and a `type` no
-channel offers. Those windows and menus live in the app's effect catalogue, and the
-data bundled with this skill carries routing only. Settling it means exporting them
-alongside `models.json`; until then a plan this tool calls clean can still have an
-FX value the app will bound on load. `scripts/plan-tool.test.mjs` in the repository
-holds both halves — the agreement and the two blind spots — by running this tool and
-the app's own loader over the same documents.
+**`plan_tool.py validate` warns about every FX row the app repairs** — the non-numeric
+leaf, the non-object `params`, the non-object `fxEffect`, and the two that need the
+channel's own catalogue: a finite number outside what its control admits, and a `type` no
+channel offers. `models.json` carries that catalogue (`fxChannels`: each channel's menu,
+and per parameter key what its control admits — a slider's window, a select's options, a
+toggle's two states), so a plan this tool calls clean is one the app loads without
+repairing it.
+
+**A group that sanitises to nothing is one of those repairs**, and it is not an FX rule: the
+app removes an emptied group rather than keeping an empty husk, so `{"gate": {}}`,
+`{"gate": {"on": {}}}` and an empty `fxEffect.params` or `insertFxParams` all load with the
+key gone and the node back on the device default. An ARRAY is the exception on both sides —
+an empty one, and one of empty objects, survive as written. Write the values, or leave the
+key out; an empty container is neither.
+
+The removal is reported **at the group**, not at the leaves inside it: those are paths the
+repair no longer has anything to do with, and repairing one would leave the empty parent
+behind for the next run to report. That holds at every depth — a parameter map whose only
+key is a container is named at the MAP, and an effect section whose only key is that map is
+named at the SECTION. Two more keys go the same way wherever they are written: a `__proto__`
+key, which the app keeps at no level, not as a node id, and not in `nodeNames`,
+`nodeColors`, `notes` or `positions` either; and any key the `fxEffect` section does not
+define, since the app treats it as an ordinary node-param value and removes it unless it is
+well formed.
+
+**The engine map has three further stages of its own**, and they can empty it after the rules
+above have passed: a slot value that is not a boolean or a finite number is deleted (stricter
+than the document sanitiser, which keeps an array); a BARE slot number is re-keyed onto the
+family this node's selector names, and is DROPPED when there is none — no selector, No Effect,
+or a selector no effect answers for — while a key already carrying its family is kept whatever
+the selector says; and the map itself is removed when nothing is left. So `{"6": 5}` with no
+selector loads as no map at all, and `{"compander:6": 5}` loads as written.
+
+Three details of that decide real documents. A selector has a family only when it is an
+INTEGER the catalogue names, so `1793.5` has none and takes the map with it. A bare slot is
+ASCII digits and nothing else — a full-width `６` is an ordinary key the app keeps. And a
+bare slot is re-keyed by its NUMERIC value, so `06` and `6` name one destination: whichever
+reaches it first wins and the other value is dropped, with a key that carries its own family
+winning over both. Write the qualified form, and write each slot once.
+
+`scripts/plan-tool.test.mjs` in the repository holds this by running the tool and the app's
+own loader over the same documents and comparing their answers — whether each document
+survives as written, and, where a value is bounded, the number each side bounds it to.
 
 A `nodeNames` value longer than
 **8 characters** is CUT to that length — the unit's own CH SETTING name screen

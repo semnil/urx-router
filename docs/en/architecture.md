@@ -109,8 +109,13 @@ carries a one-line map of the same directories and points here.
   `planProblems` (split out of `constraints.ts`, which is rate limits and nothing else: a rate limit warns
   about a plan the app authored, these check a plan built ELSEWHERE — a file, a `?plan=` link, a generator).
   `routing.ts` cannot host them (the cycle constraints → translate → routing). It runs from `loadFromText`
-  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its three kinds
-  are reported differently: an illegal wire refuses the document; an insert-FX slot collision only warns and
+  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its four kinds
+  are reported differently: an illegal wire refuses the document; a STEREO-linked pair whose two members
+  disagree about their one insert effect refuses it too, since the unit keeps a single selector, bypass and
+  engine for the pair and no state of it satisfies such a document (`insertFxPairProblems`, compared over the
+  state a WRITE would leave rather than over what the document stores — `insertFxWireState` in `translate.ts`
+  is that projection, and it sits in the emit path so the comparison and the write cannot drift apart);
+  an insert-FX slot collision only warns and
   offers to open it anyway; a stored value outside what the app can write is repaired before the document
   opens and reported on the status line, since nothing failed and nothing is being asked — bounded to the
   window, or DROPPED where there is nothing to bound: a leaf that is not a finite number (the window is

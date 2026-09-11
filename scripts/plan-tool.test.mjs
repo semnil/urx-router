@@ -10,10 +10,12 @@
 // and the two answers have to agree about whether this document survives as written. A table of
 // strings would go on passing after the loader changed, which is the failure being pinned.
 //
-// The two disagreements are declared, not tolerated: the tool carries routing data and no effect
-// catalogue, so a finite number outside its parameter's window and a `type` the channel's menu
-// does not offer are invisible to it. They are asserted as misses, so the gap is a number here
-// rather than a sentence in a docstring.
+// What the tool cannot answer is declared, not tolerated: the table below carries a row per
+// document and the ones the app repairs while the tool passes over them are counted, so the gap
+// is a number here rather than a sentence in a docstring. It is currently NONE — the two that
+// needed the FX channel's own menu and admitted sets are answered now that models.json carries
+// them — and a row that stops warning tomorrow lands in that count rather than passing as one
+// more green case.
 
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -22,7 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deserialize, PLAN_VERSION } from "../src/core/plan";
-import { insertFxPairProblems } from "../src/core/plan-validate";
+import { insertFxPairProblems, paramRangeProblems } from "../src/core/plan-validate";
 import { getModel, MODEL_IDS } from "../src/models";
 import { INSERT_FX_OPTIONS } from "../src/core/control/params";
 import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
@@ -57,6 +59,17 @@ const toolWarnings = (dir, plan) => {
   return r.stderr;
 };
 
+/** The path out of one warning line, or null when the line is not one.
+ *
+ *  Split at the FIRST colon and a qualified engine key is cut at its own separator:
+ *  `ch1.insertFxParams.compander:6` reads as `ch1.insertFxParams.compander`, a path that
+ *  exists nowhere, and every comparison against it is then answered by a truncation rather
+ *  than by the tool. What ends the path is the reason, and every reason opens the same way. */
+const warningPath = (line) => {
+  const m = /^WARNING: node param (.+?): the app (?:drops|bounds) this value on load/.exec(line);
+  return m ? m[1] : null;
+};
+
 /** The paths the tool says the app removes. Node-level advice (selector warnings, "verify on
  *  the device") is not an answer to this question and is left out. */
 const toolPaths = (dir, plan) => {
@@ -68,8 +81,8 @@ const toolPaths = (dir, plan) => {
   expect(r.status, r.stdout).toBe(0);
   return r.stderr
     .split("\n")
-    .filter((l) => l.startsWith("WARNING: node param "))
-    .map((l) => l.slice("WARNING: node param ".length).split(":")[0]);
+    .map(warningPath)
+    .filter((p) => p !== null);
 };
 
 /** The app's own load. THREE stages: deserialize, the load-time repair, and the fill that
@@ -101,8 +114,11 @@ const leavesOf = (value, path = [], out = new Map()) => {
   return out;
 };
 
-// Rev-X Hall's own LPF starts well above 0, and no channel offers type 12345 — the two the
-// tool cannot answer without the app's effect catalogue.
+// Rev-X Hall's own LPF starts well above 0, and no channel offers type 12345. These were the
+// two the tool could not answer while models.json carried routing alone; it carries the FX
+// channels' menus and admitted sets now, so both are answered and the rows say so. What they
+// pin is that the tool's warning and the app's repair agree per document, which is the same
+// question every other row asks.
 const CASES = [
   ["a document the app writes itself", { on: true, type: 0, params: { revxLpf: 40 } }, false, false],
   ["an empty effect object, whose key the app removes", {}, true, true],
@@ -117,8 +133,9 @@ const CASES = [
   ["a null parameter, which the sanitiser drops", { type: 0, params: { revxLpf: null } }, true, true],
   ["an effect object that is not an object", false, true, true],
   ["an effect object that is an array", [{}], true, true],
-  ["a number outside its parameter's window", { type: 0, params: { revxLpf: 0 } }, true, false],
-  ["a type no channel offers", { type: 12345 }, true, false],
+  ["an empty parameter map, whose key the app removes", { type: 0, params: {} }, true, true],
+  ["a number outside its parameter's window", { type: 0, params: { revxLpf: 0 } }, true, true],
+  ["a type no channel offers", { type: 12345 }, true, true],
 ];
 
 // Skipped BY NAME where python3 is absent, rather than passing over a tool it never ran.
@@ -212,8 +229,9 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
   });
 
   // What this tool must NOT do is decide whether omitting a raw key keeps the unit's value.
-  // It carries routing data and no model of the write path, and that answer depends on things
-  // only the write path knows — the channel's comp/EQ mode (SSMCS values are sent in one mode
+  // What it models of the write path is one question — whether a linked pair's two members
+  // would be written the same way — and that answer depends on things nothing in it knows:
+  // the channel's comp/EQ mode (SSMCS values are sent in one mode
   // and in no other), which family the selector names (a slot keyed under another family is
   // never sent), what the loader turns a bare slot number into with no selector present, and
   // which slots the unit recomputes for itself.
@@ -265,13 +283,19 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     );
   });
 
-  // The gap, as a count. Two documents the app rewrites and the tool cannot see — both need
-  // the effect catalogue, which the bundled data does not carry.
-  it("has exactly two blind spots, both needing the effect catalogue", () => {
-    expect(CASES.filter(([, , changes, warns]) => changes && !warns).map(([name]) => name)).toEqual([
-      "a number outside its parameter's window",
-      "a type no channel offers",
-    ]);
+  // The gap, as a count. It was two — a number outside its parameter's window and a type no
+  // channel offers, both needing the FX channel's catalogue — and models.json carries that
+  // catalogue now, so it is NONE. Asserted as a number rather than deleted: a table of cases
+  // where the app rewrites and the tool says nothing is exactly what the whole file exists to
+  // keep at zero, and a row that stops warning tomorrow has to land here rather than passing
+  // as one more green case.
+  //
+  // What it counts is the ROWS, which is the whole of what it can say: a document nobody wrote
+  // a row for is not a row that stopped warning. The app's emptied-group rule went unmodelled
+  // underneath a count reading zero, and what found it was asking a class rather than adding a
+  // row — so this is a ratchet over the table and not a statement about the tool's coverage.
+  it("leaves no row the app rewrites and the tool passes over", () => {
+    expect(CASES.filter(([, , changes, warns]) => changes && !warns).map(([name]) => name)).toEqual([]);
   });
 
   // The third stage the answers above rest on. `appChanges` asks what the SANITISER does to a
@@ -763,8 +787,11 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
             expect(bypass.warnings, `the bypass warning names its path, ${_name}`).toContain(
               `node param ${primary}.insertFxOn:`,
             );
+            // The MAP, not the slot: this document's only engine value is the container, so
+            // the scalar-only stage empties the map and the app then removes it. Naming the
+            // slot sends the author to a key inside something that is gone.
             expect(slot.warnings, `the engine-slot warning names its path, ${_name}`).toContain(
-              `node param ${primary}.insertFxParams.compander:6:`,
+              `node param ${primary}.insertFxParams:`,
             );
             // The control: a SCALAR in either place is kept, so neither is warned about —
             // without it a checker warning on every document would satisfy the two above.
@@ -817,6 +844,472 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     // What the APP did with it, which is what the warning is a claim about.
     expect(loaded.nodeParams.ch1?.insertFxParams === undefined, `the app dropped it: ${_name}`).toBe(dropped);
     expect(r.stderr.includes("node param ch1.insertFxParams:"), `the tool says so: ${_name}`).toBe(dropped);
+  });
+
+  // The FX channel's own two repairs, which the tool could not see until models.json carried
+  // the channel's menu and what each control admits. Both sides are asked the same documents
+  // and have to name the same paths: the app REPORTS them (`paramRangeProblems`) and the tool
+  // WARNS about them, and a plan the tool calls clean must not be one the app repairs.
+  //
+  // The admitted set is the CONTROL's, so the rows walk all three kinds — a slider's window,
+  // a select's option list and a toggle's two states — because bounding everything against a
+  // range is the mistake the app's own note records.
+  it("agrees with the app about the FX repairs that need the channel's catalogue", () => {
+    const FX = JSON.parse(readFileSync(join(ROOT, ".claude/skills/urx-routing-planner/scripts/models.json"), "utf8"))
+      .URX44V.fxChannels["bus.fx1"];
+    expect(FX, "the generated data carries the channel").toBeDefined();
+
+    const slider = Object.entries(FX.params).find(([, p]) => p.control === "slider" && p.rawMax !== undefined);
+    const select = Object.entries(FX.params).find(([, p]) => p.control === "select" && (p.options ?? []).length > 1);
+    const toggle = Object.entries(FX.params).find(([, p]) => p.control === "toggle");
+    expect(slider, "a slider key").toBeDefined();
+    expect(select, "a select key").toBeDefined();
+    expect(toggle, "a toggle key").toBeDefined();
+
+    const ask = (fxEffect) => {
+      const plan = {
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: "URX44V",
+        connections: [],
+        nodeParams: { "bus.fx1": { fxEffect } },
+      };
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const loaded = deserialize(JSON.stringify(plan));
+      expect(loaded).not.toBeNull();
+      return { app: paramRangeProblems(loaded), tool: r.stderr };
+    };
+
+    // A type the menu does not offer: the app DROPS it.
+    const badType = ask({ type: 4242 });
+    expect(
+      badType.app.some((p) => p.key === "type" && p.action === "drop"),
+      "the app drops the type",
+    ).toBe(true);
+    expect(badType.tool, "the tool names the type").toContain("bus.fx1.fxEffect.type");
+    // …and a type it DOES offer is not reported, or the row above passes on a checker that
+    // objects to every type.
+    expect(
+      ask({ type: FX.types[0] }).app.some((p) => p.key === "type"),
+      "a legal type",
+    ).toBe(false);
+    expect(ask({ type: FX.types[0] }).tool).not.toContain("bus.fx1.fxEffect.type");
+
+    // Each control kind, past what it admits and then inside it.
+    for (const [name, [key, spec], past, inside] of [
+      ["slider", slider, slider[1].rawMax + 1, slider[1].rawMax],
+      ["select", select, Math.max(...select[1].options) + 1, select[1].options[0]],
+      ["toggle", toggle, 2, 1],
+    ]) {
+      const over = ask({ type: FX.types[0], params: { [key]: past } });
+      expect(
+        over.app.some((p) => p.key === key && p.action === "bound"),
+        `the app bounds ${name} ${key}=${past}`,
+      ).toBe(true);
+      expect(over.tool, `the tool names ${name} ${key}`).toContain(`bus.fx1.fxEffect.params.${key}`);
+
+      const ok = ask({ type: FX.types[0], params: { [key]: inside } });
+      expect(
+        ok.app.some((p) => p.key === key),
+        `the app leaves ${name} ${key}=${inside}`,
+      ).toBe(false);
+      expect(ok.tool, `the tool leaves ${name} ${key}`).not.toContain(`bus.fx1.fxEffect.params.${key}`);
+      void spec;
+    }
+
+    // The VALUE, and not only the path. Asking whether each side MENTIONED the key is satisfied
+    // by two sides that bound it to different numbers, which is what a rounding rule written
+    // once in each language produces: JavaScript's `Math.round` is floor(x + 0.5) at every x, so
+    // a half goes to +infinity and -2.5 is -2, while rounding away from zero makes it -3. Only a
+    // key whose window reaches below zero can show it, and only at a half-integer — so the rows
+    // walk the boundary rather than sampling it, and the window's own ends come from the
+    // catalogue rather than being written here, where they would drift.
+    const probes = (spec) => {
+      const lo = spec.rawMin ?? 0;
+      const hi = spec.rawMax ?? 0;
+      // 0.49999999999999994 is the largest double below a half, and the one value that
+      // separates `Math.round` from floor(x + 0.5): the addition carries to exactly 1.0, so
+      // the second spelling answers 1 where the app answers 0.
+      return [
+        lo - 1,
+        lo - 0.5,
+        lo,
+        lo + 0.5,
+        lo + 1.5,
+        -0.5,
+        -1.5,
+        -2.5,
+        0.49999999999999994,
+        0.5,
+        1.5,
+        2.5,
+        hi - 0.5,
+        hi,
+        hi + 1,
+      ];
+    };
+    let bounded = 0;
+    for (const [key, spec] of Object.entries(FX.params)) {
+      const values = spec.control === "select" ? [...spec.options, Math.max(...spec.options) + 1] : probes(spec);
+      for (const raw of values) {
+        const got = ask({ type: FX.types[0], params: { [key]: raw } });
+        const app = got.app.find((p) => p.key === key && p.action === "bound");
+        const line = got.tool.split("\n").find((l) => l.includes(`params.${key}:`)) ?? "";
+        // Either both leave it alone, or both name the same number.
+        expect(Boolean(app), `both answer for ${key}=${raw}`).toBe(line !== "");
+        if (app) {
+          expect(line, `${key}=${raw} bounds to ${app.bound}`).toContain(`is bounded to ${app.bound}`);
+          // …and under the sentence that says what the app DID with it. The number reads the
+          // same under either heading, so asking only for it leaves a bounded value free to be
+          // announced as a deletion — which is what it was.
+          expect(line, `${key}=${raw} is reported as bounded`).toContain("the app bounds this value on load");
+          bounded += 1;
+        }
+      }
+    }
+    // The positive control: the loop above is satisfied by a run in which nothing was ever
+    // bounded, and every `toContain` in it would then have been asked of nothing.
+    expect(bounded, "the probes reach values both sides repair").toBeGreaterThan(0);
+  });
+
+  // A group the app empties is REMOVED, not kept as a husk, and the key's disappearance is a
+  // repair like any other. The walk over leaves cannot see it — an empty object has no leaf to
+  // report — so `{"gate": {}}` and `{"gate": {"on": {}}}` both loaded changed while the tool
+  // said nothing. It is one rule of the app's sanitiser rather than one site, so it is asked
+  // here over every group a node can carry, with the shapes that must NOT fire beside them:
+  // an array survives vacuously however empty it is, and a group keeping one usable leaf keeps
+  // the group. The node's own params object is the boundary — the app leaves an emptied node
+  // entry in place — so a rule reaching one key too far up would report every such node.
+  it("agrees with the app about a group that sanitises to nothing", async () => {
+    const SHAPES = [
+      ["an empty FX parameter map", "bus.fx1", { fxEffect: { type: 0, params: {} } }, "bus.fx1.fxEffect.params"],
+      ["an empty effect object", "bus.fx1", { fxEffect: {} }, "bus.fx1.fxEffect"],
+      ["an empty engine map", "ch1", { insertFx: 1793, insertFxParams: {} }, "ch1.insertFxParams"],
+      ["an empty SSMCS group", "ch1", { ssmcs: {} }, "ch1.ssmcs"],
+      ["an empty gate group", "ch1", { gate: {} }, "ch1.gate"],
+      ["an empty comp group", "ch1", { comp: {} }, "ch1.comp"],
+      // The group is what the app removes, so the group is what has to be NAMED — `ch1.gate.on`
+      // is a path that no longer exists to be repaired, which is the whole reason the rule is
+      // asked before the walk descends rather than inside it.
+      ["a group whose only leaf is a container", "ch1", { gate: { on: {} } }, "ch1.gate"],
+      ["a group emptied two levels down", "ch1", { gate: { on: { x: {} } } }, "ch1.gate"],
+      // …and the shapes the same rule must leave alone.
+      ["an empty band array", "ch1", { eqBands: [] }, null],
+      ["an array of empty bands", "ch1", { eqBands: [{}] }, null],
+      // An array is what holds THIS group up, which is the only way the array clause is
+      // reached: the walk guards a group rather than an array, so a rule that stopped
+      // counting arrays as survivors would report a group the app keeps and nothing else
+      // here would notice.
+      ["a group whose only leaf is an array", "ch1", { gate: { bands: [] } }, null],
+      // The GROUP, not the array: an array holding a non-object does not survive, so nothing in
+      // the group does and the app removes the whole key. (Expected as the array's own path
+      // first — the assertion is what said otherwise, which is why it asks for the path.)
+      ["a group whose array holds a non-object", "ch1", { gate: { bands: [1] } }, "ch1.gate"],
+      ["a group that keeps one leaf", "ch1", { gate: { threshold: -20 } }, null],
+      ["a node with no params at all", "ch1", {}, null],
+      // The same class one section further in. `fxEffect` is held out of the general walk and
+      // answered for FOUR key names, so a sibling key beside them reached no rule at all.
+      [
+        "an unknown FX key holding an empty container",
+        "bus.fx1",
+        { fxEffect: { type: 0, foo: {} } },
+        "bus.fx1.fxEffect.foo",
+      ],
+      ["an unknown FX key holding a string", "bus.fx1", { fxEffect: { type: 0, foo: "x" } }, "bus.fx1.fxEffect.foo"],
+      ["an unknown FX key holding a bad array", "bus.fx1", { fxEffect: { type: 0, foo: [1] } }, "bus.fx1.fxEffect.foo"],
+      ["an unknown FX key holding an empty array", "bus.fx1", { fxEffect: { type: 0, foo: [] } }, null],
+      ["an unknown FX key holding a number", "bus.fx1", { fxEffect: { type: 0, foo: 5 } }, null],
+    ];
+    for (const [name, node, np, path] of SHAPES) {
+      const plan = { ...doc({}), nodeParams: { [node]: np } };
+      const loaded = await appLoad(plan, false);
+      // What the APP did, which is what the warning is a claim about.
+      expect(JSON.stringify(loaded.nodeParams[node]) !== JSON.stringify(np), `the app rewrites ${name}`).toBe(
+        path !== null,
+      );
+      // …and WHERE the tool says it. A count is satisfied by a version that names a path the
+      // repair no longer has anything to do with.
+      expect(toolPaths(dir, plan), `the tool says so: ${name}`).toEqual(path === null ? [] : [path]);
+    }
+  });
+
+  // `__proto__` is not a key the app keeps, at any level, and the sanitiser strips it before
+  // anything reads the record. The survival rule already knew that — a group whose only key is
+  // `__proto__` sanitises to nothing — but the WALK did not, so one sitting beside a surviving
+  // leaf was removed at the load with nothing reporting it.
+  //
+  // Built as TEXT rather than as an object: written as an object literal, `__proto__:` sets the
+  // prototype and never becomes an own property, so the document under test would not carry the
+  // key at all and the case would measure nothing. (It did, the first time it was asked.)
+  it("agrees with the app about a __proto__ key", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { paramRangeProblems: prp, applyParamRange } = await import("../src/core/plan-validate.ts");
+    const text = (nodeParams) =>
+      `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
+      `"positions":{},"connections":[],"nodeParams":${nodeParams}}`;
+
+    const ROWS = [
+      ["beside a surviving leaf", '{"ch1":{"gate":{"__proto__":1,"on":true}}}', "ch1", true],
+      ["at the node params level", '{"ch1":{"__proto__":1,"gate":{"on":true}}}', "ch1", true],
+      ["holding a container", '{"ch1":{"__proto__":{"a":1},"gate":{"on":true}}}', "ch1", true],
+      // …already reported before this rule, since the group it is alone in sanitises to nothing.
+      ["as a group's only key", '{"ch1":{"gate":{"__proto__":true}}}', "ch1", true],
+      // The control: the same documents without the key are left alone by both sides.
+      ["no such key", '{"ch1":{"gate":{"on":true}}}', "ch1", false],
+    ];
+    for (const [name, np, node, removes] of ROWS) {
+      const doc = text(np);
+      const loaded = deserializeDocument(doc).plan;
+      applyParamRange(loaded, prp(loaded));
+      const wrote = JSON.parse(np)[node];
+      expect(JSON.stringify(loaded.nodeParams[node]) !== JSON.stringify(wrote), `the app rewrites ${name}`).toBe(
+        removes,
+      );
+
+      const file = join(dir, "plan.json");
+      writeFileSync(file, doc);
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, r.stdout).toBe(0);
+      const said = r.stderr.split("\n").some((l) => l.startsWith("WARNING: node param "));
+      expect(said, `the tool says so: ${name}`).toBe(removes);
+    }
+
+    // A node id the app never builds, which is the same rule one level up.
+    const asNode = text('{"__proto__":{"gate":{"on":true}},"ch1":{"gate":{"on":true}}}');
+    const loaded = deserializeDocument(asNode).plan;
+    expect(Object.keys(loaded.nodeParams), "the app builds no such node").not.toContain("__proto__");
+    const file = join(dir, "plan.json");
+    writeFileSync(file, asNode);
+    expect(spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" }).stderr).toContain("node param __proto__");
+  });
+
+  // The REMOVAL UNIT, derived rather than written down. Every case above names the path it
+  // expects, which is an expectation that can be wrong in the same direction as the code —
+  // and was: a leaf inside a section the app had deleted was reported at the leaf, so a plan
+  // author repairing it would have been sent to a path that no longer exists, and repairing it
+  // would leave the empty parent for the next run to report.
+  //
+  // So this asks the app what it removed instead of being told. The SHALLOWEST absent path is
+  // the unit: when a container is gone its children are not separate removals. The two sides
+  // have to produce the same set, which is a stronger statement than either "something was
+  // said" or "this path was said" — it also fails when the tool names a path the app kept.
+  it("names the same removals the app makes, at the same granularity", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { paramRangeProblems: prp, applyParamRange } = await import("../src/core/plan-validate.ts");
+
+    const removed = (wrote, got, path, out) => {
+      if (wrote === null || typeof wrote !== "object" || Array.isArray(wrote)) return out;
+      for (const k of Object.keys(wrote)) {
+        const here = path ? `${path}.${k}` : k;
+        const has = got !== null && typeof got === "object" && Object.prototype.hasOwnProperty.call(got, k);
+        if (!has) {
+          // A bare engine slot is RE-KEYED under the selected family rather than removed: absent
+          // under its own name and present under another. A rewrite, and not this question.
+          const rekeyed =
+            /\.insertFxParams$/.test(path) &&
+            got !== null &&
+            typeof got === "object" &&
+            Object.keys(got).some((q) => q.endsWith(`:${k}`));
+          if (!rekeyed) out.push(here);
+          continue;
+        }
+        removed(wrote[k], got[k], here, out);
+      }
+      return out;
+    };
+
+    // Built as TEXT: a `__proto__` written in an object literal sets the prototype and never
+    // becomes an own property, so half of these documents would not carry the key at all.
+    const DOCS = [
+      '{"bus.fx1":{"fxEffect":{"type":0,"params":{"reverbTime":{}}}}}',
+      '{"bus.fx1":{"fxEffect":{"type":0,"params":{"reverbTime":{},"revxLpf":40}}}}',
+      '{"bus.fx1":{"fxEffect":{"params":{}}}}',
+      '{"bus.fx1":{"fxEffect":{"params":{"revxLpf":"x"}}}}',
+      '{"bus.fx1":{"fxEffect":{"type":0,"params":{"__proto__":1}}}}',
+      '{"bus.fx1":{"fxEffect":{"type":0,"params":{"__proto__":1,"revxLpf":40}}}}',
+      '{"bus.fx1":{"fxEffect":{"type":0,"foo":{}}}}',
+      '{"bus.fx1":{"fxEffect":{"__proto__":1,"type":0}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"__proto__":1}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"__proto__":1,"6":5}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"6":"x"}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"6":"x","8":4}}}',
+      // The engine map's three further stages, each of which can empty it: a slot value that
+      // is not a scalar (stricter than the sanitiser, which keeps an array), and a BARE slot
+      // with no family to be re-keyed onto.
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"compander:6":{}}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"compander:6":[]}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"compander:6":[{"a":1}]}}}',
+      '{"ch1":{"insertFxParams":{"6":5}}}',
+      '{"ch1":{"insertFx":-1,"insertFxParams":{"6":5}}}',
+      '{"ch1":{"insertFx":9999,"insertFxParams":{"6":5}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"6":5,"8":"x"}}}',
+      // A qualified key SURVIVES while a bare one beside it is dropped, which is the only
+      // shape that reaches the per-slot half of the qualification stage: with every key bare
+      // the map empties and is named whole, so nothing would say which slot went.
+      '{"ch1":{"insertFxParams":{"compander:6":5,"8":3}}}',
+      '{"ch1":{"insertFx":-1,"insertFxParams":{"compander:6":5,"8":3}}}',
+      // …and the controls, each of which the app KEEPS, so a checker that reported the class
+      // wholesale would fail here rather than passing every row above.
+      '{"ch1":{"insertFxParams":{"compander:6":5}}}',
+      '{"ch1":{"insertFx":-1,"insertFxParams":{"compander:6":5}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"6":5}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"compander:6":5,"compander:8":{}}}}',
+      '{"ch1":{"gate":{"on":{}}}}',
+      '{"ch1":{"gate":{"__proto__":1,"on":true}}}',
+      '{"ch1":{"ssmcs":{}}}',
+      // …and the documents nothing may be said about, so a checker that reported everything
+      // would fail here rather than passing every row above.
+      '{"ch1":{"gate":{"threshold":-20}}}',
+      '{"ch1":{"eqBands":[]}}',
+      '{"bus.fx1":{"fxEffect":{"type":0,"params":{"revxLpf":40}}}}',
+    ];
+
+    let removals = 0;
+    for (const np of DOCS) {
+      const text =
+        `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
+        `"positions":{},"connections":[],"nodeParams":${np}}`;
+      const loaded = deserializeDocument(text).plan;
+      applyParamRange(loaded, prp(loaded));
+      const app = removed(JSON.parse(text).nodeParams, loaded.nodeParams, "", []).sort();
+      removals += app.length;
+
+      const file = join(dir, "plan.json");
+      writeFileSync(file, text);
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, r.stdout).toBe(0);
+      const tool = r.stderr
+        .split("\n")
+        .map(warningPath)
+        .filter((p) => p !== null)
+        .sort();
+      expect(tool, `the removals of ${np}`).toEqual(app);
+    }
+    // The positive control: a corpus in which the app removed nothing would satisfy every
+    // comparison above by matching two empty lists.
+    expect(removals, "the corpus reaches documents the app rewrites").toBeGreaterThan(0);
+  });
+
+  // The engine map's selector and key normalisation, as a decision table rather than as rows
+  // chosen by hand — every selector class against every key class, which is what turned up the
+  // four the Python was approximating: a non-integer selector truncated into a real family, a
+  // full-width digit read as a slot number (`str.isdigit()` is true of it and the app's own
+  // /^\d+$/ is not), and two keys normalising onto ONE destination, where the set of surviving
+  // keys says the destination is there while one of the two values is gone.
+  //
+  // That last one is why the comparison below tells a RE-KEY from a COLLISION: a bare key
+  // counts as re-keyed only when its destination was absent from the document and the loaded
+  // map holds the source's own value there. A destination the document already wrote is a
+  // collision, and the bare value is what the app drops.
+  it("agrees with the app about every selector class against every key class", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { paramRangeProblems: prp, applyParamRange } = await import("../src/core/plan-validate.ts");
+
+    const removedEngine = (wroteMap, gotMap, path, out) => {
+      const got = gotMap && typeof gotMap === "object" ? gotMap : {};
+      for (const [k, v] of Object.entries(wroteMap)) {
+        if (Object.prototype.hasOwnProperty.call(got, k)) continue;
+        const dest = Object.keys(got).find((q) => {
+          const i = q.lastIndexOf(":");
+          return i > 0 && q.slice(i + 1) === String(Number(k)) && /^[0-9]+$/.test(k);
+        });
+        const reKeyed = dest !== undefined && !Object.prototype.hasOwnProperty.call(wroteMap, dest) && got[dest] === v;
+        if (!reKeyed) out.push(`${path}.${k}`);
+      }
+      return out;
+    };
+    const removedIn = (wrote, got, path, out) => {
+      if (wrote === null || typeof wrote !== "object" || Array.isArray(wrote)) return out;
+      for (const k of Object.keys(wrote)) {
+        const here = path ? `${path}.${k}` : k;
+        const has = got !== null && typeof got === "object" && Object.prototype.hasOwnProperty.call(got, k);
+        if (!has) {
+          out.push(here);
+          continue;
+        }
+        if (k === "insertFxParams") removedEngine(wrote[k], got[k], here, out);
+        else removedIn(wrote[k], got[k], here, out);
+      }
+      return out;
+    };
+
+    const SELECTORS = [
+      ["none", ""],
+      ["No Effect", '"insertFx":-1,'],
+      ["a valid integer", '"insertFx":1793,'],
+      ["an unknown integer", '"insertFx":9999,'],
+      // …beside a value the catalogue DOES name, which is what a truncation lands on.
+      ["a non-integer", '"insertFx":1793.5,'],
+    ];
+    const MAPS = [
+      ["an ascii bare slot", '{"6":5}'],
+      ["a leading-zero bare slot", '{"06":5}'],
+      ["a qualified key", '{"compander:6":7}'],
+      ["a non-ascii digit", '{"\uFF16":5}'],
+      ["__proto__", '{"__proto__":5,"compander:6":7}'],
+      ["a qualified key and the bare one it takes", '{"compander:6":7,"6":5}'],
+      ["a qualified key and a leading-zero alias", '{"compander:6":7,"06":5}'],
+      ["two bare aliases of one slot", '{"6":5,"06":9}'],
+      // …written the other way round, which is the only shape that separates the document's
+      // order from JavaScript's: a canonical index is walked before any string key however it
+      // was written, so 5 is the value that reaches the family and 9 is the one dropped.
+      ["two bare aliases, the leading zero written first", '{"06":9,"6":5}'],
+      ["a bare slot beside a surviving qualified one", '{"compander:8":7,"6":5}'],
+      ["a value that is not a scalar", '{"compander:6":{},"compander:8":7}'],
+    ];
+
+    let outcomes = { kept: 0, removed: 0 };
+    for (const [sname, sel] of SELECTORS) {
+      for (const [mname, map] of MAPS) {
+        const np = `{"ch1":{${sel}"insertFxParams":${map}}}`;
+        const text =
+          `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
+          `"positions":{},"connections":[],"nodeParams":${np}}`;
+        const loaded = deserializeDocument(text).plan;
+        applyParamRange(loaded, prp(loaded));
+        const app = removedIn(JSON.parse(text).nodeParams, loaded.nodeParams, "", []).sort();
+        if (app.length) outcomes.removed += 1;
+        else outcomes.kept += 1;
+
+        const file = join(dir, "plan.json");
+        writeFileSync(file, text);
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, r.stdout).toBe(0);
+        const tool = r.stderr
+          .split("\n")
+          .map(warningPath)
+          .filter((p) => p !== null)
+          .sort();
+        expect(tool, `${sname} / ${mname}`).toEqual(app);
+      }
+    }
+    // Both outcomes are populations, so neither half of the table is answered by a run in
+    // which the app always did the same thing.
+    expect(outcomes.kept, "documents the app keeps whole").toBeGreaterThan(0);
+    expect(outcomes.removed, "documents the app removes from").toBeGreaterThan(0);
+  });
+
+  // The record-shaped collections are built key by key too, and never take that key.
+  it("names the collection entries the app never copies", () => {
+    for (const [key, entry] of [
+      ["nodeNames", '"__proto__":"x","ch1":"Vox"'],
+      ["nodeColors", '"__proto__":"x","ch1":"#ffffff"'],
+      ["notes", '"__proto__":"x","ch1":"hi"'],
+      ["positions", '"__proto__":{"x":1,"y":2},"ch1":{"x":1,"y":2}'],
+    ]) {
+      const text =
+        `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
+        `"connections":[],"nodeParams":{},"${key}":{${entry}}}`;
+      const file = join(dir, "plan.json");
+      writeFileSync(file, text);
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, r.stdout).toBe(0);
+      expect(r.stderr, `${key} carries the key the app drops`).toContain(`${key}[__proto__]`);
+      // …and the entry beside it, which the app keeps, is not reported.
+      expect(r.stderr, `${key} keeps its real entry`).not.toContain(`${key}[ch1]`);
+    }
   });
 
   // The one family whose write set MOVES with its own values: Pitch Fix stops sending the
