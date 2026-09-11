@@ -659,9 +659,9 @@ The constraint core (`core/routing.ts`):
   A ducker key source is the `key` kind, not `source`, so it never enters this mirroring — guaranteed by the
   kind rather than by the incidental fact that duckers are not in `channelPairs`.
 - `isStereoLinkedPair(model, plan, id)` / `mirrorLinkedPair(model, plan, id)` — when a MONO IN pair's Signal Type
-  is STEREO, an edit to one channel is mirrored onto the partner (the node params except three — the gain,
-  Clip Safe and the polarity invert are each member's own — plus each send's LEVEL / PRE-POST / ON; the
-  Signal Type / PAN-BAL flags stay on the primary). `pairSharesNodeKey` answers which is which, and the
+  is STEREO, an edit to one channel is mirrored onto the partner (the node params except the head amp — the
+  gain, Clip Safe, the polarity invert, +48V and Hi-Z are each member's own — plus each send's LEVEL /
+  PRE-POST / ON; the Signal Type / PAN-BAL flags stay on the primary). `pairSharesNodeKey` answers which is which, and the
   mirror, the MIDI catalogue's mirror identity and each funnel's write witness all read it, so none of the
   three can claim a key the copy left with the partner. **The gate is Signal Type, not the
   PAN/BAL mode**, which is what the unit does — the readings are in [device-model.md](device-model.md). What the
