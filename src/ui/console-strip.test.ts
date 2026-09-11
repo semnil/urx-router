@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 // The CONSOLE strip's own controls: the main fader, the head's rotary knobs, the INS
-// FX chip, and what a BAL-linked pair does to all three. The SENDS rack and the two
+// FX chip, and what a STEREO-linked pair does to all three. The SENDS rack and the two
 // popovers are in console-sends.test.ts; the meter carry-over across a rebuild is in
 // console.test.ts.
 //
@@ -700,14 +700,19 @@ describe("a STEREO-linked pair", () => {
     expect(partner.parentElement!.querySelector<HTMLElement>(".cap")!.style.getPropertyValue("--pos")).toBeTruthy();
   });
 
-  // A knob is different: the partner's whole head can change, so the view rebuilds
-  // once after the gesture instead of patching one attribute.
-  it("rebuilds after a knob edit so the partner's head catches up", () => {
+  // A knob is different: where the partner follows it, the partner's whole head can change,
+  // so the view rebuilds once after the gesture instead of patching one attribute. The A.GAIN
+  // knob is the head amp, which the pair does not share in either mode, so it is the negative
+  // condition rather than the example it used to be.
+  it.each([
+    ["BAL", PAN_BAL_BAL],
+    ["PAN", PAN_BAL_PAN],
+  ])("does not rebuild after an A.GAIN edit, which the pair does not share, %s", (_label, mode) => {
     h = consoleHost();
-    linkPair();
+    linkPair(mode);
     const before = h.strip("ch2").root;
-    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-gain .con-knob")!, "ArrowRight");
-    expect(h.strip("ch2").root).not.toBe(before);
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='A.GAIN']")!, "ArrowRight");
+    expect(h.strip("ch2").root).toBe(before);
   });
 
   // PAN mirrors as well: the unit holds one fader for the pair in either mode, so the
@@ -728,11 +733,21 @@ describe("a STEREO-linked pair", () => {
     expect(h.strip("ch2").fader).toBe(partner); // in place, as in BAL
   });
 
-  it("rebuilds after a knob edit in PAN too, so the partner's head catches up", () => {
+  // The PAN knob is the exception: outside BAL the partner's pan did not move, so a rebuild
+  // would only take down what is open on the strips (the SEND PAN popover) for nothing.
+  it("does not rebuild after a PAN knob edit outside BAL, where the partner did not move", () => {
     h = consoleHost();
     linkPair(PAN_BAL_PAN);
     const before = h.strip("ch2").root;
-    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-gain .con-knob")!, "ArrowRight");
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='PAN']")!, "ArrowRight");
+    expect(h.strip("ch2").root).toBe(before);
+  });
+
+  it("rebuilds after a BAL knob edit, where the pair's one balance did move", () => {
+    h = consoleHost();
+    linkPair();
+    const before = h.strip("ch2").root;
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='BAL']")!, "ArrowRight");
     expect(h.strip("ch2").root).not.toBe(before);
   });
 

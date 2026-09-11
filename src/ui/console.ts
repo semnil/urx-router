@@ -366,7 +366,7 @@ interface StripRef {
   tap: MeterTap | null; // the resolved tap this strip's meter shows (fixed per render)
   // lmtr = last meter readout written (deci-dB; 1 = sentinel "none written").
   sig: { lmtr: number };
-  // SENDS rack: the per-send column faders — kept so a BAL-linked partner's rack
+  // SENDS rack: the per-send column faders — kept so a linked partner's rack
   // fader can be mirrored in place, like the main fader. The header readout and the
   // collapsed dots are reached via `root` when the global collapse toggles.
   sendCols?: SendColRef[];
@@ -403,6 +403,11 @@ interface KnobSpec {
   /** The node-parameter keys `set` writes, for the change funnel's write witness.
    *  Absent for a knob that writes a wire's params instead. */
   keys?: readonly string[];
+  /** How a linked pair's partner follows this knob: absent = always (the pair shares it),
+   *  "pan" = in BAL only, "own" = never (the head amp). It decides whether an edit earns the
+   *  partner rebuild — where the partner did not move, the rebuild only takes down what is
+   *  open on it. */
+  pairs?: "pan" | "own";
 }
 
 /** MIDI-learn integration. The contract is shared with the channel tuning screens
@@ -2706,6 +2711,7 @@ export class Console {
           get: () => this.hooks.getPlan().nodeParams[m.id]?.gain ?? factory,
           set: (v) => void (this.nodeParamsOf(m.id).gain = v),
           keys: ["gain"],
+          pairs: "own",
           min,
           max,
           step: 1,
@@ -3130,6 +3136,7 @@ export class Console {
       reset,
       readonlyTitle,
       keys,
+      pairs: "pan",
     };
   }
 
@@ -3203,9 +3210,16 @@ export class Console {
 
   /** Rebuild once after editing a STEREO-linked strip so the mirrored partner strip
    *  catches up — a live drag/keypress updates only the dragged strip. Used by the
-   *  chips / knobs, where the partner's whole head may change. */
-  private syncPartnerStrip(id: string): void {
-    if (isStereoLinkedPair(this.hooks.getModel(), this.hooks.getPlan(), id)) this.render();
+   *  chips / knobs, where the partner's whole head may change. `pairs` names how the partner
+   *  follows the edited value: where it did not move, the rebuild only takes down what is open
+   *  on it — the SEND PAN popover, which `render()` closes where `refreshStrip` re-opens it. */
+  private syncPartnerStrip(id: string, pairs?: "pan" | "own"): void {
+    const model = this.hooks.getModel();
+    const plan = this.hooks.getPlan();
+    if (!isStereoLinkedPair(model, plan, id)) return;
+    if (pairs === "own") return;
+    if (pairs === "pan" && !isBalLinkedPair(model, plan, id)) return;
+    this.render();
   }
 
   /** Push a STEREO-linked strip's mirrored fader level onto the partner strip's level
@@ -3424,6 +3438,9 @@ export class Console {
       show(v);
       this.commit(id, k.keys);
     };
+    const syncPartner = (): void => {
+      if (partnerSync) this.syncPartnerStrip(id, k.pairs);
+    };
     show(Math.max(k.min, Math.min(k.max, k.get()))); // initial display, not dirty
     if (k.readonlyTitle) return; // device-locked: value painted, no input handlers
     this.midiMark(knob, midiId);
@@ -3450,7 +3467,7 @@ export class Console {
           const rate = st === k.step ? (k.max - k.min) / 150 : st;
           apply(start + (startY - ev.clientY) * rate, st);
         },
-        { onEnd: () => partnerSync && this.syncPartnerStrip(id) },
+        { onEnd: syncPartner },
       );
     });
     knob.addEventListener("keydown", (e) => {
@@ -3460,12 +3477,12 @@ export class Console {
       else if (e.key === "ArrowDown" || e.key === "ArrowLeft") apply(k.get() - st, st);
       else return;
       e.preventDefault();
-      if (partnerSync) this.syncPartnerStrip(id);
+      syncPartner();
     });
     knob.addEventListener("dblclick", () => {
       if (this.hooks.midi?.learnActive()) return; // pointerdown already armed
       apply(k.reset); // reset to factory value
-      if (partnerSync) this.syncPartnerStrip(id);
+      syncPartner();
     });
     // Hover + wheel nudges by one step (mirrors the Arrow keys). This sits below the
     // readonlyTitle early-return above, so device-locked knobs take no wheel input.
@@ -3474,7 +3491,7 @@ export class Console {
       (dir) => {
         const st = stepFor();
         apply(k.get() + dir * st, st);
-        if (partnerSync) this.syncPartnerStrip(id);
+        syncPartner();
       },
       () => this.hooks.midi?.learnActive(),
     );

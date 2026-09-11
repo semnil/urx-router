@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { getModel } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
-import { deserialize, ensureFixedConnections, LEVEL_OFF_DB, serialize } from "../plan";
+import { deserialize, ensureFixedConnections, LEVEL_OFF_DB, sendConnection, serialize } from "../plan";
 import { ref } from "../../models/types";
 import {
   COMP_EQ_COMP_FIRST,
@@ -1147,16 +1147,15 @@ describe("the lock dependencies the catalogue declares", () => {
   });
 });
 
-// The governor and the governed need not be the same channel. A BAL-linked pair mirrors its
-// whole node params, so its two 1-knobs are ONE governor: a gang holding CH 1's band and CH 2's
-// knob has to be ordered against both, and keyed by control id alone it was not.
+// The governor and the governed need not be the same channel. A linked pair mirrors its whole
+// node params, so its two 1-knobs are ONE governor: a gang holding CH 1's band and CH 2's knob
+// has to be ordered against both, and keyed by control id alone it was not.
 //
-// PAN and an unlinked pair are the negative conditions: there the two channels keep their own EQ
-// and COMP, so CH 2's knob governs nothing of CH 1's and the learn order has nothing to decide.
-// They pin the OUTCOME rather than the key — normalising in PAN as well is a mutation these do
-// not catch, and cannot: the insert effect is the only thing PAN mirrors, and no family a linked
-// CH pair can hold has a driver among its controls, so there is no relation there to key wrongly.
-describe("a governor across a BAL-linked pair", () => {
+// The pair answers the same way in PAN — its EQ and COMP are one set in either mode — so the
+// PAN row asks the same claim as the BAL one, in the mode that used to answer differently. An
+// unlinked pair is the negative condition: there the two channels keep their own, so CH 2's knob
+// governs nothing of CH 1's and the learn order has nothing to decide.
+describe("a governor across a linked pair", () => {
   const knobOf = (ch: string): string => controlId(ch, "oneKnob", EQ_SCOPE);
   const lowOf = (ch: string): string => controlId(ch, "bandOn", eqBandScope(0));
 
@@ -1308,10 +1307,11 @@ describe("a gang holding both members of a mirrored pair", () => {
   });
 });
 
-// What a mirror covers is a property of the NODE and the link mode, not of one parameter. BAL
-// replaces the partner's whole node params and every send, so a BAL pair's CH ON is one value the
-// same way its insert effect is — declared per parameter it was the insert effect's alone.
-describe("what a mirrored pair covers, by link mode", () => {
+// What a mirror covers is a property of the NODE, not of one parameter: the mirror replaces the
+// partner's whole node params and carries every send, so a linked pair's CH ON is one value the
+// same way its insert effect is — declared per parameter it was the insert effect's alone. The
+// link MODE decides one control, the pan, which stays each member's own outside BAL.
+describe("what a mirrored pair covers", () => {
   const press = (first: "ch1" | "ch2", link: number, ch1On: boolean, ch2On: boolean) => {
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: link, on: ch1On };
     plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, on: ch2On };
@@ -1360,6 +1360,83 @@ describe("what a mirrored pair covers, by link mode", () => {
   // PAN carries CH ON too — the unit moves both members' ONs in either mode, and only the
   // pan stays per member there. So this is the same claim as the BAL case above, asked in
   // the mode that used to answer differently.
+  // The PAN is the one control the identity is NOT stamped on outside BAL, so it needs a case
+  // of its own: stamped there as well, a CC bound to both members collapses into one decision on
+  // the primary, and the partner's pan — which the mirror does not copy outside BAL — never moves
+  // at all. The two members start apart so that a partner left alone is visible.
+  const pressPan = (link: number): { ch1?: number; ch2?: number } => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: link };
+    const panOf = (ch: string): number | undefined => sendConnection(plan, ch, "bus.stereo")?.params?.pan;
+    const setPan = (ch: string, v: number): void => {
+      const c = sendConnection(plan, ch, "bus.stereo")!;
+      c.params = { ...c.params, pan: v };
+    };
+    setPan("ch1", -63);
+    setPan("ch2", 0);
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: (c) => {
+        mirrorLinkedPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 8 } as const;
+    engine.setMappings(
+      ["ch1", "ch2"].map((ch) => ({ control: controlId(ch, "pan"), addr, mode: "absolute" }) as const),
+    );
+    engine.onMessage([0xb0, 8, 127]); // hard right, which neither member is holding
+    return { ch1: panOf("ch1"), ch2: panOf("ch2") };
+  };
+
+  // The head amp is the other thing the identity is not stamped on, and in BOTH modes: the
+  // mirror leaves the partner its own, so a CC bound to both members has to move both. Stamped
+  // on it, the gang collapses onto the primary and the partner's preamp never moves.
+  it.each([
+    ["BAL", PAN_BAL_BAL],
+    ["PAN", PAN_BAL_PAN],
+  ])("%s: both members' A.GAIN move, since the pair does not share a head amp", (_label, link) => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: link, gain: -8 };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, gain: 0 };
+    const engine = new MidiEngine({
+      resolve: (cid) => bindControl(model, plan, cid),
+      gate: () => null,
+      refused: () => {},
+      applied: (c) => {
+        mirrorLinkedPair(model, plan, c.node);
+        mirrorLinkedInsertFx(model, plan, c.node);
+      },
+      send: () => {},
+      learned: () => {},
+      learnPending: () => {},
+      now: () => 0,
+    });
+    const addr = { type: "cc", channel: 0, controller: 9 } as const;
+    engine.setMappings(
+      ["ch1", "ch2"].map((ch) => ({ control: controlId(ch, "gain"), addr, mode: "absolute" }) as const),
+    );
+    engine.onMessage([0xb0, 9, 127]); // the top of the range, which neither member is holding
+    expect(plan.nodeParams.ch1?.gain).toBe(70);
+    expect(plan.nodeParams.ch2?.gain, "the partner's own binding decided nothing").toBe(70);
+  });
+
+  it("BAL: the pan is the pair's one balance, so both members read it", () => {
+    const { ch1, ch2 } = pressPan(PAN_BAL_BAL);
+    expect(ch1).toBe(63);
+    expect(ch2, "the partner took the pair's balance").toBe(63);
+  });
+
+  it("PAN: both members' pans move, since the pair holds two of them there", () => {
+    const { ch1, ch2 } = pressPan(PAN_BAL_PAN);
+    expect(ch1).toBe(63);
+    expect(ch2, "the partner's own binding decided nothing").toBe(63);
+  });
+
   it("PAN: CH ON is one value as well, so the learn order cannot pick it either", () => {
     const a = press("ch1", PAN_BAL_PAN, true, false);
     const b = press("ch2", PAN_BAL_PAN, true, false);

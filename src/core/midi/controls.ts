@@ -373,6 +373,10 @@ function controlNodes(model: DeviceModel): string[] {
   return [...channels, ...buses, ...duckers];
 }
 
+/** The controls a linked pair does not share: its head amp, which each member has its own of.
+ *  `src/core/routing.ts`'s PAIR_OWN_NODE_KEYS is the plan-side spelling of the same set. */
+const PAIR_OWN_PARAMS = new Set<ControlParam>(["gain", "phase"]);
+
 function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[] {
   const node = model.nodes.find((n) => n.id === id);
   if (!node) return [];
@@ -1117,14 +1121,15 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   // `mirrorLinkedPair` was copying the whole node params and every send — so the pair's CH ON,
   // its sends and everything else stayed several decisions and the learn order picked the value.
   //
-  // A linked pair is one value for every control but the PAN, which PAN mode keeps per member:
-  // both members' node params, faders, ONs and send levels move together in either mode, and
-  // each member's own pan stays where PAN put it. So the identity is stamped on everything,
-  // minus that one parameter outside BAL.
+  // A linked pair is one value for every control but its head amp, which each member keeps
+  // its own of, and the PAN, which PAN mode keeps per member: everything else — node params,
+  // faders, ONs, send levels — moves together in either mode. So the identity is stamped on
+  // what the mirror copies and on nothing else.
   const primary = pairPrimary(model, id);
   if (primary !== null && primary !== id && isStereoLinkedPair(model, plan, id)) {
     const sharedPan = isBalLinkedPair(model, plan, id);
     for (const c of out) {
+      if (PAIR_OWN_PARAMS.has(c.param)) continue;
       if (!sharedPan && c.param === "pan") continue;
       c.mirrorId = controlId(primary, c.param, c.scope);
     }

@@ -237,14 +237,18 @@ export function applyPairTransition(model: DeviceModel, plan: Plan, primary: str
   return written;
 }
 
+/** The node params a linked pair does NOT share: the pair-level flags, which live on the
+ *  primary alone, and the head amp, which each member keeps its own of — the pair shares its
+ *  processing and its mixer state, and not its input stage. */
+const PAIR_OWN_NODE_KEYS = ["stereoLink", "panBal", "gain", "clipSafe", "phase"] as const;
+
 /** Mirror `id`'s mixer state onto its linked partner, so an edit to either channel moves
- *  both. Copies the node params (except the pair-level Signal Type / PAN-BAL fields, which
- *  live on the primary alone) and each send's mix params — level / PRE-POST / ON always,
- *  and the pan in BAL only.
+ *  both. Copies the node params except `PAIR_OWN_NODE_KEYS`, and each send's mix params —
+ *  level / PRE-POST / ON always, and the pan in BAL only.
  *
  *  **The gate is Signal Type, not PAN/BAL**: a linked pair holds one set of values in either
- *  mode, and the pan is the one thing each member keeps its own of in PAN — which is why the
- *  send copy drops that one key outside BAL.
+ *  mode. What the mode decides is the pan, each member's own outside BAL — which is why the
+ *  send copy drops that one key there.
  *
  *  Returns false — a no-op — unless the pair is STEREO-linked. */
 export function mirrorLinkedPair(model: DeviceModel, plan: Plan, id: string): boolean {
@@ -252,19 +256,25 @@ export function mirrorLinkedPair(model: DeviceModel, plan: Plan, id: string): bo
   const partner = partnerChannel(model, id);
   if (!partner) return false;
   const sharedPan = isBalLinkedPair(model, plan, id);
-  // Replace the partner's node params with the source's, but keep the partner's
-  // own pair-level fields (only the primary carries stereoLink / panBal). The copy
-  // is deep: a shallow spread would alias the nested groups (gate / comp / eqBands
-  // / ssmcs / osc / eqOneKnob) between the two channels, so an in-place edit to one
-  // would bleed into the other — and the alias would outlive the link, since it
-  // persists until a replace-style edit or a JSON round-trip breaks it.
+  // Replace the partner's node params with the source's, but keep the keys the pair does not
+  // share: the pair-level fields (only the primary carries stereoLink / panBal) and the head
+  // amp (each member has its own input). The copy is deep: a shallow spread would alias the
+  // nested groups (gate / comp / eqBands / ssmcs / osc / eqOneKnob) between the two channels,
+  // so an in-place edit to one would bleed into the other — and the alias would outlive the
+  // link, since it persists until a replace-style edit or a JSON round-trip breaks it.
   // The insert FX travels with them, as it does on the unit: while the pair is linked a
   // selector write from either member mirrors to the other and both point at one engine
   // instance, so a linked pair holds one insert effect between them. mirrorLinkedInsertFx
   // carries the same three keys from the transition seat, and the two agree.
-  const src = plan.nodeParams[id] ?? {};
-  const { stereoLink, panBal } = plan.nodeParams[partner] ?? {};
-  plan.nodeParams[partner] = { ...structuredClone(src), stereoLink, panBal };
+  const src = structuredClone(plan.nodeParams[id] ?? {});
+  const own = plan.nodeParams[partner] ?? {};
+  // An absent key stays absent on the partner: one held as undefined would outlive the copy
+  // through the history differ and the JSON round-trip.
+  const kept = Object.fromEntries(
+    PAIR_OWN_NODE_KEYS.filter((k) => own[k] !== undefined).map((k) => [k, own[k]]),
+  ) as Partial<NodeParams>;
+  for (const key of PAIR_OWN_NODE_KEYS) delete src[key];
+  plan.nodeParams[partner] = { ...src, ...kept };
   // Copy each send's mix params to the partner's send into the same destination. ConnParams
   // are flat scalars, so the spread is a full copy. The PAN is dropped outside BAL: there it
   // is the pair's one shared balance and belongs to both, while in PAN mode each member
