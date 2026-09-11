@@ -571,6 +571,24 @@ def fx_effect_warnings(node_id, fx, out):
             out.append((f"{node_id}.fxEffect.params.{k}", f"{v!r} is not a finite number"))
 
 
+# The two node-param paths that hold a SCALAR and nothing else: the insert-FX bypass, and
+# every engine slot under it. The general walk below recurses into a container because the
+# nested groups are containers (`gate` is a record, `eqBands` an array), so it would read a
+# finite leaf INSIDE one as a value the app keeps. The app does not: the load-time repair
+# removes a container from either of these outright, and an author who is not told watches
+# the setting disappear after this tool said the document was clean.
+def scalar_only_drops(node_id, params, out):
+    """Report the scalar-only paths the load-time repair removes."""
+    on = params.get("insertFxOn")
+    if "insertFxOn" in params and not (isinstance(on, bool) or is_number(on)):
+        out.append((f"{node_id}.insertFxOn", f"{on!r} is not a boolean or a finite number"))
+    slots = params.get("insertFxParams")
+    if isinstance(slots, dict):
+        for slot, raw in slots.items():
+            if not (isinstance(raw, bool) or is_number(raw)):
+                out.append((f"{node_id}.insertFxParams.{slot}", f"{raw!r} is not a boolean or a finite number"))
+
+
 def dropped_values(value, path, out):
     """Collect the node-param values the app's loader drops (path, why). Every leaf
     it keeps is a boolean or a finite number, and one malformed element drops the
@@ -578,7 +596,8 @@ def dropped_values(value, path, out):
 
     The `fxEffect` subtree is NOT walked here: a boolean and a non-empty object survive
     this stage and are removed by the load-time repair instead, so one owner reports
-    both (fx_effect_warnings)."""
+    both (fx_effect_warnings). `insertFxOn` and the engine slots are left out for the same
+    reason and reported by `scalar_only_drops`."""
     if isinstance(value, dict):
         for k, v in value.items():
             dropped_values(v, f"{path}.{k}", out)
@@ -613,7 +632,11 @@ def node_param_warnings(plan, nodes, pairs):
             out.append(f"node {node_id}: the app drops this node's params on load — nodeParams entries must be objects")
             continue
         dropped = []
-        dropped_values({k: v for k, v in params.items() if k != "fxEffect"}, node_id, dropped)
+        # `insertFxOn` and `insertFxParams` are held out of the general walk and reported by
+        # their own rule: it keeps a container, theirs does not.
+        walked = {k: v for k, v in params.items() if k not in ("fxEffect", "insertFxOn", "insertFxParams")}
+        dropped_values(walked, node_id, dropped)
+        scalar_only_drops(node_id, params, dropped)
         if "fxEffect" in params:
             fx_effect_warnings(node_id, params["fxEffect"], dropped)
         for path, why in dropped:

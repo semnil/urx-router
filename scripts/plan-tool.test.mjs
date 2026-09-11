@@ -715,6 +715,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
                 tool: r.status === 0,
                 app: insertFxPairProblems(getModel(modelId), loaded).length === 0,
                 stdout: r.stdout,
+                warnings: r.stderr,
               };
             };
 
@@ -752,6 +753,27 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
             const slot = ask({ insertFx: 1793, insertFxParams: { "compander:6": container } }, { insertFx: 1793 });
             expect(slot.app, `the app, engine slot ${_name}`).toBe(true);
             expect(slot.tool, `the tool, engine slot ${_name}\n${slot.stdout}`).toBe(true);
+
+            // …and SAYING SO is the other half of the contract. A verdict of "clean" about a
+            // document whose setting the app then removes is the shape this whole matrix was
+            // blind to: the pair reads the same either way, so only the warning tells the
+            // author their bypass or their engine value is not going to survive the load.
+            // The path is compared, not just the fact of a warning, because the author's next
+            // move is to go and look at it.
+            expect(bypass.warnings, `the bypass warning names its path, ${_name}`).toContain(
+              `node param ${primary}.insertFxOn:`,
+            );
+            expect(slot.warnings, `the engine-slot warning names its path, ${_name}`).toContain(
+              `node param ${primary}.insertFxParams.compander:6:`,
+            );
+            // The control: a SCALAR in either place is kept, so neither is warned about —
+            // without it a checker warning on every document would satisfy the two above.
+            expect(real.warnings, "a real bypass is not a dropped value").not.toContain(
+              `node param ${primary}.insertFxOn:`,
+            );
+            expect(scalarGate.warnings, "a scalar gate is not a dropped value").not.toContain(
+              `node param ${primary}.insertFxParams.`,
+            );
           },
         );
       }
