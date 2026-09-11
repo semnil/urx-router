@@ -928,6 +928,10 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
         expect(Boolean(app), `both answer for ${key}=${raw}`).toBe(line !== "");
         if (app) {
           expect(line, `${key}=${raw} bounds to ${app.bound}`).toContain(`is bounded to ${app.bound}`);
+          // …and under the sentence that says what the app DID with it. The number reads the
+          // same under either heading, so asking only for it leaves a bounded value free to be
+          // announced as a deletion — which is what it was.
+          expect(line, `${key}=${raw} is reported as bounded`).toContain("the app bounds this value on load");
           bounded += 1;
         }
       }
@@ -947,39 +951,54 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
   // entry in place — so a rule reaching one key too far up would report every such node.
   it("agrees with the app about a group that sanitises to nothing", async () => {
     const SHAPES = [
-      ["an empty FX parameter map", "bus.fx1", { fxEffect: { type: 0, params: {} } }, true],
-      ["an empty effect object", "bus.fx1", { fxEffect: {} }, true],
-      ["an empty engine map", "ch1", { insertFx: 1793, insertFxParams: {} }, true],
-      ["an empty SSMCS group", "ch1", { ssmcs: {} }, true],
-      ["an empty gate group", "ch1", { gate: {} }, true],
-      ["an empty comp group", "ch1", { comp: {} }, true],
-      ["a group whose only leaf is a container", "ch1", { gate: { on: {} } }, true],
-      ["a group emptied two levels down", "ch1", { gate: { on: { x: {} } } }, true],
+      ["an empty FX parameter map", "bus.fx1", { fxEffect: { type: 0, params: {} } }, "bus.fx1.fxEffect.params"],
+      ["an empty effect object", "bus.fx1", { fxEffect: {} }, "bus.fx1.fxEffect"],
+      ["an empty engine map", "ch1", { insertFx: 1793, insertFxParams: {} }, "ch1.insertFxParams"],
+      ["an empty SSMCS group", "ch1", { ssmcs: {} }, "ch1.ssmcs"],
+      ["an empty gate group", "ch1", { gate: {} }, "ch1.gate"],
+      ["an empty comp group", "ch1", { comp: {} }, "ch1.comp"],
+      // The group is what the app removes, so the group is what has to be NAMED — `ch1.gate.on`
+      // is a path that no longer exists to be repaired, which is the whole reason the rule is
+      // asked before the walk descends rather than inside it.
+      ["a group whose only leaf is a container", "ch1", { gate: { on: {} } }, "ch1.gate"],
+      ["a group emptied two levels down", "ch1", { gate: { on: { x: {} } } }, "ch1.gate"],
       // …and the shapes the same rule must leave alone.
-      ["an empty band array", "ch1", { eqBands: [] }, false],
-      ["an array of empty bands", "ch1", { eqBands: [{}] }, false],
+      ["an empty band array", "ch1", { eqBands: [] }, null],
+      ["an array of empty bands", "ch1", { eqBands: [{}] }, null],
       // An array is what holds THIS group up, which is the only way the array clause is
       // reached: the walk guards a group rather than an array, so a rule that stopped
       // counting arrays as survivors would report a group the app keeps and nothing else
       // here would notice.
-      ["a group whose only leaf is an array", "ch1", { gate: { bands: [] } }, false],
-      ["a group whose array holds a non-object", "ch1", { gate: { bands: [1] } }, true],
-      ["a group that keeps one leaf", "ch1", { gate: { threshold: -20 } }, false],
-      ["a node with no params at all", "ch1", {}, false],
+      ["a group whose only leaf is an array", "ch1", { gate: { bands: [] } }, null],
+      // The GROUP, not the array: an array holding a non-object does not survive, so nothing in
+      // the group does and the app removes the whole key. (Expected as the array's own path
+      // first — the assertion is what said otherwise, which is why it asks for the path.)
+      ["a group whose array holds a non-object", "ch1", { gate: { bands: [1] } }, "ch1.gate"],
+      ["a group that keeps one leaf", "ch1", { gate: { threshold: -20 } }, null],
+      ["a node with no params at all", "ch1", {}, null],
       // The same class one section further in. `fxEffect` is held out of the general walk and
       // answered for FOUR key names, so a sibling key beside them reached no rule at all.
-      ["an unknown FX key holding an empty container", "bus.fx1", { fxEffect: { type: 0, foo: {} } }, true],
-      ["an unknown FX key holding a string", "bus.fx1", { fxEffect: { type: 0, foo: "x" } }, true],
-      ["an unknown FX key holding a bad array", "bus.fx1", { fxEffect: { type: 0, foo: [1] } }, true],
-      ["an unknown FX key holding an empty array", "bus.fx1", { fxEffect: { type: 0, foo: [] } }, false],
-      ["an unknown FX key holding a number", "bus.fx1", { fxEffect: { type: 0, foo: 5 } }, false],
+      [
+        "an unknown FX key holding an empty container",
+        "bus.fx1",
+        { fxEffect: { type: 0, foo: {} } },
+        "bus.fx1.fxEffect.foo",
+      ],
+      ["an unknown FX key holding a string", "bus.fx1", { fxEffect: { type: 0, foo: "x" } }, "bus.fx1.fxEffect.foo"],
+      ["an unknown FX key holding a bad array", "bus.fx1", { fxEffect: { type: 0, foo: [1] } }, "bus.fx1.fxEffect.foo"],
+      ["an unknown FX key holding an empty array", "bus.fx1", { fxEffect: { type: 0, foo: [] } }, null],
+      ["an unknown FX key holding a number", "bus.fx1", { fxEffect: { type: 0, foo: 5 } }, null],
     ];
-    for (const [name, node, np, removes] of SHAPES) {
+    for (const [name, node, np, path] of SHAPES) {
       const plan = { ...doc({}), nodeParams: { [node]: np } };
       const loaded = await appLoad(plan, false);
       // What the APP did, which is what the warning is a claim about.
-      expect(JSON.stringify(loaded.nodeParams[node]) !== JSON.stringify(np), `the app rewrites ${name}`).toBe(removes);
-      expect(toolPaths(dir, plan).length > 0, `the tool says so: ${name}`).toBe(removes);
+      expect(JSON.stringify(loaded.nodeParams[node]) !== JSON.stringify(np), `the app rewrites ${name}`).toBe(
+        path !== null,
+      );
+      // …and WHERE the tool says it. A count is satisfied by a version that names a path the
+      // repair no longer has anything to do with.
+      expect(toolPaths(dir, plan), `the tool says so: ${name}`).toEqual(path === null ? [] : [path]);
     }
   });
 
