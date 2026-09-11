@@ -45,9 +45,8 @@ export const pairOwnNodes = (ctx: DynCtx): string[] => [ctx.nodeId, ...(linkedPa
  * Two of the rack's lanes stay at ONE bar and do not come through here. The reduction lane,
  * because the pair's gate and its compressor each run one detector for both members and the
  * two members' reduction meters carry one figure. And the SSMCS side-chain lane, whose two
- * addresses hold each member's own filter output while the unit draws one bar: which of the
- * two that bar is has not been read off the unit, so the lane stays on the member the screen
- * was opened on, where it cannot put one channel's meter under another channel's controls.
+ * addresses hold each member's own filter output and whose one bar on the unit is the member
+ * the screen was opened on — so the lane reads that member too.
  *
  * A node outside a MONO IN pair is left as it resolves.
  */

@@ -118,10 +118,9 @@ describe("a MONO IN pair whose Signal Type is STEREO", () => {
   });
 
   it("keeps the SSMCS side-chain lane at one bar, on the member the screen was opened on", () => {
-    // The unit draws one bar there while the lanes around it carry two, and its two
-    // addresses hold each member's own filter output. Which of the two the unit's own bar
-    // is has not been read off it, so the lane reads the opened member — where it cannot
-    // put one channel's meter under the other channel's controls.
+    // The unit draws one bar there while the lanes around it carry two, and that bar is the
+    // member the screen was opened on: with signal on the partner alone, the unit's own
+    // column stays at the floor. Its two addresses hold each member's own filter output.
     const plan = ssmcs(linkedPlan());
     expect(sides(laneOf(SSMCS_COMP_DYN, ctxFor("ch1", plan, SC_SEL), "sc"))).toEqual([[109, 0]]);
     expect(sides(laneOf(SSMCS_COMP_DYN, ctxFor("ch2", plan, SC_SEL), "sc"))).toEqual([[109, 1]]);

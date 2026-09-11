@@ -89,10 +89,10 @@ SSMCS bank / INS FX goes through it.
 (user guide, "SC meter") draws a single column there while its input/output meter draws two, read off
 a linked pair. Its two addresses are not one figure the way the reduction's are: in SSMCS with the
 strip's compressor and its side chain both on, a tone in one side moved that member's `109` and left
-the other's at the floor. **Which of the two the unit's own column draws has not been read off it**,
-so the lane keeps the member the screen was opened on. The alternative — the pair's primary on both
-members' screens — puts the partner's meter under this channel's filter controls, and with signal on
-the partner alone it would sit at the floor beside a reduction that is visibly working.
+the other's at the floor. **The unit's own column is the member the screen was opened on** — with the
+tone on CH2 alone and CH1 silent, CH1's column stayed at the floor — so the lane reads that member
+too. The alternative, the pair's primary on both members' screens, would put the partner's meter under
+this channel's filter controls and sit at the floor beside a reduction that is visibly working.
 
 ## Layout
 

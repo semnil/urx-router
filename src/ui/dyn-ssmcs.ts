@@ -419,8 +419,7 @@ const strippedLane = (ctx: DynCtx, key: string, tapKey: string): DynLane => leve
  *  chain the console offers (`meters.ts` `sidechainTap`).
  *
  *  One bar on a STEREO-linked pair, where the lanes around it carry two: the unit draws one
- *  there, and its two addresses hold each member's own filter output, so the lane reads the
- *  member the screen was opened on. */
+ *  there, and it is the member the screen was opened on, which is what this reads. */
 const sidechainLane = (ctx: DynCtx): DynLane => ({
   key: "sc",
   label: ctx.m.inspector.ssmcs.sideChain,
