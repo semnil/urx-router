@@ -12,6 +12,7 @@ import { ref } from "../../models/types";
 vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdGet, vdGetStr } from "../platform";
+import { insertFxMenu } from "../constraints";
 import { applyDeviceState } from "./readback";
 import { planToCommands, planToNameWrites } from "./translate";
 import type { VdCommand } from "./translate";
@@ -80,6 +81,23 @@ describe("insert-FX: every option encodes and round-trips", () => {
       expect(back.nodeParams["ch1"]?.insertFx).toBe(opt.value);
     });
   }
+
+  // The lock is a UI rule and the emit does not consult it: a document that carries a
+  // mono-only effect on a STEREO-linked pair (an older save, a `?plan=` link, a read of a
+  // unit some earlier build wrote to) is sent as written rather than rewritten on the way
+  // out. Nothing else reaches this — the round trips above leave the pair unlinked, so a
+  // gate added to the emit path would pass every one of them.
+  it("emits a mono-only effect the pair's own menu refuses", async () => {
+    const amp = INSERT_FX_OPTIONS.find((o) => o.monoOnly)!;
+    const plan = base();
+    plan.nodeParams["ch1"] = { stereoLink: true, insertFx: amp.value };
+    plan.nodeParams["ch2"] = { insertFx: amp.value };
+    // The menu refuses it — the control, so this cannot pass by the lock having gone away.
+    expect(insertFxMenu(model, plan, "ch1").find((e) => e.option.value === amp.value)?.lock).toBe("link");
+    expect(cmd(plan, "INSERT_FX", 0)!.vdValue).toBe(denormalizeInsertFx(amp.value));
+    expect(cmd(plan, "INSERT_FX", 1)!.vdValue).toBe(denormalizeInsertFx(amp.value));
+    expect((await roundTrip(plan)).nodeParams["ch1"]?.insertFx).toBe(amp.value);
+  });
 
   for (const opt of OUTPUT_INSERT_FX_OPTIONS) {
     it(`output "${opt.label}" (${opt.value})`, async () => {

@@ -761,6 +761,12 @@ function sanitizeParamRecord(rec: Record<string, unknown>): Record<string, unkno
   return out;
 }
 
+/** A value a scalar-only field may hold once `sanitizeParamValue` has been over it: the
+ *  numbers it lets through are already finite. */
+function isParamScalar(v: unknown): boolean {
+  return typeof v === "boolean" || typeof v === "number";
+}
+
 function sanitizeNodeParams(v: unknown, version: number): Record<string, NodeParams> {
   if (!isPlainRecord(v)) return {};
   const out: Record<string, NodeParams> = {};
@@ -774,6 +780,30 @@ function sanitizeNodeParams(v: unknown, version: number): Record<string, NodePar
     // decided per document version inside migrateFxEffectParams.
     const fxIndex = FX_CHANNEL_NODE_INDEX[nodeId];
     if (clean.fxEffect && fxIndex !== undefined) migrateFxEffectParams(clean.fxEffect, fxIndex, version);
+    // The bypass and every engine slot are SCALARS — a switch and a raw value — and the
+    // sanitiser above cannot tell a document that put a container in one of them from the
+    // nested groups it is built for (`gate` is a record, `eqBands` an array, and an empty
+    // array survives it vacuously). A container reaching the plan is then read as a
+    // JavaScript truth by everything downstream: `insertFxOn: []` is a bypass that is ON,
+    // and a container in Pitch Fix's MIDI Control slot makes the unit's own Scale and note
+    // mask drop out of the write. Neither is a state the document asked for, and no surface
+    // can show either. Dropped here, ahead of the family re-keying, so one cannot arrive
+    // under a qualified key instead.
+
+    if (clean.insertFxOn !== undefined && !isParamScalar(clean.insertFxOn)) delete clean.insertFxOn;
+    // The map itself has to BE a map, asked of its presence rather than of its truth: the
+    // checks around it are truthiness, and `false` and `0` are values a document can carry
+    // there — they survive the sanitiser (a boolean and a finite number are legal leaves),
+    // then every `if (params)` below reads false and leaves them in the plan. An array is the
+    // other way in: the sanitiser keeps one because `eqBands` is an array, and it would be
+    // walked slot by slot until the re-keying happened to empty it. One statement, so "not a
+    // map" is one case with one outcome whatever the value is worth.
+
+    if (clean.insertFxParams !== undefined && !isPlainRecord(clean.insertFxParams)) delete clean.insertFxParams;
+    if (clean.insertFxParams) {
+      const slots = clean.insertFxParams as Record<string, unknown>;
+      for (const [slot, raw] of Object.entries(slots)) if (!isParamScalar(raw)) delete slots[slot];
+    }
     // The insert-FX engine slots are re-keyed at EVERY version: a bare slot number
     // is the device-shaped namespace a readback writes, so it belongs to the family
     // the document's own selector names, whenever it was written. With no effect

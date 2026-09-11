@@ -1334,7 +1334,8 @@ export class Console {
    * that is not reversible, so it is offered as a list of named things with their reasons
    * beside them rather than as something a press cycles through. No Effect leads the list
    * and is never disabled: a strip has to be able to give a slot back from every state,
-   * including the two — rate ceiling, slot taken — that make everything else unpickable.
+   * including the three — rate ceiling, STEREO-linked pair, slot taken — that make
+   * everything else unpickable.
    */
   private openInsFxPop(id: string, anchor: HTMLElement): void {
     this.closePopovers();
@@ -1369,8 +1370,8 @@ export class Console {
       nm.textContent = entry.option.label;
       row.append(nm);
       // Why it cannot be picked, in the width of a row — or, for No Effect, what picking
-      // it does. The full sentence goes on the row's tooltip, which is where the same two
-      // facts are already said at the width of a panel in the Inspector.
+      // it does. The full sentence goes on the row's tooltip, which is where the same three
+      // facts are said at the width of a panel.
       if (disabled) {
         const why = el("span", "why");
         if (entry.lock === "rate") {
@@ -1380,6 +1381,9 @@ export class Console {
             entry.option.maxRate !== undefined
               ? t().inspector.insFxRateLockedAt(entry.option.label, formatRate(entry.option.maxRate))
               : t().inspector.insFxRateLocked;
+        } else if (entry.lock === "link") {
+          why.textContent = t().console.insFxMonoOnly;
+          row.title = t().inspector.insFxLinkLocked;
         } else {
           why.textContent = t().console.insFxInUse;
           row.title = t().inspector.insFxSlotLocked;
@@ -2598,10 +2602,20 @@ export class Console {
         proc.append(
           this.insFxVacantChip(
             m.id,
-            // Only where nothing at all can be taken, and the two reasons are not
-            // interchangeable: above every ceiling it is the rate and not the slots, and
-            // the rate question has to be asked of a strip holding nothing too.
-            free.length ? undefined : rateLocked ? t().inspector.insFxRateLocked : t().inspector.insFxSlotLocked,
+            // Only where nothing at all can be taken, and only where ONE sentence is true
+            // of the whole menu: every entry above its ceiling, or every entry held by
+            // another node. A menu refused for two reasons at once — five entries the
+            // STEREO link refuses beside two a slot holds, or Pitch Fix over its ceiling
+            // beside amps another strip is holding — has no such sentence, and each of the
+            // two that fit says something false about the other's entries. It gets none:
+            // the face still opens, and the popover gives every row its own reason.
+            free.length
+              ? undefined
+              : rateLocked
+                ? t().inspector.insFxRateLocked
+                : menu.every((e) => e.option.value === INSERT_FX_NONE || e.lock === "slot")
+                  ? t().inspector.insFxSlotLocked
+                  : undefined,
             noneAtThisRate,
           ),
         );

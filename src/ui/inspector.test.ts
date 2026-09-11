@@ -908,6 +908,34 @@ describe("insert FX", () => {
     expect(panel.querySelector("#btn-insfx-screen")).not.toBeNull();
   });
 
+  // The other view offers the same menu with a reason beside each locked row; here the
+  // menu IS a `<select>`, so the lock is the option's own disabled state. A STEREO-linked
+  // MONO IN pair may hold a compander and nothing else.
+  it("disables the mono-only effects on a STEREO-linked pair", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
+    for (const id of ["ch1", "ch2"]) {
+      renderInspector(panel, model, plan, nodeSel(id), act);
+      const sel = [...panel.querySelectorAll<HTMLElement>(".param")]
+        .find((r) => r.dataset.paramLabel === t().inspector.insertFxType)!
+        .querySelector("select")!;
+      const disabled = (label: string): boolean => [...sel.options].find((o) => o.textContent === label)!.disabled;
+      for (const label of ["Clean", "Crunch", "Lead", "Drive", "Pitch Fix"]) {
+        expect(disabled(label), `${id} ${label}`).toBe(true);
+      }
+      for (const label of ["Compander-H", "Compander-S", "No Effect"]) {
+        expect(disabled(label), `${id} ${label}`).toBe(false);
+      }
+    }
+    // The pair that is not linked keeps the whole menu.
+    renderInspector(panel, model, plan, nodeSel("ch3"), act);
+    const sel3 = [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.insertFxType)!
+      .querySelector("select")!;
+    expect([...sel3.options].some((o) => o.disabled)).toBe(false);
+  });
+
   // A bare slot number left behind after a selector change would be read as the NEW
   // family's slot, under a different law, and emitted as absolute state on the next
   // device flush.

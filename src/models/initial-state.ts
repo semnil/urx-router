@@ -64,6 +64,14 @@ export function defaultPlan(modelId: ModelId): Plan {
  * the unit; a node the read could not reach stays absent and is flagged (`unreadNodes`),
  * and a factory value there would be written back to a unit nobody managed to read.
  */
+/** The factory params for one node — what `fillFactoryParams` supplies for a key the
+ *  document leaves out. Exported for the checks that have to compare a document against
+ *  the values the WRITE will see rather than against what it literally carries; asking
+ *  here rather than modelling the fill keeps the two from drifting. */
+export function factoryNodeParams(modelId: ModelId, nodeId: string): NodeParams | undefined {
+  return INITIAL[modelId].nodeParams[nodeId];
+}
+
 export function fillFactoryParams(modelId: ModelId, plan: Plan): void {
   const source = (plan.paramSource ??= new Map<string, ParamSource>());
   // The document's own leaves first: everything already here was written by whoever wrote

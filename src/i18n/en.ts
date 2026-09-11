@@ -132,12 +132,15 @@ export const en = {
     // launcher under it. The heading and the switch are the device's words, taken from
     // the Inspector row that names the same two things.
     insFxType: dev("EFFECT TYPE"),
-    // Why an entry cannot be picked, said in the width of a list row. The Inspector's
-    // sentences (`insFxRateLockedAt` / `insFxSlotLocked`) are the same two facts said
-    // at the width of a panel; these are what fits beside a name, and the row's title
-    // carries the sentence for anyone who hovers it.
+    // Why an entry cannot be picked, said in the width of a list row. The sentences beside
+    // them (`insFxRateLockedAt` / `insFxLinkLocked` / `insFxSlotLocked`) are the same three
+    // facts at the width of a panel; these are what fits beside a name, and the row's title
+    // carries the sentence for anyone who hovers it. Only the rate one is also said in the
+    // Inspector, on the bypass switch it forces off — the other two have no Inspector
+    // surface, since a locked option there is disabled without a reason beside it.
     insFxInUse: tr("in use"),
     insFxMax: (maxRate: string): string => `max ${maxRate}`,
+    insFxMonoOnly: tr("mono only"),
     // What the popover's first entry does, beside a name that reads like a value.
     // Without it "No Effect" is one more type to pick rather than the way out.
     insFxRemove: tr("release"),
@@ -371,6 +374,10 @@ export const en = {
     // sentence above can only be said of a value this app's own table does not carry.
     insFxRateLockedAt: (effect: string, maxRate: string): string =>
       `${effect} is unavailable above ${maxRate} — forced off.`,
+    // What a STEREO-linked MONO IN pair may hold: the companders, which run in stereo
+    // across the pair. The guitar amps and Pitch Fix are mono-channel effects and the
+    // unit offers neither while the pair is linked.
+    insFxLinkLocked: tr("Only the companders are available while Signal Type is STEREO."),
     insFxSlotLocked: tr("Every insert effect is in use — each occupies one device-wide slot."),
     // The FX2 bus itself, which the rate removes rather than merely disabling something on
     // it: its own strip and every send aimed at it. The graph dims the node; this is what

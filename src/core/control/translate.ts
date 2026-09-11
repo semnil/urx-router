@@ -1849,6 +1849,48 @@ export function effectiveInsertFx(model: DeviceModel, plan: Plan, nodeId: string
   return ifx.options.some((o) => o.value === v) ? v : INSERT_FX_NONE;
 }
 
+/** What a write makes of one node's insert FX, in the terms the WIRE sees. */
+export interface InsertFxWireState {
+  /** The selector as sent: an off-menu value is No Effect, which is what `effectiveInsertFx`
+   *  already decides for every surface that asks. */
+  selector: number;
+  /** The bypass as sent, or null where the write does not send it at all — with No Effect
+   *  selected the unit ignores the switch, so the plan's value never leaves. */
+  on: number | null;
+  /** The engine commands, addressed and encoded, in emit order. Empty for a selector with
+   *  no family: No Effect writes no engine parameter. */
+  params: string[];
+}
+
+/**
+ * The insert-FX state a write would leave on the unit for one node.
+ *
+ * Its reason for existing is comparison — two documents, or the two members of a STEREO-linked
+ * pair, differ in a way that MATTERS only where this differs. Stored values do not answer that:
+ * an off-menu selector and No Effect are one state, `true` and `1` are one bypass, a bypass
+ * beside No Effect is not sent at all, and an engine value belonging to another family is not
+ * sent either. So it is computed HERE, from the same helpers the emit loop below uses, rather
+ * than modelled a second time somewhere a rule change would not reach.
+ *
+ * Null where the node has no insert FX, or where the document says nothing about it — the
+ * loop below skips such a node too. Callers comparing documents should fill the plan first,
+ * since the write sees a completed one.
+ */
+export function insertFxWireState(model: DeviceModel, plan: Plan, nodeId: string): InsertFxWireState | null {
+  const ifx = insertFxControl(model, nodeId);
+  const np = plan.nodeParams[nodeId] ?? {};
+  if (!ifx || np.insertFx === undefined) return null;
+  const selector = effectiveInsertFx(model, plan, nodeId) ?? INSERT_FX_NONE;
+  const out: VdCommand[] = [];
+  const fam = insertFxFamilyOf(selector);
+  if (fam) pushInsertFxEffectCommands(out, insertFxEngine(fam, ifx.isOutput), fam, np.insertFxParams, false);
+  return {
+    selector,
+    on: np.insertFxOn !== undefined && selector !== INSERT_FX_NONE ? (np.insertFxOn ? 1 : 0) : null,
+    params: out.map((c) => `${c.name}:${c.paramId}:${c.x}:${c.y}:${c.vdValue}`),
+  };
+}
+
 export function planToCommands(
   model: DeviceModel,
   plan: Plan,

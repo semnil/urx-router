@@ -521,6 +521,81 @@ describe("the INS FX chip", () => {
     expect(popRow("No Effect").classList.contains("off")).toBe(false);
   });
 
+  // A STEREO-linked MONO IN pair may hold a compander and nothing else — the guitar amps
+  // and Pitch Fix are mono-channel effects. Said on the entries themselves, with their own
+  // reason: the slot sentence would tell the operator to go and release something, which
+  // releases nothing here.
+  it("greys the mono-only effects on a STEREO-linked pair, and names why", () => {
+    h = consoleHost();
+    h.plan.nodeParams["ch1"] = { ...h.plan.nodeParams["ch1"], stereoLink: true };
+    h.view.refresh();
+    openerOf("ch1").click();
+    for (const label of ["Clean", "Crunch", "Lead", "Drive", "Pitch Fix"]) {
+      const row = popRow(label);
+      expect(row.classList.contains("off"), label).toBe(true);
+      expect(row.getAttribute("aria-disabled"), label).toBe("true");
+      expect(row.title, label).toBe(t().inspector.insFxLinkLocked);
+      expect(row.querySelector(".why")?.textContent, label).toBe(t().console.insFxMonoOnly);
+    }
+    for (const label of ["Compander-H", "Compander-S", "No Effect"]) {
+      expect(popRow(label).classList.contains("off"), label).toBe(false);
+    }
+  });
+
+  // The face beside the disclosure carries a reason only where ONE sentence is true of the
+  // whole menu. A STEREO-linked pair whose menu is empty never is: it is empty exactly when
+  // the companders are held by another node, so five entries are refused for Signal Type and
+  // two are in use, and each of the app's two sentences says something false about the
+  // other's entries. The row-by-row reasons in the popover are where that state is read.
+  it("says nothing on a vacant chip whose menu is refused for two reasons at once", () => {
+    h = consoleHost();
+    const face = (): HTMLElement => h.strip("ch1").root.querySelector<HTMLElement>(".con-ifxface")!;
+    h.plan.nodeParams["ch1"] = { ...h.plan.nodeParams["ch1"], stereoLink: true };
+    h.view.refresh();
+    // Linked with the compander slot free: two entries are still takeable, so there is no
+    // "nothing can be taken" to explain in the first place.
+    expect(face().title).toBe("");
+
+    pick("ch3", "Compander-H");
+    expect(face().classList.contains("vacant"), "CH 1 still holds nothing").toBe(true);
+    expect(face().title, "neither sentence is true of this menu").toBe("");
+    expect(h.strip("ch2").root.querySelector<HTMLElement>(".con-ifxface")!.title).toBe("");
+    // The face still opens the list, which is what carries the per-row reasons — without
+    // this the case above is satisfied by a strip that says nothing AND offers nothing.
+    openerOf("ch1").click();
+    expect(popRow("Clean").querySelector(".why")?.textContent).toBe(t().console.insFxMonoOnly);
+    expect(popRow("Compander-H").querySelector(".why")?.textContent).toBe(t().console.insFxInUse);
+  });
+
+  // The positive control, and it takes a different arrangement rather than the same one
+  // unlinked: with the pair apart CH 1 still has the five mono-only effects, so its menu is
+  // not empty at all. Emptying an UNLINKED strip's menu means holding all three families
+  // elsewhere — and THAT menu has one true sentence, so the reason comes back.
+  it("keeps the slot reason where every entry is held by another node", () => {
+    h = consoleHost();
+    pick("ch2", "Clean");
+    pick("ch3", "Pitch Fix");
+    pick("ch4", "Compander-H");
+    const face = h.strip("ch1").root.querySelector<HTMLElement>(".con-ifxface")!;
+    expect(face.classList.contains("vacant")).toBe(true);
+    expect(face.title).toBe(t().inspector.insFxSlotLocked);
+  });
+
+  // The same compound shape without a pair in it, which the app has had all along: at
+  // 96 kHz Pitch Fix is over its own ceiling while the amps and companders are merely held,
+  // so "every insert effect is in use" is false about Pitch Fix. Not a STEREO case at all —
+  // the rule is about the menu, not about the link.
+  it("says nothing where a rate ceiling and a held slot empty the menu together", () => {
+    h = consoleHost();
+    pick("ch2", "Clean");
+    pick("ch3", "Compander-H");
+    h.plan.sampleRate = 96000;
+    h.view.refresh();
+    const face = h.strip("ch1").root.querySelector<HTMLElement>(".con-ifxface")!;
+    expect(face.classList.contains("vacant")).toBe(true);
+    expect(face.title).toBe("");
+  });
+
   // The screen shows what is selected, so there is nothing for it to show until something
   // is — and a bypassed or rate-stopped effect is still an effect to tune.
   it("offers the tuning screen only once an effect is held", () => {

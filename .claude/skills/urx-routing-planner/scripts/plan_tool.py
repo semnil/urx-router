@@ -154,7 +154,9 @@ def validate(plan, models):
         seen.add(key)
 
     warnings.extend(collection_warnings(plan))
-    warnings.extend(node_param_warnings(plan, nodes))
+    warnings.extend(node_param_warnings(plan, nodes, model.get("channelPairs")))
+    problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
+
     return problems, warnings
 
 
@@ -329,6 +331,184 @@ def insert_fx_slot(node_id, params, nodes):
     return None
 
 
+FACTORY_INSERT_FX = -1
+FACTORY_INSERT_FX_ON = False
+
+
+def pair_of(node_id, pairs):
+    """The MONO IN pair `node_id` belongs to, primary first, or None. The pairs come from
+    the bundled model data, so this tool does not carry a second copy of which channels
+    pair with which."""
+    for pair in pairs or []:
+        if isinstance(pair, list) and len(pair) == 2 and node_id in pair:
+            return pair
+    return None
+
+
+def pair_is_linked(node_id, pairs, node_params):
+    """True when `node_id` is on a MONO IN pair whose Signal Type is STEREO. The flag lives
+    on the pair's primary, so it is read there whichever member is asked."""
+    pair = pair_of(node_id, pairs)
+    if pair is None:
+        return False
+    primary = node_params.get(pair[0])
+    return isinstance(primary, dict) and primary.get("stereoLink") is True
+
+
+def sanitized(node_params, node_id, key):
+    """One member's stored value AFTER the app's load-time sanitiser, or None where the key
+    is absent or the app drops it. The app keeps a leaf that is a boolean or a finite number
+    and drops everything else, so `null` and an omitted key are the same thing to the write
+    — comparing the raw JSON instead makes them differ."""
+    carried = node_params.get(node_id)
+    if not isinstance(carried, dict) or key not in carried:
+        return None
+    value = carried[key]
+    if isinstance(value, bool) or is_number(value):
+        return value
+    return None
+
+
+def insert_fx_wire_state(node_params, node_id, param_space):
+    """The insert-FX state a write would leave on the unit for one member of a pair, in the
+    terms the WIRE sees — the same projection `insertFxWireState` makes in the app, so the
+    two agree about which documents differ in a way that matters.
+
+    Stored values answer the wrong question: an off-menu selector and No Effect reach the
+    unit as one value, `true` and `1` are one bypass, and a bypass beside No Effect is never
+    sent at all. `None` for the engine values means the selector carries no family, which is
+    what No Effect is.
+    """
+    stored = sanitized(node_params, node_id, "insertFx")
+    selector = stored if stored in INSERT_FX_SLOTS or stored == FACTORY_INSERT_FX else FACTORY_INSERT_FX
+    if stored is None:
+        selector = FACTORY_INSERT_FX
+    on = sanitized(node_params, node_id, "insertFxOn")
+    if on is None:
+        on = FACTORY_INSERT_FX_ON
+    # `bool(1) is True`, which is the point: the app sends `np.insertFxOn ? 1 : 0`, so every
+    # truthy value is one bypass. Python's own `==` would also call `True == 1`, but it calls
+    # `1 == 1.0` and `False == 0` too, and none of those is the question being asked.
+    wire_on = None if selector == FACTORY_INSERT_FX else bool(on)
+    return selector, wire_on, insert_fx_pair_params(node_params, node_id, selector, param_space)
+
+
+def sanitized_params(params):
+    """The engine map as the app's LOADER leaves it: a leaf that is neither a boolean nor a
+    finite number is dropped from the document before anything reads it.
+
+    Everything below has to run on this rather than on the raw JSON, and each of the two
+    reasons is a way the raw map answers a question the app never asks. A dropped key cannot
+    hide the bare key the app would have fallen through to (`{"pitch:16": null, "16": 5}` is
+    5 to the app), and it cannot gate anything either (`"pitch:34": "on"` is not a MIDI
+    Control that is on — it is a key the loader removed, so the unit drives nothing and the
+    Scale is written after all).
+    """
+    if not isinstance(params, dict):
+        return {}
+    return {str(k): v for k, v in params.items() if isinstance(v, bool) or is_number(v)}
+
+
+def insert_fx_slot_value(params, family, slot):
+    """One engine slot's value, the way the app reads it: the family-qualified key first, the
+    bare slot number second. The loader re-keys a bare slot under the selected family, so the
+    two name one value and the qualified one wins. Expects a SANITISED map."""
+    for key in (f"{family}:{slot}", str(slot)):
+        if key in params:
+            return params[key]
+    return None
+
+
+def insert_fx_pair_params(node_params, node_id, selector, param_space):
+    """The engine commands a write would send for one member, as (name, slot, value) rows.
+
+    This is the app's own emit rule (`pushInsertFxEffectCommands`), reproduced from the data
+    `insertFxParamSpace` carries. Every clause of it decides whether two documents differ in
+    a way the unit can tell apart, so leaving one out makes this checker refuse a plan the
+    app loads:
+
+    - the value is read under the FAMILY's namespace, bare key second;
+    - a value that is not a finite number is not sent at all — a boolean included, since
+      `Number.isFinite(true)` is false in the app;
+    - what IS sent is the value bounded to that slot's own range, so two numbers past the
+      same end arrive as one;
+    - a slot the unit drives itself is skipped while its gate is on (Pitch Fix clears the
+      Scale and the note mask when MIDI Control is switched on, and re-sending the plan's
+      copy would put them back);
+    - a driver slot goes out under its own command name.
+
+    The emit's mirrored slots are left out: a mirror repeats a value this tuple already
+    carries, at a slot the FAMILY decides, so it falls the same way on both members of a pair
+    and can move no verdict here.
+
+    "Nothing is sent" has ONE spelling — the empty tuple — whether the selector carries no
+    family, the document omits the map, the map is empty, or nothing in it survives. Two
+    spellings made an omitted map differ from an empty one, which is a pair the app loads.
+    """
+    space = param_space.get(str(selector)) if isinstance(param_space, dict) else None
+    if not isinstance(space, dict):
+        return ()
+    family = space.get("family")
+    slots = space.get("slots")
+    if not isinstance(family, str) or not isinstance(slots, list):
+        return ()
+    carried = node_params.get(node_id)
+    params = sanitized_params(carried.get("insertFxParams") if isinstance(carried, dict) else None)
+
+    driven = set()
+    gate_spec = space.get("driven")
+    if isinstance(gate_spec, dict):
+        gate = insert_fx_slot_value(params, family, gate_spec.get("gate"))
+        # The app reads the gate as a bare truthiness with 0 for an absent one, so a boolean
+        # gates exactly as a 1 does.
+        if gate:
+            driven = {s for s in gate_spec.get("slots") or []}
+
+    out = []
+    for spec in slots:
+        if not isinstance(spec, dict):
+            continue
+        slot = spec.get("slot")
+        if slot in driven:
+            continue
+        value = insert_fx_slot_value(params, family, slot)
+        # `Number.isFinite` in the app, which a boolean is not — and `is_number` already
+        # draws that line for the same reason, so it is asked rather than re-stated.
+        if not is_number(value):
+            continue
+        raw = min(max(value, spec.get("rawMin")), spec.get("rawMax"))
+        name = "INSERT_FX_DRIVER" if spec.get("driver") else "INSERT_FX_EFFECT"
+        out.append((name, slot, raw))
+    return tuple(out)
+
+
+def insert_fx_pair_problems(plan, pairs, param_space):
+    """A STEREO-linked pair whose two members disagree about their one insert effect.
+
+    The unit keeps ONE selector, one bypass and one engine for a linked pair and mirrors a
+    write to either member onto the other, so a document giving the two members different
+    WRITTEN states describes no state the unit can be in: the app emits both, the unit keeps
+    whichever landed last, and its converging write re-sends them to its round limit and
+    gives up. The app refuses such a document, so this is a problem rather than a warning.
+    """
+    out = []
+    node_params = plan.get("nodeParams")
+    if not isinstance(node_params, dict):
+        return out
+    for pair in pairs or []:
+        if not (isinstance(pair, list) and len(pair) == 2):
+            continue
+        primary = node_params.get(pair[0])
+        if not (isinstance(primary, dict) and primary.get("stereoLink") is True):
+            continue
+        a = insert_fx_wire_state(node_params, pair[0], param_space)
+        b = insert_fx_wire_state(node_params, pair[1], param_space)
+        keys = [k for k, x, y in zip(("insertFx", "insertFxOn", "insertFxParams"), a, b) if x != y]
+        if keys:
+            out.append(("insertFxPair", f"{pair[0]} / {pair[1]}: {', '.join(keys)}", ""))
+    return out
+
+
 def fx_effect_warnings(node_id, fx, out):
     """Collect everything the app removes from one node's fxEffect (path, why).
 
@@ -391,6 +571,31 @@ def fx_effect_warnings(node_id, fx, out):
             out.append((f"{node_id}.fxEffect.params.{k}", f"{v!r} is not a finite number"))
 
 
+# The two node-param paths that hold a SCALAR and nothing else: the insert-FX bypass, and
+# every engine slot under it. The general walk below recurses into a container because the
+# nested groups are containers (`gate` is a record, `eqBands` an array), so it would read a
+# finite leaf INSIDE one as a value the app keeps. The app does not: the load-time repair
+# removes a container from either of these outright, and an author who is not told watches
+# the setting disappear after this tool said the document was clean.
+def scalar_only_drops(node_id, params, out):
+    """Report the scalar-only paths the load-time repair removes."""
+    on = params.get("insertFxOn")
+    if "insertFxOn" in params and not (isinstance(on, bool) or is_number(on)):
+        out.append((f"{node_id}.insertFxOn", f"{on!r} is not a boolean or a finite number"))
+    if "insertFxParams" not in params:
+        return
+    slots = params.get("insertFxParams")
+    # The map itself first: an engine map that is not a map is dropped whole, and reporting
+    # only its slots would say nothing at all about a document that made it a string — which
+    # is what holding the whole field out of the general walk had cost.
+    if not isinstance(slots, dict):
+        out.append((f"{node_id}.insertFxParams", f"{slots!r} is not an object of engine slots"))
+        return
+    for slot, raw in slots.items():
+        if not (isinstance(raw, bool) or is_number(raw)):
+            out.append((f"{node_id}.insertFxParams.{slot}", f"{raw!r} is not a boolean or a finite number"))
+
+
 def dropped_values(value, path, out):
     """Collect the node-param values the app's loader drops (path, why). Every leaf
     it keeps is a boolean or a finite number, and one malformed element drops the
@@ -398,7 +603,8 @@ def dropped_values(value, path, out):
 
     The `fxEffect` subtree is NOT walked here: a boolean and a non-empty object survive
     this stage and are removed by the load-time repair instead, so one owner reports
-    both (fx_effect_warnings)."""
+    both (fx_effect_warnings). `insertFxOn` and the engine slots are left out for the same
+    reason and reported by `scalar_only_drops`."""
     if isinstance(value, dict):
         for k, v in value.items():
             dropped_values(v, f"{path}.{k}", out)
@@ -412,7 +618,7 @@ def dropped_values(value, path, out):
         out.append((path, f"{value!r} is neither a boolean nor a finite number"))
 
 
-def node_param_warnings(plan, nodes):
+def node_param_warnings(plan, nodes, pairs):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
@@ -433,7 +639,11 @@ def node_param_warnings(plan, nodes):
             out.append(f"node {node_id}: the app drops this node's params on load — nodeParams entries must be objects")
             continue
         dropped = []
-        dropped_values({k: v for k, v in params.items() if k != "fxEffect"}, node_id, dropped)
+        # `insertFxOn` and `insertFxParams` are held out of the general walk and reported by
+        # their own rule: it keeps a container, theirs does not.
+        walked = {k: v for k, v in params.items() if k not in ("fxEffect", "insertFxOn", "insertFxParams")}
+        dropped_values(walked, node_id, dropped)
+        scalar_only_drops(node_id, params, dropped)
         if "fxEffect" in params:
             fx_effect_warnings(node_id, params["fxEffect"], dropped)
         for path, why in dropped:
@@ -447,7 +657,20 @@ def node_param_warnings(plan, nodes):
             out.append(f"node {node_id}: {SELECTOR_KEYS['insertFx']} resets that effect's parameters on the device")
         slot = insert_fx_slot(node_id, params, nodes)
         if slot:
-            slot_holders.setdefault(slot, []).append(node_id)
+            held = slot_holders.setdefault(slot, [])
+            # A STEREO-linked pair holds one insert effect between its two channels — the unit
+            # mirrors the selector across them and both point at one engine — so the pair claims
+            # the slot once, as the app's own census counts it. Without this the tool reports the
+            # document plan-schema.md tells an author to write (the same effect on both members)
+            # as a collision the app does not raise.
+            pair = pair_of(node_id, pairs)
+            partner = None
+            if pair is not None and pair_is_linked(node_id, pairs, node_params or {}):
+                candidate = pair[1] if pair[0] == node_id else pair[0]
+                if insert_fx_wire_state(node_params or {}, candidate, {})[0] == insert_fx_wire_state(node_params or {}, node_id, {})[0]:
+                    partner = candidate
+            if partner is None or partner not in held:
+                held.append(node_id)
         # The section's PRESENCE, not the `type` key: the selector is emitted whether or not
         # the document names a type (an absent one resolves to the channel's factory type),
         # and every parameter slot goes with it. There is no partial FX write, so a plan

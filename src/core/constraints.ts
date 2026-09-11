@@ -127,9 +127,10 @@ export function rateConstraints(model: DeviceModel, sampleRate: number): RateCon
   return { warnings, disabledNodes };
 }
 
-/** Why an insert-FX option cannot be chosen: the rate is above its ceiling, or
+/** Why an insert-FX option cannot be chosen: the rate is above its ceiling, the node
+ *  belongs to a STEREO-linked pair and the effect runs on a mono channel alone, or
  *  another node already holds the device-wide 1-of slot it needs. */
-export type InsertFxLock = "rate" | "slot";
+export type InsertFxLock = "rate" | "link" | "slot";
 
 export interface InsertFxMenuEntry {
   option: InsertFxOption;
@@ -167,19 +168,28 @@ export function insertFxCensus(model: DeviceModel, plan: Plan): InsertFxCensus {
     if (!slot) continue;
     const held = holders.get(slot) ?? [];
     const partner = isStereoLinkedPair(model, plan, node.id) ? partnerChannel(model, node.id) : undefined;
-    if (partner !== undefined && held.includes(partner)) continue;
+    // …and only where the two members hold the SAME effect. A linked pair holding two
+    // different ones is not one holder: the unit keeps one selector between them, so the
+    // document is one it cannot take, and collapsing it here would hide the collision
+    // instead of reporting it (plan-validate's `insertFxPairProblems` names the mismatch
+    // itself). The selector alone decides this — the slot is a function of it, and a
+    // member the document leaves out claims no slot to begin with.
+    const shares = partner !== undefined && plan.nodeParams[partner]?.insertFx === plan.nodeParams[node.id]?.insertFx;
+    if (shares && held.includes(partner)) continue;
     holders.set(slot, [...held, node.id]);
   }
   return holders;
 }
 
 // The insert-FX menu of one node: every option its own control offers, each with
-// the reason it is locked. Both reasons are UI-only — the write set is never
-// gated by either (see architecture.md), so this decides what the screens offer
+// the reason it is locked. All three reasons are UI-only — the write set is never
+// gated by any of them (see architecture.md), so this decides what the screens offer
 // and nothing about what is emitted. Empty for a node with no insert FX. The
 // slot census skips the node itself — and its STEREO-linked partner, which shares the
 // node's one claim — so the value it already holds stays selectable; No Effect has
-// neither a ceiling nor a slot and is never locked.
+// no ceiling, no pair rule and no slot, and is never locked.
+// The rate is asked first, so a linked pair above every ceiling reports the rate on
+// every entry and `insertFxAllRateLocked` still answers for it.
 // A caller rendering many menus in one pass passes the census in so the sweep
 // runs once instead of per node.
 export function insertFxMenu(
@@ -190,7 +200,8 @@ export function insertFxMenu(
 ): InsertFxMenuEntry[] {
   const ifx = insertFxControl(model, nodeId);
   if (!ifx) return [];
-  const partner = isStereoLinkedPair(model, plan, nodeId) ? partnerChannel(model, nodeId) : undefined;
+  const linked = isStereoLinkedPair(model, plan, nodeId);
+  const partner = linked ? partnerChannel(model, nodeId) : undefined;
   const taken = new Set<InsertFxSlot>();
   for (const [slot, holders] of census ?? insertFxCensus(model, plan)) {
     if (holders.some((h) => h !== nodeId && h !== partner)) taken.add(slot);
@@ -199,9 +210,11 @@ export function insertFxMenu(
     option,
     lock: !insertFxAvailable(option, plan.sampleRate)
       ? "rate"
-      : option.slot !== undefined && taken.has(option.slot)
-        ? "slot"
-        : null,
+      : linked && option.monoOnly
+        ? "link"
+        : option.slot !== undefined && taken.has(option.slot)
+          ? "slot"
+          : null,
   }));
 }
 

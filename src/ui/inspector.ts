@@ -844,9 +844,12 @@ export function renderInspector(
 
     // Insert FX dropdown: MONO IN channels (input effects) and MIX/STEREO outputs
     // (output effects). An option is disabled when it exceeds the current sample
-    // rate's ceiling, or when its device-wide 1-of slot is taken by another node —
-    // both asked of the one menu in core/constraints.ts the CONSOLE chip asks, so
-    // the two screens cannot disagree about what is available.
+    // rate's ceiling, when the node is on a STEREO-linked pair and the effect runs on a
+    // mono channel alone, or when its device-wide 1-of slot is taken by another node —
+    // all asked of the one menu in core/constraints.ts the CONSOLE chip asks, so
+    // the two screens cannot disagree about what is available. The reason itself is not
+    // printed here: a locked option is disabled whatever locked it, and the sentence for
+    // each reason is on the CONSOLE row that names them.
     //
     // A collapsible section, and its ON state folds it, exactly as GATE / COMP / EQ and
     // the Ducker do. It was the one processor of the five laid out LOOSE — a bus grouped

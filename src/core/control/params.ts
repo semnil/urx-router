@@ -781,18 +781,23 @@ export interface InsertFxOption {
   maxRate?: number;
   /** The 1-of-N device slot it occupies; absent = none (No Effect). */
   slot?: InsertFxSlot;
+  /** The effect runs on a MONO IN channel alone: a pair whose Signal Type is STEREO
+   *  cannot hold it. Absent = the pair may hold it, where it runs in stereo. */
+  monoOnly?: boolean;
 }
 // Per-effect sample-rate ceilings (user guide, Appendix > Effect list): the guitar amps
 // and companders run up to 96 kHz, Pitch Fix only up to 48 kHz, No Effect always. The
-// same table's "Number of simultaneous uses" row is what `slot` encodes. Cited by
+// same table's "Number of simultaneous uses" row is what `slot` encodes, and its
+// "Supported channels" row `monoOnly` — the amps and Pitch Fix say "Cannot be used when
+// Signal Type is stereo", the companders "operates in stereo" on such a pair. Cited by
 // section rather than page: the list moved from p.180 to p.184 between C0 and D0.
 export const INSERT_FX_OPTIONS: InsertFxOption[] = [
   { value: INSERT_FX_NONE, label: "No Effect" },
-  { value: 256, label: "Clean", maxRate: 96000, slot: "amp" },
-  { value: 257, label: "Crunch", maxRate: 96000, slot: "amp" },
-  { value: 258, label: "Lead", maxRate: 96000, slot: "amp" },
-  { value: 259, label: "Drive", maxRate: 96000, slot: "amp" },
-  { value: 512, label: "Pitch Fix", maxRate: 48000, slot: "pitch" },
+  { value: 256, label: "Clean", maxRate: 96000, slot: "amp", monoOnly: true },
+  { value: 257, label: "Crunch", maxRate: 96000, slot: "amp", monoOnly: true },
+  { value: 258, label: "Lead", maxRate: 96000, slot: "amp", monoOnly: true },
+  { value: 259, label: "Drive", maxRate: 96000, slot: "amp", monoOnly: true },
+  { value: 512, label: "Pitch Fix", maxRate: 48000, slot: "pitch", monoOnly: true },
   { value: 1793, label: "Compander-H", maxRate: 96000, slot: "compander" },
   { value: 1794, label: "Compander-S", maxRate: 96000, slot: "compander" },
 ];

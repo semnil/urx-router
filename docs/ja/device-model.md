@@ -357,6 +357,14 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   (2026-09-11 実測)。アプリのミラーもこの 5 キー (`gain` / `clipSafe` / `phase` / `phantom` / `hiZ`) を
   相方の値のまま残し、リンク遷移でも書かない — 別々の音源を繋いだペアは 2 つのプリアンプを保つ。メーターも Signal Type に応答する — 実機のチャンネル調整画面は
   どちらのモードでもこのペアを 1 チャンネルとして測る ([channel-tuning.md](channel-tuning.md))。
+- **STEREO のペアが Insert FX に持てるのは Compander だけ**。ユーザーガイドのエフェクトリストで
+  STEREO のチャンネルペアへのインサートを認めているチャンネルエフェクトは COMPANDER-H /
+  COMPANDER-S のみ (ペアに挿すとステレオ動作になる) で、GUITAR AMP CLASSICS 4 種と PITCH FIX は
+  「Signal Type が STEREO の場合は使用できません」。ツールはリンク中、ペア両メンバーの Insert FX
+  メニューでこの 5 つをロックする (どちらのペアでも、ペアを持つ全機種で)。Signal Type の遷移自体が
+  ペアの保持していたエフェクトを**どちらの向きでも**クリアするので、Compander を持ったまま STEREO を
+  解除すると解除される。これはレートではなくエフェクト個別の規則で、下記のレート上限を先に判定する
+  ため、全上限を超えたレートではリンク中でもレートを理由として報告する。
 - **全チャンネル/FX チャンネルの Send (STEREO 主経路 + MIX 1–2 / FX 1–2 Send)、および MIX 1/2 → STEREO の
   TO ST は固定**。常時結線され初期接続済みで表示し、削除不可。上記の要素と異なり LEVEL/PAN/PRE-POST/ON
   (SEND_ON、TO ST は ON/OFF のみ) を編集できるため、(表示ノード間の) 配線として描画する。固定なのは経路のみで、
