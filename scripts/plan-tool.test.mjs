@@ -604,6 +604,76 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     }
   });
 
+  // The loader drops an engine leaf that is neither a boolean nor a finite number, and every
+  // question below it — which key answers for a slot, whether the driver gate is on, whether
+  // anything is sent at all — has to be asked AFTER that. Read off the raw JSON instead, a
+  // dropped key hides the bare key the app falls through to and gates a suppression the app
+  // never applies. Both directions are here: a pair the CLI must not refuse, and one it must
+  // not clear.
+  it.each([
+    // "Nothing is sent" has one meaning, however the document spells it.
+    ["an empty map against an omitted one", { insertFx: 1793, insertFxParams: {} }, { insertFx: 1793 }, true],
+    [
+      "a map of only dropped leaves against an omitted one",
+      { insertFx: 1793, insertFxParams: { "compander:6": null, "compander:7": "x" } },
+      { insertFx: 1793 },
+      true,
+    ],
+    // A dropped qualified key must not hide the bare key the app uses instead.
+    [
+      "a null qualified key beside a valid bare one",
+      { insertFx: 512, insertFxParams: { "pitch:16": null, 16: 5 } },
+      { insertFx: 512, insertFxParams: { 16: 5 } },
+      true,
+    ],
+    // …and the control: a qualified key that SURVIVES does win over the bare one, so two
+    // documents that differ only there still differ.
+    [
+      "a valid qualified key beside a different bare one",
+      { insertFx: 512, insertFxParams: { "pitch:16": 5, 16: 1 } },
+      { insertFx: 512, insertFxParams: { "pitch:16": 6, 16: 1 } },
+      false,
+    ],
+    // A dropped gate is not a gate: the unit drives nothing, so the Scale IS written and two
+    // values for it are two states. This is the direction that matters most — the CLI
+    // clearing a document the app refuses.
+    [
+      "a string gate with the Scale differing",
+      { insertFx: 512, insertFxParams: { "pitch:34": "on", "pitch:16": 0 } },
+      { insertFx: 512, insertFxParams: { "pitch:34": "on", "pitch:16": 1 } },
+      false,
+    ],
+    [
+      "a null gate with the Scale differing",
+      { insertFx: 512, insertFxParams: { "pitch:34": null, "pitch:16": 0 } },
+      { insertFx: 512, insertFxParams: { "pitch:34": null, "pitch:16": 1 } },
+      false,
+    ],
+    // …and the control for those two: a gate that survives DOES suppress the Scale.
+    [
+      "a surviving gate with the Scale differing",
+      { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:16": 0 } },
+      { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:16": 1 } },
+      true,
+    ],
+  ])("agrees with the app about %s", (_name, ch1, ch2, ok) => {
+    const plan = {
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch1: { stereoLink: true, ...ch1 }, ch2 },
+    };
+    const file = join(dir, "plan.json");
+    writeFileSync(file, JSON.stringify(plan));
+    const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    const loaded = deserialize(JSON.stringify(plan));
+    expect(loaded).not.toBeNull();
+
+    expect(insertFxPairProblems(getModel("URX44V"), loaded).length === 0, `the app: ${_name}`).toBe(ok);
+    expect(r.status === 0, `the tool: ${_name}\n${r.stdout}`).toBe(ok);
+  });
+
   // The one family whose write set MOVES with its own values: Pitch Fix stops sending the
   // Scale and the twelve-note mask while MIDI Control is on, because switching it on is what
   // clears them on the unit. So the same two documents are a contradiction with the control

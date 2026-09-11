@@ -393,12 +393,26 @@ def insert_fx_wire_state(node_params, node_id, param_space):
     return selector, wire_on, insert_fx_pair_params(node_params, node_id, selector, param_space)
 
 
-def insert_fx_slot_value(params, family, slot):
-    """One engine slot's stored value, the way the app reads it: the family-qualified key
-    first, the bare slot number second. The loader re-keys a bare slot under the selected
-    family, so the two name one value and the qualified one wins."""
+def sanitized_params(params):
+    """The engine map as the app's LOADER leaves it: a leaf that is neither a boolean nor a
+    finite number is dropped from the document before anything reads it.
+
+    Everything below has to run on this rather than on the raw JSON, and each of the two
+    reasons is a way the raw map answers a question the app never asks. A dropped key cannot
+    hide the bare key the app would have fallen through to (`{"pitch:16": null, "16": 5}` is
+    5 to the app), and it cannot gate anything either (`"pitch:34": "on"` is not a MIDI
+    Control that is on — it is a key the loader removed, so the unit drives nothing and the
+    Scale is written after all).
+    """
     if not isinstance(params, dict):
-        return None
+        return {}
+    return {str(k): v for k, v in params.items() if isinstance(v, bool) or is_number(v)}
+
+
+def insert_fx_slot_value(params, family, slot):
+    """One engine slot's value, the way the app reads it: the family-qualified key first, the
+    bare slot number second. The loader re-keys a bare slot under the selected family, so the
+    two name one value and the qualified one wins. Expects a SANITISED map."""
     for key in (f"{family}:{slot}", str(slot)):
         if key in params:
             return params[key]
@@ -426,20 +440,20 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
     The emit's mirrored slots are left out: a mirror repeats a value this tuple already
     carries, at a slot the FAMILY decides, so it falls the same way on both members of a pair
     and can move no verdict here.
+
+    "Nothing is sent" has ONE spelling — the empty tuple — whether the selector carries no
+    family, the document omits the map, the map is empty, or nothing in it survives. Two
+    spellings made an omitted map differ from an empty one, which is a pair the app loads.
     """
-    carried = node_params.get(node_id)
-    if not isinstance(carried, dict):
-        return None
-    space = param_space.get(str(selector))
+    space = param_space.get(str(selector)) if isinstance(param_space, dict) else None
     if not isinstance(space, dict):
-        return None
+        return ()
     family = space.get("family")
     slots = space.get("slots")
     if not isinstance(family, str) or not isinstance(slots, list):
-        return None
-    params = carried.get("insertFxParams")
-    if not isinstance(params, dict):
-        return None
+        return ()
+    carried = node_params.get(node_id)
+    params = sanitized_params(carried.get("insertFxParams") if isinstance(carried, dict) else None)
 
     driven = set()
     gate_spec = space.get("driven")
