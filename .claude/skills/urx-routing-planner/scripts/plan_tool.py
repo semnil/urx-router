@@ -154,7 +154,11 @@ def validate(plan, models):
         seen.add(key)
 
     warnings.extend(collection_warnings(plan))
-    warnings.extend(node_param_warnings(plan, nodes, model.get("channelPairs"), model.get("fxChannels")))
+    warnings.extend(
+        node_param_warnings(
+            plan, nodes, model.get("channelPairs"), model.get("fxChannels"), model.get("insertFxParamSpace")
+        )
+    )
     problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
 
     return problems, warnings
@@ -696,7 +700,45 @@ def fx_effect_warnings(node_id, fx, out):
 # finite leaf INSIDE one as a value the app keeps. The app does not: the load-time repair
 # removes a container from either of these outright, and an author who is not told watches
 # the setting disappear after this tool said the document was clean.
-def scalar_only_drops(node_id, params, out):
+def insert_fx_family(selector, param_space):
+    """The namespace a selector's engine values live under, or None when it has none — no
+    selector written, No Effect, or a value no effect in the catalogue answers for."""
+    if selector is None or not is_number(selector):
+        return None
+    space = (param_space or {}).get(str(int(selector)))
+    return (space or {}).get("family")
+
+
+def insert_fx_final_keys(slots, family):
+    """The engine-map keys still there once the app has finished with them.
+
+    Three stages run after the document sanitiser, and the generic survival rule reproduces
+    none of them (`core/plan.ts`, the block that ends by deleting the map):
+
+    1. SCALAR-ONLY. A slot value that is not a boolean or a finite number is deleted. This is
+       stricter than the sanitiser, which keeps an array of objects — so an empty array
+       survives that stage and is deleted at this one, and asking the sanitiser alone named
+       the slot while the app had removed the map around it.
+    2. QUALIFICATION. A BARE slot number belongs to the family the document's own selector
+       names. With no selector, with No Effect, or with a selector no family answers for, it
+       belongs to nothing and is dropped — while a key already carrying its family is kept
+       whatever the selector says, since it names that family itself.
+    3. The map is deleted when nothing is left.
+
+    Returns the surviving key set, so a caller can ask whether the map goes without
+    re-deriving any of this."""
+    if not isinstance(slots, dict):
+        return set()
+    kept = {k: v for k, v in slots.items() if k != "__proto__" and (isinstance(v, bool) or is_number(v))}
+    out = {k for k in kept if not k.isdigit()}
+    if family:
+        for k in kept:
+            if k.isdigit() and f"{family}:{k}" not in out:
+                out.add(f"{family}:{k}")
+    return out
+
+
+def scalar_only_drops(node_id, params, out, param_space=None):
     """Report the scalar-only paths the load-time repair removes."""
     on = params.get("insertFxOn")
     if "insertFxOn" in params and not (isinstance(on, bool) or is_number(on)):
@@ -721,8 +763,12 @@ def scalar_only_drops(node_id, params, out):
             )
         )
         return
-    # Nothing in it survives, so the map itself goes rather than each slot in it.
-    if not survives_sanitizer(slots):
+    # What is LEFT once the app has finished, which is what decides whether the map goes or
+    # only some of its slots. The generic survival rule answers a different question and got
+    # this wrong in both directions: an empty array survives it and is not a scalar, and a bare
+    # slot survives it and belongs to no family unless the selector names one.
+    family = insert_fx_family(params.get("insertFx"), param_space)
+    if not insert_fx_final_keys(slots, family):
         out.append((f"{node_id}.insertFxParams", GROUP_REMOVED))
         return
     for slot, raw in slots.items():
@@ -731,6 +777,17 @@ def scalar_only_drops(node_id, params, out):
             continue
         if not (isinstance(raw, bool) or is_number(raw)):
             out.append((f"{node_id}.insertFxParams.{slot}", f"{raw!r} is not a boolean or a finite number"))
+            continue
+        # A bare slot with no family to go to is dropped rather than re-keyed, so its own name
+        # is what disappears and the slot is what gets named.
+        if slot.isdigit() and family is None:
+            out.append(
+                (
+                    f"{node_id}.insertFxParams.{slot}",
+                    "a bare slot number belongs to the family this node's selector names, and this "
+                    "plan names none — so the app drops it rather than re-keying it",
+                )
+            )
 
 
 def survives_sanitizer(value):
@@ -804,7 +861,7 @@ def dropped_values(value, path, out):
         out.append((path, f"{value!r} is neither a boolean nor a finite number"))
 
 
-def node_param_warnings(plan, nodes, pairs, fx_channels):
+def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
@@ -831,7 +888,7 @@ def node_param_warnings(plan, nodes, pairs, fx_channels):
         # their own rule: it keeps a container, theirs does not.
         walked = {k: v for k, v in params.items() if k not in ("fxEffect", "insertFxOn", "insertFxParams")}
         dropped_values(walked, node_id, dropped)
-        scalar_only_drops(node_id, params, dropped)
+        scalar_only_drops(node_id, params, dropped, param_space)
         bounded = []
         if "fxEffect" in params:
             gone = fx_effect_warnings(node_id, params["fxEffect"], dropped)

@@ -309,6 +309,14 @@ key, which the app keeps at no level, not as a node id, and not in `nodeNames`,
 define, since the app treats it as an ordinary node-param value and removes it unless it is
 well formed.
 
+**The engine map has three further stages of its own**, and they can empty it after the rules
+above have passed: a slot value that is not a boolean or a finite number is deleted (stricter
+than the document sanitiser, which keeps an array); a BARE slot number is re-keyed onto the
+family this node's selector names, and is DROPPED when there is none — no selector, No Effect,
+or a selector no effect answers for — while a key already carrying its family is kept whatever
+the selector says; and the map itself is removed when nothing is left. So `{"6": 5}` with no
+selector loads as no map at all, and `{"compander:6": 5}` loads as written.
+
 `scripts/plan-tool.test.mjs` in the repository holds this by running the tool and the app's
 own loader over the same documents and comparing their answers — whether each document
 survives as written, and, where a value is bounded, the number each side bounds it to.

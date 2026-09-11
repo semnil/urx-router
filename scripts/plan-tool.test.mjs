@@ -59,6 +59,17 @@ const toolWarnings = (dir, plan) => {
   return r.stderr;
 };
 
+/** The path out of one warning line, or null when the line is not one.
+ *
+ *  Split at the FIRST colon and a qualified engine key is cut at its own separator:
+ *  `ch1.insertFxParams.compander:6` reads as `ch1.insertFxParams.compander`, a path that
+ *  exists nowhere, and every comparison against it is then answered by a truncation rather
+ *  than by the tool. What ends the path is the reason, and every reason opens the same way. */
+const warningPath = (line) => {
+  const m = /^WARNING: node param (.+?): the app (?:drops|bounds) this value on load/.exec(line);
+  return m ? m[1] : null;
+};
+
 /** The paths the tool says the app removes. Node-level advice (selector warnings, "verify on
  *  the device") is not an answer to this question and is left out. */
 const toolPaths = (dir, plan) => {
@@ -70,8 +81,8 @@ const toolPaths = (dir, plan) => {
   expect(r.status, r.stdout).toBe(0);
   return r.stderr
     .split("\n")
-    .filter((l) => l.startsWith("WARNING: node param "))
-    .map((l) => l.slice("WARNING: node param ".length).split(":")[0]);
+    .map(warningPath)
+    .filter((p) => p !== null);
 };
 
 /** The app's own load. THREE stages: deserialize, the load-time repair, and the fill that
@@ -776,8 +787,11 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
             expect(bypass.warnings, `the bypass warning names its path, ${_name}`).toContain(
               `node param ${primary}.insertFxOn:`,
             );
+            // The MAP, not the slot: this document's only engine value is the container, so
+            // the scalar-only stage empties the map and the app then removes it. Naming the
+            // slot sends the author to a key inside something that is gone.
             expect(slot.warnings, `the engine-slot warning names its path, ${_name}`).toContain(
-              `node param ${primary}.insertFxParams.compander:6:`,
+              `node param ${primary}.insertFxParams:`,
             );
             // The control: a SCALAR in either place is kept, so neither is warned about —
             // without it a checker warning on every document would satisfy the two above.
@@ -1121,6 +1135,27 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       '{"ch1":{"insertFx":1793,"insertFxParams":{"__proto__":1,"6":5}}}',
       '{"ch1":{"insertFx":1793,"insertFxParams":{"6":"x"}}}',
       '{"ch1":{"insertFx":1793,"insertFxParams":{"6":"x","8":4}}}',
+      // The engine map's three further stages, each of which can empty it: a slot value that
+      // is not a scalar (stricter than the sanitiser, which keeps an array), and a BARE slot
+      // with no family to be re-keyed onto.
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"compander:6":{}}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"compander:6":[]}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"compander:6":[{"a":1}]}}}',
+      '{"ch1":{"insertFxParams":{"6":5}}}',
+      '{"ch1":{"insertFx":-1,"insertFxParams":{"6":5}}}',
+      '{"ch1":{"insertFx":9999,"insertFxParams":{"6":5}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"6":5,"8":"x"}}}',
+      // A qualified key SURVIVES while a bare one beside it is dropped, which is the only
+      // shape that reaches the per-slot half of the qualification stage: with every key bare
+      // the map empties and is named whole, so nothing would say which slot went.
+      '{"ch1":{"insertFxParams":{"compander:6":5,"8":3}}}',
+      '{"ch1":{"insertFx":-1,"insertFxParams":{"compander:6":5,"8":3}}}',
+      // …and the controls, each of which the app KEEPS, so a checker that reported the class
+      // wholesale would fail here rather than passing every row above.
+      '{"ch1":{"insertFxParams":{"compander:6":5}}}',
+      '{"ch1":{"insertFx":-1,"insertFxParams":{"compander:6":5}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"6":5}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"compander:6":5,"compander:8":{}}}}',
       '{"ch1":{"gate":{"on":{}}}}',
       '{"ch1":{"gate":{"__proto__":1,"on":true}}}',
       '{"ch1":{"ssmcs":{}}}',
@@ -1147,8 +1182,8 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       expect(r.status, r.stdout).toBe(0);
       const tool = r.stderr
         .split("\n")
-        .filter((l) => l.startsWith("WARNING: node param "))
-        .map((l) => l.slice("WARNING: node param ".length).split(":")[0])
+        .map(warningPath)
+        .filter((p) => p !== null)
         .sort();
       expect(tool, `the removals of ${np}`).toEqual(app);
     }
