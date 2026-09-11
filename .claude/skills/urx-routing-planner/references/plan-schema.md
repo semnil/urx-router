@@ -299,6 +299,12 @@ key gone and the node back on the device default. An ARRAY is the exception on b
 an empty one, and one of empty objects, survive as written. Write the values, or leave the
 key out; an empty container is neither.
 
+The removal is reported **at the group**, not at the leaves inside it: those are paths the
+repair no longer has anything to do with. Two more keys go the same way wherever they are
+written — a `__proto__` key, which the app keeps at no level and not as a node id either,
+and any key the `fxEffect` section does not define, since the app treats it as an ordinary
+node-param value and removes it unless it is well formed.
+
 `scripts/plan-tool.test.mjs` in the repository holds this by running the tool and the app's
 own loader over the same documents and comparing their answers — whether each document
 survives as written, and, where a value is bounded, the number each side bounds it to.
