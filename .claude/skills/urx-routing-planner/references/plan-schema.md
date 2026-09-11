@@ -300,10 +300,14 @@ an empty one, and one of empty objects, survive as written. Write the values, or
 key out; an empty container is neither.
 
 The removal is reported **at the group**, not at the leaves inside it: those are paths the
-repair no longer has anything to do with. Two more keys go the same way wherever they are
-written — a `__proto__` key, which the app keeps at no level and not as a node id either,
-and any key the `fxEffect` section does not define, since the app treats it as an ordinary
-node-param value and removes it unless it is well formed.
+repair no longer has anything to do with, and repairing one would leave the empty parent
+behind for the next run to report. That holds at every depth — a parameter map whose only
+key is a container is named at the MAP, and an effect section whose only key is that map is
+named at the SECTION. Two more keys go the same way wherever they are written: a `__proto__`
+key, which the app keeps at no level, not as a node id, and not in `nodeNames`,
+`nodeColors`, `notes` or `positions` either; and any key the `fxEffect` section does not
+define, since the app treats it as an ordinary node-param value and removes it unless it is
+well formed.
 
 `scripts/plan-tool.test.mjs` in the repository holds this by running the tool and the app's
 own loader over the same documents and comparing their answers — whether each document

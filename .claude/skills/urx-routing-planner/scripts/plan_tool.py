@@ -198,6 +198,12 @@ def collection_warnings(plan):
             continue
         entries = v.items() if container is dict else enumerate(v)
         for label, el in entries:
+            # The app builds these records key by key and never copies a `__proto__` one, so
+            # the entry is gone whatever it holds — a well-formed value included, which is why
+            # asking `ok(el)` alone said nothing about it.
+            if container is dict and label == "__proto__":
+                out.append(f"{key}[{label}]: the app drops this on load — {PROTO_REMOVED}")
+                continue
             if not ok(el):
                 out.append(f"{key}[{label}]: the app drops this on load — {why}")
     out.extend(name_warnings(plan))
@@ -589,6 +595,9 @@ FX_EFFECT_KEYS = ("on", "level", "type", "params")
 def fx_effect_warnings(node_id, fx, out):
     """Collect everything the app removes from one node's fxEffect (path, why).
 
+    Returns True when the WHOLE section goes, so the caller asks the channel's catalogue
+    nothing about values the load has already deleted.
+
     Two stages remove a value and this owns both, because at this path they mean the
     same thing to the author. The document sanitiser drops a leaf that is neither a
     boolean nor a finite number; the load-time repair then drops what SURVIVED that and
@@ -601,7 +610,7 @@ def fx_effect_warnings(node_id, fx, out):
     `fx_catalogue_warnings`, from the `fxChannels` entry models.json carries."""
     if not isinstance(fx, dict):
         out.append((f"{node_id}.fxEffect", f"{fx!r} is not an object, which drops the whole effect"))
-        return
+        return True
     # An empty group sanitizes to nothing and the key is removed, which is not a harmless
     # difference: the document as written authors the whole channel at the factory defaults,
     # while the loaded plan leaves the channel alone.
@@ -614,7 +623,14 @@ def fx_effect_warnings(node_id, fx, out):
                 "supplied by the loader and sent by the write",
             )
         )
-        return
+        return True
+    # Nothing in it survives, so the KEY goes and the effect runs on the channel's factory
+    # values — the same removal the empty object above is a special case of. Reported at the
+    # section, because naming a leaf inside a section the app deleted sends a plan author to
+    # repair a path that no longer exists.
+    if not survives_sanitizer(fx):
+        out.append((f"{node_id}.fxEffect", GROUP_REMOVED))
+        return True
     # `on` is the one field read as a flag, so a number works there by truthiness.
     if "on" in fx and not isinstance(fx["on"], bool) and not is_number(fx["on"]):
         out.append((f"{node_id}.fxEffect.on", f"{fx['on']!r} is neither a boolean nor a finite number"))
@@ -644,10 +660,10 @@ def fx_effect_warnings(node_id, fx, out):
         dropped_child(k, v, f"{node_id}.fxEffect", out)
     params = fx.get("params")
     if params is None and "params" not in fx:
-        return
+        return False
     if not isinstance(params, dict):
         out.append((f"{node_id}.fxEffect.params", f"{params!r} is not an object, which drops every parameter"))
-        return
+        return False
     # An empty map is removed the way any emptied group is. Reported because the tool's whole
     # claim is that a document it passes loads unchanged, and this one does not — the key goes.
     if not params:
@@ -657,8 +673,17 @@ def fx_effect_warnings(node_id, fx, out):
                 "an empty parameter map carries nothing and the app removes the key",
             )
         )
-        return
+        return False
+    # …and a map whose keys all go is removed just as whole, so it is named at the MAP. Asked
+    # per key instead, a document whose only parameter is a container was answered with that
+    # parameter's path while the app had deleted the map around it.
+    if not survives_sanitizer(params):
+        out.append((f"{node_id}.fxEffect.params", GROUP_REMOVED))
+        return False
     for k, v in params.items():
+        if k == "__proto__":
+            out.append((f"{node_id}.fxEffect.params.{k}", PROTO_REMOVED))
+            continue
         # NOT recursed into: a parameter is one number, so an object here is a malformed
         # parameter rather than a group whose leaves could be read one at a time.
         if not is_number(v):
@@ -696,7 +721,14 @@ def scalar_only_drops(node_id, params, out):
             )
         )
         return
+    # Nothing in it survives, so the map itself goes rather than each slot in it.
+    if not survives_sanitizer(slots):
+        out.append((f"{node_id}.insertFxParams", GROUP_REMOVED))
+        return
     for slot, raw in slots.items():
+        if slot == "__proto__":
+            out.append((f"{node_id}.insertFxParams.{slot}", PROTO_REMOVED))
+            continue
         if not (isinstance(raw, bool) or is_number(raw)):
             out.append((f"{node_id}.insertFxParams.{slot}", f"{raw!r} is not a boolean or a finite number"))
 
@@ -802,8 +834,9 @@ def node_param_warnings(plan, nodes, pairs, fx_channels):
         scalar_only_drops(node_id, params, dropped)
         bounded = []
         if "fxEffect" in params:
-            fx_effect_warnings(node_id, params["fxEffect"], dropped)
-            fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
+            gone = fx_effect_warnings(node_id, params["fxEffect"], dropped)
+            if not gone:
+                fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
         for path, why in dropped:
             out.append(f"node param {path}: the app drops this value on load — {why}")
         for path, why in bounded:

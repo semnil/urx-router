@@ -1071,6 +1071,113 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     expect(spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" }).stderr).toContain("node param __proto__");
   });
 
+  // The REMOVAL UNIT, derived rather than written down. Every case above names the path it
+  // expects, which is an expectation that can be wrong in the same direction as the code —
+  // and was: a leaf inside a section the app had deleted was reported at the leaf, so a plan
+  // author repairing it would have been sent to a path that no longer exists, and repairing it
+  // would leave the empty parent for the next run to report.
+  //
+  // So this asks the app what it removed instead of being told. The SHALLOWEST absent path is
+  // the unit: when a container is gone its children are not separate removals. The two sides
+  // have to produce the same set, which is a stronger statement than either "something was
+  // said" or "this path was said" — it also fails when the tool names a path the app kept.
+  it("names the same removals the app makes, at the same granularity", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { paramRangeProblems: prp, applyParamRange } = await import("../src/core/plan-validate.ts");
+
+    const removed = (wrote, got, path, out) => {
+      if (wrote === null || typeof wrote !== "object" || Array.isArray(wrote)) return out;
+      for (const k of Object.keys(wrote)) {
+        const here = path ? `${path}.${k}` : k;
+        const has = got !== null && typeof got === "object" && Object.prototype.hasOwnProperty.call(got, k);
+        if (!has) {
+          // A bare engine slot is RE-KEYED under the selected family rather than removed: absent
+          // under its own name and present under another. A rewrite, and not this question.
+          const rekeyed =
+            /\.insertFxParams$/.test(path) &&
+            got !== null &&
+            typeof got === "object" &&
+            Object.keys(got).some((q) => q.endsWith(`:${k}`));
+          if (!rekeyed) out.push(here);
+          continue;
+        }
+        removed(wrote[k], got[k], here, out);
+      }
+      return out;
+    };
+
+    // Built as TEXT: a `__proto__` written in an object literal sets the prototype and never
+    // becomes an own property, so half of these documents would not carry the key at all.
+    const DOCS = [
+      '{"bus.fx1":{"fxEffect":{"type":0,"params":{"reverbTime":{}}}}}',
+      '{"bus.fx1":{"fxEffect":{"type":0,"params":{"reverbTime":{},"revxLpf":40}}}}',
+      '{"bus.fx1":{"fxEffect":{"params":{}}}}',
+      '{"bus.fx1":{"fxEffect":{"params":{"revxLpf":"x"}}}}',
+      '{"bus.fx1":{"fxEffect":{"type":0,"params":{"__proto__":1}}}}',
+      '{"bus.fx1":{"fxEffect":{"type":0,"params":{"__proto__":1,"revxLpf":40}}}}',
+      '{"bus.fx1":{"fxEffect":{"type":0,"foo":{}}}}',
+      '{"bus.fx1":{"fxEffect":{"__proto__":1,"type":0}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"__proto__":1}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"__proto__":1,"6":5}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"6":"x"}}}',
+      '{"ch1":{"insertFx":1793,"insertFxParams":{"6":"x","8":4}}}',
+      '{"ch1":{"gate":{"on":{}}}}',
+      '{"ch1":{"gate":{"__proto__":1,"on":true}}}',
+      '{"ch1":{"ssmcs":{}}}',
+      // …and the documents nothing may be said about, so a checker that reported everything
+      // would fail here rather than passing every row above.
+      '{"ch1":{"gate":{"threshold":-20}}}',
+      '{"ch1":{"eqBands":[]}}',
+      '{"bus.fx1":{"fxEffect":{"type":0,"params":{"revxLpf":40}}}}',
+    ];
+
+    let removals = 0;
+    for (const np of DOCS) {
+      const text =
+        `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
+        `"positions":{},"connections":[],"nodeParams":${np}}`;
+      const loaded = deserializeDocument(text).plan;
+      applyParamRange(loaded, prp(loaded));
+      const app = removed(JSON.parse(text).nodeParams, loaded.nodeParams, "", []).sort();
+      removals += app.length;
+
+      const file = join(dir, "plan.json");
+      writeFileSync(file, text);
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, r.stdout).toBe(0);
+      const tool = r.stderr
+        .split("\n")
+        .filter((l) => l.startsWith("WARNING: node param "))
+        .map((l) => l.slice("WARNING: node param ".length).split(":")[0])
+        .sort();
+      expect(tool, `the removals of ${np}`).toEqual(app);
+    }
+    // The positive control: a corpus in which the app removed nothing would satisfy every
+    // comparison above by matching two empty lists.
+    expect(removals, "the corpus reaches documents the app rewrites").toBeGreaterThan(0);
+  });
+
+  // The record-shaped collections are built key by key too, and never take that key.
+  it("names the collection entries the app never copies", () => {
+    for (const [key, entry] of [
+      ["nodeNames", '"__proto__":"x","ch1":"Vox"'],
+      ["nodeColors", '"__proto__":"x","ch1":"#ffffff"'],
+      ["notes", '"__proto__":"x","ch1":"hi"'],
+      ["positions", '"__proto__":{"x":1,"y":2},"ch1":{"x":1,"y":2}'],
+    ]) {
+      const text =
+        `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
+        `"connections":[],"nodeParams":{},"${key}":{${entry}}}`;
+      const file = join(dir, "plan.json");
+      writeFileSync(file, text);
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, r.stdout).toBe(0);
+      expect(r.stderr, `${key} carries the key the app drops`).toContain(`${key}[__proto__]`);
+      // …and the entry beside it, which the app keeps, is not reported.
+      expect(r.stderr, `${key} keeps its real entry`).not.toContain(`${key}[ch1]`);
+    }
+  });
+
   // The one family whose write set MOVES with its own values: Pitch Fix stops sending the
   // Scale and the twelve-note mask while MIDI Control is on, because switching it on is what
   // clears them on the unit. So the same two documents are a contradiction with the control
