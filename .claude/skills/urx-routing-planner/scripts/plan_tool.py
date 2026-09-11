@@ -701,40 +701,85 @@ def fx_effect_warnings(node_id, fx, out):
 # removes a container from either of these outright, and an author who is not told watches
 # the setting disappear after this tool said the document was clean.
 def insert_fx_family(selector, param_space):
-    """The namespace a selector's engine values live under, or None when it has none — no
-    selector written, No Effect, or a value no effect in the catalogue answers for."""
-    if selector is None or not is_number(selector):
+    """The namespace a selector's engine values live under, or None when it has none.
+
+    The app answers this with a `switch` over the selector VALUE, so only a value the
+    catalogue names exactly has a family: no selector written, No Effect, an unknown number,
+    and a NON-INTEGER all answer None. Truncating to an int instead put `1793.5` in the
+    compander's namespace, where the app puts it nowhere and deletes the map."""
+    if selector is None or not is_number(selector) or float(selector) != int(selector):
         return None
     space = (param_space or {}).get(str(int(selector)))
     return (space or {}).get("family")
 
 
-def insert_fx_final_keys(slots, family):
-    """The engine-map keys still there once the app has finished with them.
+# A BARE slot is what the app's own test accepts, which is ASCII digits and nothing else.
+# Python's `str.isdigit()` is true of other scripts' digits as well, so a full-width `６` was
+# read as a slot number the app keeps as an ordinary key.
+BARE_SLOT = re.compile(r"^[0-9]+$")
 
-    Three stages run after the document sanitiser, and the generic survival rule reproduces
-    none of them (`core/plan.ts`, the block that ends by deleting the map):
 
-    1. SCALAR-ONLY. A slot value that is not a boolean or a finite number is deleted. This is
-       stricter than the sanitiser, which keeps an array of objects — so an empty array
-       survives that stage and is deleted at this one, and asking the sanitiser alone named
-       the slot while the app had removed the map around it.
-    2. QUALIFICATION. A BARE slot number belongs to the family the document's own selector
-       names. With no selector, with No Effect, or with a selector no family answers for, it
-       belongs to nothing and is dropped — while a key already carrying its family is kept
-       whatever the selector says, since it names that family itself.
-    3. The map is deleted when nothing is left.
+def js_key_order(keys):
+    """The order JavaScript walks an object's own keys: canonical array indices first, in
+    ascending numeric order, then everything else in insertion order.
 
-    Returns the surviving key set, so a caller can ask whether the map goes without
-    re-deriving any of this."""
+    It decides which of two bare aliases reaches the family's key first and which is dropped
+    for colliding with it — `{"06": 9, "6": 5}` is walked `6` then `06` however it was
+    written, so the value that survives is 5."""
+
+    def is_index(k):
+        return BARE_SLOT.match(k) is not None and str(int(k)) == k and int(k) < 2**32 - 1
+
+    indices = sorted((k for k in keys if is_index(k)), key=int)
+    return indices + [k for k in keys if not is_index(k)]
+
+
+# What the app does with one key the document wrote. Everything but `keep` and `rekey` means
+# the key is gone; they are told apart because each is a different sentence to the author.
+KEEP, REKEY, DROP_PROTO, DROP_SCALAR, DROP_UNQUALIFIED, DROP_COLLISION = (
+    "keep",
+    "rekey",
+    "proto",
+    "scalar",
+    "unqualified",
+    "collision",
+)
+
+
+def insert_fx_dispositions(slots, family):
+    """What becomes of each key the document wrote, by SOURCE key.
+
+    A set of surviving keys cannot answer this: two keys can normalise onto one destination,
+    and then the set says the destination is there while one of the two values is gone. The
+    app keeps the qualified key and drops the bare one that collides with it, so the author's
+    value silently becomes the other one's.
+
+    Mirrors `qualifyInsertFxParams`: every non-bare key is copied first, then each bare key is
+    re-keyed onto the family unless that destination is already taken."""
     if not isinstance(slots, dict):
-        return set()
-    kept = {k: v for k, v in slots.items() if k != "__proto__" and (isinstance(v, bool) or is_number(v))}
-    out = {k for k in kept if not k.isdigit()}
-    if family:
-        for k in kept:
-            if k.isdigit() and f"{family}:{k}" not in out:
-                out.add(f"{family}:{k}")
+        return {}
+    out = {}
+    for k, v in slots.items():
+        if k == "__proto__":
+            out[k] = DROP_PROTO
+        elif not (isinstance(v, bool) or is_number(v)):
+            out[k] = DROP_SCALAR
+        elif not BARE_SLOT.match(k):
+            out[k] = KEEP
+    taken = {k for k, d in out.items() if d == KEEP}
+    for k in js_key_order(list(slots)):
+        if k in out:
+            continue
+        if not family:
+            out[k] = DROP_UNQUALIFIED
+            continue
+        # `Number("06")` is 6, so a leading zero names the same slot as its plain spelling.
+        dest = f"{family}:{int(k)}"
+        if dest in taken:
+            out[k] = DROP_COLLISION
+        else:
+            taken.add(dest)
+            out[k] = REKEY
     return out
 
 
@@ -768,24 +813,32 @@ def scalar_only_drops(node_id, params, out, param_space=None):
     # this wrong in both directions: an empty array survives it and is not a scalar, and a bare
     # slot survives it and belongs to no family unless the selector names one.
     family = insert_fx_family(params.get("insertFx"), param_space)
-    if not insert_fx_final_keys(slots, family):
+    how = insert_fx_dispositions(slots, family)
+    # Nothing is left, so the map itself goes rather than each key in it.
+    if not any(d in (KEEP, REKEY) for d in how.values()):
         out.append((f"{node_id}.insertFxParams", GROUP_REMOVED))
         return
     for slot, raw in slots.items():
-        if slot == "__proto__":
-            out.append((f"{node_id}.insertFxParams.{slot}", PROTO_REMOVED))
-            continue
-        if not (isinstance(raw, bool) or is_number(raw)):
-            out.append((f"{node_id}.insertFxParams.{slot}", f"{raw!r} is not a boolean or a finite number"))
-            continue
-        # A bare slot with no family to go to is dropped rather than re-keyed, so its own name
-        # is what disappears and the slot is what gets named.
-        if slot.isdigit() and family is None:
+        path = f"{node_id}.insertFxParams.{slot}"
+        what = how.get(slot)
+        if what == DROP_PROTO:
+            out.append((path, PROTO_REMOVED))
+        elif what == DROP_SCALAR:
+            out.append((path, f"{raw!r} is not a boolean or a finite number"))
+        elif what == DROP_UNQUALIFIED:
             out.append(
                 (
-                    f"{node_id}.insertFxParams.{slot}",
+                    path,
                     "a bare slot number belongs to the family this node's selector names, and this "
                     "plan names none — so the app drops it rather than re-keying it",
+                )
+            )
+        elif what == DROP_COLLISION:
+            out.append(
+                (
+                    path,
+                    f"this slot re-keys onto {family}:{int(slot)}, which the plan already carries — the "
+                    "key that names its own family wins, so THIS value is the one the app drops",
                 )
             )
 

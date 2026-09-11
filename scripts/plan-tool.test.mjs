@@ -1192,6 +1192,105 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     expect(removals, "the corpus reaches documents the app rewrites").toBeGreaterThan(0);
   });
 
+  // The engine map's selector and key normalisation, as a decision table rather than as rows
+  // chosen by hand — every selector class against every key class, which is what turned up the
+  // four the Python was approximating: a non-integer selector truncated into a real family, a
+  // full-width digit read as a slot number (`str.isdigit()` is true of it and the app's own
+  // /^\d+$/ is not), and two keys normalising onto ONE destination, where the set of surviving
+  // keys says the destination is there while one of the two values is gone.
+  //
+  // That last one is why the comparison below tells a RE-KEY from a COLLISION: a bare key
+  // counts as re-keyed only when its destination was absent from the document and the loaded
+  // map holds the source's own value there. A destination the document already wrote is a
+  // collision, and the bare value is what the app drops.
+  it("agrees with the app about every selector class against every key class", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { paramRangeProblems: prp, applyParamRange } = await import("../src/core/plan-validate.ts");
+
+    const removedEngine = (wroteMap, gotMap, path, out) => {
+      const got = gotMap && typeof gotMap === "object" ? gotMap : {};
+      for (const [k, v] of Object.entries(wroteMap)) {
+        if (Object.prototype.hasOwnProperty.call(got, k)) continue;
+        const dest = Object.keys(got).find((q) => {
+          const i = q.lastIndexOf(":");
+          return i > 0 && q.slice(i + 1) === String(Number(k)) && /^[0-9]+$/.test(k);
+        });
+        const reKeyed = dest !== undefined && !Object.prototype.hasOwnProperty.call(wroteMap, dest) && got[dest] === v;
+        if (!reKeyed) out.push(`${path}.${k}`);
+      }
+      return out;
+    };
+    const removedIn = (wrote, got, path, out) => {
+      if (wrote === null || typeof wrote !== "object" || Array.isArray(wrote)) return out;
+      for (const k of Object.keys(wrote)) {
+        const here = path ? `${path}.${k}` : k;
+        const has = got !== null && typeof got === "object" && Object.prototype.hasOwnProperty.call(got, k);
+        if (!has) {
+          out.push(here);
+          continue;
+        }
+        if (k === "insertFxParams") removedEngine(wrote[k], got[k], here, out);
+        else removedIn(wrote[k], got[k], here, out);
+      }
+      return out;
+    };
+
+    const SELECTORS = [
+      ["none", ""],
+      ["No Effect", '"insertFx":-1,'],
+      ["a valid integer", '"insertFx":1793,'],
+      ["an unknown integer", '"insertFx":9999,'],
+      // …beside a value the catalogue DOES name, which is what a truncation lands on.
+      ["a non-integer", '"insertFx":1793.5,'],
+    ];
+    const MAPS = [
+      ["an ascii bare slot", '{"6":5}'],
+      ["a leading-zero bare slot", '{"06":5}'],
+      ["a qualified key", '{"compander:6":7}'],
+      ["a non-ascii digit", '{"\uFF16":5}'],
+      ["__proto__", '{"__proto__":5,"compander:6":7}'],
+      ["a qualified key and the bare one it takes", '{"compander:6":7,"6":5}'],
+      ["a qualified key and a leading-zero alias", '{"compander:6":7,"06":5}'],
+      ["two bare aliases of one slot", '{"6":5,"06":9}'],
+      // …written the other way round, which is the only shape that separates the document's
+      // order from JavaScript's: a canonical index is walked before any string key however it
+      // was written, so 5 is the value that reaches the family and 9 is the one dropped.
+      ["two bare aliases, the leading zero written first", '{"06":9,"6":5}'],
+      ["a bare slot beside a surviving qualified one", '{"compander:8":7,"6":5}'],
+      ["a value that is not a scalar", '{"compander:6":{},"compander:8":7}'],
+    ];
+
+    let outcomes = { kept: 0, removed: 0 };
+    for (const [sname, sel] of SELECTORS) {
+      for (const [mname, map] of MAPS) {
+        const np = `{"ch1":{${sel}"insertFxParams":${map}}}`;
+        const text =
+          `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
+          `"positions":{},"connections":[],"nodeParams":${np}}`;
+        const loaded = deserializeDocument(text).plan;
+        applyParamRange(loaded, prp(loaded));
+        const app = removedIn(JSON.parse(text).nodeParams, loaded.nodeParams, "", []).sort();
+        if (app.length) outcomes.removed += 1;
+        else outcomes.kept += 1;
+
+        const file = join(dir, "plan.json");
+        writeFileSync(file, text);
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, r.stdout).toBe(0);
+        const tool = r.stderr
+          .split("\n")
+          .map(warningPath)
+          .filter((p) => p !== null)
+          .sort();
+        expect(tool, `${sname} / ${mname}`).toEqual(app);
+      }
+    }
+    // Both outcomes are populations, so neither half of the table is answered by a run in
+    // which the app always did the same thing.
+    expect(outcomes.kept, "documents the app keeps whole").toBeGreaterThan(0);
+    expect(outcomes.removed, "documents the app removes from").toBeGreaterThan(0);
+  });
+
   // The record-shaped collections are built key by key too, and never take that key.
   it("names the collection entries the app never copies", () => {
     for (const [key, entry] of [

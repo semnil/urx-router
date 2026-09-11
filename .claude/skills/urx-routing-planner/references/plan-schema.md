@@ -317,6 +317,13 @@ or a selector no effect answers for — while a key already carrying its family 
 the selector says; and the map itself is removed when nothing is left. So `{"6": 5}` with no
 selector loads as no map at all, and `{"compander:6": 5}` loads as written.
 
+Three details of that decide real documents. A selector has a family only when it is an
+INTEGER the catalogue names, so `1793.5` has none and takes the map with it. A bare slot is
+ASCII digits and nothing else — a full-width `６` is an ordinary key the app keeps. And a
+bare slot is re-keyed by its NUMERIC value, so `06` and `6` name one destination: whichever
+reaches it first wins and the other value is dropped, with a key that carries its own family
+winning over both. Write the qualified form, and write each slot once.
+
 `scripts/plan-tool.test.mjs` in the repository holds this by running the tool and the app's
 own loader over the same documents and comparing their answers — whether each document
 survives as written, and, where a value is bounded, the number each side bounds it to.
