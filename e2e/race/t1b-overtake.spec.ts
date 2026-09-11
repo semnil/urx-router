@@ -616,8 +616,8 @@ test.describe("T1b overtake", () => {
         // worth of gesture on a single `pending` slot. Benign for two faders; the same
         // slot is what makes a whole drag arrive as its last value only.
         expect(flushes).toHaveLength(2);
-        // The burst flush carries at least the faders it touched (a BAL-linked strip
-        // mirrors its partner, so the count runs slightly over the gesture count).
+        // The burst flush carries at least the faders it touched (a linked strip mirrors
+        // its partner, so the count runs slightly over the gesture count).
         expect(flushes[0]).toBeGreaterThanOrEqual(burst);
         expect(flushes[1]).toBe(2);
       } else {

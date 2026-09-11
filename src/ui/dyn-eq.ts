@@ -44,11 +44,10 @@ import { eqResponse } from "../core/eq-response";
 import type { EqBandState } from "../core/eq-response";
 import { controlId, eqBandScope, EQ_SCOPE } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
-import { tapFor } from "../core/meters";
 import type { EqBand, NodeParams } from "../core/plan";
 import { el, onOff, settingsRow, settingsSection } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { enumRow, levelLane } from "./dyn-chan";
+import { enumRow, levelLane, pairOwnNodes, pairTap } from "./dyn-chan";
 import { bandMarkers, drawBandMarkers, drawFreqAxes, drawFreqCurve, freqGeo, pickBandMarker } from "./dyn-freq-plot";
 import type { BandMarker } from "./dyn-freq-plot";
 import { flagOffNote, oneKnobLevelRow, splitDisplay } from "./dyn-screen";
@@ -90,6 +89,9 @@ function eqTapKeys(nodeId: string): { in: string; out: string } {
 const oneKnobOn = (ctx: DynCtx): boolean => ctx.plan.nodeParams[ctx.nodeId]?.eqOneKnob?.on === true;
 
 export const EQ_DYN: DynPlotProcessor = {
+  // A linked pair's screen reads its primary's Signal Type and both members' meter
+  // addresses, so the pair is what this screen draws rather than the node it was opened on.
+  ownNodes: pairOwnNodes,
   key: "eq",
   loDb: LO_DB,
   tickStep: TICK_STEP,
@@ -111,7 +113,7 @@ export const EQ_DYN: DynPlotProcessor = {
     // already get while 1-knob is off.
     const fields = eqBandFields(ctx.sel);
     const lane = (key: string, tapKey: string, caption: string): DynLane =>
-      levelLane(key, tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null, caption);
+      levelLane(key, pairTap(ctx, tapKey), caption);
     return {
       fields,
       lanes: [lane("in", keys.in, ctx.m.dynTuning.laneIn), lane("out", keys.out, ctx.m.dynTuning.laneOut)],

@@ -336,8 +336,8 @@ export class MidiEngine {
       decisions.map((d) => d.control.governedBy).filter((gid): gid is string => gid !== undefined),
     );
     // Matched on the control's LOCK identity, which is its own id except where the catalogue
-    // normalises it: a BAL-linked pair mirrors its whole node params, so its two 1-knobs are
-    // one governor and a gang naming either has to be ordered against the values on both.
+    // normalises it: a linked pair mirrors its whole node params, so its two 1-knobs are one
+    // governor and a gang naming either has to be ordered against the values on both.
     const governs = (d: Decision): boolean => governors.has(d.control.lockId ?? d.control.id);
     const ordered = [...decisions.filter((d) => !governs(d)), ...decisions.filter(governs)];
     // The DECISION is what is retried, not the deciding. Re-deciding would read the control

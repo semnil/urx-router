@@ -409,6 +409,33 @@ test("prints — for a tap that has not reported, never a floor value", async ({
   }
 });
 
+/** Link CH1/2 through the inspector, the way the operator does. Seeding it would leave the
+ *  screen answering about a plan rather than about a gesture. */
+const linkPair = async (page: Page) => {
+  await node(page, "ch1").click();
+  await chooseOption(page.locator("#inspector .param", { hasText: "Signal Type" }).locator("select"), "1");
+};
+
+test("a STEREO-linked MONO IN pair draws both members on every level lane", async ({ page }) => {
+  // The unit meters such a pair as one channel: input and output are two bars each while
+  // the reduction stays one.
+  await linkPair(page);
+  await openFromInspector(page, "ch1");
+  // Two columns — the reduction merges into the output's — and both of them stereo.
+  await expect(screenBox(page).locator(".gt-slot")).toHaveCount(2);
+  await expect(screenBox(page).locator(".gt-slot.stereo")).toHaveCount(2);
+  await expect(screenBox(page).locator(".gt-slot .gt-side .gt-bar")).toHaveCount(4);
+});
+
+test("an unlinked MONO IN channel keeps one bar per lane", async ({ page }) => {
+  // The control the case above needs: without it, a rack that drew two bars for every
+  // channel would satisfy every assertion there.
+  await openFromInspector(page, "ch1");
+  await expect(screenBox(page).locator(".gt-slot")).toHaveCount(2);
+  await expect(screenBox(page).locator(".gt-slot.stereo")).toHaveCount(0);
+  await expect(screenBox(page).locator(".gt-bar")).toHaveCount(2);
+});
+
 test.describe("with a live session", () => {
   test.beforeEach(async ({ page }) => {
     await page.click("#btn-device");
@@ -420,6 +447,65 @@ test.describe("with a live session", () => {
     await openFromInspector(page, "ch1");
     // 106 PRE GATE / 107 GATE GR / 108 PRE COMP, all on CH1's x0.
     await expectGateTaps(page);
+  });
+
+  test("paints each member's own level on its own bar", async ({ page }) => {
+    // The bar count and the subscribed addresses are both satisfied by a rack that draws
+    // the primary's level twice, which is the defect this pair of bars exists to prevent.
+    // So drive the two addresses apart and read the bars back.
+    await linkPair(page);
+    await openFromInspector(page, "ch1");
+    await pushMeters(page, [106, 0, -60], [106, 1, -300]);
+
+    // Both sides in ONE reading: a snapshot of the other side taken before the poll starts
+    // is the value from before the push, and comparing against it passes on a rack that
+    // never moved.
+    const louder = () =>
+      screenBox(page)
+        .locator(".gt-slot.stereo")
+        .first()
+        .locator(".gt-side .gt-shade")
+        .evaluateAll((els) => {
+          const [l, r] = els.map((el) => Number(getComputedStyle(el).getPropertyValue("--lvl")));
+          return l === r ? "same" : l > r ? "L" : "R";
+        });
+    await expect.poll(louder).toBe("L");
+    // The shared readout prints the louder side, which is the coordinate the pair's own
+    // detector works in — so it is CH1's here and CH2's once the two are swapped.
+    await expect(readout(page, "PRE GATE").locator(".v")).toHaveText("-6.0");
+
+    await pushMeters(page, [106, 0, -300], [106, 1, -60]);
+    await expect.poll(louder).toBe("R");
+    await expect(readout(page, "PRE GATE").locator(".v")).toHaveText("-6.0");
+  });
+
+  test("streams both members of a STEREO-linked pair, from either member's screen", async ({ page }) => {
+    // The bar count says the rack drew two; this says which addresses they are, and that
+    // the reduction is still one. Both members open the same pair, in the same order.
+    await linkPair(page);
+    await openFromInspector(page, "ch1");
+    await expect
+      .poll(() => page.evaluate(() => window.__dynTest.meterAddrs))
+      .toEqual([
+        [106, 0],
+        [106, 1],
+        [108, 0],
+        [108, 1],
+        [107, 0],
+      ]);
+
+    await screenBox(page).locator(".consent-btn-secondary").click();
+    await expect(screenBox(page)).toBeHidden();
+    await openFromInspector(page, "ch2");
+    await expect
+      .poll(() => page.evaluate(() => window.__dynTest.meterAddrs))
+      .toEqual([
+        [106, 0],
+        [106, 1],
+        [108, 0],
+        [108, 1],
+        [107, 1],
+      ]);
   });
 
   test("hands the meter slot back when it closes", async ({ page }) => {

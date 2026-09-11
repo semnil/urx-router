@@ -43,6 +43,8 @@ import { chooseOption } from "../choose-option";
 
 const CH1_GATE_THRESHOLD = "29:0:0"; // GATE_THRESHOLD, centi-dB
 const CH2_GATE_THRESHOLD = "29:0:1";
+const CH1_HPF_ON = "25:0:0"; // HPF_ON — a scoped param, so a notify for it costs a read
+const CH2_HPF_ON = "25:0:1";
 const CC7 = { type: "cc", channel: 0, controller: 7 } as const;
 const CC14_7 = { type: "cc14", channel: 0, controller: 7 } as const; // MSB CC 7 / LSB CC 39
 const CC39 = { type: "cc", channel: 0, controller: 39 } as const;
@@ -263,7 +265,7 @@ test.describe("T4b midi", () => {
 
   // ===========================================================================
   // midi-bal-mirror-clobbers-partner — the only collision mediated by a mirror.
-  // mirrorBalPair structuredClones the WHOLE source node's params onto the linked
+  // mirrorLinkedPair structuredClones the WHOLE source node's params onto the linked
   // partner on every applied message, so a fader move on ch1 republishes every
   // other parameter of ch2 as well.
   // ===========================================================================
@@ -331,7 +333,7 @@ test.describe("T4b midi", () => {
 
   test("a UI edit to the partner survives the same message — the app funnel mirrors it first", async ({ page }) => {
     // The differential. The catalog's own wording has the destroyed value come from
-    // the tuning screen, and it does not: every app-side funnel calls mirrorBalPair
+    // the tuning screen, and it does not: every app-side funnel calls mirrorLinkedPair
     // itself, so a UI edit to ch2 is copied onto ch1 before the message arrives and
     // the message's mirror finds the two already equal. What the mirror destroys is
     // whatever did NOT go through a mirroring funnel — the run above.
@@ -376,6 +378,100 @@ test.describe("T4b midi", () => {
     expect(after).toHaveLength(0);
     expect((await memOf(page))[CH2_GATE_THRESHOLD]).toBe(-4000);
     expect((await memOf(page))[CH1_GATE_THRESHOLD]).toBe(-4000);
+  });
+
+  // The other end of the same mirror, and the one nothing else here reaches: where the partner
+  // ALREADY holds what the mirror writes it, the copy moves nothing and the plan's own diff
+  // cannot tell that key from one nobody touched. The read in flight then takes the partner
+  // back to what the unit answered and the pair splits — unless the apply NAMES what it
+  // asserted. That naming runs from the engine through mirrorLinkedPair to main.ts's
+  // markChanged, and this is the seam where all three are the real ones.
+  test("a mirror writing the value the partner already holds still keeps it from a read", async ({ page }) => {
+    await installFake(page, { storage: midiStore([{ control: "ch1/hpf", addr: CC7, mode: "absolute" }]) });
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await goLive(page);
+    await linkBalPair(page);
+    await setLatency(page, { get: 8, set: 25 });
+
+    // Both members ON, through the mapped control itself — one press, since the toggle's
+    // default is an edge.
+    await mark(page, "on");
+    await pushMidi(page, [cc7(127), cc7(0)]);
+    await settleAfter(page, "on");
+    expect((await memOf(page))[CH1_HPF_ON], "the member the mapping names").toBe(1);
+    expect((await memOf(page))[CH2_HPF_ON], "and the partner, through the mirror").toBe(1);
+
+    // The pair is put out of step the way it really goes out of step: the unit reports ONE
+    // member's HPF off, and a device-authored value is applied with no mirror behind it. The
+    // app now holds ch1 OFF and ch2 ON.
+    await divergeAt(page, CH1_HPF_ON, 0);
+    await mark(page, "split");
+    await pushNotify(page, [[25, 0, 0, 0]]);
+    await settleAfter(page, "split");
+    await page.evaluate((a) => {
+      delete window.__urxFake.diverge[a];
+    }, CH1_HPF_ON);
+    await graphNode(page, "ch1").click();
+    await expect(page.locator('#inspector .param[data-param-label="HPF"] button.on')).toHaveText("OFF");
+    await graphNode(page, "ch2").click();
+    await expect(page.locator('#inspector .param[data-param-label="HPF"] button.on')).toHaveText("ON");
+
+    // Now the unit reports the PARTNER's off as well, and that read is held open.
+    await divergeAt(page, CH2_HPF_ON, 0);
+    await blockAt(page, "vd_get", 1);
+    await mark(page, "notify");
+    await pushNotify(page, [[25, 0, 1, 0]]);
+    await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 15_000 });
+
+    // One press inside it: ch1 goes back ON, and the mirror writes ch2 the ON it already has.
+    // The write to ch1 is what says the message landed inside the window — the partner's own
+    // is the write that does not exist, which is the whole point.
+    const notifyAt = markTime(await traceOf(page), "notify")!;
+    const writesTo = async (addr: string): Promise<(number | undefined)[]> =>
+      setsOf(await traceOf(page))
+        .filter((x) => x.addr === addr && x.start > notifyAt)
+        .map((x) => x.value);
+    const ledgerMark = (await ledgerOf(page)).length;
+    await mark(page, "cc");
+    await pushMidi(page, [cc7(127), cc7(0)]);
+    await expect
+      .poll(() => writesTo(CH1_HPF_ON), { timeout: 20_000, message: "the press never reached the link" })
+      .toContain(1);
+
+    await releaseBarrier(page);
+    await waitQuiet(page);
+    const afterPress = (await ledgerOf(page)).slice(ledgerMark);
+    // The unit stops reporting a value nobody wrote. What it goes on being told, the app
+    // adopts in the end — correctly — which is why the verdict below is about the read that
+    // was IN FLIGHT and not about where the pair comes to rest.
+    await page.evaluate((a) => {
+      delete window.__urxFake.diverge[a];
+    }, CH2_HPF_ON);
+
+    await dump(page, "a mirror's no-op write vs the read that reported the partner off", "notify", {
+      ledger: await ledgerOf(page),
+    });
+    const hpfWrites = afterPress.filter((e) => (e.subKeys ?? []).includes("hpf")).map((e) => `${e.source}:${e.key}`);
+    console.log(
+      `inside the read: writes to ${CH1_HPF_ON} = ${(await writesTo(CH1_HPF_ON)).join(",") || "(none)"}, ` +
+        `to ${CH2_HPF_ON} = ${(await writesTo(CH2_HPF_ON)).join(",") || "(none)"}; ` +
+        `hpf ledger after the press = ${hpfWrites.join(", ") || "(none)"}`,
+    );
+
+    // The message itself is in the ledger, on the member the mapping names and on nothing
+    // else: the mirror's write to the partner moved no value, which is the state this case
+    // exists for. Without it the assertion below is about a window nothing happened in.
+    expect(hpfWrites, "the message applied inside the read").toContain("midi:ch1");
+
+    // And the read it landed inside took NEITHER member back. A later whole-device reconcile
+    // is a different event, and adopting a value the unit keeps reporting is the app behaving.
+    expect(
+      hpfWrites.filter((w) => w.startsWith("follow-scoped")),
+      "the read in flight took the pair back",
+    ).toEqual([]);
+    await graphNode(page, "ch1").click();
+    await expect(page.locator('#inspector .param[data-param-label="HPF"] button.on')).toHaveText("ON");
   });
 
   test("a linked pair deep-clones the source node once per applied message", async ({ page }) => {

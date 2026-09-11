@@ -380,6 +380,12 @@ const pickSignalType = (value: number): void => {
   sel.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
+/** Clip Safe, one of the head-amp values a linked pair does NOT share. */
+const clipSafeButton = (face: string): HTMLButtonElement =>
+  [...paramRow("Clip Safe").querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === face)!;
+const clipSafeOnFace = (): string | undefined =>
+  paramRow("Clip Safe").querySelector<HTMLButtonElement>("button.on")?.textContent ?? undefined;
+
 /** PAN / BAL, the mode that decides which of the two pair mirrors runs. */
 const pickPanBal = (value: number): void => {
   const sel = paramRow("PAN / BAL").querySelector("select")!;
@@ -567,6 +573,34 @@ describe("Fetch from device", () => {
     expect(insertFxOnFace()).toBe("ON");
     // …and the key it never touched took the device's value.
     expect(paramRow("HPF").querySelector("button.on")?.textContent).toBe("OFF");
+  });
+
+  // The head amp is the other direction of the same rule: the pair mirror LEAVES it with the
+  // partner, so an edit to one member's Clip Safe sends nothing for the other's — and naming
+  // it on the partner would take the device's answer away for a value this gesture never
+  // wrote. The device holds this stub's default for CH 2's Clip Safe (unwritten, so OFF)
+  // while the plan says ON, which is the contest: the read's value has to win it.
+  it("keeps the device's answer for a key the mirror leaves with the partner", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    pickSignalType(1); // STEREO, which lands the pair in BAL — where the node mirror runs
+    selectNode("ch2");
+    clipSafeButton("ON").click();
+    expect(clipSafeOnFace()).toBe("ON");
+
+    selectNode("ch1");
+    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+
+    // The edit inside the read's window is on the SOURCE member's own head amp.
+    clipSafeButton("ON").click();
+    await invoked(shell, "vd_disconnect");
+
+    selectNode("ch1");
+    expect(clipSafeOnFace(), "the member edited keeps what the operator set").toBe("ON");
+    selectNode("ch2");
+    expect(clipSafeOnFace(), "the partner took the device's value").toBe("OFF");
   });
 
   // A pair transition is the case where NOTHING the gesture wrote has to move. Signal

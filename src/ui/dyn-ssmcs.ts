@@ -45,7 +45,7 @@ import {
 } from "../core/control/vd";
 import { ssmcsEqResponse, ssmcsScResponse } from "../core/eq-response";
 import type { SsmcsBandState, SsmcsScState } from "../core/eq-response";
-import { sidechainTap, tapFor } from "../core/meters";
+import { sidechainTap } from "../core/meters";
 import {
   controlId,
   ssmcsControlParam,
@@ -58,7 +58,7 @@ import type { ControlParam } from "../core/midi/controls";
 import { processorOn, SSMCS_INITIAL } from "../core/plan";
 import type { NodeParams, SsmcsBand, SsmcsParams } from "../core/plan";
 import { onOff, settingsChoice, settingsRow } from "./dom";
-import { bindChannelStrip, enumRow, levelLane } from "./dyn-chan";
+import { bindChannelStrip, enumRow, levelLane, pairOwnNodes, pairTap } from "./dyn-chan";
 import {
   bandMarkers,
   drawBandMarkers,
@@ -412,12 +412,14 @@ function ssmcsFieldText(f: DynField, v: number): string | undefined {
 }
 
 /** The three taps a lane can carry beyond the ones `bindChannelStrip` names. */
-const strippedLane = (ctx: DynCtx, key: string, tapKey: string): DynLane =>
-  levelLane(key, tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null);
+const strippedLane = (ctx: DynCtx, key: string, tapKey: string): DynLane => levelLane(key, pairTap(ctx, tapKey));
 
 /** The compressor's key signal — the side-chain filter's output, which is what its
  *  detector hears. Not a point on the strip, which is why its tap does not come from the
- *  chain the console offers (`meters.ts` `sidechainTap`). */
+ *  chain the console offers (`meters.ts` `sidechainTap`).
+ *
+ *  One bar on a STEREO-linked pair, where the lanes around it carry two: the unit draws one
+ *  there, and it is the member the screen was opened on, which is what this reads. */
 const sidechainLane = (ctx: DynCtx): DynLane => ({
   key: "sc",
   label: ctx.m.inspector.ssmcs.sideChain,
@@ -439,6 +441,9 @@ function mainHalves(w: number, h: number): { half: number; left: DynPlotGeo; rig
 }
 
 export const SSMCS_DYN: DynPlotProcessor = {
+  // A linked pair's screen reads its primary's Signal Type and both members' meter
+  // addresses, so the pair is what this screen draws rather than the node it was opened on.
+  ownNodes: pairOwnNodes,
   key: "ssmcs",
   loDb: LO_DB,
   tickStep: TICK_STEP,
@@ -618,6 +623,9 @@ function drawScResponse(c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Record<
 }
 
 export const SSMCS_COMP_DYN: DynPlotProcessor = {
+  // A linked pair's screen reads its primary's Signal Type and both members' meter
+  // addresses, so the pair is what this screen draws rather than the node it was opened on.
+  ownNodes: pairOwnNodes,
   key: "ssmcsComp",
   loDb: LO_DB,
   tickStep: TICK_STEP,
@@ -647,9 +655,9 @@ export const SSMCS_COMP_DYN: DynPlotProcessor = {
       //
       // SIDE CHAIN keeps all three lanes: what the filter does is the DIFFERENCE between the
       // input and what the detector hears, so dropping the input leaves that face unable to
-      // answer its own question — and the filter's own output is not metered at all, so there
-      // is no pair to reduce it to. CURVE is the compressor's own pair, so it goes and the
-      // rack is two columns.
+      // answer its own question, and the filter's own output is the third lane rather than
+      // half of a pair the rack could reduce. CURVE is the compressor's own pair, so it goes
+      // and the rack is two columns.
       ...(sc ? { keyLane: sidechainLane(ctx) } : {}),
       grNetDb: strapGainDb(stripOf(ctx)),
     });
@@ -752,6 +760,9 @@ export const SSMCS_COMP_DYN: DynPlotProcessor = {
 const bandOf = (ctx: DynCtx): SsmcsEqBandName => SSMCS_EQ_BAND_NAMES[ctx.sel] ?? SSMCS_EQ_BAND_NAMES[0];
 
 export const SSMCS_EQ_DYN: DynPlotProcessor = {
+  // A linked pair's screen reads its primary's Signal Type and both members' meter
+  // addresses, so the pair is what this screen draws rather than the node it was opened on.
+  ownNodes: pairOwnNodes,
   key: "ssmcsEq",
   loDb: LO_DB,
   tickStep: TICK_STEP,

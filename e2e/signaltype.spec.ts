@@ -428,24 +428,31 @@ test("BAL mode links a MUTE toggle across both channels in the CONSOLE", async (
   await expect(m2).toHaveAttribute("aria-pressed", "true"); // partner follows in BAL
 });
 
-test("BAL mode links a gain edit across both channels in the CONSOLE", async ({ page }) => {
+// The head amp is the pair's one exception in either mode: the unit gives each member its own
+// input, so linking two channels must not write the partner's preamp.
+test("a linked pair leaves each channel its own A.GAIN in the CONSOLE", async ({ page }) => {
   await node(page, "ch1").click();
-  await chooseOption(sigSelect(page), "1"); // STEREO
-  await chooseOption(panBalSelect(page), "1"); // BAL
+  await chooseOption(sigSelect(page), "1"); // STEREO (lands in BAL)
 
   await page.click("#btn-view-console");
-  const g1 = cstrip(page, "CH 1")
-    .locator(".con-gain", { has: page.locator(".con-knob[aria-label='A.GAIN']") })
-    .locator(".val");
-  const g2 = cstrip(page, "CH 2")
-    .locator(".con-gain", { has: page.locator(".con-knob[aria-label='A.GAIN']") })
-    .locator(".val");
-  await expect(g1).toHaveText("-8");
-  await expect(g2).toHaveText("-8");
+  const gain = (name: string) =>
+    cstrip(page, name)
+      .locator(".con-gain", { has: page.locator(".con-knob[aria-label='A.GAIN']") })
+      .locator(".val");
+  await expect(gain("CH 1")).toHaveText("-8");
+  await expect(gain("CH 2")).toHaveText("-8");
   await cstrip(page, "CH 1").locator(".con-knob[aria-label='A.GAIN']").focus();
   await page.keyboard.press("ArrowUp");
-  await expect(g1).toHaveText("-7");
-  await expect(g2).toHaveText("-7"); // partner follows in BAL
+  await expect(gain("CH 1")).toHaveText("-7");
+  await expect(gain("CH 2")).toHaveText("-8"); // the partner's preamp is its own
+
+  // …and the fader beside it still moves as one, so the case is about the head amp rather
+  // than about the pair having stopped mirroring.
+  const rv = (name: string) => cstrip(page, name).locator(".con-readout .rd:not(.mtr) .rv");
+  await cstrip(page, "CH 1").locator(".con-fader").focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(rv("CH 1")).toHaveText("+0.4");
+  await expect(rv("CH 2")).toHaveText("+0.4");
 });
 
 test("BAL mode shares one balance across both channels in the CONSOLE", async ({ page }) => {
@@ -488,10 +495,13 @@ test("BAL mode edits a MIX send pan without closing the SEND PAN popover", async
   await expect(pop).toBeVisible(); // ...and the popover stayed open
 });
 
-test("PAN mode keeps the two channels' faders independent in the CONSOLE", async ({ page }) => {
+// PAN mirrors as well — a linked pair holds one fader whatever the mode — and what PAN
+// keeps per member is the pan. Both halves are one case because the second is the negative
+// control for the first: a mirror that carried everything would take the pan with it.
+test("PAN mode links the faders and leaves each channel its own pan in the CONSOLE", async ({ page }) => {
   await node(page, "ch1").click();
   await chooseOption(sigSelect(page), "1"); // STEREO (lands in BAL)
-  await chooseOption(panBalSelect(page), "0"); // PAN
+  await chooseOption(panBalSelect(page), "0"); // PAN: CH1 hard left, CH2 hard right
 
   await page.click("#btn-view-console");
   const ch1 = cstrip(page, "CH 1").locator(".con-readout .rd:not(.mtr) .rv");
@@ -499,5 +509,16 @@ test("PAN mode keeps the two channels' faders independent in the CONSOLE", async
   await cstrip(page, "CH 1").locator(".con-fader").focus();
   await page.keyboard.press("ArrowUp"); // one detent up the level_gain grid: +0.4 dB
   await expect(ch1).toHaveText("+0.4");
-  await expect(ch2).toHaveText("0.0"); // no mirroring in PAN mode
+  await expect(ch2).toHaveText("+0.4"); // the partner follows in PAN too
+
+  const pan = (name: string) =>
+    cstrip(page, name)
+      .locator(".con-gain", { has: page.locator(".con-knob[aria-label='PAN']") })
+      .locator(".val");
+  await expect(pan("CH 1")).toHaveText("L63");
+  await expect(pan("CH 2")).toHaveText("R63");
+  await cstrip(page, "CH 1").locator(".con-knob[aria-label='PAN']").focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(pan("CH 1")).toHaveText("L62");
+  await expect(pan("CH 2")).toHaveText("R63"); // each member's own in PAN
 });

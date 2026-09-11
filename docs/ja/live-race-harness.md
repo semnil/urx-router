@@ -297,7 +297,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | `midi-write-during-refetch-snapshot` | midi | 門を持たない書き手と、スナップショット再基準化の組み合わせ |
 | `midi-rebase-eats-ui-entry-ladder` | midi | 単一の書き手が 2 つの矛盾する分類を受ける唯一の場所 |
 | `midi-14bit-pair-and-cross-binding` | midi | 値の方針ではなくメッセージの復号。永久に発火しない割当も作れる |
-| `midi-bal-mirror-clobbers-partner` | midi | 衝突がアプリ側 2 者間で、鏡映を介して起きる唯一のケース |
+| `midi-bal-mirror-clobbers-partner` | midi | 鏡映を介した衝突 — アプリ側 2 者間のものと、値を動かさない鏡映の書き込みと相方を別の値で報告した読み出しとの間のもの |
 
 ### T5 drop — 失敗注入
 
@@ -783,7 +783,7 @@ ref ではなく `github.run_id` にしてある理由は同ファイルのヘ�
 
 **8 番目の書き手だけは意図的に固有の `WriteSource` を持たない**。制約 / 整合性の書き手は自分のタイミングで
 書くことがない。`constraints.ts` は読むだけ、`routing.ts` のミラー
-(`mirrorBalPair` / `applyPairTransition` / `mirrorLinkedInsertFx`) は UI / MIDI のファネル内で
+(`mirrorLinkedPair` / `applyPairTransition` / `mirrorLinkedInsertFx`) は UI / MIDI のファネル内で
 `markChanged(source)` より前に走り、`scene-scope.ts` の `applySceneExternal` が走る 2 箇所はどちらも
 共有プランの外側 — `applyDeviceStateScoped` では readback の私的コピーへ、`loadFromText` では
 `loadPlan` が差し替える前の受け入れ文書へ書く。いずれもその後のマージまたは差し替えを通ってはじめて

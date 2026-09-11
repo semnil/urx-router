@@ -42,6 +42,10 @@ export interface ConsoleHost {
   plan: Plan;
   /** How many times the view ran the shared change funnel. */
   changes: () => number;
+  /** What each of those calls NAMED as written — the contest paths a device read in flight
+   *  arbitrates by. A count cannot see a funnel claiming a key it did not write, which is
+   *  how a mirror takes the device's answer away from a value it left alone. */
+  changeKeys: () => readonly (readonly string[])[];
   /** Meter-stream errors the view surfaced. */
   meterErrors: string[];
   /** Tuning screens the view asked the app to open. */
@@ -102,6 +106,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
   const meterErrors: string[] = [];
   const opened: ConsoleHost["opened"] = [];
   let changes = 0;
+  const changeKeys: string[][] = [];
 
   // jsdom has no pointer capture. The view calls it on every drag opener, and an
   // unimplemented method would end the gesture before its first move. Tracked per
@@ -170,7 +175,10 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
   const hooks: ConsoleHooks = {
     getModel: () => model,
     getPlan: () => plan,
-    onChange: () => void changes++,
+    onChange: (keys) => {
+      changes++;
+      changeKeys.push([...(keys ?? [])]);
+    },
     onMeterError: (message) => void meterErrors.push(message),
     onOpenDynScreen: (kind, id) => void opened.push({ kind, id }),
     midi: opts.midi,
@@ -198,6 +206,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
     model,
     plan,
     changes: () => changes,
+    changeKeys: () => changeKeys,
     meterErrors,
     opened,
     strip,

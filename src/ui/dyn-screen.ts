@@ -48,7 +48,14 @@ import type { MidiLearnHooks } from "./midi-learn";
 import { setLevelText } from "./glyph";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
-import { decodeGrDb, METER_GREEN_TOP_DB, METER_YELLOW_TOP_DB, MeterStore, subscribeMeters } from "../core/meters";
+import {
+  decodeGrDb,
+  isStereoTap,
+  METER_GREEN_TOP_DB,
+  METER_YELLOW_TOP_DB,
+  MeterStore,
+  subscribeMeters,
+} from "../core/meters";
 import type { MeterTap } from "../core/meters";
 import { dynFromPos, dynToPos, dynValueText, formatDyn } from "../core/control/translate";
 import type { DynField } from "../core/control/translate";
@@ -80,8 +87,9 @@ export interface DynValues {
 
 /**
  * One meter lane: a bar column and a readout cell. A level lane carries a tap, and
- * draws one bar per side the tap has (a stereo node's taps carry L and R). A reduction
- * lane carries a GR address instead, grows downward from 0 and reads as a magnitude.
+ * draws one bar per side the tap has — a stereo node's taps carry L and R, and so does the
+ * tap `pairTap` builds for a MONO IN pair whose Signal Type is STEREO. A reduction lane
+ * carries a GR address instead, grows downward from 0 and reads as a magnitude.
  */
 export interface DynLane {
   key: string;
@@ -609,7 +617,7 @@ export function splitDisplay(parts: DynParts): HTMLElement {
 
 /** How many bars a lane draws: a stereo tap's L and R, or one — and always one where
  *  the lane folds the two sides into the value its processor actually reacts to. */
-const laneSideCount = (lane: DynLane): number => (lane.tap?.r && !lane.foldSides ? 2 : 1);
+const laneSideCount = (lane: DynLane): number => (isStereoTap(lane.tap) && !lane.foldSides ? 2 : 1);
 
 export class DynScreen {
   private readonly scrim: HTMLElement;

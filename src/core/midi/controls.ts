@@ -58,7 +58,7 @@ import {
   EQ_TYPE_SHELVING,
   insertFxEngaged,
 } from "../control/params";
-import { isBalLinkedPair, isStereoLinkedPair, mixSendLocks, pairPrimary } from "../routing";
+import { isBalLinkedPair, isStereoLinkedPair, mixSendLocks, pairPrimary, pairSharesNodeKey } from "../routing";
 import {
   insertFxFamilyOf,
   insertFxLockedSlots,
@@ -207,17 +207,16 @@ export interface ControlDesc {
    */
   governedBy?: string;
   /**
-   * This control's identity for that ordering, when it is not its own id. A BAL-linked pair
-   * mirrors its whole node params, so CH 1's 1-knob and CH 2's are ONE governor — a gang that
-   * names either has to be ordered against the values on both. Both halves normalise to the
-   * pair's primary, so they meet whichever channel each was learned on.
+   * This control's identity for that ordering, when it is not its own id. A STEREO-linked
+   * pair mirrors its whole node params, so CH 1's 1-knob and CH 2's are ONE governor — a gang
+   * that names either has to be ordered against the values on both. Both halves normalise to
+   * the pair's primary, so they meet whichever channel each was learned on.
    *
-   * BAL only, and asked of the plan: PAN keeps each channel's own EQ and COMP, so the knob on
-   * one governs nothing on the other. The insert effect mirrors in PAN as well, and is not an
-   * exception here — no family a linked CH pair can hold has a driver among its controls, so
-   * there is no insert-FX governor for a pair to share. Amps and companders drive nothing,
-   * Pitch Fix's MIDI Control has no parameter row, and the multi-band compressor is offered on
-   * outputs, which are not pairs.
+   * Asked of the plan, and of Signal Type alone: the pair's EQ and COMP are one set in either
+   * PAN/BAL mode, so the knob on one channel governs the other's slots as well. The insert
+   * effect needs no seat of its own here — no family a linked CH pair can hold has a driver
+   * among its controls. Amps and companders drive nothing, Pitch Fix's MIDI Control has no
+   * parameter row, and the multi-band compressor is offered on outputs, which are not pairs.
    */
   lockId?: string;
   /**
@@ -229,12 +228,35 @@ export interface ControlDesc {
    * wherever the learn order put them. Carrying no `mirrorId` is therefore how a member says it
    * IS the primary, which is how the seat is decided.
    *
-   * What a mirror covers differs by mode. BAL replaces the partner's node params entirely, so
-   * every control on the pair is one; PAN keeps each channel's own everything EXCEPT the insert
-   * effect, which the unit holds as one instance for the pair.
+   * A linked pair is one value for every control but the PAN, which is the member's own in
+   * PAN mode and the pair's one shared balance in BAL.
    */
   mirrorId?: string;
+  /**
+   * Where this control's value LIVES in the plan, at the granularity the read merge
+   * arbitrates — which is what lets a funnel name the key it asserted, on this node and on
+   * the partner a mirror copied it to. It is also what separates the channel's own A.GAIN
+   * from the `gain` INSIDE a COMP or an EQ band: those carry the same `param` token under a
+   * scope, and a caller asking the token alone answers the same for all three.
+   *
+   * Absent on exactly two kinds, each covered elsewhere: an insert-FX SLOT (one write can
+   * touch a mirrored slot and drop the bare one it came from, and `mirrorLinkedInsertFx`
+   * names the pair's three insert-FX keys on every edit regardless), and a control on a node
+   * no pair mirror reaches — an FX channel's effect, the oscillator. `writes.contract` pins
+   * both halves against what each control actually moves.
+   */
+  writes?: ControlWrite;
 }
+
+/**
+ * What a control writes, in the plan's own terms. A NODE write names a `nodeParams` path on
+ * the control's own node, dotted for a value inside a nested group (`gate.threshold`,
+ * `ssmcs.comp.attack`, `eqBands.0.gain`) — the same spelling a tuning screen's write list
+ * uses, and the granularity `patchContestNames` names. A SEND write names one param of the
+ * control's send into `to` (a node id; the fixed main path is MAIN_BUS), which lives on the
+ * wire rather than on the node.
+ */
+export type ControlWrite = { kind: "node"; path: string } | { kind: "send"; to: string; param: string };
 
 /** A control bound to a concrete plan: normalized read/write access. */
 export interface BoundControl extends ControlDesc {
@@ -380,11 +402,12 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   if (!node) return [];
   const out: BoundControl[] = [];
   const np = (): NodeParams => (plan.nodeParams[id] ??= {});
-  /** The node a lock relationship is keyed by: a BAL-linked pair mirrors its node params, so
-   *  its two channels lock as one and both answer with the primary. Identity everywhere else,
-   *  which is what lets one spelling serve the processors that mirror and those that do not. */
+  /** The node a lock relationship is keyed by: a STEREO-linked pair mirrors its node params in
+   *  either PAN/BAL mode, so its two channels lock as one and both answer with the primary.
+   *  Identity everywhere else, which is what lets one spelling serve the processors that mirror
+   *  and those that do not. */
   const lockNode = (nodeId: string): string =>
-    isBalLinkedPair(model, plan, nodeId) ? (pairPrimary(model, nodeId) ?? nodeId) : nodeId;
+    isStereoLinkedPair(model, plan, nodeId) ? (pairPrimary(model, nodeId) ?? nodeId) : nodeId;
   const conn = (toId: string): PlanConnection | undefined => sendConnection(plan, id, toId);
 
   // A continuous control persisted on a send connection's params (level / pan);
@@ -402,6 +425,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param,
       ...(send ? { scope: send } : {}),
+      writes: { kind: "send", to, param },
       kind: "continuous",
       get: () => codec.get(conn(to)?.params?.[param] ?? fallback),
       set: (v) => {
@@ -423,6 +447,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param: "mute",
       ...(send ? { scope: send } : {}),
+      writes: { kind: "send", to, param: "on" },
       kind: "toggle",
       get: () => ((conn(to)?.params?.on ?? defaultOn) ? 0 : 1),
       set: (v) => {
@@ -442,6 +467,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     id: controlId(id, "chOn"),
     node: id,
     param: "chOn",
+    writes: { kind: "node", path: "on" },
     kind: "toggle",
     get: () => (plan.nodeParams[id]?.on === false ? 0 : 1),
     set: (v) => {
@@ -467,6 +493,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     id: controlId(id, param),
     node: id,
     param,
+    writes: { kind: "node", path: param },
     kind: "toggle",
     get: () => (locked?.() ? 0 : (plan.nodeParams[id]?.[param] ?? def) ? 1 : 0),
     set: (v) => {
@@ -485,6 +512,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     id: controlId(id, param),
     node: id,
     param,
+    writes: { kind: "node", path: param },
     kind: "continuous",
     get: () => codec.get(plan.nodeParams[id]?.[param] ?? fallback),
     set: (v) => {
@@ -514,6 +542,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param: f.key as ControlParam,
       scope,
+      writes: { kind: "node", path: `${sub}.${f.key}` },
       kind: "continuous",
       governedBy,
       get: () => codec.get(typeof cur()[f.key] === "number" ? (cur()[f.key] as number) : f.def),
@@ -543,6 +572,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param,
       scope,
+      writes: { kind: "node", path: `${sub}.${key}` },
       kind: "toggle",
       governedBy,
       lockId,
@@ -560,6 +590,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
    *  `eqOneKnob` — the two differ only in where they live. */
   const oneKnobLevel = (
     scope: string,
+    path: string,
     read: () => number,
     write: (v: number) => void,
     locked: () => boolean,
@@ -567,6 +598,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     id: controlId(id, "oneKnobLevel", scope),
     node: id,
     param: "oneKnobLevel",
+    writes: { kind: "node", path },
     // The knob of the same scope owns it, the other way round from the values that knob
     // computes: this one is locked while the knob is OFF, and those while it is on.
     governedBy: controlId(lockNode(id), "oneKnob", scope),
@@ -610,6 +642,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param,
       scope,
+      writes: { kind: "node", path: ["ssmcs", ...path, planKey].join(".") },
       kind: "continuous",
       get: () => codec.get(typeof ssmcsAt(path)[planKey] === "number" ? (ssmcsAt(path)[planKey] as number) : f.def),
       set: (v) => {
@@ -631,6 +664,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     node: id,
     param,
     ...(scope ? { scope } : {}),
+    writes: { kind: "node", path: ["ssmcs", ...path, key].join(".") },
     kind: "toggle",
     get: () => (((ssmcsAt(path)[key] as boolean | undefined) ?? def) ? 1 : 0),
     set: (v) => {
@@ -691,6 +725,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         out.push(
           oneKnobLevel(
             COMP_SCOPE,
+            "comp.oneKnobLevel",
             () => (typeof comp().oneKnobLevel === "number" ? (comp().oneKnobLevel as number) : 0),
             (v) => {
               const p = np();
@@ -717,6 +752,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param: "oneKnob",
       scope: EQ_SCOPE,
+      writes: { kind: "node", path: "eqOneKnob.on" },
       kind: "toggle",
       lockId: controlId(lockNode(id), "oneKnob", EQ_SCOPE),
       get: () => (knobOn() ? 1 : 0),
@@ -730,6 +766,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     out.push(
       oneKnobLevel(
         EQ_SCOPE,
+        "eqOneKnob.level",
         () => (typeof knob().level === "number" ? (knob().level as number) : 0),
         (v) => {
           const p = np();
@@ -761,6 +798,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         param: "bandOn",
         governedBy: eqKnob,
         scope,
+        writes: { kind: "node", path: `eqBands.${index}.on` },
         kind: "toggle",
         get: () => (bandLocked() ? 0 : (band().on ?? true) ? 1 : 0),
         set: (v) => {
@@ -785,6 +823,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           node: id,
           param: f.key as ControlParam,
           scope,
+          writes: { kind: "node", path: `eqBands.${index}.${f.key}` },
           kind: "continuous",
           governedBy: eqKnob,
           get: () => codec.get((band()[f.key as "freq" | "q" | "gain"] as number | undefined) ?? f.def),
@@ -1058,6 +1097,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           node: id,
           param: "tap",
           scope: target,
+          writes: { kind: "send", to: target, param: "tap" },
           kind: "toggle",
           get: () => (conn(target)?.params?.tap === "pre" ? 1 : 0),
           set: (v) => {
@@ -1115,17 +1155,21 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   // The mirror identity, stamped ONCE over the finished list rather than at each site that
   // builds a control. What a mirror covers is a property of the NODE and the link mode, not of
   // any one parameter, and put at the sites it was the insert effect's alone while
-  // `mirrorBalPair` was copying the whole node params and every send — so a BAL pair's CH ON,
+  // `mirrorLinkedPair` was copying the whole node params and every send — so the pair's CH ON,
   // its sends and everything else stayed several decisions and the learn order picked the value.
   //
-  // BAL replaces the partner's node params entirely, so every control on the pair is one value.
-  // PAN keeps each channel's own, EXCEPT the insert effect: a linked pair holds one instance
-  // between them, on the unit and here (`mirrorLinkedInsertFx` runs in both modes).
+  // A linked pair is one value for every control but its head amp, which each member keeps
+  // its own of, and the PAN, which PAN mode keeps per member: everything else — node params,
+  // faders, ONs, send levels — moves together in either mode. So the identity is stamped on
+  // what the mirror copies and on nothing else. The head-amp question is asked of the plan KEY
+  // a control writes, not of its param token: a COMP's or an EQ band's `gain` is the same
+  // token under a scope, and the mirror carries those.
   const primary = pairPrimary(model, id);
   if (primary !== null && primary !== id && isStereoLinkedPair(model, plan, id)) {
-    const bal = isBalLinkedPair(model, plan, id);
+    const sharedPan = isBalLinkedPair(model, plan, id);
     for (const c of out) {
-      if (!bal && c.param !== "insfx" && c.param !== "insertFxOn") continue;
+      if (c.writes?.kind === "node" && !pairSharesNodeKey(c.writes.path)) continue;
+      if (!sharedPan && c.param === "pan") continue;
       c.mirrorId = controlId(primary, c.param, c.scope);
     }
   }

@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
 import { sendConnection } from "../core/plan";
 import type { ConsoleMidiHooks } from "./console";
-import { BUS_TYPE_FIXED, PAN_BAL_BAL } from "../core/control/params";
+import { BUS_TYPE_FIXED, PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { t } from "../i18n";
 
 let h: ConsoleHost;
@@ -560,15 +560,15 @@ describe("what a rebuild has to carry", () => {
   });
 });
 
-describe("a BAL-linked pair", () => {
+describe("a STEREO-linked pair", () => {
   // A linked send fader has to track on the partner strip without a rebuild — a
   // rebuild mid-drag would take the focus and the pointer capture with it.
-  it("mirrors a send fader onto the partner strip's column in place", () => {
+  const mirrorsInPlace = (mode: number): void => {
     h = consoleHost();
-    // A BAL-linked pair is Signal Type STEREO (`stereoLink`) plus PAN/BAL on BAL, both
-    // held on the pair's PRIMARY channel — the pair is one stereo channel then, so its
-    // mixer parameters mirror.
-    Object.assign((h.plan.nodeParams["ch1"] ??= {}), { stereoLink: true, panBal: PAN_BAL_BAL });
+    // The link is Signal Type STEREO (`stereoLink`) plus a PAN/BAL mode, both held on
+    // the pair's PRIMARY channel. The send LEVEL mirrors in either mode — the pair holds
+    // one of it — so both modes are asked here; only the PAN is the mode's to decide.
+    Object.assign((h.plan.nodeParams["ch1"] ??= {}), { stereoLink: true, panBal: mode });
     seedLevel("ch1", "bus.mix1", -10);
     seedLevel("ch2", "bus.mix1", -10);
 
@@ -583,6 +583,14 @@ describe("a BAL-linked pair", () => {
     expect(h.sendCol("ch2", "bus.mix1").fader).toBe(el);
     expect(el.getAttribute("aria-valuenow")).not.toBe(before);
     expect(level("ch2", "bus.mix1")).toBe(level("ch1", "bus.mix1"));
+  };
+
+  it("mirrors a send fader onto the partner strip's column in place", () => {
+    mirrorsInPlace(PAN_BAL_BAL);
+  });
+
+  it("mirrors it in PAN as well, where only the pan stays per member", () => {
+    mirrorsInPlace(PAN_BAL_PAN);
   });
 });
 
