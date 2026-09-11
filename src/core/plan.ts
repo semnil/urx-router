@@ -791,6 +791,15 @@ function sanitizeNodeParams(v: unknown, version: number): Record<string, NodePar
     // under a qualified key instead.
 
     if (clean.insertFxOn !== undefined && !isParamScalar(clean.insertFxOn)) delete clean.insertFxOn;
+    // The map itself has to BE a map, asked of its presence rather than of its truth: the
+    // checks around it are truthiness, and `false` and `0` are values a document can carry
+    // there — they survive the sanitiser (a boolean and a finite number are legal leaves),
+    // then every `if (params)` below reads false and leaves them in the plan. An array is the
+    // other way in: the sanitiser keeps one because `eqBands` is an array, and it would be
+    // walked slot by slot until the re-keying happened to empty it. One statement, so "not a
+    // map" is one case with one outcome whatever the value is worth.
+
+    if (clean.insertFxParams !== undefined && !isPlainRecord(clean.insertFxParams)) delete clean.insertFxParams;
     if (clean.insertFxParams) {
       const slots = clean.insertFxParams as Record<string, unknown>;
       for (const [slot, raw] of Object.entries(slots)) if (!isParamScalar(raw)) delete slots[slot];

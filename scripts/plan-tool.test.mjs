@@ -790,6 +790,12 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     ["a string", "not-a-map", true],
     ["a number", 7, true],
     ["a boolean", true, true],
+    // The FALSY half of the same partition. `if (params)` in the loader is false for these,
+    // so a truthiness check leaves them in the plan while the tool says they were dropped —
+    // which is exactly the gap a matrix of `true` and `7` cannot see.
+    ["a false boolean", false, true],
+    ["a zero", 0, true],
+    ["an empty string", "", true],
     ["null", null, true],
     ["an empty array", [], true],
     ["an array of records", [{ a: 1 }], true],
