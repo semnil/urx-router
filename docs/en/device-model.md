@@ -358,17 +358,17 @@ Source selection for the analog outputs (MAIN / LINE).
   PAN hard-pans the odd channel left (L63 = −63) and the even one right (R63 = +63); BAL and leaving STEREO
   centre both (C = 0), and the send pan then reads as a BALANCE (as a native stereo channel does — shown
   identically in both GRAPH and CONSOLE). **A linked pair holds one set of values whatever the mode**: an edit
-  to either channel is auto-mirrored to the other (the node params except the head amp below, plus each
+  to either channel is auto-mirrored to the other (the node params except the three below, plus each
   send's LEVEL / PRE-POST / ON), because that is what the unit does. Measured on it with the pair in PAN: writing one member's gate
   threshold, gate ON, compressor threshold, HPF frequency, CH fader, CH ON, STEREO-assign ON, MIX send level,
   MIX send ON or MIX send PRE-POST moved the other member's with it. **What the mode decides is the pan.**
   In BAL it is the pair's single shared balance, so both channels read the same value (the re-init above
   seeds it centred) and it mirrors with everything else; in PAN each channel keeps its own CH PAN and send
   pans, and writing one member's left the other where the transition had put it. The Signal Type / PAN-BAL
-  flags live on the primary alone. **The head amp is each member's own, in either mode**: with the pair
-  linked, writing one member's A.Gain, Clip Safe or polarity invert left the partner's where it was, in BAL
-  as well as in PAN, so what the pair shares reaches its processing and its mixer state and stops at the
-  input stage. The app's mirror keeps those three with the partner for that reason. The metering answers to Signal
+  flags live on the primary alone. **A.Gain, Clip Safe and the polarity invert are each member's own, in
+  either mode**: with the pair linked, writing one member's left the partner's where it was, in BAL as well
+  as in PAN. The app's mirror keeps those three with the partner for that reason; the pair's remaining
+  head-amp values, +48V and Hi-Z, are mirrored with everything else. The metering answers to Signal
   Type as well: the unit's channel tuning screens meter such a pair as one channel in either mode, which
   [channel-tuning.md](channel-tuning.md) carries.
 - **Every channel / FX-channel send is fixed** (the STEREO main path plus every MIX 1–2 / FX 1–2 send), as is
