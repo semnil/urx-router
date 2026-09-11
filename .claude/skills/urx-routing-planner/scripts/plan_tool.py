@@ -577,6 +577,10 @@ def fx_catalogue_warnings(node_id, fx, channel, out, bounded):
             bounded.append((f"{node_id}.fxEffect.params.{key}", f"{raw!r} is bounded to {admitted!r}"))
 
 
+# The keys `fx_effect_warnings` answers for itself; every other one goes to the general walk.
+FX_EFFECT_KEYS = ("on", "level", "type", "params")
+
+
 def fx_effect_warnings(node_id, fx, out):
     """Collect everything the app removes from one node's fxEffect (path, why).
 
@@ -624,6 +628,15 @@ def fx_effect_warnings(node_id, fx, out):
         )
     if "type" in fx and not is_number(fx["type"]):
         out.append((f"{node_id}.fxEffect.type", f"{fx['type']!r} is not a finite number"))
+    # Every key this function does not recognise is an ordinary node-param value: the app
+    # keeps a well-formed one and removes the rest, exactly as it does anywhere else. Asked
+    # by NAME for four of them, a sibling key holding a container, a string or a bad array was
+    # removed at the load with nothing reporting it — which is the same class the group rule
+    # was written for, one section further in.
+    for k, v in fx.items():
+        if k in FX_EFFECT_KEYS:
+            continue
+        dropped_child(k, v, f"{node_id}.fxEffect", out)
     params = fx.get("params")
     if params is None and "params" not in fx:
         return
@@ -703,6 +716,35 @@ def survives_sanitizer(value):
     return False
 
 
+GROUP_REMOVED = (
+    "this group sanitises to nothing and the app removes the key, so the node "
+    "falls back to the device default rather than holding an empty group"
+)
+
+PROTO_REMOVED = "the app never keeps a `__proto__` key, so this one is removed whatever it holds"
+
+
+def dropped_child(key, value, path, out):
+    """One child of a container, decided once for every walk site.
+
+    Two of the app's rules live here rather than in the leaf walk, because neither is a
+    statement about a leaf. A `__proto__` key is removed whatever it holds, at every level.
+    A group nothing survives is removed WHOLE, so the removal is reported at the group rather
+    than at its leaves — the same distinction `fxEffect.level` draws: a leaf warning says the
+    value is wrong, and here it is the KEY that is gone. Descending anyway would name paths
+    that no longer exist to be repaired.
+
+    Written once and called from each site, because spelling it per site is what left the
+    `fxEffect` section answering for four key names and nothing else."""
+    if key == "__proto__":
+        out.append((f"{path}.{key}", PROTO_REMOVED))
+        return
+    if isinstance(value, dict) and not survives_sanitizer(value):
+        out.append((f"{path}.{key}", GROUP_REMOVED))
+        return
+    dropped_values(value, f"{path}.{key}", out)
+
+
 def dropped_values(value, path, out):
     """Collect the node-param values the app's loader drops (path, why). Every leaf
     it keeps is a boolean or a finite number, and one malformed element drops the
@@ -714,20 +756,7 @@ def dropped_values(value, path, out):
     reason and reported by `scalar_only_drops`."""
     if isinstance(value, dict):
         for k, v in value.items():
-            # A group nothing survives is removed WHOLE, so the removal is reported at the
-            # group rather than at its leaves — the same distinction `fxEffect.level` draws:
-            # a leaf warning says the value is wrong, and here it is the KEY that is gone.
-            # Descending anyway would name paths that no longer exist to be repaired.
-            if isinstance(v, dict) and not survives_sanitizer(v):
-                out.append(
-                    (
-                        f"{path}.{k}",
-                        "this group sanitises to nothing and the app removes the key, so the node "
-                        "falls back to the device default rather than holding an empty group",
-                    )
-                )
-                continue
-            dropped_values(v, f"{path}.{k}", out)
+            dropped_child(k, v, path, out)
     elif isinstance(value, list):
         if all(isinstance(el, dict) for el in value):
             for i, el in enumerate(value):
@@ -754,6 +783,9 @@ def node_param_warnings(plan, nodes, pairs, fx_channels):
     if node_params is not None and not isinstance(node_params, dict):
         return ["nodeParams is not an object — the app loads the plan with no node params at all"]
     for node_id, params in (node_params or {}).items():
+        if node_id == "__proto__":
+            out.append(f"node param {node_id}: the app drops this value on load — {PROTO_REMOVED}")
+            continue
         if not isinstance(params, dict):
             out.append(f"node {node_id}: the app drops this node's params on load — nodeParams entries must be objects")
             continue

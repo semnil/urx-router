@@ -966,6 +966,13 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       ["a group whose array holds a non-object", "ch1", { gate: { bands: [1] } }, true],
       ["a group that keeps one leaf", "ch1", { gate: { threshold: -20 } }, false],
       ["a node with no params at all", "ch1", {}, false],
+      // The same class one section further in. `fxEffect` is held out of the general walk and
+      // answered for FOUR key names, so a sibling key beside them reached no rule at all.
+      ["an unknown FX key holding an empty container", "bus.fx1", { fxEffect: { type: 0, foo: {} } }, true],
+      ["an unknown FX key holding a string", "bus.fx1", { fxEffect: { type: 0, foo: "x" } }, true],
+      ["an unknown FX key holding a bad array", "bus.fx1", { fxEffect: { type: 0, foo: [1] } }, true],
+      ["an unknown FX key holding an empty array", "bus.fx1", { fxEffect: { type: 0, foo: [] } }, false],
+      ["an unknown FX key holding a number", "bus.fx1", { fxEffect: { type: 0, foo: 5 } }, false],
     ];
     for (const [name, node, np, removes] of SHAPES) {
       const plan = { ...doc({}), nodeParams: { [node]: np } };
@@ -974,6 +981,56 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       expect(JSON.stringify(loaded.nodeParams[node]) !== JSON.stringify(np), `the app rewrites ${name}`).toBe(removes);
       expect(toolPaths(dir, plan).length > 0, `the tool says so: ${name}`).toBe(removes);
     }
+  });
+
+  // `__proto__` is not a key the app keeps, at any level, and the sanitiser strips it before
+  // anything reads the record. The survival rule already knew that — a group whose only key is
+  // `__proto__` sanitises to nothing — but the WALK did not, so one sitting beside a surviving
+  // leaf was removed at the load with nothing reporting it.
+  //
+  // Built as TEXT rather than as an object: written as an object literal, `__proto__:` sets the
+  // prototype and never becomes an own property, so the document under test would not carry the
+  // key at all and the case would measure nothing. (It did, the first time it was asked.)
+  it("agrees with the app about a __proto__ key", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { paramRangeProblems: prp, applyParamRange } = await import("../src/core/plan-validate.ts");
+    const text = (nodeParams) =>
+      `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
+      `"positions":{},"connections":[],"nodeParams":${nodeParams}}`;
+
+    const ROWS = [
+      ["beside a surviving leaf", '{"ch1":{"gate":{"__proto__":1,"on":true}}}', "ch1", true],
+      ["at the node params level", '{"ch1":{"__proto__":1,"gate":{"on":true}}}', "ch1", true],
+      ["holding a container", '{"ch1":{"__proto__":{"a":1},"gate":{"on":true}}}', "ch1", true],
+      // …already reported before this rule, since the group it is alone in sanitises to nothing.
+      ["as a group's only key", '{"ch1":{"gate":{"__proto__":true}}}', "ch1", true],
+      // The control: the same documents without the key are left alone by both sides.
+      ["no such key", '{"ch1":{"gate":{"on":true}}}', "ch1", false],
+    ];
+    for (const [name, np, node, removes] of ROWS) {
+      const doc = text(np);
+      const loaded = deserializeDocument(doc).plan;
+      applyParamRange(loaded, prp(loaded));
+      const wrote = JSON.parse(np)[node];
+      expect(JSON.stringify(loaded.nodeParams[node]) !== JSON.stringify(wrote), `the app rewrites ${name}`).toBe(
+        removes,
+      );
+
+      const file = join(dir, "plan.json");
+      writeFileSync(file, doc);
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, r.stdout).toBe(0);
+      const said = r.stderr.split("\n").some((l) => l.startsWith("WARNING: node param "));
+      expect(said, `the tool says so: ${name}`).toBe(removes);
+    }
+
+    // A node id the app never builds, which is the same rule one level up.
+    const asNode = text('{"__proto__":{"gate":{"on":true}},"ch1":{"gate":{"on":true}}}');
+    const loaded = deserializeDocument(asNode).plan;
+    expect(Object.keys(loaded.nodeParams), "the app builds no such node").not.toContain("__proto__");
+    const file = join(dir, "plan.json");
+    writeFileSync(file, asNode);
+    expect(spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" }).stderr).toContain("node param __proto__");
   });
 
   // The one family whose write set MOVES with its own values: Pitch Fix stops sending the
