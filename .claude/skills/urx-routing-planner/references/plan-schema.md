@@ -174,8 +174,9 @@ the device default. The full set:
   neither": the app fills the absent member with the factory value (No Effect) and
   the write then clears the pair. A pair that disagrees describes no state the unit
   can be in, so the app REFUSES the document and `plan_tool.py validate` exits
-  non-zero naming the keys. Which effect is legal there it still cannot see —
-  `plan_tool.py` reads no effect catalogue.
+  non-zero naming the keys. WHICH effect is legal there it still cannot see: the bundled
+  data carries each selector's engine slots, not the menu a node or a linked pair may
+  choose from.
   Changing `stereoLink` in either direction clears the pair's insert effect on the unit.
 - `insertFxOn` — insert-effect ON/OFF (bypass), `true`/`false`. The device
   re-engages it whenever an effect is (re)selected; it only applies (and is only
@@ -283,13 +284,13 @@ this is layout, not a repair — and it is one more reason to omit `positions` e
 let the app arrange the board. `plan_tool.py validate` does not see it: it happens after the
 checks above, in the view, and this tool mirrors the loader.
 
-**`plan_tool.py validate` warns about every row that needs no effect catalogue** —
-the non-numeric leaf, the non-object `params`, the non-object `fxEffect` — and
-CANNOT see the two that do: a finite number outside its window, and a `type` no
-channel offers. Those windows and menus live in the app's effect catalogue, and the
-data bundled with this skill carries routing only. Settling it means exporting them
-alongside `models.json`; until then a plan this tool calls clean can still have an
-FX value the app will bound on load. `scripts/plan-tool.test.mjs` in the repository
+**`plan_tool.py validate` warns about every FX row the app repairs** — the non-numeric
+leaf, the non-object `params`, the non-object `fxEffect`, and the two that need the
+channel's own catalogue: a finite number outside what its control admits, and a `type` no
+channel offers. `models.json` carries that catalogue (`fxChannels`: each channel's menu,
+and per parameter key what its control admits — a slider's window, a select's options, a
+toggle's two states), so a plan this tool calls clean is one the app loads without
+repairing it. `scripts/plan-tool.test.mjs` in the repository
 holds both halves — the agreement and the two blind spots — by running this tool and
 the app's own loader over the same documents.
 
