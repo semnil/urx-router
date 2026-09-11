@@ -6,14 +6,15 @@
 // dependency chain — so they live here. Language-agnostic: the UI maps codes to
 // messages. Nothing here runs on a device readback (see insertFxSlotProblems).
 
-import type { DeviceModel, ModelId } from "../models/types";
-import { factoryNodeParams } from "../models/initial-state";
+import type { DeviceModel } from "../models/types";
+import { fillFactoryParams } from "../models/initial-state";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import { isPlainRecord } from "./plan";
 import type { Plan } from "./plan";
-import { INSERT_FX_PAIR_KEYS, validatePlan } from "./routing";
+import { insertFxWireState } from "./control/translate";
+import { validatePlan } from "./routing";
 import type { PlanProblem } from "./routing";
 
 /** One device-wide 1-of insert-FX slot claimed by more than one node. Not a wire,
@@ -45,26 +46,13 @@ export interface InsertFxPairProblem {
   reason: "insertFxPair";
   /** The pair, primary first. */
   nodes: [string, string];
-  /** The disagreeing keys, in `INSERT_FX_PAIR_KEYS` order. */
+  /** The stored keys whose written state disagrees, selector first. */
   keys: string[];
 }
 
-/** One member's value for a pair key as the WRITE will see it: what the document carries,
- *  or the factory value the load-time fill supplies for an absent one. Compared raw, a
- *  document that names the effect once and leaves the partner to the fill would read as a
- *  disagreement although both members end up sending the same value. */
-function pairValue(modelId: ModelId, plan: Plan, nodeId: string, key: string): unknown {
-  const carried = (plan.nodeParams[nodeId] as Record<string, unknown> | undefined)?.[key];
-  return carried !== undefined ? carried : (factoryNodeParams(modelId, nodeId) as Record<string, unknown>)?.[key];
-}
-
-/** `insertFxParams` is a flat slot->raw map, so equality is its entries; everything else
- *  here is a scalar. */
-function samePairValue(a: unknown, b: unknown): boolean {
-  if (!isPlainRecord(a) || !isPlainRecord(b)) return a === b;
-  const ka = Object.keys(a);
-  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
-}
+/** Which stored key each half of the wire state came from, so the report names what the
+ *  author wrote rather than what the wire calls it. */
+const PAIR_STATE_KEYS = { selector: "insertFx", on: "insertFxOn", params: "insertFxParams" } as const;
 
 /**
  * A STEREO-linked pair holds ONE insert effect between its two channels: the unit keeps a
@@ -76,17 +64,34 @@ function samePairValue(a: unknown, b: unknown): boolean {
  * `sendConverging` re-sends both to its round limit and finishes unconverged.
  *
  * So it is a refusal rather than a warning: there is no state of the unit that satisfies the
- * document, and the operator has nothing to decide. The comparison is made against the
- * values the write will see, which is why an omitted member is filled in first.
+ * document, and the operator has nothing to decide.
+ *
+ * What is compared is the state a WRITE would leave, not what the document stores. The two
+ * are different questions, and stored values answer the wrong one: an off-menu selector and
+ * No Effect reach the unit as one value, `true` and `1` are one bypass, a bypass beside No
+ * Effect is never sent, and an engine value under another family's namespace is not sent
+ * either. Each of those is a document the unit CAN satisfy, and refusing it would be a load
+ * the operator cannot explain. `insertFxWireState` is that projection and lives in the emit
+ * path, so it and the write cannot drift apart; the plan is filled first because the write
+ * sees a completed document.
  */
 export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPairProblem[] {
   const out: InsertFxPairProblem[] = [];
-  for (const [a, b] of model.channelPairs) {
-    if (plan.nodeParams[a]?.stereoLink !== true) continue;
-    const keys = INSERT_FX_PAIR_KEYS.filter(
-      (key) => !samePairValue(pairValue(model.id, plan, a, key), pairValue(model.id, plan, b, key)),
-    );
-    if (keys.length > 0) out.push({ reason: "insertFxPair", nodes: [a, b], keys: [...keys] });
+  const linked = model.channelPairs.filter(([a]) => plan.nodeParams[a]?.stereoLink === true);
+  if (linked.length === 0) return out;
+  // The fill mutates, so it runs on a copy: this is a question about the document, and
+  // answering it must not complete the caller's plan behind their back.
+  const filled = structuredClone(plan);
+  fillFactoryParams(model.id, filled);
+  for (const [a, b] of linked) {
+    const sa = insertFxWireState(model, filled, a);
+    const sb = insertFxWireState(model, filled, b);
+    if (!sa || !sb) continue;
+    const keys: string[] = [];
+    if (sa.selector !== sb.selector) keys.push(PAIR_STATE_KEYS.selector);
+    if (sa.on !== sb.on) keys.push(PAIR_STATE_KEYS.on);
+    if (sa.params.join("|") !== sb.params.join("|")) keys.push(PAIR_STATE_KEYS.params);
+    if (keys.length > 0) out.push({ reason: "insertFxPair", nodes: [a, b], keys });
   }
   return out;
 }

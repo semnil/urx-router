@@ -111,9 +111,12 @@ describe("insertFxSlotProblems", () => {
       ["the selector", { insertFx: COMP_H }, { insertFx: COMP_S }, ["insertFx"]],
       ["the bypass", { insertFx: COMP_H, insertFxOn: true }, { insertFx: COMP_H, insertFxOn: false }, ["insertFxOn"]],
       [
+        // Slot 6 is the compander's Threshold — a slot the write SENDS. Slot 0 is the
+        // engine's own type id and never goes out, so a pair differing only there is
+        // covered below as a state the unit can satisfy.
         "the engine values",
-        { insertFx: COMP_H, insertFxParams: { "0": 12 } },
-        { insertFx: COMP_H, insertFxParams: { "0": 13 } },
+        { insertFx: COMP_H, insertFxParams: { "6": -1200 } },
+        { insertFx: COMP_H, insertFxParams: { "6": -1300 } },
         ["insertFxParams"],
       ],
       // The member the document leaves out is filled with the factory value, so omitting
@@ -123,7 +126,7 @@ describe("insertFxSlotProblems", () => {
       // Several at once: every disagreeing key is named, not just the first.
       [
         "all three",
-        { insertFx: AMP, insertFxOn: true, insertFxParams: { "0": 1 } },
+        { insertFx: AMP, insertFxOn: true, insertFxParams: { "6": 1 } },
         { insertFx: COMP_H },
         ["insertFx", "insertFxOn", "insertFxParams"],
       ],
@@ -151,6 +154,36 @@ describe("insertFxSlotProblems", () => {
         { insertFx: COMP_H, insertFxParams: { "0": 12 } },
       ],
     ])("says nothing when %s", (_name, ch1, ch2) => {
+      expect(insertFxPairProblems(u44v, linked(ch1, ch2))).toEqual([]);
+    });
+
+    // Documents that LOOK different and reach the unit as ONE state. Each is a refusal the
+    // stored-value comparison this replaced would have made, and each would have been a load
+    // the operator could not explain.
+    it.each([
+      // An off-menu selector is No Effect on the wire, which is what the partner holds.
+      ["an off-menu selector beside No Effect", { insertFx: 4242 }, { insertFx: INSERT_FX_NONE }],
+      // The bypass goes out as `? 1 : 0`, so every truthy value is one bypass.
+      ["a boolean bypass beside a number", { insertFx: COMP_H, insertFxOn: true }, { insertFx: COMP_H, insertFxOn: 1 }],
+      // With No Effect selected the unit ignores the switch and the write does not send it.
+      [
+        "two bypasses under No Effect",
+        { insertFx: INSERT_FX_NONE, insertFxOn: true },
+        { insertFx: INSERT_FX_NONE, insertFxOn: false },
+      ],
+      // Slot 0 is the engine's type id; the write skips it.
+      [
+        "an engine value the write skips",
+        { insertFx: COMP_H, insertFxParams: { "0": 12 } },
+        { insertFx: COMP_H, insertFxParams: { "0": 13 } },
+      ],
+      // …and a value under a family the selector does not name is not sent either.
+      [
+        "an engine value of another family",
+        { insertFx: COMP_H, insertFxParams: { "amp:6": 12 } },
+        { insertFx: COMP_H, insertFxParams: { "amp:6": 99 } },
+      ],
+    ])("says nothing about %s", (_name, ch1, ch2) => {
       expect(insertFxPairProblems(u44v, linked(ch1, ch2))).toEqual([]);
     });
 
