@@ -11,6 +11,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { FX_CHANNEL_NODE_INDEX } from "../core/control/fx-effect";
 import { MODEL_IDS, getModel } from "./index";
 import { renderModelMarkdown, skillModelsJson } from "./skill-export";
 
@@ -39,6 +40,26 @@ describe("urx-routing-planner skill data stays in sync with the device model", (
       check(modelMd(id), renderModelMarkdown(getModel(id)), `references/model-${id.toLowerCase()}.md`);
     });
   }
+
+  // The drift guard above compares the committed file against the generator, so what it
+  // cannot see is the generator itself getting narrower and the file being regenerated in the
+  // same change: both sides move together and the diff is clean. Every entry keyed by node is
+  // exposed that way, so each is asked against the index it is derived FROM rather than
+  // against a list written here, which would be the same copy twice.
+  it("carries every FX channel, not a subset the generator happened to emit", () => {
+    const models = JSON.parse(skillModelsJson());
+    for (const id of MODEL_IDS) {
+      expect(Object.keys(models[id].fxChannels).sort(), `${id} fxChannels`).toEqual(
+        Object.keys(FX_CHANNEL_NODE_INDEX).sort(),
+      );
+      // …and each entry is populated, since a channel present with an empty menu answers no
+      // question the validator asks it and would pass the key comparison above.
+      for (const [nodeId, fx] of Object.entries(models[id].fxChannels)) {
+        expect((fx as { types: number[] }).types.length, `${id} ${nodeId} types`).toBeGreaterThan(0);
+        expect(Object.keys((fx as { params: object }).params).length, `${id} ${nodeId} params`).toBeGreaterThan(0);
+      }
+    }
+  });
 
   // The drift guard above is a pure equality check, so the renderers must be
   // deterministic: rendering the same model twice (the same process, back to back)
