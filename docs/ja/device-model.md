@@ -344,10 +344,19 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   STEREO への固定 Send の pan なので一緒に動く): PAN は奇数 ch を左 (L63 = −63)・偶数 ch を右
   (R63 = +63) にハードパン、BAL と STEREO 解除は両方中央 (C = 0) にし、Send pan はネイティブのステレオ ch
   同様 BALANCE 表示になる (GRAPH/CONSOLE 双方で同一表示)。
-  **BAL モード時のみ**、ペアは 1 つのステレオ ch として動作し、片 ch への編集をもう一方へ自動ミラーする
-  (ノードパラメーター全般 + 各 Send の LEVEL/PRE-POST/ON、および pan)。pan は BAL モードではペア共有の
-  バランス 1 値なので両 ch で一致する (上記の初期化が中央を起点として与える)。Signal Type / PAN-BAL
-  フラグは primary のみ保持。PAN モードでは両 ch は独立のまま (pan も含めミラーしない)。
+  **リンク済みペアはモードに関わらず 1 組の値を持つ**: 片 ch への編集はもう一方へ自動ミラーされる
+  (下記のヘッドアンプを除くノードパラメーター + 各 Send の LEVEL/PRE-POST/ON)。実機がそうするためである。PAN モードでの実測:
+  片メンバーの Gate Threshold・Gate ON・Comp Threshold・HPF 周波数・CH フェーダー・CH ON・STEREO アサイン
+  ON・MIX Send レベル・MIX Send ON・MIX Send PRE-POST を書くと、もう一方の同じ値も動いた。
+  **モードが決めるのは pan である**。BAL では pan はペア共有のバランス 1 値なので両 ch で一致し
+  (上記の初期化が中央を起点として与える)、他と同様にミラーされる。PAN では各 ch が自分の CH PAN と
+  Send pan を保持し、片メンバーへ書いてももう一方は遷移が置いた位置に留まった。Signal Type / PAN-BAL
+  フラグは primary のみ保持。**ヘッドアンプは各メンバー自身の値である — A.Gain・Clip Safe・位相反転・
+  +48V・Hi-Z の 5 つ**: リンク中に片メンバーへ書いても BAL でも PAN でも相方の同じ値は動かず、未リンクの
+  ペアを**リンクしたときも** secondary の入力段は primary からコピーされず両者が自分の値を保った
+  (2026-09-11 実測)。アプリのミラーもこの 5 キー (`gain` / `clipSafe` / `phase` / `phantom` / `hiZ`) を
+  相方の値のまま残し、リンク遷移でも書かない — 別々の音源を繋いだペアは 2 つのプリアンプを保つ。メーターも Signal Type に応答する — 実機のチャンネル調整画面は
+  どちらのモードでもこのペアを 1 チャンネルとして測る ([channel-tuning.md](channel-tuning.md))。
 - **STEREO のペアが Insert FX に持てるのは Compander だけ**。ユーザーガイドのエフェクトリストで
   STEREO のチャンネルペアへのインサートを認めているチャンネルエフェクトは COMPANDER-H /
   COMPANDER-S のみ (ペアに挿すとステレオ動作になる) で、GUITAR AMP CLASSICS 4 種と PITCH FIX は

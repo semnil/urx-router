@@ -23,7 +23,7 @@ import { COMP_EQ_COMP_FIRST, COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS, COMP_ONE_KNOB
 import { channelDynamics } from "../core/control/translate";
 import { COMP_SCOPE, controlId } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
-import { bindChannelStrip, subObjectIo } from "./dyn-chan";
+import { bindChannelStrip, pairOwnNodes, subObjectIo } from "./dyn-chan";
 import { drawTransferCurve, kneeResponse, transferPlot } from "./dyn-plot";
 import { flagOffNote, oneKnobLevelRow } from "./dyn-screen";
 import type { DynCtx, DynPlotProcessor, DynValues } from "./dyn-screen";
@@ -100,6 +100,9 @@ function makeupOf(ctx: DynCtx): number {
 }
 
 export const COMP_DYN: DynPlotProcessor = {
+  // A linked pair's screen reads its primary's Signal Type and both members' meter
+  // addresses, so the pair is what this screen draws rather than the node it was opened on.
+  ownNodes: pairOwnNodes,
   key: "comp",
   loDb: LO_DB,
   tickStep: 6,

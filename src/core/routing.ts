@@ -171,19 +171,18 @@ export function pairPrimary(model: DeviceModel, nodeId: string): string | null {
 }
 
 /** True when `id` belongs to a MONO IN pair whose Signal Type is STEREO, whatever its
- *  PAN/BAL mode (the flag lives on the primary, so it is read there). The insert FX is
- *  the one piece of pair state that answers to Signal Type alone: measured in both PAN
- *  and BAL, a linked pair mirrors the selector either way and its two members point at
- *  one engine instance, and only a Signal Type transition clears it. Everything else
- *  the pair shares is BAL-only — see isBalLinkedPair. */
+ *  PAN/BAL mode (the flag lives on the primary, so it is read there). This is the gate for
+ *  everything the pair holds in common — its tuning, its mixer state and the one insert
+ *  effect its two members point at — and only a Signal Type transition clears it. The
+ *  PAN/BAL mode decides one thing on top of it, the pan: see isBalLinkedPair. */
 export function isStereoLinkedPair(model: DeviceModel, plan: Plan, id: string): boolean {
   const primary = pairPrimary(model, id);
   return primary !== null && plan.nodeParams[primary]?.stereoLink === true;
 }
 
 /** True when `id` belongs to a STEREO-linked MONO IN pair currently in BAL mode.
- *  Such a pair acts as one stereo channel, so its mixer parameters mirror across
- *  both channels; PAN mode instead keeps the two channels independent. */
+ *  A linked pair mirrors its mixer parameters in either mode; what BAL decides is the
+ *  PAN — one shared balance for the pair, where PAN mode leaves each channel its own. */
 export function isBalLinkedPair(model: DeviceModel, plan: Plan, id: string): boolean {
   const primary = pairPrimary(model, id);
   if (!primary || !isStereoLinkedPair(model, plan, id)) return false;
@@ -197,7 +196,8 @@ export function isBalLinkedPair(model: DeviceModel, plan: Plan, id: string): boo
  *  together — PAN hard-pans the odd channel left and the even one right, BAL and
  *  unlinking centre both. A channel's CH_PAN is the pan of its fixed send into
  *  STEREO, so the send loop covers it; the SD Rec assign is a `sendSwitch` and has
- *  no pan. Call it before `mirrorBalPair` so the mirror copies settled values.
+ *  no pan. The head amp is untouched here as it is in the mirror: linking leaves each member
+ *  the input stage it had. Call it before `mirrorLinkedPair` so the mirror copies settled values.
  *
  *  Returns the contest keys it wrote, for the caller's write witness. Every one of them
  *  can be written without MOVING — unlinking a BAL pair centres pans that are already
@@ -238,49 +238,79 @@ export function applyPairTransition(model: DeviceModel, plan: Plan, primary: str
   return written;
 }
 
-/** Mirror `id`'s mixer state onto its linked partner when the pair is in BAL mode,
- *  so an edit to either channel moves both. Copies the node params (except the
- *  pair-level Signal Type / PAN-BAL fields, which live on the primary alone) and
- *  each send's full mix params — level / PRE-POST / ON and the pan, which in BAL
- *  mode is the pair's one shared balance, so both channels read the same value.
- *  Returns false — a no-op — unless the pair is STEREO-linked in BAL mode. */
-export function mirrorBalPair(model: DeviceModel, plan: Plan, id: string): boolean {
-  if (!isBalLinkedPair(model, plan, id)) return false;
+/** The node params a linked pair does NOT share: the pair-level flags, which live on the
+ *  primary alone, and the head-amp values each member keeps its own of. */
+const PAIR_OWN_NODE_KEYS = ["stereoLink", "panBal", "gain", "clipSafe", "phase", "phantom", "hiZ"] as const;
+
+/** Whether an edit to `path` on one member of a linked pair reaches the other — the one
+ *  place that question is answered, so `mirrorLinkedPair`'s copy, the MIDI catalogue's
+ *  mirror identity and each funnel's write witness cannot disagree about it. Takes a
+ *  contest path as well as a bare key: a nested group (`gate.threshold`) is shared when
+ *  its group is. */
+export function pairSharesNodeKey(path: string): boolean {
+  const head = path.split(".")[0];
+  return !(PAIR_OWN_NODE_KEYS as readonly string[]).includes(head);
+}
+
+/** Mirror `id`'s mixer state onto its linked partner, so an edit to either channel moves
+ *  both. Copies the node params except `PAIR_OWN_NODE_KEYS`, and each send's mix params —
+ *  level / PRE-POST / ON always, and the pan in BAL only.
+ *
+ *  **The gate is Signal Type, not PAN/BAL**: a linked pair holds one set of values in either
+ *  mode. What the mode decides is the pan, each member's own outside BAL — which is why the
+ *  send copy drops that one key there.
+ *
+ *  Returns false — a no-op — unless the pair is STEREO-linked. */
+export function mirrorLinkedPair(model: DeviceModel, plan: Plan, id: string): boolean {
+  if (!isStereoLinkedPair(model, plan, id)) return false;
   const partner = partnerChannel(model, id);
   if (!partner) return false;
-  // Replace the partner's node params with the source's, but keep the partner's
-  // own pair-level fields (only the primary carries stereoLink / panBal). The copy
-  // is deep: a shallow spread would alias the nested groups (gate / comp / eqBands
-  // / ssmcs / osc / eqOneKnob) between the two channels, so an in-place edit to one
-  // would bleed into the other — and the alias would outlive the link, since it
-  // persists until a replace-style edit or a JSON round-trip breaks it.
+  const sharedPan = isBalLinkedPair(model, plan, id);
+  // Replace the partner's node params with the source's, but keep the keys the pair does not
+  // share: the pair-level fields (only the primary carries stereoLink / panBal) and the head
+  // amp (each member has its own input). The copy is deep: a shallow spread would alias the
+  // nested groups (gate / comp / eqBands / ssmcs / osc / eqOneKnob) between the two channels,
+  // so an in-place edit to one would bleed into the other — and the alias would outlive the
+  // link, since it persists until a replace-style edit or a JSON round-trip breaks it.
   // The insert FX travels with them, as it does on the unit: while the pair is linked a
   // selector write from either member mirrors to the other and both point at one engine
-  // instance, so a linked pair holds one insert effect between them (measured). It is
-  // carried here for a BAL pair and by mirrorLinkedInsertFx for a PAN one, to the same
-  // values — the unit mirrors it in both modes, this function only runs in BAL.
-  const src = plan.nodeParams[id] ?? {};
-  const { stereoLink, panBal } = plan.nodeParams[partner] ?? {};
-  plan.nodeParams[partner] = { ...structuredClone(src), stereoLink, panBal };
-  // Copy each send's mix params (level / PRE-POST / ON / pan) to the partner's send
-  // into the same destination — the BAL pan is shared across the pair. ConnParams
-  // are flat scalars, so the spread is a full copy here.
+  // instance, so a linked pair holds one insert effect between them. mirrorLinkedInsertFx
+  // carries the same three keys from the transition seat, and the two agree.
+  const src = structuredClone(plan.nodeParams[id] ?? {});
+  const own = plan.nodeParams[partner] ?? {};
+  // An absent key stays absent on the partner: one held as undefined would outlive the copy
+  // through the history differ and the JSON round-trip.
+  const kept = Object.fromEntries(
+    PAIR_OWN_NODE_KEYS.filter((k) => own[k] !== undefined).map((k) => [k, own[k]]),
+  ) as Partial<NodeParams>;
+  for (const key of PAIR_OWN_NODE_KEYS) delete src[key];
+  plan.nodeParams[partner] = { ...src, ...kept };
+  // Copy each send's mix params to the partner's send into the same destination. ConnParams
+  // are flat scalars, so the spread is a full copy. The PAN is dropped outside BAL: there it
+  // is the pair's one shared balance and belongs to both, while in PAN mode each member
+  // holds its own and the partner keeps what it has.
   for (const c of plan.connections) {
     if (c.kind !== "send" || c.from !== ref(id, "out")) continue;
     const pc = plan.connections.find((p) => p.kind === "send" && p.from === ref(partner, "out") && p.to === c.to);
     if (!pc) continue;
-    pc.params = { ...pc.params, ...c.params };
+    const from = c.params ?? {};
+    if (sharedPan) {
+      pc.params = { ...pc.params, ...from };
+    } else {
+      const { pan: _pan, ...rest } = from;
+      pc.params = { ...pc.params, ...rest };
+    }
   }
   return true;
 }
 
 /** Mirror `id`'s insert FX onto its linked partner, so the pair's one effect reads the
- *  same on both members. Gated on Signal Type alone (isStereoLinkedPair): the unit was
- *  measured mirroring the selector in PAN as well as BAL, where mirrorBalPair does not
- *  run — without this the plan would keep an effect on one member only and the next
- *  flush would write NONE over what the unit holds on the other. Called beside
- *  mirrorBalPair from every edit funnel, and in BAL the two write the same values.
- *  The engine values are deep-copied for the aliasing reason mirrorBalPair documents.
+ *  same on both members. Called beside mirrorLinkedPair from every edit funnel: the two
+ *  share a gate and write the same values, and this pass is what names the pair's three
+ *  insert-FX keys as the edit's own writes whatever the edit was — without it a device
+ *  read in flight takes back an effect the plan holds on both members, and the next flush
+ *  writes NONE over what the unit holds on the other one. The engine values are
+ *  deep-copied for the aliasing reason mirrorLinkedPair documents.
  *  Returns false — a no-op — unless the pair is STEREO-linked. */
 /** The pair state this mirror carries, and the whole of it — the caller that has to name
  *  what the mirror asserted reads the same list rather than keeping a second copy. */

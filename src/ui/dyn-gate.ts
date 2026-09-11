@@ -10,7 +10,7 @@ import { GATE_RANGE_OFF_DB } from "../core/control/vd";
 import { GR_FLOOR_DB } from "../core/meters";
 import { controlId, GATE_SCOPE } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
-import { bindChannelStrip, subObjectIo } from "./dyn-chan";
+import { bindChannelStrip, pairOwnNodes, subObjectIo } from "./dyn-chan";
 import { transferPlot } from "./dyn-plot";
 import { flagOffNote, HI_DB } from "./dyn-screen";
 import type { DynPlotProcessor } from "./dyn-screen";
@@ -37,6 +37,9 @@ const OUT_TICKS = [0, -24, -48, -72, -96, -128];
 const io = subObjectIo("gate");
 
 export const GATE_DYN: DynPlotProcessor = {
+  // A linked pair's screen reads its primary's Signal Type and both members' meter
+  // addresses, so the pair is what this screen draws rather than the node it was opened on.
+  ownNodes: pairOwnNodes,
   key: "gate",
   loDb: LO_DB,
   // The step every rack on every screen reads in. The FLOOR is still this processor's own

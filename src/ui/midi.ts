@@ -43,19 +43,53 @@ import {
   type MidiMapping,
 } from "../core/midi/mapping";
 import { midiProbe, startMidiTrace } from "./midi-probe";
-import { mirrorBalPair, mirrorLinkedInsertFx } from "../core/routing";
+import {
+  INSERT_FX_PAIR_KEYS,
+  isBalLinkedPair,
+  mirrorLinkedPair,
+  mirrorLinkedInsertFx,
+  pairSharesNodeKey,
+  partnerChannel,
+} from "../core/routing";
+import { connParamContestKey, nodeParamContestPath } from "../core/plan-history";
+import { sendConnection } from "../core/plan";
 import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
 import { errorCode, errorText, getLang, t } from "../i18n";
 
+/** The contest keys an applied control's write lands on, named for `node` — the member the
+ *  message names, or the partner a mirror copied the same write to. Empty for a control the
+ *  catalogue leaves unnamed (an insert-FX slot, whose pair keys the insert-FX mirror names in
+ *  full, and a node no pair mirror reaches) and for a send this plan does not carry. */
+function appliedKeys(plan: Plan, control: BoundControl, node: string): string[] {
+  const w = control.writes;
+  if (w === undefined) return [];
+  if (w.kind === "node") return [nodeParamContestPath(node, w.path)];
+  const c = sendConnection(plan, node, w.to);
+  return c ? [connParamContestKey(c.from, c.to, w.param)] : [];
+}
+
+/** Whether the pair mirror carries THIS control's value to the partner: everything but the
+ *  head amp, and — outside BAL — the pan, which each member keeps its own of. */
+function mirrorCarries(model: DeviceModel, plan: Plan, control: BoundControl): boolean {
+  const w = control.writes;
+  if (w === undefined) return false;
+  if (w.kind === "node") return pairSharesNodeKey(w.path);
+  return w.param !== "pan" || isBalLinkedPair(model, plan, control.node);
+}
+
 export interface MidiHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
   /** An incoming MIDI message edited the plan through `control` (`mirrored` =
-   *  the BAL-linked partner was updated too): dirty + live sync + repaint. */
-  onApplied: (control: BoundControl, mirrored: boolean) => void;
+   *  the linked partner was updated too): dirty + live sync + repaint. `keys` are the
+   *  contest paths the apply and its mirrors ASSERTED — including ones whose value did not
+   *  move, which is the whole reason the witness exists: a mirror writing the value the
+   *  partner already held leaves no diff, and a device read in flight then takes the
+   *  partner back and splits the pair. */
+  onApplied: (control: BoundControl, mirrored: boolean, keys: readonly string[]) => void;
   /** A localized refusal, or null when an incoming message may edit the plan
    *  (a device read mutating it across awaits, a file flow that can replace it). */
   blocked: () => string | null;
@@ -180,18 +214,29 @@ export class MidiControl {
       // Once per gated window — the engine decides that, so this is a plain status write.
       refused: (reason) => hooks.onStatus(reason),
       applied: (control) => {
-        // Same funnel as a console edit, and BOTH of its mirrors. The BAL one is a no-op in
-        // PAN mode, while an insert effect is shared by a linked pair in EITHER mode — one
-        // effect, one device slot — so a write mirrored only the first way splits the pair:
-        // the plan holds two answers and the next flush emits both, one per instance.
+        // Same funnel as a console edit, and BOTH of its mirrors. A linked pair holds one
+        // insert effect — one effect, one device slot — so a write that skipped that mirror
+        // splits the pair: the plan holds two answers and the next flush emits both, one per
+        // instance.
         const model = hooks.getModel();
         const plan = hooks.getPlan();
-        const balMirrored = mirrorBalPair(model, plan, control.node);
+        const pairMirrored = mirrorLinkedPair(model, plan, control.node);
         // The insert-FX half runs for every control, not only the new bypass: the effect's
         // own parameter mappings write the same shared values and were splitting the pair
         // the same way.
         const insFxMirrored = mirrorLinkedInsertFx(model, plan, control.node);
-        hooks.onApplied(control, balMirrored || insFxMirrored);
+        // What this apply asserted, the same rule the UI and CONSOLE funnels follow: the
+        // control's own key, plus the partner's copy of it where the mirror carries that key,
+        // plus the insert-FX mirror's three.
+        const partner = partnerChannel(model, control.node);
+        const keys = [
+          ...appliedKeys(plan, control, control.node),
+          ...(pairMirrored && partner && mirrorCarries(model, plan, control)
+            ? appliedKeys(plan, control, partner)
+            : []),
+        ];
+        if (insFxMirrored && partner) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
+        hooks.onApplied(control, pairMirrored || insFxMirrored, keys);
         this.scheduleFeedback();
       },
       send: (bytes) => {

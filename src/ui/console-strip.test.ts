@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 // The CONSOLE strip's own controls: the main fader, the head's rotary knobs, the INS
-// FX chip, and what a BAL-linked pair does to all three. The SENDS rack and the two
+// FX chip, and what a STEREO-linked pair does to all three. The SENDS rack and the two
 // popovers are in console-sends.test.ts; the meter carry-over across a rebuild is in
 // console.test.ts.
 //
@@ -14,7 +14,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
 import type { ConsoleMidiHooks } from "./console";
 import { sendConnection } from "../core/plan";
-import { PAN_BAL_BAL } from "../core/control/params";
+import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
+import { nodeParamContestPath } from "../core/plan-history";
 import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, insertFxSelected } from "../core/control/params";
 import { insertFxControl, planToCommands } from "../core/control/translate";
 import { getModel } from "../models";
@@ -752,9 +753,9 @@ describe("the INS FX chip", () => {
   });
 });
 
-describe("a BAL-linked pair", () => {
-  const linkPair = (): void => {
-    Object.assign((h.plan.nodeParams["ch1"] ??= {}), { stereoLink: true, panBal: PAN_BAL_BAL });
+describe("a STEREO-linked pair", () => {
+  const linkPair = (mode: number = PAN_BAL_BAL): void => {
+    Object.assign((h.plan.nodeParams["ch1"] ??= {}), { stereoLink: true, panBal: mode });
     h.view.refresh();
   };
 
@@ -775,13 +776,66 @@ describe("a BAL-linked pair", () => {
     expect(partner.parentElement!.querySelector<HTMLElement>(".cap")!.style.getPropertyValue("--pos")).toBeTruthy();
   });
 
-  // A knob is different: the partner's whole head can change, so the view rebuilds
-  // once after the gesture instead of patching one attribute.
-  it("rebuilds after a knob edit so the partner's head catches up", () => {
+  // A knob is different: where the partner follows it, the partner's whole head can change,
+  // so the view rebuilds once after the gesture instead of patching one attribute. The A.GAIN
+  // knob is the head amp, which the pair does not share in either mode, so it is the negative
+  // condition rather than the example it used to be.
+  it.each([
+    ["BAL", PAN_BAL_BAL],
+    ["PAN", PAN_BAL_PAN],
+  ])("does not rebuild after an A.GAIN edit, which the pair does not share, %s", (_label, mode) => {
+    h = consoleHost();
+    linkPair(mode);
+    const before = h.strip("ch2").root;
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='A.GAIN']")!, "ArrowRight");
+    expect(h.strip("ch2").root).toBe(before);
+  });
+
+  // PAN mirrors as well: the unit holds one fader for the pair in either mode, so the
+  // partner strip has to keep up there too. The CAP is what says the strip was repainted —
+  // the plan's value moves either way (`mirrorLinkedPair` is Signal Type's), and a case
+  // reading only that passes with the partner's fader left where it was drawn.
+  it("mirrors the main fader onto the partner in PAN as well", () => {
+    h = consoleHost();
+    linkPair(PAN_BAL_PAN);
+    const partner = h.strip("ch2").fader!;
+    const cap = partner.parentElement!.querySelector<HTMLElement>(".cap")!;
+    const before = main("ch2");
+    const drawn = cap.style.getPropertyValue("--pos");
+    key(h.strip("ch1").fader!, "ArrowDown");
+    expect(main("ch2")).not.toBe(before);
+    expect(main("ch2")).toBe(main("ch1"));
+    expect(cap.style.getPropertyValue("--pos")).not.toBe(drawn);
+    expect(h.strip("ch2").fader).toBe(partner); // in place, as in BAL
+  });
+
+  // The funnel names what it WROTE, and the head amp is not among it: claiming the partner's
+  // gain would take the device's answer away for a value the mirror left alone, which a read
+  // in flight then drops (src/main.device.test.ts carries that end of it).
+  it("does not name the partner's head amp as written", () => {
+    h = consoleHost();
+    linkPair();
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='A.GAIN']")!, "ArrowRight");
+    const named = h.changeKeys().flat();
+    expect(named, "the edited member's own gain is named").toContain(nodeParamContestPath("ch1", "gain"));
+    expect(named, "the partner's is not").not.toContain(nodeParamContestPath("ch2", "gain"));
+  });
+
+  // The PAN knob is the exception: outside BAL the partner's pan did not move, so a rebuild
+  // would only take down what is open on the strips (the SEND PAN popover) for nothing.
+  it("does not rebuild after a PAN knob edit outside BAL, where the partner did not move", () => {
+    h = consoleHost();
+    linkPair(PAN_BAL_PAN);
+    const before = h.strip("ch2").root;
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='PAN']")!, "ArrowRight");
+    expect(h.strip("ch2").root).toBe(before);
+  });
+
+  it("rebuilds after a BAL knob edit, where the pair's one balance did move", () => {
     h = consoleHost();
     linkPair();
     const before = h.strip("ch2").root;
-    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-gain .con-knob")!, "ArrowRight");
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='BAL']")!, "ArrowRight");
     expect(h.strip("ch2").root).not.toBe(before);
   });
 

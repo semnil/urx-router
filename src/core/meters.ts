@@ -33,7 +33,8 @@ export interface MeterTap {
 }
 
 /** A tap is stereo when it carries a second (R) meter address. Single source of the
- *  "meter this point as L/R" predicate — the console builds one bar column per channel. */
+ *  "meter this point as L/R" predicate: the console builds one bar column per side, and a
+ *  tuning screen's lane one bar. */
 export const isStereoTap = (tap: MeterTap | null | undefined): boolean => tap?.r !== undefined;
 
 /**

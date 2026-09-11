@@ -661,20 +661,30 @@ The constraint core (`core/routing.ts`):
   the partner (and removed together with it) so a channel pair always shares one input source (UI: `graph.ts`).
   A ducker key source is the `key` kind, not `source`, so it never enters this mirroring — guaranteed by the
   kind rather than by the incidental fact that duckers are not in `channelPairs`.
-- `isBalLinkedPair(model, plan, id)` / `mirrorBalPair(model, plan, id)` — when a STEREO-linked MONO IN pair is in
-  BAL mode, an edit to one channel is mirrored onto the partner (node params in general plus each send's
-  LEVEL / PRE-POST / ON / pan — in BAL the pan is the pair's one shared balance; the Signal Type / PAN-BAL flags
-  stay on the primary). Called from each edit funnel: `main.ts` `onUpdateParams` / `onUpdateNodeParams` for the
-  graph / inspector, and `console.ts` `commit` for CONSOLE — both views share the one function so they behave
-  identically. No mirroring in PAN mode. See [device-model.md](device-model.md).
-- **The insert FX is the one thing a link does not carry, and it answers to Signal Type alone.** Measured on the
-  unit: the Signal Type transition itself — in **either** direction — clears the selector and its ON on **both**
+- `isStereoLinkedPair(model, plan, id)` / `mirrorLinkedPair(model, plan, id)` — when a MONO IN pair's Signal Type
+  is STEREO, an edit to one channel is mirrored onto the partner (the node params except the head amp — the
+  gain, Clip Safe, the polarity invert, +48V and Hi-Z are each member's own — plus each send's LEVEL /
+  PRE-POST / ON; the Signal Type / PAN-BAL flags stay on the primary). `pairSharesNodeKey` answers which is which, and the
+  mirror, the MIDI catalogue's mirror identity and each funnel's write witness all read it, so none of the
+  three can claim a key the copy left with the partner. **The gate is Signal Type, not the
+  PAN/BAL mode**, which is what the unit does — the readings are in [device-model.md](device-model.md). What the
+  mode decides is the one parameter on top: `isBalLinkedPair` gates the PAN, which is the pair's one shared
+  balance in BAL and the member's own in PAN, and it is the same question the BALANCE label asks. Called from
+  each edit funnel: `main.ts` `onUpdateParams` / `onUpdateNodeParams` for the graph / inspector, and
+  `console.ts` `commit` for CONSOLE — both views share the one function so they behave identically.
+- **The channel tuning screens meter such a pair as one channel**, on Signal Type alone rather than on PAN/BAL:
+  every level lane carries both members' addresses and the reduction lane stays one bar. The rule, the readings
+  behind it and the one screen it does not reach (the DUCKER's KEY lane) are in
+  [channel-tuning.md](channel-tuning.md), "A MONO IN pair whose Signal Type is STEREO".
+- **A Signal Type transition is the one thing that clears the pair's insert FX, and nothing else does.** Measured
+  on the unit: the transition itself — in **either** direction — clears the selector and its ON on **both**
   members, whichever member was holding one, and the engine array keeps its values (only a selector write
   re-seeds it). While the pair *is* linked the selector mirrors both ways and both members point at one engine
   instance, so a linked pair holds one insert effect between them rather than one each. That mirror does **not**
   depend on PAN/BAL: it was measured in both modes, and a PAN⇄BAL toggle on its own never clears the effect.
-  So the insert FX is the one piece of pair state gated on `stereoLink` rather than on `isBalLinkedPair` —
-  a STEREO-linked pair in PAN mode is reachable, and there the unit mirrors while the BAL-only mirror does not.
+  It therefore takes a mirror pass of its own (`mirrorLinkedInsertFx`) beside the node mirror: the two share
+  the `stereoLink` gate and write the same values, and the separate pass is what names the three pair keys as
+  the edit's own writes whatever that edit touched.
   `applyPairTransition` clears `insertFx` / `insertFxOn` / `insertFxParams` on both members at the transition,
   the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
   linked pair as a single holder — the app follows what the device does instead of modelling a second copy of
@@ -1178,7 +1188,7 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   CONSOLE edit through the same snapshot diff. CONSOLE re-renders only the edited strip itself, avoiding a
   full rebuild mid-drag; returning to GRAPH reflects the edits via `graph.repaint*`.
 - **A re-render keeps what the DOM was carrying** — a full render (`render()`) replaces every strip element,
-  and some edits still take it (the power LED's per-strip dim, a BAL-linked partner) as does every device-follow
+  and some edits still take it (the power LED's per-strip dim, a linked partner) as does every device-follow
   read-back. The transient state those elements held is carried across the rebuild rather than lost with them:
   each strip's meter ballistics move onto the fresh lanes when it still meters the same tap (`carryMeterState`,
   shared with `refreshStrip`), and keyboard focus is handed back to the same control (`markFocus` /
@@ -1545,8 +1555,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   panel itself is one, and a desk is a second physical surface), a live flush's converge / refetch await
   (it recurs per flush of a 1-knob drag, and an edit made inside one now survives it, since the read merges
   rather than assigns), and MIDI learn (it binds a control, it does not edit the plan).
-- **Applying edits** — an incoming edit runs the same funnel as a console edit: BAL pair mirror
-  (`mirrorBalPair`) → `markChanged` (dirty + Live sync) → the ~20 Hz reflect shared with device follow
+- **Applying edits** — an incoming edit runs the same funnel as a console edit: the pair mirror
+  (`mirrorLinkedPair`) → `markChanged` (dirty + Live sync) → the ~20 Hz reflect shared with device follow
   (`requestReflect`) repaints the touched strips / nodes.
 - **Persistence** — one `localStorage` key (`urx-midi`) holds the port choice (hardware-specific, shared
   across models) and the mapping list per model (control ids depend on the model's node set). Saved ports are

@@ -15,7 +15,49 @@ import type { SettingsRowOptions } from "./dom";
 import { grAddr, tapFor } from "../core/meters";
 import type { GrKind, MeterTap } from "../core/meters";
 import type { NodeParams } from "../core/plan";
+import { isStereoLinkedPair, pairPrimary, partnerChannel } from "../core/routing";
 import type { DynBinding, DynCtx, DynLane } from "./dyn-screen";
+
+/** The two members of the MONO IN pair this node belongs to when its Signal Type is STEREO,
+ *  primary first, or null for every other node. One read, so the predicate and the members
+ *  cannot come from different answers. */
+function linkedPair(ctx: DynCtx): readonly [string, string] | null {
+  if (!isStereoLinkedPair(ctx.model, ctx.plan, ctx.nodeId)) return null;
+  const primary = pairPrimary(ctx.model, ctx.nodeId)!;
+  return [primary, partnerChannel(ctx.model, primary)!];
+}
+
+/** The nodes a channel tuning screen reads beyond the one it was opened on. A linked pair's
+ *  screen reads its primary's Signal Type and both members' meter addresses, which is what
+ *  `DynProcessor.ownNodes` exists to declare. */
+export const pairOwnNodes = (ctx: DynCtx): string[] => [ctx.nodeId, ...(linkedPair(ctx) ?? [])];
+
+/**
+ * The tap a channel tuning screen's level lane reads, widened to the pair where the unit
+ * meters one.
+ *
+ * On a linked pair the unit draws the input and the output as two bars each, so the lane
+ * carries the primary member's address as L and the partner's as R, in that order whichever
+ * member the screen was opened on. PAN/BAL does not change it. The rack folds the two with
+ * `Math.max` for the readout and for the threshold cap that rides the input lane, which is
+ * the coordinate the pair's own detector works in.
+ *
+ * Two of the rack's lanes stay at ONE bar and do not come through here. The reduction lane,
+ * because the pair's gate and its compressor each run one detector for both members and the
+ * two members' reduction meters carry one figure. And the SSMCS side-chain lane, whose two
+ * addresses hold each member's own filter output and whose one bar on the unit is the member
+ * the screen was opened on — so the lane reads that member too.
+ *
+ * A node outside a MONO IN pair is left as it resolves.
+ */
+export function pairTap(ctx: DynCtx, tapKey: string): MeterTap | null {
+  const own = tapFor(ctx.nodeId, tapKey, ctx.model.id) ?? null;
+  const pair = own && linkedPair(ctx);
+  if (!pair) return own;
+  const l = tapFor(pair[0], tapKey, ctx.model.id)!;
+  const r = tapFor(pair[1], tapKey, ctx.model.id)!;
+  return { key: l.key, label: l.label, l: l.l, r: r.l };
+}
 
 /**
  * A level lane, named by the tap it reads.
@@ -108,15 +150,11 @@ export function bindChannelStrip(
   // coordinate, which is what earns the rack its one gesture.
   const inLane = levelLane(
     "in",
-    tapFor(ctx.nodeId, o.inTapKey, ctx.model.id) ?? null,
+    pairTap(ctx, o.inTapKey),
     o.tapCaptions ? undefined : ctx.m.dynTuning.laneIn,
     o.cap ? { cap: o.cap } : undefined,
   );
-  const outLane = levelLane(
-    "out",
-    tapFor(ctx.nodeId, o.outTapKey, ctx.model.id) ?? null,
-    o.tapCaptions ? undefined : ctx.m.dynTuning.laneOut,
-  );
+  const outLane = levelLane("out", pairTap(ctx, o.outTapKey), o.tapCaptions ? undefined : ctx.m.dynTuning.laneOut);
   const grLane = (extra: Partial<DynLane>): DynLane => ({
     key: "gr",
     label: text.tapGr,

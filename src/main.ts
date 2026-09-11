@@ -7,9 +7,10 @@ import { parseRef } from "./models/types";
 import {
   applyPairTransition,
   INSERT_FX_PAIR_KEYS,
-  mirrorBalPair,
+  mirrorLinkedPair,
   mirrorLinkedInsertFx,
   mixSendLocks,
+  pairSharesNodeKey,
   partnerChannel,
 } from "./core/routing";
 import {
@@ -1490,10 +1491,10 @@ const inspectorActions = {
       return;
     }
     conn.params = { ...conn.params, ...patch };
-    // A STEREO-linked pair in BAL mode moves as one: copy the same send change to
-    // the partner channel, pan included — in BAL mode the pan is the pair's one
-    // shared balance (see mirrorBalPair).
-    const mirrored = mirrorBalPair(getModel(modelId), plan, parseRef(from).nodeId);
+    // A STEREO-linked pair moves as one: copy the same send change to the partner
+    // channel. The pan goes with it in BAL, where it is the pair's one shared balance,
+    // and stays the member's own in PAN (see mirrorLinkedPair).
+    const mirrored = mirrorLinkedPair(getModel(modelId), plan, parseRef(from).nodeId);
     markChanged();
     // A PRE/POST change flips the wire's pre-fader marker; a send ON/OFF or an OSC
     // L/R assign change flips the wire's (and its jacks') off-state dimming. Repaint
@@ -1513,7 +1514,7 @@ const inspectorActions = {
     const partner = partnerChannel(getModel(modelId), id);
     plan.nodeParams[id] = { ...prev, ...patch };
     // Signal Type / PAN-BAL move the pair's pans — and PAN-BAL itself on a link —
-    // the way the unit does. Applied before the BAL mirror below, so the mirror
+    // the way the unit does. Applied before the pair mirror below, so the mirror
     // copies the settled values onto the partner. It names its own writes: every one
     // of them can land on the value already there, so nothing downstream can recover
     // them from the plan's diff.
@@ -1521,12 +1522,11 @@ const inspectorActions = {
       patch.stereoLink !== undefined || patch.panBal !== undefined
         ? applyPairTransition(getModel(modelId), plan, id, patch)
         : [];
-    // A STEREO-linked pair in BAL mode moves as one: copy this channel's params to
-    // the partner (the pair-level Signal Type / PAN-BAL fields stay on the primary).
-    const mirrored = mirrorBalPair(getModel(modelId), plan, id);
-    // The insert FX mirrors on Signal Type alone, PAN mode included (measured), so it
-    // takes a pass of its own beside the BAL-gated mirror above. In BAL both run and
-    // write the same values.
+    // A STEREO-linked pair moves as one: copy this channel's params to the partner
+    // (the pair-level Signal Type / PAN-BAL fields stay on the primary).
+    const mirrored = mirrorLinkedPair(getModel(modelId), plan, id);
+    // The insert FX takes a pass of its own beside it, which is what names the pair's
+    // three insert-FX keys whatever this edit was. Both write the same values.
     const insFxMirrored = mirrorLinkedInsertFx(getModel(modelId), plan, id);
     // The patch's own keys, not only the ones whose value moved: this funnel asserts
     // every member it carries, and a device read in flight must not take back one that
@@ -1544,14 +1544,17 @@ const inspectorActions = {
     const keys = [...names.map((name) => nodeParamContestPath(id, name)), ...transitionKeys];
     // A mirror asserts the PARTNER's keys the same way, and it can assert one that already
     // holds the value it writes — the insert-FX mirror re-writes a bypass that was already
-    // on. Each names only what IT wrote, and for the BAL mirror that is THIS EDIT's keys,
-    // not the whole record it copies: the other keys it carries over were already equal on
-    // both sides, so copying them writes nothing, while claiming them takes the device's
-    // answer away from the partner alone. Measured before the narrowing: a read that moved
-    // both members' HPF, with an unrelated Phase edit inside it, left CH 1 on the device's
-    // ON and CH 2 on the plan's OFF — one gesture splitting a pair that moves as one.
+    // on. Each names only what IT wrote, and for the pair mirror that is THIS EDIT's keys
+    // MINUS the ones the pair does not share, not the whole record it copies: the other keys
+    // it carries over were already equal on both sides, so copying them writes nothing, while
+    // claiming them takes the device's answer away from the partner alone. Measured before
+    // the narrowing: a read that moved both members' HPF, with an unrelated Phase edit inside
+    // it, left CH 1 on the device's ON and CH 2 on the plan's OFF — one gesture splitting a
+    // pair that moves as one. A key the mirror LEAVES with the partner is the same defect
+    // pointed the other way: the head amp is the member's own, so claiming it takes the
+    // device's answer for a value this edit never sent.
     const mirroredKeys = new Set<string>();
-    if (mirrored) for (const name of names) mirroredKeys.add(name);
+    if (mirrored) for (const name of names) if (pairSharesNodeKey(name)) mirroredKeys.add(name);
     if (insFxMirrored) for (const key of INSERT_FX_PAIR_KEYS) mirroredKeys.add(key);
     if (partner) for (const name of mirroredKeys) keys.push(nodeParamContestPath(partner, name));
     markChanged("ui", keys);
@@ -3541,8 +3544,8 @@ if (!DEMO) {
   midi = new MidiControl({
     getModel: () => getModel(modelId),
     getPlan: () => plan,
-    onApplied: (control, mirrored) => {
-      markChanged("midi");
+    onApplied: (control, mirrored, keys) => {
+      markChanged("midi", keys);
       followDirtyNodes.add(control.node);
       const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
       if (partner) followDirtyNodes.add(partner);
