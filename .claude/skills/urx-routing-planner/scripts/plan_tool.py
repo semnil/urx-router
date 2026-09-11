@@ -520,12 +520,17 @@ def fx_admitted(spec, value):
 
     Rounded first, by the same rule every control there uses, so a value halfway between two
     settings resolves the same way whichever control holds it. That rule is JavaScript's
-    `Math.round`, which is floor(x + 0.5) at every x — a HALF goes to +infinity, so -2.5 is
-    -2 and not -3. Written with a sign branch it rounds away from zero on the negative side,
-    which the three keys with a negative rawMin (the two delay feedbacks and Rev-R3's) then
-    disagree with the app about at every half-integer.
+    `Math.round`: the nearest integer, with a TIE going to +infinity, so -2.5 is -2 and not
+    -3. Written with a sign branch it rounds away from zero on the negative side, which the
+    three keys with a negative rawMin (the two delay feedbacks and Rev-R3's) then disagree
+    with the app about at every half-integer.
+
+    Spelled as the tie rather than as floor(x + 0.5), which is NOT the same function: adding
+    0.5 rounds a second time, and at the largest double below a half that carry takes the sum
+    to exactly 1.0 — so 0.49999999999999994 goes to 1 while `Math.round` gives 0.
     """
-    v = int(math.floor(value + 0.5))
+    floor = math.floor(value)
+    v = floor if value - floor < 0.5 else floor + 1
     control = spec.get("control")
     if control == "toggle":
         return 0 if v <= 0 else 1

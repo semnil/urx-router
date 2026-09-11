@@ -915,7 +915,26 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     const probes = (spec) => {
       const lo = spec.rawMin ?? 0;
       const hi = spec.rawMax ?? 0;
-      return [lo - 1, lo - 0.5, lo, lo + 0.5, lo + 1.5, -0.5, -1.5, -2.5, 0.5, 1.5, 2.5, hi - 0.5, hi, hi + 1];
+      // 0.49999999999999994 is the largest double below a half, and the one value that
+      // separates `Math.round` from floor(x + 0.5): the addition carries to exactly 1.0, so
+      // the second spelling answers 1 where the app answers 0.
+      return [
+        lo - 1,
+        lo - 0.5,
+        lo,
+        lo + 0.5,
+        lo + 1.5,
+        -0.5,
+        -1.5,
+        -2.5,
+        0.49999999999999994,
+        0.5,
+        1.5,
+        2.5,
+        hi - 0.5,
+        hi,
+        hi + 1,
+      ];
     };
     let bounded = 0;
     for (const [key, spec] of Object.entries(FX.params)) {
