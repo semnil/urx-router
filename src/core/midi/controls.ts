@@ -232,6 +232,17 @@ export interface ControlDesc {
    * PAN mode and the pair's one shared balance in BAL.
    */
   mirrorId?: string;
+  /**
+   * The node-param key this control writes, for a control that writes one DIRECTLY: `gain`,
+   * `phantom`, `hpf`. Absent for everything else — a send connection's params, and a field
+   * inside a nested group (`gate` / `comp` / `eqBands[i]`), which the edit funnels leave to
+   * the plan's own diff rather than naming.
+   *
+   * It is what separates the channel's own A.GAIN from the `gain` INSIDE a COMP or an EQ
+   * band: those carry the same `param` token under a scope, and a caller asking the token
+   * alone answers the same for all three. Both readers of the pair rules ask this instead.
+   */
+  planKey?: string;
 }
 
 /** A control bound to a concrete plan: normalized read/write access. */
@@ -466,6 +477,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     id: controlId(id, param),
     node: id,
     param,
+    planKey: param,
     kind: "toggle",
     get: () => (locked?.() ? 0 : (plan.nodeParams[id]?.[param] ?? def) ? 1 : 0),
     set: (v) => {
@@ -484,6 +496,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     id: controlId(id, param),
     node: id,
     param,
+    planKey: param,
     kind: "continuous",
     get: () => codec.get(plan.nodeParams[id]?.[param] ?? fallback),
     set: (v) => {
@@ -1120,12 +1133,14 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   // A linked pair is one value for every control but its head amp, which each member keeps
   // its own of, and the PAN, which PAN mode keeps per member: everything else — node params,
   // faders, ONs, send levels — moves together in either mode. So the identity is stamped on
-  // what the mirror copies and on nothing else.
+  // what the mirror copies and on nothing else. The head-amp question is asked of the plan KEY
+  // a control writes, not of its param token: a COMP's or an EQ band's `gain` is the same
+  // token under a scope, and the mirror carries those.
   const primary = pairPrimary(model, id);
   if (primary !== null && primary !== id && isStereoLinkedPair(model, plan, id)) {
     const sharedPan = isBalLinkedPair(model, plan, id);
     for (const c of out) {
-      if (!pairSharesNodeKey(c.param)) continue;
+      if (c.planKey !== undefined && !pairSharesNodeKey(c.planKey)) continue;
       if (!sharedPan && c.param === "pan") continue;
       c.mirrorId = controlId(primary, c.param, c.scope);
     }

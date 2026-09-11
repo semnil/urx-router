@@ -1425,6 +1425,22 @@ describe("what a mirrored pair covers", () => {
     expect(plan.nodeParams.ch2?.gain, "the partner's own binding decided nothing").toBe(70);
   });
 
+  // The head-amp exception is asked of the plan KEY a control writes, not of its param
+  // token: a COMP's makeup and an EQ band's gain carry the same `gain` token under a scope,
+  // and the mirror copies both of those with the rest of the node params. Read from the token
+  // alone, every one of them lost its mirror identity.
+  it("keeps the mirror identity on a scoped gain, and drops it only on the channel's own", () => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_BAL };
+    const mirrorOf = (cid: string): string | undefined => bindControl(model, plan, cid)?.mirrorId;
+    expect(mirrorOf(controlId("ch2", "gain")), "the channel's own A.GAIN").toBeUndefined();
+    expect(mirrorOf(controlId("ch2", "gain", COMP_SCOPE)), "the COMP's makeup gain").toBe(
+      controlId("ch1", "gain", COMP_SCOPE),
+    );
+    expect(mirrorOf(controlId("ch2", "gain", eqBandScope(1))), "an EQ band's gain").toBe(
+      controlId("ch1", "gain", eqBandScope(1)),
+    );
+  });
+
   it("BAL: the pan is the pair's one balance, so both members read it", () => {
     const { ch1, ch2 } = pressPan(PAN_BAL_BAL);
     expect(ch1).toBe(63);

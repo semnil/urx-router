@@ -3543,8 +3543,8 @@ if (!DEMO) {
   midi = new MidiControl({
     getModel: () => getModel(modelId),
     getPlan: () => plan,
-    onApplied: (control, mirrored) => {
-      markChanged("midi");
+    onApplied: (control, mirrored, keys) => {
+      markChanged("midi", keys);
       followDirtyNodes.add(control.node);
       const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
       if (partner) followDirtyNodes.add(partner);

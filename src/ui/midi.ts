@@ -43,7 +43,14 @@ import {
   type MidiMapping,
 } from "../core/midi/mapping";
 import { midiProbe, startMidiTrace } from "./midi-probe";
-import { mirrorLinkedPair, mirrorLinkedInsertFx } from "../core/routing";
+import {
+  INSERT_FX_PAIR_KEYS,
+  mirrorLinkedPair,
+  mirrorLinkedInsertFx,
+  pairSharesNodeKey,
+  partnerChannel,
+} from "../core/routing";
+import { nodeParamContestPath } from "../core/plan-history";
 import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
@@ -54,8 +61,12 @@ export interface MidiHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
   /** An incoming MIDI message edited the plan through `control` (`mirrored` =
-   *  the linked partner was updated too): dirty + live sync + repaint. */
-  onApplied: (control: BoundControl, mirrored: boolean) => void;
+   *  the linked partner was updated too): dirty + live sync + repaint. `keys` are the
+   *  contest paths the apply and its mirrors ASSERTED — including ones whose value did not
+   *  move, which is the whole reason the witness exists: a mirror writing the value the
+   *  partner already held leaves no diff, and a device read in flight then takes the
+   *  partner back and splits the pair. */
+  onApplied: (control: BoundControl, mirrored: boolean, keys: readonly string[]) => void;
   /** A localized refusal, or null when an incoming message may edit the plan
    *  (a device read mutating it across awaits, a file flow that can replace it). */
   blocked: () => string | null;
@@ -191,7 +202,20 @@ export class MidiControl {
         // own parameter mappings write the same shared values and were splitting the pair
         // the same way.
         const insFxMirrored = mirrorLinkedInsertFx(model, plan, control.node);
-        hooks.onApplied(control, pairMirrored || insFxMirrored);
+        // What this apply asserted, the same rule the UI and CONSOLE funnels follow: the
+        // control's own key, plus the partner's copy of it where the pair shares that key,
+        // plus the insert-FX mirror's three. A control writing a nested group or a wire's
+        // params names nothing and leaves those to the plan's diff, which is what the other
+        // funnels do with them.
+        const partner = partnerChannel(model, control.node);
+        const keys: string[] = [];
+        if (control.planKey !== undefined) {
+          keys.push(nodeParamContestPath(control.node, control.planKey));
+          if (pairMirrored && partner && pairSharesNodeKey(control.planKey))
+            keys.push(nodeParamContestPath(partner, control.planKey));
+        }
+        if (insFxMirrored && partner) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
+        hooks.onApplied(control, pairMirrored || insFxMirrored, keys);
         this.scheduleFeedback();
       },
       send: (bytes) => {
