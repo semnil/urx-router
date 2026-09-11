@@ -578,7 +578,103 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       );
       expect(bare.app, `the app, bare ${slot} against ${q}`).toBe(true);
       expect(bare.tool, `the tool, bare ${slot} against ${q}\n${bare.stdout}`).toBe(true);
+
+      // …and the rest of the decision table, which is about what the write LEAVES OUT or
+      // NORMALISES. Each row is a document whose two members store different things and
+      // reach the unit as one state, so a checker reproducing only "which slots exist"
+      // refuses a plan the app loads.
+      const rows = [
+        // Past the same end of the range: both arrive as that end.
+        [`below ${q} min`, { [q]: lo - 1 }, { [q]: lo }, true],
+        [`above ${q} max`, { [q]: hi }, { [q]: hi + 1 }, true],
+        // A boolean is not a finite number, so the write sends neither.
+        [`boolean ${q} against boolean`, { [q]: true }, { [q]: false }, true],
+        [`boolean ${q} against omitted`, { [q]: true }, {}, true],
+        // The control for the three above: inside the range, two numbers still differ.
+        [`${q} inside the range`, { [q]: lo }, { [q]: hi }, false],
+      ];
+      for (const [name, p1, p2, ok] of rows) {
+        const got = ask(
+          { stereoLink: true, insertFx: selector, insertFxParams: p1 },
+          { insertFx: selector, insertFxParams: p2 },
+        );
+        expect(got.app, `the app, ${name}`).toBe(ok);
+        expect(got.tool, `the tool, ${name}\n${got.stdout}`).toBe(ok);
+      }
     }
+  });
+
+  // The one family whose write set MOVES with its own values: Pitch Fix stops sending the
+  // Scale and the twelve-note mask while MIDI Control is on, because switching it on is what
+  // clears them on the unit. So the same two documents are a contradiction with the control
+  // off and one state with it on — which a checker holding a static slot list cannot tell
+  // apart, and it refuses the second.
+  it("follows Pitch Fix's MIDI Control, which moves what a write sends", () => {
+    const SPACE_PITCH = SPACE["512"];
+    expect(SPACE_PITCH?.driven, "the generated data carries the gate and what it drives").toBeDefined();
+    const { gate, slots: drivenSlots } = SPACE_PITCH.driven;
+    // The Scale and one note, which is what the unit takes over.
+    const scale = drivenSlots[0];
+    const note = drivenSlots[drivenSlots.length - 1];
+
+    const ask = (ch1, ch2) => {
+      const plan = {
+        format: "urx-router-plan",
+        version: 2,
+        modelId: "URX44V",
+        connections: [],
+        nodeParams: { ch1, ch2 },
+      };
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const loaded = deserialize(JSON.stringify(plan));
+      expect(loaded).not.toBeNull();
+      return {
+        tool: r.status === 0,
+        app: insertFxPairProblems(getModel("URX44V"), loaded).length === 0,
+        stdout: r.stdout,
+      };
+    };
+    const pitch = (on, extra) => ({ insertFx: 512, insertFxParams: { [`pitch:${gate}`]: on, ...extra } });
+
+    for (const [what, slot] of [
+      ["the Scale", scale],
+      ["a note", note],
+    ]) {
+      // Control OFF: the write sends it, so two values are two states.
+      const off = ask({ stereoLink: true, ...pitch(0, { [`pitch:${slot}`]: 0 }) }, pitch(0, { [`pitch:${slot}`]: 1 }));
+      expect(off.app, `the app, ${what} with MIDI Control off`).toBe(false);
+      expect(off.tool, `the tool, ${what} with MIDI Control off\n${off.stdout}`).toBe(false);
+
+      // Control ON: the unit owns it, the write leaves it out, and the two are one state.
+      const on = ask({ stereoLink: true, ...pitch(1, { [`pitch:${slot}`]: 0 }) }, pitch(1, { [`pitch:${slot}`]: 1 }));
+      expect(on.app, `the app, ${what} with MIDI Control on`).toBe(true);
+      expect(on.tool, `the tool, ${what} with MIDI Control on\n${on.stdout}`).toBe(true);
+    }
+
+    // The gate is read for TRUTH, not for the number 1: the app takes whatever the slot
+    // holds and asks `on ?`, so a boolean gates exactly as a 1 does. Read as `== 1` the
+    // Scale comes back into the write and the pair reads as a contradiction again.
+    const truthy = ask(
+      { stereoLink: true, ...pitch(true, { [`pitch:${scale}`]: 0 }) },
+      pitch(true, { [`pitch:${scale}`]: 1 }),
+    );
+    expect(truthy.app, "the app, a boolean MIDI Control").toBe(true);
+    expect(truthy.tool, `the tool, a boolean MIDI Control\n${truthy.stdout}`).toBe(true);
+
+    // …and a truthy value that is not 1, which is what separates "read for truth" from
+    // "read as 1" in a language where `True == 1`. The gate's own slot is bounded to 1 on
+    // the way out, so both members still SEND the same gate — what moves is whether the
+    // Scale is left out.
+    const two = ask({ stereoLink: true, ...pitch(2, { [`pitch:${scale}`]: 0 }) }, pitch(2, { [`pitch:${scale}`]: 1 }));
+    expect(two.app, "the app, a MIDI Control past its own range").toBe(true);
+    expect(two.tool, `the tool, a MIDI Control past its own range\n${two.stdout}`).toBe(true);
+
+    // The gate itself is still sent, so disagreeing about IT is a contradiction either way.
+    const gates = ask({ stereoLink: true, ...pitch(1, {}) }, pitch(0, {}));
+    expect(gates.app, "the app, the gate itself differing").toBe(false);
+    expect(gates.tool, `the tool, the gate itself differing\n${gates.stdout}`).toBe(false);
   });
 
   it.each(PAIR_CORPUS)("agrees with the app about %s", (_name, ch1, ch2, ok) => {

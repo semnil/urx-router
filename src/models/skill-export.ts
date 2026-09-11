@@ -10,7 +10,12 @@ import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
 import { INSERT_FX_OPTIONS } from "../core/control/params";
-import { insertFxFamilyOf, insertFxWritableSlots } from "../core/control/insert-fx-effect";
+import {
+  insertFxDeviceDriven,
+  insertFxDriverSlots,
+  insertFxFamilyOf,
+  insertFxWritableSlots,
+} from "../core/control/insert-fx-effect";
 
 // Compact, machine-readable shape consumed by scripts/plan_tool.py. A rule is a
 // [from, to, kind, fixed] tuple; nodes keep array order so the JSON mirrors the
@@ -24,15 +29,29 @@ export interface SkillModel {
    *  collapse it to one slot holder the way `insertFxCensus` does — a rule it cannot
    *  reach from the routing data, and one it would otherwise have to spell out itself. */
   channelPairs: [string, string][];
-  /** Per channel insert-FX selector: the namespace its stored engine values live under, and
-   *  the slots a write SENDS. Model-INDEPENDENT — carried per model because the file is keyed
-   *  by model id, and a key beside those would read as a fourth model to anything that asks
-   *  `modelId in models`.
+  /** Per channel insert-FX selector: everything a reader needs to work out what a write
+   *  SENDS for that effect's engine values. Model-INDEPENDENT — carried per model because the
+   *  file is keyed by model id, and a key beside those would read as a fourth model to
+   *  anything that asks `modelId in models`.
    *
-   *  The two travel TOGETHER because they are read together and neither is guessable from the
-   *  other: the four guitar amps are one resource slot and four namespaces, and the resource
-   *  slot's own name ("guitar amp") is a display word that matches no namespace at all. */
-  insertFxParamSpace: Record<string, { family: string; slots: number[] }>;
+   *  It travels as ONE entry because it is read as one, and no part of it is guessable from
+   *  another: the four guitar amps are one resource slot and four namespaces, the resource
+   *  slot's own name ("guitar amp") is a display word matching no namespace, a value outside
+   *  its slot's range reaches the unit as the end of that range, and a slot the unit is
+   *  driving itself is not sent at all. */
+  insertFxParamSpace: Record<
+    string,
+    {
+      /** The namespace stored values live under (`guitar-clean`, `pitch`, …). */
+      family: string;
+      /** Every slot a write can send, with the range it is bounded to, the second slot a
+       *  mirrored value also goes to, and whether it is sent under the DRIVER name. */
+      slots: { slot: number; rawMin: number; rawMax: number; mirror?: number; driver?: true }[];
+      /** The slots the unit drives ITSELF while `gate` is non-zero, which the write then
+       *  leaves out. Absent for a family that drives nothing. */
+      driven?: { gate: number; slots: number[] };
+    }
+  >;
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -61,16 +80,33 @@ function skillModel(model: DeviceModel): SkillModel {
  * Both are derived from the app's own catalogue, so a family renamed or a slot added arrives
  * here with it. Keyed by SELECTOR because that is what a document carries.
  */
-function insertFxParamSpaceBySelector(): Record<string, { family: string; slots: number[] }> {
-  const out: Record<string, { family: string; slots: number[] }> = {};
+function insertFxParamSpaceBySelector(): SkillModel["insertFxParamSpace"] {
+  const out: SkillModel["insertFxParamSpace"] = {};
   for (const option of INSERT_FX_OPTIONS) {
     const family = insertFxFamilyOf(option.value);
     if (!family) continue;
+    const drivers = insertFxDriverSlots(family);
+    const slots = [...insertFxWritableSlots(family)]
+      .sort((a, b) => a.slot - b.slot)
+      .map((s) => ({
+        slot: s.slot,
+        rawMin: s.rawMin,
+        rawMax: s.rawMax,
+        ...(s.mirror !== undefined ? { mirror: s.mirror } : {}),
+        ...(drivers.has(s.slot) ? { driver: true as const } : {}),
+      }));
+    // The driven set is decided at write time by ONE slot's value, so what goes out is that
+    // slot and the set it gates — asked of the catalogue with the gate on and again with it
+    // off, rather than restated here. A family that drives nothing answers the same both
+    // times and carries no entry.
+    const gate = [...drivers].find(
+      (g) => insertFxDeviceDriven(family, { [`${family}:${g}`]: 1 }).size > insertFxDeviceDriven(family, {}).size,
+    );
+    const driven = gate === undefined ? [] : [...insertFxDeviceDriven(family, { [`${family}:${gate}`]: 1 })];
     out[String(option.value)] = {
       family,
-      slots: insertFxWritableSlots(family)
-        .map((s) => s.slot)
-        .sort((a, b) => a - b),
+      slots,
+      ...(gate !== undefined && driven.length > 0 ? { driven: { gate, slots: driven.sort((a, b) => a - b) } } : {}),
     };
   }
   return out;

@@ -393,20 +393,39 @@ def insert_fx_wire_state(node_params, node_id, param_space):
     return selector, wire_on, insert_fx_pair_params(node_params, node_id, selector, param_space)
 
 
+def insert_fx_slot_value(params, family, slot):
+    """One engine slot's stored value, the way the app reads it: the family-qualified key
+    first, the bare slot number second. The loader re-keys a bare slot under the selected
+    family, so the two name one value and the qualified one wins."""
+    if not isinstance(params, dict):
+        return None
+    for key in (f"{family}:{slot}", str(slot)):
+        if key in params:
+            return params[key]
+    return None
+
+
 def insert_fx_pair_params(node_params, node_id, selector, param_space):
-    """The engine values the write would send for one member.
+    """The engine commands a write would send for one member, as (name, slot, value) rows.
 
-    Two things decide that and neither is guessable: the NAMESPACE the values live under —
-    the app re-keys a bare slot under the selected family on load, so `"6"` and
-    `"guitar-clean:6"` are one value while `"pitch:6"` belongs to an effect that is not
-    selected — and WHICH slots the selected effect writes, since slot 0 is the engine's own
-    type id and never goes out. Both come from `insertFxParamSpace` in models.json, generated
-    from the app's own catalogue.
+    This is the app's own emit rule (`pushInsertFxEffectCommands`), reproduced from the data
+    `insertFxParamSpace` carries. Every clause of it decides whether two documents differ in
+    a way the unit can tell apart, so leaving one out makes this checker refuse a plan the
+    app loads:
 
-    ⚠️ The family is NOT the resource-slot name this file shows an author. `INSERT_FX_SLOTS`
-    says "guitar amp" for all four amps, which is a display word over four namespaces
-    (`guitar-clean` … `guitar-drive`) and matches none of them; reusing it here made every
-    guitar-amp and Pitch Fix parameter invisible to this check.
+    - the value is read under the FAMILY's namespace, bare key second;
+    - a value that is not a finite number is not sent at all — a boolean included, since
+      `Number.isFinite(true)` is false in the app;
+    - what IS sent is the value bounded to that slot's own range, so two numbers past the
+      same end arrive as one;
+    - a slot the unit drives itself is skipped while its gate is on (Pitch Fix clears the
+      Scale and the note mask when MIDI Control is switched on, and re-sending the plan's
+      copy would put them back);
+    - a driver slot goes out under its own command name.
+
+    The emit's mirrored slots are left out: a mirror repeats a value this tuple already
+    carries, at a slot the FAMILY decides, so it falls the same way on both members of a pair
+    and can move no verdict here.
     """
     carried = node_params.get(node_id)
     if not isinstance(carried, dict):
@@ -421,22 +440,32 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
     params = carried.get("insertFxParams")
     if not isinstance(params, dict):
         return None
-    prefix = family + ":"
-    out = {}
-    for key, value in params.items():
-        if not (isinstance(value, bool) or is_number(value)):
+
+    driven = set()
+    gate_spec = space.get("driven")
+    if isinstance(gate_spec, dict):
+        gate = insert_fx_slot_value(params, family, gate_spec.get("gate"))
+        # The app reads the gate as a bare truthiness with 0 for an absent one, so a boolean
+        # gates exactly as a 1 does.
+        if gate:
+            driven = {s for s in gate_spec.get("slots") or []}
+
+    out = []
+    for spec in slots:
+        if not isinstance(spec, dict):
             continue
-        name = str(key)
-        slot = name if name.isdigit() else (name[len(prefix) :] if name.startswith(prefix) else None)
-        if slot is None or not slot.isdigit() or int(slot) not in slots:
+        slot = spec.get("slot")
+        if slot in driven:
             continue
-        # A bare key is re-keyed under the family on load, so the qualified one wins where a
-        # document carries both — which is what `qualifyInsertFxParams` does.
-        if name.isdigit():
-            out.setdefault(int(slot), value)
-        else:
-            out[int(slot)] = value
-    return tuple(sorted(out.items()))
+        value = insert_fx_slot_value(params, family, slot)
+        # `Number.isFinite` in the app, which a boolean is not — and `is_number` already
+        # draws that line for the same reason, so it is asked rather than re-stated.
+        if not is_number(value):
+            continue
+        raw = min(max(value, spec.get("rawMin")), spec.get("rawMax"))
+        name = "INSERT_FX_DRIVER" if spec.get("driver") else "INSERT_FX_EFFECT"
+        out.append((name, slot, raw))
+    return tuple(out)
 
 
 def insert_fx_pair_problems(plan, pairs, param_space):
