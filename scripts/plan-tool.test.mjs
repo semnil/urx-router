@@ -10,10 +10,12 @@
 // and the two answers have to agree about whether this document survives as written. A table of
 // strings would go on passing after the loader changed, which is the failure being pinned.
 //
-// The two disagreements are declared, not tolerated: the tool carries routing data and no effect
-// catalogue, so a finite number outside its parameter's window and a `type` the channel's menu
-// does not offer are invisible to it. They are asserted as misses, so the gap is a number here
-// rather than a sentence in a docstring.
+// What the tool cannot answer is declared, not tolerated: the table below carries a row per
+// document and the ones the app repairs while the tool passes over them are counted, so the gap
+// is a number here rather than a sentence in a docstring. It is currently NONE — the two that
+// needed the FX channel's own menu and admitted sets are answered now that models.json carries
+// them — and a row that stops warning tomorrow lands in that count rather than passing as one
+// more green case.
 
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -216,8 +218,9 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
   });
 
   // What this tool must NOT do is decide whether omitting a raw key keeps the unit's value.
-  // It carries routing data and no model of the write path, and that answer depends on things
-  // only the write path knows — the channel's comp/EQ mode (SSMCS values are sent in one mode
+  // What it models of the write path is one question — whether a linked pair's two members
+  // would be written the same way — and that answer depends on things nothing in it knows:
+  // the channel's comp/EQ mode (SSMCS values are sent in one mode
   // and in no other), which family the selector names (a slot keyed under another family is
   // never sent), what the loader turns a bare slot number into with no selector present, and
   // which slots the unit recomputes for itself.
@@ -275,7 +278,12 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
   // where the app rewrites and the tool says nothing is exactly what the whole file exists to
   // keep at zero, and a row that stops warning tomorrow has to land here rather than passing
   // as one more green case.
-  it("has no blind spots left", () => {
+  //
+  // What it counts is the ROWS, which is the whole of what it can say: a document nobody wrote
+  // a row for is not a row that stopped warning. The app's emptied-group rule went unmodelled
+  // underneath a count reading zero, and what found it was asking a class rather than adding a
+  // row — so this is a ratchet over the table and not a statement about the tool's coverage.
+  it("leaves no row the app rewrites and the tool passes over", () => {
     expect(CASES.filter(([, , changes, warns]) => changes && !warns).map(([name]) => name)).toEqual([]);
   });
 

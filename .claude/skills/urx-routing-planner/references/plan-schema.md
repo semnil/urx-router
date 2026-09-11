@@ -290,9 +290,18 @@ channel's own catalogue: a finite number outside what its control admits, and a 
 channel offers. `models.json` carries that catalogue (`fxChannels`: each channel's menu,
 and per parameter key what its control admits — a slider's window, a select's options, a
 toggle's two states), so a plan this tool calls clean is one the app loads without
-repairing it. `scripts/plan-tool.test.mjs` in the repository
-holds both halves — the agreement and the two blind spots — by running this tool and
-the app's own loader over the same documents.
+repairing it.
+
+**A group that sanitises to nothing is one of those repairs**, and it is not an FX rule: the
+app removes an emptied group rather than keeping an empty husk, so `{"gate": {}}`,
+`{"gate": {"on": {}}}` and an empty `fxEffect.params` or `insertFxParams` all load with the
+key gone and the node back on the device default. An ARRAY is the exception on both sides —
+an empty one, and one of empty objects, survive as written. Write the values, or leave the
+key out; an empty container is neither.
+
+`scripts/plan-tool.test.mjs` in the repository holds this by running the tool and the app's
+own loader over the same documents and comparing their answers — whether each document
+survives as written, and, where a value is bounded, the number each side bounds it to.
 
 A `nodeNames` value longer than
 **8 characters** is CUT to that length — the unit's own CH SETTING name screen
