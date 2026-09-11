@@ -51,7 +51,7 @@ vi.mock("../core/platform", () => ({
 vi.mock("./midi-probe", () => ({ midiProbe: null, startMidiTrace: null }));
 
 import { ensureFixedConnections } from "../core/plan";
-import { nodeParamContestPath } from "../core/plan-history";
+import { connParamContestKey, nodeParamContestPath } from "../core/plan-history";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
@@ -321,6 +321,50 @@ describe("MidiControl", () => {
     expect(plan.nodeParams.ch2?.hpf, "nothing moved on the partner").toBe(false);
     expect(keys, "the member the mapping names").toContain(nodeParamContestPath("ch1", "hpf"));
     expect(keys, "and the partner the mirror wrote").toContain(nodeParamContestPath("ch2", "hpf"));
+  });
+
+  // The same, for the two kinds the funnel used to name NOTHING at all: a value inside a
+  // nested group, and one that lives on the wire rather than on the node. Both are copied to
+  // the partner by mirrorLinkedPair, and with the partner already holding the value the copy
+  // writes, nothing in the plan's diff says the app touched it.
+  it.each([
+    ["a nested group's field", "ch1/threshold@gate", "gate.threshold", (ch: string) => ({ gate: { threshold: -30 } })],
+  ])("names the partner's %s", async (_label, control, path, seed) => {
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({ models: { URX44V: [{ control, addr: MAPPING.addr, mode: "absolute" }] } }),
+    );
+    const { hooks, plan } = install();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_BAL, ...seed("ch1") };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, ...seed("ch2") };
+    await attached();
+    dispatch({ type: "ready" });
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+
+    mocks.inputReceiver!([0xb0, 7, 127]);
+    const keys = vi.mocked(hooks.onApplied).mock.calls.at(-1)?.[2] ?? [];
+    expect(keys, "the member the mapping names").toContain(nodeParamContestPath("ch1", path));
+    expect(keys, "and the partner the mirror wrote").toContain(nodeParamContestPath("ch2", path));
+  });
+
+  it("names the partner's send parameter", async () => {
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({ models: { URX44V: [{ control: "ch1/level", addr: MAPPING.addr, mode: "absolute" }] } }),
+    );
+    const { hooks, plan } = install();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_BAL };
+    await attached();
+    dispatch({ type: "ready" });
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+
+    mocks.inputReceiver!([0xb0, 7, 127]);
+    const keys = vi.mocked(hooks.onApplied).mock.calls.at(-1)?.[2] ?? [];
+    const wire = (ch: string): string => connParamContestKey(`${ch}:out`, "bus.stereo:in", "level");
+    expect(keys, "the member the mapping names").toContain(wire("ch1"));
+    expect(keys, "and the partner the mirror wrote").toContain(wire("ch2"));
   });
 
   // …and only where the pair shares the key. The head amp is each member's own, so the

@@ -45,17 +45,40 @@ import {
 import { midiProbe, startMidiTrace } from "./midi-probe";
 import {
   INSERT_FX_PAIR_KEYS,
+  isBalLinkedPair,
   mirrorLinkedPair,
   mirrorLinkedInsertFx,
   pairSharesNodeKey,
   partnerChannel,
 } from "../core/routing";
-import { nodeParamContestPath } from "../core/plan-history";
+import { connParamContestKey, nodeParamContestPath } from "../core/plan-history";
+import { sendConnection } from "../core/plan";
 import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
 import { errorCode, errorText, getLang, t } from "../i18n";
+
+/** The contest keys an applied control's write lands on, named for `node` — the member the
+ *  message names, or the partner a mirror copied the same write to. Empty for a control the
+ *  catalogue leaves unnamed (an insert-FX slot, whose pair keys the insert-FX mirror names in
+ *  full, and a node no pair mirror reaches) and for a send this plan does not carry. */
+function appliedKeys(plan: Plan, control: BoundControl, node: string): string[] {
+  const w = control.writes;
+  if (w === undefined) return [];
+  if (w.kind === "node") return [nodeParamContestPath(node, w.path)];
+  const c = sendConnection(plan, node, w.to);
+  return c ? [connParamContestKey(c.from, c.to, w.param)] : [];
+}
+
+/** Whether the pair mirror carries THIS control's value to the partner: everything but the
+ *  head amp, and — outside BAL — the pan, which each member keeps its own of. */
+function mirrorCarries(model: DeviceModel, plan: Plan, control: BoundControl): boolean {
+  const w = control.writes;
+  if (w === undefined) return false;
+  if (w.kind === "node") return pairSharesNodeKey(w.path);
+  return w.param !== "pan" || isBalLinkedPair(model, plan, control.node);
+}
 
 export interface MidiHooks {
   getModel: () => DeviceModel;
@@ -203,17 +226,15 @@ export class MidiControl {
         // the same way.
         const insFxMirrored = mirrorLinkedInsertFx(model, plan, control.node);
         // What this apply asserted, the same rule the UI and CONSOLE funnels follow: the
-        // control's own key, plus the partner's copy of it where the pair shares that key,
-        // plus the insert-FX mirror's three. A control writing a nested group or a wire's
-        // params names nothing and leaves those to the plan's diff, which is what the other
-        // funnels do with them.
+        // control's own key, plus the partner's copy of it where the mirror carries that key,
+        // plus the insert-FX mirror's three.
         const partner = partnerChannel(model, control.node);
-        const keys: string[] = [];
-        if (control.planKey !== undefined) {
-          keys.push(nodeParamContestPath(control.node, control.planKey));
-          if (pairMirrored && partner && pairSharesNodeKey(control.planKey))
-            keys.push(nodeParamContestPath(partner, control.planKey));
-        }
+        const keys = [
+          ...appliedKeys(plan, control, control.node),
+          ...(pairMirrored && partner && mirrorCarries(model, plan, control)
+            ? appliedKeys(plan, control, partner)
+            : []),
+        ];
         if (insFxMirrored && partner) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
         hooks.onApplied(control, pairMirrored || insFxMirrored, keys);
         this.scheduleFeedback();
