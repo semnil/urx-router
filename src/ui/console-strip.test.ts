@@ -15,6 +15,7 @@ import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test
 import type { ConsoleMidiHooks } from "./console";
 import { sendConnection } from "../core/plan";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
+import { nodeParamContestPath } from "../core/plan-history";
 import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, insertFxSelected } from "../core/control/params";
 import { insertFxControl, planToCommands } from "../core/control/translate";
 import { getModel } from "../models";
@@ -731,6 +732,18 @@ describe("a STEREO-linked pair", () => {
     expect(main("ch2")).toBe(main("ch1"));
     expect(cap.style.getPropertyValue("--pos")).not.toBe(drawn);
     expect(h.strip("ch2").fader).toBe(partner); // in place, as in BAL
+  });
+
+  // The funnel names what it WROTE, and the head amp is not among it: claiming the partner's
+  // gain would take the device's answer away for a value the mirror left alone, which a read
+  // in flight then drops (src/main.device.test.ts carries that end of it).
+  it("does not name the partner's head amp as written", () => {
+    h = consoleHost();
+    linkPair();
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='A.GAIN']")!, "ArrowRight");
+    const named = h.changeKeys().flat();
+    expect(named, "the edited member's own gain is named").toContain(nodeParamContestPath("ch1", "gain"));
+    expect(named, "the partner's is not").not.toContain(nodeParamContestPath("ch2", "gain"));
   });
 
   // The PAN knob is the exception: outside BAL the partner's pan did not move, so a rebuild

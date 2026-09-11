@@ -238,9 +238,18 @@ export function applyPairTransition(model: DeviceModel, plan: Plan, primary: str
 }
 
 /** The node params a linked pair does NOT share: the pair-level flags, which live on the
- *  primary alone, and the head amp, which each member keeps its own of — the pair shares its
- *  processing and its mixer state, and not its input stage. */
+ *  primary alone, and the head-amp values each member keeps its own of. */
 const PAIR_OWN_NODE_KEYS = ["stereoLink", "panBal", "gain", "clipSafe", "phase"] as const;
+
+/** Whether an edit to `path` on one member of a linked pair reaches the other — the one
+ *  place that question is answered, so `mirrorLinkedPair`'s copy, the MIDI catalogue's
+ *  mirror identity and each funnel's write witness cannot disagree about it. Takes a
+ *  contest path as well as a bare key: a nested group (`gate.threshold`) is shared when
+ *  its group is. */
+export function pairSharesNodeKey(path: string): boolean {
+  const head = path.split(".")[0];
+  return !(PAIR_OWN_NODE_KEYS as readonly string[]).includes(head);
+}
 
 /** Mirror `id`'s mixer state onto its linked partner, so an edit to either channel moves
  *  both. Copies the node params except `PAIR_OWN_NODE_KEYS`, and each send's mix params —

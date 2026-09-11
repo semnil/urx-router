@@ -73,6 +73,7 @@ import {
   mirrorLinkedPair,
   mirrorLinkedInsertFx,
   mixSendLocks,
+  pairSharesNodeKey,
   partnerChannel,
   sendTapWritable,
 } from "../core/routing";
@@ -3195,13 +3196,14 @@ export class Console {
     const mirrored = mirrorLinkedPair(model, plan, id);
     const insFxMirrored = mirrorLinkedInsertFx(model, plan, id);
     // Each mirror names only what IT wrote, the same rule the inspector's funnel
-    // follows: the pair mirror carries THIS edit's keys onto the partner, and the
+    // follows: the pair mirror carries THIS edit's SHARED keys onto the partner, and the
     // insert-FX mirror the three-key pair state it copies whenever the pair is linked.
-    // A key no mirror wrote stays the device's to answer for.
+    // A key no mirror wrote — one the pair does not share included — stays the device's
+    // to answer for.
     const keys = written.map((k) => nodeParamContestPath(id, k));
     const partner = partnerChannel(model, id);
     if (partner) {
-      if (mirrored) for (const k of written) keys.push(nodeParamContestPath(partner, k));
+      if (mirrored) for (const k of written) if (pairSharesNodeKey(k)) keys.push(nodeParamContestPath(partner, k));
       if (insFxMirrored) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
     }
     this.hooks.onChange(keys);

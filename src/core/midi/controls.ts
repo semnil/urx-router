@@ -58,7 +58,7 @@ import {
   EQ_TYPE_SHELVING,
   insertFxEngaged,
 } from "../control/params";
-import { isBalLinkedPair, isStereoLinkedPair, mixSendLocks, pairPrimary } from "../routing";
+import { isBalLinkedPair, isStereoLinkedPair, mixSendLocks, pairPrimary, pairSharesNodeKey } from "../routing";
 import {
   insertFxFamilyOf,
   insertFxLockedSlots,
@@ -372,10 +372,6 @@ function controlNodes(model: DeviceModel): string[] {
   const duckers = model.nodes.filter((n) => n.kind === "ducker").map((n) => n.id);
   return [...channels, ...buses, ...duckers];
 }
-
-/** The controls a linked pair does not share: its head amp, which each member has its own of.
- *  `src/core/routing.ts`'s PAIR_OWN_NODE_KEYS is the plan-side spelling of the same set. */
-const PAIR_OWN_PARAMS = new Set<ControlParam>(["gain", "phase"]);
 
 function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[] {
   const node = model.nodes.find((n) => n.id === id);
@@ -1129,7 +1125,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   if (primary !== null && primary !== id && isStereoLinkedPair(model, plan, id)) {
     const sharedPan = isBalLinkedPair(model, plan, id);
     for (const c of out) {
-      if (PAIR_OWN_PARAMS.has(c.param)) continue;
+      if (!pairSharesNodeKey(c.param)) continue;
       if (!sharedPan && c.param === "pan") continue;
       c.mirrorId = controlId(primary, c.param, c.scope);
     }

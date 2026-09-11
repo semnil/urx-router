@@ -10,6 +10,7 @@ import {
   mirrorLinkedPair,
   mirrorLinkedInsertFx,
   mixSendLocks,
+  pairSharesNodeKey,
   partnerChannel,
 } from "./core/routing";
 import {
@@ -1543,14 +1544,17 @@ const inspectorActions = {
     const keys = [...names.map((name) => nodeParamContestPath(id, name)), ...transitionKeys];
     // A mirror asserts the PARTNER's keys the same way, and it can assert one that already
     // holds the value it writes — the insert-FX mirror re-writes a bypass that was already
-    // on. Each names only what IT wrote, and for the BAL mirror that is THIS EDIT's keys,
-    // not the whole record it copies: the other keys it carries over were already equal on
-    // both sides, so copying them writes nothing, while claiming them takes the device's
-    // answer away from the partner alone. Measured before the narrowing: a read that moved
-    // both members' HPF, with an unrelated Phase edit inside it, left CH 1 on the device's
-    // ON and CH 2 on the plan's OFF — one gesture splitting a pair that moves as one.
+    // on. Each names only what IT wrote, and for the pair mirror that is THIS EDIT's keys
+    // MINUS the ones the pair does not share, not the whole record it copies: the other keys
+    // it carries over were already equal on both sides, so copying them writes nothing, while
+    // claiming them takes the device's answer away from the partner alone. Measured before
+    // the narrowing: a read that moved both members' HPF, with an unrelated Phase edit inside
+    // it, left CH 1 on the device's ON and CH 2 on the plan's OFF — one gesture splitting a
+    // pair that moves as one. A key the mirror LEAVES with the partner is the same defect
+    // pointed the other way: the head amp is the member's own, so claiming it takes the
+    // device's answer for a value this edit never sent.
     const mirroredKeys = new Set<string>();
-    if (mirrored) for (const name of names) mirroredKeys.add(name);
+    if (mirrored) for (const name of names) if (pairSharesNodeKey(name)) mirroredKeys.add(name);
     if (insFxMirrored) for (const key of INSERT_FX_PAIR_KEYS) mirroredKeys.add(key);
     if (partner) for (const name of mirroredKeys) keys.push(nodeParamContestPath(partner, name));
     markChanged("ui", keys);
