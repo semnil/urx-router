@@ -308,7 +308,7 @@ single source of truth. This table states what each case measures.
 | `midi-write-during-refetch-snapshot` | midi | An ungated writer combined with a snapshot re-base |
 | `midi-rebase-eats-ui-entry-ladder` | midi | The only writer classified two contradictory ways at once |
 | `midi-14bit-pair-and-cross-binding` | midi | Message-level decoding, including a binding that can never fire |
-| `midi-bal-mirror-clobbers-partner` | midi | The only collision between two app-side writers, mediated by a mirror |
+| `midi-bal-mirror-clobbers-partner` | midi | Collisions mediated by a mirror — between two app-side writers, and between a mirror's no-op write and the read that reported the partner otherwise |
 
 ### T5 drop — failure injection
 

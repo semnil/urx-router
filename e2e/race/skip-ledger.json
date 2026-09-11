@@ -18,7 +18,7 @@
       "e2e/race/t3-undo.spec.ts": 18,
       "e2e/race/t3b-undo.spec.ts": 18,
       "e2e/race/t4-midi.spec.ts": 8,
-      "e2e/race/t4b-midi.spec.ts": 20,
+      "e2e/race/t4b-midi.spec.ts": 21,
       "e2e/race/t5-drop.spec.ts": 12,
       "e2e/race/t6-teardown.spec.ts": 12,
       "e2e/race/t7-meter.spec.ts": 14,
