@@ -155,7 +155,7 @@ def validate(plan, models):
 
     warnings.extend(collection_warnings(plan))
     warnings.extend(node_param_warnings(plan, nodes, model.get("channelPairs")))
-    problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs"), model.get("insertFxWritableSlots") or {}))
+    problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
 
     return problems, warnings
 
@@ -369,7 +369,7 @@ def sanitized(node_params, node_id, key):
     return None
 
 
-def insert_fx_wire_state(node_params, node_id, writable):
+def insert_fx_wire_state(node_params, node_id, param_space):
     """The insert-FX state a write would leave on the unit for one member of a pair, in the
     terms the WIRE sees — the same projection `insertFxWireState` makes in the app, so the
     two agree about which documents differ in a way that matters.
@@ -390,28 +390,36 @@ def insert_fx_wire_state(node_params, node_id, writable):
     # truthy value is one bypass. Python's own `==` would also call `True == 1`, but it calls
     # `1 == 1.0` and `False == 0` too, and none of those is the question being asked.
     wire_on = None if selector == FACTORY_INSERT_FX else bool(on)
-    return selector, wire_on, insert_fx_pair_params(node_params, node_id, selector, writable)
+    return selector, wire_on, insert_fx_pair_params(node_params, node_id, selector, param_space)
 
 
-def insert_fx_pair_params(node_params, node_id, selector, writable):
+def insert_fx_pair_params(node_params, node_id, selector, param_space):
     """The engine values the write would send for one member.
 
-    Two things decide that and neither is guessable: WHICH slots the selected effect writes
-    (slot 0 is the engine's own type id and never goes out, for one), and which namespace a
-    key is in — the app re-keys a bare slot under the selected family on load, so `"6"` and
-    `"compander:6"` are the same value while `"amp:6"` belongs to an effect that is not
-    selected. The slot list is generated into models.json from the app's own catalogue
-    (`insertFxWritableSlots`), so a slot added to a family arrives here with it.
+    Two things decide that and neither is guessable: the NAMESPACE the values live under —
+    the app re-keys a bare slot under the selected family on load, so `"6"` and
+    `"guitar-clean:6"` are one value while `"pitch:6"` belongs to an effect that is not
+    selected — and WHICH slots the selected effect writes, since slot 0 is the engine's own
+    type id and never goes out. Both come from `insertFxParamSpace` in models.json, generated
+    from the app's own catalogue.
+
+    ⚠️ The family is NOT the resource-slot name this file shows an author. `INSERT_FX_SLOTS`
+    says "guitar amp" for all four amps, which is a display word over four namespaces
+    (`guitar-clean` … `guitar-drive`) and matches none of them; reusing it here made every
+    guitar-amp and Pitch Fix parameter invisible to this check.
     """
-    family = INSERT_FX_SLOTS.get(selector)
     carried = node_params.get(node_id)
-    if family is None or not isinstance(carried, dict):
+    if not isinstance(carried, dict):
+        return None
+    space = param_space.get(str(selector))
+    if not isinstance(space, dict):
+        return None
+    family = space.get("family")
+    slots = space.get("slots")
+    if not isinstance(family, str) or not isinstance(slots, list):
         return None
     params = carried.get("insertFxParams")
     if not isinstance(params, dict):
-        return None
-    slots = writable.get(str(selector))
-    if slots is None:
         return None
     prefix = family + ":"
     out = {}
@@ -431,7 +439,7 @@ def insert_fx_pair_params(node_params, node_id, selector, writable):
     return tuple(sorted(out.items()))
 
 
-def insert_fx_pair_problems(plan, pairs, writable):
+def insert_fx_pair_problems(plan, pairs, param_space):
     """A STEREO-linked pair whose two members disagree about their one insert effect.
 
     The unit keeps ONE selector, one bypass and one engine for a linked pair and mirrors a
@@ -450,8 +458,8 @@ def insert_fx_pair_problems(plan, pairs, writable):
         primary = node_params.get(pair[0])
         if not (isinstance(primary, dict) and primary.get("stereoLink") is True):
             continue
-        a = insert_fx_wire_state(node_params, pair[0], writable)
-        b = insert_fx_wire_state(node_params, pair[1], writable)
+        a = insert_fx_wire_state(node_params, pair[0], param_space)
+        b = insert_fx_wire_state(node_params, pair[1], param_space)
         keys = [k for k, x, y in zip(("insertFx", "insertFxOn", "insertFxParams"), a, b) if x != y]
         if keys:
             out.append(("insertFxPair", f"{pair[0]} / {pair[1]}: {', '.join(keys)}", ""))

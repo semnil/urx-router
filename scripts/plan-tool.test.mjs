@@ -24,6 +24,8 @@ import { fileURLToPath } from "node:url";
 import { deserialize, PLAN_VERSION } from "../src/core/plan";
 import { insertFxPairProblems } from "../src/core/plan-validate";
 import { getModel } from "../src/models";
+import { INSERT_FX_OPTIONS } from "../src/core/control/params";
+import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TOOL = join(ROOT, ".claude/skills/urx-routing-planner/scripts/plan_tool.py");
@@ -501,6 +503,83 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     // The control for the whole table: unlinked, the two channels are independent.
     ["unlinked and different", { insertFx: 1793 }, { insertFx: 1794 }, true],
   ];
+
+  // …and the same question asked of EVERY channel selector rather than of one. The hand-written
+  // table above reached the engine values through the compander alone, whose namespace happens
+  // to equal its resource-slot name — so a validator keying the namespace off that name agreed
+  // with the app on every case in it and ignored all four guitar amps and Pitch Fix. The
+  // selectors come from the app's own catalogue, so one added tomorrow is asked the same three
+  // questions the day it ships.
+  const INPUT_SELECTORS = INSERT_FX_OPTIONS.filter((o) => o.slot).map((o) => o.value);
+  // Read from the file the TOOL reads, not from the app's own model: the question is whether
+  // the generated data and the app agree, so taking it from the app would answer itself.
+  const SPACE = JSON.parse(readFileSync(join(ROOT, ".claude/skills/urx-routing-planner/scripts/models.json"), "utf8"))
+    .URX44V.insertFxParamSpace;
+
+  it("asks every channel selector, in its own namespace", () => {
+    expect(INPUT_SELECTORS.length, "the catalogue has to carry some").toBeGreaterThan(1);
+    // The families must not all be the same word, or the case below cannot tell a namespace
+    // from a resource-slot name — which is exactly the blind spot it exists for.
+    expect(new Set(INPUT_SELECTORS.map((v) => SPACE[String(v)]?.family)).size).toBeGreaterThan(1);
+
+    for (const selector of INPUT_SELECTORS) {
+      const space = SPACE[String(selector)];
+      expect(space, `selector ${selector} has a namespace`).toBeDefined();
+      // Two values that survive the write: translate bounds every engine slot to the range
+      // its own control declares, so a pair of numbers outside it arrives as one value and
+      // the "differing" half below would assert nothing. The ends of the range are the two
+      // that are always representable and always distinct.
+      const spec = insertFxWritableSlots(space.family).find((x) => x.rawMin !== x.rawMax);
+      expect(spec, `selector ${selector} has a slot with a range`).toBeDefined();
+      const [lo, hi] = [spec.rawMin, spec.rawMax];
+      const slot = spec.slot;
+      const q = `${space.family}:${slot}`;
+      const ask = (ch1, ch2) => {
+        const plan = {
+          format: "urx-router-plan",
+          version: 2,
+          modelId: "URX44V",
+          connections: [],
+          nodeParams: { ch1, ch2 },
+        };
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const loaded = deserialize(JSON.stringify(plan));
+        expect(loaded).not.toBeNull();
+        return {
+          tool: r.status === 0,
+          app: insertFxPairProblems(getModel("URX44V"), loaded).length === 0,
+          stdout: r.stdout,
+        };
+      };
+
+      // Qualified keys that DIFFER: both have to refuse.
+      const differ = ask(
+        { stereoLink: true, insertFx: selector, insertFxParams: { [q]: lo } },
+        { insertFx: selector, insertFxParams: { [q]: hi } },
+      );
+      expect(differ.app, `the app, ${q} differing`).toBe(false);
+      expect(differ.tool, `the tool, ${q} differing\n${differ.stdout}`).toBe(false);
+
+      // The same value under the same key: both have to pass. Without this the case above
+      // is satisfied by a checker that refuses every document carrying engine values.
+      const same = ask(
+        { stereoLink: true, insertFx: selector, insertFxParams: { [q]: lo } },
+        { insertFx: selector, insertFxParams: { [q]: lo } },
+      );
+      expect(same.app, `the app, ${q} agreeing`).toBe(true);
+      expect(same.tool, `the tool, ${q} agreeing\n${same.stdout}`).toBe(true);
+
+      // A BARE key against the qualified one it is re-keyed into: one value, so both pass.
+      const bare = ask(
+        { stereoLink: true, insertFx: selector, insertFxParams: { [String(slot)]: lo } },
+        { insertFx: selector, insertFxParams: { [q]: lo } },
+      );
+      expect(bare.app, `the app, bare ${slot} against ${q}`).toBe(true);
+      expect(bare.tool, `the tool, bare ${slot} against ${q}\n${bare.stdout}`).toBe(true);
+    }
+  });
 
   it.each(PAIR_CORPUS)("agrees with the app about %s", (_name, ch1, ch2, ok) => {
     const plan = {

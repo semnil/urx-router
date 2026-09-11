@@ -24,10 +24,15 @@ export interface SkillModel {
    *  collapse it to one slot holder the way `insertFxCensus` does — a rule it cannot
    *  reach from the routing data, and one it would otherwise have to spell out itself. */
   channelPairs: [string, string][];
-  /** Engine slots a write SENDS, per channel insert-FX selector. Model-INDEPENDENT — it is
-   *  carried per model because the file is keyed by model id, and a key beside those would
-   *  read as a fourth model to anything that asks `modelId in models`. */
-  insertFxWritableSlots: Record<string, number[]>;
+  /** Per channel insert-FX selector: the namespace its stored engine values live under, and
+   *  the slots a write SENDS. Model-INDEPENDENT — carried per model because the file is keyed
+   *  by model id, and a key beside those would read as a fourth model to anything that asks
+   *  `modelId in models`.
+   *
+   *  The two travel TOGETHER because they are read together and neither is guessable from the
+   *  other: the four guitar amps are one resource slot and four namespaces, and the resource
+   *  slot's own name ("guitar amp") is a display word that matches no namespace at all. */
+  insertFxParamSpace: Record<string, { family: string; slots: number[] }>;
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -38,31 +43,35 @@ function skillModel(model: DeviceModel): SkillModel {
     nodes,
     rules: model.rules.map((r) => [r.from, r.to, r.kind, Boolean(r.fixed)]),
     channelPairs: model.channelPairs.map(([a, b]) => [a, b]),
-    insertFxWritableSlots: insertFxWritableSlotsBySelector(),
+    insertFxParamSpace: insertFxParamSpaceBySelector(),
   };
 }
 
 /**
- * Which engine slots a write actually SENDS, per channel insert-FX selector.
+ * Where one channel insert-FX selector's engine values live, and which of them a write sends.
  *
  * `plan_tool.py` compares the two members of a STEREO-linked pair by the state a write would
- * leave, and an engine value the write skips is not part of that state — slot 0 is the
- * engine's own type id, for one. Without this the tool refuses a document the app loads,
- * which is the worse direction for a pre-flight check: it sends the author to fix something
- * that is not broken. Derived rather than listed, so a slot added to a family arrives here
- * with it.
+ * leave, and needs both halves to do it: the NAMESPACE, because the loader re-keys a bare
+ * slot under the selected family and a value under any other family is not sent; and the
+ * SLOTS, because an engine value the write skips is not part of the state either (slot 0 is
+ * the engine's own type id). Neither is derivable from routing data, and the resource-slot
+ * name the tool shows an author ("guitar amp") is not the namespace — it is one word over
+ * four families.
  *
- * Keyed by SELECTOR rather than by family because that is what a document carries; the four
- * guitar amps are four selectors over one slot set.
+ * Both are derived from the app's own catalogue, so a family renamed or a slot added arrives
+ * here with it. Keyed by SELECTOR because that is what a document carries.
  */
-function insertFxWritableSlotsBySelector(): Record<string, number[]> {
-  const out: Record<string, number[]> = {};
+function insertFxParamSpaceBySelector(): Record<string, { family: string; slots: number[] }> {
+  const out: Record<string, { family: string; slots: number[] }> = {};
   for (const option of INSERT_FX_OPTIONS) {
     const family = insertFxFamilyOf(option.value);
     if (!family) continue;
-    out[String(option.value)] = insertFxWritableSlots(family)
-      .map((s) => s.slot)
-      .sort((a, b) => a - b);
+    out[String(option.value)] = {
+      family,
+      slots: insertFxWritableSlots(family)
+        .map((s) => s.slot)
+        .sort((a, b) => a - b),
+    };
   }
   return out;
 }
