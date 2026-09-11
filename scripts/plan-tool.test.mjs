@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deserialize, PLAN_VERSION } from "../src/core/plan";
 import { insertFxPairProblems } from "../src/core/plan-validate";
-import { getModel } from "../src/models";
+import { getModel, MODEL_IDS } from "../src/models";
 import { INSERT_FX_OPTIONS } from "../src/core/control/params";
 import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
 
@@ -673,6 +673,90 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     expect(insertFxPairProblems(getModel("URX44V"), loaded).length === 0, `the app: ${_name}`).toBe(ok);
     expect(r.status === 0, `the tool: ${_name}\n${r.stdout}`).toBe(ok);
   });
+
+  // A container where a SCALAR belongs. The document sanitiser is built for the nested groups
+  // (`gate` is a record, `eqBands` an array, and an empty array survives it vacuously), so it
+  // cannot tell one of those from a document that put a container in the bypass or in an
+  // engine slot — and a container that reaches the plan is read as a JavaScript truth by
+  // everything after it: `[]` is a bypass that is ON, and a container in Pitch Fix's MIDI
+  // Control slot drops the Scale out of the write. The loader now takes them out of those two
+  // fields, which is what lets one rule describe both sides.
+  //
+  // Driven over EVERY model, every one of its linked pairs and both document versions: the
+  // pair rule is per pair and the re-keying is per version, so one model's CH1/2 at version 3
+  // is one cell of that table rather than a sample of it.
+  const CONTAINERS = [
+    ["an empty array", []],
+    ["an array of records", [{ a: 1 }]],
+    ["a non-empty object", { a: 1 }],
+  ];
+
+  for (const modelId of MODEL_IDS) {
+    const pairs = getModel(modelId).channelPairs;
+    for (const [primary, partner] of pairs) {
+      for (const version of [2, 3]) {
+        it.each(CONTAINERS)(
+          `agrees about ${modelId} ${primary}/${partner} v${version} carrying %s`,
+          (_name, container) => {
+            const ask = (ch1, ch2) => {
+              const plan = {
+                format: "urx-router-plan",
+                version,
+                modelId,
+                connections: [],
+                nodeParams: { [primary]: { stereoLink: true, ...ch1 }, [partner]: ch2 },
+              };
+              const file = join(dir, "plan.json");
+              writeFileSync(file, JSON.stringify(plan));
+              const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+              const loaded = deserialize(JSON.stringify(plan));
+              expect(loaded).not.toBeNull();
+              return {
+                tool: r.status === 0,
+                app: insertFxPairProblems(getModel(modelId), loaded).length === 0,
+                stdout: r.stdout,
+              };
+            };
+
+            // The bypass: a container is not a bypass that is on, so this is the factory
+            // false the partner also has.
+            const bypass = ask({ insertFx: 1793, insertFxOn: container }, { insertFx: 1793, insertFxOn: false });
+            expect(bypass.app, `the app, bypass ${_name}`).toBe(true);
+            expect(bypass.tool, `the tool, bypass ${_name}\n${bypass.stdout}`).toBe(true);
+
+            // …and the control, so this does not pass on a checker that ignores the bypass:
+            // a real bypass difference is still a contradiction.
+            const real = ask({ insertFx: 1793, insertFxOn: true }, { insertFx: 1793, insertFxOn: false });
+            expect(real.app, "the app, a real bypass difference").toBe(false);
+            expect(real.tool, `the tool, a real bypass difference\n${real.stdout}`).toBe(false);
+
+            // Pitch Fix's gate: a container there gates nothing, so the Scale IS written and
+            // two values for it are two states.
+            const gate = ask(
+              { insertFx: 512, insertFxParams: { "pitch:34": container, "pitch:16": 0 } },
+              { insertFx: 512, insertFxParams: { "pitch:34": container, "pitch:16": 1 } },
+            );
+            expect(gate.app, `the app, pitch gate ${_name}`).toBe(false);
+            expect(gate.tool, `the tool, pitch gate ${_name}\n${gate.stdout}`).toBe(false);
+
+            // …and its control: a gate that IS a scalar still suppresses the Scale.
+            const scalarGate = ask(
+              { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:16": 0 } },
+              { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:16": 1 } },
+            );
+            expect(scalarGate.app, "the app, a scalar pitch gate").toBe(true);
+            expect(scalarGate.tool, `the tool, a scalar pitch gate\n${scalarGate.stdout}`).toBe(true);
+
+            // An engine slot that is a container carries no value, so it is the same as the
+            // partner naming nothing there.
+            const slot = ask({ insertFx: 1793, insertFxParams: { "compander:6": container } }, { insertFx: 1793 });
+            expect(slot.app, `the app, engine slot ${_name}`).toBe(true);
+            expect(slot.tool, `the tool, engine slot ${_name}\n${slot.stdout}`).toBe(true);
+          },
+        );
+      }
+    }
+  }
 
   // The one family whose write set MOVES with its own values: Pitch Fix stops sending the
   // Scale and the twelve-note mask while MIDI Control is on, because switching it on is what
