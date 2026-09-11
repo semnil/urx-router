@@ -895,6 +895,37 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       expect(ok.tool, `the tool leaves ${name} ${key}`).not.toContain(`bus.fx1.fxEffect.params.${key}`);
       void spec;
     }
+
+    // The VALUE, and not only the path. Asking whether each side MENTIONED the key is satisfied
+    // by two sides that bound it to different numbers, which is what a rounding rule written
+    // once in each language produces: JavaScript's `Math.round` is floor(x + 0.5) at every x, so
+    // a half goes to +infinity and -2.5 is -2, while rounding away from zero makes it -3. Only a
+    // key whose window reaches below zero can show it, and only at a half-integer — so the rows
+    // walk the boundary rather than sampling it, and the window's own ends come from the
+    // catalogue rather than being written here, where they would drift.
+    const probes = (spec) => {
+      const lo = spec.rawMin ?? 0;
+      const hi = spec.rawMax ?? 0;
+      return [lo - 1, lo - 0.5, lo, lo + 0.5, lo + 1.5, -0.5, -1.5, -2.5, 0.5, 1.5, 2.5, hi - 0.5, hi, hi + 1];
+    };
+    let bounded = 0;
+    for (const [key, spec] of Object.entries(FX.params)) {
+      const values = spec.control === "select" ? [...spec.options, Math.max(...spec.options) + 1] : probes(spec);
+      for (const raw of values) {
+        const got = ask({ type: FX.types[0], params: { [key]: raw } });
+        const app = got.app.find((p) => p.key === key && p.action === "bound");
+        const line = got.tool.split("\n").find((l) => l.includes(`params.${key}:`)) ?? "";
+        // Either both leave it alone, or both name the same number.
+        expect(Boolean(app), `both answer for ${key}=${raw}`).toBe(line !== "");
+        if (app) {
+          expect(line, `${key}=${raw} bounds to ${app.bound}`).toContain(`is bounded to ${app.bound}`);
+          bounded += 1;
+        }
+      }
+    }
+    // The positive control: the loop above is satisfied by a run in which nothing was ever
+    // bounded, and every `toContain` in it would then have been asked of nothing.
+    expect(bounded, "the probes reach values both sides repair").toBeGreaterThan(0);
   });
 
   // The one family whose write set MOVES with its own values: Pitch Fix stops sending the

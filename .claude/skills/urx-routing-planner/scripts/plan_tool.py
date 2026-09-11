@@ -519,9 +519,13 @@ def fx_admitted(spec, value):
     menu's last option on the menu — the app's own note on `paramRangeProblems`.
 
     Rounded first, by the same rule every control there uses, so a value halfway between two
-    settings resolves the same way whichever control holds it.
+    settings resolves the same way whichever control holds it. That rule is JavaScript's
+    `Math.round`, which is floor(x + 0.5) at every x — a HALF goes to +infinity, so -2.5 is
+    -2 and not -3. Written with a sign branch it rounds away from zero on the negative side,
+    which the three keys with a negative rawMin (the two delay feedbacks and Rev-R3's) then
+    disagree with the app about at every half-integer.
     """
-    v = int(math.floor(value + 0.5)) if value >= 0 else -int(math.floor(-value + 0.5))
+    v = int(math.floor(value + 0.5))
     control = spec.get("control")
     if control == "toggle":
         return 0 if v <= 0 else 1
@@ -543,13 +547,18 @@ def fx_admitted(spec, value):
     return v
 
 
-def fx_catalogue_warnings(node_id, fx, channel, out):
+def fx_catalogue_warnings(node_id, fx, channel, out, bounded):
     """The two FX repairs that need the channel's own catalogue: a `type` its menu does not
     offer, which the app DROPS (a menu has no nearest member to move to), and a finite number
     outside what its control admits, which the app BOUNDS.
 
     Both come from `fxChannels` in models.json, generated from the app's catalogue — the two
-    questions this tool could not answer before it carried them."""
+    questions this tool could not answer before it carried them.
+
+    They go to DIFFERENT lists because the app does different things with them, and the
+    sentence each is printed under says which: a dropped value is gone and the effect runs on
+    its own default, while a bounded one is still sent — as the bound. Printed under one
+    heading, every bound announced itself as a deletion."""
     if not isinstance(channel, dict) or not isinstance(fx, dict):
         return
     types = channel.get("types")
@@ -565,7 +574,7 @@ def fx_catalogue_warnings(node_id, fx, channel, out):
             continue
         admitted = fx_admitted(spec, raw)
         if admitted != raw:
-            out.append((f"{node_id}.fxEffect.params.{key}", f"{raw!r} is bounded to {admitted!r}"))
+            bounded.append((f"{node_id}.fxEffect.params.{key}", f"{raw!r} is bounded to {admitted!r}"))
 
 
 def fx_effect_warnings(node_id, fx, out):
@@ -700,12 +709,14 @@ def node_param_warnings(plan, nodes, pairs, fx_channels):
         walked = {k: v for k, v in params.items() if k not in ("fxEffect", "insertFxOn", "insertFxParams")}
         dropped_values(walked, node_id, dropped)
         scalar_only_drops(node_id, params, dropped)
+        bounded = []
         if "fxEffect" in params:
             fx_effect_warnings(node_id, params["fxEffect"], dropped)
-            fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped)
-
+            fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
         for path, why in dropped:
             out.append(f"node param {path}: the app drops this value on load — {why}")
+        for path, why in bounded:
+            out.append(f"node param {path}: the app bounds this value on load — {why}")
         if any(k in params for k in DUCKER_KEYS) and nodes.get(node_id, {}).get("kind") != "ducker":
             duckers = ", ".join(i for i, n in nodes.items() if n.get("kind") == "ducker")
             out.append(
