@@ -120,6 +120,7 @@ const CASES = [
   ["a null parameter, which the sanitiser drops", { type: 0, params: { revxLpf: null } }, true, true],
   ["an effect object that is not an object", false, true, true],
   ["an effect object that is an array", [{}], true, true],
+  ["an empty parameter map, whose key the app removes", { type: 0, params: {} }, true, true],
   ["a number outside its parameter's window", { type: 0, params: { revxLpf: 0 } }, true, true],
   ["a type no channel offers", { type: 12345 }, true, true],
 ];
@@ -926,6 +927,45 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     // The positive control: the loop above is satisfied by a run in which nothing was ever
     // bounded, and every `toContain` in it would then have been asked of nothing.
     expect(bounded, "the probes reach values both sides repair").toBeGreaterThan(0);
+  });
+
+  // A group the app empties is REMOVED, not kept as a husk, and the key's disappearance is a
+  // repair like any other. The walk over leaves cannot see it — an empty object has no leaf to
+  // report — so `{"gate": {}}` and `{"gate": {"on": {}}}` both loaded changed while the tool
+  // said nothing. It is one rule of the app's sanitiser rather than one site, so it is asked
+  // here over every group a node can carry, with the shapes that must NOT fire beside them:
+  // an array survives vacuously however empty it is, and a group keeping one usable leaf keeps
+  // the group. The node's own params object is the boundary — the app leaves an emptied node
+  // entry in place — so a rule reaching one key too far up would report every such node.
+  it("agrees with the app about a group that sanitises to nothing", async () => {
+    const SHAPES = [
+      ["an empty FX parameter map", "bus.fx1", { fxEffect: { type: 0, params: {} } }, true],
+      ["an empty effect object", "bus.fx1", { fxEffect: {} }, true],
+      ["an empty engine map", "ch1", { insertFx: 1793, insertFxParams: {} }, true],
+      ["an empty SSMCS group", "ch1", { ssmcs: {} }, true],
+      ["an empty gate group", "ch1", { gate: {} }, true],
+      ["an empty comp group", "ch1", { comp: {} }, true],
+      ["a group whose only leaf is a container", "ch1", { gate: { on: {} } }, true],
+      ["a group emptied two levels down", "ch1", { gate: { on: { x: {} } } }, true],
+      // …and the shapes the same rule must leave alone.
+      ["an empty band array", "ch1", { eqBands: [] }, false],
+      ["an array of empty bands", "ch1", { eqBands: [{}] }, false],
+      // An array is what holds THIS group up, which is the only way the array clause is
+      // reached: the walk guards a group rather than an array, so a rule that stopped
+      // counting arrays as survivors would report a group the app keeps and nothing else
+      // here would notice.
+      ["a group whose only leaf is an array", "ch1", { gate: { bands: [] } }, false],
+      ["a group whose array holds a non-object", "ch1", { gate: { bands: [1] } }, true],
+      ["a group that keeps one leaf", "ch1", { gate: { threshold: -20 } }, false],
+      ["a node with no params at all", "ch1", {}, false],
+    ];
+    for (const [name, node, np, removes] of SHAPES) {
+      const plan = { ...doc({}), nodeParams: { [node]: np } };
+      const loaded = await appLoad(plan, false);
+      // What the APP did, which is what the warning is a claim about.
+      expect(JSON.stringify(loaded.nodeParams[node]) !== JSON.stringify(np), `the app rewrites ${name}`).toBe(removes);
+      expect(toolPaths(dir, plan).length > 0, `the tool says so: ${name}`).toBe(removes);
+    }
   });
 
   // The one family whose write set MOVES with its own values: Pitch Fix stops sending the

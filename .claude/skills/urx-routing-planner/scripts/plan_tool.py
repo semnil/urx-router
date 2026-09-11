@@ -630,6 +630,16 @@ def fx_effect_warnings(node_id, fx, out):
     if not isinstance(params, dict):
         out.append((f"{node_id}.fxEffect.params", f"{params!r} is not an object, which drops every parameter"))
         return
+    # An empty map is removed the way any emptied group is. Reported because the tool's whole
+    # claim is that a document it passes loads unchanged, and this one does not — the key goes.
+    if not params:
+        out.append(
+            (
+                f"{node_id}.fxEffect.params",
+                "an empty parameter map carries nothing and the app removes the key",
+            )
+        )
+        return
     for k, v in params.items():
         # NOT recursed into: a parameter is one number, so an object here is a malformed
         # parameter rather than a group whose leaves could be read one at a time.
@@ -657,9 +667,40 @@ def scalar_only_drops(node_id, params, out):
     if not isinstance(slots, dict):
         out.append((f"{node_id}.insertFxParams", f"{slots!r} is not an object of engine slots"))
         return
+    # Empty, it is removed the way any emptied group is. Held out of the general walk for the
+    # container it keeps, this field needs the clause said there as well — its own rule reports
+    # per slot, and a map with no slots has nothing for that to report.
+    if not slots:
+        out.append(
+            (
+                f"{node_id}.insertFxParams",
+                "an empty engine map carries nothing and the app removes the key",
+            )
+        )
+        return
     for slot, raw in slots.items():
         if not (isinstance(raw, bool) or is_number(raw)):
             out.append((f"{node_id}.insertFxParams.{slot}", f"{raw!r} is not a boolean or a finite number"))
+
+
+def survives_sanitizer(value):
+    """Whether the app's document sanitiser leaves anything of `value` behind.
+
+    A leaf survives when it is a boolean or a finite number. An ARRAY survives when every
+    element is an object, one bad element dropping the whole array — so an empty array and an
+    array of empty objects both survive, vacuously. A GROUP survives only while at least one
+    of its own leaves does, which is the clause a walk over leaves alone cannot reach: the app
+    removes a group that sanitises to nothing rather than keeping an empty husk, so the key is
+    gone and the node falls back to the device default. `__proto__` is not a key the app keeps,
+    so it cannot be what holds a group up.
+    """
+    if isinstance(value, bool) or is_number(value):
+        return True
+    if isinstance(value, list):
+        return all(isinstance(el, dict) for el in value)
+    if isinstance(value, dict):
+        return any(survives_sanitizer(v) for k, v in value.items() if k != "__proto__")
+    return False
 
 
 def dropped_values(value, path, out):
@@ -673,6 +714,19 @@ def dropped_values(value, path, out):
     reason and reported by `scalar_only_drops`."""
     if isinstance(value, dict):
         for k, v in value.items():
+            # A group nothing survives is removed WHOLE, so the removal is reported at the
+            # group rather than at its leaves — the same distinction `fxEffect.level` draws:
+            # a leaf warning says the value is wrong, and here it is the KEY that is gone.
+            # Descending anyway would name paths that no longer exist to be repaired.
+            if isinstance(v, dict) and not survives_sanitizer(v):
+                out.append(
+                    (
+                        f"{path}.{k}",
+                        "this group sanitises to nothing and the app removes the key, so the node "
+                        "falls back to the device default rather than holding an empty group",
+                    )
+                )
+                continue
             dropped_values(v, f"{path}.{k}", out)
     elif isinstance(value, list):
         if all(isinstance(el, dict) for el in value):
