@@ -40,6 +40,19 @@ export interface SkillModel {
    *  slot's own name ("guitar amp") is a display word matching no namespace, a value outside
    *  its slot's range reaches the unit as the end of that range, and a slot the unit is
    *  driving itself is not sent at all. */
+  insertFxParamSpace: Record<
+    string,
+    {
+      /** The namespace stored values live under (`guitar-clean`, `pitch`, …). */
+      family: string;
+      /** Every slot a write can send, with the range it is bounded to, the second slot a
+       *  mirrored value also goes to, and whether it is sent under the DRIVER name. */
+      slots: { slot: number; rawMin: number; rawMax: number; mirror?: number; driver?: true }[];
+      /** The slots the unit drives ITSELF while `gate` is non-zero, which the write then
+       *  leaves out. Absent for a family that drives nothing. */
+      driven?: { gate: number; slots: number[] };
+    }
+  >;
   /** Per FX-channel node id: the effect types its menu offers, and what each parameter key
    *  ADMITS. Both are what `plan_tool.py` needs to answer the two questions it could not:
    *  a `type` the menu does not offer (dropped on load, since a menu has no nearest member)
@@ -55,19 +68,6 @@ export interface SkillModel {
     {
       types: number[];
       params: Record<string, { control: string; rawMin?: number; rawMax?: number; options?: number[] }>;
-    }
-  >;
-  insertFxParamSpace: Record<
-    string,
-    {
-      /** The namespace stored values live under (`guitar-clean`, `pitch`, …). */
-      family: string;
-      /** Every slot a write can send, with the range it is bounded to, the second slot a
-       *  mirrored value also goes to, and whether it is sent under the DRIVER name. */
-      slots: { slot: number; rawMin: number; rawMax: number; mirror?: number; driver?: true }[];
-      /** The slots the unit drives ITSELF while `gate` is non-zero, which the write then
-       *  leaves out. Absent for a family that drives nothing. */
-      driven?: { gate: number; slots: number[] };
     }
   >;
 }
