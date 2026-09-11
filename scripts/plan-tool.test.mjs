@@ -780,6 +780,39 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     }
   }
 
+  // `insertFxParams` that is not a map at all, partitioned over the JSON types it could be.
+  // The loader drops the whole field, and the author has to be told at THAT path — reporting
+  // its slots says nothing about a document whose map was a string, and an array reaches the
+  // loader intact (`eqBands` is an array, so the sanitiser keeps one), which is a second way
+  // in to the same answer. The valid object is the control: it is kept, so it must not be
+  // warned about, or a checker warning on every document would satisfy the rows above.
+  it.each([
+    ["a string", "not-a-map", true],
+    ["a number", 7, true],
+    ["a boolean", true, true],
+    ["null", null, true],
+    ["an empty array", [], true],
+    ["an array of records", [{ a: 1 }], true],
+    ["an object of slots", { "compander:6": -1200 }, false],
+  ])("agrees that insertFxParams as %s is dropped whole", (_name, value, dropped) => {
+    const plan = {
+      format: "urx-router-plan",
+      version: PLAN_VERSION,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch1: { insertFx: 1793, insertFxParams: value } },
+    };
+    const file = join(dir, "plan.json");
+    writeFileSync(file, JSON.stringify(plan));
+    const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    const loaded = deserialize(JSON.stringify(plan));
+    expect(loaded).not.toBeNull();
+
+    // What the APP did with it, which is what the warning is a claim about.
+    expect(loaded.nodeParams.ch1?.insertFxParams === undefined, `the app dropped it: ${_name}`).toBe(dropped);
+    expect(r.stderr.includes("node param ch1.insertFxParams:"), `the tool says so: ${_name}`).toBe(dropped);
+  });
+
   // The one family whose write set MOVES with its own values: Pitch Fix stops sending the
   // Scale and the twelve-note mask while MIDI Control is on, because switching it on is what
   // clears them on the unit. So the same two documents are a contradiction with the control

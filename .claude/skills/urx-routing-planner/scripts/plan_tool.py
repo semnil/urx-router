@@ -582,11 +582,18 @@ def scalar_only_drops(node_id, params, out):
     on = params.get("insertFxOn")
     if "insertFxOn" in params and not (isinstance(on, bool) or is_number(on)):
         out.append((f"{node_id}.insertFxOn", f"{on!r} is not a boolean or a finite number"))
+    if "insertFxParams" not in params:
+        return
     slots = params.get("insertFxParams")
-    if isinstance(slots, dict):
-        for slot, raw in slots.items():
-            if not (isinstance(raw, bool) or is_number(raw)):
-                out.append((f"{node_id}.insertFxParams.{slot}", f"{raw!r} is not a boolean or a finite number"))
+    # The map itself first: an engine map that is not a map is dropped whole, and reporting
+    # only its slots would say nothing at all about a document that made it a string — which
+    # is what holding the whole field out of the general walk had cost.
+    if not isinstance(slots, dict):
+        out.append((f"{node_id}.insertFxParams", f"{slots!r} is not an object of engine slots"))
+        return
+    for slot, raw in slots.items():
+        if not (isinstance(raw, bool) or is_number(raw)):
+            out.append((f"{node_id}.insertFxParams.{slot}", f"{raw!r} is not a boolean or a finite number"))
 
 
 def dropped_values(value, path, out):
