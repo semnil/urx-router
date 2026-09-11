@@ -196,7 +196,8 @@ export function isBalLinkedPair(model: DeviceModel, plan: Plan, id: string): boo
  *  together — PAN hard-pans the odd channel left and the even one right, BAL and
  *  unlinking centre both. A channel's CH_PAN is the pan of its fixed send into
  *  STEREO, so the send loop covers it; the SD Rec assign is a `sendSwitch` and has
- *  no pan. Call it before `mirrorLinkedPair` so the mirror copies settled values.
+ *  no pan. The head amp is untouched here as it is in the mirror: linking leaves each member
+ *  the input stage it had. Call it before `mirrorLinkedPair` so the mirror copies settled values.
  *
  *  Returns the contest keys it wrote, for the caller's write witness. Every one of them
  *  can be written without MOVING — unlinking a BAL pair centres pans that are already
@@ -239,7 +240,7 @@ export function applyPairTransition(model: DeviceModel, plan: Plan, primary: str
 
 /** The node params a linked pair does NOT share: the pair-level flags, which live on the
  *  primary alone, and the head-amp values each member keeps its own of. */
-const PAIR_OWN_NODE_KEYS = ["stereoLink", "panBal", "gain", "clipSafe", "phase"] as const;
+const PAIR_OWN_NODE_KEYS = ["stereoLink", "panBal", "gain", "clipSafe", "phase", "phantom", "hiZ"] as const;
 
 /** Whether an edit to `path` on one member of a linked pair reaches the other — the one
  *  place that question is answered, so `mirrorLinkedPair`'s copy, the MIDI catalogue's

@@ -1433,6 +1433,8 @@ describe("what a mirrored pair covers", () => {
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_BAL };
     const mirrorOf = (cid: string): string | undefined => bindControl(model, plan, cid)?.mirrorId;
     expect(mirrorOf(controlId("ch2", "gain")), "the channel's own A.GAIN").toBeUndefined();
+    expect(mirrorOf(controlId("ch2", "phantom")), "+48V").toBeUndefined();
+    expect(mirrorOf(controlId("ch2", "phase")), "the polarity invert").toBeUndefined();
     expect(mirrorOf(controlId("ch2", "gain", COMP_SCOPE)), "the COMP's makeup gain").toBe(
       controlId("ch1", "gain", COMP_SCOPE),
     );
