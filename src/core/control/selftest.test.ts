@@ -14,24 +14,30 @@ vi.mock("../platform", () => ({
 }));
 
 import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
-import { auditUnverified, eqOneKnob, inputEq, planToCommands, unverifiedAddresses } from "./translate";
+import { auditUnverified, channelControl, eqOneKnob, inputEq, planToCommands, unverifiedAddresses } from "./translate";
+import { planProblems } from "../plan-validate";
 import {
+  denormalizeInsertFx,
   dGainParam,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
   PARAMS,
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
 } from "./params";
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
 import {
   formatSelfTestReport,
+  linkedPassesFor,
   passesFor,
   PASSES,
   perturbedPlan,
   runSelfTest,
   selectableInputIds,
+  stereoLinkedPass,
   summarizeVerdicts,
+  unlinkedPassesFor,
 } from "./selftest";
 
 const model = getModel("URX44V");
@@ -68,6 +74,42 @@ function installMockDevice(seed: Plan): Map<string, number> {
   // Names are read via the string IPC but not part of the self-test round-trip;
   // a faithful device reports no custom name (empty).
   vi.mocked(vdGetStr).mockResolvedValue("");
+  return table;
+}
+
+// The table above answers every address independently, which no URX does: a STEREO-linked
+// MONO IN pair holds ONE insert effect between its two members. This wraps it with the two
+// halves of that — while a pair's Signal Type is STEREO a write of the selector or its ON
+// to either member lands on both, and EITHER transition of Signal Type clears both
+// members' selector and ON, whichever of them was holding it.
+//
+// It deliberately does not model the pan slam or the unit's own PAN/BAL=BAL on linking:
+// translate emits SIGNAL_TYPE and PAN_BAL ahead of every pan, so the plan's values land on
+// top of both and a round trip cannot tell them apart from a device that did neither.
+function installPairLinkingDevice(seed: Plan): Map<string, number> {
+  const table = installMockDevice(seed);
+  const partnerY = new Map<number, number>();
+  for (const [a, b] of model.channelPairs) {
+    const ay = channelControl(model, a)?.y;
+    const by = channelControl(model, b)?.y;
+    if (ay === undefined || by === undefined) continue;
+    partnerY.set(ay, by).set(by, ay);
+  }
+  const set = (id: number, x: number, y: number, v: number) => table.set(`${id}:${x}:${y}`, v);
+  const get = (id: number, x: number, y: number) => table.get(`${id}:${x}:${y}`) ?? 0;
+  vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+    const partner = partnerY.get(y);
+    const linked = partner !== undefined && get(PARAMS.SIGNAL_TYPE.id, 0, y) === 1;
+    if (id === PARAMS.SIGNAL_TYPE.id && partner !== undefined && get(id, x, y) !== v) {
+      for (const py of [y, partner]) {
+        set(PARAMS.INSERT_FX.id, 0, py, denormalizeInsertFx(INSERT_FX_NONE));
+        set(PARAMS.INSERT_FX_ON.id, 0, py, 0);
+      }
+    }
+    set(id, x, y, v);
+    if (linked && (id === PARAMS.INSERT_FX.id || id === PARAMS.INSERT_FX_ON.id)) set(id, x, partner, v);
+    return Promise.resolve();
+  });
   return table;
 }
 
@@ -111,7 +153,161 @@ describe("passesFor (model-driven sweep count)", () => {
   });
 });
 
+// The sweep writes the MONO IN pairs' Signal Type, so what it hands the device in each
+// pass is a document about a pair state. These ask that each such document is one the
+// unit can hold — the question the loader asks of a document from outside — and that the
+// two blocks between them still write everything the one block used to.
+describe("stereo-link sweep", () => {
+  const models = ["URX44V", "URX44", "URX22"] as const;
+
+  // The regression this exists for: a linked pair holds ONE insert effect between its two
+  // members, so a pass naming an effect on one and No Effect on the other describes no
+  // device state. It cost a whole self-test run against hardware (8 of 10 passes left one
+  // address differing after every round), and it is invisible from inside the sweep — the
+  // plan is built, written and only the unit disagrees. planProblems is the same funnel the
+  // loader runs, so a perturbed plan is held to what a hand-written document is held to.
+  for (const id of models) {
+    it(`${id}: every pass is a document the unit can hold`, () => {
+      const m = getModel(id);
+      const seed = emptyPlan(m.id);
+      ensureFixedConnections(m, seed);
+      for (let pass = 0; pass < passesFor(m); pass++) {
+        expect({ pass, problems: planProblems(m, perturbedPlan(m, seed, pass)) }).toEqual({ pass, problems: [] });
+      }
+    });
+  }
+
+  // What the two blocks are for. Each assertion names a state the old single-block sweep
+  // could not reach at all: it kept whatever Signal Type the unit was captured in, so one
+  // of the two was never written and — where the capture was linked — no channel could be
+  // given an effect of its own.
+  it("URX44V: writes both link states, both PAN/BAL modes, and every insert-FX option", () => {
+    const m = getModel("URX44V");
+    const seed = emptyPlan(m.id);
+    ensureFixedConnections(m, seed);
+    const linkStates = new Set<boolean>();
+    const panBalWhileLinked = new Set<number>();
+    const selectors = new Map<number, Set<number>>(); // channel y -> selectors written
+    const monoOnlyWhileLinked: number[] = [];
+    for (let pass = 0; pass < passesFor(m); pass++) {
+      const plan = perturbedPlan(m, seed, pass);
+      const linked = plan.nodeParams["ch1"]?.stereoLink === true;
+      linkStates.add(linked);
+      if (linked) panBalWhileLinked.add(plan.nodeParams["ch1"]!.panBal!);
+      for (const c of planToCommands(m, plan)) {
+        if (c.paramId !== PARAMS.INSERT_FX.id) continue;
+        (selectors.get(c.y) ?? selectors.set(c.y, new Set()).get(c.y)!).add(c.vdValue);
+        const opt = INSERT_FX_OPTIONS.find((o) => o.value === c.vdValue);
+        if (linked && opt?.monoOnly) monoOnlyWhileLinked.push(c.vdValue);
+      }
+    }
+    expect([...linkStates].sort()).toEqual([false, true]);
+    expect([...panBalWhileLinked].sort()).toEqual([0, 1]);
+    // Every mono channel instance, and every option, written somewhere in the run.
+    expect([...selectors.keys()].sort((a, b) => a - b)).toEqual([0, 1, 2, 3]);
+    const written = new Set([...selectors.values()].flatMap((v) => [...v]));
+    for (const o of INSERT_FX_OPTIONS) {
+      expect({ option: o.label, written: written.has(denormalizeInsertFx(o.value)) }).toEqual({
+        option: o.label,
+        written: true,
+      });
+    }
+    // The linked block writes only what a linked pair may hold: monoOnly is the field
+    // insertFxMenu locks as "link", and the broker taking one anyway is not a reason for
+    // the run to write a state no screen here offers.
+    expect(monoOnlyWhileLinked).toEqual([]);
+  });
+
+  it("both blocks are non-empty on every model", () => {
+    for (const id of models) {
+      const m = getModel(id);
+      expect({ id, unlinked: unlinkedPassesFor(m) > 0, linked: linkedPassesFor(m) > 0 }).toEqual({
+        id,
+        unlinked: true,
+        linked: true,
+      });
+      expect(stereoLinkedPass(m, unlinkedPassesFor(m) - 1)).toBe(false);
+      expect(stereoLinkedPass(m, unlinkedPassesFor(m))).toBe(true);
+      expect(passesFor(m)).toBe(unlinkedPassesFor(m) + linkedPassesFor(m));
+    }
+  });
+
+  // A pass whose pairs are linked must name ONE effect per pair, on both members — the
+  // shape the device mirrors. Asked of the emitted commands rather than of the plan, since
+  // the command is what reaches the unit.
+  it("URX44V: a linked pass writes one selector per pair, to both instances", () => {
+    const m = getModel("URX44V");
+    const seed = emptyPlan(m.id);
+    ensureFixedConnections(m, seed);
+    for (let pass = unlinkedPassesFor(m); pass < passesFor(m); pass++) {
+      const byY = new Map<number, number>();
+      for (const c of planToCommands(m, perturbedPlan(m, seed, pass))) {
+        if (c.paramId === PARAMS.INSERT_FX.id) byY.set(c.y, c.vdValue);
+      }
+      expect({ pass, pair0: byY.get(0) === byY.get(1), pair1: byY.get(2) === byY.get(3) }).toEqual({
+        pass,
+        pair0: true,
+        pair1: true,
+      });
+    }
+  });
+});
+
 describe("runSelfTest", () => {
+  // The independent-address device above cannot fail this way: it takes two different
+  // selectors on one pair and keeps both. Run against one that mirrors a linked pair the
+  // way the unit does, a sweep that gives one member an effect and the other No Effect
+  // leaves that pair differing after every round, and the run ends unconverged — which is
+  // what a URX44V with both pairs linked reported. The restore is asserted too, since the
+  // sweep now writes Signal Type and the unit clears both members' insert FX on the way
+  // back.
+  it("passes and restores against a device that links its pairs", async () => {
+    installPairLinkingDevice(populatedPlan());
+    const report = await runSelfTest(model, 0);
+    expect(report.residual).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect(report.restored).toBe(true);
+    expect(report.restoreResidual).toBe(0);
+  });
+
+  // The state the hardware run was captured in: both MONO IN pairs already STEREO-linked,
+  // which is simply how the operator had left the unit. A sweep that keeps whatever Signal
+  // Type it captured can then never write a per-channel insert FX — the pair holds one — so
+  // this is the case the shipped run failed, and it fails here too without the unlinked
+  // block. The run has to start from whatever the unit is in, not from a state it prefers.
+  // Which block a pass ran in decides what its residual can mean — a linked pair holds one
+  // insert effect, so a per-channel finding there is about a different device state than
+  // the same finding in the unlinked block. The report is read pass by pass, so it says so
+  // per pass rather than leaving the reader to count.
+  it("the report names each pass's pair state", async () => {
+    installMockDevice(populatedPlan());
+    const report = await runSelfTest(model, 0);
+    expect(report.unlinkedPasses).toBe(unlinkedPassesFor(model));
+    const md = formatSelfTestReport({
+      ...report,
+      traces: [
+        { pass: report.unlinkedPasses - 1, baseline: [], rounds: [] },
+        { pass: report.unlinkedPasses, baseline: [], rounds: [] },
+      ],
+    });
+    expect(md).toContain(`passes: ${passesFor(model)} (${unlinkedPassesFor(model)} with the MONO IN pairs unlinked`);
+    expect(md).toContain(`pass ${report.unlinkedPasses - 1} (pairs unlinked)`);
+    expect(md).toContain(`pass ${report.unlinkedPasses} (pairs STEREO-linked)`);
+  });
+
+  it("passes and restores from a capture whose pairs are already linked", async () => {
+    const seed = populatedPlan();
+    for (const [primary] of model.channelPairs) {
+      seed.nodeParams[primary] = { ...seed.nodeParams[primary], stereoLink: true, panBal: PAN_BAL_BAL };
+    }
+    installPairLinkingDevice(seed);
+    const report = await runSelfTest(model, 0);
+    expect(report.residual).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect(report.restored).toBe(true);
+    expect(report.restoreResidual).toBe(0);
+  });
+
   it("passes and restores against a faithful device", async () => {
     installMockDevice(populatedPlan());
     const report = await runSelfTest(model, 0);
