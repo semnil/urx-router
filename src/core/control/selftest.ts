@@ -52,7 +52,7 @@ import type { DeviceModel } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan } from "../plan";
-import { canConnect, isStereoLinkedPair, partnerChannel } from "../routing";
+import { canConnect, isStereoLinkedPair, mirrorLinkedPair, partnerChannel } from "../routing";
 import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
@@ -426,9 +426,22 @@ function makeSilent(model: DeviceModel, plan: Plan): void {
 // unlinked pair reads. Writing BAL to an unlinked pair is a write nothing here has
 // measured, and it is not what the app's own transition does either.
 //
-// The pair's insert FX is NOT carried across: the unit clears the selector and its ON on
-// BOTH members at either transition, and sweepInsertFx (which runs after this) assigns
-// this pass's effect afterwards.
+// Linking is not only a flag: a linked pair holds ONE set of channel values between its
+// two members and mirrors a write to either onto the other, so a plan that still names two
+// is asking for a state the unit cannot be in — the write sends both, the unit keeps the
+// last, and the converge alternates. A capture taken while the pair was UNLINKED is free to
+// disagree, which is exactly the state this block has to be able to write. So the primary's
+// values are mirrored onto the secondary here, through the app's own definition of what a
+// pair shares rather than a second list: mirrorLinkedPair leaves the head amp and — outside
+// BAL — each member's pan alone, which is what the unit leaves alone too.
+//
+// It runs BEFORE sweepInsertFx, which then assigns the pass's effect to both members of a
+// linked holder; the mirror carrying the captured selector across first changes nothing it
+// does not overwrite.
+//
+// The pair's insert FX is NOT carried across the TRANSITION on the unit: it clears the
+// selector and its ON on both members either way, and the sweep assigns this pass's effect
+// afterwards.
 function sweepStereoLink(plan: Plan, pass: number, model: DeviceModel): void {
   const linked = stereoLinkedPass(model, pass);
   const k = pass - unlinkedPassesFor(model);
@@ -436,6 +449,7 @@ function sweepStereoLink(plan: Plan, pass: number, model: DeviceModel): void {
     const np = (plan.nodeParams[primary] ??= {});
     np.stereoLink = linked;
     np.panBal = linked && k % 2 === 0 ? PAN_BAL_BAL : PAN_BAL_PAN;
+    if (linked) mirrorLinkedPair(model, plan, primary);
   }
 }
 

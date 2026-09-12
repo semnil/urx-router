@@ -2460,7 +2460,11 @@ listed here so they are not proposed again as gaps:
    mirrors a write to either onto the other. A run that kept whatever the unit was captured in would leave
    the other state unwritten, and where the capture was linked it could not give a channel an insert effect
    its neighbour does not have: the pair has one selector, so such a document describes no state the unit can
-   hold and the converge alternates to its round limit. The capture carries the unit's own Signal Type and
+   hold and the converge alternates to its round limit. **That is the pair's rule and not the selector's**, so
+   the linked block mirrors the primary's values onto the secondary through `mirrorLinkedPair` — the app's own
+   answer to what a pair shares, which leaves the head amp and, outside BAL, each member's pan alone. A capture
+   taken while the pair was UNLINKED is free to disagree about any of the rest, and that is exactly the capture
+   this block has to be able to write. The capture carries the unit's own Signal Type and
    PAN/BAL and the restore writes them back, so a run that finishes ends where it started. What changes is a
    run that does not: it leaves the pairs in the block it died in, with the pans the unit slams at either
    transition — a perturbed pair structure, not only perturbed values.

@@ -23,6 +23,7 @@ import {
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
   PAN_BAL_BAL,
+  PAN_BAL_PAN,
   PARAMS,
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
 } from "./params";
@@ -56,6 +57,39 @@ function populatedPlan(): Plan {
   return plan;
 }
 
+// A plan whose MONO IN pairs carry a stated link state, with the two members either
+// agreeing about what a linked pair holds one of or deliberately disagreeing — one node
+// value (CH ON) and one send value (the MIX1 send's ON). BOTH shapes are units that exist:
+// an UNLINKED pair is free to disagree, and that is the capture the linked block has to be
+// able to write, since the pair cannot hold two values at once. A LINKED one cannot, so
+// `differ` there would describe no unit at all.
+//
+// The agreeing shape is written out rather than mirrored from the primary, so the fixture
+// does not agree with the app's own mirror by construction.
+function pairPlan({ linked, differ }: { linked: boolean; differ: boolean }): Plan {
+  const plan = populatedPlan();
+  for (const [primary, secondary] of model.channelPairs) {
+    plan.nodeParams[primary] = {
+      ...plan.nodeParams[primary],
+      stereoLink: linked,
+      panBal: linked ? PAN_BAL_BAL : PAN_BAL_PAN,
+      on: true,
+    };
+    plan.nodeParams[secondary] = { ...plan.nodeParams[secondary], on: !differ };
+    for (const [id, on] of [
+      [primary, true],
+      [secondary, !differ],
+    ] as const) {
+      const to = "bus.mix1:in";
+      const from = `${id}:out`;
+      const existing = plan.connections.find((c) => c.kind === "send" && c.from === from && c.to === to);
+      if (existing) existing.params = { ...existing.params, on };
+      else plan.connections.push({ from, to, kind: "send", params: { level: -6, pan: 0, tap: "post", on } });
+    }
+  }
+  return plan;
+}
+
 // Faithful mock device: a value table seeded from a plan; vdSet writes, vdGet
 // reads (an unset port-ref address reads the NONE sentinel, like the broker).
 function installMockDevice(seed: Plan): Map<string, number> {
@@ -78,10 +112,16 @@ function installMockDevice(seed: Plan): Map<string, number> {
 }
 
 // The table above answers every address independently, which no URX does: a STEREO-linked
-// MONO IN pair holds ONE insert effect between its two members. This wraps it with the two
-// halves of that — while a pair's Signal Type is STEREO a write of the selector or its ON
-// to either member lands on both, and EITHER transition of Signal Type clears both
-// members' selector and ON, whichever of them was holding it.
+// MONO IN pair holds ONE set of channel values between its two members. This wraps it with
+// the three halves of that — while a pair's Signal Type is STEREO a write to either member
+// lands on both; linking copies the PRIMARY's values onto the secondary; and either
+// transition of Signal Type clears both members' insert selector and its ON, whichever of
+// them was holding it.
+//
+// MIRRORED is a SAMPLE, not the pair's contract: the insert-FX pair plus one node value and
+// one send value, which is what a case needs to reach the paths the selector alone does not.
+// What a pair actually shares is `pairSharesNodeKey` in src/core/routing.ts, and a second
+// copy of it here would be a list to keep in step with the unit rather than a fixture.
 //
 // It deliberately does not model the pan slam or the unit's own PAN/BAL=BAL on linking:
 // translate emits SIGNAL_TYPE and PAN_BAL ahead of every pan, so the plan's values land on
@@ -95,6 +135,14 @@ function installPairLinkingDevice(seed: Plan): Map<string, number> {
     if (ay === undefined || by === undefined) continue;
     partnerY.set(ay, by).set(by, ay);
   }
+  const MIRRORED: number[] = [
+    PARAMS.INSERT_FX.id,
+    PARAMS.INSERT_FX_ON.id,
+    PARAMS.CH_ON.id,
+    PARAMS.CH_FADER.id,
+    PARAMS.SEND_ON.id,
+    PARAMS.SEND_LEVEL.id,
+  ];
   const set = (id: number, x: number, y: number, v: number) => table.set(`${id}:${x}:${y}`, v);
   const get = (id: number, x: number, y: number) => table.get(`${id}:${x}:${y}`) ?? 0;
   vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
@@ -105,9 +153,16 @@ function installPairLinkingDevice(seed: Plan): Map<string, number> {
         set(PARAMS.INSERT_FX.id, 0, py, denormalizeInsertFx(INSERT_FX_NONE));
         set(PARAMS.INSERT_FX_ON.id, 0, py, 0);
       }
+      // Linking copies the primary's values onto the secondary — the pair ends up holding
+      // one set, and which one it is the unit decides rather than the caller.
+      if (v === 1) {
+        const primary = Math.min(y, partner);
+        const secondary = Math.max(y, partner);
+        for (const p of MIRRORED) set(p, 0, secondary, get(p, 0, primary));
+      }
     }
     set(id, x, y, v);
-    if (linked && (id === PARAMS.INSERT_FX.id || id === PARAMS.INSERT_FX_ON.id)) set(id, x, partner, v);
+    if (linked && MIRRORED.includes(id)) set(id, x, partner, v);
     return Promise.resolve();
   });
   return table;
@@ -232,6 +287,43 @@ describe("stereo-link sweep", () => {
     }
   });
 
+  // Everything else the pair holds one of, asked the same way. A capture can legally have
+  // the two members disagreeing — that is what an UNLINKED pair is for — and the linked
+  // block then has to stop asking for both, or it sends two values the unit collapses into
+  // one and the converge alternates. Insert FX was the instance that reached hardware; the
+  // rule is the pair's, not the selector's.
+  it("URX44V: a linked pass writes one value per pair for the state a pair shares", () => {
+    const m = getModel("URX44V");
+    const seed = pairPlan({ linked: false, differ: true });
+    // Premise: the seed really does disagree, or this asserts nothing.
+    expect(seed.nodeParams["ch1"]?.on).not.toBe(seed.nodeParams["ch2"]?.on);
+    for (let pass = unlinkedPassesFor(m); pass < passesFor(m); pass++) {
+      const byAddr = new Map<string, number>();
+      for (const c of planToCommands(m, perturbedPlan(m, seed, pass))) {
+        if (c.paramId === PARAMS.CH_ON.id || c.paramId === PARAMS.SEND_ON.id) {
+          byAddr.set(`${c.paramId}:${c.y}`, c.vdValue);
+        }
+      }
+      for (const id of [PARAMS.CH_ON.id, PARAMS.SEND_ON.id]) {
+        expect({
+          pass,
+          param: id,
+          pair0: byAddr.get(`${id}:0`) === byAddr.get(`${id}:1`),
+          pair1: byAddr.get(`${id}:2`) === byAddr.get(`${id}:3`),
+        }).toEqual({ pass, param: id, pair0: true, pair1: true });
+      }
+    }
+  });
+
+  // The unlinked block is the other half: there the two members are free to differ, and a
+  // run that mirrored everywhere would stop covering that.
+  it("URX44V: an unlinked pass leaves the two members free to differ", () => {
+    const m = getModel("URX44V");
+    const seed = pairPlan({ linked: false, differ: true });
+    const plan = perturbedPlan(m, seed, 0);
+    expect(plan.nodeParams["ch1"]?.on).not.toBe(plan.nodeParams["ch2"]?.on);
+  });
+
   // A pass whose pairs are linked must name ONE effect per pair, on both members — the
   // shape the device mirrors. Asked of the emitted commands rather than of the plan, since
   // the command is what reaches the unit.
@@ -295,12 +387,23 @@ describe("runSelfTest", () => {
     expect(md).toContain(`pass ${report.unlinkedPasses} (pairs STEREO-linked)`);
   });
 
-  it("passes and restores from a capture whose pairs are already linked", async () => {
-    const seed = populatedPlan();
-    for (const [primary] of model.channelPairs) {
-      seed.nodeParams[primary] = { ...seed.nodeParams[primary], stereoLink: true, panBal: PAN_BAL_BAL };
-    }
+  // The capture the linked block has to be able to write: pairs UNLINKED, with the two
+  // members legally disagreeing about state a LINKED pair holds one of. Linking then
+  // collapses each disagreement, so a plan still naming both values asks for a state the
+  // unit cannot be in and the converge alternates to its round limit — the same defect the
+  // insert-FX selector had, on every other key the pair shares.
+  it("passes and restores from an unlinked capture whose pairs disagree", async () => {
+    const seed = pairPlan({ linked: false, differ: true });
     installPairLinkingDevice(seed);
+    const report = await runSelfTest(model, 0);
+    expect(report.residual).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect(report.restored).toBe(true);
+    expect(report.restoreResidual).toBe(0);
+  });
+
+  it("passes and restores from a capture whose pairs are already linked", async () => {
+    installPairLinkingDevice(pairPlan({ linked: true, differ: false }));
     const report = await runSelfTest(model, 0);
     expect(report.residual).toEqual([]);
     expect(report.ok).toBe(true);
