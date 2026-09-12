@@ -2453,6 +2453,17 @@ listed here so they are not proposed again as gaps:
    addresses, and nothing observed restores from them (1-knob off, a preset reload, a neutral level, and a
    power cycle read back by eye on the unit's own screen). `diag` reports what a run could not send; the
    save-off is outside even that, and the private reference tree carries the measurements.
+
+   **And what a pass writes is no longer only values.** Every MONO IN pair's Signal Type is swept: the run is
+   two blocks, unlinked first and STEREO-linked second, because a linked pair is a different device state
+   rather than a variation of one — it holds a single set of channel values between its two members and
+   mirrors a write to either onto the other. A run that kept whatever the unit was captured in would leave
+   the other state unwritten, and where the capture was linked it could not give a channel an insert effect
+   its neighbour does not have: the pair has one selector, so such a document describes no state the unit can
+   hold and the converge alternates to its round limit. The capture carries the unit's own Signal Type and
+   PAN/BAL and the restore writes them back, so a run that finishes ends where it started. What changes is a
+   run that does not: it leaves the pairs in the block it died in, with the pans the unit slams at either
+   transition — a perturbed pair structure, not only perturbed values.
 2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
    a coerced in-range value is a better outcome than an out-of-range one reaching the unit. The clamp is
    deliberately NOT applied to the readout beside it: the panel shows what the plan holds, which after a
