@@ -13,16 +13,31 @@
 //
 // COVERAGE: enum params are swept across passes — pass k selects option
 // (k mod optionCount) for COMP/EQ type, COMP knee, OSC mode and EQ-band type, so
-// every option is written over the run. Insert FX is swept on a single node per
-// pass (one input channel + one output bus), the rest set to none, to respect
+// every option is written over the run. Insert FX is swept on a single holder per
+// pass (one input holder + one output bus), the rest set to none, to respect
 // the device-wide 1-of-N slot exclusivity. The device auto-engages a
 // (re)selected effect through its insert ON/OFF switch; that switch is modeled
 // (insertFxOn) and emitted after the selector, so the restore puts a captured
 // "selected but bypassed" effect back to bypassed. Input source is swept across
 // the model's selectable input ports, so the (still-unverified on URX22/44)
-// physical port map is exercised, not just the captured selection. The pass count
-// (passesFor) is the max of the largest swept enum and the passes needed to reach
-// every input port, so the trailing ports (usbsub / hdmi) are covered too.
+// physical port map is exercised, not just the captured selection.
+//
+// The run is two blocks and every MONO IN pair's Signal Type is what separates them:
+// unlinked first, then STEREO-linked (stereoLinkedPass). A linked pair is a different
+// device state, not a variation of the same one — it holds ONE set of channel values
+// between its two members and mirrors a write to either onto the other — so a run that
+// stayed in one of them would leave the other unwritten. It is also what makes the
+// per-channel insert-FX sweep expressible at all: a linked pair has one selector, so the
+// unlinked block is the only place a channel can hold an effect its neighbour does not.
+// Pass counts: unlinkedPassesFor is the max of the largest swept enum and the passes
+// needed to reach every input port (so the trailing usbsub / hdmi ports are covered),
+// linkedPassesFor one per (pair x option a linked pair may hold).
+//
+// THE RUN THEREFORE WRITES STRUCTURE, not only values. The capture holds the unit's own
+// Signal Type / PAN-BAL and the restore writes them back, but a run that dies before its
+// restore leaves the pairs in the block it was in, with the pans the unit slammed when it
+// got there — so an interrupted run is a perturbed pair structure, not only perturbed
+// values.
 //
 // UNVERIFIED GUESSES: some device mappings are confirmed only on URX44V and remain
 // guesses on URX22/URX44 (see UNVERIFIED_MAPPINGS). A static audit first refutes any
@@ -37,7 +52,7 @@ import type { DeviceModel } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan } from "../plan";
-import { canConnect, partnerChannel } from "../routing";
+import { canConnect, isStereoLinkedPair, mirrorLinkedPair, partnerChannel } from "../routing";
 import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
@@ -47,6 +62,8 @@ import {
   INSERT_FX_OPTIONS,
   insertFxAvailable,
   OUTPUT_INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
+  PAN_BAL_PAN,
   REC_POINT_OPTIONS,
 } from "./params";
 import { reachedAndFailed, sendConverging } from "./client";
@@ -174,6 +191,11 @@ export interface SelfTestReport {
   applied: number;
   /** Sweep passes run (each writes + verifies a perturbed plan). */
   passes: number;
+  /** How many of them ran with the MONO IN pairs unlinked — the rest ran STEREO-linked.
+   *  Carried on the report because a residual or a trace is read pass by pass, and which
+   *  of the two states the pass was in is what says whether a channel could hold an
+   *  insert effect of its own at all. */
+  unlinkedPasses: number;
   /** Commands sent across all passes. */
   written: number;
   /** Params that did not match after a write — the findings. */
@@ -265,10 +287,11 @@ const ENUM_SWEEP: Record<string, number[]> = {
 // engine slots lives in the completeness / value-coverage / insert-fx-effect /
 // translate unit tests.
 //
-// stereoLink / panBal are skipped too: stereoLink (Signal Type) is structural —
-// toggling it resets the secondary channel and rejects independent writes to it
-// while linked — and panBal is a 0/1 enum only meaningful while linked, so the
-// generic "+1" perturb drives it out of range. Both round-trip in value-coverage.
+// stereoLink / panBal are out of the generic perturb and swept by sweepStereoLink
+// instead: they are structural (Signal Type decides whether a pair holds one set of
+// values or two, and resets the secondary channel on either transition), so what they
+// need is a block per state rather than a per-pass flip — and panBal is a 0/1 enum only
+// meaningful while linked, which the generic "+1" would drive out of range.
 // comp.oneKnobLevel is a bounded 0..100 raw (not a small enum), so the "+1" nudge
 // runs it past 100 when captured at max; skip it (its round-trip is value-covered).
 const SKIP = new Set([
@@ -292,16 +315,50 @@ export const PASSES = Math.max(
   ...Object.values(ENUM_SWEEP).map((o) => o.length),
 );
 
-// Passes for a model: enough to write every swept enum option at least once AND
+// The run is two blocks, and `stereoLinkedPass` is the boundary. Every MONO IN pair
+// is forced UNLINKED for the first block and STEREO-linked for the second, because the
+// two are different device states and a channel param reaches the unit through a
+// different path in each: a linked pair holds ONE set of values between its two members
+// and mirrors a write to either onto the other. A run that stayed in one of them would
+// leave the other unexercised — and the sweep that stayed in whatever the unit happened
+// to hold could not write a per-channel insert FX at all (a linked pair has one).
+//
+// Unlinked passes for a model: enough to write every swept enum option at least once AND
 // to point some channel group at every selectable input port. The input-source
 // sweep gives group gi the port at (pass + gi) mod N, so the union across G
 // groups reaches every one of the N ports only after N - G + 1 passes (URX44V 10
 // / URX44 9 / URX22 7). Taking the max with the enum floor keeps the last input
 // ports (usbsub / hdmi) reached instead of leaving their INPUT_PORTS guess
 // unexercised. Exported for tests.
-export function passesFor(model: DeviceModel): number {
+export function unlinkedPassesFor(model: DeviceModel): number {
   const ports = selectableInputIds(model).length;
   return Math.max(PASSES, ports - channelSourceGroups(model).length + 1);
+}
+
+// Insert-FX options a STEREO-linked MONO IN pair may hold: the companders, which the
+// user guide's Effect list says operate in stereo on such a pair, plus No Effect. The
+// amps and Pitch Fix are `monoOnly` — the same field `insertFxMenu` locks as "link" —
+// and although the broker takes one anyway, writing it here would be writing a state no
+// surface of this app lets an operator choose.
+const LINKED_INSERT_FX_OPTIONS = INSERT_FX_OPTIONS.filter((o) => !o.monoOnly);
+
+// Linked passes for a model: one per (receiving pair x option), so every pair holds
+// every option it can. The two cursors are coprime counts (pairs 2, options 3 — 1 and 3
+// on a URX22), so k mod each reaches every combination in their product. Zero on a model
+// with no MONO IN pair, which is no model today.
+export function linkedPassesFor(model: DeviceModel): number {
+  return model.channelPairs.length * LINKED_INSERT_FX_OPTIONS.length;
+}
+
+/** Whether sweep pass `pass` runs with every MONO IN pair STEREO-linked. Exported so the
+ *  sweeps and their tests read the boundary from one place. */
+export function stereoLinkedPass(model: DeviceModel, pass: number): boolean {
+  return pass >= unlinkedPassesFor(model);
+}
+
+// Passes for a model: the unlinked block then the linked one. Exported for tests.
+export function passesFor(model: DeviceModel): number {
+  return unlinkedPassesFor(model) + linkedPassesFor(model);
 }
 
 // Perturb every scalar in an object tree in place: flip bools, nudge numbers,
@@ -357,19 +414,69 @@ function makeSilent(model: DeviceModel, plan: Plan): void {
   }
 }
 
-// Sweep insert FX: one input channel and one output bus get this pass's option,
+// Sweep Signal Type (stereo link) and PAN/BAL: every MONO IN pair takes this pass's
+// block state, so both device states are exercised rather than whichever one the unit
+// happened to be captured in. Written into the plan rather than as a step of its own,
+// so the emit order carries it: translate puts SIGNAL_TYPE / PAN_BAL ahead of the pan
+// blocks because either selector makes the unit slam the pair's CH_PAN and every bus
+// send's pan, and the plan's pans have to land on top of that.
+//
+// PAN/BAL is the pair's own mode and only means anything while linked: the linked block
+// alternates it so both are written, and the unlinked block holds PAN, which is what an
+// unlinked pair reads. Writing BAL to an unlinked pair is a write nothing here has
+// measured, and it is not what the app's own transition does either.
+//
+// Linking is not only a flag: a linked pair holds ONE set of channel values between its
+// two members and mirrors a write to either onto the other, so a plan that still names two
+// is asking for a state the unit cannot be in — the write sends both, the unit keeps the
+// last, and the converge alternates. A capture taken while the pair was UNLINKED is free to
+// disagree, which is exactly the state this block has to be able to write. So the primary's
+// values are mirrored onto the secondary here, through the app's own definition of what a
+// pair shares rather than a second list: mirrorLinkedPair leaves the head amp and — outside
+// BAL — each member's pan alone, which is what the unit leaves alone too.
+//
+// It runs BEFORE sweepInsertFx, which then assigns the pass's effect to both members of a
+// linked holder; the mirror carrying the captured selector across first changes nothing it
+// does not overwrite.
+//
+// The pair's insert FX is NOT carried across the TRANSITION on the unit: it clears the
+// selector and its ON on both members either way, and the sweep assigns this pass's effect
+// afterwards.
+function sweepStereoLink(plan: Plan, pass: number, model: DeviceModel): void {
+  const linked = stereoLinkedPass(model, pass);
+  const k = pass - unlinkedPassesFor(model);
+  for (const [primary] of model.channelPairs) {
+    const np = (plan.nodeParams[primary] ??= {});
+    np.stereoLink = linked;
+    np.panBal = linked && k % 2 === 0 ? PAN_BAL_BAL : PAN_BAL_PAN;
+    if (linked) mirrorLinkedPair(model, plan, primary);
+  }
+}
+
+// Sweep insert FX: one input holder and one output bus get this pass's option,
 // every other insert-FX node is set to none. A single active effect per kind
 // respects the device-wide 1-of-N slot exclusivity (two channels cannot hold the
 // same slot at once), and options over the captured sample rate's ceiling are
 // dropped (a rate-locked selector never round-trips), so the write is always
-// legal. The receiving node also rotates per pass, so every node/instance of the
+// legal. The receiving holder also rotates per pass, so every node/instance of the
 // selector and switch params is exercised, not just the first. The ON/OFF
 // (bypass) switch is modeled (insertFxOn, flipped by perturb): translate emits
 // it after the selector on the effect-bearing nodes, so the device's auto-engage
 // on (re)selection is overridden and both switch states round-trip over the run.
+//
+// An input HOLDER is a channel while its pair is unlinked and the PAIR once it is
+// linked, because that is what the unit holds one effect for: a linked pair keeps one
+// selector between its two members and mirrors a write to either onto the other. Giving
+// one member an effect and the other No Effect describes no state the unit can be in —
+// the write sends two selectors, the unit keeps whichever landed last, and the converge
+// alternates to its round limit and finishes unconverged. plan-validate.ts's
+// insertFxPairProblems refuses the same document at the load. So a linked holder is
+// written to BOTH its members, and the linked block picks from the options such a pair
+// may hold.
 function sweepInsertFx(plan: Plan, pass: number, model: DeviceModel): void {
-  const inputs: string[] = [];
+  const inputs: string[][] = [];
   const outputs: string[] = [];
+  const paired = new Set<string>();
   for (const node of model.nodes) {
     const ifx = insertFxControl(model, node.id);
     if (!ifx) continue;
@@ -379,12 +486,24 @@ function sweepInsertFx(plan: Plan, pass: number, model: DeviceModel): void {
     const np = (plan.nodeParams[node.id] ??= {});
     np.insertFx = INSERT_FX_NONE;
     delete np.insertFxParams;
-    (ifx.isOutput ? outputs : inputs).push(node.id);
+    if (ifx.isOutput) {
+      outputs.push(node.id);
+      continue;
+    }
+    if (paired.has(node.id)) continue;
+    const partner = isStereoLinkedPair(model, plan, node.id) ? partnerChannel(model, node.id) : undefined;
+    if (partner !== undefined) paired.add(partner);
+    inputs.push(partner !== undefined ? [node.id, partner] : [node.id]);
   }
-  const legalIn = INSERT_FX_OPTIONS.filter((o) => insertFxAvailable(o, plan.sampleRate));
+  const linked = stereoLinkedPass(model, pass);
+  const k = linked ? pass - unlinkedPassesFor(model) : pass;
+  const legalIn = (linked ? LINKED_INSERT_FX_OPTIONS : INSERT_FX_OPTIONS).filter((o) =>
+    insertFxAvailable(o, plan.sampleRate),
+  );
   const legalOut = OUTPUT_INSERT_FX_OPTIONS.filter((o) => insertFxAvailable(o, plan.sampleRate));
   if (inputs.length) {
-    plan.nodeParams[inputs[pass % inputs.length]].insertFx = legalIn[pass % legalIn.length].value;
+    const value = legalIn[k % legalIn.length].value;
+    for (const id of inputs[k % inputs.length]) plan.nodeParams[id].insertFx = value;
   }
   if (outputs.length) {
     plan.nodeParams[outputs[pass % outputs.length]].insertFx = legalOut[pass % legalOut.length].value;
@@ -456,6 +575,8 @@ export function perturbedPlan(model: DeviceModel, original: Plan, pass: number, 
   const plan = structuredClone(original);
   for (const np of Object.values(plan.nodeParams)) perturb(np as Record<string, unknown>, pass);
   for (const c of plan.connections) if (c.params) perturb(c.params as Record<string, unknown>, pass);
+  // Before the insert-FX sweep, which reads the link state to decide what a holder is.
+  sweepStereoLink(plan, pass, model);
   sweepInsertFx(plan, pass, model);
   sweepInputSource(plan, pass, model);
   if (suppress) for (const m of UNVERIFIED_MAPPINGS) if (suppress.has(m.key)) m.suppress?.(plan);
@@ -503,6 +624,7 @@ export async function runSelfTest(
     device: "",
     applied: 0,
     passes,
+    unlinkedPasses: unlinkedPassesFor(model),
     written: 0,
     residual: [],
     traces: [],
@@ -927,7 +1049,10 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   lines.push(`# URX self-test report — ${report.device || "(no device)"}`);
   lines.push("");
   lines.push(`- Result: ${report.ok ? "PASS" : "FAIL"} (phase: ${report.phase})`);
-  lines.push(`- Captured groups: ${report.applied}; passes: ${report.passes}; commands written: ${report.written}`);
+  const linkedPasses = report.passes - report.unlinkedPasses;
+  lines.push(
+    `- Captured groups: ${report.applied}; passes: ${report.passes} (${report.unlinkedPasses} with the MONO IN pairs unlinked, ${linkedPasses} STEREO-linked); commands written: ${report.written}`,
+  );
   lines.push(
     report.phase === "refused"
       ? "- Restored: not applicable — the run refused to start and wrote nothing"
@@ -1011,7 +1136,9 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   // have — is answerable only from the rounds themselves.
   for (const t of report.traces) {
     lines.push("");
-    lines.push(`## Converge trace — pass ${t.pass}`);
+    lines.push(
+      `## Converge trace — pass ${t.pass} (pairs ${t.pass < report.unlinkedPasses ? "unlinked" : "STEREO-linked"})`,
+    );
     lines.push("");
     lines.push("Captured value of each address that did not converge (the diff's starting point):");
     for (const b of t.baseline) lines.push(`- ${b.name} @ ${b.addr} = ${b.value}`);
