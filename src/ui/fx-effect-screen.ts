@@ -177,19 +177,17 @@ function lanesOf(ctx: DynCtx): DynLane[] {
 /**
  * Why nothing this screen sets reaches the signal, or null when something does.
  *
- * The rate first, then the bypass — the order the insert-FX screen takes, and for its
- * reason: above 96 kHz the FX2 bus is gone, which the CONSOLE strip and the Inspector
- * already say, and saying it in different words on a third surface (or not at all) is how
- * one panel tells the operator the effect is off while another hands them a live editor.
+ * The rate is the one reason: above 96 kHz the FX2 bus is gone, which the CONSOLE strip and
+ * the Inspector already say, and saying it in different words on a third surface (or not at
+ * all) is how one panel tells the operator the effect is off while another hands them a live
+ * editor. The insert-FX screen puts the same note first, ahead of its bypass.
  *
- * Neither state closes the screen or locks a row. The unit accepts and keeps a parameter
- * write at any rate, and a bypassed effect is still an effect to tune — the plan holds the
- * values, the unit stores them, and the two lanes go on reading the signal that is passing
- * through untouched.
+ * It does not close the screen or lock a row. The unit accepts and keeps a parameter write at
+ * any rate — the plan holds the values, the unit stores them, and the two lanes go on reading
+ * whatever reaches them.
  */
 function offNote(ctx: DynCtx): string | null {
-  if (nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate)) return ctx.m.inspector.fx2RateLocked;
-  return fxOf(ctx).on === false ? ctx.m.dynTuning.bypassed : null;
+  return nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate) ? ctx.m.inspector.fx2RateLocked : null;
 }
 
 /** The rows the unit owns, tagged with which of the two things it is doing. Both stay on
@@ -230,9 +228,9 @@ const labelOf = (d: FxParamDesc, m: Messages): string =>
  * The catalogue shares a key wherever two families really are one parameter and separates the
  * ones that only look alike, so the first descriptor found under a key is the right label.
  *
- * The effect array's slot 2 is answered too, though no surface offers it any more: a mapping
- * saved against a build that did offer it is still in the operator's file, and a row naming
- * its own token would read as a defect rather than as an assignment to remove.
+ * The effect array's slots 1 and 2 are answered too, though no surface offers either any more:
+ * a mapping saved against a build that did offer one is still in the operator's file, and a
+ * row naming its own token would read as a defect rather than as an assignment to remove.
  */
 export function fxControlLabel(scope: string | undefined, m: Messages): string | null {
   if (scope === undefined || !scope.startsWith(`${FX_SCOPE}.`)) return null;

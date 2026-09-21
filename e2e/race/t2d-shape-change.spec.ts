@@ -51,14 +51,14 @@ const arr = (slot: number): string => `${FX1_ARRAY}:0:${slot}`;
  *  until something reads it. */
 const PANEL_HPF = 21;
 
-/** Rev-X (FX1 factory type 0) array slots: ON, then the ten REVX_PARAMS descriptors —
- *  reverbTime 7, revxInitialDelay 9, decay 15, roomSize 12, revxDiffusion 8, revxHpf 10,
- *  revxLpf 11, revxHiRatio 13, lowRatio 14, lowFreq 18 (core/control/fx-effect.ts). Slot 2 is
- *  not one of them: the app neither reads it nor writes it, so it appears in neither pass. */
-const REVX_SLOTS = [1, 7, 9, 15, 12, 8, 10, 11, 13, 14, 18];
-/** Mono Delay (type 1024) array slots: ON, then DELAY_PARAMS — delay 6, delayFeedback 7,
+/** Rev-X (FX1 factory type 0) array slots: the ten REVX_PARAMS descriptors — reverbTime 7,
+ *  revxInitialDelay 9, decay 15, roomSize 12, revxDiffusion 8, revxHpf 10, revxLpf 11,
+ *  revxHiRatio 13, lowRatio 14, lowFreq 18 (core/control/fx-effect.ts). Slots 1 and 2 are not
+ *  among them: the app neither reads nor writes either, so they appear in neither pass. */
+const REVX_SLOTS = [7, 9, 15, 12, 8, 10, 11, 13, 14, 18];
+/** Mono Delay (type 1024) array slots: DELAY_PARAMS — delay 6, delayFeedback 7,
  *  delayHiRatio 8, delayHpf 9, delayLpf 10, sync 4, bpm 3, note 11. */
-const DELAY_SLOTS = [1, 6, 7, 8, 9, 10, 4, 3, 11];
+const DELAY_SLOTS = [6, 7, 8, 9, 10, 4, 3, 11];
 /** Slots only one family has. Computed, not spelled out, so the two tables above are
  *  the single statement of the catalog and this cannot drift away from them. */
 const REVX_ONLY = REVX_SLOTS.filter((s) => !DELAY_SLOTS.includes(s)).sort((a, b) => a - b);
@@ -101,7 +101,7 @@ const fxRow = (page: Page, label: string) =>
   fxSection(page).locator(".param", { has: page.getByText(label, { exact: true }) });
 
 // The effect's PARAMETERS live on the FX EFFECT tuning screen; the Inspector keeps the
-// EFFECT TYPE selector, the ON toggle and the launcher. So this case drives two surfaces,
+// EFFECT TYPE selector and the launcher. So this case drives two surfaces,
 // and it cannot drive them at once: the screen is a modal and makes the Inspector inert
 // while it is open. Every phase below therefore opens it, authors, and closes it again —
 // which is also why the opens sit OUTSIDE the marked windows. The screen lays its
@@ -178,9 +178,8 @@ test.describe("T2d shape-change", () => {
 
   // shape-fx-effect-type-slot-family. The FX EFFECT TYPE selector is the only
   // parameter whose write changes which SLOTS of an array param exist rather than the
-  // value at a fixed id. The two families share six slots, of which one (1 = ON) is the
-  // array's family-independent header and five (7, 8, 9, 10, 11) carry a different
-  // parameter on either side of the switch. Three things are
+  // value at a fixed id. The two families share five slots (7, 8, 9, 10, 11), and each
+  // carries a different parameter on either side of the switch. Three things are
   // measured in one run: the send ORDER (the selector must reach the device before the
   // array it types), the address SET on either side of the switch (read out of the
   // app's own two read passes — the opening readback before, the converge after), and

@@ -9,7 +9,7 @@ vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdGet, vdGetStr } from "../platform";
 import { COLOR_PALETTE, dGainParam, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS, silentKey } from "./params";
-import { FX_SLOT_ON, fxEffectTypes, fxParams } from "./fx-effect";
+import { fxEffectTypes, fxParams } from "./fx-effect";
 import { defaultPlan } from "../../models/initial-state";
 import { applyDeviceState, applySilentState, formatReadbackReport } from "./readback";
 import { readableContestKey } from "../plan-history";
@@ -1585,50 +1585,45 @@ describe("applySilentState", () => {
     expect(plan.nodeParams["bus.fx1"], "not one value of it moved").toEqual(before);
   });
 
-  // The layout rule reaches the addresses a HEAD lays out, and no further. An FX channel's
-  // ON sits in the same array and means the same thing under every type, so a head the panel
-  // moved says nothing about it — and the guard that keeps an unsent edit is the whole of
+  // Slots 1 and 2 of the effect array are asked for NOWHERE. No control of the unit's own
+  // reaches either, so the app neither writes nor reads them, and a read that carried one back
+  // would put plan state behind a value no surface shows and no command sends. Asked of the
+  // addresses the park actually requests, as an EQUALITY with the held type's descriptor slots,
+  // for every type either channel offers: a run that requested nothing from these arrays fails
+  // it, and so does one extra slot.
+  it("asks the effect array for the held type's descriptor slots and nothing else", async () => {
+    for (const [fxIndex, arrId, node] of [
+      [0, 681, "bus.fx1"],
+      [1, 685, "bus.fx2"],
+    ] as const) {
+      for (const opt of fxEffectTypes(fxIndex)) {
+        const plan = defaultPlan("URX44V");
+        plan.nodeParams[node] = { ...plan.nodeParams[node], fxEffect: { type: opt.value } };
+        vi.mocked(vdGet).mockClear();
+        mockVdGetFrom(deviceTableFor(plan));
+        await applySilentState(model, plan);
+        expect(plan.nodeParams[node]!.fxEffect!.type, `${node} ${opt.label}: the park held the type`).toBe(opt.value);
+        const asked = [
+          ...new Set(
+            vi
+              .mocked(vdGet)
+              .mock.calls.filter(([id]) => id === arrId)
+              .map(([, , y]) => y),
+          ),
+        ].sort((a, b) => a - b);
+        const laidOut = fxParams(opt.value)
+          .map((d) => d.slot)
+          .sort((a, b) => a - b);
+        expect(laidOut.length, `${node} ${opt.label}: the type lays out no slot`).toBeGreaterThan(0);
+        expect(asked, `${node} ${opt.label}`).toEqual(laidOut);
+      }
+    }
+  });
+
+  // The layout rule reaches the addresses a HEAD lays out, and no further. The insert-FX
+  // bypass is its own param, not an engine slot, so the selector moving on the panel leaves
+  // it meaning what it always did — and the guard that keeps an unsent edit is the whole of
   // what stops the app writing its own back over the operator's.
-  it("keeps an unsent edit to the effect ON when the unit's head moved", async () => {
-    const plan = defaultPlan("URX44V");
-    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
-    const table = deviceTableFor(plan);
-    table.set("679:0:0", delay.value); // the hand on the unit: another type, unannounced
-    const fx = plan.nodeParams["bus.fx1"]!.fxEffect!;
-    plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { ...fx, on: false } };
-
-    mockVdGetFrom(table);
-    // The snapshot holds the type this session last sent — not the one the panel chose —
-    // and holds every other address as it stands.
-    await applySilentState(model, plan, undefined, undefined, (id) => id !== 679);
-
-    const after = plan.nodeParams["bus.fx1"]?.fxEffect;
-    expect(after?.type, "the unit's own type").toBe(delay.value);
-    expect(after?.on, "and the operator's own edit, which no type changes the meaning of").toBe(false);
-  });
-
-  // Slot 2 of the effect array is asked for NOWHERE. No control of the unit's own reaches it,
-  // so the app neither writes it nor reads it, and a read that carried it back would put plan
-  // state behind a value no surface shows and no command sends. Asked of the addresses the
-  // park actually requests, with slot 1 — the effect ON, which IS read — as the control: a run
-  // that requested nothing from these arrays would satisfy the absence on its own.
-  it("asks the effect array for the ON and never for slot 2", async () => {
-    const plan = defaultPlan("URX44V");
-    mockVdGetFrom(deviceTableFor(plan));
-    await applySilentState(model, plan);
-    const asked = vi.mocked(vdGet).mock.calls.filter(([id]) => id === 681 || id === 685);
-    expect(
-      asked.some(([, , y]) => y === FX_SLOT_ON),
-      "the effect ON was not read",
-    ).toBe(true);
-    expect(
-      asked.filter(([, , y]) => y === 2),
-      "slot 2 was read",
-    ).toEqual([]);
-  });
-
-  // The same address on the other family: the insert-FX bypass is its own param, not an
-  // engine slot, so the selector moving on the panel leaves it meaning what it always did.
   it("keeps an unsent insert-FX bypass when the unit's selector moved", async () => {
     const plan = defaultPlan("URX44V");
     const was = plan.nodeParams["bus.stereo"];
@@ -1661,7 +1656,7 @@ describe("applySilentState", () => {
     const DURING = STEADY + 37;
     // One pass' worth of array reads answer the OTHER layout's values while both readings of
     // the head answer the type the unit started and ended on.
-    let contaminated = fxParams(0).length + 2;
+    let contaminated = fxParams(0).length;
     vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
       if (paramId === 681 && contaminated > 0) {
         contaminated--;
@@ -1691,8 +1686,8 @@ describe("applySilentState", () => {
     const STEADY = table.get(`681:0:${time.slot}`)!;
     const DURING = STEADY + 41;
     // The first reading is clean; the excursion lands inside the second.
-    // Every descriptor slot, plus the effect ON. Slot 2 is not among them.
-    const perPass = fxParams(0).length + 1;
+    // Every descriptor slot, and nothing else.
+    const perPass = fxParams(0).length;
     let arrayReads = 0;
     vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
       if (paramId === 681) {

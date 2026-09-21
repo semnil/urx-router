@@ -63,6 +63,8 @@ export const ja: Messages = {
     power: "オン/オフ",
     eq: "EQ",
     effect: "EFFECT",
+    effectHint:
+      "本体にはこのエフェクト単体の ON/OFF がなく、常に掛かっています。FX チャンネル自体の ON/OFF はストリップの電源ボタンで切り替えます。",
     pre: "PRE",
     sends: "SENDS",
     sendPan: "SEND PAN",

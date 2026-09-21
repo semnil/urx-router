@@ -99,8 +99,13 @@ export const en = {
     eq: dev("EQ"),
     // The FX strip's processing chip. Named for what happens there rather than for the
     // strip — the scribble above it already reads FX 1 / FX 2 — and the unit's own
-    // parameters are EFFECT TYPE and EFFECT ON.
+    // parameter is EFFECT TYPE.
     effect: dev("EFFECT"),
+    // The tooltip on that chip, which is drawn lit and cannot be pressed: why nothing
+    // switches there, and where the FX channel's own on/off is.
+    effectHint: tr(
+      "The unit has no on/off for this effect — it is always in. The FX channel itself switches with the strip's power button.",
+    ),
     pre: dev("PRE"),
     // Per-strip SENDS rack: header label, the SEND PAN popover header, and the
     // hover tooltip on the PRE button (mirrors cueFull's tooltip mechanism).
@@ -709,8 +714,8 @@ export const en = {
     fx: {
       // The screen's own name. The unit has no FX-effect screen to copy a heading from —
       // an FX channel's effect parameters are reached through its INS FX screen — so this
-      // is the app's name for the screen, built from the words the unit's own parameters
-      // use (EFFECT TYPE / EFFECT ON). Latin in both languages, like every screen title.
+      // is the app's name for the screen, built from the word the unit's own parameter
+      // uses (EFFECT TYPE). Latin in both languages, like every screen title.
       title: fixed("FX EFFECT"),
       open: tr("FX Effect screen"),
       // While tempo Sync is on the unit computes the delay time from the BPM and the note

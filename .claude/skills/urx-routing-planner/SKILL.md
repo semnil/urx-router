@@ -312,7 +312,7 @@ it, send it to the main mix at -3 dB, and also feed FX1 for reverb."
 ```json
 {
   "format": "urx-router-plan",
-  "version": 3,
+  "version": 4,
   "modelId": "URX44V",
   "connections": [
     { "from": "in.micline_1_2:out", "to": "ch1:in", "kind": "source" },
@@ -338,7 +338,7 @@ and give my streaming app the ducked mix on USB MAIN A."
 ```json
 {
   "format": "urx-router-plan",
-  "version": 3,
+  "version": 4,
   "modelId": "URX44V",
   "connections": [
     { "from": "in.micline_1_2:out", "to": "ch1:in", "kind": "source" },

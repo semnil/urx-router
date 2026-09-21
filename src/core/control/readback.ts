@@ -49,7 +49,7 @@ import {
 import type { ParamName } from "./params";
 import { writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
-import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, FX_SLOT_ON, fxParams } from "./fx-effect";
+import { FX_EFFECT_ARRAY_PARAM, FX_EFFECT_TYPE_PARAM, fxParams } from "./fx-effect";
 import {
   insertFxEngine,
   insertFxFamilyOf,
@@ -587,9 +587,9 @@ export async function applySilentState(
       base,
       head,
       what,
-      // The guard is kept for everything the head does NOT lay out — an FX channel's ON and
-      // MIX, an insert effect's bypass — since a type says nothing about what those mean. It
-      // is the addresses BEHIND the head that a moved one makes incomparable, and `agrees`
+      // The guard is kept for everything the head does NOT lay out — an insert effect's
+      // bypass — since a type says nothing about what that means. It is the addresses
+      // BEHIND the head that a moved one makes incomparable, and `agrees`
       // asks that of the head the unit holds NOW, which is what an attempt whose head moved
       // leaves behind for the next one.
       () => read(agrees(head) ? source : plain),
@@ -1746,28 +1746,24 @@ async function readFxEffect(
   const arrId = FX_EFFECT_ARRAY_PARAM[fxIndex];
   const type = await vdGet(FX_EFFECT_TYPE_PARAM[fxIndex], 0, 0);
   const params: Record<string, number> = {};
-  // The type's own descriptors are what the head lays out; ON is at a fixed slot and means the
-  // same thing under every type, so it stays on the caller's ordinary source.
+  // The type's own descriptors are what the head lays out, so they come from `slots`; the
+  // head itself stays on the caller's ordinary source. Slots 1 and 2 are not read: nothing
+  // writes them, so a value carried back would be plan state no surface shows and no command
+  // sends.
   for (const desc of fxParams(type)) {
     params[desc.key] = await laidOut(arrId, 0, desc.slot);
   }
-  return {
-    type,
-    // Slot 2 is not read either: nothing writes it, so a value carried back would be plan
-    // state no surface shows and no command sends.
-    on: vdToBool(await vdGet(arrId, 0, FX_SLOT_ON)),
-    params,
-  };
+  return { type, params };
 }
 
 /**
- * An FX channel's effect — the type, the ON slot every type shares and the selected type's
- * parameter array — applied to the plan. Shared by the full read and the silent-address park for the
- * reason `readInsertFxInto` is, and MERGED into what the node already holds for the same
- * reason: the params map carries one key per FAMILY, so a channel that has held several
- * effects keeps each one's values and a read answers for the family the type names. Replacing
- * the map dropped the dormant families with it, and selecting one of them back then sent the
- * incoming type's factory values rather than what the operator had set.
+ * An FX channel's effect — the type and the selected type's parameter array — applied to the
+ * plan. Shared by the full read and the silent-address park for the reason `readInsertFxInto`
+ * is, and MERGED into what the node already holds for the same reason: the params map carries
+ * one key per FAMILY, so a channel that has held several effects keeps each one's values and a
+ * read answers for the family the type names. Replacing the map dropped the dormant families
+ * with it, and selecting one of them back then sent the incoming type's factory values rather
+ * than what the operator had set.
  *
  * Throws on a read failure so the caller keeps the provenance it already tracks.
  */
@@ -1781,7 +1777,7 @@ async function readFxEffectInto(
   const read = await readFxEffect(source, fxIndex, slots);
   return {
     head: read.type,
-    seen: JSON.stringify([read.type, read.on, read.params]),
+    seen: JSON.stringify([read.type, read.params]),
     apply: (plan) => {
       const was = plan.nodeParams[nodeId];
       const type = keepHead ? (was?.fxEffect?.type ?? read.type) : read.type;

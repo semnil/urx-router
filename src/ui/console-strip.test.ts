@@ -971,6 +971,33 @@ describe("where the focus goes after the INS FX popover closes", () => {
   // only the INS FX pair finds nothing on it and the browser parks focus on <body>.
   const fxOpenerOf = (id: string): HTMLElement | null => h.strip(id).root.querySelector<HTMLElement>(".con-fxopen");
 
+  // The face beside it states a state and is not a control: lit, pressed, disabled, out of
+  // the tab order, with the reason as its tooltip — and a press, a key or a pointer on it
+  // opens nothing and changes nothing. Pressing it while the list stands open is a press
+  // outside the list, so it closes it.
+  it("draws the FX strip's EFFECT face lit, inert and explained", () => {
+    h = consoleHost();
+    const face = h.strip("bus.fx1").root.querySelector<HTMLElement>(".con-fxface")!;
+    expect(face.classList.contains("on"), "lit").toBe(true);
+    expect(face.classList.contains("readonly"), "and not dimmed").toBe(false);
+    expect(face.getAttribute("aria-pressed")).toBe("true");
+    expect(face.getAttribute("aria-disabled")).toBe("true");
+    expect(face.tabIndex, "out of the tab order").toBe(-1);
+    expect(face.title).toBe(t().console.effectHint);
+    const before = JSON.stringify(h.plan.nodeParams["bus.fx1"]);
+    face.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    key(face, "Enter");
+    key(face, " ");
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden, "nothing opened").toBe(true);
+    expect(h.opened, "no screen opened").toEqual([]);
+    expect(JSON.stringify(h.plan.nodeParams["bus.fx1"]), "nothing changed").toBe(before);
+    // The positive control: the disclosure beside it does open the list.
+    fxOpenerOf("bus.fx1")!.click();
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden, "the disclosure opens it").toBe(false);
+    face.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    expect(document.querySelector<HTMLElement>(".con-ifxpop")!.hidden, "a press on the face closes it").toBe(true);
+  });
+
   it("returns it to the FX disclosure when a whole-rack repaint closes the type list", () => {
     h = consoleHost();
     fxOpenerOf("bus.fx1")!.click();

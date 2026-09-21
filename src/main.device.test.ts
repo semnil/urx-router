@@ -27,7 +27,7 @@ import {
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
 import { attackToVd, eqFreqToVd } from "./core/control/vd";
-import { FX_SLOT_ON, formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
+import { formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
@@ -3052,10 +3052,6 @@ describe("an EFFECT TYPE change while a session is live", () => {
   const unitOnRevxHall = (): Record<string, number> => {
     const seed: Record<string, number> = { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
     seed["679/0/0"] = 0;
-    // Slot 1 is the effect's ON, which is not a tunable descriptor and so is not in
-    // `fxParams`. Seeded anyway: unseeded it reads 0, and the session's opening readback then
-    // puts an effect the unit has ON into the plan as OFF.
-    seed[`681/0/${FX_SLOT_ON}`] = 1;
     for (const d of fxParams(0)) seed[`681/0/${d.slot}`] = d.def;
     return seed;
   };
@@ -3112,15 +3108,6 @@ describe("an EFFECT TYPE change while a session is live", () => {
     sel.value = String(value);
     sel.dispatchEvent(new Event("change", { bubbles: true }));
   };
-
-  /** The Effect ON row's two buttons, as the Inspector draws them (a segmented toggle, not
-   *  a checkbox) — reopened per reading, so each one is a fresh draw of the plan. */
-  const effectOnRow = (): { on: HTMLButtonElement; off: HTMLButtonElement } => {
-    pressNode("bus.fx1");
-    const [on, off] = [...paramRow(t().inspector.fxEffect.effectOn).querySelectorAll("button")];
-    return { on: on as HTMLButtonElement, off: off as HTMLButtonElement };
-  };
-  const effectIsOn = (): boolean => effectOnRow().on.classList.contains("on");
 
   /** The HPF as the FX EFFECT screen prints it — read off the surface, and reopened per
    *  reading so each one is a fresh draw of the plan as it stands. */
@@ -3369,30 +3356,73 @@ describe("an EFFECT TYPE change while a session is live", () => {
     ).toBe(false);
   });
 
-  // An edit the operator has already made and the flush has not carried yet. The park
-  // answers the app's own write rather than a device-side event, so it arrives INSIDE that
-  // window every time — and reading the address the edit is on brings back the value the
-  // edit was made against. What keeps it is the guard both parks read through: where the
-  // unit still holds what this session last sent, the read answers with the plan's own
-  // value, and this edit has not been sent.
+  // An edit the operator has already made and the flush has not carried yet. A converge's
+  // park runs after that flush's own writes, so an edit made while they were in flight is
+  // still only in the plan when the park reads its address — and reading it brings back the
+  // value the edit was made against. What keeps it is the guard both parks read through:
+  // where the unit still holds what this session last sent, the read answers with the plan's
+  // own value, and this edit has not been sent. Asked of the insert-FX bypass, the one
+  // address a park reads that no head lays out.
   it("keeps an edit the flush has not carried yet", SLOW, async () => {
     const { table } = stubWithPanel();
+    const baseSet = table.vd_set as (a: Record<string, unknown>) => unknown;
+    let during: (() => void) | null = null;
+    table.vd_set = (a: Record<string, unknown>) => {
+      const out = baseSet(a);
+      if (during !== null && a.paramId === PARAMS.COMP_EQ_TYPE.id) {
+        const gesture = during;
+        during = null;
+        gesture();
+      }
+      return out;
+    };
     const shell = (await bootApp({ tauri: table }))!;
     $("btn-live").click();
     await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
-    // The premise: the unit and the plan agree that the effect is ON.
-    expect(effectIsOn(), "the factory value").toBe(true);
 
-    // OFF, and then the type before the 120 ms window closes — no await between them.
-    effectOnRow().off.click();
-    expect(effectIsOn(), "the edit reached the plan").toBe(false);
-    pickType(REVX_ROOM);
-    await vi.waitFor(() => expect(shownHpf()).not.toBe(""), { timeout: 20_000 });
+    // The premise: CH 3 holds an effect, engaged, and the unit holds it too.
+    pressNode("ch3");
+    const effect = [...insertFxSection()!.querySelector("select")!.options]
+      .map((o) => Number(o.value))
+      .find((v) => v !== INSERT_FX_NONE)!;
+    pickInsertFx(effect);
+    await settled(shell);
+    pressNode("ch3");
+    expect(insertFxOnFace(), "the premise: the effect is engaged").toBe("ON");
+
+    // The bypass goes OFF while a COMP/EQ head's flush is writing — after that flush took its
+    // commands, before its converge parks.
+    const ifx = insertFxControl(getModel("URX44V"), "ch3")!;
+    const bypassAt = `${ifx.onParam}:0:${ifx.instances[0]}`;
+    let gestureAt = -1;
+    during = () => {
+      gestureAt = shell.invokes.length;
+      pressNode("ch3");
+      [...insertFxSection()!.querySelectorAll<HTMLButtonElement>(".toggle button")]
+        .find((b) => b.textContent === "OFF")!
+        .click();
+    };
+    pressNode("ch1");
+    const compEq = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    compEq.value = String(COMP_EQ_SSMCS);
+    compEq.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(during).toBeNull(), { timeout: 20_000 });
     await settled(shell);
 
-    // Read back off the panel rather than from the box just clicked: what the park merged
-    // into the plan is what a rebuild draws, and what the next flush sends.
-    expect(effectIsOn(), "the operator's own edit, not the value it was made against").toBe(false);
+    // The positive control: the park did read the bypass after the edit, so what is asserted
+    // below is the guard's answer rather than a read that never happened.
+    expect(
+      shell.invokes.some((cmd, i) => cmd === "vd_get" && at(shell.args[i]) === bypassAt && i > gestureAt),
+      "the park read the bypass",
+    ).toBe(true);
+    // Read back off the panel: what the park merged into the plan is what a rebuild draws…
+    pressNode("ch3");
+    expect(insertFxOnFace(), "the operator's own edit, not the value it was made against").toBe("OFF");
+    // …and what the next flush sends.
+    const writes = shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_set" && at(shell.args[i]) === bypassAt && i > gestureAt ? [shell.args[i]!.value] : [],
+    );
+    expect(writes.at(-1), "the edit reached the unit").toBe(0);
   });
 
   // The gesture outlives the wait. A park held for a converge can have the session end under

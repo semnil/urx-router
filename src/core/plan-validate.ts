@@ -122,9 +122,8 @@ export interface ParamRangeProblem {
   reason: "paramRange";
   node: string;
   /** Which container holds it: the node's `fxEffect` value itself, a field of that object
-   *  (`type` / `level` / `params`), or a member of its `params` map. `level` is bounded by a
-   *  literal two lines above the parameter loop in `pushFxEffectCommands`; a `params` member
-   *  is bounded by its own descriptor. */
+   *  (`type` / `params`), or a member of its `params` map. A `params` member is bounded by
+   *  its own descriptor. */
   where: "effect" | "field" | "params";
   /** The field or catalogue key, as the plan stores it. `fxEffect` for the object itself. */
   key: string;

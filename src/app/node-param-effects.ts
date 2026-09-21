@@ -64,7 +64,7 @@ export function nodeParamEffects(patch: NodeParams, prev: NodeParams | undefined
   // An FX EFFECT type change swaps the whole parameter editor (each effect keeps its
   // own controls under the shared fxEffect keys), so it must re-render — else the
   // previous effect's editor stays live and writes wrong-scale raws. The effect's own
-  // value sliders / ON toggle share the key but leave type unchanged.
+  // value sliders share the key but leave type unchanged.
   const fxEffectRelayout = patch.fxEffect !== undefined && patch.fxEffect.type !== prev?.fxEffect?.type;
 
   return {

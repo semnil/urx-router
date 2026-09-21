@@ -1260,9 +1260,9 @@ function setFxEffectType(actions: InspectorActions, plan: Plan, nodeId: string, 
   mergeFxEffect(actions, plan, nodeId, { type });
 }
 
-// FX-channel EFFECT section: the EFFECT TYPE selector, the effect ON toggle and the
-// launcher. The type's own parameters are the tuning screen's, so nothing here reads a
-// value that screen can move. fxIndex = 0 (FX1) / 1 (FX2).
+// FX-channel EFFECT section: the EFFECT TYPE selector and the launcher. The type's own
+// parameters are the tuning screen's, so nothing here reads a value that screen can move.
+// fxIndex = 0 (FX1) / 1 (FX2).
 function fxEffectSection(
   nodeId: string,
   fxIndex: number,
@@ -1278,7 +1278,6 @@ function fxEffectSection(
   const { el, body } = section(t.title, { key: "fxEffect" });
 
   body.append(enumSelect(t.effectType, fxEffectTypes(fxIndex), type, (v) => setFxEffectType(actions, plan, nodeId, v)));
-  body.append(boolToggle(t.effectOn, fx.on ?? true, (v) => mergeFxEffect(actions, plan, nodeId, { on: v })));
   // The type's own parameters moved to the tuning screen, for the reason stated on
   // `dynLauncher`: they belong beside the meters either side of the effect, and a second
   // copy here would sit at the position it was drawn at — these sliders read a captured

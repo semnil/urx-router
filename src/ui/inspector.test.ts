@@ -629,7 +629,7 @@ describe("renderInspector — an FX channel the plan does not describe", () => {
     const plan = emptyPlan("URX44V");
     expect(plan.nodeParams["bus.fx1"]?.fxEffect, "the premise: nothing describes it").toBeUndefined();
     renderInspector(panel, model, plan, nodeSel("bus.fx1"), act);
-    // The section still draws — a selector, an ON toggle and the launcher, and no value rows
+    // The section still draws — a selector and the launcher, and no value rows
     // (a select carries no `.param-val`, which is why this asks for the launcher).
     expect(panel.querySelector("#btn-fx-screen")).not.toBeNull();
 

@@ -741,20 +741,6 @@ test("the channel tuning screens show every processor, both displays and their n
   await inv.take(page, "#dyn-screen-modal");
   await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 
-  // …and with the effect switched out, which is the state that puts a line under the
-  // display. Seeded through the plan so the screen opens already in it.
-  const fxBypassed = {
-    format: "urx-router-plan",
-    version: 1,
-    modelId: "URX44V",
-    connections: [],
-    nodeParams: { "bus.fx1": { fxEffect: { on: false } } },
-  };
-  await page.goto(`/?plan=${planParamZ(fxBypassed)}`);
-  await openFx("bus.fx1");
-  await inv.take(page, "#dyn-screen-modal");
-  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
-
   expectComplete("dynScreen", inv);
 });
 

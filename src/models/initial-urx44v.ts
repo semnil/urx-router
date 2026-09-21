@@ -269,7 +269,6 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     on: true,
     fxEffect: {
       type: 0,
-      on: true,
       params: {
         reverbTime: 23,
         revxInitialDelay: 2,
@@ -288,7 +287,6 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     on: true,
     fxEffect: {
       type: 1024,
-      on: true,
       params: {
         delay: 5000,
         delayFeedback: 20,

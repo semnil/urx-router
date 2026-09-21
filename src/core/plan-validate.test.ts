@@ -377,52 +377,59 @@ describe("paramRangeProblems", () => {
     expect(offenders).toEqual([]);
   });
 
-  // Array slot 2 leaves a document at the LOAD, at every version. The app neither reads it nor
-  // writes it, so a value there addresses nothing — and left in place it would survive the load
-  // unreported (no window checks it any more), be written back into every later save, and then
+  // Array slots 1 and 2 leave a document at the LOAD, at every version. The app neither reads
+  // nor writes either, so a value there addresses nothing — and left in place it would survive
+  // the load unreported (no window checks it), be written back into every later save, and then
   // be dropped without a word by the first device read, which rebuilds the section from what it
   // read. Asked of the whole funnel rather than of the migration alone, since what has to hold
-  // is that a document loses it, and asked with a sibling as the control: the drop is that key
-  // and not the section.
-  // …and what a build that still carries the field would do with the result. A version-2
-  // writer sends the catalogue's 100 to slot 2 for an ABSENT level, so a file written here and
-  // tagged 2 would load in such a build and move a unit holding anything else at that address.
-  // The version is what stops it: that build refuses a document tagged higher than its own.
+  // is that a document loses it, and asked with the siblings as the control: the drop is that
+  // key and not the section.
+  // …and what a build that still carries a field would do with the result. A version-2 writer
+  // sends the catalogue's 100 to slot 2 for an ABSENT level, and a version-3 writer sends 1 to
+  // slot 1 for an absent on, so a file written here and tagged lower would load in such a build
+  // and move a unit holding anything else at those addresses. The version is what stops it:
+  // that build refuses a document tagged higher than its own.
   it("writes a version this change's own removal is safe under", () => {
-    expect(PLAN_VERSION).toBe(3);
+    expect(PLAN_VERSION).toBe(4);
     const doc = JSON.parse(serialize(defaultPlan("URX44V"))) as {
       version: number;
       nodeParams: Record<string, { fxEffect?: Record<string, unknown> }>;
     };
     expect(doc.version, "a fresh save carries it").toBe(PLAN_VERSION);
-    // …and neither FX section it writes carries the key, which is what makes the tag the only
-    // signal a version-2 reader gets. Read per section rather than over the whole document:
-    // `level` is a live key elsewhere — every bus fader, the oscillator, each 1-knob EQ.
+    // …and neither FX section it writes carries either key, which is what makes the tag the
+    // only signal an older reader gets. Read per section rather than over the whole document:
+    // `level` and `on` are live keys elsewhere — every bus fader and channel ON, the oscillator,
+    // each 1-knob EQ.
     for (const node of ["bus.fx1", "bus.fx2"]) {
       const fx = doc.nodeParams[node]?.fxEffect;
       expect(fx, `the premise: ${node} carries a section`).toBeTypeOf("object");
       expect(fx, node).not.toHaveProperty("level");
+      expect(fx, node).not.toHaveProperty("on");
     }
   });
 
-  it("drops the effect array's slot 2 from a loaded document, and nothing beside it", () => {
-    // Tagged 2 — the version a build that still wrote the key produced.
-    const doc = JSON.stringify({
-      format: "urx-router-plan",
-      version: 2,
-      modelId: "URX44V",
-      connections: [],
-      nodeParams: { "bus.fx1": { fxEffect: { type: 0, on: false, level: 100, params: { revxHpf: 9 } } } },
-    });
-    const fx = deserialize(doc).nodeParams["bus.fx1"]?.fxEffect as Record<string, unknown> | undefined;
-    expect(fx, "the premise: the section survives the load").toBeTypeOf("object");
-    expect(fx).not.toHaveProperty("level");
-    // The control: the keys beside it are untouched, so the drop is that key rather than the
-    // section being rebuilt or emptied.
-    expect(fx).toMatchObject({ type: 0, on: false, params: { revxHpf: 9 } });
-    // …and no problem is reported for it, because there is nothing to report: the value
-    // addressed nothing and the document is not being repaired, it is being read.
-    expect(paramRangeProblems(deserialize(doc))).toEqual([]);
+  it.each([
+    ["slot 1", "on", false],
+    ["slot 2", "level", 100],
+  ] as const)("drops the effect array's %s from a loaded document, and nothing beside it", (_slot, key, value) => {
+    for (let version = 1; version <= PLAN_VERSION; version++) {
+      const doc = JSON.stringify({
+        format: "urx-router-plan",
+        version,
+        modelId: "URX44V",
+        connections: [],
+        nodeParams: { "bus.fx1": { fxEffect: { type: 0, [key]: value, params: { revxHpf: 9 } } } },
+      });
+      const fx = deserialize(doc).nodeParams["bus.fx1"]?.fxEffect as Record<string, unknown> | undefined;
+      expect(fx, `the premise: the section survives a version-${version} load`).toBeTypeOf("object");
+      expect(fx, `version ${version}`).not.toHaveProperty(key);
+      // The control: the keys beside it are untouched, so the drop is that key rather than the
+      // section being rebuilt or emptied.
+      expect(fx, `version ${version}`).toEqual({ type: 0, params: { revxHpf: 9 } });
+      // …and no problem is reported for it, because there is nothing to report: the value
+      // addressed nothing and the document is not being repaired, it is being read.
+      expect(paramRangeProblems(deserialize(doc)), `version ${version}`).toEqual([]);
+    }
   });
 
   // A key the SELECTED type does not own. The migration leaves it exactly where it is, so a

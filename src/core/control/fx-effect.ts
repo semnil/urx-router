@@ -23,9 +23,6 @@ import { preferredNumber, R20, R40 } from "./preferred-numbers";
 export const FX_EFFECT_TYPE_PARAM = [679, 683] as const;
 /** Effect-parameter array param_id per FX channel index. Addressed by slot on y. */
 export const FX_EFFECT_ARRAY_PARAM = [681, 685] as const;
-/** The array slot every effect type shares. Slot 2 is deliberately absent: no control of
- *  the unit's own reaches it, so this app neither reads it nor writes it. */
-export const FX_SLOT_ON = 1;
 
 /** Effect families: the three distinct parameter layouts. */
 export type FxFamily = "revx" | "revr3" | "delay";
@@ -784,10 +781,11 @@ export function migrateFxEffectParams(
   fxIndex: number,
   version: number,
 ): void {
-  // Array slot 2, at EVERY version: the app neither reads nor writes it, so a document
-  // carrying one holds a value no build addresses. Left in place it would survive the load
-  // unreported, be written back into every later save, and then be dropped without a word by
-  // the first device read, which rebuilds the section from what it read.
+  // Array slots 1 and 2, at EVERY version: the app neither reads nor writes either, so a
+  // document carrying one holds a value no build addresses. Left in place it would survive the
+  // load unreported, be written back into every later save, and then be dropped without a word
+  // by the first device read, which rebuilds the section from what it read.
+  delete (fx as unknown as Record<string, unknown>).on;
   delete (fx as unknown as Record<string, unknown>).level;
   const params = fx.params;
   if (!params) return;
