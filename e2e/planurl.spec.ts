@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { planParam, planParamZ } from "./plan-param";
+import { wire } from "./graph-helpers";
 import { fxParams } from "../src/core/control/fx-effect";
 
 const validPlan = {
@@ -45,6 +46,30 @@ const conflictAndBoundedPlan = {
     ch2: { insertFx: 257 },
     "bus.fx2": { fxEffect: { type: 1024, params: { delayLpf: 20 } } },
   },
+};
+
+// A USB output holding the two channels of a MONO IN pair — two ordinary patch wires,
+// which is how a plan carries the unit's `CH 3/4`.
+const monoPairPlan = {
+  format: "urx-router-plan",
+  version: 1,
+  modelId: "URX44V",
+  connections: [
+    { from: "ch3:out", to: "out.usbmain_b:in", kind: "patch" },
+    { from: "ch4:out", to: "out.usbmain_b:in", kind: "patch" },
+  ],
+};
+
+// Two channels on a USB output that are not one pair (CH 2 is CH 1's partner, CH 3 is
+// CH 4's): a selection the unit's list does not offer, so the loader refuses it.
+const notAPairPlan = {
+  format: "urx-router-plan",
+  version: 1,
+  modelId: "URX44V",
+  connections: [
+    { from: "ch2:out", to: "out.usbmain_b:in", kind: "patch" },
+    { from: "ch3:out", to: "out.usbmain_b:in", kind: "patch" },
+  ],
 };
 
 const report = (page: Page) => page.locator("#load-report");
@@ -103,6 +128,27 @@ test("an illegal plan surfaces a copyable report and does not load", async ({ pa
   // Closing dismisses the modal.
   await page.locator("#load-report-close").click();
   await expect(report(page)).toBeHidden();
+});
+
+test("a USB output holding a MONO IN pair's two channels loads with both wires drawn", async ({ page }) => {
+  await page.goto(`/?plan=${planParam(monoPairPlan)}`);
+  await expect(page.locator("#statusbar")).toContainText("Plan loaded");
+  await expect(report(page)).toBeHidden();
+  await expect(wire(page, "ch3:out", "out.usbmain_b:in")).toHaveCount(1);
+  await expect(wire(page, "ch4:out", "out.usbmain_b:in")).toHaveCount(1);
+});
+
+test("a USB output holding two channels of different pairs is refused, naming both wires", async ({ page }) => {
+  await page.goto(`/?plan=${planParam(notAPairPlan)}`);
+  await expect(report(page)).toBeVisible();
+  // Every wire into that output is named, since neither alone is the one at fault.
+  const body = page.locator("#load-report-body");
+  await expect(body).toContainText("URX Router plan validation failed");
+  await expect(body).toContainText("problems: 2");
+  await expect(body).toContainText("[monoPairOnly] ch2:out -> out.usbmain_b:in");
+  await expect(body).toContainText("[monoPairOnly] ch3:out -> out.usbmain_b:in");
+  await expect(page.locator("#statusbar")).not.toContainText("Plan loaded");
+  await expect(page.locator("#load-report-proceed")).toHaveCount(0);
 });
 
 test("an insert-FX slot conflict warns and loads on the operator's word", async ({ page }) => {

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "./fixtures";
-import { faceplate, selectWire, stereoTie } from "./graph-helpers";
+import { drag, faceplate, port, selectWire, stereoTie, tapJack, wire } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
 import { openInsertFxSection } from "./insert-fx-section";
 import { planParam } from "./plan-param";
@@ -124,6 +124,44 @@ test("BAL mode labels a send from the linked channel as BALANCE", async ({ page 
   await selectWire(page, "ch1:out", "bus.mix1:in");
   await expect(page.locator("#inspector .param", { hasText: "Balance" })).toHaveCount(1);
   await expect(page.locator("#inspector .param-label span", { hasText: /^Pan$/ })).toHaveCount(0);
+});
+
+// Signal Type moves nothing on a USB output: the unit keeps a USB output's source when a
+// pair is linked or unlinked, and offers the single channels while the pair is linked. So a
+// channel on an output alone stays alone, and a pair on one stays the pair either way.
+test("linking and unlinking a pair leaves the USB outputs' wires where they were", async ({ page }, testInfo) => {
+  const USB_A = "out.usbmain_a:in";
+  const USB_B = "out.usbmain_b:in";
+  await drag(page, tapJack(page, "ch3:out"), port(page, USB_A)); // CH 3 alone
+  await drag(page, tapJack(page, "ch1:out"), port(page, USB_B));
+  await drag(page, tapJack(page, "ch2:out"), port(page, USB_B)); // CH 1/2
+  await expect(wire(page, "ch3:out", USB_A)).toHaveCount(1);
+  await expect(wire(page, "ch1:out", USB_B)).toHaveCount(1);
+  await expect(wire(page, "ch2:out", USB_B)).toHaveCount(1);
+
+  // Read off the saved plan rather than the board: an unlink repaints the nodes and leaves
+  // the wires as drawn, so the board cannot show a wire the plan dropped there.
+  const usbWires = async (): Promise<string[]> =>
+    (await savedPlan(page, testInfo)).connections
+      .filter((c: { to: string }) => c.to === USB_A || c.to === USB_B)
+      .map((c: { from: string; to: string }) => `${c.from} -> ${c.to}`)
+      .sort();
+  const held = [`ch1:out -> ${USB_B}`, `ch2:out -> ${USB_B}`, `ch3:out -> ${USB_A}`];
+  expect(await usbWires()).toEqual(held);
+
+  for (const id of ["ch3", "ch1"]) {
+    await node(page, id).click();
+    await chooseOption(sigSelect(page), "1"); // STEREO
+  }
+  await expect(stereoTie(page)).toHaveCount(2);
+  expect(await usbWires()).toEqual(held);
+
+  for (const id of ["ch3", "ch1"]) {
+    await node(page, id).click();
+    await chooseOption(sigSelect(page), "0"); // MONO x 2
+  }
+  await expect(stereoTie(page)).toHaveCount(0);
+  expect(await usbWires()).toEqual(held);
 });
 
 test("signal type round-trips through save and open", async ({ page }, testInfo) => {
