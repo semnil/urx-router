@@ -246,7 +246,8 @@ export function buildModel(p: ModelParams): DeviceModel {
   const analogOuts = p.hasLineOut ? ["out.main", "out.line"] : ["out.main"];
   for (const o of analogOuts) for (const s of patchSources) r(ref(s, "out"), ref(o, "in"), "patch");
 
-  // 8. USB OUT signal assign (single source each).
+  // 8. USB OUT signal assign: one source each, or a MONO IN pair as two channel wires
+  //    (routing.ts monoPairsInto reads these channel rules with channelPairs).
   const usbOuts = ["out.usbmain_a", "out.usbmain_b", "out.usbmain_c", "out.usbsub"];
   for (const o of usbOuts) {
     for (const s of ["bus.stereo", "bus.stream", "bus.mix1", "bus.mix2"]) r(ref(s, "out"), ref(o, "in"), "patch");

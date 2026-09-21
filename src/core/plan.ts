@@ -874,9 +874,9 @@ export function hasConnection(plan: Plan, from: string, to: string): boolean {
  * duplicated. What follows is silent and severe, because every consumer trusts a
  * different one of the two encodings. `isSceneExternalConnection` reads the STORED kind,
  * so an output patch written as `"send"` is no longer scene-external and a scene-scoped
- * save takes device-wide state with it; the emit looks the wire up by RULE kind
- * (`incomingConnection(..., "patch")`), finds nothing, and writes the selector out as
- * NONE — live sync tells the unit there is no patch while the graph draws one.
+ * save takes device-wide state with it; the emit looks the wire up by port and RULE
+ * kind, finds nothing, and writes the selector out as NONE — live sync tells the unit
+ * there is no patch while the graph draws one.
  *
  * Rewritten rather than refused: the field is redundant, so a disagreement is noise
  * with no operator intent behind it, and refusing a document over a value the app can
@@ -924,8 +924,9 @@ export function removeConnection(plan: Plan, from: string, to: string): void {
   plan.connections = plan.connections.filter((c) => !(c.from === from && c.to === to));
 }
 
-// Exclusive routing selectors (source / patch / key) accept at most one incoming
-// wire into a destination; these mutators express that single-input invariant.
+// Exclusive routing selectors (source / patch / key / record) accept one incoming wire
+// into a destination — a USB output also the two wires of a MONO IN pair; these read
+// and replace what a selector holds.
 export function incomingConnection(plan: Plan, to: string, kind: ConnectionKind): PlanConnection | undefined {
   return plan.connections.find((c) => c.to === to && c.kind === kind);
 }

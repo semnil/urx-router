@@ -50,7 +50,8 @@ export function fullLabel(node: DeviceNode): string {
   return node.sublabel ? `${node.label} ${node.sublabel}` : node.label;
 }
 
-// source / patch / key / record: single-input receiver (a selector). send: summing
+// source / patch / key / record: single-input receiver (a selector) — a USB output's
+// patch also takes the two channels of a MONO IN pair (routing.ts monoPairOf). send: summing
 // receiver (a bus) that accepts many incoming wires, each with LEVEL / PAN /
 // PRE-POST. sendSwitch: an ON/OFF assign into a summing bus, with no LEVEL / PAN
 // — e.g. the MIX 1/2 "TO ST" send, or the OSCILLATOR assign (which carries only
@@ -101,7 +102,8 @@ export function parseRef(r: string): { nodeId: string; portId: string } {
   return { nodeId: r.slice(0, i), portId: r.slice(i + 1) };
 }
 
-/** Receivers of these kinds accept at most one incoming wire. */
+/** Receivers of these kinds accept at most one incoming wire, except a USB output, which
+ *  also takes the two channels of a MONO IN pair (routing.ts monoPairOf). */
 export function isSingleInput(kind: ConnectionKind): boolean {
   return kind === "source" || kind === "patch" || kind === "key" || kind === "record";
 }

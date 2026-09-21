@@ -485,6 +485,7 @@ export const ja: Messages = {
       sendSwitch: "Bus send (ON/OFF スイッチ)",
       record: "SD Rec ソース選択 (単一)",
     },
+    connKindMonoPair: "出力パッチ (1系統または MONO IN ペア)",
     nodeKind: {
       input: "入力ソース",
       channel: "ミキサーチャンネル",
@@ -909,6 +910,7 @@ export const ja: Messages = {
     noRule: "この経路は接続できません",
     duplicate: "すでに接続済みです",
     singleInput: "この入力は1系統のみです (既存の接続を外してください)",
+    monoPairOnly: "USB 出力に入るのは 1 系統か、MONO IN ペアの 2 チャンネルだけです (先に接続を外してください)",
     cannotConnect: "接続できません",
     noReason: "失敗の原因が報告されませんでした",
     recPointRequired: "USB 出力・microSD Rec はチャンネル上辺の Rec Point タップから配線してください",

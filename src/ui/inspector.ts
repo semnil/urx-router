@@ -9,7 +9,7 @@ import { clipNodeName, processorOn, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
 import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 
-import { isFixedConnection, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
+import { isFixedConnection, monoPairsInto, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
 import {
   effectiveInsertFx,
   busBalance,
@@ -1034,6 +1034,7 @@ export function renderInspector(
 
 function connKindLabel(from: string, to: string, model: DeviceModel): string {
   const rule = model.rules.find((r) => r.from === from && r.to === to);
+  if (rule?.kind === "patch" && monoPairsInto(model, to).length > 0) return t().inspector.connKindMonoPair;
   return rule ? t().inspector.connKind[rule.kind] : t().inspector.none;
 }
 

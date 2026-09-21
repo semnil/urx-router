@@ -118,6 +118,8 @@ describe("planToCommands absolute-state completeness", () => {
     t.set("22:0:0", 0); // ch1 input source = in.micline_1_2 L
     t.set("705:0:0", (0x80000000 | 288) >>> 0); // streaming source = MIX1 (tagged)
     t.set("706:0:0", (0x80000000 | 289) >>> 0);
+    t.set("732:0:0", 2); // USB MAIN A = the mono pair CH 3/4: CH 3's slot on L…
+    t.set("732:0:1", 3); // …and CH 4's on R
 
     const c1 = await readThenEmit(t);
     const c2 = await readThenEmit(tableFrom(c1));
@@ -127,5 +129,9 @@ describe("planToCommands absolute-state completeness", () => {
     expect(c1.some((c) => c.name === "SEND_ON" && c.vdValue === 1)).toBe(true);
     expect(c1.some((c) => c.name === "INPUT_SOURCE" && c.vdValue === 0)).toBe(true);
     expect(c1.some((c) => c.name === "STREAM_SRC_L" && c.vdValue !== PORT_REF_NONE)).toBe(true);
+    expect(c1.filter((c) => c.name === "USB_OUT_SRC_A").map((c) => [c.y, c.vdValue])).toEqual([
+      [0, 2],
+      [1, 3],
+    ]);
   });
 });

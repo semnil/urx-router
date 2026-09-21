@@ -42,7 +42,7 @@ import {
   insertFxDeviceDriven,
   insertFxDriverSlots,
 } from "./insert-fx-effect";
-import { isFixedConnection, sendTapWritable } from "../routing";
+import { isFixedConnection, monoPairOf, sendTapWritable } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
   BUS_TYPE_OPTIONS,
@@ -1537,9 +1537,11 @@ export function inputNodeForPort(port: number): string | null {
 // to a bus/channel port: [destNode, kind, paramL, paramR, yL, yR]. Every selector
 // has both an L and an R slot (some reuse one param id at two y instances).
 // `sourcePorts` maps the wire's source to its L/R port; the param's own encoding
-// applies the tag (streaming) or not. Drives both emit and readback so the two
-// directions cannot drift. (Input source and ducker key are bespoke — different
-// namespace / per-instance shape — and stay separate below.)
+// applies the tag (streaming) or not. A USB output also takes the two wires of a
+// mono pair (monoPairOf), written L = the primary's slot, R = the partner's. Drives
+// both emit and readback so the two directions cannot drift. (Input source and
+// ducker key are bespoke — different namespace / per-instance shape — and stay
+// separate below.)
 export const ROUTING_SELECTORS: [string, ConnectionKind, ParamName, ParamName, number, number][] = [
   ["bus.stream", "source", "STREAM_SRC_L", "STREAM_SRC_R", 0, 0],
   ["out.usbmain_a", "patch", "USB_OUT_SRC_A", "USB_OUT_SRC_A", 0, 1],
@@ -2334,13 +2336,29 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   }
 
   // Streaming / USB-out / monitor / analog-patch selects — absolute. One incoming
-  // wire → source port(s); no wire emits the NONE sentinel so a write clears the
-  // selection. Skips selectors whose destination node is absent on this model.
-  // See ROUTING_SELECTORS; readback consumes the same table.
+  // wire → source port(s); the two wires of a mono pair into a USB output → L = the
+  // primary's slot, R = the partner's, whatever order the wires are in; no wire emits
+  // the NONE sentinel so a write clears the selection. Any other set of wires writes
+  // its first wire alone, so every value written is one the unit's own list offers.
+  // Skips selectors whose destination node is absent on this model. See
+  // ROUTING_SELECTORS; readback consumes the same table.
   for (const [to, kind, pl, pr, yl, yr] of ROUTING_SELECTORS) {
     if (!model.nodes.some((n) => n.id === to)) continue;
-    const conn = incomingConnection(plan, ref(to, "in"), kind);
-    const p = conn ? sourcePorts(model, parseRef(conn.from).nodeId) : null;
+    const wires = plan.connections.filter((c) => c.to === ref(to, "in") && c.kind === kind);
+    const pair =
+      kind === "patch"
+        ? monoPairOf(
+            model,
+            ref(to, "in"),
+            wires.map((c) => c.from),
+          )
+        : null;
+    const conn = wires[0];
+    const p = pair
+      ? { l: sourcePorts(model, pair[0])!.l, r: sourcePorts(model, pair[1])!.l }
+      : conn
+        ? sourcePorts(model, parseRef(conn.from).nodeId)
+        : null;
     // A wire to a source that does not resolve to a port is left untouched.
     if (conn && !p) continue;
     out.push(command(pl, yl, p ? p.l : PORT_REF_NONE));

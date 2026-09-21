@@ -653,6 +653,122 @@ describe("connections", () => {
   });
 });
 
+// A USB output takes one source, or the two channels of a MONO IN pair as two ordinary
+// wires. Drawing a channel of a STEREO-linked pair puts the pair there; an unlinked channel
+// goes alone, and its partner can join it by its own gesture. Each wire is deleted alone.
+describe("a USB output's mono pair", () => {
+  const USB_A = "out.usbmain_a:in";
+  const seed =
+    (linked: boolean, ...held: string[]) =>
+    (plan: Plan): void => {
+      plan.connections = plan.connections.filter((c) => c.to !== USB_A);
+      plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, stereoLink: linked };
+      for (const ch of held) plan.connections.push({ from: `${ch}:out`, to: USB_A, kind: "patch" });
+    };
+  const sourcesOfA = (): string[] => fx.plan.connections.filter((c) => c.to === USB_A).map((c) => c.from);
+
+  it.each(["ch3", "ch4"])("draws both wires from %s of a linked pair, in one change", (ch) => {
+    fx = graphFixture({ seed: seed(true) });
+    drag(tapHit(fx.host, `${ch}:out`)!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
+    expect(sourcesOfA().sort()).toEqual(["ch3:out", "ch4:out"]);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+    expect(statuses().at(-1)).toBe(t().status.connected);
+    expect(wireHit(fx.host, "ch3:out", USB_A)).not.toBeNull();
+    expect(wireHit(fx.host, "ch4:out", USB_A)).not.toBeNull();
+  });
+
+  it("draws both wires when the drag starts at the output and ends on a linked channel", () => {
+    fx = graphFixture({ seed: seed(true) });
+    drag(portHit(fx.host, USB_A)!, { x: 100, y: 200 }, tapHit(fx.host, "ch3:out"));
+    expect(sourcesOfA().sort()).toEqual(["ch3:out", "ch4:out"]);
+  });
+
+  it("completes a linked pair the output holds one channel of", () => {
+    fx = graphFixture({ seed: seed(true, "ch3") });
+    drag(tapHit(fx.host, "ch3:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
+    expect(sourcesOfA()).toEqual(["ch3:out", "ch4:out"]);
+    expect(statuses().at(-1)).toBe(t().status.connected);
+  });
+
+  it("draws the linked partner onto an output holding the other channel alone", () => {
+    fx = graphFixture({ seed: seed(true, "ch3") });
+    drag(tapHit(fx.host, "ch4:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
+    expect(sourcesOfA()).toEqual(["ch3:out", "ch4:out"]);
+  });
+
+  it("adds nothing to an output already holding the linked pair, and says so", () => {
+    fx = graphFixture({ seed: seed(true, "ch3", "ch4") });
+    drag(tapHit(fx.host, "ch3:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
+    expect(sourcesOfA()).toEqual(["ch3:out", "ch4:out"]);
+    expect(statuses().at(-1)).toBe(t().error.duplicate);
+  });
+
+  // A wire to a shelved node is not drawn, so the partner of a shelved channel does not
+  // join: the board and what goes to the unit stay the single channel the operator sees.
+  it("draws one wire when the linked partner is on the shelf", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        seed(true)(plan);
+        plan.hidden = ["ch4"];
+      },
+    });
+    drag(tapHit(fx.host, "ch3:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
+    expect(sourcesOfA()).toEqual(["ch3:out"]);
+  });
+
+  // The drop that completes a held linked pair is taken, so it is lit as legal while the
+  // drag is under way — the same fill as an empty USB output beside it.
+  it("lights the output holding a linked channel alone as a legal drop for that channel", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        seed(true, "ch3")(plan);
+        plan.connections = plan.connections.filter((c) => c.to !== "out.usbmain_b:in");
+      },
+    });
+    const jackOf = (r: string) => fx.host.querySelector(`[data-pin="${r}"]`)!.previousElementSibling!;
+    const tap = tapHit(fx.host, "ch3:out")!;
+    tap.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 0, clientY: 0, bubbles: true }));
+    tap.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 60, clientY: 0, bubbles: true }));
+    const legalFill = jackOf("out.usbmain_b:in").getAttribute("fill");
+    expect(legalFill, "the control: an empty USB output is lit").toBeTruthy();
+    expect(jackOf(USB_A).getAttribute("fill")).toBe(legalFill);
+    tap.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
+  });
+
+  it("draws one wire from an unlinked channel, takes its partner as a second, and nothing else", () => {
+    fx = graphFixture({ seed: seed(false) });
+    drag(tapHit(fx.host, "ch4:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
+    expect(sourcesOfA()).toEqual(["ch4:out"]);
+    drag(tapHit(fx.host, "ch3:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
+    expect(sourcesOfA()).toEqual(["ch4:out", "ch3:out"]);
+    drag(tapHit(fx.host, "ch1:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
+    expect(sourcesOfA(), "a third wire is refused").toEqual(["ch4:out", "ch3:out"]);
+    expect(statuses().at(-1)).toBe(t().error.monoPairOnly);
+  });
+
+  it("refuses a channel that is not the partner, in the USB output's own words", () => {
+    fx = graphFixture({ seed: seed(false, "ch3") });
+    drag(tapHit(fx.host, "ch2:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
+    expect(sourcesOfA()).toEqual(["ch3:out"]);
+    expect(statuses().at(-1)).toBe(t().error.monoPairOnly);
+    // A receiver that takes one source keeps its own sentence.
+    expect(t().error.monoPairOnly).not.toBe(t().error.singleInput);
+  });
+
+  it("deletes one wire of the pair and leaves the other", () => {
+    fx = graphFixture({ seed: seed(true, "ch3", "ch4") });
+    fx.graph.deleteConnection("ch3:out", USB_A);
+    expect(sourcesOfA()).toEqual(["ch4:out"]);
+    expect(wireHit(fx.host, "ch4:out", USB_A)).not.toBeNull();
+  });
+
+  it("selects the primary's wire on a click on an output holding the pair", () => {
+    fx = graphFixture({ seed: seed(false, "ch4", "ch3") });
+    press(portHit(fx.host, USB_A)!);
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "conn", from: "ch3:out", to: USB_A });
+  });
+});
+
 describe("node drag", () => {
   it("moves a node and reports the change exactly once", () => {
     fx = graphFixture();

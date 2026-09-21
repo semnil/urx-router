@@ -678,6 +678,22 @@ describe("planProblems", () => {
     expect(refused(plan)).toEqual([{ from, to, reason: "noRule" }]);
   });
 
+  // A USB output's mono pair is two wires into one single-input receiver, and a document
+  // holding it opens; any other second wire into a USB output is refused, every wire named.
+  it("opens a document holding a USB output's mono pair, and refuses every other second wire there", () => {
+    const into = (...froms: string[]) => {
+      const plan = emptyPlan("URX44V");
+      for (const f of froms)
+        plan.connections.push({ from: ref(f, "out"), to: ref("out.usbmain_b", "in"), kind: "patch" });
+      return refused(plan).map((p) => `${p.reason} ${"from" in p ? p.from : ""}`);
+    };
+    expect(into("ch3", "ch4")).toEqual([]);
+    expect(into("ch4", "ch3")).toEqual([]);
+    expect(into("ch2", "ch3")).toEqual(["monoPairOnly ch2:out", "monoPairOnly ch3:out"]);
+    expect(into("ch1", "ch2", "ch3")).toEqual(["monoPairOnly ch1:out", "monoPairOnly ch2:out", "monoPairOnly ch3:out"]);
+    expect(into("bus.mix1", "ch4")).toEqual(["monoPairOnly bus.mix1:out", "monoPairOnly ch4:out"]);
+  });
+
   it("keeps a slot collision on the warning side, with no refusal to hide behind", () => {
     const plan = emptyPlan("URX44V");
     const [options] = [...INPUT_SLOTS.values()];
