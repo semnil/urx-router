@@ -781,10 +781,11 @@ export function migrateFxEffectParams(
   fxIndex: number,
   version: number,
 ): void {
-  // Array slot 2, at EVERY version: the app neither reads nor writes it, so a document
-  // carrying one holds a value no build addresses. Left in place it would survive the load
-  // unreported, be written back into every later save, and then be dropped without a word by
-  // the first device read, which rebuilds the section from what it read.
+  // Array slots 1 and 2, at EVERY version: the app neither reads nor writes either, so a
+  // document carrying one holds a value no build addresses. Left in place it would survive the
+  // load unreported, be written back into every later save, and then be dropped without a word
+  // by the first device read, which rebuilds the section from what it read.
+  delete (fx as unknown as Record<string, unknown>).on;
   delete (fx as unknown as Record<string, unknown>).level;
   const params = fx.params;
   if (!params) return;

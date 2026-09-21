@@ -189,11 +189,11 @@ the device default. The full set:
 **Raw-encoded — author with caution (see warnings):**
 - `ssmcs` — the SSMCS channel-strip values are RAW broker integers on a non-public
   curve.
-- `fxEffect` — the FX bus effect. Its `type` (the EFFECT TYPE selector) and `on` are
-  plain values, but the `params` map holds raw per-effect values keyed by the
-  device's array slot. Array slot 2 is not a field here: no control of the unit's own
-  reaches it, so the app neither reads it nor writes it, and a document naming it
-  names nothing.
+- `fxEffect` — the FX bus effect. Its `type` (the EFFECT TYPE selector) is a plain
+  value, but the `params` map holds raw per-effect values keyed by the device's array
+  slot. Array slots 1 (`on`) and 2 (`level`) are not fields here: no control of the
+  unit's own reaches either, so the app neither reads nor writes them, and a document
+  naming one names nothing — the load removes the key.
 - `insertFxParams` — insert-FX engine values are raw slot integers. Two switches in
   here decide whether OTHER slots are written at all, so a plan carrying one of them
   is asking for more than the switch. The Multi-Band Compressor's 1-Knob On (slot 6):

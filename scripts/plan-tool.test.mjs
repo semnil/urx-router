@@ -120,12 +120,15 @@ const leavesOf = (value, path = [], out = new Map()) => {
 // pin is that the tool's warning and the app's repair agree per document, which is the same
 // question every other row asks.
 const CASES = [
-  ["a document the app writes itself", { on: true, type: 0, params: { revxLpf: 40 } }, false, false],
+  ["a document the app writes itself", { type: 0, params: { revxLpf: 40 } }, false, false],
   ["an empty effect object, whose key the app removes", {}, true, true],
   ["a boolean where a number belongs", { type: 0, params: { revxLpf: false } }, true, true],
   // Array slot 2, which the app removes at the load whatever the value is. A finite number in
   // its old window is the shape that reads as valid, so it is the one asked here.
   ["the effect array's slot 2, which the app no longer carries", { type: 0, level: 80 }, true, true],
+  // Array slot 1, the same way. A boolean is the shape that reads as valid, so it is the one
+  // asked here.
+  ["the effect array's slot 1, which the app no longer carries", { type: 0, on: true }, true, true],
   ["a boolean type", { type: false }, true, true],
   ["a boolean parameter map", { type: 0, params: false }, true, true],
   ["an object where a parameter belongs", { type: 0, params: { revxLpf: { x: 1 } } }, true, true],
@@ -1131,6 +1134,10 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       '{"bus.fx1":{"fxEffect":{"type":0,"params":{"__proto__":1,"revxLpf":40}}}}',
       '{"bus.fx1":{"fxEffect":{"type":0,"foo":{}}}}',
       '{"bus.fx1":{"fxEffect":{"__proto__":1,"type":0}}}',
+      // The effect array's slot 1 goes at the load whatever it holds. Alone, it leaves the
+      // section standing and empty, so the removal is the leaf and not the section.
+      '{"bus.fx1":{"fxEffect":{"type":0,"on":true}}}',
+      '{"bus.fx1":{"fxEffect":{"on":true}}}',
       '{"ch1":{"insertFx":1793,"insertFxParams":{"__proto__":1}}}',
       '{"ch1":{"insertFx":1793,"insertFxParams":{"__proto__":1,"6":5}}}',
       '{"ch1":{"insertFx":1793,"insertFxParams":{"6":"x"}}}',

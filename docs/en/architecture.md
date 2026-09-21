@@ -3580,8 +3580,8 @@ otherwise reach an inverting encoder.
 Once the section is present the whole channel is authored — **there is no partial FX write**. The
 selector goes out whether or not the document names a type (an absent one resolves to the channel's
 factory type), and every parameter slot goes with it at that type's defaults, because a type write would
-refill the slots the plan left out anyway. So `{ "on": true }` resets the effect exactly as a document
-naming a type does, and omitting only `fxEffect.params` preserves nothing.
+refill the slots the plan left out anyway. So a section naming a single parameter resets the effect
+exactly as a document naming a type does, and omitting only `fxEffect.params` preserves nothing.
 
 **The panel and the wire agree on a document the loader completed.** `inspector.ts` reads an absent
 `fxEffect` as `{}` and draws the resolved type, and the tuning screen each descriptor's own
