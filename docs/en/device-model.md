@@ -61,6 +61,7 @@ flowchart LR
     FX2[FX 2]
     STREAM[STREAMING]
     MON[MONITOR 1-2]
+    OSC[OSCILLATOR]
   end
 
   subgraph OUT[Outputs]
@@ -76,9 +77,12 @@ flowchart LR
   ST --> STEREO & MIX1 & MIX2 & FX1 & FX2
   FX1 & FX2 --> STEREO & MIX1 & MIX2
   MIX1 & MIX2 -->|TO ST| STEREO
+  OSC -->|ON/OFF| STEREO & MIX1 & MIX2 & FX1 & FX2
   STEREO & MIX1 & MIX2 --> STREAM & MON
   STEREO & MIX1 & MIX2 --> MAIN & LINE & USBOUT & SDREC
   STREAM --> MAIN & LINE & USBOUT
+  MON --> MAIN & LINE
+  MONO & ST -->|direct out| USBOUT & SDREC
   MONO & ST & STEREO & MIX1 & MIX2 -->|key| DUCK
 ```
 
@@ -92,14 +96,18 @@ Connection kinds (`kind`):
 
 - `source` — the receiver accepts **only one wire** (a selector). Channel input-source selection and
   bus source selection.
-- `patch` — the receiver accepts **only one wire** (output patch / Signal Assign).
+- `patch` — the receiver accepts **only one wire** (output patch / Signal Assign), **except a USB
+  output**, which also takes the two channels of a MONO IN pair as two wires (see §6).
 - `key` — the receiver accepts **only one wire** (ducker sidechain-trigger select). A selector like
   `source`, but it never carries the mono-pair source mirroring, so it is its own kind (see §10).
+- `record` — the receiver accepts **only one wire** (a microSD Rec track pair's source select, see §8).
 - `send` — the receiver accepts **many** (a bus is a summing mix), with level/pan/PRE-POST/ON. Sends from channels / FX to buses.
   The fixed main-fader paths (CH / FX channel → STEREO) are LEVEL/PAN + a **STEREO-assign ON** only and carry **no PRE/POST** (see §2).
 - `sendSwitch` — the receiver accepts **many** but the send is **ON/OFF only** (no per-wire level/pan). Used for the MIX→STEREO "TO ST" send.
 
-> A `source` / `patch` / `key` receiver rejects a second selector wire (only one source can feed it).
+> A `source` / `patch` / `key` / `record` receiver rejects a second selector wire (only one source can
+> feed it). The one exception is a USB output holding one channel of a MONO IN pair: it takes that
+> channel's partner as its second wire, and no other second wire and no third (§6).
 > The `key` wire shares the blue selector color with `source` on the canvas.
 
 ### 1. Channel input source (`source`, one receiver)
@@ -122,8 +130,9 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 > On the URX44V, every channel (CH1–4, 5/6, 7/8, 9/10, 11/12) can select USB MAIN A/B/C,
 > each USB DAW pair, and USB SUB as its input source (verified on hardware).
 >
-> **Mono-channel pairing**: CH1–4 form the pairs CH1/2 and CH3/4; fixing one channel's input source
-> fixes its partner too (e.g. choosing MIC/LINE 1/2 on CH1 also sets CH2 to MIC/LINE 1/2). The tool
+> **Mono-channel pairing**: CH1–4 form the pairs CH1/2 and CH3/4 (CH1/2 alone on the URX22, whose mono
+> channels are CH1–2); fixing one channel's input source fixes its partner too (e.g. choosing
+> MIC/LINE 1/2 on CH1 also sets CH2 to MIC/LINE 1/2). The tool
 > wires the same source node to both channels (L/R is implied by channel position).
 >
 > **All Input / All USB DAW are not sources**: the INPUT screen's `[All Input]` and `[All USB DAW]`
@@ -247,18 +256,43 @@ Source selection for the analog outputs (MAIN / LINE).
 > source select, so — like DAW Rec — they are **not modeled as editable nodes** (user guide:
 > "The Monitor 1, 2 signals are output from PHONES 1, 2").
 
-### 6. USB OUT Signal Assign (`patch`, one receiver)
+### 6. USB OUT Signal Assign (`patch`, one source or a MONO IN pair)
 
 | Output | Selectable sources |
 | --- | --- |
-| USB MAIN OUT A / B / C | STEREO OUT / STREAM OUT / MIX1 OUT / MIX2 OUT / CH 1–N OUT |
+| USB MAIN OUT A / B / C | STEREO OUT / STREAM OUT / MIX1 OUT / MIX2 OUT / CH 1–N OUT / a MONO IN pair |
 | USB SUB OUT | same as above |
 
-> The unit's own list carries one more item per mono pair — `CH 1/2`, `CH 3/4` — beside the single
-> mono channels, and writes it as the two channels' slots where a single channel is one slot twice.
-> A `patch` receiver takes one source and a mono channel is one node, so a plan cannot express it; a
-> device read reports such an output as not read rather than taking its first channel
-> ([known-issues.md](known-issues.md)).
+The unit's own list offers each MONO IN pair beside the single channels. The pairs are the model's mono
+channel pairs: **CH 1/2 and CH 3/4 on the URX44 / URX44V, CH 1/2 alone on the URX22**, whose CH 3/4 is a
+stereo channel and so is one source already. A plan holds a pair as **two ordinary `patch` wires** into
+the output, one from each channel, with no field of its own. A USB output therefore takes one wire, or two
+that are the two channels of one pair in either order; any other second wire, and any third, is refused
+(`monoPairOnly`): the canvas does not draw it, and a document carrying one (a file, a `?plan=` link) is
+refused at load.
+
+- **What is written.** The source select has an L and an R half. A single source writes its own L / R
+  ports — a single mono channel is its one input slot on both halves — and a pair writes **L = the
+  primary (odd) channel's slot, R = the partner's**, whatever order the two wires sit in. Measured on a
+  URX44V (System 1.3.1.0), CH 3's slot on L and CH 4's on R, written over the control link, shows on the
+  unit's own screen as `CH3/4`, and choosing `CH 1/2` on the unit's own screen announces CH 1's slot on L
+  and CH 2's on R. Any other set of wires into a USB output is written as its first wire
+  alone, so what the unit holds once a write ends is always a selection its list offers.
+- **What is read back.** The primary's slot on L and the partner's on R reads as the pair's two wires;
+  one mono slot on both halves reads as that one channel, dropping a partner wire the plan held. Halves
+  that name neither one source nor a pair stay **unread** — the pair the wrong way round, two channels
+  of different pairs, one half selected and the other clear: the node keeps the plan's own wires and
+  carries the unread badge, and the read report names both halves. The unit's list offers none of
+  these. Measured on the same unit, CH 4 on L with CH 3 on R, CH 2 on L with CH 3 on R, and CH 3 on L
+  with R clear, each written over the control link, are all accepted and held; the first, read on the
+  unit's own screen, leaves its source field **blank**. There is no selection there for the plan to
+  take, and the app writes none of them.
+- **The pair's Signal Type does not reach the USB outputs.** Measured on the same unit: linking and
+  unlinking the pair (Signal Type STEREO / MONO × 2, see "Fixed (non-wireable) elements") left a USB
+  output's source where it was, and while the pair was linked the list still offered each of its channels
+  alone. So a link transition writes no USB output, and a linked pair's channel may feed one on its own.
+  On the canvas, drawing a channel of a linked pair puts the pair on the output
+  ([architecture.md](architecture.md)).
 
 ### 7. DAW Rec Signal Assign (fixed, no node)
 

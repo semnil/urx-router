@@ -619,8 +619,9 @@ carries a one-line map of the same directories and points here.
 ## Data model
 
 - **DeviceModel** — an immutable per-model device definition. It holds `nodes` (inputs / channels /
-  buses / outputs / duckers), `rules` (legal paths = `RoutingRule[]`), and `channelPairs` (the mono
-  channels that share one input source — CH1/2, CH3/4). `models/build.ts` generates it from per-model
+  buses / outputs / duckers), `rules` (legal paths = `RoutingRule[]`), and `channelPairs` (the MONO IN
+  pairs — CH1/2 and CH3/4, CH1/2 alone on the URX22: the channels that share one input source, and the
+  pairs a USB output takes as two wires). `models/build.ts` generates it from per-model
   parameters. A node may *ride on* a parent via `attachTo` (a ducker on its channel, the microSD Rec
   slots on their header), drawn hung just below it ([below](#hung-nodes-ducker-microsd-rec-slots)).
 - **Plan** — the mutable state the user creates. It holds `modelId`, node positions (`positions`),
@@ -659,11 +660,23 @@ The constraint core (`core/routing.ts`):
   `legalTargets` / `legalSources` that ignore the plan and return rule-defined partners only,
   occupied single-input ports included, so a "rule exists but already full" target can still be shown.
 - `canConnect(model, plan, fromRef, toRef)` — checks rule existence and receiver multiplicity
-  (`source` / `patch` / `key` accept one wire; `send` accepts many). A single-input port's occupancy
-  counts any existing wire into it regardless of kind, so a hand-edited file carrying a malformed /
-  mismatched kind cannot slip a second input past the guard.
-- `partnerChannel(model, nodeId)` — returns the paired mono channel. A `source` wire is mirrored onto
-  the partner (and removed together with it) so a channel pair always shares one input source (UI: `graph.ts`).
+  (`source` / `patch` / `key` / `record` accept one wire; `send` / `sendSwitch` accept many). A
+  single-input port's occupancy counts any existing wire into it regardless of kind, so a hand-edited
+  file carrying a malformed / mismatched kind cannot slip a second input past the guard. **A USB output
+  is the one exception**: holding one channel of a MONO IN pair, it takes the partner's wire as its
+  second, and it refuses any other second wire — and any third — with `monoPairOnly` rather than
+  `singleInput`, which the analog outputs, channel inputs, ducker keys and SD Rec tracks keep.
+  `monoPairsInto(model, toRef)` names the pairs a receiver takes — every `channelPairs` entry both of
+  whose channels have a `patch` rule into it, which only a USB output has — and
+  `monoPairOf(model, toRef, fromRefs)` names the pair a set of wires makes, primary first whatever order
+  they are in, or null. `validatePlan` holds a loaded plan to the same sets. The device translation and
+  the readback read the pair through `monoPairOf` as well: what is written and read for it is in
+  [device-model.md](device-model.md) §6.
+- `partnerChannel(model, nodeId)` — returns the other channel of the MONO IN pair. A `source` wire is
+  mirrored onto the partner (and removed together with it) so a channel pair always shares one input
+  source (UI: `graph.ts`). A USB output's pair is **not** mirrored this way: its two wires are
+  independent `patch` wires, each deleted on its own, and the gesture that puts both on the output is
+  the linked-pair draw described below the list.
   A ducker key source is the `key` kind, not `source`, so it never enters this mirroring — guaranteed by the
   kind rather than by the incidental fact that duckers are not in `channelPairs`.
 - `isStereoLinkedPair(model, plan, id)` / `mirrorLinkedPair(model, plan, id)` — when a MONO IN pair's Signal Type
@@ -757,8 +770,12 @@ The constraint core (`core/routing.ts`):
 The UI (`graph.ts`) uses these to let a wire be dragged from either an output or an input port,
 highlighting the opposite-side ports in two layers: legal targets filled, rule-defined-but-occupied
 ones outline-only. A drag from an output opens on any possible route; a drag from an input opens only
-when a legal source exists. Clicking a single-input port that already holds a source selects that
-wire, the same as clicking the wire itself.
+when a legal source exists. **Drawing a channel of a STEREO-linked pair onto a USB output draws both
+wires in one change** — from either member, in either drag direction — and drawing it onto an output
+that holds that same channel alone adds the missing partner. An unlinked channel goes alone; a USB
+output holding it stays a legal target for its partner, which joins by its own drag. The two wires are
+deleted one at a time. Clicking a single-input port that already holds a source selects that wire, the
+same as clicking the wire itself; on a USB output holding a pair it selects the primary's wire.
 
 **Path trace**: long-pressing a node (`LONG_PRESS_MS`, ~450ms, held without moving past
 `LONG_PRESS_TOLERANCE`) highlights the signal path feeding it. `routing.ts`
