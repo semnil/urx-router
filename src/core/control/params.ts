@@ -367,12 +367,16 @@ export const PARAMS = {
   /** MIX bus BUS Type: 0 = VARI (variable per-send level) / 1 = FIXED. L/R-linked
    *  (written to both out instances). Confirmed by live snapshot-diff (MIX1 0 → 1).
    *
-   *  Writing it resets the whole send bank into that MIX on the device — every source's
-   *  send level to -∞ and every send ON off — and writing it BACK does not undo that:
-   *  the levels stay at -∞ and sends that were off come back on. So the plan's values
-   *  have to be pushed after it, which is what "converge" does. The unit takes them
-   *  under FIXED as well as VARI, so the round repairs the bank in either direction
-   *  rather than fighting the device.
+   *  Writing it resets the whole send bank into that MIX on the device: every source's
+   *  send level drops to -∞, and every send ON goes to the side the written type sets —
+   *  off for FIXED, on for VARI. Writing it BACK therefore restores neither: the levels
+   *  stay at -∞ and a send that was off comes back on. So the plan's values have to be
+   *  pushed after it, which is what "converge" does. The unit takes them under FIXED as
+   *  well as VARI — the ON acts there and the level is accepted and read back, so the
+   *  round repairs the bank in either direction rather than fighting the device. Under
+   *  FIXED the stored level does not reach the audio: the send runs at the fixed level.
+   *  The console goes on showing the stored level and stops it being edited; the
+   *  connection panel drops the field.
    *
    *  This completes the set `prepare.ts`'s SKIP list already names as the structural
    *  selectors whose change resets a bank: compEqType, stereoLink, panBal all declared

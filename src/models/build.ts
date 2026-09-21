@@ -82,8 +82,9 @@ export function buildModel(p: ModelParams): DeviceModel {
   // The device exposes MIC/LINE and USB DAW as fixed 2-channel pairs, so each is
   // one node here. The front mini jack is wired into the MIC/LINE 1 input path
   // and is not a separate selectable source. "All Input" / "All USB DAW" are
-  // bulk-set actions (one tap rewrites every channel's source from a fixed
-  // table), not selectable sources, so they are not input nodes.
+  // bulk-set actions (one tap rewrites channel sources from a fixed table — All
+  // USB DAW every channel, All Input only the channels its table names), not
+  // selectable sources, so they are not input nodes.
   const inputs: string[] = [];
   const addInput = (id: string, label: string): void => {
     add({ id, kind: "input", label, column: "input", ports: outPort() });
