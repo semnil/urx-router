@@ -1469,7 +1469,7 @@ export class Graph {
     for (const c of this.plan.connections) {
       // A wire to a hidden endpoint is not drawn, so its ports must not read as
       // in use (e.g. a hidden ducker's key source on the still-visible source).
-      if (this.isHidden(parseRef(c.from).nodeId) || this.isHidden(parseRef(c.to).nodeId)) continue;
+      if (!this.isWireShown(c)) continue;
       // An off / muted wire recedes, so its jacks must not glow as live either — a
       // port lights only when it carries at least one audible (non-off) connection.
       if (this.isOffSend(c)) continue;
@@ -1548,7 +1548,7 @@ export class Graph {
     for (const conn of this.plan.connections) {
       // A wire to a shelved endpoint would dangle into empty space; skip any wire
       // whose node is hidden, so a shelved node takes its wires off-canvas with it.
-      if (this.isHidden(parseRef(conn.from).nodeId) || this.isHidden(parseRef(conn.to).nodeId)) continue;
+      if (!this.isWireShown(conn)) continue;
       const isOff = this.isOffSend(conn);
       // Declutter toggle: drop the off / -∞ sends entirely (they are non-removable
       // fixed wires, so hiding is the only way to thin the always-wired send mesh).
@@ -2346,10 +2346,15 @@ export class Graph {
     );
   }
 
-  /** Select the wire feeding `inputRef`: the only one, or the primary's when the two
-   *  wires are a mono pair on a USB output. */
+  /** Whether a wire is on the board: neither of its nodes is on the shelf. */
+  private isWireShown(c: PlanConnection): boolean {
+    return !this.isHidden(parseRef(c.from).nodeId) && !this.isHidden(parseRef(c.to).nodeId);
+  }
+
+  /** Select the wire feeding `inputRef` among those on the board: the only one, or the
+   *  primary's when both wires of a mono pair on a USB output are shown. */
   private selectInputWire(inputRef: string): void {
-    const wires = this.plan.connections.filter((c) => c.to === inputRef);
+    const wires = this.plan.connections.filter((c) => c.to === inputRef && this.isWireShown(c));
     const pair = monoPairOf(
       this.model,
       inputRef,

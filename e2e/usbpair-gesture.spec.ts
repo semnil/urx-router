@@ -121,6 +121,35 @@ test("any second wire but the partner, and any third, is refused as not a mono p
   await expect(wiresIntoUsbA(page)).toHaveCount(2);
 });
 
+// A wire to a shelved channel is not drawn, so a click on the output's jack picks the
+// wire the board shows, the Inspector names it, and Delete removes that one.
+test("with the odd channel on the shelf, a click on the output selects and deletes the drawn wire", async ({
+  page,
+}) => {
+  await drawOntoUsbA(page, CH3);
+  await drawOntoUsbA(page, CH4);
+  await expect(wiresIntoUsbA(page)).toHaveCount(2);
+
+  await node(page, "ch3").click();
+  await page.getByRole("button", { name: en.inspector.hideNode }).click();
+  await expect(node(page, "ch3")).toHaveCount(0);
+  await expect(wiresIntoUsbA(page)).toHaveCount(1);
+
+  await port(page, USB_A_IN).click();
+  const fromValue = page
+    .locator("#inspector .field")
+    .filter({ has: page.locator(`.field-key:text-is("${en.inspector.from}")`) })
+    .locator(".field-val");
+  await expect(fromValue).toHaveText("CH 4");
+  await page.keyboard.press("Delete");
+  await expect(wiresIntoUsbA(page)).toHaveCount(0);
+
+  // The shelved channel's wire is still in the plan: bringing CH 3 back draws it alone.
+  await page.locator(".hidden-shelf .chip", { hasText: "CH 3" }).click();
+  await expect(wire(page, CH3, USB_A_IN)).toHaveCount(1);
+  await expect(wire(page, CH4, USB_A_IN)).toHaveCount(0);
+});
+
 test("a bus onto an output holding one channel is refused as not a mono pair", async ({ page }) => {
   await drawOntoUsbA(page, CH3);
   await expect(status(page)).toHaveText(en.status.connected);

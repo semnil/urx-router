@@ -762,6 +762,32 @@ describe("a USB output's mono pair", () => {
     expect(wireHit(fx.host, "ch4:out", USB_A)).not.toBeNull();
   });
 
+  // A wire to a shelved channel is not drawn, so a click on the port picks among the
+  // wires the board shows — and Delete takes the one it picked.
+  it("selects the drawn partner when the odd channel is on the shelf, and deletes that one", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        seed(false, "ch3", "ch4")(plan);
+        plan.hidden = ["ch3"];
+      },
+    });
+    press(portHit(fx.host, USB_A)!);
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "conn", from: "ch4:out", to: USB_A });
+    fx.graph.deleteSelection();
+    expect(sourcesOfA()).toEqual(["ch3:out"]);
+  });
+
+  it("selects the odd channel's wire when its partner is on the shelf", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        seed(false, "ch4", "ch3")(plan);
+        plan.hidden = ["ch4"];
+      },
+    });
+    press(portHit(fx.host, USB_A)!);
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "conn", from: "ch3:out", to: USB_A });
+  });
+
   it("selects the primary's wire on a click on an output holding the pair", () => {
     fx = graphFixture({ seed: seed(false, "ch4", "ch3") });
     press(portHit(fx.host, USB_A)!);
