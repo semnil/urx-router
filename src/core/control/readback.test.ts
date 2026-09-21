@@ -376,7 +376,7 @@ describe("applyDeviceState round-trip", () => {
   // channel is one slot twice. The plan has no wire for that pair, and reading the L
   // half alone made it CH 3: the next absolute write then sent 2/2 and moved the unit
   // off what the operator had selected on it. These three are the three shapes the two
-  // halves can come back in.
+  // halves can come back in — and the fourth is a scope that does not ask.
   describe("USB output source, read from both halves", () => {
     const pairPlan = (): Plan => {
       const target = emptyPlan("URX44V");
@@ -418,6 +418,66 @@ describe("applyDeviceState round-trip", () => {
       const wire = target.connections.find((c) => c.to === ref("out.usbmain_a", "in") && c.kind === "patch");
       expect(wire?.from).toBe("ch3:out");
       expect(result.unreadNodes.has("out.usbmain_a"), "read in full, so no badge").toBe(false);
+    });
+
+    // The scene device scope leaves every output patch to the unit: it restores the plan's
+    // own value for exactly these wires after the read, so a verdict about one is a verdict
+    // about routing the session does not sync — and an incomplete read stops a live session.
+    // Under that scope the read does not ask.
+    describe("under the scene scope", () => {
+      const sceneScoped = (target: Plan) =>
+        applyDeviceState(model, target, undefined, undefined, undefined, false, true);
+
+      it("does not report a pair it was never going to place", async () => {
+        const target = pairPlan();
+        mockVdGetFrom(
+          new Map([
+            [`${PARAMS.USB_OUT_SRC_A.id}:0:0`, 2],
+            [`${PARAMS.USB_OUT_SRC_A.id}:0:1`, 3],
+          ]),
+        );
+
+        const result = await sceneScoped(target);
+
+        expect(result.errors.filter((e) => e.includes("out.usbmain_a"))).toEqual([]);
+        expect(result.unreadNodes.has("out.usbmain_a"), "not attempted, so not unread").toBe(false);
+        // The scope's own restore is main.ts's; here the wire is simply never touched.
+        const wire = target.connections.find((c) => c.to === ref("out.usbmain_a", "in") && c.kind === "patch");
+        expect(wire?.from).toBe("bus.stereo:out");
+      });
+
+      it("still reports a failure inside the scope", async () => {
+        const target = pairPlan();
+        target.connections.push({ from: "in.aux:out", to: "ch1:in", kind: "source" });
+        mockVdGetFrom(
+          new Map([
+            [`${PARAMS.USB_OUT_SRC_A.id}:0:0`, 2],
+            [`${PARAMS.USB_OUT_SRC_A.id}:0:1`, 3],
+            [`${PARAMS.INPUT_SOURCE.id}:0:0`, 8888], // CH1's source: in scope, and undecodable
+          ]),
+        );
+
+        const result = await sceneScoped(target);
+
+        // A channel's input source is mixer state, which this scope DOES sync: the read
+        // says so, and a live session still refuses to start on it.
+        expect(result.errors.some((e) => e.includes("unknown source port 8888"))).toBe(true);
+        expect(result.unreadNodes.has("ch1")).toBe(true);
+      });
+
+      it("does not ask for a record assign either", async () => {
+        const target = pairPlan();
+        mockVdGetFrom(new Map([[`${PARAMS.SD_REC_SOURCE.id}:0:0`, 7777]]));
+
+        const result = await sceneScoped(target);
+
+        expect(result.errors.filter((e) => e.includes("record source"))).toEqual([]);
+        expect(result.unreadNodes.has("out.sdrec.t1")).toBe(false);
+        // …and the same read with the scope open does report it, which is what says the
+        // difference is the scope rather than the seeding.
+        const all = await applyDeviceState(model, pairPlan());
+        expect(all.errors.some((e) => e.includes("unknown record source port 7777"))).toBe(true);
+      });
     });
 
     it("keeps the wire when one half is selected and the other is not", async () => {

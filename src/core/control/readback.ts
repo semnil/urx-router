@@ -58,6 +58,7 @@ import {
   qualifyInsertFxParams,
 } from "./insert-fx-effect";
 import { pairPrimary } from "../routing";
+import { isSceneExternalConnection } from "../scene-scope";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   addrKey,
@@ -293,6 +294,20 @@ export async function applyDeviceState(
    *  group count (T5 concentration: 8 groups per mono channel where the pin says 9),
    *  which is the only thing that counts them. */
   skipNames = false,
+  /** Skip the exclusive selectors the device keeps OUTSIDE its scenes — every output
+   *  patch, the microSD record assigns and the monitor / streaming source selects,
+   *  named by `isSceneExternalConnection`. Set by the scene device scope, and by
+   *  nothing else.
+   *
+   *  Under that scope the caller restores the plan's own values for exactly these
+   *  wires after the read (`main.ts` applyDeviceStateScoped → scene-scope.ts), so
+   *  reading them cannot change the plan — it can only return a VERDICT about routing
+   *  the session does not sync. That verdict is not inert: a selector the unit holds
+   *  in a shape the plan cannot express lands in `errors`, and an incomplete read is
+   *  what stops a live session from starting and ends a running one. A USB output the
+   *  operator had set to a mono pair on the unit therefore stopped Live sync for a
+   *  session that was not syncing USB outputs at all. */
+  skipSceneExternal = false,
 ): Promise<ReadbackResult> {
   // Only `mustSettle` — the addresses inside this read's scope — may hold it open, and
   // it holds for all of them: a changed write ends its own wait at its notify, one that
@@ -314,7 +329,7 @@ export async function applyDeviceState(
         signal,
       })
     : undefined;
-  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only, skipNames);
+  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only, skipNames, skipSceneExternal);
 }
 
 /**
@@ -656,6 +671,9 @@ async function readPass(
    *  name section below for why that read must not happen at all rather than
    *  being made to wait. */
   skipNames = false,
+  /** Skip the exclusive selectors the device keeps outside its scenes — applyDeviceState's
+   *  own parameter carries why. */
+  skipSceneExternal = false,
 ): Promise<ReadbackResult> {
   const { vdGet, vdGetStr } = readers(source);
   ensureFixedConnections(model, plan);
@@ -1225,6 +1243,7 @@ async function readPass(
   for (const [to, kind, pl, pr, yl, yr] of ROUTING_SELECTORS) {
     if (!model.nodes.some((n) => n.id === to)) continue;
     if (!want(to)) continue;
+    if (skipSceneExternal && isSceneExternalConnection({ from: "", to: ref(to, "in"), kind })) continue;
     attempted.add(to);
     try {
       const portL = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
@@ -1262,9 +1281,12 @@ async function readPass(
   // microSD Rec per-track source assign: decode each track-pair slot's L track
   // (param 736) to its source node (channel pair / STEREO / MIX) and reflect the
   // exclusive record wire (NONE clears it). Empty on models without a recorder.
+  // A record assign is scene-external, so the scene scope skips it for the reason
+  // the parameter's own comment gives.
   for (const slot of recordSlots(model)) {
     signal?.throwIfAborted();
     if (!want(slot.id)) continue;
+    if (skipSceneExternal) continue;
     attempted.add(slot.id);
     try {
       const port = vdToPortRef(await vdGet(PARAMS.SD_REC_SOURCE.id, 0, slot.trackL));
