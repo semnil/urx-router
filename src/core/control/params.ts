@@ -374,8 +374,9 @@ export const PARAMS = {
    *  pushed after it, which is what "converge" does. The unit takes them under FIXED as
    *  well as VARI — the ON acts there and the level is accepted and read back, so the
    *  round repairs the bank in either direction rather than fighting the device. Under
-   *  FIXED the level the unit takes does not reach the audio: the send runs at the fixed
-   *  level, which is what the console and the connection panel lock it to.
+   *  FIXED the stored level does not reach the audio: the send runs at the fixed level.
+   *  The console goes on showing the stored level and stops it being edited; the
+   *  connection panel drops the field.
    *
    *  This completes the set `prepare.ts`'s SKIP list already names as the structural
    *  selectors whose change resets a bank: compEqType, stereoLink, panBal all declared
