@@ -480,15 +480,21 @@ describe("applyDeviceState round-trip", () => {
       });
     });
 
-    it("keeps the wire when one half is selected and the other is not", async () => {
+    // Either half can be the one left clear, and each is its own row: the report names the
+    // halves in order, and a read of L alone would have taken the second shape for a clear.
+    const halves: Array<[string, Array<[string, number]>, string]> = [
+      ["only L selected", [[`${PARAMS.USB_OUT_SRC_A.id}:0:0`, 2]], "2 / NONE"],
+      ["only R selected", [[`${PARAMS.USB_OUT_SRC_A.id}:0:1`, 2]], "NONE / 2"],
+    ];
+    it.each(halves)("keeps the wire when %s", async (_, seed, ports) => {
       const target = pairPlan();
-      mockVdGetFrom(new Map([[`${PARAMS.USB_OUT_SRC_A.id}:0:0`, 2]])); // the R half defaults to NONE
+      mockVdGetFrom(new Map(seed)); // the other half defaults to NONE
 
       const result = await applyDeviceState(model, target);
 
       const wire = target.connections.find((c) => c.to === ref("out.usbmain_a", "in") && c.kind === "patch");
       expect(wire?.from).toBe("bus.stereo:out");
-      expect(result.errors.some((e) => e.includes("out.usbmain_a: source ports 2 / NONE name no single node"))).toBe(
+      expect(result.errors.some((e) => e.includes(`out.usbmain_a: source ports ${ports} name no single node`))).toBe(
         true,
       );
       expect(result.unreadNodes.has("out.usbmain_a")).toBe(true);
