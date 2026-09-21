@@ -416,7 +416,11 @@ export const PLAN_FORMAT = "urx-router-plan";
 // catalogue's 100 there. Tagged 2, a file written here would load in that build and move a
 // unit that holds anything else at that address, which is the write this version exists to
 // stop. Tagged 3 it is refused there instead, with the reason on screen.
-export const PLAN_VERSION = 3;
+//
+// 4 is the same step for the array's slot 1. To a version-3 build an absent `on` is not
+// silence either: its writer sends 1 there. Tagged 3, a file written here would load in that
+// build and move a unit holding 0 at that address; tagged 4 it is refused there.
+export const PLAN_VERSION = 4;
 
 // Language-agnostic load failures. The UI maps the code to a localized message.
 export type PlanErrorCode = "notPlanFile" | "missingModel" | "planUrlUnsupported" | "planVersionUnsupported";

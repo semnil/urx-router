@@ -44,7 +44,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MODELS_PATH = os.path.join(HERE, "models.json")
 DEFAULT_BASE = "https://urx-router.semnil.com/"
 PLAN_FORMAT = "urx-router-plan"
-PLAN_VERSION = 3
+PLAN_VERSION = 4
 
 SINGLE_INPUT_KINDS = {"source", "patch", "key", "record"}
 KNOWN_KINDS = {"source", "patch", "send", "sendSwitch", "key", "record"}

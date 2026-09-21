@@ -384,24 +384,27 @@ describe("paramRangeProblems", () => {
   // read. Asked of the whole funnel rather than of the migration alone, since what has to hold
   // is that a document loses it, and asked with the siblings as the control: the drop is that
   // key and not the section.
-  // …and what a build that still carries the field would do with the result. A version-2
-  // writer sends the catalogue's 100 to slot 2 for an ABSENT level, so a file written here and
-  // tagged 2 would load in such a build and move a unit holding anything else at that address.
-  // The version is what stops it: that build refuses a document tagged higher than its own.
+  // …and what a build that still carries a field would do with the result. A version-2 writer
+  // sends the catalogue's 100 to slot 2 for an ABSENT level, and a version-3 writer sends 1 to
+  // slot 1 for an absent on, so a file written here and tagged lower would load in such a build
+  // and move a unit holding anything else at those addresses. The version is what stops it:
+  // that build refuses a document tagged higher than its own.
   it("writes a version this change's own removal is safe under", () => {
-    expect(PLAN_VERSION).toBe(3);
+    expect(PLAN_VERSION).toBe(4);
     const doc = JSON.parse(serialize(defaultPlan("URX44V"))) as {
       version: number;
       nodeParams: Record<string, { fxEffect?: Record<string, unknown> }>;
     };
     expect(doc.version, "a fresh save carries it").toBe(PLAN_VERSION);
-    // …and neither FX section it writes carries the key, which is what makes the tag the only
-    // signal a version-2 reader gets. Read per section rather than over the whole document:
-    // `level` is a live key elsewhere — every bus fader, the oscillator, each 1-knob EQ.
+    // …and neither FX section it writes carries either key, which is what makes the tag the
+    // only signal an older reader gets. Read per section rather than over the whole document:
+    // `level` and `on` are live keys elsewhere — every bus fader and channel ON, the oscillator,
+    // each 1-knob EQ.
     for (const node of ["bus.fx1", "bus.fx2"]) {
       const fx = doc.nodeParams[node]?.fxEffect;
       expect(fx, `the premise: ${node} carries a section`).toBeTypeOf("object");
       expect(fx, node).not.toHaveProperty("level");
+      expect(fx, node).not.toHaveProperty("on");
     }
   });
 

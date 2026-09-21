@@ -10,7 +10,7 @@ any private protocol knowledge.
 ```json
 {
   "format": "urx-router-plan",
-  "version": 3,
+  "version": 4,
   "modelId": "URX44V",
   "sampleRate": 48000,
   "connections": [ ... ],
@@ -39,7 +39,7 @@ the unit and edit that.
 
 - `format` — always the string `"urx-router-plan"`. Anything else and the app
   refuses the document before it looks at the routing.
-- `version` — always `2` for a plan written today. A document tagged newer than
+- `version` — always `4` for a plan written today. A document tagged newer than
   the app's version is refused; an older one is migrated forward on load, and an
   absent one reads as current.
 - `modelId` — `"URX22"`, `"URX44"`, or `"URX44V"`. Any other string is refused.
