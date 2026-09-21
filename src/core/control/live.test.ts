@@ -506,10 +506,11 @@ describe("LiveSync sideEffect converge", () => {
 
   // BUS Type is the fourth of the structural selectors prepare.ts's SKIP list names as
   // resetting a bank, and it was the one that did not declare it. On the unit, writing it
-  // resets every send into that MIX — levels to -infinity, ONs off — and writing it back
-  // restores neither: the levels stay down and sends that were off come back on. Nothing
-  // re-sends them, because the plan and the snapshot still agree, so the board goes on
-  // showing a mix the device does not have for the rest of the session.
+  // resets every send into that MIX — levels to -infinity, ONs to the side the written type
+  // sets (off for FIXED, on for VARI) — so writing it back restores neither: the levels stay
+  // down and sends that were off come back on. Nothing re-sends them, because the plan and
+  // the snapshot still agree, so the board goes on showing a mix the device does not have
+  // for the rest of the session.
   it("converges after a BUS Type edit, the way the other bank-resetting selectors do", async () => {
     const busTypeOf = (p: Plan, v: number): void => {
       p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: v };
