@@ -142,8 +142,8 @@ test("a repaired value is reported beside the conflict, and is repaired once the
   // one, not the document as it arrived.
   await page.locator('#graph-host g.node[data-id="bus.fx2"]').click();
   // Read off the FX tuning screen, which is where the effect's parameters are drawn. The
-  // section folds with the effect's own ON state, so it is opened before the launcher inside
-  // it is pressed.
+  // section's open state is one the Inspector remembers, so it is opened before the launcher
+  // inside it is pressed.
   const sec = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: "FX Effect" }) });
   if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
   await sec.locator("#btn-fx-screen").click();

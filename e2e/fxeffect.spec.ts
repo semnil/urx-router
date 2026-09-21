@@ -2,6 +2,7 @@ import { test, expect, colorToken, scrollsByWheel, type Page } from "./fixtures"
 import { chooseOption } from "./choose-option";
 import { planParamZ } from "./plan-param";
 import { getModel } from "../src/models";
+import { en } from "../src/i18n/en";
 
 // The FX EFFECT tuning screen and the two surfaces that reach it: the CONSOLE FX strip's
 // EFFECT face + disclosure, and the Inspector's FX Effect section. What each family shows,
@@ -43,9 +44,9 @@ const openFromConsole = async (page: Page, name: string): Promise<void> => {
   await expect(screenBox(page)).toBeVisible();
 };
 
-/** The Inspector's FX Effect section, expanded. It is a `<details>` that folds with the
- *  effect's own ON state, so a bypassed channel ships it closed and everything inside is
- *  then unreachable — which reads in a failure as the control being gone. */
+/** The Inspector's FX Effect section, expanded. It is a `<details>` whose open state the
+ *  Inspector remembers, so a run can find it closed, and everything inside is then
+ *  unreachable — which reads in a failure as the control being gone. */
 const fxSection = async (page: Page, nodeId: string) => {
   await page.click("#btn-view-graph");
   await page.locator(`g.node[data-id="${nodeId}"]`).click();
@@ -84,13 +85,26 @@ test.beforeEach(async ({ page }) => {
 test("the FX strip carries an EFFECT face and a disclosure", async ({ page }) => {
   await page.click("#btn-view-console");
   const fx1 = strip(page, "FX 1");
-  await expect(fx1.locator(".con-fxface")).toHaveText("EFFECT");
+  const face = fx1.locator(".con-fxface");
+  await expect(face).toHaveText("EFFECT");
   await expect(fx1.locator(".con-fxopen")).toBeVisible();
-  // The face is the EFFECT ON switch, and it is the only thing that switches it: pressing
-  // it moves the strip's own state and nothing else on the surface claims that value.
-  await expect(fx1.locator(".con-fxface")).toHaveAttribute("aria-pressed", "true");
-  await fx1.locator(".con-fxface").click();
-  await expect(fx1.locator(".con-fxface")).toHaveAttribute("aria-pressed", "false");
+  // The face is drawn lit and is not a control: the unit has no switch for an FX channel's
+  // effect, and the tooltip says so. It is NOT dimmed the way a read-only chip is — the lit
+  // look is what it states.
+  await expect(face).toHaveClass(/\bon\b/);
+  await expect(face).toHaveAttribute("aria-pressed", "true");
+  await expect(face).toHaveAttribute("aria-disabled", "true");
+  await expect(face).toHaveAttribute("title", en.console.effectHint);
+  expect(Number(await face.evaluate((n) => getComputedStyle(n).opacity))).toBe(1);
+  expect(await face.evaluate((n) => getComputedStyle(n).cursor)).toBe("not-allowed");
+  // A press changes nothing and opens nothing…
+  await face.click({ force: true });
+  await expect(face).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".con-ifxpop")).toBeHidden();
+  // …while the disclosure beside it opens the EFFECT TYPE popover.
+  await fx1.locator(".con-fxopen").click();
+  await expect(page.locator(".con-ifxpop")).toBeVisible();
+  await expect(page.locator(".con-ifxpop .irow", { hasText: "Rev-X Hall" })).toHaveAttribute("aria-checked", "true");
 });
 
 test("the disclosure opens a type popover with five live rows and a launcher", async ({ page }) => {
@@ -105,7 +119,8 @@ test("the disclosure opens a type popover with five live rows and a launcher", a
   // and an FX channel's engine is its own, so there is nothing for a `why` column to say.
   await expect(pop.locator(".irow.off")).toHaveCount(0);
   await expect(pop.locator(".irow .why")).toHaveCount(0);
-  // …and EFFECT ON is deliberately not in here: the face it hangs off already switches it.
+  // …and there is no ON row in here: an FX channel's effect has no switch of its own beside
+  // the strip's [ON].
   await expect(pop.getByRole("button", { name: /^(ON|OFF)$/ })).toHaveCount(0);
   await expect(pop.locator(".iopen.off")).toHaveCount(0);
 });
@@ -125,11 +140,12 @@ test("choosing a type from the popover opens the screen on it", async ({ page })
   await expect(page.locator(".con-ifxpop .irow", { hasText: "Mono Delay" })).toHaveAttribute("aria-checked", "true");
 });
 
-test("the Inspector's FX section keeps three controls and no raw sliders", async ({ page }) => {
+test("the Inspector's FX section keeps two controls and no raw sliders", async ({ page }) => {
   const section = await fxSection(page, "bus.fx1");
   await expect(section.locator("select")).toHaveCount(1); // EFFECT TYPE
-  await expect(section.locator(".toggle")).toHaveCount(1); // Effect ON
   await expect(section.locator("#btn-fx-screen")).toBeVisible();
+  // No switch: an FX channel's effect has none of its own beside the strip's [ON].
+  await expect(section.locator(".toggle")).toHaveCount(0);
   // The parameters moved to the screen whole. A slider left here would sit at the position
   // it was drawn at and write that stale value back on the next drag.
   await expect(section.locator('input[type="range"]')).toHaveCount(0);
@@ -306,16 +322,6 @@ test("switching family rebuilds the rows and keeps the other family's values", a
   await closeScreen(page);
 });
 
-test("the screen opens bypassed and says so", async ({ page }) => {
-  await page.click("#btn-view-console");
-  await strip(page, "FX 1").locator(".con-fxface").click();
-  await openFromConsole(page, "FX 1");
-  // Editable, metered and open — the plan holds the values and the unit stores them.
-  await expect(screenBox(page)).toContainText("Bypassed");
-  await expect(screenRow(page, "Rev.Time").locator('input[type="range"]')).toBeEnabled();
-  await closeScreen(page);
-});
-
 test("FX 2 above 96 kHz still opens, with the rate note in front", async ({ page }) => {
   await page.click("#btn-view-graph");
   await chooseOption(page.locator("#rate-picker"), { label: "192 kHz" });
@@ -324,20 +330,6 @@ test("FX 2 above 96 kHz still opens, with the rate note in front", async ({ page
   // The bus is gone at this rate; its own controls are not. The values are untouched and
   // the screen is the same screen.
   await expect(screenRow(page, "Delay").locator('input[type="range"]')).toBeEnabled();
-  await closeScreen(page);
-});
-
-test("the rate note outranks the bypass note when both are true", async ({ page }) => {
-  // `offNote` returns one line, rate first. Each existing case makes exactly one of the two
-  // conditions true, so the ORDER — which the comment and the doc both call load-bearing —
-  // is satisfied by either arrangement until a case makes both true at once.
-  await page.click("#btn-view-console");
-  await strip(page, "FX 2").locator(".con-fxface").click(); // bypass it
-  await page.click("#btn-view-graph");
-  await chooseOption(page.locator("#rate-picker"), { label: "192 kHz" });
-  await openFromInspector(page, "bus.fx2");
-  await expect(screenBox(page)).toContainText("above 96 kHz");
-  await expect(screenBox(page)).not.toContainText("Bypassed");
   await closeScreen(page);
 });
 

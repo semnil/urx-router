@@ -91,7 +91,7 @@ import {
 } from "../core/control/vd";
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
-import { controlId, FX_ON_SCOPE, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
+import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
 import { el, focusables, onWheelStep, popLeft, popTop, preserveFocus, scrubFloat } from "./dom";
 import { fineActive, fineTag } from "./fine";
@@ -637,11 +637,7 @@ export class Console {
       const tgt = e.target as HTMLElement;
       if (this.tapOpenFor && !this.tapPop.contains(tgt) && !tgt.closest(".con-tap")) this.closeTapPop();
       if (this.sendPanOpenFor && !this.sendPanPop.contains(tgt) && !tgt.closest(".con-panbtn")) this.closeSendPan();
-      if (
-        this.typePopFor &&
-        !this.typePop.contains(tgt) &&
-        !tgt.closest(".con-ifxface, .con-ifxopen, .con-fxface, .con-fxopen")
-      )
+      if (this.typePopFor && !this.typePop.contains(tgt) && !tgt.closest(".con-ifxface, .con-ifxopen, .con-fxopen"))
         this.closeTypePop();
     });
     // Escape is a KEYBOARD dismissal, so the focus goes back to what opened the popover:
@@ -1470,6 +1466,22 @@ export class Console {
     return chip;
   }
 
+  /** The face beside that disclosure: lit, and not a control. It carries the read-only
+   *  chip's accessible shape (a pressed button that is disabled, out of the tab order) with
+   *  the tooltip as its reason, but not its dimming — `.static` keeps the lit look and only
+   *  takes away the pointer. Nothing is wired, so a press, a key and MIDI learn all pass it
+   *  by. */
+  private fxEffectFaceChip(): HTMLElement {
+    const chip = el("div", "con-chip con-fxface static on");
+    chip.textContent = t().console.effect;
+    chip.setAttribute("role", "button");
+    chip.setAttribute("aria-pressed", "true");
+    chip.setAttribute("aria-disabled", "true");
+    chip.title = t().console.effectHint;
+    chip.tabIndex = -1;
+    return chip;
+  }
+
   /**
    * The EFFECT TYPE popover: the same element and the same three parts the INS FX one uses.
    *
@@ -1482,9 +1494,8 @@ export class Console {
    *     second holder to take. So there is no `why` column here at all;
    *   - the launcher is never inert, because there is always an effect to open.
    *
-   * EFFECT ON is deliberately NOT here. The face this popover hangs off already switches it,
-   * and one value behind two faces is a question the operator has to answer before using
-   * either. The INS FX popover dropped its bypass for the same reason.
+   * There is no ON row here, and the INS FX popover's bypass has no counterpart: an FX
+   * channel's effect has no switch of its own beside the strip's [ON].
    */
   private openFxTypePop(id: string, anchor: HTMLElement): void {
     this.closePopovers();
@@ -1526,8 +1537,8 @@ export class Console {
     const open = el("div", "iopen");
     open.textContent = dynOpenLabel("fx", t());
     open.setAttribute("role", "button");
-    // A bypassed effect, and one on a bus the rate has taken away, are both still effects to
-    // tune — the screen says so under its own display — so nothing gates this.
+    // An effect on a bus the rate has taken away is still an effect to tune — the screen says
+    // so under its own display — so nothing gates this.
     this.wireActivate(open, undefined, () => {
       this.closeTypePop();
       this.hooks.onOpenDynScreen?.("fx", id);
@@ -1583,8 +1594,8 @@ export class Console {
     if (this.typePopBtn) {
       this.typePopBtn.classList.remove("open");
       this.typePopBtn.setAttribute("aria-expanded", "false");
-      // The disclosure if the rebuilt strip still has one, the face otherwise — the
-      // same order every other landing here uses.
+      // The disclosure if the rebuilt strip still has one, and on an INS FX strip the face
+      // otherwise — the same order every other landing here uses.
       this.releaseFocus(this.typePopBtn, restore, openFor, this.typePopSel.join(", "));
       this.typePopBtn = null;
     }
@@ -2205,7 +2216,7 @@ export class Console {
    *  popover began serving a second selector, and a whole-rack repaint then dropped focus to
    *  the document body — an FX strip carries neither INS FX class. */
   private get typePopSel(): readonly string[] {
-    return this.typePopKind === "fx" ? [".con-fxopen", ".con-fxface"] : [".con-ifxopen", ".con-ifxface"];
+    return this.typePopKind === "fx" ? [".con-fxopen"] : [".con-ifxopen", ".con-ifxface"];
   }
 
   private get popovers(): ReadonlyArray<{
@@ -2650,36 +2661,18 @@ export class Console {
       this.appendOpener(proc, noneAtThisRate ? null : this.insFxOpenChip(m.id, holds));
     }
     if (this.isFxChannel(m.id)) {
-      // The same face + disclosure pair GATE / COMP / EQ / INS FX take. The face switches
-      // the effect in and out, the disclosure opens the EFFECT TYPE popover.
+      // The same face + disclosure pair GATE / COMP / EQ / INS FX take. The face is drawn lit
+      // and cannot be pressed — an FX channel's effect has no switch of its own beside the
+      // strip's [ON], and it is always in — and its tooltip says so. The disclosure opens the
+      // EFFECT TYPE popover.
       //
       // The chip is called EFFECT and not FX: the strip's own scribble already reads FX 1 /
       // FX 2, so a chip repeating that names nothing, and what a chip in this row names
-      // everywhere else is WHAT HAPPENS there. The unit's vocabulary is the same — its
-      // parameters are EFFECT TYPE and EFFECT ON.
+      // everywhere else is WHAT HAPPENS there.
       //
       // An FX channel has no empty state to draw: its selector has no "none" value and the
-      // factory type is a real effect, so the face is always a live switch and the
-      // disclosure always opens onto something. That is the whole of what makes this pair
-      // simpler than the INS FX one above.
-      const fxOn = (): boolean => planOf().fxEffect?.on ?? true;
-      proc.append(
-        this.buildChip(
-          m.id,
-          t().console.effect,
-          fxOn(),
-          () => {
-            const next = !fxOn();
-            const np = this.nodeParamsOf(m.id);
-            np.fxEffect = { ...np.fxEffect, on: next };
-            return next;
-          },
-          // The nested field by name, not the group: naming `fxEffect` would claim every
-          // sibling this rebuild merely copied and take the device's answer for all of them.
-          // The morphing strip's chips solved the same shape first.
-          { cls: "con-chip con-fxface", keys: ["fxEffect.on"], midiId: controlId(m.id, "fx", FX_ON_SCOPE) },
-        ),
-      );
+      // factory type is a real effect, so the disclosure always opens onto something.
+      proc.append(this.fxEffectFaceChip());
       this.appendOpener(proc, this.fxTypeOpenChip(m.id));
     }
     // DUCKER: the sidechain ducker hung under a stereo channel (its own node).

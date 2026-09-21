@@ -3584,7 +3584,7 @@ refill the slots the plan left out anyway. So `{ "on": true }` resets the effect
 naming a type does, and omitting only `fxEffect.params` preserves nothing.
 
 **The panel and the wire agree on a document the loader completed.** `inspector.ts` reads an absent
-`fxEffect` as `{}` and draws the resolved type and ON, and the tuning screen each descriptor's own
+`fxEffect` as `{}` and draws the resolved type, and the tuning screen each descriptor's own
 default; the fill puts those same values into the plan, so the row and the command carry one number. Aligning the *emit* to
 the panel is the other way to close that gap and it is the destructive one — it was written, measured and
 reverted — which is why the plan is completed at the LOAD, where the operator can be told what it means.

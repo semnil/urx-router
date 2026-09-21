@@ -232,7 +232,6 @@ export const SSMCS_INITIAL = {
 // round-trips exactly. Absent fields fall back to the device defaults.
 export interface FxEffectParams {
   type?: number; // EFFECT TYPE enum (679 / 683 value); absent = FX default
-  on?: boolean; // effect ON (array slot 1); absent or true = on
   params?: Record<string, number>; // raw per-parameter values keyed by descriptor key
 }
 

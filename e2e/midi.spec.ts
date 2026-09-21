@@ -1281,21 +1281,23 @@ test("a MIDI window that outlives a reload of the app is spoken to again", async
   await expect(mapRow(win, "ch1/mute")).toBeVisible();
 });
 
-test("the FX strip's EFFECT face arms, and its assignment reads as words", async ({ page }) => {
-  // Two halves of one defect, and neither check sees the other. The catalog's contract is
-  // every toggle the CONSOLE draws, and this face drew without an id — a chip that never
-  // marks itself is absent from BOTH sides of a marked-versus-armed comparison, so the
-  // counts agree and nothing is red. And an FX scope carries the PLAN KEY, so the assignment
-  // it makes printed that key: "FX 1 · fx.reverbTime · fx", three tokens the operator has
-  // seen on no surface.
+test("the FX strip's EFFECT face arms nothing, and a screen knob's assignment reads as words", async ({ page }) => {
+  // The face is drawn lit and is not a control, so learn has nothing to take from it. An FX
+  // scope carries the PLAN KEY, so an assignment made on the screen printed that key —
+  // "FX 1 · fx.reverbTime · fx", three tokens the operator has seen on no surface.
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
   await setLearn(page, win, true);
 
-  await strip(page, "FX 1").locator(".con-fxface").click();
-  await expect(win.locator(".mw-hint")).toContainText("FX 1 · FX EFFECT · Effect");
-  await sendMidi(page, [0xb0, 41, 127]);
-  await expect(mapRow(win, "bus.fx1/fx@fx.on").locator(".mw-ctl")).toHaveText("FX 1 · FX EFFECT · Effect");
+  await expect(strip(page, "FX 1").locator(".con-fxface")).toBeVisible();
+  await expect(strip(page, "FX 1").locator(".con-fxface.midi-target")).toHaveCount(0);
+  // Nor does its pointer offer an assignment, while the disclosure beside it does.
+  const cursorOf = (sel: string) =>
+    strip(page, "FX 1")
+      .locator(sel)
+      .evaluate((n) => getComputedStyle(n).cursor);
+  expect(await cursorOf(".con-fxopen"), "learn's pointer").toBe("copy");
+  expect(await cursorOf(".con-fxface")).toBe("not-allowed");
 
   // A row of the screen itself, which is where a plan key would show: the same id syntax,
   // resolved through the catalogue rather than printed.

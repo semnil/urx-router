@@ -28,7 +28,6 @@ import {
   FX_CHANNEL_NODE_INDEX,
   FX_EFFECT_ARRAY_PARAM,
   FX_EFFECT_TYPE_PARAM,
-  FX_SLOT_ON,
   fxDescRawToSend,
   fxRowOwners,
   resolveFxEffectType,
@@ -1206,10 +1205,8 @@ function pushFxEffectCommands(
   // delay-family slots with it.
   const type = resolveFxEffectType(fxIndex, fx.type);
   out.push(rawCommand("FX_EFFECT_TYPE", typeId, "enum", 0, type));
-  out.push(rawCommand("FX_EFFECT_PARAM", arrId, "raw", FX_SLOT_ON, (fx.on ?? true) ? 1 : 0));
-  // Slot 2 is NOT sent. No control of the unit's own reaches it — its effect screen does not
-  // show it and the effect guide lists it for none of the five types — so what a value there
-  // does is unestablished, and this app writes only what it has confirmed on the unit.
+  // Slots 1 and 2 are NOT sent: the array carries only the selected type's descriptor slots,
+  // and the unit keeps whatever it holds there.
   // The slot the unit is computing for itself, skipped for the reason the insert-FX loop
   // below skips its own: while tempo Sync is on the unit derives the delay time from the BPM
   // and the note value, and it ACCEPTS a write to that slot and holds it — so re-sending the

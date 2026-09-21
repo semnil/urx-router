@@ -158,15 +158,18 @@ describe("arming surfaces against the control catalog", () => {
     expect(bindControl(ch.model, ch.plan, "ch1/insertFxOn"), "and the catalog has no such id").toBeNull();
   });
 
-  it("marks and binds the FX strip's EFFECT face by name", () => {
+  // The FX strip's EFFECT face is drawn lit and is not a control, so it offers no id. The id
+  // a build that drew it as a switch armed has no binding either — a ring here would be a
+  // control that reaches nothing.
+  it("offers nothing on the FX strip's EFFECT face", () => {
     const armed: string[] = [];
     ch = consoleHost({ modelId: "URX44V", midi: learnHooks(armed) });
     const face = ch.strip("bus.fx1").root.querySelector<HTMLElement>(".con-fxface");
     if (!face) throw new Error(".con-fxface is missing — the FX strip draws no EFFECT chip");
-    expect(face.classList.contains("midi-target"), "the EFFECT face offers itself").toBe(true);
+    expect(face.classList.contains("midi-target"), "the EFFECT face offers nothing").toBe(false);
     face.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    expect(armed, "and arms exactly one id").toEqual(["bus.fx1/fx@fx.on"]);
-    expect(bindControl(ch.model, ch.plan, armed[0]), "which the catalog binds").toBeTruthy();
+    expect(armed, "and arms nothing").toEqual([]);
+    expect(bindControl(ch.model, ch.plan, "bus.fx1/fx@fx.on"), "and the catalog has no such id").toBeNull();
   });
 
   // Every registered processor, on the first node it will bind to — so a processor

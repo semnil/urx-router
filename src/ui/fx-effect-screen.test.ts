@@ -287,10 +287,10 @@ describe("the words a MIDI assignment prints for an FX control", () => {
     // The positive control: the catalogue really did offer the rows this is about. A run
     // that enumerated nothing would satisfy every assertion below.
     expect(scopes.length, "the catalogue offered no FX control at all").toBeGreaterThan(10);
-    expect(scopes, "EFFECT ON is one of them").toContain(FX_ON_SCOPE);
-    // …and the effect array's slot 2 is NOT: no surface offers it, so the catalogue must not
-    // list an id nothing can arm. The label below still answers for it, for a mapping saved
-    // against a build that did.
+    // …and the effect array's slots 1 and 2 are NOT: no surface offers either, so the
+    // catalogue must not list an id nothing can arm. The label below still answers for both,
+    // for a mapping saved against a build that did.
+    expect(scopes, "the effect ON is offered by nothing").not.toContain(FX_ON_SCOPE);
     expect(scopes, "the effect level is offered by nothing").not.toContain(FX_LEVEL_SCOPE);
     for (const scope of scopes) {
       const label = fxControlLabel(scope, t());
@@ -307,19 +307,22 @@ describe("the words a MIDI assignment prints for an FX control", () => {
   // later build no longer carries reaches the resolver as an FX scope whose key matches no
   // descriptor of any type — and the answer has to be "I cannot name this", so the caller
   // falls back to printing the id rather than to a label belonging to some other row.
-  // The one scope the catalogue no longer offers, and therefore the one nothing else here
-  // reaches: the loop above walks `listControls`, which no longer lists it, and the case
-  // below asks about a key no type carries. A mapping made against a build that DID offer it
+  // The two scopes the catalogue no longer offers, and therefore the two nothing else here
+  // reaches: the loop above walks `listControls`, which no longer lists them, and the case
+  // below asks about a key no type carries. A mapping made against a build that DID offer one
   // is still in the operator's file, and `src/ui/midi.ts` asks this function for its words
-  // whether or not the id binds. Without this, deleting that branch leaves the whole suite
+  // whether or not the id binds. Without these, deleting either branch leaves the whole suite
   // green and the row reads "FX 1 · fx.level · fx" — the three tokens this describe exists
   // to keep off the screen.
-  it("still names a mapping saved against the effect level", () => {
+  it.each([
+    ["the effect level", FX_LEVEL_SCOPE, () => t().inspector.fxEffect.level],
+    ["the effect ON", FX_ON_SCOPE, () => t().inspector.fxEffect.effectOn],
+  ])("still names a mapping saved against %s", (_name, scope, word) => {
     setLang("en");
-    const label = fxControlLabel(FX_LEVEL_SCOPE, t());
+    const label = fxControlLabel(scope, t());
     expect(label).toContain(t().dynTuning.fx.title);
-    expect(label).toContain(t().inspector.fxEffect.level);
-    expect(label).not.toContain(FX_LEVEL_SCOPE.slice(FX_SCOPE.length + 1));
+    expect(label).toContain(word());
+    expect(label).not.toContain(scope.slice(FX_SCOPE.length + 1));
   });
 
   it("declines an FX scope whose key no type carries", () => {

@@ -10,7 +10,6 @@ import type { Plan } from "../plan";
 import {
   balanceLabel,
   delayMs,
-  FX_SLOT_ON,
   FX_TYPE_DEFAULTS,
   formatFx1Hz,
   formatFx2Hz,
@@ -361,10 +360,10 @@ describe("fx-effect translate", () => {
   it("emits the EFFECT TYPE (679/683) and the family's parameter slots", () => {
     const plan = emptyPlan("URX44V");
     plan.nodeParams["bus.fx1"] = {
-      fxEffect: { type: 0, on: true, params: { reverbTime: 24, revxHpf: 9 } },
+      fxEffect: { type: 0, params: { reverbTime: 24, revxHpf: 9 } },
     };
     plan.nodeParams["bus.fx2"] = {
-      fxEffect: { type: 1024, on: true, params: { delay: 7563, note: 9 } },
+      fxEffect: { type: 1024, params: { delay: 7563, note: 9 } },
     };
     const cmds = planToCommands(model, plan);
     const at = (id: number, y: number) => cmds.find((c) => c.paramId === id && c.y === y);
@@ -403,24 +402,22 @@ describe("fx-effect translate", () => {
 
   // …and the other half of that contract, which is the trap: there is no PARTIAL FX write.
   // An author told "author a selector only when the user asked to change the effect" can
-  // write `{ on: true }` believing no selector goes out. The whole channel is authored the
+  // write one parameter believing no selector goes out. The whole channel is authored the
   // moment the section exists — the array is absolute state, and a type write would refill
   // the slots left out anyway.
   it("writes the whole channel, selector included, once the plan describes it at all", () => {
     const plan = emptyPlan("URX44V");
-    plan.nodeParams["bus.fx1"] = { fxEffect: { on: true } };
+    plan.nodeParams["bus.fx1"] = { fxEffect: { params: { revxLpf: 40 } } };
     const cmds = planToCommands(model, plan).filter((c) => c.paramId === 679 || c.paramId === 681);
     // The selector goes out although the document names no type…
     expect(cmds.find((c) => c.paramId === 679)?.vdValue).toBe(0);
-    // …and every parameter slot with it, at the type's own defaults.
+    // …and every parameter slot with it, the one the document names at its value and the rest
+    // at the type's own defaults. Nothing else goes to the array.
     const full = fxParams(0);
-    // …and every parameter slot with it, plus the effect's own ON. Slot 2 is NOT among them.
-    expect(cmds.filter((c) => c.paramId === 681).length).toBe(full.length + 1);
-    expect(
-      cmds.find((c) => c.paramId === 681 && c.y === 2),
-      "slot 2 went out",
-    ).toBeUndefined();
-    for (const d of full) expect(cmds.find((c) => c.y === d.slot)?.vdValue, d.key).toBe(d.def);
+    expect(cmds.filter((c) => c.paramId === 681).length).toBe(full.length);
+    for (const d of full) {
+      expect(cmds.find((c) => c.y === d.slot)?.vdValue, d.key).toBe(d.key === "revxLpf" ? 40 : d.def);
+    }
   });
 
   // Both types read a raw as raw / 10 and differ in the range they take. A 2000 ms Mono
@@ -659,8 +656,6 @@ describe("fx-effect readback round-trip", () => {
     vi.resetModules();
     const table = new Map<string, number>([
       ["683:0:0", 768], // FX2 = Rev.R3 Hall
-      ["685:0:1", 1], // on
-      ["685:0:2", 100], // level
       ["685:0:7", 15], // reverbTime
       ["685:0:14", 54], // erRevBalance
     ]);
@@ -704,28 +699,28 @@ describe("paramRangeAddrs", () => {
     expect(paramRangeAddrs(model, plan, problems)).toEqual([at(hpf.slot), at(lpf.slot)]);
   });
 
-  // Slot 2 of the effect array is written NOWHERE. No control of the unit's own reaches it —
-  // its effect screen does not show it and the effect guide lists it for none of the five
-  // types — so what a value there does is unestablished, and this app writes only what it has
-  // confirmed on the unit. Asked on both channels and on every type either one offers, with
-  // slot 1 as the control: a plan that emitted nothing at all would satisfy the absence.
-  it("writes the effect ON and never slot 2, on either channel", () => {
-    for (const [node, arrId, types] of [
-      ["bus.fx1", 681, fxEffectTypes(0)],
-      ["bus.fx2", 685, fxEffectTypes(1)],
+  // Slots 1 and 2 of the effect array are written NOWHERE. No control of the unit's own
+  // reaches either — its effect screen does not show them and the effect guide lists them for
+  // none of the five types — so this app leaves what the unit holds there. Asked on both
+  // channels and on every type either one offers, as an EQUALITY with the selected type's
+  // descriptor slots: a plan that emitted nothing at all fails it, and so does one extra slot.
+  it("writes the selected type's descriptor slots and nothing else, on either channel", () => {
+    for (const [node, arrId, fxIndex] of [
+      ["bus.fx1", 681, 0],
+      ["bus.fx2", 685, 1],
     ] as const) {
-      for (const opt of types) {
+      for (const opt of fxEffectTypes(fxIndex)) {
         const plan = emptyPlan("URX44V");
         plan.nodeParams[node] = { fxEffect: { type: opt.value } };
-        const cmds = planToCommands(model, plan).filter((c) => c.paramId === arrId);
-        expect(
-          cmds.some((c) => c.y === FX_SLOT_ON),
-          `${node} ${opt.label}: the ON was not sent`,
-        ).toBe(true);
-        expect(
-          cmds.filter((c) => c.y === 2),
-          `${node} ${opt.label}: slot 2 went out`,
-        ).toEqual([]);
+        const sent = planToCommands(model, plan)
+          .filter((c) => c.paramId === arrId)
+          .map((c) => c.y)
+          .sort((a, b) => a - b);
+        const laidOut = fxParams(opt.value)
+          .map((d) => d.slot)
+          .sort((a, b) => a - b);
+        expect(laidOut.length, `${node} ${opt.label}: the type lays out no slot`).toBeGreaterThan(0);
+        expect(sent, `${node} ${opt.label}`).toEqual(laidOut);
       }
     }
   });

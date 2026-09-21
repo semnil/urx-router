@@ -183,7 +183,7 @@ describe("inspector re-render: relayout versus in place", () => {
   // An FX EFFECT type change swaps the whole parameter editor — else the previous
   // effect's editor stays live and writes wrong-scale raws.
   it("re-renders for an FX effect's type, not for its own values", () => {
-    const prev: NodeParams = { fxEffect: { type: 1, on: true, params: { 0: 10 } } };
+    const prev: NodeParams = { fxEffect: { type: 1, params: { 0: 10 } } };
     expect(fx({ fxEffect: { type: 2 } }, prev).refreshInspector).toBe(true);
     expect(fx({ fxEffect: { type: 1, params: { 0: 40 } } }, prev).refreshInspector).toBe(false);
   });

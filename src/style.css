@@ -2280,6 +2280,11 @@ input[type="range"]:focus-visible,
   cursor: not-allowed;
   opacity: 0.45;
 }
+/* A chip that states a state and is not a control (the FX strip's EFFECT face): the
+   read-only chip's cursor without its dimming, so it keeps the look it is drawn with. */
+.con-chip.static {
+  cursor: not-allowed;
+}
 /* Shared toggle-chip state, applied to the head chips (con-chip) and the SENDS rack's
    enable chip / PRE button (con-sl / con-slp) — same primitive (buildChip), different
    base layout. */
@@ -4100,7 +4105,7 @@ button.consent-btn-primary {
    own armable elements. */
 .con-root.midi-learn .con-fader,
 .con-root.midi-learn .con-knob,
-.con-root.midi-learn .con-chip:not(.readonly):not(.spacer),
+.con-root.midi-learn .con-chip:not(.readonly):not(.static):not(.spacer),
 #dyn-screen-box .midi-target {
   cursor: copy;
 }

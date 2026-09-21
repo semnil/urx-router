@@ -192,7 +192,7 @@ the host prints the first of the two that is there: a screen that
 explains its figure while another surface calls the block bypassed is handing the operator a live
 editor for something that reaches nothing. Which flag each one reads is the only difference — `gateOn`
 / `compOn` / `eqOn` / `duckerOn` for the channel strip, the SSMCS master plus the block's own switch
-for that bank, the rate and then the bypass for INS FX and FX EFFECT — and what an unset flag means is
+for that bank, the rate and then the bypass for INS FX, the rate alone for FX EFFECT — and what an unset flag means is
 `PROCESSOR_ON_DEFAULT` in `core/plan.ts` rather than a literal per reader.
 
 The two cannot share the line, and that is measured rather than preferred: at the 960 px minimum
@@ -1536,11 +1536,13 @@ FX arrangement, for the INS FX reason.
 ### What it owns, and what it does not
 
 It owns the selected effect's parameters and the meter subscription for its FX channel.
-It does not own EFFECT TYPE, EFFECT ON, the channel fader, the FX send amounts or the sample rate.
-Two of those are on the strip beside it and in the inspector; the rest are where they already were.
+It does not own EFFECT TYPE, the channel fader, the FX send amounts or the sample rate. The first is
+on the strip beside it and in the inspector; the rest are where they already were. Slots 1 and 2 of the
+effect array belong to nothing here: no control of the unit's own reaches either, so the app neither
+writes nor reads them, and the unit keeps whatever it holds there.
 
 **No EFFECT TYPE row, deliberately.** Count what the writer emits and the selector is the odd one out:
-every other command names ONE slot — ON is slot 1, one slot per descriptor — so the value it
+every other command names ONE slot — one per descriptor — so the value it
 overwrites is the knob the operator is looking at. The selector alone replaces the contents of
 slots nobody named, because the unit refills the engine array with the incoming type's factory values.
 Putting it on a face of knobs would make those two edits look alike.
@@ -1572,8 +1574,8 @@ It is the same guarded read the converge takes, narrowed by `only` to the famili
 it carries the settle for this session's own recent writes, the merge that leaves an edit made meanwhile
 standing, and the `holdsSent` guard that leaves an edit the flush has NOT carried yet standing too. Read
 as a whole node instead, it also brought back every announced value of that channel — device follow's,
-not this park's — each as the unit's rather than as the operator's: an Effect ON toggled a moment
-earlier and still inside its flush window was read back OFF and went out that way. The plan's own heads
+not this park's — each as the unit's rather than as the operator's, so a value the operator had set a
+moment earlier and still inside its flush window was read back as the unit's and went out that way. The plan's own heads
 are left standing (`keepHeads`): the operator has already chosen the incoming type, so the values are
 filed under the keys the head the UNIT is on owns, and the selection the flush is about to carry is not
 undone by the read taken for it. What the park leaves in the plan is a DIFF against the snapshot, which
@@ -1596,9 +1598,9 @@ matching one is applied, so a discarded attempt leaves none of its layout behind
 every attempt arrives at its caller holding exactly what it held before. The guard itself is dropped, while the unit's head is not the one
 the SNAPSHOT holds, for the addresses that head LAYS OUT and no others: moved on the panel, the
 snapshot's raws describe the previous layout there, and a slot whose two layouts agree on a number read
-as "still what this session sent". An FX channel's ON and an insert effect's bypass are not laid out by
-anything — they mean the same under every type — so they keep it, and an unsent edit to either survives
-a type the operator changed on the unit.
+as "still what this session sent". An insert effect's bypass is not laid out by anything — it means
+the same under every effect — so it keeps it, and an unsent edit to it survives an effect the operator
+changed on the unit.
 
 Two properties of that arrangement are load-bearing. A read that FAILS sends nothing — the head write
 behind it is the destructive half, so the session goes down and the unit is left as it is
@@ -1718,14 +1720,14 @@ be **coarser than the unit at the top**, where its last step is about 28 ms agai
 detent. Precision comes from the keyboard and the wheel instead: an arrow key and one wheel notch each
 move a single step, which is 0.1 ms.
 
-### Above 96 kHz, and while bypassed
+### Above 96 kHz
 
-Both states open the screen and lock nothing; the note under the display says which one it is, rate
-first and bypass second — the order the INS FX screen takes. The unit accepts and keeps a parameter
-write at any rate, and a bypassed effect is still an effect to tune: the plan holds the values, the
-unit stores them, and both lanes go on reading the signal passing through untouched. The CONSOLE dims
-an FX 2 strip above 96 kHz but leaves its own controls reachable — what the rate closes is the sends
-INTO that bus — so the chip and the disclosure stay pressable there.
+The rate opens the screen and locks nothing; the note under the display says so — the note the INS FX
+screen puts first, ahead of its bypass. The unit accepts and keeps a parameter write at any rate: the
+plan holds the values, the unit stores them, and both lanes go on reading whatever reaches them. There
+is no bypassed state here, since an FX channel's effect has no switch of its own beside the strip's
+[ON]. The CONSOLE dims an FX 2 strip above 96 kHz but leaves its own controls reachable — what the rate
+closes is the sends INTO that bus — so the disclosure stays pressable there.
 
 ## Off the scale is off the frame
 
@@ -1889,8 +1891,8 @@ per address, so a batch carrying more than one frame for an address keeps only t
 | GRAPH inspector, GATE / SSMCS / COMP / EQ section | A full-width button below the ON/OFF toggle, its label centred and a caret at the trailing edge |
 | CONSOLE strip | A narrow chip beside each processor chip the strip has, labelled `▸` |
 | GRAPH inspector, Insert FX | The same full-width button, below the Insert FX selector and its ON toggle — shown once an effect this screen tunes is selected, since with none there is nothing to open on |
-| CONSOLE FX strip | A face reading `EFFECT` and a `▸` beside it. The face switches EFFECT ON; the disclosure opens the EFFECT TYPE popover, whose footer carries the launcher and whose rows open the screen on what they choose |
-| GRAPH inspector, FX Effect | The same full-width button, below the EFFECT TYPE selector and the Effect ON toggle. Never inert — an FX channel always holds an effect |
+| CONSOLE FX strip | A face reading `EFFECT` and a `▸` beside it. The face is drawn lit and cannot be pressed: the unit has no on/off for an FX channel's effect, which is always in, and the face's tooltip says so. The `▸` opens the EFFECT TYPE popover, whose footer carries the launcher and whose rows open the screen on what they choose |
+| GRAPH inspector, FX Effect | The same full-width button, below the EFFECT TYPE selector. Never inert — an FX channel always holds an effect |
 
 In SSMCS mode the inspector keeps all four sections and hands each launcher over: the SSMCS section
 opens the MAIN face, and the COMP and EQ sections open the COMP and EQ faces of the same bank. They
