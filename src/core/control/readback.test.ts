@@ -371,6 +371,70 @@ describe("applyDeviceState round-trip", () => {
     expect(result.unreadNodes.has("ch1")).toBe(true);
   });
 
+  // The unit's USB output list carries a mono PAIR ("CH 3/4") beside the single mono
+  // channels, and writes it as the two channels' own slots — 2 and 3 — where a single
+  // channel is one slot twice. The plan has no wire for that pair, and reading the L
+  // half alone made it CH 3: the next absolute write then sent 2/2 and moved the unit
+  // off what the operator had selected on it. These three are the three shapes the two
+  // halves can come back in.
+  describe("USB output source, read from both halves", () => {
+    const pairPlan = (): Plan => {
+      const target = emptyPlan("URX44V");
+      ensureFixedConnections(model, target);
+      target.connections.push({ from: "bus.stereo:out", to: "out.usbmain_a:in", kind: "patch" });
+      return target;
+    };
+
+    it("keeps the plan's wire and reports the pair when the halves name two channels", async () => {
+      const target = pairPlan();
+      mockVdGetFrom(
+        new Map([
+          [`${PARAMS.USB_OUT_SRC_A.id}:0:0`, 2], // CH 3's input slot
+          [`${PARAMS.USB_OUT_SRC_A.id}:0:1`, 3], // CH 4's — the unit's "CH 3/4"
+        ]),
+      );
+
+      const result = await applyDeviceState(model, target);
+
+      const wire = target.connections.find((c) => c.to === ref("out.usbmain_a", "in") && c.kind === "patch");
+      expect(wire?.from, "the plan's own wire, not a guess made from one half").toBe("bus.stereo:out");
+      expect(result.errors.some((e) => e.includes("out.usbmain_a: source ports 2 / 3 name no single node"))).toBe(true);
+      // The badge and the report read this set; a converge must not be built on a
+      // value we could not read.
+      expect(result.unreadNodes.has("out.usbmain_a")).toBe(true);
+    });
+
+    it("takes a single mono channel, which is the same slot on both halves", async () => {
+      const target = pairPlan();
+      mockVdGetFrom(
+        new Map([
+          [`${PARAMS.USB_OUT_SRC_A.id}:0:0`, 2],
+          [`${PARAMS.USB_OUT_SRC_A.id}:0:1`, 2],
+        ]),
+      );
+
+      const result = await applyDeviceState(model, target);
+
+      const wire = target.connections.find((c) => c.to === ref("out.usbmain_a", "in") && c.kind === "patch");
+      expect(wire?.from).toBe("ch3:out");
+      expect(result.unreadNodes.has("out.usbmain_a"), "read in full, so no badge").toBe(false);
+    });
+
+    it("keeps the wire when one half is selected and the other is not", async () => {
+      const target = pairPlan();
+      mockVdGetFrom(new Map([[`${PARAMS.USB_OUT_SRC_A.id}:0:0`, 2]])); // the R half defaults to NONE
+
+      const result = await applyDeviceState(model, target);
+
+      const wire = target.connections.find((c) => c.to === ref("out.usbmain_a", "in") && c.kind === "patch");
+      expect(wire?.from).toBe("bus.stereo:out");
+      expect(result.errors.some((e) => e.includes("out.usbmain_a: source ports 2 / NONE name no single node"))).toBe(
+        true,
+      );
+      expect(result.unreadNodes.has("out.usbmain_a")).toBe(true);
+    });
+  });
+
   it("marks a fixed send OFF (params.on=false) but keeps its wire when the device reports OFF", async () => {
     const target = emptyPlan("URX44V");
     ensureFixedConnections(model, target);

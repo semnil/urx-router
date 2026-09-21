@@ -1212,28 +1212,45 @@ async function readPass(
   }
 
   // Streaming / USB-out / monitor / analog-patch selects (same ROUTING_SELECTORS
-  // table that drives emit): decode the L param's port to its source node and
-  // reflect the exclusive wire (NONE clears it). Skips selectors whose destination
-  // node is absent on this model (e.g. out.line without a line output).
-  for (const [to, kind, pl, , yl] of ROUTING_SELECTORS) {
+  // table that drives emit): decode BOTH halves and reflect the exclusive wire only
+  // where they name one node (NONE on both clears it). Skips selectors whose
+  // destination node is absent on this model (e.g. out.line without a line output).
+  //
+  // Both halves, because the unit has a selection the plan has no wire for: its USB
+  // output list offers a mono PAIR (`CH 1/2`) beside the single mono channels, and it
+  // writes that pair as two different slots — L = the first channel's, R = the second's
+  // — while a single mono channel is the same slot twice. The L half alone reads a pair
+  // as its first channel, and the next absolute write then sends that channel twice,
+  // moving the unit off the selection the operator made on it.
+  for (const [to, kind, pl, pr, yl, yr] of ROUTING_SELECTORS) {
     if (!model.nodes.some((n) => n.id === to)) continue;
     if (!want(to)) continue;
     attempted.add(to);
     try {
-      const port = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
-      const src = port === null ? null : nodeForPort(model, port);
-      if (src) {
-        setExclusiveConnection(plan, ref(src, "out"), ref(to, "in"), kind);
-        applied++;
-      } else if (port === null) {
+      const portL = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
+      const portR = vdToPortRef(await vdGet(PARAMS[pr].id, 0, yr));
+      const srcL = portL === null ? null : nodeForPort(model, portL);
+      const srcR = portR === null ? null : nodeForPort(model, portR);
+      if (portL === null && portR === null) {
         clearIncoming(plan, ref(to, "in"), kind);
         applied++;
+      } else if (srcL !== null && srcL === srcR) {
+        setExclusiveConnection(plan, ref(srcL, "out"), ref(to, "in"), kind);
+        applied++;
       } else {
-        // The device named a source this build cannot decode, so its real routing
-        // stays unknown. The plan's own wire is kept rather than cleared, which
-        // makes it a value we did not read — flagged like any other failed read so
-        // the node carries its unread badge and a converge is not built on it.
-        errors.push(`${to}: unknown source port ${port}`);
+        // The device named a source this build cannot express — a port neither half
+        // decodes, a pair of channels, or one half selected and the other cleared — so
+        // its real routing stays unknown. The plan's own wire is kept rather than
+        // replaced by a guess, which makes it a value we did not read: flagged like any
+        // other failed read, so the node carries its unread badge and a converge is not
+        // built on it. The two are separate sentences because they are separate states:
+        // a port this build does not know, and two ports it knows separately.
+        const undecoded = [portL, portR].find((p) => p !== null && nodeForPort(model, p) === null);
+        errors.push(
+          undecoded !== undefined && undecoded !== null
+            ? `${to}: unknown source port ${undecoded}`
+            : `${to}: source ports ${portL ?? "NONE"} / ${portR ?? "NONE"} name no single node`,
+        );
         failed.add(to);
       }
     } catch (e) {
