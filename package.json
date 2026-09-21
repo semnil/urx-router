@@ -50,7 +50,7 @@
     "esbuild": "^0.28.2",
     "jsdom": "^30.0.1",
     "monocart-coverage-reports": "^2.13.0",
-    "prettier": "^3.9.6",
+    "prettier": "^3.9.8",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "vitest": "^4.1.11"
