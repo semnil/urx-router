@@ -1995,7 +1995,11 @@ async function applyDeviceStateScoped(
   // session (the tracker guards it), so the Fetch button costs nothing here.
   linkLedger?.noteFullRead();
   const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(target) : null;
-  const result = await applyDeviceState(getModel(modelId), target, signal, undefined, pending);
+  // The same boundary decides what the read ASKS for: what this scope restores below is
+  // what the read may not have a verdict about, or a selector the unit holds in a shape
+  // the plan cannot express stops a session that is not syncing it (readback's own
+  // parameter comment carries the case).
+  const result = await applyDeviceState(getModel(modelId), target, signal, undefined, pending, false, keep !== null);
   if (keep) applySceneExternal(target, keep);
   return result;
 }

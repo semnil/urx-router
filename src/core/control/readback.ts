@@ -58,6 +58,7 @@ import {
   qualifyInsertFxParams,
 } from "./insert-fx-effect";
 import { pairPrimary } from "../routing";
+import { isSceneExternalConnection } from "../scene-scope";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
   addrKey,
@@ -293,6 +294,20 @@ export async function applyDeviceState(
    *  group count (T5 concentration: 8 groups per mono channel where the pin says 9),
    *  which is the only thing that counts them. */
   skipNames = false,
+  /** Skip the exclusive selectors the device keeps OUTSIDE its scenes — every output
+   *  patch, the microSD record assigns and the monitor / streaming source selects,
+   *  named by `isSceneExternalConnection`. Set by the scene device scope, and by
+   *  nothing else.
+   *
+   *  Under that scope the caller restores the plan's own values for exactly these
+   *  wires after the read (`main.ts` applyDeviceStateScoped → scene-scope.ts), so
+   *  reading them cannot change the plan — it can only return a VERDICT about routing
+   *  the session does not sync. That verdict is not inert: a selector the unit holds
+   *  in a shape the plan cannot express lands in `errors`, and an incomplete read is
+   *  what stops a live session from starting and ends a running one. A USB output the
+   *  operator had set to a mono pair on the unit therefore stopped Live sync for a
+   *  session that was not syncing USB outputs at all. */
+  skipSceneExternal = false,
 ): Promise<ReadbackResult> {
   // Only `mustSettle` — the addresses inside this read's scope — may hold it open, and
   // it holds for all of them: a changed write ends its own wait at its notify, one that
@@ -314,7 +329,7 @@ export async function applyDeviceState(
         signal,
       })
     : undefined;
-  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only, skipNames);
+  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only, skipNames, skipSceneExternal);
 }
 
 /**
@@ -656,6 +671,9 @@ async function readPass(
    *  name section below for why that read must not happen at all rather than
    *  being made to wait. */
   skipNames = false,
+  /** Skip the exclusive selectors the device keeps outside its scenes — applyDeviceState's
+   *  own parameter carries why. */
+  skipSceneExternal = false,
 ): Promise<ReadbackResult> {
   const { vdGet, vdGetStr } = readers(source);
   ensureFixedConnections(model, plan);
@@ -1212,28 +1230,46 @@ async function readPass(
   }
 
   // Streaming / USB-out / monitor / analog-patch selects (same ROUTING_SELECTORS
-  // table that drives emit): decode the L param's port to its source node and
-  // reflect the exclusive wire (NONE clears it). Skips selectors whose destination
-  // node is absent on this model (e.g. out.line without a line output).
-  for (const [to, kind, pl, , yl] of ROUTING_SELECTORS) {
+  // table that drives emit): decode BOTH halves and reflect the exclusive wire only
+  // where they name one node (NONE on both clears it). Skips selectors whose
+  // destination node is absent on this model (e.g. out.line without a line output).
+  //
+  // Both halves, because the unit has a selection the plan has no wire for: its USB
+  // output list offers a mono PAIR (`CH 1/2`) beside the single mono channels, and it
+  // writes that pair as two different slots — L = the first channel's, R = the second's
+  // — while a single mono channel is the same slot twice. The L half alone reads a pair
+  // as its first channel, and the next absolute write then sends that channel twice,
+  // moving the unit off the selection the operator made on it.
+  for (const [to, kind, pl, pr, yl, yr] of ROUTING_SELECTORS) {
     if (!model.nodes.some((n) => n.id === to)) continue;
     if (!want(to)) continue;
+    if (skipSceneExternal && isSceneExternalConnection({ from: "", to: ref(to, "in"), kind })) continue;
     attempted.add(to);
     try {
-      const port = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
-      const src = port === null ? null : nodeForPort(model, port);
-      if (src) {
-        setExclusiveConnection(plan, ref(src, "out"), ref(to, "in"), kind);
-        applied++;
-      } else if (port === null) {
+      const portL = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
+      const portR = vdToPortRef(await vdGet(PARAMS[pr].id, 0, yr));
+      const srcL = portL === null ? null : nodeForPort(model, portL);
+      const srcR = portR === null ? null : nodeForPort(model, portR);
+      if (portL === null && portR === null) {
         clearIncoming(plan, ref(to, "in"), kind);
         applied++;
+      } else if (srcL !== null && srcL === srcR) {
+        setExclusiveConnection(plan, ref(srcL, "out"), ref(to, "in"), kind);
+        applied++;
       } else {
-        // The device named a source this build cannot decode, so its real routing
-        // stays unknown. The plan's own wire is kept rather than cleared, which
-        // makes it a value we did not read — flagged like any other failed read so
-        // the node carries its unread badge and a converge is not built on it.
-        errors.push(`${to}: unknown source port ${port}`);
+        // The device named a source this build cannot express — a port neither half
+        // decodes, a pair of channels, or one half selected and the other cleared — so
+        // its real routing stays unknown. The plan's own wire is kept rather than
+        // replaced by a guess, which makes it a value we did not read: flagged like any
+        // other failed read, so the node carries its unread badge and a converge is not
+        // built on it. The two are separate sentences because they are separate states:
+        // a port this build does not know, and two ports it knows separately.
+        const undecoded = [portL, portR].find((p) => p !== null && nodeForPort(model, p) === null);
+        errors.push(
+          undecoded !== undefined && undecoded !== null
+            ? `${to}: unknown source port ${undecoded}`
+            : `${to}: source ports ${portL ?? "NONE"} / ${portR ?? "NONE"} name no single node`,
+        );
         failed.add(to);
       }
     } catch (e) {
@@ -1245,9 +1281,12 @@ async function readPass(
   // microSD Rec per-track source assign: decode each track-pair slot's L track
   // (param 736) to its source node (channel pair / STEREO / MIX) and reflect the
   // exclusive record wire (NONE clears it). Empty on models without a recorder.
+  // A record assign is scene-external, so the scene scope skips it for the reason
+  // the parameter's own comment gives.
   for (const slot of recordSlots(model)) {
     signal?.throwIfAborted();
     if (!want(slot.id)) continue;
+    if (skipSceneExternal) continue;
     attempted.add(slot.id);
     try {
       const port = vdToPortRef(await vdGet(PARAMS.SD_REC_SOURCE.id, 0, slot.trackL));

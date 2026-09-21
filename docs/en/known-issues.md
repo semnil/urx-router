@@ -271,6 +271,31 @@ The URX22 has no microSD recorder, and the clock exists to date-stamp those
 recordings, so the unit has no Date/Time menu at all. The HDMI page is fitted to the
 URX44V only.
 
+## A USB output set to a MONO PAIR on the unit reads back as unread
+
+The unit's USB output source list offers a mono **pair** — `CH 1/2`, `CH 3/4` — beside
+the single mono channels and the stereo channels, and writes it as the two channels'
+own slots, where a single mono channel is one slot on both halves. A plan has no wire
+for that pair: a `patch` receiver takes one source, and a mono channel is one node.
+
+A device read therefore reports such a USB output as **not read**: the node keeps the
+plan's own wire and carries the unread badge, and the read report names the two ports.
+It is not taken as the pair's first channel — doing that would make the next write send
+that channel on both halves and move the unit off the selection made on it.
+
+**Live sync will not start against a unit in that state** while the device scope is *All supported*,
+by the same rule that stops it after any incomplete read: a session snapshots the plan as
+the device's state, and a value the read could not place would be written back over the
+unit's own. The dialog names how many settings could not be read.
+
+Under **Scene only** the session starts and runs: that scope leaves every output patch to
+the unit, so the read does not ask about one — and what it does not ask about cannot make
+a read incomplete. The USB output keeps the plan's own wire on screen and is never written.
+
+To put a channel pair on a USB output, select it on the unit; to drive that output from
+URX Router — or to run Live sync with the device scope *All supported* — choose one of the
+sources a plan can express (a bus, a stereo channel, or a single mono channel).
+
 ## The URX does not save device-wide settings in a scene
 
 This is a behavior of the URX itself, not of URX Router — noted here because it

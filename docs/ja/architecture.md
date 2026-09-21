@@ -1716,10 +1716,10 @@ source を上書きし合う。ハンドルの上書きは費用ゼロ (`vd_para
 
 3 本とも `translate.ts` の `planToFollowOnlyAddrs` が、対になる emit 判定のすぐ隣で列挙する。登録と書込抑制が
 離れて食い違わないようにするためで、`live.ts` は `planToCommands` と同じ形で — **書込スコープも含めて** — この
-一覧を消費する。スコープを掛けるのは対称性のためではない: *Scene only* のとき全体読みは読んだ後にプランの
+一覧を消費する。スコープを掛けるのは対称性のためではない: *シーンのみ* のとき全体読みは読んだ後にプランの
 シーン外の値を書き戻す (`applyDeviceStateScoped` → `core/scene-scope.ts`。`sdRecTrackCount` を名指ししている) ので、
 839 を追従してしまうと**その設定が成り立たない唯一の経路**になる — notify 由来の読みと全体読みが、同じ設定の下で
-同じ値について食い違う。Track Count は `sceneExternal` なので *Scene only* では外れ、送りの tap はシーン内の値
+同じ値について食い違う。Track Count は `sceneExternal` なので *シーンのみ* では外れ、送りの tap はシーン内の値
 なので残る。**索引の
 所有ノードと readback のゲートは 2 つの判断ではなく 1 つである。** 所有ノードを名乗らせてよいのは、`readback`
 がそのアドレスをそのノードの scoped read で読む間だけで、839 が `want("out.sdrec")` でゲートされているのは

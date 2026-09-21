@@ -254,6 +254,12 @@ Source selection for the analog outputs (MAIN / LINE).
 | USB MAIN OUT A / B / C | STEREO OUT / STREAM OUT / MIX1 OUT / MIX2 OUT / CH 1–N OUT |
 | USB SUB OUT | same as above |
 
+> The unit's own list carries one more item per mono pair — `CH 1/2`, `CH 3/4` — beside the single
+> mono channels, and writes it as the two channels' slots where a single channel is one slot twice.
+> A `patch` receiver takes one source and a mono channel is one node, so a plan cannot express it; a
+> device read reports such an output as not read rather than taking its first channel
+> ([known-issues.md](known-issues.md)).
+
 ### 7. DAW Rec Signal Assign (fixed, no node)
 
 - CH n OUT → USB DAW OUT n is a **fixed 1:1 wire** (the block diagram shows no source-select box)

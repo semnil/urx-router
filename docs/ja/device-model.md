@@ -246,6 +246,12 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
 | USB MAIN OUT A / B / C | STEREO OUT / STREAM OUT / MIX1 OUT / MIX2 OUT / CH 1–N OUT |
 | USB SUB OUT | 同上 |
 
+> 実機の一覧は、単独のモノラルチャンネルとは別にモノラルのペア (`CH 1/2`・`CH 3/4`) を項目として
+> 持ち、これを両チャンネルのスロット 2 つとして書く (単独チャンネルは同じスロットを両半分に書く)。
+> `patch` の受け口はソースを 1 つしか取らず、モノラルチャンネルはノード 1 つなので、プランでは
+> 表現できない。デバイス読み出しはこの状態の出力を、先頭チャンネルとして取らず未読として報告する
+> ([known-issues.md](known-issues.md))。
+
 ### 7. DAW Rec Signal Assign (固定、ノード非表示)
 
 - CH n OUT → USB DAW OUT n の **1 対 1 固定結線** (ブロックダイアグラムにソース選択 box は無い)
