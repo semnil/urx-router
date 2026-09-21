@@ -283,10 +283,14 @@ plan's own wire and carries the unread badge, and the read report names the two 
 It is not taken as the pair's first channel — doing that would make the next write send
 that channel on both halves and move the unit off the selection made on it.
 
-**Live sync will not start against a unit in that state**, by the same rule that stops it
-after any incomplete read: a session snapshots the plan as the device's state, and a value
-the read could not place would be written back over the unit's own. The dialog names how
-many settings could not be read.
+**Live sync will not start against a unit in that state** while the device scope is *All*,
+by the same rule that stops it after any incomplete read: a session snapshots the plan as
+the device's state, and a value the read could not place would be written back over the
+unit's own. The dialog names how many settings could not be read.
+
+Under **Scene only** the session starts and runs: that scope leaves every output patch to
+the unit, so the read does not ask about one — and what it does not ask about cannot make
+a read incomplete. The USB output keeps the plan's own wire on screen and is never written.
 
 To put a channel pair on a USB output, select it on the unit; to drive that output from
 URX Router — or to run Live sync — choose one of the sources a plan can express (a bus, a
