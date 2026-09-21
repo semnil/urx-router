@@ -599,6 +599,8 @@ export const en = {
       sendSwitch: tr("Bus send (ON/OFF switch)"),
       record: tr("SD Rec source select (single)"),
     },
+    // A USB output's patch, which takes one source or the two channels of a MONO IN pair.
+    connKindMonoPair: tr("Output patch (one source or a MONO IN pair)"),
     nodeKind: {
       input: tr("Input source"),
       channel: tr("Mixer channel"),
@@ -1149,6 +1151,7 @@ export const en = {
     noRule: tr("This route cannot be connected"),
     duplicate: tr("Already connected"),
     singleInput: tr("This input accepts only one source (remove the existing connection first)"),
+    monoPairOnly: tr("A USB output takes one source, or both channels of a MONO IN pair (remove a connection first)"),
     cannotConnect: tr("Cannot connect"),
     // What a failure that described itself as nothing is reported as. `errorText`
     // substitutes it so an empty description cannot reach the operator as an empty

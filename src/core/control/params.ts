@@ -568,8 +568,9 @@ export const PARAMS = {
   STREAM_SRC_L: { id: 705, encoding: "portRefTagged", sceneExternal: true },
   STREAM_SRC_R: { id: 706, encoding: "portRefTagged", sceneExternal: true },
   /** USB output source select (y = 0 and 1, the L/R pair). Raw port ref: one bus
-   *  or channel per out. The device allocates 2 slots per selector and both are
-   *  written (ROUTING_SELECTORS in translate.ts). */
+   *  or channel per out, or a MONO IN pair written L = the primary's input slot, R =
+   *  the partner's. The device allocates 2 slots per selector and both are written
+   *  (ROUTING_SELECTORS in translate.ts). */
   USB_OUT_SRC_A: { id: 732, encoding: "portRef", sceneExternal: true },
   USB_OUT_SRC_B: { id: 733, encoding: "portRef", sceneExternal: true },
   USB_OUT_SRC_C: { id: 734, encoding: "portRef", sceneExternal: true },

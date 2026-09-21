@@ -640,6 +640,30 @@ describe("renderInspector — an FX channel the plan does not describe", () => {
   });
 });
 
+// A USB output takes one source or a MONO IN pair, so its patch is not "single"; the
+// analog outputs share the kind and still take one.
+describe("renderInspector — a connection's type", () => {
+  const typeOf = (from: string, to: string): string | undefined => {
+    const model = getModel("URX44V");
+    const plan = emptyPlan("URX44V");
+    plan.connections.push({ from, to, kind: "patch" });
+    renderInspector(panel, model, plan, connSel(from, to), act);
+    const row = [...panel.querySelectorAll(".field")].find(
+      (f) => f.querySelector(".field-key")?.textContent === t().inspector.type,
+    );
+    return row?.querySelector(".field-val")?.textContent ?? undefined;
+  };
+
+  it("names a USB output's patch as taking one source or a MONO IN pair", () => {
+    expect(typeOf("ch3:out", "out.usbmain_a:in")).toBe(t().inspector.connKindMonoPair);
+    expect(typeOf("bus.stereo:out", "out.usbsub:in")).toBe(t().inspector.connKindMonoPair);
+  });
+
+  it("keeps the analog output's patch single", () => {
+    expect(typeOf("bus.stereo:out", "out.main:in")).toBe(t().inspector.connKind.patch);
+  });
+});
+
 describe("renderInspector — every node of every model", () => {
   it.each(MODEL_IDS)("renders every %s node without throwing, and names each one", (id) => {
     const model = getModel(id);

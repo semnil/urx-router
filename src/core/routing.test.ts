@@ -14,6 +14,8 @@ import {
   legalTargets,
   mirrorLinkedPair,
   mirrorLinkedInsertFx,
+  monoPairOf,
+  monoPairsInto,
   partnerChannel,
   possibleSources,
   possibleTargets,
@@ -702,5 +704,123 @@ describe("duckerKeySource", () => {
   it("is null when the wire is not a ducker key", () => {
     expect(duckerKeySource(u44, ref("ch1", "out"), ref("bus.stereo", "in"))).toBeNull();
     expect(duckerKeySource(u44, ref("ch1", "out"), ref("out.usbmain_b", "in"))).toBeNull();
+  });
+});
+
+// A USB output takes one source, or the two channels of a MONO IN pair as two wires —
+// the unit's "CH 1/2" / "CH 3/4", written L = the primary's slot, R = the partner's. No
+// other set of wires is a selection the unit's list offers.
+describe("USB output mono pair", () => {
+  const USB_OUTS = ["out.usbmain_a", "out.usbmain_b", "out.usbmain_c", "out.usbsub"];
+  const into = (plan: Plan, to: string, ...froms: string[]) => {
+    for (const f of froms) plan.connections.push({ from: ref(f, "out"), to: ref(to, "in"), kind: "patch" });
+  };
+
+  it("takes exactly the model's channel pairs, on the USB outputs and nowhere else", () => {
+    for (const model of Object.values(MODELS)) {
+      for (const out of USB_OUTS)
+        expect(monoPairsInto(model, ref(out, "in")), `${model.id} ${out}`).toEqual(model.channelPairs);
+      // The receivers the same channels reach under another kind take no pair: an analog
+      // output (buses only), a channel's own input, a ducker's key, an SD Rec track.
+      const others = model.rules.map((r) => r.to).filter((to) => !USB_OUTS.some((o) => to === ref(o, "in")));
+      for (const to of new Set(others)) expect(monoPairsInto(model, to), `${model.id} ${to}`).toEqual([]);
+    }
+    expect(MODELS.URX22.channelPairs).toEqual([["ch1", "ch2"]]);
+  });
+
+  it("names the pair primary first whichever order the wires are in", () => {
+    const to = ref("out.usbmain_a", "in");
+    expect(monoPairOf(u44, to, [ref("ch3", "out"), ref("ch4", "out")])).toEqual(["ch3", "ch4"]);
+    expect(monoPairOf(u44, to, [ref("ch4", "out"), ref("ch3", "out")])).toEqual(["ch3", "ch4"]);
+    expect(monoPairOf(u44, to, [ref("ch2", "out"), ref("ch3", "out")])).toBeNull();
+    expect(monoPairOf(u44, to, [ref("ch3", "out")])).toBeNull();
+    expect(monoPairOf(u44, to, [ref("ch3", "out"), ref("ch4", "out"), ref("ch1", "out")])).toBeNull();
+    expect(monoPairOf(u44, ref("out.main", "in"), [ref("ch3", "out"), ref("ch4", "out")])).toBeNull();
+  });
+
+  it("takes the partner as a second wire, and refuses every other second wire", () => {
+    const to = ref("out.usbmain_a", "in");
+    for (const [held, partner] of [
+      ["ch3", "ch4"],
+      ["ch4", "ch3"],
+    ]) {
+      const plan = emptyPlan("URX44");
+      into(plan, "out.usbmain_a", held);
+      expect(canConnect(u44, plan, ref(partner, "out"), to), `${held} then ${partner}`).toEqual({ ok: true });
+      for (const other of ["ch1", "ch2", "ch_5_6", "bus.stereo"])
+        expect(canConnect(u44, plan, ref(other, "out"), to).reason, `${held} then ${other}`).toBe("monoPairOnly");
+      // The partner is the one legal source a drag back from the port offers.
+      expect([...legalSources(u44, plan, to)]).toEqual([ref(partner, "out")]);
+    }
+  });
+
+  it("takes no third wire, and no channel beside a bus", () => {
+    const to = ref("out.usbmain_a", "in");
+    const pair = emptyPlan("URX44");
+    into(pair, "out.usbmain_a", "ch3", "ch4");
+    expect(canConnect(u44, pair, ref("ch1", "out"), to).reason).toBe("monoPairOnly");
+    expect(canConnect(u44, pair, ref("ch3", "out"), to).reason).toBe("duplicate");
+    expect(legalSources(u44, pair, to).size).toBe(0);
+    const bus = emptyPlan("URX44");
+    into(bus, "out.usbmain_a", "bus.stereo");
+    expect(canConnect(u44, bus, ref("ch3", "out"), to).reason).toBe("monoPairOnly");
+    expect(canConnect(u44, bus, ref("bus.mix1", "out"), to).reason).toBe("monoPairOnly");
+  });
+
+  it("does not read the pair's Signal Type: two wires are the pair linked or not", () => {
+    const to = ref("out.usbmain_a", "in");
+    for (const stereoLink of [false, true]) {
+      const plan = emptyPlan("URX44");
+      plan.nodeParams.ch3 = { stereoLink };
+      into(plan, "out.usbmain_a", "ch3");
+      expect(canConnect(u44, plan, ref("ch4", "out"), to).ok, `stereoLink ${stereoLink}`).toBe(true);
+      into(plan, "out.usbmain_a", "ch4");
+      expect(validatePlan(u44, plan), `stereoLink ${stereoLink}`).toEqual([]);
+    }
+  });
+
+  it("holds a loaded plan to the same sets", () => {
+    const u22 = MODELS.URX22;
+    const check = (model: typeof u44, froms: string[]) => {
+      const plan = emptyPlan(model.id);
+      into(plan, "out.usbmain_a", ...froms);
+      return validatePlan(model, plan).map((p) => `${p.reason} ${p.from}`);
+    };
+    expect(check(u44, ["ch3", "ch4"])).toEqual([]);
+    expect(check(u44, ["ch4", "ch3"])).toEqual([]);
+    expect(check(u44, ["ch1", "ch2"])).toEqual([]);
+    expect(check(u22, ["ch1", "ch2"])).toEqual([]);
+    // Every wire into the port is named, so every one is something the author can see.
+    expect(check(u44, ["ch2", "ch3"])).toEqual(["monoPairOnly ch2:out", "monoPairOnly ch3:out"]);
+    expect(check(u44, ["ch3", "ch4", "ch1"])).toEqual([
+      "monoPairOnly ch3:out",
+      "monoPairOnly ch4:out",
+      "monoPairOnly ch1:out",
+    ]);
+    expect(check(u44, ["bus.stereo", "ch3"])).toEqual(["monoPairOnly bus.stereo:out", "monoPairOnly ch3:out"]);
+    expect(check(u22, ["ch_3_4", "ch1"])).toEqual(["monoPairOnly ch_3_4:out", "monoPairOnly ch1:out"]);
+    // A receiver that takes no pair still says so in its own words.
+    const main = emptyPlan("URX44");
+    into(main, "out.main", "bus.stereo", "bus.mix1");
+    expect(validatePlan(u44, main).map((p) => p.reason)).toEqual(["singleInput", "singleInput"]);
+  });
+
+  // The unit leaves a USB output's source where it was when the pair is linked or
+  // unlinked, so the app's transition leaves both wires too.
+  it("keeps a USB output's wires through a Signal Type transition", () => {
+    const plan = defaultPlan("URX44");
+    plan.connections = plan.connections.filter((c) => !USB_OUTS.some((o) => c.to === ref(o, "in")));
+    into(plan, "out.usbmain_a", "ch3", "ch4");
+    into(plan, "out.usbmain_b", "ch3");
+    into(plan, "out.usbmain_c", "ch4");
+    const wires = () => plan.connections.filter((c) => c.kind === "patch").map((c) => `${c.from}>${c.to}`);
+    const before = wires();
+    expect(before.filter((w) => w.includes("usbmain")).length).toBe(4);
+    for (const stereoLink of [true, false]) {
+      applyPairTransition(u44, plan, "ch3", { stereoLink });
+      plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, stereoLink };
+      mirrorLinkedPair(u44, plan, "ch3");
+      expect(wires(), `stereoLink ${stereoLink}`).toEqual(before);
+    }
   });
 });

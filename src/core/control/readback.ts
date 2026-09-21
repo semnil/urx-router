@@ -57,7 +57,7 @@ import {
   mergeReadInsertFxParams,
   qualifyInsertFxParams,
 } from "./insert-fx-effect";
-import { pairPrimary } from "../routing";
+import { monoPairOf, pairPrimary } from "../routing";
 import { isSceneExternalConnection } from "../scene-scope";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
@@ -304,9 +304,9 @@ export async function applyDeviceState(
    *  reading them cannot change the plan — it can only return a VERDICT about routing
    *  the session does not sync. That verdict is not inert: a selector the unit holds
    *  in a shape the plan cannot express lands in `errors`, and an incomplete read is
-   *  what stops a live session from starting and ends a running one. A USB output the
-   *  operator had set to a mono pair on the unit therefore stopped Live sync for a
-   *  session that was not syncing USB outputs at all. */
+   *  what stops a live session from starting and ends a running one — so a USB output
+   *  held in a shape the unit's own list does not offer would stop Live sync for a
+   *  session that does not sync USB outputs at all. */
   skipSceneExternal = false,
 ): Promise<ReadbackResult> {
   // Only `mustSettle` — the addresses inside this read's scope — may hold it open, and
@@ -1230,16 +1230,17 @@ async function readPass(
   }
 
   // Streaming / USB-out / monitor / analog-patch selects (same ROUTING_SELECTORS
-  // table that drives emit): decode BOTH halves and reflect the exclusive wire only
-  // where they name one node (NONE on both clears it). Skips selectors whose
+  // table that drives emit): decode BOTH halves and reflect the wire where they name
+  // one node (NONE on both clears it), and the two wires of a mono pair into a USB
+  // output where L names its primary and R its partner. Skips selectors whose
   // destination node is absent on this model (e.g. out.line without a line output).
   //
-  // Both halves, because the unit has a selection the plan has no wire for: its USB
-  // output list offers a mono PAIR (`CH 1/2`) beside the single mono channels, and it
-  // writes that pair as two different slots — L = the first channel's, R = the second's
-  // — while a single mono channel is the same slot twice. The L half alone reads a pair
-  // as its first channel, and the next absolute write then sends that channel twice,
-  // moving the unit off the selection the operator made on it.
+  // Both halves, because a USB output's list offers a mono PAIR (`CH 1/2`) beside the
+  // single mono channels, and the unit writes that pair as two different slots — L =
+  // the first channel's, R = the second's — while a single mono channel is the same
+  // slot twice. The L half alone reads a pair as its first channel, and the next
+  // absolute write then sends that channel twice, moving the unit off the selection
+  // the operator made on it.
   for (const [to, kind, pl, pr, yl, yr] of ROUTING_SELECTORS) {
     if (!model.nodes.some((n) => n.id === to)) continue;
     if (!want(to)) continue;
@@ -1256,10 +1257,23 @@ async function readPass(
       } else if (srcL !== null && srcL === srcR) {
         setExclusiveConnection(plan, ref(srcL, "out"), ref(to, "in"), kind);
         applied++;
+      } else if (
+        srcL !== null &&
+        srcR !== null &&
+        kind === "patch" &&
+        monoPairOf(model, ref(to, "in"), [ref(srcL, "out"), ref(srcR, "out")])?.[0] === srcL
+      ) {
+        clearIncoming(plan, ref(to, "in"), kind);
+        plan.connections.push(
+          { from: ref(srcL, "out"), to: ref(to, "in"), kind },
+          { from: ref(srcR, "out"), to: ref(to, "in"), kind },
+        );
+        applied++;
       } else {
         // The device named a source this build cannot express — a port neither half
-        // decodes, a pair of channels, or one half selected and the other cleared — so
-        // its real routing stays unknown. The plan's own wire is kept rather than
+        // decodes, the two channels of a pair the wrong way round or of two pairs, or one
+        // half selected and the other cleared — so its real routing stays unknown. The
+        // unit's own list offers none of these. The plan's own wire is kept rather than
         // replaced by a guess, which makes it a value we did not read: flagged like any
         // other failed read, so the node carries its unread badge and a converge is not
         // built on it. The two are separate sentences because they are separate states:
@@ -1268,7 +1282,7 @@ async function readPass(
         errors.push(
           undecoded !== undefined && undecoded !== null
             ? `${to}: unknown source port ${undecoded}`
-            : `${to}: source ports ${portL ?? "NONE"} / ${portR ?? "NONE"} name no single node`,
+            : `${to}: source ports ${portL ?? "NONE"} / ${portR ?? "NONE"} name neither one source nor a mono pair`,
         );
         failed.add(to);
       }

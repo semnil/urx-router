@@ -347,8 +347,8 @@ export type OutputMono = { via: "monitor"; monitorId: string; on: boolean } | { 
 // stereo). The inspector states it as a standing row instead.
 export function outputMono(plan: Plan, outputId: string): OutputMono {
   // incomingConnection rather than a hand-rolled find: it is the shared lookup for
-  // a single-input receiver, it matches on the port and the kind, and it is what
-  // translate.ts resolves the same patch with.
+  // a single-input receiver, and it matches on the port and the kind, as the emit
+  // does for the same patch.
   const wire = incomingConnection(plan, ref(outputId, "in"), "patch");
   const source = wire ? parseRef(wire.from).nodeId : null;
   if (!source || !isMonitorBus(source)) return { via: "none" };

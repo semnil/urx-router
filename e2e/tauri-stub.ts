@@ -254,6 +254,17 @@ export const setDeviceValue = (page: Page, paramId: number, y: number, value: nu
     [paramId, x, y, value],
   );
 
+/** What the stubbed device holds at one ADDRESS — the read half of `setDeviceValue`: the
+ *  value the last write or `setDeviceValue` put there, or undefined when neither has.
+ *  `writesOf` records no x or y, so it cannot say which instance of a param a value went
+ *  to — the L and R halves of a USB output's source are one param id at two y. */
+export const deviceValueOf = (page: Page, paramId: number, y: number, x = 0): Promise<number | undefined> =>
+  page.evaluate(
+    ([id, xx, yy]) =>
+      (window as unknown as { __urxInstance: Record<string, number> }).__urxInstance[`${id}:${xx}:${yy}`],
+    [paramId, x, y],
+  );
+
 /** Announce a device-side parameter change through the session's notify stream — what
  *  the unit sends when one of its own controls is moved. Seed the address with
  *  `setDeviceValue` first: a change the app cannot read back is one the reconcile the

@@ -1,6 +1,7 @@
 // Connection constraint engine. A wire is legal only when the DeviceModel
 // declares a matching rule, and single-input receivers (selectors / patches)
-// reject a second wire.
+// reject a second wire — except a USB output, which takes the two channels of a
+// mono pair as two wires.
 
 import { isSingleInput, parseRef, ref } from "../models/types";
 import type { DeviceModel, NodeKind, RoutingRule } from "../models/types";
@@ -11,7 +12,7 @@ import { BUS_TYPE_FIXED, BUS_TYPE_VARI, PAN_BAL_BAL, PAN_BAL_PAN, STEREO_PAN_DEF
 
 // Language-agnostic failure codes. The UI maps these to localized messages so
 // core stays free of any i18n dependency.
-export type ConnectError = "noRule" | "duplicate" | "singleInput";
+export type ConnectError = "noRule" | "duplicate" | "singleInput" | "monoPairOnly";
 
 export interface ConnectResult {
   ok: boolean;
@@ -112,9 +113,16 @@ export function canConnect(model: DeviceModel, plan: Plan, from: string, to: str
   // A single-input receiver rejects a second incoming wire, counting any existing
   // wire into the port regardless of its stored kind (a malformed/garbled plan
   // could carry a wrong-kind wire into the slot). Summing receivers have a
-  // non-single-input rule.kind, so their fan-in stays unrestricted.
-  if (isSingleInput(rule.kind) && plan.connections.some((c) => c.to === to)) {
-    return { ok: false, reason: "singleInput" };
+  // non-single-input rule.kind, so their fan-in stays unrestricted. A USB output
+  // holding one channel of a mono pair takes the other channel's wire, and that
+  // is the only second wire it takes.
+  if (isSingleInput(rule.kind)) {
+    const held = plan.connections.filter((c) => c.to === to);
+    if (held.length > 0) {
+      if (rule.kind !== "patch" || monoPairsInto(model, to).length === 0) return { ok: false, reason: "singleInput" };
+      if (held.length === 1 && monoPairOf(model, to, [held[0].from, from])) return { ok: true };
+      return { ok: false, reason: "monoPairOnly" };
+    }
   }
   return { ok: true };
 }
@@ -131,20 +139,24 @@ export interface PlanProblem {
 // against the live plan), this checks an already-built plan: a wire is a problem
 // when no rule matches (noRule), a single-input receiver carries more than one
 // incoming wire (singleInput — reported for each wire into that port so every
-// offender is listed), or the same from->to pair appears twice (duplicate).
-// deserialize already drops structurally malformed elements, so only
-// routing-legality issues remain to report here.
+// offender is listed; monoPairOnly for a USB output, whose two wires are legal
+// only as the two channels of one mono pair), or the same from->to pair appears
+// twice (duplicate). deserialize already drops structurally malformed elements,
+// so only routing-legality issues remain to report here.
 export function validatePlan(model: DeviceModel, plan: Plan): PlanProblem[] {
-  const incoming = new Map<string, number>();
-  for (const c of plan.connections) incoming.set(c.to, (incoming.get(c.to) ?? 0) + 1);
+  const incoming = new Map<string, string[]>();
+  for (const c of plan.connections) incoming.set(c.to, [...(incoming.get(c.to) ?? []), c.from]);
   const problems: PlanProblem[] = [];
   const seen = new Set<string>();
   for (const c of plan.connections) {
     const kind = ruleKind(model, c.from, c.to);
+    const froms = incoming.get(c.to) ?? [];
     if (kind === undefined) {
       problems.push({ from: c.from, to: c.to, reason: "noRule" });
-    } else if (isSingleInput(kind) && (incoming.get(c.to) ?? 0) > 1) {
-      problems.push({ from: c.from, to: c.to, reason: "singleInput" });
+    } else if (isSingleInput(kind) && froms.length > 1) {
+      const pairs = kind === "patch" ? monoPairsInto(model, c.to) : [];
+      if (pairs.length === 0) problems.push({ from: c.from, to: c.to, reason: "singleInput" });
+      else if (!monoPairOf(model, c.to, froms)) problems.push({ from: c.from, to: c.to, reason: "monoPairOnly" });
     }
     const key = `${c.from} ${c.to}`;
     if (seen.has(key)) problems.push({ from: c.from, to: c.to, reason: "duplicate" });
@@ -153,7 +165,8 @@ export function validatePlan(model: DeviceModel, plan: Plan): PlanProblem[] {
   return problems;
 }
 
-/** The mono channel that shares its input source with `nodeId`, if any. */
+/** The other channel of the mono pair containing `nodeId`, if any: the channel that
+ *  shares its input source, and the one that joins it on a USB output as a pair. */
 export function partnerChannel(model: DeviceModel, nodeId: string): string | undefined {
   for (const [a, b] of model.channelPairs) {
     if (a === nodeId) return b;
@@ -168,6 +181,25 @@ export function partnerChannel(model: DeviceModel, nodeId: string): string | und
 export function pairPrimary(model: DeviceModel, nodeId: string): string | null {
   for (const [a, b] of model.channelPairs) if (a === nodeId || b === nodeId) return a;
   return null;
+}
+
+/** The mono pairs `to` takes as two wires, primary first: every channelPairs entry both
+ *  of whose channels have a `patch` rule into it. Only a USB output has channel patch
+ *  rules, so every other receiver takes none. */
+export function monoPairsInto(model: DeviceModel, to: string): Array<[string, string]> {
+  return model.channelPairs.filter(
+    ([a, b]) => ruleKind(model, ref(a, "out"), to) === "patch" && ruleKind(model, ref(b, "out"), to) === "patch",
+  );
+}
+
+/** The mono pair the wires from `froms` (out refs) make into `to`, primary first
+ *  whichever order they are in — or null unless they are exactly the two channels of a
+ *  pair `to` takes. Two wires into a USB output mean that pair and nothing else: the
+ *  output is written L = the primary's slot, R = the partner's. */
+export function monoPairOf(model: DeviceModel, to: string, froms: readonly string[]): [string, string] | null {
+  if (froms.length !== 2) return null;
+  const [x, y] = froms.map((f) => parseRef(f).nodeId);
+  return monoPairsInto(model, to).find(([a, b]) => (x === a && y === b) || (x === b && y === a)) ?? null;
 }
 
 /** True when `id` belongs to a MONO IN pair whose Signal Type is STEREO, whatever its

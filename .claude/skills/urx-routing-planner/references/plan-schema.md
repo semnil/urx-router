@@ -70,7 +70,9 @@ Each wire is one object:
 - `kind` — must equal the kind the model declares for that route. The model
   reference groups every legal route by kind; copy it from there. Kinds:
   - `source` — input → channel select (single-input).
-  - `patch` — bus → physical/USB output select (single-input).
+  - `patch` — bus → physical/USB output select, and channel → USB output (a
+    direct out). Single-input, except that a USB output also takes a MONO IN pair
+    as two wires (below).
   - `record` — channel/bus → microSD record-track select (single-input).
   - `key` — channel/bus → ducker side-chain select (single-input).
   - `send` — channel/FX → bus summing send (many allowed; carries level/pan/tap).
@@ -80,7 +82,12 @@ Each wire is one object:
 
 **Single-input rule:** a `source`/`patch`/`record`/`key` destination accepts at
 most one incoming wire. Two wires into the same `:in` of that kind is the
-`singleInput` validation error.
+`singleInput` validation error — except a USB output (`out.usbmain_*:in` /
+`out.usbsub:in`), which takes one source OR the two channels of one MONO IN pair
+(`ch1:out` + `ch2:out`, and on URX44 / URX44V `ch3:out` + `ch4:out`), in either
+order. That pair is the unit's `CH 1/2` / `CH 3/4` selection and is written L = the
+first channel's slot, R = the second's. Any other set of wires into a USB output
+is the `monoPairOnly` validation error.
 
 **Fixed sends:** the model reference marks some `send`/`sendSwitch` routes
 `(fixed)` — the channel/FX main paths into STEREO, the CH→MIX/FX sends, and

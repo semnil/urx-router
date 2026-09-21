@@ -103,14 +103,14 @@ _input source select (single-input: at most one wire into the destination)_
 - **-> `ch_9_10:in`**: `in.micline_1_2:out`, `in.micline_3_4:out`, `in.aux:out`, `in.sdplay:out`, `in.usbmain_a:out`, `in.usbmain_b:out`, `in.usbmain_c:out`, `in.usbdaw_1_2:out`, `in.usbdaw_3_4:out`, `in.usbdaw_5_6:out`, `in.usbdaw_7_8:out`, `in.usbdaw_9_10:out`, `in.usbdaw_11_12:out`, `in.usbsub:out`, `in.hdmi:out`
 
 ### kind: `patch`
-_output patch select (single-input)_
+_output patch select (single-input; a USB output also takes a MONO IN pair as two wires)_
 
 - **-> `out.line:in`**: `bus.stereo:out`, `bus.mix1:out`, `bus.mix2:out`, `bus.stream:out`, `bus.mon1:out`, `bus.mon2:out`
 - **-> `out.main:in`**: `bus.stereo:out`, `bus.mix1:out`, `bus.mix2:out`, `bus.stream:out`, `bus.mon1:out`, `bus.mon2:out`
-- **-> `out.usbmain_a:in`**: `bus.stereo:out`, `bus.stream:out`, `bus.mix1:out`, `bus.mix2:out`, `ch1:out`, `ch2:out`, `ch3:out`, `ch4:out`, `ch_5_6:out`, `ch_7_8:out`, `ch_9_10:out`, `ch_11_12:out`
-- **-> `out.usbmain_b:in`**: `bus.stereo:out`, `bus.stream:out`, `bus.mix1:out`, `bus.mix2:out`, `ch1:out`, `ch2:out`, `ch3:out`, `ch4:out`, `ch_5_6:out`, `ch_7_8:out`, `ch_9_10:out`, `ch_11_12:out`
-- **-> `out.usbmain_c:in`**: `bus.stereo:out`, `bus.stream:out`, `bus.mix1:out`, `bus.mix2:out`, `ch1:out`, `ch2:out`, `ch3:out`, `ch4:out`, `ch_5_6:out`, `ch_7_8:out`, `ch_9_10:out`, `ch_11_12:out`
-- **-> `out.usbsub:in`**: `bus.stereo:out`, `bus.stream:out`, `bus.mix1:out`, `bus.mix2:out`, `ch1:out`, `ch2:out`, `ch3:out`, `ch4:out`, `ch_5_6:out`, `ch_7_8:out`, `ch_9_10:out`, `ch_11_12:out`
+- **-> `out.usbmain_a:in`**: `bus.stereo:out`, `bus.stream:out`, `bus.mix1:out`, `bus.mix2:out`, `ch1:out`, `ch2:out`, `ch3:out`, `ch4:out`, `ch_5_6:out`, `ch_7_8:out`, `ch_9_10:out`, `ch_11_12:out` — or two wires, one from each channel of a MONO IN pair (`ch1:out` + `ch2:out`, `ch3:out` + `ch4:out`), written L = the first channel, R = the second
+- **-> `out.usbmain_b:in`**: `bus.stereo:out`, `bus.stream:out`, `bus.mix1:out`, `bus.mix2:out`, `ch1:out`, `ch2:out`, `ch3:out`, `ch4:out`, `ch_5_6:out`, `ch_7_8:out`, `ch_9_10:out`, `ch_11_12:out` — or two wires, one from each channel of a MONO IN pair (`ch1:out` + `ch2:out`, `ch3:out` + `ch4:out`), written L = the first channel, R = the second
+- **-> `out.usbmain_c:in`**: `bus.stereo:out`, `bus.stream:out`, `bus.mix1:out`, `bus.mix2:out`, `ch1:out`, `ch2:out`, `ch3:out`, `ch4:out`, `ch_5_6:out`, `ch_7_8:out`, `ch_9_10:out`, `ch_11_12:out` — or two wires, one from each channel of a MONO IN pair (`ch1:out` + `ch2:out`, `ch3:out` + `ch4:out`), written L = the first channel, R = the second
+- **-> `out.usbsub:in`**: `bus.stereo:out`, `bus.stream:out`, `bus.mix1:out`, `bus.mix2:out`, `ch1:out`, `ch2:out`, `ch3:out`, `ch4:out`, `ch_5_6:out`, `ch_7_8:out`, `ch_9_10:out`, `ch_11_12:out` — or two wires, one from each channel of a MONO IN pair (`ch1:out` + `ch2:out`, `ch3:out` + `ch4:out`), written L = the first channel, R = the second
 
 ### kind: `key`
 _ducker side-chain key select (single-input)_

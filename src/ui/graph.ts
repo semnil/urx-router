@@ -11,8 +11,11 @@ import {
   directOutTarget,
   isFixedConnection,
   isNodeInactive,
+  isStereoLinkedPair,
   legalSources,
   legalTargets,
+  monoPairOf,
+  monoPairsInto,
   pairPrimary,
   partnerChannel,
   possibleSources,
@@ -1466,7 +1469,7 @@ export class Graph {
     for (const c of this.plan.connections) {
       // A wire to a hidden endpoint is not drawn, so its ports must not read as
       // in use (e.g. a hidden ducker's key source on the still-visible source).
-      if (this.isHidden(parseRef(c.from).nodeId) || this.isHidden(parseRef(c.to).nodeId)) continue;
+      if (!this.isWireShown(c)) continue;
       // An off / muted wire recedes, so its jacks must not glow as live either — a
       // port lights only when it carries at least one audible (non-off) connection.
       if (this.isOffSend(c)) continue;
@@ -1545,7 +1548,7 @@ export class Graph {
     for (const conn of this.plan.connections) {
       // A wire to a shelved endpoint would dangle into empty space; skip any wire
       // whose node is hidden, so a shelved node takes its wires off-canvas with it.
-      if (this.isHidden(parseRef(conn.from).nodeId) || this.isHidden(parseRef(conn.to).nodeId)) continue;
+      if (!this.isWireShown(conn)) continue;
       const isOff = this.isOffSend(conn);
       // Declutter toggle: drop the off / -∞ sends entirely (they are non-removable
       // fixed wires, so hiding is the only way to thin the always-wired send mesh).
@@ -2066,7 +2069,7 @@ export class Graph {
         this.finishConnect(c.ref, c.dir, ref, c.dir === "out" ? c.tap : releasedTap);
       } else if (c.dir === "in") {
         // A click (or a drag with no legal source) on an input port selects its
-        // single incoming wire, mirroring a click on the wire itself.
+        // incoming wire (selectInputWire), mirroring a click on the wire itself.
         this.selectInputWire(c.ref);
       }
     }
@@ -2214,6 +2217,10 @@ export class Graph {
     // through the mixer stage. So an output drag keeps just the side it left from.
     // Only outputs need this — a tap is always an output, so an input drag has
     // nothing to split.
+    // A channel of a STEREO-linked pair dropped onto the USB output holding it alone brings
+    // its partner (finishConnect), so that drop is lit as legal though the wire exists.
+    for (const r of possible)
+      if (dir === "out" ? this.completesLinkedPair(from, r) : this.completesLinkedPair(r, from)) legal.add(r);
     if (dir === "out") {
       const fromThisJack = (rs: Set<string>): Set<string> =>
         new Set([...rs].filter((r) => this.isRecPointTap(from, r) === tap));
@@ -2296,23 +2303,65 @@ export class Graph {
       return;
     }
     const result = canConnect(this.model, this.plan, out, into);
-    if (!result.ok) {
+    if (!result.ok && !this.completesLinkedPair(out, into)) {
       this.cb.onStatus(result.reason ? t().error[result.reason] : t().error.cannotConnect);
       return;
     }
     // canConnect rejects a route with no rule, so reaching here means kind is set.
-    this.plan.connections.push({ from: out, to: into, kind: kind! });
+    if (result.ok) this.plan.connections.push({ from: out, to: into, kind: kind! });
     if (kind === "source") this.mirrorPairSource(out, into);
+    if (kind === "patch") {
+      const partner = this.linkedPairPartner(out, into);
+      if (partner) this.plan.connections.push({ from: partner, to: into, kind: "patch" });
+    }
     // redrawWires ends with refreshPortStates, so the port glow is restored there.
     this.redrawWires();
     this.cb.onChange();
     this.cb.onStatus(t().status.connected);
   }
 
-  /** Select the single wire feeding `inputRef`, if exactly one is present. */
+  /** The partner channel's out ref that joins `out` on the USB output `into`: set when
+   *  `out` is a channel of a STEREO-linked pair the output takes, the partner is on the
+   *  board and its wire is legal there now; null otherwise. Drawing either channel of a
+   *  linked pair puts the pair on the output; an unlinked channel goes alone, and so does
+   *  one whose partner is on the shelf, since a wire to a shelved node is not drawn. */
+  private linkedPairPartner(out: string, into: string): string | null {
+    const node = parseRef(out).nodeId;
+    if (!isStereoLinkedPair(this.model, this.plan, node)) return null;
+    const pair = monoPairsInto(this.model, into).find(([a, b]) => a === node || b === node);
+    if (!pair) return null;
+    const partnerNode = pair[0] === node ? pair[1] : pair[0];
+    if (this.isHidden(partnerNode)) return null;
+    const partner = ref(partnerNode, "out");
+    return canConnect(this.model, this.plan, partner, into).ok ? partner : null;
+  }
+
+  /** A drop of `out` onto `into` that the output already holds, which completes a linked
+   *  pair there: the one refused wire the board still takes, adding the partner instead. */
+  private completesLinkedPair(out: string, into: string): boolean {
+    return (
+      ruleKind(this.model, out, into) === "patch" &&
+      canConnect(this.model, this.plan, out, into).reason === "duplicate" &&
+      this.linkedPairPartner(out, into) !== null
+    );
+  }
+
+  /** Whether a wire is on the board: neither of its nodes is on the shelf. */
+  private isWireShown(c: PlanConnection): boolean {
+    return !this.isHidden(parseRef(c.from).nodeId) && !this.isHidden(parseRef(c.to).nodeId);
+  }
+
+  /** Select the wire feeding `inputRef` among those on the board: the only one, or the
+   *  primary's when both wires of a mono pair on a USB output are shown. */
   private selectInputWire(inputRef: string): void {
-    const wires = this.plan.connections.filter((c) => c.to === inputRef);
-    if (wires.length === 1) this.select({ type: "conn", from: wires[0].from, to: wires[0].to });
+    const wires = this.plan.connections.filter((c) => c.to === inputRef && this.isWireShown(c));
+    const pair = monoPairOf(
+      this.model,
+      inputRef,
+      wires.map((c) => c.from),
+    );
+    const wire = wires.length === 1 ? wires[0] : pair ? wires.find((c) => c.from === ref(pair[0], "out")) : undefined;
+    if (wire) this.select({ type: "conn", from: wire.from, to: wire.to });
   }
 
   // Mono channels are paired: assigning a source to one fixes its partner too.

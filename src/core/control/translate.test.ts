@@ -1020,6 +1020,96 @@ describe("planToCommands", () => {
     expect(usbOut("USB_OUT_SRC_SUB").map((c) => c.vdValue)).toEqual([258, 259]);
   });
 
+  // The unit's "CH 3/4" is two wires in the plan, one from each channel, and goes out as
+  // the two channels' own slots — L = the primary's, R = the partner's — whichever order
+  // the wires sit in.
+  it("emits a USB output's mono pair as the primary's slot on L and the partner's on R", () => {
+    const usbA = (plan: Plan) =>
+      [0, 1].map((y) => planToCommands(model, plan).find((c) => c.name === "USB_OUT_SRC_A" && c.y === y)!.vdValue);
+    for (const order of [
+      ["ch3", "ch4"],
+      ["ch4", "ch3"],
+    ]) {
+      const plan = emptyPlan("URX44V");
+      for (const ch of order) plan.connections.push({ from: `${ch}:out`, to: "out.usbmain_a:in", kind: "patch" });
+      expect(usbA(plan), order.join(" then ")).toEqual([2, 3]);
+    }
+    const one = emptyPlan("URX44V");
+    one.connections.push({ from: "ch1:out", to: "out.usbmain_a:in", kind: "patch" });
+    one.connections.push({ from: "ch2:out", to: "out.usbmain_a:in", kind: "patch" });
+    expect(usbA(one)).toEqual([0, 1]);
+    const urx22 = getModel("URX22");
+    const u22 = emptyPlan("URX22");
+    u22.connections.push({ from: "ch2:out", to: "out.usbsub:in", kind: "patch" });
+    u22.connections.push({ from: "ch1:out", to: "out.usbsub:in", kind: "patch" });
+    const sub = planToCommands(urx22, u22).filter((c) => c.name === "USB_OUT_SRC_SUB");
+    expect(sub.map((c) => [c.y, c.vdValue])).toEqual([
+      [0, 0],
+      [1, 1],
+    ]);
+  });
+
+  // A USB output's list offers None, each source on its own and each mono pair, and a
+  // shape outside it (the pair the wrong way round, two channels of different pairs, a
+  // half left clear) is no selection the unit offers — the first of them blanks the unit's
+  // source field. So whatever wires a plan holds, the two halves written are one of those.
+  // Every set of up to three of an output's sources, in the order given and reversed, on
+  // every model — and a set that is not a pair is its first wire alone.
+  it("writes a USB output only as a selection its list offers, for any set of wires", () => {
+    for (const id of MODEL_IDS) {
+      const m = getModel(id);
+      for (const out of ["out.usbmain_a", "out.usbmain_b", "out.usbmain_c", "out.usbsub"]) {
+        const param = (
+          {
+            "out.usbmain_a": "USB_OUT_SRC_A",
+            "out.usbmain_b": "USB_OUT_SRC_B",
+            "out.usbmain_c": "USB_OUT_SRC_C",
+            "out.usbsub": "USB_OUT_SRC_SUB",
+          } as const
+        )[out];
+        if (!m.nodes.some((n) => n.id === out)) continue;
+        const sources = m.rules.filter((r) => r.to === `${out}:in`).map((r) => r.from);
+        const halves = (froms: string[]) => {
+          const plan = emptyPlan(id);
+          for (const from of froms) plan.connections.push({ from, to: `${out}:in`, kind: "patch" });
+          return planToCommands(m, plan)
+            .filter((c) => c.name === param)
+            .sort((a, b) => a.y - b.y)
+            .map((c) => c.vdValue)
+            .join("/");
+        };
+        const single = new Map(sources.map((f) => [f, halves([f])]));
+        const offered = new Set([halves([]), ...single.values()]);
+        for (const [a, b] of m.channelPairs) {
+          const [l] = single.get(`${a}:out`)!.split("/");
+          const [r] = single.get(`${b}:out`)!.split("/");
+          offered.add(`${l}/${r}`);
+        }
+        expect(offered.size, `${id} ${out}: None, every source and every pair`).toBe(
+          1 + sources.length + m.channelPairs.length,
+        );
+        const sets: string[][] = [];
+        for (let i = 0; i < sources.length; i++) {
+          sets.push([sources[i]]);
+          for (let j = i + 1; j < sources.length; j++) {
+            sets.push([sources[i], sources[j]], [sources[j], sources[i]]);
+            for (let k = j + 1; k < sources.length; k++)
+              sets.push([sources[i], sources[j], sources[k]], [sources[k], sources[j], sources[i]]);
+          }
+        }
+        const isPair = (froms: string[]) =>
+          froms.length === 2 &&
+          m.channelPairs.some(([a, b]) => froms.includes(`${a}:out`) && froms.includes(`${b}:out`));
+        for (const froms of sets) {
+          const written = halves(froms);
+          expect(offered.has(written), `${id} ${out} ← ${froms.join(", ")} wrote ${written}`).toBe(true);
+          // Any set that is not a pair is written as its first wire alone.
+          if (!isPair(froms)) expect(written, `${id} ${out} ← ${froms.join(", ")}`).toBe(single.get(froms[0]));
+        }
+      }
+    }
+  });
+
   it("maps a higher stereo channel source to its input slot, not its node index", () => {
     const plan = emptyPlan("URX44V");
     plan.connections.push({ from: "ch_9_10:out", to: "out.usbmain_a:in", kind: "patch" });

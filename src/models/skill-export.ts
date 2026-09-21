@@ -10,6 +10,7 @@ import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
 import { INSERT_FX_OPTIONS } from "../core/control/params";
+import { monoPairsInto } from "../core/routing";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
 import {
   insertFxDeviceDriven,
@@ -28,7 +29,10 @@ export interface SkillModel {
   /** The MONO IN pairs, primary first. Carried because a pair whose Signal Type is
    *  STEREO holds one insert effect between its two channels, so the validator has to
    *  collapse it to one slot holder the way `insertFxCensus` does — a rule it cannot
-   *  reach from the routing data, and one it would otherwise have to spell out itself. */
+   *  reach from the routing data, and one it would otherwise have to spell out itself;
+   *  and because a USB output takes a pair's two channels as two wires, which the
+   *  validator derives from these pairs and the patch rules the way routing.ts
+   *  `monoPairsInto` does. */
   channelPairs: [string, string][];
   /** Per channel insert-FX selector: everything a reader needs to work out what a write
    *  SENDS for that effect's engine values. Model-INDEPENDENT — carried per model because the
@@ -167,7 +171,7 @@ const ROUTE_KIND_ORDER: ConnectionKind[] = ["source", "patch", "key", "record", 
 
 const ROUTE_KIND_DESC: Record<ConnectionKind, string> = {
   source: "input source select (single-input: at most one wire into the destination)",
-  patch: "output patch select (single-input)",
+  patch: "output patch select (single-input; a USB output also takes a MONO IN pair as two wires)",
   key: "ducker side-chain key select (single-input)",
   record: "microSD record-track source select (single-input)",
   send: "summing send into a bus (many sources allowed; carries level/pan/tap)",
@@ -209,12 +213,20 @@ export function renderModelMarkdown(model: DeviceModel): string {
     // Rows are grouped by destination (sorted) so the same selector's sources sit
     // together; sources within a row keep model order. fixed marks a destination
     // any of whose wires is structural.
+    // A destination that takes a MONO IN pair as two wires says which pairs, and which
+    // channel's slot each half is written with.
     const dests = [...new Set(group.map((r) => r.to))].sort();
     for (const to of dests) {
       const into = group.filter((r) => r.to === to);
       const fixed = into.some((r) => r.fixed);
       const sources = into.map((r) => `\`${r.from}\``).join(", ");
-      lines.push(`- **-> \`${to}\`**${fixed ? " *(fixed)*" : ""}: ${sources}`);
+      const pairs = kind === "patch" ? monoPairsInto(model, to) : [];
+      const pairNote = pairs.length
+        ? ` — or two wires, one from each channel of a MONO IN pair (${pairs
+            .map(([a, b]) => `\`${a}:out\` + \`${b}:out\``)
+            .join(", ")}), written L = the first channel, R = the second`
+        : "";
+      lines.push(`- **-> \`${to}\`**${fixed ? " *(fixed)*" : ""}: ${sources}${pairNote}`);
     }
     lines.push("");
   }

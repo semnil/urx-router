@@ -104,8 +104,8 @@ for (const lang of ["en", "ja"]) {
   await warnPage.goto(base);
   await warnPage.locator("#graph-host g.node").first().waitFor();
   await warnPage.waitForTimeout(800);
-  // USB MAIN OUT B takes a single source and the default plan already patches it,
-  // so its existing wire goes first. `button.danger` is the inspector's delete
+  // USB MAIN OUT B already holds the default plan's STEREO patch, and a second wire is
+  // taken only as a MONO IN pair's partner, so its existing wire goes first. `button.danger` is the inspector's delete
   // control whatever the language; dispatchEvent bypasses the wire-hit bands'
   // pointer interception, as in the e2e specs.
   await warnPage.locator('.wire-hit[data-to="out.usbmain_b:in"]').first().dispatchEvent("pointerdown");
