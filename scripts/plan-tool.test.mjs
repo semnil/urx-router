@@ -1414,6 +1414,68 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     expect(toolSaysOk, `the tool: ${_name}\n${r.stdout}`).toBe(ok);
   });
 
+  // A USB output takes one source, or the two channels of a MONO IN pair as two wires in
+  // either order, and nothing else — the app's load refuses every other set with the wires
+  // into that output named. The tool has to refuse the same sets, with the same code on the
+  // same wires. Every set of one or two of an output's sources in both orders, and every
+  // three that hold a pair, on every model; four sets ride in one document, one per USB
+  // output, since each output is judged on its own.
+  it("agrees with the app about which wires a USB output takes", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { planProblems, isRefusal } = await import("../src/core/plan-validate.ts");
+    const OUTS = ["out.usbmain_a", "out.usbmain_b", "out.usbmain_c", "out.usbsub"];
+    let pairs = 0;
+    let refusals = 0;
+    for (const modelId of MODEL_IDS) {
+      const model = getModel(modelId);
+      const outs = OUTS.filter((o) => model.nodes.some((n) => n.id === o));
+      const sources = model.rules.filter((r) => r.to === "out.usbmain_a:in").map((r) => r.from);
+      const pairRefs = model.channelPairs.map(([a, b]) => [`${a}:out`, `${b}:out`]);
+      const sets = [];
+      for (let i = 0; i < sources.length; i++) {
+        sets.push([sources[i]]);
+        for (let j = i + 1; j < sources.length; j++) sets.push([sources[i], sources[j]], [sources[j], sources[i]]);
+      }
+      for (const [a, b] of pairRefs) for (const c of sources) if (c !== a && c !== b) sets.push([b, c, a]);
+      for (let k = 0; k < sets.length; k += outs.length) {
+        const batch = sets.slice(k, k + outs.length);
+        const plan = {
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections: batch.flatMap((froms, i) => froms.map((from) => ({ from, to: `${outs[i]}:in`, kind: "patch" }))),
+          nodeParams: {},
+        };
+        const loaded = deserializeDocument(JSON.stringify(plan)).plan;
+        const app = planProblems(model, loaded)
+          .filter(isRefusal)
+          .map((p) => `[${p.reason}] ${p.from} -> ${p.to}`)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const tool = r.stdout
+          .split("\n")
+          .filter((l) => /^\[(noRule|singleInput|monoPairOnly|duplicate)\] /.test(l))
+          .sort();
+        expect(tool, `${modelId} ${JSON.stringify(batch)}\n${r.stdout}`).toEqual(app);
+        expect(r.status !== 0, `${modelId} ${JSON.stringify(batch)}: the exit code says the same`).toBe(app.length > 0);
+        refusals += app.length;
+        // A pair counts once both sides kept it: no refusal names its output.
+        pairs += batch.filter(
+          (froms, i) =>
+            froms.length === 2 &&
+            pairRefs.some(([a, b]) => froms.includes(a) && froms.includes(b)) &&
+            !app.some((l) => l.endsWith(`-> ${outs[i]}:in`)),
+        ).length;
+      }
+    }
+    // Both answers are real populations: pairs the two keep, and refusals the two share.
+    expect(pairs).toBeGreaterThan(0);
+    expect(refusals).toBeGreaterThan(0);
+  });
+
   // `True == 1` in Python, and the app's own comparison is `===` — so a boolean comp/EQ type
   // falls back to the COMP-first order and sends no SSMCS at all.
   it("does not read a boolean as the SSMCS comp/EQ order", () => {

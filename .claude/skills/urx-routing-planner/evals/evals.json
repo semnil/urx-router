@@ -39,6 +39,13 @@
       "name": "ambiguous-stream-and-monitor",
       "prompt": "I want to stream my setup and also hear myself while I do it. Can you set that up?",
       "expected_output": "The request is underspecified (no model; no inputs/mic; which output feeds the streaming software; headphones vs monitors). A good answer clarifies the requirements first \u2014 asks which URX model and what sources/outputs \u2014 or explicitly states the assumptions it is making (model, inputs) before building, rather than silently fabricating a plan."
+    },
+    {
+      "id": 6,
+      "name": "urx44v-mono-pair-to-usb",
+      "prompt": "URX44V: my two mics are on channels 3 and 4. I want them to show up in my DAW as one stereo track on USB MAIN OUT A, channel 3 left and channel 4 right, straight off the channels. Is that possible, and can you set it up?",
+      "expected_output": "Yes: USB MAIN OUT A takes the MONO IN pair CH 3/4 as two patch wires, ch3:out->out.usbmain_a:in and ch4:out->out.usbmain_a:in (the default bus.stereo->out.usbmain_a wire removed), which the app writes L = CH 3, R = CH 4. The answer notes that a direct out is tapped at the channel's Rec Point (pre-fader, pre-Ducker). The plan passes validation (no monoPairOnly / singleInput) and comes with a ?plan= URL.",
+      "files": []
     }
   ]
 }

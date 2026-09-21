@@ -45,7 +45,10 @@ nearest legal alternative. A grounded yes/no with the concrete route (or the
 reason there isn't one) is the deliverable. Because the signal flow is
 one-directional (input → channel → bus → output), the common "not possible" cases
 are requests that fight it — channel → channel, output → channel, or two sources
-into one single-input selector.
+into one single-input selector. The one two-wire exception is a USB output fed a
+MONO IN pair (`ch1` + `ch2`, and on URX44 / URX44V `ch3` + `ch4`): that is the
+unit's own `CH 1/2` / `CH 3/4` selection, so sending a mono pair to a USB output as
+a stereo pair IS possible.
 
 **A caveat the route table can't show — direct outs are pre-fader/pre-Ducker.**
 A channel wired straight to a USB output (`out.usbmain_*` / `out.usbsub`) or a
@@ -163,7 +166,11 @@ read, and what it costs is the unit's own setting for that key. Where the user
 wants the unit's current values kept, they have to be IN the document — fetch the
 plan from the unit and edit that. Remember:
    - **Single-input** destinations (`source`/`patch`/`record`/`key`) take one
-     wire only.
+     wire only — except a USB output (`out.usbmain_*` / `out.usbsub`), which also
+     takes the two channels of a MONO IN pair as two `patch` wires, one from each
+     channel. The app writes that L = the pair's first (odd) channel, R = its
+     second, whatever order the wires are listed in; no other pair of wires is
+     legal there (not two channels of different pairs, not a channel beside a bus).
    - **Fixed sends** (marked `(fixed)` in the reference: CH/FX → STEREO, CH →
      MIX/FX, MIX → STEREO) always exist. You don't list them to keep them; you
      list them with `params` to set level/pan or turn them `on` — and listing one
@@ -205,6 +212,9 @@ Reason codes:
      reference; you likely used a wrong node id or an unsupported path.
    - `singleInput` — more than one wire into a single-input destination. Remove
      the extra(s); a channel/output/ducker/record slot takes one source.
+   - `monoPairOnly` — a USB output holds a set of wires that is neither one
+     source nor the two channels of one MONO IN pair. Keep one source, or exactly
+     the pair's two channels.
    - `duplicate` — the same `from -> to` is listed twice. Drop the repeat.
    - `notPlanFile` / `planVersionUnsupported` / `unknownModel` — the document
      itself is refused, before the routing is even looked at: `format` must be
@@ -295,8 +305,8 @@ app and tooling parse, not prose:
   which is what the unit's own CH SETTING name screen takes (`plan_tool.py validate`
   names each name it would shorten),
 - the `?plan=` deep link,
-- the validator's reason codes (`noRule`, `singleInput`, `duplicate`, and the
-  document-level ones in step 5).
+- the validator's reason codes (`noRule`, `singleInput`, `monoPairOnly`,
+  `duplicate`, and the document-level ones in step 5).
 
 The desktop app's menu labels follow whatever UI language the user has selected,
 so name a menu in the user's language and you may add the English label in

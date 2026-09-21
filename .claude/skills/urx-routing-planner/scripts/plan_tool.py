@@ -11,7 +11,7 @@ loads the plan as authored":
   or position is silently DROPPED rather than refused, so those are reported as
   warnings — the plan loads, just not as written,
 - validation matches core/routing.ts `validatePlan` (noRule / singleInput /
-  duplicate), and
+  monoPairOnly / duplicate), and
 - the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
   of the raw-deflated UTF-8 JSON, padding stripped), read back by `?plan=` on
   startup. Compression keeps full plans inside GitHub Pages' ~8 KB URL limit;
@@ -61,6 +61,31 @@ def rule_index(model):
     for frm, to, kind, _fixed in model["rules"]:
         by_pair[(frm, to)] = kind
     return by_pair
+
+
+def node_of(ref):
+    """The node id of a `node:port` ref (core/models `parseRef`)."""
+    return ref.rsplit(":", 1)[0]
+
+
+def mono_pairs_into(model, by_pair, to):
+    """The mono pairs `to` takes as two wires, primary first: every channelPairs entry
+    both of whose channels have a `patch` rule into it (core/routing.ts `monoPairsInto`).
+    Only a USB output has channel patch rules, so every other receiver takes none."""
+    return [
+        (a, b)
+        for a, b in model.get("channelPairs", [])
+        if by_pair.get((f"{a}:out", to)) == "patch" and by_pair.get((f"{b}:out", to)) == "patch"
+    ]
+
+
+def is_mono_pair(pairs, froms):
+    """Whether the wires from `froms` are exactly the two channels of one of `pairs`,
+    in either order (core/routing.ts `monoPairOf`)."""
+    if len(froms) != 2:
+        return False
+    x, y = (node_of(f) for f in froms)
+    return any({x, y} == {a, b} and x != y for a, b in pairs)
 
 
 def is_number(v):
@@ -133,16 +158,27 @@ def validate(plan, models):
 
     incoming = {}
     for c in kept:
-        incoming[c["to"]] = incoming.get(c["to"], 0) + 1
+        incoming.setdefault(c["to"], []).append(c["from"])
 
     seen = set()
     for c in kept:
         frm, to, kind = c["from"], c["to"], c["kind"]
         rule_kind = by_pair.get((frm, to))
+        froms = incoming.get(to, [])
+        # A single-input receiver holding more than one wire is refused — except a USB
+        # output holding exactly the two channels of one mono pair, which the app writes
+        # L = the primary's slot, R = the partner's.
+        over = None
+        if rule_kind in SINGLE_INPUT_KINDS and len(froms) > 1:
+            pairs = mono_pairs_into(model, by_pair, to) if rule_kind == "patch" else []
+            if not pairs:
+                over = "singleInput"
+            elif not is_mono_pair(pairs, froms):
+                over = "monoPairOnly"
         if rule_kind is None:
             problems.append(("noRule", frm, to))
-        elif rule_kind in SINGLE_INPUT_KINDS and incoming.get(to, 0) > 1:
-            problems.append(("singleInput", frm, to))
+        elif over is not None:
+            problems.append((over, frm, to))
         elif kind != rule_kind:
             # Same from/to is legal, but the wrong kind misbehaves in the app even
             # though it would pass the app's structural check. Surface it so the
