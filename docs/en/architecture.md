@@ -109,7 +109,7 @@ carries a one-line map of the same directories and points here.
   `planProblems` (split out of `constraints.ts`, which is rate limits and nothing else: a rate limit warns
   about a plan the app authored, these check a plan built ELSEWHERE — a file, a `?plan=` link, a generator).
   `routing.ts` cannot host them (the cycle constraints → translate → routing). It runs from `loadFromText`
-  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its four kinds
+  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its five kinds
   are reported differently: an illegal wire refuses the document; a STEREO-linked pair whose two members
   disagree about their one insert effect refuses it too, since the unit keeps a single selector, bypass and
   engine for the pair and no state of it satisfies such a document (`insertFxPairProblems`, compared over the
@@ -125,7 +125,9 @@ carries a one-line map of the same directories and points here.
   repair that changes what is sent, and in the safe direction — see "An FX channel the plan does not
   describe". The two actions are counted and said
   separately, since a value moved to the nearest one the app can send and a value removed are different
-  events. `isRefusal` and `needsDecision` are the two predicates that split
+  events. A receiver the unit never leaves without a source that the document gives no wire — STREAMING —
+  is completed the same way, with its default source, and said on the same line (`requiredSourceProblems`;
+  see "A plan that names no STREAMING source"). `isRefusal` and `needsDecision` are the two predicates that split
   them, one seat each / `plan.ts` plan state + JSON + the `?plan=` deep-link codec (deflate-compressed
   `"z"` format; legacy uncompressed links must keep decoding) / `levels.ts` the device's discrete level_gain
   grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Every
@@ -570,7 +572,9 @@ carries a one-line map of the same directories and points here.
   loader completes a document from the model's factory values — so a write carries keys nobody set, and
   this names the strips they are on by re-emitting the plan with those keys blanked: an address that
   survives that emit is one an authored key asks for. `load` counts as authored (the document named the
-  value); `default` and `device` do not
+  value); `default` and `device` do not. A routing selector is named only for a wire the app completed —
+  the load, or a Fetch / Live-sync start that found the unit on NONE (see "A plan that names no STREAMING
+  source")
 
 - `src-tauri/` — Rust shell. Webview host + tauri-plugin-dialog + file IO commands
   (`read_text_file`/`read_binary_file`/`write_text_file`/`write_binary_file`; `third_party_licenses` reads
@@ -619,9 +623,11 @@ carries a one-line map of the same directories and points here.
 ## Data model
 
 - **DeviceModel** — an immutable per-model device definition. It holds `nodes` (inputs / channels /
-  buses / outputs / duckers), `rules` (legal paths = `RoutingRule[]`), and `channelPairs` (the MONO IN
+  buses / outputs / duckers), `rules` (legal paths = `RoutingRule[]`), `channelPairs` (the MONO IN
   pairs — CH1/2 and CH3/4, CH1/2 alone on the URX22: the channels that share one input source, and the
-  pairs a USB output takes as two wires). `models/build.ts` generates it from per-model
+  pairs a USB output takes as two wires), and `requiredSources` (the receivers that always hold exactly
+  one source, each with the source a plan naming none is given — STREAMING and its STEREO; see "A plan
+  that names no STREAMING source"). `models/build.ts` generates it from per-model
   parameters. A node may *ride on* a parent via `attachTo` (a ducker on its channel, the microSD Rec
   slots on their header), drawn hung just below it ([below](#hung-nodes-ducker-microsd-rec-slots)).
 - **Plan** — the mutable state the user creates. It holds `modelId`, node positions (`positions`),
@@ -776,6 +782,14 @@ that holds that same channel alone adds the missing partner. An unlinked channel
 output holding it stays a legal target for its partner, which joins by its own drag. The two wires are
 deleted one at a time. Clicking a single-input port that already holds a source selects that wire, the
 same as clicking the wire itself; on a USB output holding a pair it selects the primary's wire.
+**Drawing another source onto STREAMING replaces the wire it holds**, in one change and so one undo step:
+the unit's source list for STREAMING has no None, so the board never leaves it empty
+(`DeviceModel.requiredSources`, asked through `requiresSource`). That drop is lit as legal, in the same
+set a render mid-drag relights (`connectCandidates` serves the drag's start and the repaint alike), which
+also lets a drag open from STREAMING's own input; a click there still selects its wire. Its last wire is
+kept: the board's Delete key reaches `deleteConnection`, which refuses it with a status message, and the
+Inspector offers no delete for it — a hint in that refusal's own words instead (`isLastRequiredSource` is
+the one predicate both ask).
 
 **Path trace**: long-pressing a node (`LONG_PRESS_MS`, ~450ms, held without moving past
 `LONG_PRESS_TOLERANCE`) highlights the signal path feeding it. `routing.ts`
@@ -2002,7 +2016,7 @@ exists to prevent. And a rejection leaves the registration by exception, so it n
 generation guard: `refresh`'s catch compares the generation it started with before it stops anything, or a refusal
 arriving after its session ended stops the live one instead, with nothing to restart it.
 
-**Three follow-only cases join for the same reason**, and the name path is their precedent rather than a
+**Four follow-only cases join for the same reason**, and the name path is their precedent rather than a
 coincidence: an address the app only READS was in no registration, so the unit's announcement reached nobody and
 the value caught up only at the next full read. The first two were measured announcing a front-panel change on a URX44V
 (2026-08-11, System V1.3.1.0), which is what separates them from the addresses that genuinely stay silent — D.Gain
@@ -2016,6 +2030,7 @@ array address it wrote. So the silence is about the front panel, not about the a
 | CH → FX send tap (193 / 197 / 320 / 324) | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
 | microSD Rec Track Count (839) | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node 839 lands on, and the only address that read touches |
 | the FX delay time the unit computes (681 / 685, slot 6) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
+| STREAMING source select (705 / 706) | while the plan holds no STREAMING wire: its list on the unit has no None, so the emit sends nothing there rather than NONE (`leavesUnsourced`) | **`bus.stream`** — its scoped read takes the source back with the node's DELAY |
 
 The third is not a read-only ADDRESS at all, which is why the heading above says cases. Slot 6 is written like
 any other parameter while the operator owns the delay time; it moves to this list only while tempo Sync is on,
@@ -2024,13 +2039,17 @@ function of the effect type and of the Sync switch — and its pair is a SUPPRES
 address. The other two are addresses the app could never write; this one is written whenever the unit is not the
 one deriving it, which is what makes the emitted set and this one exact complements.
 
-All three are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
+The fourth has the third's shape: STREAMING's source is written whenever the plan holds a STREAMING wire and joins
+this list only while it holds none, so it too takes the plan as well as the model. The unit announces a source
+picked on its own panel there, as it announces a write (see "A plan that names no STREAMING source").
+
+All four are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
 registration and the write suppression cannot drift apart; `live.ts` consumes that list the same way it consumes
 `planToCommands`, **including its write scope**. That scope is not symmetry for its own sake: under *Scene only* a
 whole-device read puts the plan's scene-external values back after reading (`applyDeviceStateScoped` →
 `core/scene-scope.ts`, which names `sdRecTrackCount`), so a follow that pulled 839 in would be the one path where
 that preference does not hold — the notify-driven read and the full read would disagree about one value under one
-setting. Track Count is `sceneExternal` and drops out under *Scene only*; the send taps are scene state and stay. **The index entry and the readback gate are one decision, not two.** Naming an owner node is
+setting. Track Count and STREAMING's source are `sceneExternal` and drop out under *Scene only*; the send taps are scene state and stay. **The index entry and the readback gate are one decision, not two.** Naming an owner node is
 correct only while `readback` reads that address on a scoped read of that node — 839 is gated on
 `want("out.sdrec")` for exactly this reason, and the full-read behaviour is identical either way because `want` is
 `only === undefined || only.has(id)`. Were that gate to go back to `only === undefined`, every front-panel Track
@@ -2506,6 +2525,11 @@ listed here so they are not proposed again as gaps:
    PAN/BAL and the restore writes them back, so a run that finishes ends where it started. What changes is a
    run that does not: it leaves the pairs in the block it died in, with the pans the unit slams at either
    transition — a perturbed pair structure, not only perturbed values.
+
+   **One selector a partial capture leaves alone instead: STREAMING's source.** A capture that did not read it
+   (`ReadbackResult.sourceUnread`) keeps no STREAMING wire in the plan it restores from, so no pass and not the
+   restore write that selector — the unit keeps the source it held — and the report says so among its issues.
+   Every other address of a partial capture is still swept and restored as above.
 2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
    a coerced in-range value is a better outcome than an out-of-range one reaching the unit. The clamp is
    deliberately NOT applied to the readout beside it: the panel shows what the plan holds, which after a
@@ -3606,7 +3630,9 @@ comes off a connection rather than a node parameter, took whichever parameter ha
 carrying a zero.
 
 Three answers, not two. A key the plan does not carry names nothing: the emit asks before it decides
-whether to send one, then supplies the value itself, and that is nobody's to have chosen. A command
+whether to send one, then supplies the value itself, and that is nobody's to have chosen — except at a
+routing selector, whose value is the wire into its receiver: it names the receiver when that wire is one
+the app completed (see "A plan that names no STREAMING source"). A command
 carrying no record AT ALL is the third, and reads as a value the note cannot vouch for rather than
 as one nobody supplied — the two must not collapse together, or losing track goes out silently.
 
@@ -3636,6 +3662,46 @@ the panel is the other way to close that gap and it is the destructive one — i
 reverted — which is why the plan is completed at the LOAD, where the operator can be told what it means.
 Where the fill does not run the two still diverge: a node a device read could not answer for stays sparse
 on purpose, and the Inspector's own stand-in for an absent value is not always the model's factory one.
+
+### A plan that names no STREAMING source
+
+STREAMING's source list on the unit offers STEREO, MIX 1 and MIX 2 and no None, so the app gives every plan
+exactly one STREAMING wire (device-model.md §4). **A document that names none is completed at the load**
+with the factory STEREO → STREAMING (`requiredSourceProblems` / `applyRequiredSources`), and the status line
+says so ahead of the load's own message, since the next write sends a selection the document did not name.
+Any wire into STREAMING counts, whatever kind it is stored under — the install restates the kind from the
+rule table — while one the sanitiser dropped does not. A scene-scoped document leaves the source out by
+design: opened over a plan of the same model it keeps that plan's source, as it keeps every scene-external
+value, and over another model it is completed like any other. `emptyPlan` carries the same wire, so a plan
+built from nothing — a new plan, a model switch, the self-test's capture — starts with it.
+
+The wire the load adds is recorded as the fill's: `default`, under the wire's own contest name
+(`connectionContestKey`, the name an edit or a device read records a wire under). A routing command carries
+no parameter key — its value is the wire into its receiver — so this record is how the write confirm names
+STREAMING when the write moves the unit onto the source the load supplied (`app/unauthored-writes.ts`). It
+is the one routing selector the confirm names: every other wire is on the board as the operator drew, loaded
+or read it. A scene-scoped document that carries the source over carries the record with it.
+
+**A device read takes what the unit holds, and says what it could not take.** NONE at STREAMING's source is
+a state the unit's own list does not offer and a software write does reach, and the read reflects it as no
+wire in its own view and names it
+(`ReadbackResult.unsourced`). A Fetch or a Live-sync start then gives the plan STEREO in its place
+(`supplyRequiredSources`), records it `default` as the load's completion is recorded, and leads the status
+line with a note saying the unit's STREAMING was on a state its source list does not offer. The read's own
+view keeps the unit's state, so the snapshot a Live session starts from holds no value there; the start sends
+nothing, the unit stays on NONE, and the flush the operator's next edit starts carries STEREO with it; Device → Write moves the unit onto it, and its confirm names STREAMING. A
+Live-sync start that fails after its read keeps the completion with the rest of the read's values, and the note
+stays on the status line beside the dialog that reports the failure. A
+decoded source that list does not offer — a channel's slot — is not taken at all: the plan's own wire stays,
+STREAMING is read as incomplete (`ReadbackResult.sourceUnread`, and the node in `unreadNodes`), so a Fetch
+reports a partial read and Live sync does not start.
+
+A follow read and a `.urxf` import that find NONE leave the plan with no STREAMING wire, as does an undo or
+redo that removes it — undoing a source drawn onto such a plan, or replaying an entry after a device read has
+moved STREAMING's source under it. The emit then sends nothing to that selector (it never sends NONE there)
+and registers the address as a follow-only one (`planToFollowOnlyAddrs`). The unit announces a source picked
+on its own panel at that address, one notify per half, as it announces a write there (measured on the unit),
+so that source reaches the plan through the registration.
 
 ### Taking back a value the write path normalised
 
