@@ -1838,11 +1838,15 @@ still-held pointer a live control — the state the hold exists to prevent. So t
 blur, and the refresh runs at the **first** release to arrive: this screen's own `pointerup` or
 `pointercancel`, or the end of the last hold anywhere in the app — which the window coming back also
 produces, so a return with the button still down lands it there. Whichever runs first clears `grabbed`;
-the others find it already cleared. The hold in turn asks for the row that is on screen
+the others find it already cleared. The one refresh that does not wait is a plan **replaced** under the press —
+the model switch a Fetch or a Live-sync start applies: the plan the press began on is gone, so the screen
+rebuilds against the plan that took its place without waiting. Until that press ends, nothing it drives writes —
+neither the row it began on nor the fresh one under the still-held pointer, whichever of them the engine goes on
+driving — and once it ends the rows are drawn again from what the plan holds. The hold in turn asks for the row that is on screen
 rather than the one the gesture started on, since a rebuild may already have replaced it. A rebuilt row
 keeps whatever `disabled` state the rebuild gave it — COMP's 1-knob coming on hands threshold / ratio /
-gain / knee to the device and locks those rows — and it does not get focus back, because no rebuild in
-this app restores focus.
+gain / knee to the device and locks those rows — and it does not get focus back, because the screen's own
+rebuild restores none.
 
 The inspector defers on the same signal, through the gate that already waits out an IME composition and
 an open `<select>` picker. That one is worth naming because a held row is the only one of the three with

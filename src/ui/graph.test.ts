@@ -28,6 +28,7 @@ import {
   nodeIds,
   portHit,
   press,
+  release,
   selBarCount,
   shelfChips,
   tapHit,
@@ -872,6 +873,161 @@ describe("node drag", () => {
     fx = graphFixture();
     fx.graph.alignStereoPair("ch1");
     expect(nodeEl(fx.host, "ch1")).not.toBeNull();
+  });
+});
+
+// The host can refuse an edit, and the board asks before it writes: each gesture that writes
+// the plan, refused, leaves the plan as it was and reports nothing. Each is shown taken as
+// well, so a gesture that writes nothing either way cannot pass for a refused one.
+describe("an edit the host refuses", () => {
+  const USB_A = "out.usbmain_a:in";
+  const selectTwo = (): void => {
+    const g = fx.graph as unknown as { toggleNodeSelection: (id: string) => void };
+    g.toggleNodeSelection("ch1");
+    g.toggleNodeSelection("ch2");
+  };
+  const gestures: Array<{ name: string; seed?: GraphOptions["seed"]; act: () => void }> = [
+    { name: "a node drag", act: () => drag(faceplate(fx.host, "ch1")!, { x: 260, y: 180 }) },
+    {
+      name: "a wire drawn from a jack",
+      seed: (plan) => {
+        plan.connections = plan.connections.filter((c) => c.to !== USB_A);
+      },
+      act: () => drag(tapHit(fx.host, "ch1:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A)),
+    },
+    {
+      name: "a wire deleted",
+      seed: (plan) => {
+        plan.connections = plan.connections.filter((c) => c.to !== USB_A);
+        plan.connections.push({ from: "ch1:out", to: USB_A, kind: "patch" });
+      },
+      act: () => fx.graph.deleteConnection("ch1:out", USB_A),
+    },
+    { name: "a node shelved", act: () => fx.graph.hideNode("ch1") },
+    { name: "Hide unused", act: () => fx.graph.hideUnused() },
+    {
+      name: "the multi-selection shelved",
+      act: () => {
+        selectTwo();
+        fx.graph.hideSelected();
+      },
+    },
+    {
+      name: "a node brought back from the shelf",
+      seed: (plan) => void (plan.hidden = ["ch1"]),
+      act: () => fx.graph.showNode("ch1"),
+    },
+    { name: "Show all", seed: (plan) => void (plan.hidden = ["ch1"]), act: () => fx.graph.showAll() },
+    { name: "Arrange", act: () => fx.graph.autoLayout() },
+    {
+      name: "a note collapsed",
+      seed: (plan) => void (plan.notes = { ch1: "take" }),
+      act: () => fx.graph.toggleNoteCollapse("ch1"),
+    },
+    {
+      name: "a collapsed note opened for editing",
+      seed: (plan) => {
+        plan.notes = { ch1: "take" };
+        plan.noteCollapsed = ["ch1"];
+      },
+      act: () => {
+        press(faceplate(fx.host, "ch1")!);
+        press(faceplate(fx.host, "ch1")!);
+      },
+    },
+  ];
+  for (const g of gestures) {
+    it(`writes nothing for ${g.name} while refused, and writes it once taken`, () => {
+      fx = graphFixture({ seed: g.seed });
+      const before = JSON.stringify(fx.plan);
+      fx.cb.mayEdit.mockReturnValue(false);
+      g.act();
+      expect(JSON.stringify(fx.plan)).toBe(before);
+      expect(fx.cb.onChange).not.toHaveBeenCalled();
+      expect(fx.host.querySelector("textarea")).toBeNull();
+      fx.restore();
+
+      fx = graphFixture({ seed: g.seed });
+      g.act();
+      expect(JSON.stringify(fx.plan), "the positive control: the gesture writes the plan").not.toBe(before);
+    });
+  }
+
+  // Asked before each move rather than once per press, so a drag the host starts refusing
+  // part-way writes nothing from there on — and the press ends there, so taking edits again
+  // does not bring it back.
+  it("ends a drag at the move the host refuses, and keeps it ended", () => {
+    fx = graphFixture();
+    const at = (type: string, x: number, y: number): PointerEvent =>
+      new PointerEvent(type, { pointerId: 1, clientX: x, clientY: y, bubbles: true, cancelable: true });
+    faceplate(fx.host, "ch1")!.dispatchEvent(at("pointerdown", 100, 100));
+    fx.svg.dispatchEvent(at("pointermove", 260, 180));
+    const moved = JSON.stringify(fx.plan.positions["ch1"]);
+    expect(moved, "the premise: the drag moved the node").toBeDefined();
+    fx.cb.mayEdit.mockReturnValue(false);
+    fx.svg.dispatchEvent(at("pointermove", 300, 220));
+    expect(JSON.stringify(fx.plan.positions["ch1"])).toBe(moved);
+    // What it moved before the refusal is reported, once.
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+    fx.cb.mayEdit.mockReturnValue(true);
+    fx.svg.dispatchEvent(at("pointermove", 400, 300));
+    fx.svg.dispatchEvent(at("pointerup", 400, 300));
+    expect(JSON.stringify(fx.plan.positions["ch1"])).toBe(moved);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+  });
+});
+
+// A gesture belongs to the plan it began on. A plan replaced under it ends it, and a pointer
+// still held writes nothing into the plan that took its place; the same plan re-drawn in place
+// (a device read landing in it) keeps the gesture.
+describe("a plan replaced under a gesture", () => {
+  const at = (type: string, x: number, y: number): PointerEvent =>
+    new PointerEvent(type, { pointerId: 1, clientX: x, clientY: y, bubbles: true, cancelable: true });
+
+  it("ends a node drag, reporting nothing and writing nothing into the new plan", () => {
+    fx = graphFixture();
+    faceplate(fx.host, "ch1")!.dispatchEvent(at("pointerdown", 100, 100));
+    fx.svg.dispatchEvent(at("pointermove", 260, 180));
+    const next = defaultPlan("URX44V");
+    fx.graph.setModel(getModel("URX44V"), next);
+    const place = nodeEl(fx.host, "ch1")!.getAttribute("transform");
+    fx.svg.dispatchEvent(at("pointermove", 400, 300));
+    fx.svg.dispatchEvent(at("pointerup", 400, 300));
+    expect(next.positions["ch1"]).toBeUndefined();
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("transform")).toBe(place);
+    expect(fx.cb.onChange).not.toHaveBeenCalled();
+  });
+
+  it("ends a wire being drawn, drawing nothing into the new plan", () => {
+    const USB_A = "out.usbmain_a:in";
+    const withoutA = (plan: Plan): void => {
+      plan.connections = plan.connections.filter((c) => c.to !== USB_A);
+    };
+    fx = graphFixture({ seed: withoutA });
+    const tap = tapHit(fx.host, "ch1:out")!;
+    tap.dispatchEvent(at("pointerdown", 0, 0));
+    fx.svg.dispatchEvent(at("pointermove", 60, 0));
+    expect(fx.host.querySelector(".overlay-temp"), "the premise: the wire is being drawn").not.toBeNull();
+    const next = defaultPlan("URX44V");
+    withoutA(next);
+    fx.graph.setModel(getModel("URX44V"), next);
+    expect(fx.host.querySelector(".overlay-temp")).toBeNull();
+    fx.svg.dispatchEvent(at("pointermove", 400, 200));
+    release(fx.svg, { x: 400, y: 200 }, portHit(fx.host, USB_A));
+    expect(next.connections.filter((c) => c.to === USB_A)).toEqual([]);
+    expect(fx.cb.onChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps a node drag when the same plan is drawn again", () => {
+    fx = graphFixture();
+    faceplate(fx.host, "ch1")!.dispatchEvent(at("pointerdown", 100, 100));
+    fx.svg.dispatchEvent(at("pointermove", 260, 180));
+    fx.graph.setModel(getModel("URX44V"), fx.plan);
+    const moved = JSON.stringify(fx.plan.positions["ch1"]);
+    fx.svg.dispatchEvent(at("pointermove", 400, 300));
+    fx.svg.dispatchEvent(at("pointerup", 400, 300));
+    expect(JSON.stringify(fx.plan.positions["ch1"])).not.toBe(moved);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
   });
 });
 

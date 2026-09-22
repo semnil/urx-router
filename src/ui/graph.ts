@@ -244,6 +244,9 @@ export interface GraphCallbacks {
   onChange: () => void;
   // Fired whenever the shelved-node set changes, so the host can persist it.
   onHiddenChange: (hidden: string[]) => void;
+  // Asked before a gesture writes the plan. False refuses it: nothing is written, and the
+  // host has said why.
+  mayEdit: () => boolean;
 }
 
 interface Pt {
@@ -389,6 +392,14 @@ export class Graph {
   }
 
   setModel(model: DeviceModel, plan: Plan): void {
+    // A gesture in progress belongs to the plan it began on. A different plan here is that one
+    // replaced, so the gesture ends and reports nothing: a pointer still held writes nothing
+    // into the plan that took its place.
+    if (plan !== this.plan) {
+      this.dragNode = null;
+      this.lastNodeClick = null;
+      this.endAllPointers();
+    }
     this.model = model;
     this.plan = plan;
     this.selection = null;
@@ -528,6 +539,7 @@ export class Graph {
   /** Minimize a node's note to its header, or re-expand it. */
   toggleNoteCollapse(id: string): void {
     if (!this.noteLines(id).length) return;
+    if (!this.cb.mayEdit()) return;
     const nowCollapsed = !this.collapsed.has(id);
     if (nowCollapsed) this.collapsed.add(id);
     else this.collapsed.delete(id);
@@ -547,6 +559,7 @@ export class Graph {
 
   /** Open a floating textarea over the node's note panel, editing in context. */
   private openNoteEditor(id: string): void {
+    if (!this.cb.mayEdit()) return;
     this.closeNoteEditor();
     this.select({ type: "node", id });
     // Editing always shows the panel, so un-collapse first. That drops the flag
@@ -1799,6 +1812,7 @@ export class Graph {
   }
 
   deleteConnection(from: string, to: string): void {
+    if (!this.cb.mayEdit()) return;
     if (isFixedConnection(this.model, from, to)) {
       this.cb.onStatus(t().status.fixedConnection);
       return;
@@ -1982,6 +1996,12 @@ export class Graph {
       // opened the note editor instead — and on a collapsed note that also un-collapsed
       // it and marked the plan changed.
       if (!this.dragNode.moved) this.lastNodeClick = null;
+      // Asked before every move writes the place, so a refused drag ends here having moved
+      // nothing — and, being a drag, is not half of a double-press either.
+      if (!this.cb.mayEdit()) {
+        this.endNodeDrag();
+        return;
+      }
       this.dragNode.moved = true;
       const p = this.clientToContent(e);
       this.plan.positions[this.dragNode.id] = {
@@ -2019,9 +2039,10 @@ export class Graph {
       if (this.connect.mode === "pending") {
         const moved = Math.hypot(e.clientX - this.connect.startX, e.clientY - this.connect.startY);
         if (moved < DRAG_THRESHOLD) return;
-        this.connect.mode = this.beginConnect(this.connect.ref, this.connect.dir, this.connect.tap)
-          ? "connecting"
-          : "noop";
+        this.connect.mode =
+          this.cb.mayEdit() && this.beginConnect(this.connect.ref, this.connect.dir, this.connect.tap)
+            ? "connecting"
+            : "noop";
       }
       if (this.connect.mode === "connecting") {
         const p = this.clientToContent(e);
@@ -2123,7 +2144,8 @@ export class Graph {
 
   /**
    * Drop every pointer this view is tracking — what a window blur ends, where the two
-   * pointer ends above each speak for one pointer and are told which.
+   * pointer ends above each speak for one pointer and are told which. The host calls it too,
+   * before the board stops taking edits, so a moved node is reported while it still can be.
    *
    * `cancelInteraction` alone is not that: it clears the interaction but leaves
    * `pointers`, `pinch` and the captures, all three of which the pointer ends do clear.
@@ -2133,7 +2155,7 @@ export class Graph {
    * is fresh per press, so one left behind makes the next single press read as a second
    * finger and the view opens a pinch nobody started.
    */
-  private endAllPointers(): void {
+  endAllPointers(): void {
     for (const id of this.pointers.keys()) {
       try {
         this.svg.releasePointerCapture(id);
@@ -2392,6 +2414,7 @@ export class Graph {
    *  channel on just its factory sends is left in place — collapse it by hand
    *  (inspector / multi-select hide) instead. */
   hideUnused(): void {
+    if (!this.cb.mayEdit()) return;
     // SD Rec track slots follow their header in a chain, so they are never shelved
     // on their own (shelving the header collapses them via isHidden). The header
     // counts as wired when any of its slots is assigned, so an in-use recorder
@@ -2411,6 +2434,7 @@ export class Graph {
 
   /** Shelve one node. Its wires (if any) are hidden along with it. */
   hideNode(id: string): void {
+    if (!this.cb.mayEdit()) return;
     this.hidden.add(id);
     this.commitHidden();
     this.dropSelectionIfHidden();
@@ -2423,6 +2447,7 @@ export class Graph {
   hideSelected(): void {
     const ids = [...this.selectedNodes];
     if (!ids.length) return;
+    if (!this.cb.mayEdit()) return;
     const shelvable = ids.filter((id) => !this.hidden.has(id));
     for (const id of shelvable) this.hidden.add(id);
     this.selection = null;
@@ -2439,6 +2464,7 @@ export class Graph {
    * back (it is never shown alone) and a parent brings its child back. Only the
    * parent is placed — the child's position derives from it. */
   showNode(id: string): void {
+    if (!this.cb.mayEdit()) return;
     const parent = this.parentOf(id);
     let changed = this.hidden.delete(id);
     if (parent) {
@@ -2474,6 +2500,7 @@ export class Graph {
   /** Bring every shelved node back and re-frame the diagram. */
   showAll(): void {
     if (!this.hidden.size) return;
+    if (!this.cb.mayEdit()) return;
     const returning = new Set(this.hidden);
     this.hidden.clear();
     this.commitHidden();
@@ -2706,6 +2733,7 @@ export class Graph {
   // --- layout / export -----------------------------------------------------
 
   autoLayout(): void {
+    if (!this.cb.mayEdit()) return;
     // Stack each column top-to-bottom, but snap every node onto the ROW_GAP grid
     // so the result is identical to a fresh plan's default positions (which are
     // pure row * ROW_GAP) — running Arrange on an untouched board moves nothing.

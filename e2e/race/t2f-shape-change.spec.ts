@@ -470,7 +470,7 @@ test.describe("T2f shape-change", () => {
     expect(registeredFlagged).toEqual([848]);
     expect(reg.at(-1)).toEqual([848, 0, 0]);
     // …and no readback group covers them either: a whole-device read of ~800 addresses
-    // asks for none of the thirteen. 848 is read once, by the badge refresh the session
+    // asks for none of the thirteen. 848 is read once, by the Follow USB read the session
     // start makes, which is the same asymmetry seen from the read side.
     expect(setupReads).toHaveLength(0);
     expect(followUsbReads).toHaveLength(1);

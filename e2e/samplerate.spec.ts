@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "./fixtures";
-import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
+import { dialogsOf, setRefusedReads, stubTauriDevice, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 
 // The sample rate is the one plan value the device can accept and then undo by
@@ -161,6 +161,34 @@ test("the release arm names what the plan's rate costs the recorder, and the sha
   // Where it must NOT be: the note belongs to every arm, adopting included.
   await expect(page.locator("#rate-choice-note")).not.toContainText("Track Count");
 
+  await page.click("#rate-choice-cancel");
+  expect(await writesOf(page)).toEqual([]);
+});
+
+// The recorder's count is read from the unit before the choice is offered, and a read that
+// fails cancels the write there, as every read on the link does: no choice, nothing sent.
+// The same write with the read answering reaches the choice and names the cost, which is
+// what makes the missing choice the refusal's doing.
+test("an unreadable Track Count cancels the write before the choice is offered", async ({ page }) => {
+  await stubDevice(page, { deviceRate: 48000, followUsb: true, trackPairs: 8 });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await chooseOption(page.locator("#rate-picker"), { value: "96000" });
+
+  await setRefusedReads(page, [SD_REC_TRACK_COUNT]);
+  await page.click("#btn-device");
+  await page.click("#btn-write");
+  await expect
+    .poll(() => dialogsOf(page))
+    .toContainEqual(expect.stringContaining("Track Count could not be read (read timeout)"));
+  await expect(page.locator("#rate-choice")).toBeHidden();
+  expect(await writesOf(page)).toEqual([]);
+
+  await setRefusedReads(page, []);
+  await page.click("#btn-device");
+  await page.click("#btn-write");
+  await expect(page.locator("#rate-choice")).toBeVisible();
+  await expect(page.locator("#rate-choice-release-note")).toContainText("16");
   await page.click("#rate-choice-cancel");
   expect(await writesOf(page)).toEqual([]);
 });

@@ -84,6 +84,8 @@ export function graphFixture(opts: GraphOptions = {}): GraphFixture {
     onStatus: vi.fn(),
     onChange: vi.fn(),
     onHiddenChange: vi.fn(),
+    // Every edit is taken; a case about a refused one answers false itself.
+    mayEdit: vi.fn(() => true),
   };
   // The view registers a window-lifetime listener (its blur ender), and jsdom's window
   // outlives the file — so without this each fixture leaves one behind and a later
@@ -162,6 +164,18 @@ export function drag(
     from.dispatchEvent(pointer("pointerdown", start.x, start.y, init));
     from.dispatchEvent(pointer("pointermove", to.x, to.y, init));
     from.dispatchEvent(pointer("pointerup", to.x, to.y, init));
+  } finally {
+    hitTarget = prev;
+  }
+}
+
+/** Release a press already in flight at `to`, over `endOn` — the second half of `drag`, for a
+ *  case that does something between the press and its release. */
+export function release(on: Element, to: { x: number; y: number }, endOn: Element | null = null): void {
+  const prev = hitTarget;
+  hitTarget = endOn;
+  try {
+    on.dispatchEvent(pointer("pointerup", to.x, to.y));
   } finally {
     hitTarget = prev;
   }

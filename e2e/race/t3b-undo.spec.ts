@@ -1318,13 +1318,14 @@ test.describe("T3b undo", () => {
     await chooseOption(page.locator("#model-picker"), "URX44V");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 
-    // (b)/(c) A Fetch, cancelled at its first read. It used to restore a pre-read clone
-    // by replacing the plan object, and rerenderPlan then reset the history against a
-    // document that was not even the one the entries were recorded on. The read now
-    // works on a private copy (readback.readIntoPlan), so a cancel touches nothing —
-    // and a history that describes an unchanged plan has no reason to be thrown away.
+    // (b)/(c) A Fetch, cancelled at the first read of its plan — its second read, Follow
+    // USB's being the first. It used to restore a pre-read clone by replacing the plan
+    // object, and rerenderPlan then reset the history against a document that was not
+    // even the one the entries were recorded on. The read now works on a private copy
+    // (readback.readIntoPlan), so a cancel touches nothing — and a history that
+    // describes an unchanged plan has no reason to be thrown away.
     await threeEdits();
-    await blockAt(page, "vd_get", 1);
+    await blockAt(page, "vd_get", 2);
     await mark(page, "fetch-cancel");
     await page.click("#btn-device");
     await page.click("#btn-fetch");

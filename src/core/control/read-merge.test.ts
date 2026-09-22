@@ -180,6 +180,43 @@ describe("readIntoPlan", () => {
     // "A cancel means nothing happened" — with no restore step to get it wrong.
     expect(JSON.stringify(plan)).toBe(before);
   });
+
+  // A read its caller refuses (a live start refuses an incomplete one) merges nothing, the
+  // same as one that threw, and still says what it read. The same read accepted is the
+  // positive control: it is what makes the untouched plan the refusal's doing.
+  for (const accepted of [false, true]) {
+    it(`${accepted ? "merges" : "writes nothing from"} a read its caller ${accepted ? "accepts" : "refuses"}`, async () => {
+      const plan = basePlan();
+      const before = JSON.stringify(plan);
+      const partial: ReadbackResult = { applied: 1, errors: ["ch3: read-refused"], unreadNodes: new Set(["ch3"]) };
+      const asked: ReadbackResult[] = [];
+
+      const merged = await readIntoPlan(
+        () => plan,
+        async (into) => {
+          into.nodeParams.ch2 = { ...into.nodeParams.ch2, hpf: true };
+          return partial;
+        },
+        undefined,
+        undefined,
+        (read) => (asked.push(read), accepted),
+      );
+
+      expect(asked).toEqual([partial]);
+      expect(merged).not.toBeNull();
+      expect(merged!.errors).toEqual(partial.errors);
+      expect(merged!.deviceView.nodeParams.ch2?.hpf).toBe(true);
+      if (accepted) {
+        expect(plan.nodeParams.ch2?.hpf).toBe(true);
+        expect(merged!.devicePatch).not.toEqual([]);
+      } else {
+        expect(JSON.stringify(plan)).toBe(before);
+        expect(merged!.devicePatch).toEqual([]);
+        expect(merged!.unplaced).toEqual([]);
+        expect(merged!.held).toEqual([]);
+      }
+    });
+  }
 });
 
 // The value contest cannot see an edit that ended where it started. These drive the real

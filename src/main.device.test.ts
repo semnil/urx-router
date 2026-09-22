@@ -26,14 +26,15 @@ import {
 } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
-import { attackToVd, eqFreqToVd } from "./core/control/vd";
+import { attackToVd, eqFreqToVd, levelToVd, vdToLevel } from "./core/control/vd";
 import { formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
-import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE } from "./core/control/params";
+import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, STEREO_FADER } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
 import { insertFxControl, nameControl } from "./core/control/translate";
 import { getModel } from "./models";
+import { loadHidden } from "./app/view-state";
 import { faceplate, press, wireHit } from "./ui/graph.test-util";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
@@ -128,6 +129,9 @@ async function invoked(shell: TauriShell, cmd: string, n = 1, timeout = 25_000):
 }
 
 const live = (): HTMLButtonElement => document.getElementById("btn-live") as HTMLButtonElement;
+/** A fetch's own finally has run: it puts the button's label back. */
+const fetchEnded = (): Promise<void> =>
+  vi.waitFor(() => expect($("btn-fetch").textContent).toBe(t().toolbar.fetchDevice), { timeout: 10_000 });
 
 /** The inspector row a label names (main.flows.test.ts). */
 const row = (label: string): HTMLElement => {
@@ -391,6 +395,34 @@ const pickPanBal = (value: number): void => {
   const sel = paramRow("PAN / BAL").querySelector("select")!;
   sel.value = String(value);
   sel.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+/** Which face of the oscillator's ON toggle the inspector shows lit, with `bus.osc` already
+ *  selected. The default plan has it OFF, and every unwritten address a stub answers 0 reads
+ *  OFF too. */
+const oscFace = (): string | null | undefined => row(t().inspector.oscOn).querySelector("button.on")?.textContent;
+/** The same, selecting the node first. Two presses on one node inside the board's
+ *  double-press window open its note editor, whose field then owns the Edit menu's undo, so a
+ *  case that selects the node and then undoes reads through `oscFace` in between. */
+const oscOn = (): string | null | undefined => {
+  selectNode("bus.osc");
+  return oscFace();
+};
+/** Press the oscillator's ON face, selecting the node through a completed press first. */
+const pressOscOn = (): void =>
+  [...paramRow(t().inspector.oscOn).querySelectorAll<HTMLButtonElement>("button")]
+    .find((b) => b.textContent === "ON")!
+    .click();
+const turnOscOn = (): void => {
+  selectNode("bus.osc");
+  pressOscOn();
+};
+
+/** Undo from the application menu, and wait until the oscillator, selected already, shows
+ *  `face`. */
+const undoTo = async (shell: TauriShell, face: string): Promise<void> => {
+  expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+  await vi.waitFor(() => expect(oscFace()).toBe(face), { timeout: 10_000 });
 };
 
 /** Which half of the bypass toggle is lit. The section holds one toggle group; the
@@ -809,6 +841,46 @@ describe("Fetch from device", () => {
     expect(shell.count("plugin:dialog|message")).toBe(0);
     expect(SUPPORTED_SYSTEM_FIRMWARE).toBeTruthy();
   });
+
+  // A read that lands drops the undo history even where it changes no value: the unit here
+  // holds everything the plan does, the edit made before the read included, and the undo that
+  // follows has nothing to take back.
+  for (const [flow, start, landed] of [
+    [
+      "fetch",
+      () => $("btn-fetch").click(),
+      async (shell: TauriShell) => {
+        await invoked(shell, "vd_disconnect", 2);
+        await fetchEnded();
+      },
+    ],
+    [
+      "live start",
+      () => live().click(),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+    ],
+  ] as const) {
+    it(`drops the undo history on a ${flow} whose read changed no value`, SLOW, async () => {
+      let unitOsc = 0;
+      const shell = await bootDevice({
+        vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.OSC_ON.id ? unitOsc : 0),
+      });
+      $("btn-fetch").click();
+      await invoked(shell, "vd_disconnect");
+      await fetchEnded();
+      turnOscOn();
+      expect(oscFace(), "the premise: the edit landed").toBe("ON");
+      await new Promise((r) => setTimeout(r, 0)); // the press's own entry closes
+      unitOsc = 1;
+      start();
+      await landed(shell);
+      // By way of another node, for the reason the draw-failure cases give.
+      selectNode("ch1");
+      expect(oscOn(), "the premise: the read left the edit standing").toBe("ON");
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+    });
+  }
 });
 
 /**
@@ -915,6 +987,1208 @@ describe("the model the device turns out to be", () => {
     // actually is rather than the one that was on screen.
     expect(shell.count("vd_params_subscribe")).toBe(1);
   });
+
+  /** The plan on screen, read back through the case's only save (SAVES). */
+  const savedPlan = async (
+    shell: TauriShell,
+  ): Promise<{
+    modelId: string;
+    connections: Array<{ from: string; to: string; params?: { level?: number } }>;
+    positions: Record<string, unknown>;
+  }> => {
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
+    return JSON.parse((shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string }).contents);
+  };
+
+  // The read into the switch's plan lands the unit's values on the model's fixed
+  // connections — every channel's main fader, mono and stereo, here — in the plan the
+  // switch puts on screen.
+  it("puts the device's values on the switched plan, its fixed connections' included", SLOW, async () => {
+    const shell = await bootDevice({
+      ...connectAs("URX22"),
+      ...SAVES,
+      vd_get: (a: Record<string, unknown>) =>
+        a.paramId === PARAMS.CH_FADER.id || a.paramId === STEREO_FADER ? levelToVd(-10) : 0,
+    });
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(
+      () => expect(countFor(statusText(), (n) => t().status.fetchedDevice("URX22", n))).toBeGreaterThan(50),
+      { timeout: 10_000 },
+    );
+
+    const doc = await savedPlan(shell);
+    expect(doc.modelId).toBe("URX22");
+    const channels = new Set(
+      getModel("URX22")
+        .nodes.filter((n) => n.kind === "channel")
+        .map((n) => n.id),
+    );
+    const mains = doc.connections.filter((c) => c.to === "bus.stereo:in" && channels.has(c.from.split(":")[0]!));
+    expect(mains.length, "the premise: the model's channels feed STEREO").toBe(channels.size);
+    for (const c of mains) expect(c.params?.level, c.from).toBe(vdToLevel(levelToVd(-10)));
+  });
+
+  /** A unit whose Follow USB read — the first inside a fetch or a live start — waits until
+   *  `release` answers it, with a value or a refusal. Every other read answers `rest`. */
+  const holdFollowUsb = (
+    rest: (a: Record<string, unknown>) => number = () => 0,
+  ): {
+    reading: Promise<void>;
+    release: (answer: number | Error) => void;
+    vd_get: (a: Record<string, unknown>) => unknown;
+  } => {
+    let asked = (): void => {};
+    const reading = new Promise<void>((r) => (asked = r));
+    let release = (_answer: number | Error): void => {};
+    const answered = new Promise<number | Error>((r) => (release = r));
+    const vd_get = (a: Record<string, unknown>): unknown => {
+      if (a.paramId !== PARAMS.FOLLOW_USB.id) return rest(a);
+      asked();
+      return answered.then((v) => {
+        if (v instanceof Error) throw v;
+        return v;
+      });
+    };
+    return { reading, release: (v) => release(v), vd_get };
+  };
+  const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+  /** CH 1's first send column on the CONSOLE, looked up afresh: a refused edit repaints the
+   *  strips. */
+  const firstSend = (): HTMLElement =>
+    $("console-host").querySelector(".con-strip")!.querySelector<HTMLElement>(".con-vfad")!;
+  /** Step the send one detent up from the keyboard, the way the operator does. */
+  const stepSendUp = (): void => {
+    for (const type of ["keydown", "keyup"]) {
+      firstSend().dispatchEvent(new KeyboardEvent(type, { key: "ArrowUp", bubbles: true, cancelable: true }));
+    }
+  };
+
+  // While a switched read runs, the plan on screen is the one the switch discards, so an edit
+  // to it is refused rather than kept and then lost: the control goes back to the value the
+  // plan holds and the status line says why. The key is CH 1's send to MIX 1, a fixed wire
+  // both models carry, so the switch's plan then takes the unit's value for it with nothing
+  // contested and nothing left over to report.
+  it("refuses an edit to the plan a switched fetch is reading to replace", SLOW, async () => {
+    const unit = holdFollowUsb((a) => (a.paramId === PARAMS.SEND_LEVEL.id ? levelToVd(-10) : 0));
+    const shell = await bootDevice({ ...connectAs("URX22"), ...SAVES, vd_get: unit.vd_get });
+    $("btn-view-console").click();
+    $("btn-fetch").click();
+    await unit.reading;
+    const before = firstSend().getAttribute("aria-valuenow");
+    try {
+      stepSendUp();
+      expect(firstSend().getAttribute("aria-valuenow"), "the premise: the console took the key").not.toBe(before);
+      await tick();
+      expect(firstSend().getAttribute("aria-valuenow")).toBe(before);
+      expect(statusText()).toBe(t().status.busySwitchRead);
+    } finally {
+      unit.release(0);
+    }
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(
+      () => expect(countFor(statusText(), (n) => t().status.fetchedDevice("URX22", n))).toBeGreaterThan(50),
+      { timeout: 10_000 },
+    );
+    expect(confirms(shell)).toEqual([t().confirm.switchModel("URX22", "URX44V")]);
+    const doc = await savedPlan(shell);
+    expect(doc.modelId).toBe("URX22");
+    const mix1 = doc.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in");
+    expect(mix1?.params?.level).toBe(vdToLevel(levelToVd(-10)));
+  });
+
+  // The same refusal where the read then fails, so the plan it was made on stays on screen:
+  // what shows the edit never reached the plan is that the send still holds its value and that
+  // nothing was recorded for an undo to take back.
+  for (const [flow, start, failure] of [
+    ["fetch", () => $("btn-fetch").click(), (m: string) => t().status.fetchError(m)],
+    ["live start", () => live().click(), (m: string) => t().status.liveError(m)],
+  ] as const) {
+    it(`keeps no trace of an edit refused while a switched ${flow} reads, when the read fails`, SLOW, async () => {
+      const unit = holdFollowUsb();
+      const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+      $("btn-view-console").click();
+      start();
+      await unit.reading;
+      const before = firstSend().getAttribute("aria-valuenow");
+      try {
+        stepSendUp();
+        await tick();
+        expect(statusText()).toBe(t().status.busySwitchRead);
+      } finally {
+        unit.release(new Error("read-refused"));
+      }
+      await vi.waitFor(() => expect(errors(shell)).toEqual([failure("read-refused")]), { timeout: 10_000 });
+      await invoked(shell, "vd_disconnect");
+      await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 25_000 });
+
+      expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
+      expect(firstSend().getAttribute("aria-valuenow")).toBe(before);
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+      // Nor did it mark the plan unsaved: New replaces it without asking.
+      $("btn-new").click();
+      await vi.waitFor(() => expect(statusText()).toBe(t().status.newPlan), { timeout: 10_000 });
+      expect(confirms(shell)).toEqual([t().confirm.switchModel("URX22", "URX44V")]);
+    });
+  }
+
+  // The same refusal from the other surfaces, each reaching the plan through its own funnel:
+  // the inspector's toggle (a node-param edit) and the board's Hide unused (the shelved set,
+  // which the board also keeps a copy of and the stored layout a third). The same action once
+  // the read has failed is the positive control.
+  const nodesOnBoard = (): number => $("graph-host").querySelectorAll("g.node[data-id]").length;
+  for (const [surface, act, observe] of [
+    ["the inspector's toggle", () => pressOscOn(), () => oscFace()],
+    ["the board's Hide unused", () => $("btn-hide-unused").click(), () => nodesOnBoard()],
+  ] as const) {
+    it(`refuses an edit from ${surface} while a switched fetch reads`, SLOW, async () => {
+      const unit = holdFollowUsb();
+      const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+      selectNode("bus.osc");
+      const before = observe();
+      const shelf = loadHidden("URX44V");
+      $("btn-fetch").click();
+      await unit.reading;
+      try {
+        act();
+        await tick();
+        expect(observe()).toBe(before);
+        expect(statusText()).toBe(t().status.busySwitchRead);
+      } finally {
+        unit.release(new Error("read-refused"));
+      }
+      await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.fetchError("read-refused")]), {
+        timeout: 10_000,
+      });
+      await invoked(shell, "vd_disconnect");
+      expect(observe()).toBe(before);
+      expect(loadHidden("URX44V"), "the layout stored for the model").toEqual(shelf);
+      // The oscillator selected again by way of another node, for the reason the
+      // draw-failure cases below give.
+      selectNode("ch1");
+      selectNode("bus.osc");
+      act();
+      await tick();
+      expect(observe(), "the positive control: the same action lands").not.toBe(before);
+    });
+  }
+
+  // An undo there is refused too, and says the same thing — the ordinary device-read refusal
+  // would name the device instead. The entry it would have taken is still there afterwards.
+  it("refuses an undo while a switched fetch reads, and keeps the entry for after", SLOW, async () => {
+    const unit = holdFollowUsb();
+    const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+    turnOscOn();
+    expect(oscFace(), "the premise: the edit landed").toBe("ON");
+    await tick();
+    $("btn-fetch").click();
+    await unit.reading;
+    try {
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.busySwitchRead);
+      expect(oscFace()).toBe("ON");
+    } finally {
+      unit.release(new Error("read-refused"));
+    }
+    await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.fetchError("read-refused")]), { timeout: 10_000 });
+    await invoked(shell, "vd_disconnect");
+    await undoTo(shell, "OFF");
+  });
+
+  // And an incoming MIDI change: the MIDI gate refuses it with the same line, and the same
+  // message moves the control once the read is over — the half that makes the unchanged
+  // wire the refusal's doing.
+  it("refuses an incoming MIDI change while a switched fetch reads", SLOW, async () => {
+    const CC = 23;
+    const unit = holdFollowUsb();
+    const shell = (await bootApp({
+      seed: {
+        "urx-midi": JSON.stringify({
+          input: "Controller In",
+          models: {
+            URX44V: [
+              {
+                control: "ch1/mute",
+                addr: { type: "cc", channel: 0, controller: CC },
+                mode: "absolute",
+                button: "edge",
+              },
+            ],
+          },
+        }),
+      },
+      tauri: deviceCommands({
+        ...connectAs("URX22"),
+        "plugin:dialog|message": "Ok",
+        midi_list_inputs: ["Controller In"],
+        midi_open_input: null,
+        midi_close_input: null,
+        vd_get: unit.vd_get,
+      }),
+    }))!;
+    await invoked(shell, "midi_open_input");
+    const opened = shell.args[shell.invokes.indexOf("midi_open_input")] as {
+      channel: { onmessage: (d: unknown) => void };
+    };
+    // The CH 1 -> STEREO send, drawn dashed once the channel is muted.
+    const dashed = (): string | null | undefined =>
+      $("graph-host")
+        .querySelector<SVGPathElement>(
+          'g:has(> .wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]) path:not(.wire-hit)',
+        )
+        ?.getAttribute("stroke-dasharray");
+    expect(dashed(), "the premise: the send is drawn undimmed").toBeNull();
+
+    $("btn-fetch").click();
+    await unit.reading;
+    try {
+      opened.channel.onmessage([{ bytes: [0xb0, CC, 127] }]);
+      await vi.waitFor(() => expect(statusText()).toBe(t().status.busySwitchRead), { timeout: 10_000 });
+      expect(dashed()).toBeNull();
+    } finally {
+      unit.release(new Error("read-refused"));
+    }
+    await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.fetchError("read-refused")]), { timeout: 10_000 });
+    await invoked(shell, "vd_disconnect");
+    expect(dashed()).toBeNull();
+    opened.channel.onmessage([{ bytes: [0xb0, CC, 127] }]);
+    await vi.waitFor(() => expect(dashed()).toBe("1.5 4"), { timeout: 10_000 });
+  });
+
+  // The board writes a node's place as the pointer moves and reports the move once the drag
+  // ends, so a drag is refused before the node moves and ends at that refusal: what the pointer
+  // does after the switch writes nothing into the plan that replaced the one it was pressed on,
+  // and leaves nothing for an undo. CH 3 is a mono channel on a URX44V and
+  // half of the CH 3/4 pair on a URX22, so a place carried across is one for a node the
+  // switched plan does not have.
+  const boardSvg = (): SVGSVGElement => $("graph-host").querySelector("svg")!;
+  const placeOf = (id: string): string | null | undefined =>
+    $("graph-host").querySelector(`g.node[data-id="${id}"]`)?.getAttribute("transform");
+  const pointerAt = (type: string, x: number, y: number): PointerEvent =>
+    new PointerEvent(type, { pointerId: 1, clientX: x, clientY: y, bubbles: true, cancelable: true });
+  /** Press a node's faceplate and move the pointer, without releasing it. */
+  const grabAndMove = (id: string): void => {
+    faceplate($("graph-host"), id)!.dispatchEvent(pointerAt("pointerdown", 0, 0));
+    boardSvg().dispatchEvent(pointerAt("pointermove", 40, 30));
+  };
+  for (const [flow, start, ended] of [
+    ["fetch", () => $("btn-fetch").click(), () => fetchEnded()],
+    [
+      "live start",
+      () => live().click(),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+    ],
+  ] as const) {
+    it(`writes nothing into the switched plan from a drag held across a switched ${flow}`, SLOW, async () => {
+      const unit = holdFollowUsb();
+      const shell = await bootDevice({ ...connectAs("URX22"), ...SAVES, vd_get: unit.vd_get });
+      start();
+      await unit.reading;
+      const before = placeOf("ch3");
+      try {
+        grabAndMove("ch3");
+        expect(placeOf("ch3")).toBe(before);
+        expect(statusText()).toBe(t().status.busySwitchRead);
+      } finally {
+        unit.release(0);
+      }
+      await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+      boardSvg().dispatchEvent(pointerAt("pointermove", 70, 50));
+      boardSvg().dispatchEvent(pointerAt("pointerup", 70, 50));
+      await ended();
+
+      const doc = await savedPlan(shell);
+      expect(doc.modelId).toBe("URX22");
+      expect(doc.positions).not.toHaveProperty("ch3");
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+    });
+  }
+
+  // A press on a jack writes nothing until it moves, so one made during the read and still
+  // held when the switch applies has had nothing to refuse: it is the switch that ends it, and
+  // moved and released afterwards over a jack it could reach, it draws nothing into the
+  // switched plan. CH 2 is the partner of the CH 1 the unit's reads put on the USB output, so
+  // the drop would add it there.
+  it("draws nothing into the switched plan from a jack pressed across a switched fetch", SLOW, async () => {
+    const unit = holdFollowUsb();
+    const shell = await bootDevice({ ...connectAs("URX22"), ...SAVES, vd_get: unit.vd_get });
+    const USB_SUB = "out.usbsub:in";
+    $("btn-fetch").click();
+    await unit.reading;
+    try {
+      $("graph-host")
+        .querySelector('[data-tap="ch2:out"]')!
+        .dispatchEvent(pointerAt("pointerdown", 0, 0));
+    } finally {
+      unit.release(0);
+    }
+    await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+    const into = $("graph-host").querySelector(`[data-ref="${USB_SUB}"]`);
+    expect(into, "the premise: the switched board has the jack").not.toBeNull();
+    expect(wireHit($("graph-host"), "ch2:out", USB_SUB), "the premise: the jack does not hold CH 2").toBeNull();
+    const real = document.elementFromPoint;
+    document.elementFromPoint = (() => into) as typeof document.elementFromPoint;
+    try {
+      boardSvg().dispatchEvent(pointerAt("pointermove", 200, 100));
+      boardSvg().dispatchEvent(pointerAt("pointerup", 200, 100));
+    } finally {
+      document.elementFromPoint = real;
+    }
+    await fetchEnded();
+
+    const doc = await savedPlan(shell);
+    expect(doc.connections.filter((c) => c.from === "ch2:out" && c.to === USB_SUB)).toEqual([]);
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    expect(statusText()).toBe(t().status.nothingToUndo);
+  });
+
+  // A drag already moving when a switched read begins is ended there and reported as the edit
+  // it is, rather than kept against the read: the moves after it write nothing, and once the
+  // read has failed an undo takes the drag back.
+  it("reports a drag already moving when a switched fetch begins, as an edit an undo takes back", SLOW, async () => {
+    const unit = holdFollowUsb();
+    const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+    const before = placeOf("ch1");
+    grabAndMove("ch1");
+    const moved = placeOf("ch1");
+    expect(moved, "the premise: the drag moved the node").not.toBe(before);
+    $("btn-fetch").click();
+    await unit.reading;
+    try {
+      boardSvg().dispatchEvent(pointerAt("pointermove", 90, 70));
+      expect(placeOf("ch1")).toBe(moved);
+      boardSvg().dispatchEvent(pointerAt("pointerup", 90, 70));
+    } finally {
+      unit.release(new Error("read-refused"));
+    }
+    await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.fetchError("read-refused")]), { timeout: 10_000 });
+    await fetchEnded();
+    expect(placeOf("ch1")).toBe(moved);
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(placeOf("ch1")).toBe(before), { timeout: 10_000 });
+  });
+
+  // The same for the inspector, whose rebuild a control can hold — a picker left open, a
+  // composition in flight — while the switch replaces the plan the panel was built for. The
+  // panel is rebuilt past that hold, and what the old control still delivers reaches nothing:
+  // the switched plan is left with nothing to undo.
+  for (const [control, hold, deliver] of [
+    [
+      "a picker",
+      () => {
+        const picker = row(t().inspector.recPoint).querySelector<HTMLSelectElement>("select")!;
+        picker.focus();
+        return picker;
+      },
+      (picker: HTMLElement) => {
+        // Neither the value it showed nor the one the switched plan read (every read here
+        // answers 0), so a choice that landed would move the switched plan.
+        const sel = picker as HTMLSelectElement;
+        sel.value = [...sel.options].find((o) => o.value !== sel.value && o.value !== "0")!.value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+    ],
+    [
+      "a name being composed",
+      () => {
+        const field = row(t().inspector.name).querySelector<HTMLInputElement>("input")!;
+        field.focus();
+        field.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+        return field;
+      },
+      (field: HTMLElement) => {
+        (field as HTMLInputElement).value = "Vox";
+        field.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      },
+    ],
+  ] as const) {
+    it(`takes nothing into the switched plan from ${control} held across a switched fetch`, SLOW, async () => {
+      const unit = holdFollowUsb();
+      const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+      selectNode("ch1");
+      $("btn-fetch").click();
+      await unit.reading;
+      let held: HTMLElement;
+      try {
+        held = hold();
+      } finally {
+        unit.release(0);
+      }
+      await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+      expect(held.isConnected, "the panel built for the replaced plan is gone").toBe(false);
+      deliver(held);
+      await fetchEnded();
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+    });
+  }
+
+  // A tuning screen holds its rebuild while a pointer is down on it, and binds to its node
+  // again when the plan changes under it. A switch replaces the plan: the screen rebuilds past
+  // the press, so the slider the pointer was on is gone with the plan it was built for, and
+  // until that press ends nothing it drives writes — neither the slider it began on nor the
+  // switched plan's own under the pointer.
+  it("ends a tuning-screen press held across a switched fetch", SLOW, async () => {
+    const unit = holdFollowUsb();
+    const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+    $("btn-view-console").click();
+    $("btn-fetch").click();
+    await unit.reading;
+    const threshold = (): HTMLInputElement =>
+      $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="threshold"]')!;
+    let held: HTMLInputElement;
+    try {
+      $("console-host").querySelector(".con-strip")!.querySelector<HTMLElement>(".con-chip-open")!.click(); // GATE
+      held = threshold();
+      held.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    } finally {
+      unit.release(0);
+    }
+    await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+    expect(held.isConnected, "the slider built for the replaced plan is gone").toBe(false);
+    const shown = threshold().value;
+    for (const slider of [held, threshold()]) {
+      slider.value = String(Number(slider.value) - 5);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+    expect(threshold().value, "the rows show what the switched plan holds once the press ends").toBe(shown);
+    await fetchEnded();
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    expect(statusText()).toBe(t().status.nothingToUndo);
+    // The positive control: the switched plan's own slider takes a drag, as an edit an undo
+    // takes back.
+    const fresh = threshold();
+    const was = fresh.value;
+    fresh.value = String(Number(was) - 5);
+    fresh.dispatchEvent(new Event("input", { bubbles: true }));
+    fresh.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(threshold().value).toBe(was), { timeout: 10_000 });
+  });
+
+  // The keyboard's counterpart. A key held down goes on repeating into whatever holds the
+  // focus, and the CONSOLE hands the focus on across a rebuild of its strips. A key pressed on
+  // CH 1's fader while a switched read runs is refused; once the switch applies, its repeats
+  // reach no control of the switched plan, which is left with nothing to undo. A fresh press
+  // on the switched plan's own fader is the positive control: it moves the fader, as an edit an
+  // undo takes back.
+  const mainFader = (): HTMLElement =>
+    $("console-host").querySelector(".con-strip")!.querySelector<HTMLElement>(".con-fader")!;
+  /** CH 1's fader readout, which names the level to the step the keys move it by. */
+  const mainLevel = (): string | null =>
+    $("console-host").querySelector(".con-strip")!.querySelector(".con-readout .rv")!.textContent;
+  const arrowUp = (target: EventTarget, repeat: boolean): void => {
+    for (const type of repeat ? ["keydown"] : ["keydown", "keyup"])
+      target.dispatchEvent(new KeyboardEvent(type, { key: "ArrowUp", repeat, bubbles: true, cancelable: true }));
+  };
+  for (const [flow, start, ended] of [
+    ["fetch", () => $("btn-fetch").click(), () => fetchEnded()],
+    [
+      "live start",
+      () => live().click(),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+    ],
+  ] as const) {
+    it(`takes nothing into the switched plan from a key held across a switched ${flow}`, SLOW, async () => {
+      const unit = holdFollowUsb();
+      const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+      $("btn-view-console").click();
+      start();
+      await unit.reading;
+      try {
+        mainFader().focus();
+        mainFader().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+        await tick();
+        expect(statusText(), "the premise: the press was refused").toBe(t().status.busySwitchRead);
+      } finally {
+        unit.release(0);
+      }
+      await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+      const shown = mainLevel();
+      const held = document.activeElement ?? document.body;
+      for (let i = 0; i < 3; i++) arrowUp(held, true);
+      held.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowUp", bubbles: true, cancelable: true }));
+      await ended();
+
+      expect(mainLevel()).toBe(shown);
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+      mainFader().focus();
+      arrowUp(mainFader(), false);
+      expect(mainLevel(), "the positive control: a fresh press moves it").not.toBe(shown);
+      await tick();
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      await vi.waitFor(() => expect(mainLevel()).toBe(shown), { timeout: 10_000 });
+    });
+  }
+
+  // Once the read is over, whichever way it ended, the plan on screen takes a drag again and
+  // an undo takes it back: the refusal is a property of the read, not of the press.
+  const dragBackOnUndo = async (shell: TauriShell, id: string): Promise<void> => {
+    const before = placeOf(id);
+    grabAndMove(id);
+    boardSvg().dispatchEvent(pointerAt("pointerup", 40, 30));
+    expect(placeOf(id), "the drag moved the node").not.toBe(before);
+    await tick(); // the drag's own entry closes
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(placeOf(id)).toBe(before), { timeout: 10_000 });
+  };
+  for (const [flow, start, finish, model] of [
+    [
+      "fetch that switched",
+      () => $("btn-fetch").click(),
+      async (unit: ReturnType<typeof holdFollowUsb>) => {
+        unit.release(0);
+        await fetchEnded();
+      },
+      "URX22",
+    ],
+    [
+      "fetch that failed",
+      () => $("btn-fetch").click(),
+      async (unit: ReturnType<typeof holdFollowUsb>) => {
+        unit.release(new Error("read-refused"));
+        await fetchEnded();
+      },
+      "URX44V",
+    ],
+    [
+      "fetch that was cancelled",
+      () => $("btn-fetch").click(),
+      async (unit: ReturnType<typeof holdFollowUsb>) => {
+        $("btn-fetch").click(); // a second click cancels
+        unit.release(0);
+        await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 10_000 });
+        await fetchEnded();
+      },
+      "URX44V",
+    ],
+    [
+      "live start that switched",
+      () => live().click(),
+      async (unit: ReturnType<typeof holdFollowUsb>) => {
+        unit.release(0);
+        await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+      },
+      "URX22",
+    ],
+    [
+      "live start that failed",
+      () => live().click(),
+      async (unit: ReturnType<typeof holdFollowUsb>) => {
+        unit.release(new Error("read-refused"));
+        await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 25_000 });
+      },
+      "URX44V",
+    ],
+  ] as const) {
+    it(`takes a drag and its undo again after a ${flow}`, SLOW, async () => {
+      const unit = holdFollowUsb();
+      const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+      start();
+      await unit.reading;
+      try {
+        grabAndMove("ch1");
+        expect(statusText(), "the premise: the drag was refused").toBe(t().status.busySwitchRead);
+        boardSvg().dispatchEvent(pointerAt("pointerup", 40, 30));
+      } finally {
+        await finish(unit);
+      }
+      expect($<HTMLSelectElement>("model-picker").value).toBe(model);
+      await dragBackOnUndo(shell, "ch1");
+    });
+  }
+
+  // The refusal lasts as long as the read and no longer. Past it the plan on screen is the one
+  // that stays — kept by a fetch whose incomplete read switches nothing, or put there by a
+  // live start whose read applied the switch — and an edit made while the flow is still
+  // releasing its link or registering its session lands.
+  const heldCommand = (): { asked: Promise<void>; release: () => void; answer: () => Promise<null> } => {
+    let ask = (): void => {};
+    const asked = new Promise<void>((r) => (ask = r));
+    let release = (): void => {};
+    const released = new Promise<void>((r) => (release = r));
+    return { asked, release: () => release(), answer: () => (ask(), released.then(() => null)) };
+  };
+
+  it("takes edits again once a switched fetch's read is over, before its link is released", SLOW, async () => {
+    const disconnect = heldCommand();
+    const shell = await bootDevice({
+      ...connectAs("URX22"),
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId === PARAMS.CH_ON.id) throw new Error("read-refused");
+        return 0;
+      },
+      vd_disconnect: disconnect.answer,
+      "plugin:dialog|message": byMessage((m) => m !== t().confirm.deviceErrorExport),
+    });
+    $("btn-view-console").click();
+    $("btn-fetch").click();
+    await disconnect.asked;
+    const before = firstSend().getAttribute("aria-valuenow");
+    try {
+      expect($<HTMLSelectElement>("model-picker").value, "the premise: the incomplete read switched nothing").toBe(
+        "URX44V",
+      );
+      stepSendUp();
+      await tick();
+      expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+      expect(statusText()).not.toBe(t().status.busySwitchRead);
+    } finally {
+      disconnect.release();
+    }
+    await vi.waitFor(() => expect(confirms(shell)).toContain(t().confirm.deviceErrorExport), { timeout: 10_000 });
+    expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+  });
+
+  it("takes edits again once a switched live start's read is over, while its session registers", SLOW, async () => {
+    const subscribe = heldCommand();
+    await bootDevice({ ...connectAs("URX22"), vd_params_subscribe: subscribe.answer });
+    live().click();
+    await subscribe.asked;
+    try {
+      expect($<HTMLSelectElement>("model-picker").value, "the premise: the read applied the switch").toBe("URX22");
+      // The oscillator, which the unit here holds OFF.
+      turnOscOn();
+      await tick();
+      expect(oscFace()).toBe("ON");
+      expect(statusText()).not.toBe(t().status.busySwitchRead);
+    } finally {
+      subscribe.release();
+    }
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    expect(oscFace()).toBe("ON");
+  });
+
+  // And once a switched read has failed: the plan on screen is then the one that stays, so an
+  // edit made while the flow is still releasing its link lands.
+  for (const [flow, start, failure] of [
+    ["fetch", () => $("btn-fetch").click(), (m: string) => t().status.fetchError(m)],
+    ["live start", () => live().click(), (m: string) => t().status.liveError(m)],
+  ] as const) {
+    it(`takes edits again once a switched ${flow}'s read has failed, before its link is released`, SLOW, async () => {
+      const disconnect = heldCommand();
+      const shell = await bootDevice({
+        ...connectAs("URX22"),
+        vd_get: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.FOLLOW_USB.id) throw new Error("read-refused");
+          return 0;
+        },
+        vd_disconnect: disconnect.answer,
+      });
+      $("btn-view-console").click();
+      start();
+      await disconnect.asked;
+      const before = firstSend().getAttribute("aria-valuenow");
+      try {
+        expect($<HTMLSelectElement>("model-picker").value, "the premise: the failed read switched nothing").toBe(
+          "URX44V",
+        );
+        stepSendUp();
+        await tick();
+        expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+        expect(statusText()).not.toBe(t().status.busySwitchRead);
+      } finally {
+        disconnect.release();
+      }
+      await vi.waitFor(() => expect(errors(shell)).toEqual([failure("read-refused")]), { timeout: 10_000 });
+      expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+    });
+  }
+
+  // A refused edit's restore runs after the funnel that refused it, so an edit refused in the
+  // step the read resolves in has its restore run once the switch has been applied. The plan on
+  // screen is the switch's by then, and so is the status line, which the restore leaves
+  // standing. The first fetch counts the reads a switched fetch of this unit takes, so the
+  // second can edit at every step from its last read on until the switch is applied.
+  it("leaves the switch's status line standing when a refused edit's restore runs after the switch", SLOW, async () => {
+    let reads = 0;
+    const count = (): number => (reads++, 0);
+    const shell = await bootDevice({
+      ...connectAs("URX22"),
+      vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.FOLLOW_USB.id ? 0 : count()),
+    });
+    const picker = $<HTMLSelectElement>("model-picker");
+    $("btn-view-console").click();
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(() => expect(picker.value).toBe("URX22"), { timeout: 10_000 });
+    const total = reads;
+    // Back to the model the fetch switched from, so the next fetch offers the same switch.
+    picker.value = "URX44V";
+    picker.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.switchedModel("URX44V")), { timeout: 10_000 });
+
+    reads = 0;
+    const unit = holdFollowUsb(count);
+    shell.answer("vd_get", unit.vd_get);
+    $("btn-fetch").click();
+    await unit.reading;
+    unit.release(0);
+    let edits = 0;
+    for (let hop = 0; hop < 100_000 && picker.value === "URX44V"; hop++) {
+      await Promise.resolve();
+      if (picker.value === "URX44V" && reads >= total) {
+        stepSendUp();
+        edits++;
+      }
+    }
+    expect(picker.value, "the premise: the read applied the switch").toBe("URX22");
+    expect(edits, "the premise: edits were made from the read's last step on").toBeGreaterThan(0);
+    await invoked(shell, "vd_disconnect", 2);
+    await tick();
+    expect(statusText()).not.toBe(t().status.busySwitchRead);
+    expect(countFor(statusText(), (n) => t().status.fetchedDevice("URX22", n))).toBeGreaterThan(50);
+  });
+
+  // A switch the operator took replaces the plan only once the read into the new plan has
+  // landed. Each case below edits the plan first, so "as it was" is observable twice: the
+  // edit still on the board, and still the entry an undo takes back — a replacement drops
+  // both, whatever the picker then says.
+  const editFirst = async (): Promise<void> => {
+    turnOscOn();
+    expect(oscFace(), "the premise: the edit landed").toBe("ON");
+    await new Promise((r) => setTimeout(r, 0)); // the press's own entry closes
+  };
+  const unswitched = async (shell: TauriShell): Promise<void> => {
+    expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
+    expect(oscFace()).toBe("ON");
+    await undoTo(shell, "OFF");
+  };
+  const TAKEN = [t().confirm.discard, t().confirm.switchModel("URX22", "URX44V")];
+
+  for (const [flow, start, failure] of [
+    ["fetch", () => $("btn-fetch").click(), (m: string) => t().status.fetchError(m)],
+    ["live start", () => live().click(), (m: string) => t().status.liveError(m)],
+  ] as const) {
+    it(`leaves the plan and its model as they were when a switched ${flow}'s Follow USB read fails`, SLOW, async () => {
+      const shell = await bootDevice({
+        ...connectAs("URX22"),
+        vd_get: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.FOLLOW_USB.id) throw new Error("read-refused");
+          return 0;
+        },
+      });
+      await editFirst();
+      start();
+      await vi.waitFor(() => expect(errors(shell)).toEqual([failure("read-refused")]), { timeout: 10_000 });
+      await invoked(shell, "vd_disconnect");
+
+      expect(confirms(shell), "the premise: the switch was offered and taken").toEqual(TAKEN);
+      await unswitched(shell);
+    });
+  }
+
+  it("leaves the plan and its model as they were when a switched fetch is cancelled", SLOW, async () => {
+    let reads = 0;
+    const shell = await bootDevice({
+      ...connectAs("URX22"),
+      vd_get: () => {
+        // The first read is Follow USB's, so the third is inside the plan read: a second
+        // click there cancels it.
+        if (++reads === 3) $("btn-fetch").click();
+        return 0;
+      },
+    });
+    await editFirst();
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 10_000 });
+
+    expect(reads, "the premise: the plan read had begun").toBeGreaterThanOrEqual(3);
+    expect(errors(shell)).toEqual([]);
+    expect(confirms(shell), "the premise: the switch was offered and taken").toEqual(TAKEN);
+    await unswitched(shell);
+  });
+
+  // A live session starts only from a complete read, so an incomplete one is a read that
+  // failed on this side, and the switch it carried is not applied either.
+  it("leaves the plan and its model as they were when a switched live start reads incompletely", SLOW, async () => {
+    const shell = await bootDevice({
+      ...connectAs("URX22"),
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId === PARAMS.CH_ON.id) throw new Error("read-refused");
+        return 0;
+      },
+    });
+    await editFirst();
+    live().click();
+    await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 10_000 });
+    await invoked(shell, "vd_disconnect");
+
+    const incomplete = (n: number): string => t().status.liveError(t().error.liveReadIncomplete(n));
+    expect(countFor(errors(shell)[0], incomplete)).toBeGreaterThan(0);
+    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(confirms(shell), "the premise: the switch was offered and taken").toEqual(TAKEN);
+    await unswitched(shell);
+  });
+
+  /** The nodes the board flags as not read from the device. */
+  const flagged = (): string[] =>
+    [...$("graph-host").querySelectorAll("g.node[data-id]")]
+      .filter((g) => [...g.querySelectorAll("text")].some((el) => el.textContent === "?"))
+      .map((g) => g.getAttribute("data-id")!);
+
+  // A fetch into the switch's plan is applied only when it read everything, as a live start
+  // is: one that read part of the unit — its link dropping on the way, or one parameter
+  // refused — switches nothing and puts nothing it read on screen, and still says so on the
+  // status line and offers the report on what it could not read.
+  for (const [how, rest, status] of [
+    [
+      "its link drops",
+      (): number => {
+        throw new Error("device-lost");
+      },
+      (line: string) => expect(line).toBe(t().error.shell.deviceLost),
+    ],
+    [
+      "one parameter is refused",
+      (a: Record<string, unknown>): number => {
+        if (a.paramId === PARAMS.CH_ON.id) throw new Error("read-refused");
+        return 0;
+      },
+      (line: string) => {
+        const failed = Number(/\d+/.exec(line)?.[0]);
+        expect(line).toBe(t().status.fetchSwitchIncomplete(failed, "URX22", "URX44V"));
+        expect(failed).toBeGreaterThan(0);
+      },
+    ],
+  ] as const) {
+    it(
+      `leaves the plan and its model as they were when a switched fetch's read is cut short: ${how}`,
+      SLOW,
+      async () => {
+        const shell = await bootDevice({
+          ...connectAs("URX22"),
+          vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.FOLLOW_USB.id ? 0 : rest(a)),
+          "plugin:dialog|message": byMessage((m) => m !== t().confirm.deviceErrorExport),
+        });
+        const badge = (): string | undefined => $("follow-usb").dataset.state;
+        const badgeBefore = badge();
+        await editFirst();
+        $("btn-fetch").click();
+        await vi.waitFor(() => expect(confirms(shell)).toContain(t().confirm.deviceErrorExport), { timeout: 10_000 });
+        await invoked(shell, "vd_disconnect");
+
+        expect(confirms(shell), "the switch was taken and the report offered").toEqual([
+          ...TAKEN,
+          t().confirm.deviceErrorExport,
+        ]);
+        expect(errors(shell)).toEqual([]);
+        status(statusText());
+        expect(flagged()).toEqual([]);
+        expect(badge()).toBe(badgeBefore);
+        await unswitched(shell);
+      },
+    );
+  }
+
+  // An incomplete read with no switch in it merges nothing either, as a live start: the plan
+  // on screen keeps what it held — no node flagged as unread, the edit made before it still
+  // standing and still the entry an undo takes back — and the session does not start.
+  it("merges nothing from an incomplete live start on the plan's own model", SLOW, async () => {
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId === PARAMS.CH_ON.id) throw new Error("read-refused");
+        return 0;
+      },
+    });
+    await editFirst();
+    live().click();
+    await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 10_000 });
+    await invoked(shell, "vd_disconnect");
+
+    const incomplete = (n: number): string => t().status.liveError(t().error.liveReadIncomplete(n));
+    expect(countFor(errors(shell)[0], incomplete)).toBeGreaterThan(0);
+    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(flagged()).toEqual([]);
+    // Read back from the plan rather than off the panel the edit left drawn: the inspector is
+    // rebuilt by way of another node, for the reason the draw-failure cases below give.
+    selectNode("ch1");
+    expect(oscOn()).toBe("ON");
+    await undoTo(shell, "OFF");
+  });
+
+  // A fetch on the plan's own model is the one read that keeps a partial result: the values it
+  // did read land (the oscillator the unit holds OFF, over the edit made before it), each node
+  // whose read did not come through is flagged, and the history is re-taken from there.
+  it("keeps what an incomplete fetch on the plan's own model did read", SLOW, async () => {
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId === PARAMS.CH_ON.id) throw new Error("read-refused");
+        return 0;
+      },
+      "plugin:dialog|message": byMessage((m) => m !== t().confirm.deviceErrorExport),
+    });
+    await editFirst();
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(confirms(shell)).toContain(t().confirm.deviceErrorExport), { timeout: 10_000 });
+    await invoked(shell, "vd_disconnect");
+
+    const [n, failed, unread] = [...statusText().matchAll(/\d+/g)].map((m) => Number(m[0]));
+    expect(statusText()).toBe(t().status.fetchPartial(n, failed, unread));
+    expect(n).toBeGreaterThan(0);
+    expect(flagged()).toContain("ch1");
+    // By way of another node, for the reason the draw-failure cases below give.
+    selectNode("ch1");
+    expect(oscOn()).toBe("OFF");
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    expect(statusText()).toBe(t().status.nothingToUndo);
+  });
+
+  // A switch whose plan cannot be drawn is not applied: loadPlan puts the plan on screen back
+  // and reports the failure itself, and the flow ends there with the link handed back and
+  // nothing registered.
+  for (const [flow, start] of [
+    ["fetch", () => $("btn-fetch").click()],
+    ["live start", () => live().click()],
+  ] as const) {
+    it(`leaves the plan and its model as they were when a switched ${flow}'s plan cannot be drawn`, SLOW, async () => {
+      const shell = await bootDevice(connectAs("URX22"));
+      // The class the booted app draws with: each boot imports the modules afresh.
+      const { Graph } = await import("./ui/graph");
+      const draw = Graph.prototype.setModel;
+      let armed = true;
+      const spy = vi.spyOn(Graph.prototype, "setModel").mockImplementation(function (
+        this: InstanceType<typeof Graph>,
+        ...args: Parameters<typeof draw>
+      ) {
+        if (armed && args[1].modelId === "URX22") {
+          armed = false;
+          throw new Error("draw-failed");
+        }
+        draw.apply(this, args);
+      });
+      try {
+        await editFirst();
+        start();
+        await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.loadError("draw-failed")]), {
+          timeout: 10_000,
+        });
+        await invoked(shell, "vd_disconnect");
+
+        expect(armed, "the premise: the switch's plan was the one drawn").toBe(false);
+        expect(confirms(shell), "the premise: the switch was offered and taken").toEqual(TAKEN);
+        expect(shell.count("vd_params_subscribe")).toBe(0);
+        expect(live().getAttribute("aria-pressed")).toBe("false");
+        await vi.waitFor(() => expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false), { timeout: 10_000 });
+        expect($("btn-fetch").textContent).toBe(t().toolbar.fetchDevice);
+        expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
+        // A failed draw drops the selection (loadPlan). The oscillator is selected again by
+        // way of another node: a second press on it inside the board's double-press window
+        // opens its note editor instead.
+        selectNode("ch1");
+        expect(oscOn()).toBe("ON");
+        await undoTo(shell, "OFF");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  }
+});
+
+// A device read that did not land leaves the undo history as it was — an entry still open
+// included. The press here is held across the flow, so the edit made inside it is an open
+// entry for the whole of the flow and its release is what closes it; a flow that re-based
+// the history on its way out takes that entry with it, and the undo then has nothing to do.
+describe("the undo history across a device read that did not land", () => {
+  const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+  /** Edit the plan inside a press held across `run`, then release it once `run` has seen
+   *  the flow end. */
+  const editHeldAcross = async (run: () => Promise<void>): Promise<void> => {
+    selectNode("bus.osc");
+    await tick();
+    const at = $("statusbar");
+    at.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    pressOscOn();
+    await run();
+    at.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+    await tick();
+  };
+  /** A live start's own finally has run: the link is handed back after it. */
+  const liveEnded = (): Promise<void> =>
+    vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 25_000 });
+  const refuseFollowUsb = (a: Record<string, unknown>): number => {
+    if (a.paramId === PARAMS.FOLLOW_USB.id) throw new Error("read-refused");
+    return 0;
+  };
+  const declineSwitch = {
+    ...connectAs("URX22"),
+    "plugin:dialog|message": byMessage((m) => m !== t().confirm.switchModel("URX22", "URX44V")),
+  };
+  const undone = async (shell: TauriShell): Promise<void> => {
+    expect(oscFace(), "the premise: the edit stands").toBe("ON");
+    await undoTo(shell, "OFF");
+  };
+
+  it("through a fetch whose Follow USB read fails", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: refuseFollowUsb });
+    await editHeldAcross(async () => {
+      $("btn-fetch").click();
+      await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.fetchError("read-refused")]), {
+        timeout: 10_000,
+      });
+      await fetchEnded();
+    });
+    await undone(shell);
+  });
+
+  it("through a fetch cancelled during its Follow USB read", SLOW, async () => {
+    let asked = (): void => {};
+    const reading = new Promise<void>((r) => (asked = r));
+    let answer = (): void => {};
+    const held = new Promise<void>((r) => (answer = r));
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.FOLLOW_USB.id ? (asked(), held.then(() => 1)) : 0),
+    });
+    await editHeldAcross(async () => {
+      $("btn-fetch").click();
+      await reading;
+      $("btn-fetch").click(); // a second click cancels
+      answer();
+      await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 10_000 });
+      await fetchEnded();
+    });
+    expect(errors(shell)).toEqual([]);
+    await undone(shell);
+  });
+
+  it("through a fetch whose model switch is declined", SLOW, async () => {
+    const shell = await bootDevice(declineSwitch);
+    await editHeldAcross(async () => {
+      $("btn-fetch").click();
+      await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 10_000 });
+      await fetchEnded();
+    });
+    expect(confirms(shell)).toEqual([t().confirm.discard, t().confirm.switchModel("URX22", "URX44V")]);
+    await undone(shell);
+  });
+
+  it("through a live start whose Follow USB read fails", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: refuseFollowUsb });
+    await editHeldAcross(async () => {
+      live().click();
+      await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.liveError("read-refused")]), {
+        timeout: 10_000,
+      });
+      await liveEnded();
+    });
+    await undone(shell);
+  });
+
+  it("through a live start whose model switch is declined", SLOW, async () => {
+    const shell = await bootDevice(declineSwitch);
+    await editHeldAcross(async () => {
+      live().click();
+      await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 10_000 });
+      await liveEnded();
+    });
+    expect(confirms(shell)).toEqual([t().confirm.discard, t().confirm.switchModel("URX22", "URX44V")]);
+    await undone(shell);
+  });
+
+  const refuseChannelOn = (a: Record<string, unknown>): number => {
+    if (a.paramId === PARAMS.CH_ON.id) throw new Error("read-refused");
+    return 0;
+  };
+
+  it("through a live start whose read is incomplete", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: refuseChannelOn });
+    await editHeldAcross(async () => {
+      live().click();
+      await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 10_000 });
+      await liveEnded();
+    });
+    await undone(shell);
+  });
+
+  it("through a switched fetch whose read is incomplete", SLOW, async () => {
+    const shell = await bootDevice({
+      ...connectAs("URX22"),
+      vd_get: refuseChannelOn,
+      "plugin:dialog|message": byMessage((m) => m !== t().confirm.deviceErrorExport),
+    });
+    await editHeldAcross(async () => {
+      $("btn-fetch").click();
+      await vi.waitFor(() => expect(confirms(shell)).toContain(t().confirm.deviceErrorExport), { timeout: 10_000 });
+      await fetchEnded();
+    });
+    expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
+    await undone(shell);
+  });
+});
+
+// A device read that landed drops the undo history as it lands, an entry still open then
+// included — and only then: an edit made after it, while a fetch is still releasing its link
+// or a live start still registering its session, is an entry of its own that the undo takes
+// back. The press is held across the rest of the flow, as in the cases above, so the entry is
+// still open when the flow ends.
+describe("the undo history across a device read that landed", () => {
+  const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+  const heldCommand = (): { asked: Promise<void>; release: () => void; answer: () => Promise<null> } => {
+    let ask = (): void => {};
+    const asked = new Promise<void>((r) => (ask = r));
+    let release = (): void => {};
+    const released = new Promise<void>((r) => (release = r));
+    return { asked, release: () => release(), answer: () => (ask(), released.then(() => null)) };
+  };
+  /** Edit the plan inside a press that stays down until `lift`. */
+  const editPressed = async (): Promise<void> => {
+    selectNode("bus.osc");
+    await tick();
+    $("statusbar").dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    pressOscOn();
+    expect(oscFace(), "the premise: the edit landed").toBe("ON");
+  };
+  const lift = async (): Promise<void> => {
+    $("statusbar").dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+    await tick();
+  };
+  const liveUp = (): Promise<void> =>
+    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+  for (const [flow, cleanup, start, ended] of [
+    ["fetch", "vd_disconnect", () => $("btn-fetch").click(), fetchEnded],
+    ["live start", "vd_watch_link", () => live().click(), liveUp],
+  ] as const) {
+    it(`keeps an edit made while a ${flow} awaits ${cleanup} after its read landed`, SLOW, async () => {
+      const held = heldCommand();
+      const shell = await bootDevice({ [cleanup]: held.answer });
+      start();
+      await held.asked;
+      try {
+        await editPressed();
+      } finally {
+        held.release();
+      }
+      await ended();
+      await lift();
+      await undoTo(shell, "OFF");
+    });
+
+    it(`drops an entry opened before a ${flow}'s read as the read lands`, SLOW, async () => {
+      let unitOsc = 0;
+      const shell = await bootDevice({
+        vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.OSC_ON.id ? unitOsc : 0),
+      });
+      await editPressed();
+      // The unit holds what the edit put there, so the read changes no value.
+      unitOsc = 1;
+      start();
+      await ended();
+      await lift();
+      // By way of another node, for the reason the draw-failure cases give.
+      selectNode("ch1");
+      expect(oscOn(), "the premise: the read left the edit standing").toBe("ON");
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+    });
+  }
 });
 
 describe("the live session", () => {
@@ -1801,6 +3075,31 @@ describe("Write to device", () => {
     const asked = confirms(shell).at(-1) ?? "";
     expect(asked).toContain(t().confirm.reclock(formatRate(0), formatRate(96_000)));
     expect(asked).not.toContain("Track Count");
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
+  // The count is read from the unit before the rate question is asked, and a read that
+  // fails ends the write there, as every read on the link does: no question, nothing sent.
+  // The two cases above, whose read answers, are what show this flow reaches it.
+  it("writes nothing, and asks nothing, when the recorder's count cannot be read", SLOW, async () => {
+    const shell = await bootDevice(
+      {
+        vd_get: (a: Record<string, unknown>) => {
+          if (`${a.paramId}:${a.x}:${a.y}` === TRACK_COUNT_ADDR) throw new Error("timeout");
+          return 0;
+        },
+      },
+      false,
+    );
+    chooseRate(96_000);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(
+      () => expect(errors(shell)).toEqual([t().status.writeError(t().error.trackCountUnread("timeout"))]),
+      { timeout: 10_000 },
+    );
+
+    expect(confirms(shell)).toEqual([]);
     expect(shell.count("vd_set")).toBe(0);
   });
 
@@ -4100,6 +5399,360 @@ describe("the Follow USB badge", () => {
     expect(refused).toBeGreaterThan(-1);
     expect(shell.args[refused]?.paramId).toBe(PARAMS.FOLLOW_USB.id);
     expect(followUsbWrites(shell)).toHaveLength(1);
+  });
+
+  // A Fetch and a Live-sync start read Follow USB on their own connection, and that read
+  // aborts its caller like every other device read on the link: nothing merged, the badge
+  // left as it was. Each refusal case is paired with the same flow answering, which is what
+  // shows the plan values it asserts on are ones the read really moves.
+
+  /** A unit whose plan read moves the board: every channel's ON reads 0, so it takes its
+   *  MUTE tag, and every insert-FX selector reads Compander-H, where the default plan has
+   *  every channel on and no effect selected. Follow USB reads ON until `unit.refused` is
+   *  set, and is refused from then on. */
+  const unit = { refused: false };
+  const unitReads = (a: Record<string, unknown>): number => {
+    if (a.paramId === PARAMS.FOLLOW_USB.id) {
+      if (unit.refused) throw new Error("read-refused");
+      return 1;
+    }
+    if (a.paramId === PARAMS.SAMPLE_RATE.id) return 48_000;
+    if (a.paramId === PARAMS.INSERT_FX.id) return COMPANDER_H;
+    return 0;
+  };
+  beforeEach(() => void (unit.refused = false));
+
+  const muted = (id: string): boolean =>
+    [...($("graph-host").querySelector(`g.node[data-id="${id}"]`)?.querySelectorAll("text") ?? [])].some(
+      (el) => el.textContent === "MUTE",
+    );
+  /** Repaint the board from the plan, the way leaving the Console view does. A flow that
+   *  throws before its own repaint leaves the board drawn from the plan it started with, so
+   *  a MUTE tag read without this cannot see a merge such a flow made. */
+  const repaint = (): void => {
+    $("btn-view-console").click();
+    $("btn-view-graph").click();
+  };
+  const insertFxOf = (id: string): string => {
+    selectNode(id);
+    return insertFxSection()!.querySelector("select")!.value;
+  };
+  /** The parameter ids of every `vd_get` from ledger position `from` on, in order. */
+  const readsFrom = (shell: TauriShell, from: number): unknown[] =>
+    shell.invokes.flatMap((cmd, i) => (i >= from && cmd === "vd_get" ? [shell.args[i]?.paramId] : []));
+  /** The flow has ended one way or the other: a session came up, or the link was handed
+   *  back. The rate picker locks for exactly as long as something holds the link. */
+  const settled = async (): Promise<void> =>
+    vi.waitFor(
+      () => {
+        const up = live().getAttribute("aria-pressed") === "true";
+        expect(up || !$<HTMLSelectElement>("rate-picker").disabled).toBe(true);
+      },
+      { timeout: 25_000 },
+    );
+
+  it("sets the badge from a fetch that answers, alongside the values it merged", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: unitReads });
+    expect(badge().dataset.state).toBe("unknown");
+    expect(muted("ch1"), "the premise: the plan has CH 1 on").toBe(false);
+    expect(insertFxOf("ch1"), "the premise: the plan selects no effect").toBe("-1");
+
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    await settled();
+
+    expect(errors(shell)).toEqual([]);
+    expect(badge().dataset.state).toBe("on");
+    expect(muted("ch1")).toBe(true);
+    expect(insertFxOf("ch1")).toBe(String(COMPANDER_H));
+  });
+
+  it("aborts a fetch whose Follow USB read fails, with nothing merged", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: unitReads });
+    // A badge that already holds a reading, so "left as it was" is a state of its own rather
+    // than the unknown a failed read could also land on.
+    badge().click();
+    await invoked(shell, "vd_disconnect");
+    expect(badge().dataset.state).toBe("on");
+
+    unit.refused = true;
+    const from = shell.invokes.length;
+    $("btn-fetch").click();
+    expect($<HTMLSelectElement>("rate-picker").disabled, "the premise: the fetch took the link").toBe(true);
+    await settled();
+    await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.fetchError("read-refused")]), {
+      timeout: 10_000,
+    });
+
+    expect(countFor(statusText(), (n) => t().status.fetchedDevice("URX44V", n))).toBeNaN();
+    expect(badge().dataset.state).toBe("on");
+    repaint();
+    expect(muted("ch1")).toBe(false);
+    expect(insertFxOf("ch1")).toBe("-1");
+    // The read that failed was Follow USB, and no plan read followed it.
+    expect(readsFrom(shell, from)).toEqual([PARAMS.FOLLOW_USB.id]);
+    expect(shell.count("vd_disconnect")).toBe(2);
+  });
+
+  // The live half's positive control on the badge is "writes over the live session's own
+  // link rather than opening a second one" above; this one carries the plan values too.
+  it("sets the badge from a live start that answers, alongside the values it merged", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: unitReads });
+    expect(badge().dataset.state).toBe("unknown");
+
+    live().click();
+    await settled();
+
+    expect(errors(shell)).toEqual([]);
+    expect(live().getAttribute("aria-pressed")).toBe("true");
+    expect(badge().dataset.state).toBe("on");
+    expect(muted("ch1")).toBe(true);
+    expect(insertFxOf("ch1")).toBe(String(COMPANDER_H));
+  });
+
+  it("refuses to start a session whose Follow USB read fails, and tears the start down", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: unitReads });
+    badge().click();
+    await invoked(shell, "vd_disconnect");
+    expect(badge().dataset.state).toBe("on");
+
+    unit.refused = true;
+    const from = shell.invokes.length;
+    live().click();
+    await settled();
+    await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.liveError("read-refused")]), {
+      timeout: 10_000,
+    });
+
+    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect($("live-tally").hidden).toBe(true);
+    expect(badge().dataset.state).toBe("on");
+    expect(muted("ch1")).toBe(false);
+    expect(insertFxOf("ch1")).toBe("-1");
+    // Torn down: the connection the start opened was released — by its own epoch, the one
+    // after the badge read's — nothing was registered on it, and the link holder was handed
+    // back.
+    const epochs = shell.invokes.flatMap((cmd, i) => (cmd === "vd_disconnect" ? [shell.args[i]?.epoch as number] : []));
+    expect(epochs).toHaveLength(2);
+    expect(epochs[1]).toBe(epochs[0] + 1);
+    expect(shell.invokes.indexOf("vd_connect", from)).toBeLessThan(shell.invokes.lastIndexOf("vd_disconnect"));
+    expect(shell.count("vd_params_subscribe")).toBe(0);
+    expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false);
+    expect(readsFrom(shell, from)).toEqual([PARAMS.FOLLOW_USB.id]);
+  });
+
+  for (const [flow, start] of [
+    ["fetch", () => $("btn-fetch").click()],
+    ["live start", () => live().click()],
+  ] as const) {
+    // The read's window is open while Follow USB is asked for: an edit made then is the
+    // operator's, and the unit's value for the same key (the oscillator OFF, here) does
+    // not replace it. A fetch then offers the list of device values it did not apply, in
+    // the words for a read where nothing failed; every confirm declines, which is how that
+    // offer is answered here (the case after this loop takes it). A live start offers
+    // nothing.
+    it(`keeps an edit made while a ${flow} reads Follow USB`, SLOW, async () => {
+      let asked = (): void => {};
+      const reading = new Promise<void>((r) => (asked = r));
+      let answer = (): void => {};
+      const held = new Promise<void>((r) => (answer = r));
+      const shell = await bootDevice(
+        {
+          vd_get: (a: Record<string, unknown>) =>
+            a.paramId === PARAMS.FOLLOW_USB.id ? (asked(), held.then(() => 1)) : unitReads(a),
+        },
+        false,
+      );
+      start();
+      await reading;
+      turnOscOn();
+      expect(oscOn(), "the premise: the edit landed").toBe("ON");
+      answer();
+      await settled();
+
+      expect(errors(shell)).toEqual([]);
+      expect(badge().dataset.state).toBe("on");
+      expect(oscOn()).toBe("ON");
+      const offered = flow === "fetch" ? [t().confirm.deviceUnappliedExport] : [];
+      await vi.waitFor(() => expect(confirms(shell)).toEqual(offered), { timeout: 10_000 });
+    });
+
+    // The read latch is up while Follow USB is asked for, so a file flow that would replace
+    // the plan under the read is refused there as it is during the plan read.
+    it(`refuses a file flow while a ${flow} reads Follow USB`, SLOW, async () => {
+      let during = "";
+      const shell = await bootDevice({
+        vd_get: (a: Record<string, unknown>) => {
+          if (a.paramId !== PARAMS.FOLLOW_USB.id) return unitReads(a);
+          $("btn-new").click();
+          during = statusText();
+          return 1;
+        },
+      });
+      start();
+      await settled();
+
+      expect(during).toBe(t().status.busyDeviceRead);
+      expect(errors(shell)).toEqual([]);
+      expect(badge().dataset.state).toBe("on");
+    });
+  }
+
+  // The fetch above, with its offer taken: the report names the one device value the merge
+  // left standing — the oscillator group the edit rebuilt — under the heading that says why,
+  // and carries no failure section, since nothing failed.
+  it("saves the device values a fetch left standing, under the prompt that says so", SLOW, async () => {
+    let asked = (): void => {};
+    const reading = new Promise<void>((r) => (asked = r));
+    let answer = (): void => {};
+    const held = new Promise<void>((r) => (answer = r));
+    const shell = await bootDevice({
+      ...SAVES,
+      vd_get: (a: Record<string, unknown>) =>
+        a.paramId === PARAMS.FOLLOW_USB.id ? (asked(), held.then(() => 1)) : unitReads(a),
+    });
+    $("btn-fetch").click();
+    await reading;
+    turnOscOn();
+    answer();
+    await settled();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
+
+    expect(errors(shell)).toEqual([]);
+    expect(confirms(shell)).toEqual([t().confirm.deviceUnappliedExport]);
+    expect(JSON.stringify(shell.args[shell.invokes.indexOf("plugin:dialog|save")])).toContain("URX44V-fetch-report.md");
+    const lines = String((shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string }).contents).split(
+      "\n",
+    );
+    expect(lines[0]).toBe("# URX readback report — URX44V");
+    expect(lines.filter((l) => l.startsWith("## "))).toEqual(["## Device values not applied"]);
+    expect(lines.filter((l) => l.startsWith("- ")).slice(1)).toEqual(["- nodeParams bus.osc.osc"]);
+    expect(lines[2]).toMatch(/; read failures: 0; nodes unconfirmed: 0$/);
+  });
+
+  // A cancel lands on the read in flight: a Follow USB read that fails after it is reported
+  // as the cancel, as a plan read that fails after one is.
+  it("reports a fetch cancelled during its Follow USB read as cancelled when that read fails", SLOW, async () => {
+    let asked = (): void => {};
+    const reading = new Promise<void>((r) => (asked = r));
+    let fail = (): void => {};
+    const held = new Promise<number>((_r, reject) => (fail = () => reject(new Error("read-refused"))));
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.FOLLOW_USB.id ? (asked(), held) : unitReads(a)),
+    });
+    $("btn-fetch").click();
+    await reading;
+    $("btn-fetch").click(); // a second click cancels
+    fail();
+    await settled();
+
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 10_000 });
+    expect(errors(shell)).toEqual([]);
+    expect(badge().dataset.state).toBe("unknown");
+    expect(insertFxOf("ch1")).toBe("-1");
+  });
+
+  // The badge moves only with a plan read that landed. Each case starts from a badge that
+  // reads ON and has the flow's own Follow USB read answer OFF, so a badge set from that
+  // read alone shows as "off".
+  it("leaves the badge as it was when a fetch is cancelled during its plan read", SLOW, async () => {
+    const link = { followUsb: 1, reads: 0, cancelAt: 0 };
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId === PARAMS.FOLLOW_USB.id) return link.followUsb;
+        if (++link.reads === link.cancelAt) $("btn-fetch").click();
+        return unitReads(a);
+      },
+    });
+    badge().click();
+    await invoked(shell, "vd_disconnect");
+    expect(badge().dataset.state).toBe("on");
+
+    Object.assign(link, { followUsb: 0, reads: 0, cancelAt: 3 });
+    $("btn-fetch").click();
+    await settled();
+
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 10_000 });
+    expect(link.reads, "the premise: the plan read had begun").toBeGreaterThanOrEqual(3);
+    expect(errors(shell)).toEqual([]);
+    expect(badge().dataset.state).toBe("on");
+    expect(insertFxOf("ch1")).toBe("-1");
+  });
+
+  it("leaves the badge as it was when a live start's plan read is incomplete", SLOW, async () => {
+    const link = { followUsb: 1, refuseFx: false };
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId === PARAMS.FOLLOW_USB.id) return link.followUsb;
+        if (link.refuseFx && a.paramId === PARAMS.INSERT_FX.id) throw new Error("read-refused");
+        return unitReads(a);
+      },
+    });
+    badge().click();
+    await invoked(shell, "vd_disconnect");
+    expect(badge().dataset.state).toBe("on");
+
+    Object.assign(link, { followUsb: 0, refuseFx: true });
+    live().click();
+    await settled();
+
+    await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 10_000 });
+    const incomplete = (n: number): string => t().status.liveError(t().error.liveReadIncomplete(n));
+    expect(countFor(errors(shell)[0], incomplete)).toBeGreaterThan(0);
+    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(badge().dataset.state).toBe("on");
+  });
+
+  // What the badge said was read over a link. A fetch whose link drops part-way keeps the
+  // values it did read, and its badge goes back to unknown, as a session's does when its
+  // link drops.
+  it("leaves the badge unknown after a fetch whose link dropped part-way", SLOW, async () => {
+    const link = { followUsb: 0, reads: 0, dropAt: Infinity };
+    // Every confirm declines, which is how the offer to save the read report is answered.
+    const shell = await bootDevice(
+      {
+        vd_get: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.FOLLOW_USB.id) return link.followUsb;
+          if (++link.reads >= link.dropAt) throw new Error("device-lost");
+          return unitReads(a);
+        },
+      },
+      false,
+    );
+    badge().click();
+    await invoked(shell, "vd_disconnect");
+    expect(badge().dataset.state).toBe("off");
+
+    Object.assign(link, { followUsb: 1, reads: 0, dropAt: 40 });
+    $("btn-fetch").click();
+    await settled();
+
+    await vi.waitFor(() => expect(statusText()).toBe(t().error.shell.deviceLost), { timeout: 10_000 });
+    expect(errors(shell)).toEqual([]);
+    expect(badge().dataset.state).toBe("unknown");
+  });
+
+  // A model switch the operator took is applied only by a read that lands, so a fetch whose
+  // Follow USB read fails switches nothing — the plan keeps its model, and the badge what
+  // it read before.
+  it("leaves the badge as it was after a fetch that switched models fails", SLOW, async () => {
+    const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unitReads });
+    badge().click();
+    await invoked(shell, "vd_disconnect");
+    expect(badge().dataset.state).toBe("on");
+
+    unit.refused = true;
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.fetchError("read-refused")]), {
+      timeout: 10_000,
+    });
+    await settled();
+
+    expect(confirms(shell), "the premise: the switch was offered and taken").toEqual([
+      t().confirm.switchModel("URX22", "URX44V"),
+    ]);
+    expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
+    expect(badge().dataset.state).toBe("on");
   });
 });
 

@@ -1559,12 +1559,18 @@ const INSERT_FX_KEYS = ["insertFx", "insertFxOn", "insertFxParams"] as const;
  * stay in it — the difference between it and the plan is what the next outgoing diff
  * writes back, and a `deviceView` edited to agree with the plan would leave the app
  * holding an intent it had no way left to send.
+ *
+ * `accept` is asked once the read has returned, before anything is merged. A read it
+ * refuses writes nothing into the plan, the same as a read that threw, and still returns
+ * what it read — its errors and its private copy — with an empty patch: nothing unplaced
+ * and nothing held.
  */
 export async function readIntoPlan(
   current: () => Plan,
   read: (into: Plan) => Promise<ReadbackResult>,
   witness?: PlanWriteWitness,
   hold?: (ctx: HoldContext) => ReadonlySet<string>,
+  accept?: (result: ReadbackResult) => boolean,
 ): Promise<MergedRead | null> {
   const plan = current();
   const before = clonePlanState(plan);
@@ -1573,6 +1579,7 @@ export async function readIntoPlan(
   try {
     const result = await read(target);
     if (current() !== plan) return null;
+    if (accept && !accept(result)) return { ...result, deviceView: target, devicePatch: [], unplaced: [], held: [] };
     // Taken before anything is written, so the merge's own writes are not read back as
     // the app's authorship by a read still in flight beside this one.
     const authored = watch?.authored();

@@ -128,6 +128,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       const writes: Array<[number, number]> = [];
       const strWrites: Array<[number, number, string]> = [];
       const linkLog: string[] = [];
+      const saved: string[] = [];
       // The device's numeric state, seeded from `values` and UPDATED by every write,
       // so a re-read answers what was written. Without that a converge loop
       // (client.ts sendConverging: send the diff, re-read, re-send whatever still
@@ -142,13 +143,21 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         __urxWrites: Array<[number, number]>;
         __urxStrWrites: Array<[number, number, string]>;
         __urxLinkLog: string[];
+        __urxSaved: string[];
         __urxInstance: Record<string, number>;
         __urxNotify: { onmessage: (batch: unknown) => void } | null;
+        __urxRefuseReads: number[];
+        __urxHoldReads: number[];
+        __urxHeld: Array<{ id: number; go: () => void }>;
       };
+      w.__urxRefuseReads = [];
+      w.__urxHoldReads = [];
+      w.__urxHeld = [];
       w.__urxDialogs = dialogs;
       w.__urxWrites = writes;
       w.__urxStrWrites = strWrites;
       w.__urxLinkLog = linkLog;
+      w.__urxSaved = saved;
       w.__urxNotify = null;
       // Per-instance state, empty until something writes. x/y default to 0 so a
       // scalar param has exactly one key whichever way it is addressed.
@@ -186,11 +195,19 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
           // that is what a spec means by `{ 689: -1000 }`, and per-instance state only
           // starts existing once something writes it.
           if (cmd === "vd_get") {
-            const at = instance[slotKey(args)];
-            if (at !== undefined) return Promise.resolve(at);
-            const v = values[Number(args?.paramId)];
-            if (v !== undefined) return Promise.resolve(v);
-            return o.failReads ? Promise.reject(new Error("read timeout")) : Promise.resolve(0);
+            const id = Number(args?.paramId);
+            // Answered when the read is released, so a refusal set while it waited is the answer.
+            const answer = (): Promise<unknown> => {
+              if (w.__urxRefuseReads.includes(id)) return Promise.reject(new Error("read timeout"));
+              const at = instance[slotKey(args)];
+              if (at !== undefined) return Promise.resolve(at);
+              const v = values[id];
+              if (v !== undefined) return Promise.resolve(v);
+              return o.failReads ? Promise.reject(new Error("read timeout")) : Promise.resolve(0);
+            };
+            if (w.__urxHoldReads.includes(id))
+              return new Promise<void>((go) => w.__urxHeld.push({ id, go })).then(answer);
+            return answer();
           }
           if (cmd === "vd_set") {
             instance[slotKey(args)] = Number(args?.value);
@@ -216,6 +233,9 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
           // beside the constant answer rather than instead of it, so a spec that never
           // registered the live commands still meets the same refusal it always did.
           if (cmd === "vd_params_subscribe") w.__urxNotify = args?.channel as typeof w.__urxNotify;
+          // Recorded beside the constant answer, so a spec that answers a save can read back
+          // the document it wrote. Without an answer in `commands` the save is refused as before.
+          if (cmd === "write_text_file") saved.push(String(args?.contents ?? ""));
           return cmd in constants
             ? Promise.resolve(constants[cmd])
             : Promise.reject(new Error(`stub: unhandled command ${cmd}`));
@@ -253,6 +273,36 @@ export const setDeviceValue = (page: Page, paramId: number, y: number, value: nu
     },
     [paramId, x, y, value],
   );
+
+/** Refuse every read of these param ids from now on, ahead of `values` and of anything
+ *  written — one refused parameter on a link that otherwise answers. Replaces the list set
+ *  before, so `[]` lifts the refusal and a spec can run the same flow again as its own
+ *  positive control. */
+export const setRefusedReads = (page: Page, paramIds: number[]): Promise<void> =>
+  page.evaluate((ids) => {
+    (window as unknown as { __urxRefuseReads: number[] }).__urxRefuseReads = ids;
+  }, paramIds);
+
+/** Hold every read of these param ids from now on until a later call stops naming them: the
+ *  read waits unanswered, and is answered when released — by a refusal set meanwhile, by
+ *  what a write or `setDeviceValue` put there, or by `values`. Replaces the list set before,
+ *  so `[]` releases every held read. `heldReadsOf` says how many are waiting, which is what
+ *  a spec waits on to know a flow has reached the read. */
+export const setHeldReads = (page: Page, paramIds: number[]): Promise<void> =>
+  page.evaluate((ids) => {
+    const w = window as unknown as {
+      __urxHoldReads: number[];
+      __urxHeld: Array<{ id: number; go: () => void }>;
+    };
+    w.__urxHoldReads = ids;
+    const released = w.__urxHeld.filter((h) => !ids.includes(h.id));
+    w.__urxHeld = w.__urxHeld.filter((h) => ids.includes(h.id));
+    for (const h of released) h.go();
+  }, paramIds);
+
+/** How many reads `setHeldReads` is holding right now. */
+export const heldReadsOf = (page: Page): Promise<number> =>
+  page.evaluate(() => (window as unknown as { __urxHeld: unknown[] }).__urxHeld.length);
 
 /** What the stubbed device holds at one ADDRESS — the read half of `setDeviceValue`: the
  *  value the last write or `setDeviceValue` put there, or undefined when neither has.
@@ -292,6 +342,12 @@ export const notifyBurst = (
     },
     updates as Array<{ paramId: number; y: number; value: number; x?: number }>,
   );
+
+/** The contents of every text file the stub was asked to write, in order — a saved plan is
+ *  its JSON document. Recorded only; pass `write_text_file` (and `plugin:dialog|save`) in
+ *  `commands` for the save to be answered. */
+export const savedFilesOf = (page: Page): Promise<string[]> =>
+  page.evaluate(() => (window as unknown as { __urxSaved: string[] }).__urxSaved);
 
 /** Every link-ledger line the stub was asked to append, in order (raw JSONL). */
 export const linkLogOf = (page: Page): Promise<string[]> =>

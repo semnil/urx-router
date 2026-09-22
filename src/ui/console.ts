@@ -491,6 +491,8 @@ export class Console {
   private typePopBtn: HTMLElement | null = null;
   private typePopKind: "insfx" | "fx" = "insfx";
   private stripsHost!: HTMLElement;
+  /** The plan the strips were last built from. A different one at a render is that plan replaced. */
+  private builtFor: Plan | null = null;
 
   constructor(
     private host: HTMLElement,
@@ -2161,8 +2163,15 @@ export class Console {
     for (const [id, r] of this.refs) this.carryMeterState(prev.get(id), r);
     // The popover one first: it answers null unless the focus WAS inside a popover, and in
     // that case the rack capture — taken after the close — has nothing of its own to say.
-    restorePopFocus();
-    restoreFocus();
+    // Neither is handed on across a replaced plan: the control the focus stood on belongs to
+    // the plan that is gone, so a key still held there reaches nothing in the one that took
+    // its place.
+    const plan = this.hooks.getPlan();
+    if (plan === this.builtFor) {
+      restorePopFocus();
+      restoreFocus();
+    }
+    this.builtFor = plan;
     this.startMeters(); // rescope the meter subscription to the rebuilt strips
     this.redrawMeters();
   }

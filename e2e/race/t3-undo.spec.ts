@@ -215,6 +215,9 @@ test.describe("T3 undo", () => {
     // --- control arm: the wire selected with a matched pointerdown/pointerup ------
     await sendWire(page).dispatchEvent("pointerdown");
     await sendWire(page).dispatchEvent("pointerup");
+    // The burst starts after the pointerup's deferred commit: a zero-delay timer queued
+    // here runs after the one the pointerup queued.
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 0)));
     await expect(levelSlider(page)).toHaveCount(1);
     const start = await levelSlider(page).inputValue();
 

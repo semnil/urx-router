@@ -521,7 +521,7 @@ param notify の到達性を判定する不変条件 6 にメーターの通信�
 | `analyze.ts` | 不変条件 1 / 2 / 3 / 4 / 6 / 8 / 12 / 13 / 16 と時系列の整形 |
 | `t0`〜`t8` + `t0b`〜`tzb` | ティア別のケース |
 | `t2c`〜`t2f` | T2 の残り 8 ケース (書込アドレス集合の形を変える param のうち、後から埋めた分) |
-| `t9-probe.spec.ts` | probe 自身の契約と、不変条件 13 / 3 |
+| `t9-probe.spec.ts` | probe 自身の契約と、不変条件 13 / 3 — 着地した取得・ライブ同期開始の読み出しが `device-action` に帰属することを含む |
 
 **上のティア表のケースは全件、id で対応するスペックに存在する** — 1 件を確かめるなら
 `grep -rF <id> e2e/race`、全体の台帳は id そのもの。**駆動されていない**のは恒久的に skip された
@@ -778,7 +778,7 @@ ref ではなく `github.run_id` にしてある理由は同ファイルのヘ�
 
 台帳は自前で作らず **undo が使っている差分器 (`clonePlanState` + `diffPlans`) を再利用する**。
 差分器を通らない書き込みは定義上アンドゥ不能な書き込みでもあるので、台帳と undo 項目が食い違えない。
-書き手は `markChanged(source)` / `planReadFromDevice(source)` と device-follow の 3 経路・undo・load
+書き手は `markChanged(source)` / `planReadFromDevice()` と device-follow の 3 経路・undo・load
 で名指しする。
 
 **8 番目の書き手だけは意図的に固有の `WriteSource` を持たない**。制約 / 整合性の書き手は自分のタイミングで
