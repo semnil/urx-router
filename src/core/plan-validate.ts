@@ -14,6 +14,8 @@ import type { InsertFxSlot } from "./control/params";
 import { isPlainRecord, requiredSourceWire } from "./plan";
 import type { Plan } from "./plan";
 import { insertFxWireState } from "./control/translate";
+import { hiZOn } from "./input-lock";
+import { HI_Z_A_GAIN_MAX_DB } from "./control/vd";
 import { validatePlan } from "./routing";
 import type { PlanProblem } from "./routing";
 
@@ -111,7 +113,12 @@ export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPa
  *  route — it is a FILE, but one the unit wrote, and it reaches the plan through the readback
  *  rather than through this funnel.
  *
- *  SCOPE: the FX channel effect, and nothing else. `translate.ts` bounds twenty addresses by
+ *  SCOPE: the FX channel effect, plus two keys of a channel carrying HI-Z (`where: "node"`):
+ *  +48V on while HI-Z is on is bounded to off (HI-Z kept), and A.Gain above +40 dB while HI-Z
+ *  is on is bounded to +40 — the app never turns the two on together, and the unit does not
+ *  apply an A.Gain above +40 under HI-Z. A device read keeps +48V and HI-Z both on where the
+ *  unit holds them, so a file this build saved can carry that pair.
+ *  Beyond those, the FX channel effect and nothing else. `translate.ts` bounds twenty addresses by
  *  a window, and this reads one family of them. The others (insert-FX, SSMCS, the two 1-knob
  *  levels, the oscillator interval) have the same shape, and one of them — the oscillator —
  *  is scene-external, so a scene-scoped write would not send it while a whole-plan repair
@@ -122,9 +129,10 @@ export interface ParamRangeProblem {
   reason: "paramRange";
   node: string;
   /** Which container holds it: the node's `fxEffect` value itself, a field of that object
-   *  (`type` / `params`), or a member of its `params` map. A `params` member is bounded by
-   *  its own descriptor. */
-  where: "effect" | "field" | "params";
+   *  (`type` / `params`), a member of its `params` map, or one of the node's own params
+   *  (`node`: a HI-Z channel's `phantom` / `gain`). A `params` member is bounded by its own
+   *  descriptor. */
+  where: "effect" | "field" | "params" | "node";
   /** The field or catalogue key, as the plan stores it. `fxEffect` for the object itself. */
   key: string;
   /** What the document carries. NOT always a number: the sanitiser keeps a boolean leaf and a
@@ -147,12 +155,14 @@ export interface ParamRangeProblem {
    *  document emits with the key absent, so the drop moves no value; what it changes is that
    *  the plan stops carrying something the write path silently ignores, and the load says so. */
   action: "bound" | "drop";
-  /** The value the loader writes. Absent for `drop`, which writes nothing. */
-  bound?: number;
+  /** The value the loader writes. Absent for `drop`, which writes nothing. A boolean only for
+   *  a HI-Z channel's `phantom`, which is bounded to false. */
+  bound?: number | boolean;
 }
 
-/** Every FX parameter a plan holds outside its own control's range, in model order.
- *  Reads the type through `resolveFxEffectType` like every other consumer, so the window
+/** Every FX parameter a plan holds outside its own control's range, in model order, then the
+ *  +48V / A.Gain of each HI-Z channel the SCOPE note above names. Reads the FX type
+ *  through `resolveFxEffectType` like every other consumer, so the window
  *  asked about is the one the write path will bound against. */
 export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
   const out: ParamRangeProblem[] = [];
@@ -223,6 +233,32 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
       }
     }
   }
+  // A HI-Z channel with HI-Z on: +48V goes off and A.Gain stops at +40 dB.
+  for (const [node, np] of Object.entries(plan.nodeParams)) {
+    if (!hiZOn(plan.modelId, node, np)) continue;
+    if (np.phantom) {
+      out.push({
+        reason: "paramRange",
+        node,
+        where: "node",
+        key: "phantom",
+        stored: np.phantom,
+        action: "bound",
+        bound: false,
+      });
+    }
+    if (typeof np.gain === "number" && np.gain > HI_Z_A_GAIN_MAX_DB) {
+      out.push({
+        reason: "paramRange",
+        node,
+        where: "node",
+        key: "gain",
+        stored: np.gain,
+        action: "bound",
+        bound: HI_Z_A_GAIN_MAX_DB,
+      });
+    }
+  }
   return out;
 }
 
@@ -231,6 +267,10 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
 export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void {
   for (const p of problems) {
     const np = plan.nodeParams[p.node]!;
+    if (p.where === "node") {
+      (np as Record<string, unknown>)[p.key] = p.bound;
+      continue;
+    }
     if (p.where === "effect") {
       delete np.fxEffect;
       continue;
@@ -247,7 +287,7 @@ export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void
     } else if (p.action === "drop") {
       delete fx.params![p.key];
     } else {
-      fx.params![p.key] = p.bound!;
+      fx.params![p.key] = p.bound as number;
     }
   }
 }

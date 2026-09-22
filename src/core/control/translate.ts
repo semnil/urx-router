@@ -329,6 +329,11 @@ const HI_Z_CHANNELS: Record<string, string[]> = {
   URX22: ["ch2"],
 };
 
+/** Whether a node on a model carries the HI-Z (instrument input) switch. */
+export function hasHiZInput(modelId: string, nodeId: string): boolean {
+  return (HI_Z_CHANNELS[modelId] ?? []).includes(nodeId);
+}
+
 /** Input gain for a channel: which param, the linked instances, range, and whether it is the analog A.Gain. */
 export interface ChannelGain {
   param: number;
@@ -448,7 +453,7 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
     y,
     hasHpf: true,
     hasMicStrip: true,
-    hasHiZ: (HI_Z_CHANNELS[model.id] ?? []).includes(nodeId),
+    hasHiZ: hasHiZInput(model.id, nodeId),
     phases: [{ name: "PHASE", key: "phase", param: PARAMS.PHASE.id, y, side: "" }],
     gain: { param: PARAMS.HA_GAIN.id, instances: [y], minDb: A_GAIN_MIN_DB, maxDb: A_GAIN_MAX_DB, analog: true },
   };
@@ -2069,6 +2074,11 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     if (np.on !== undefined) out.push(rawCommand("CH_ON", cc.on, "bool", cc.y, np.on ? 1 : 0));
     if (cc.hasHpf && np.hpf !== undefined) out.push(command("HPF_ON", cc.y, np.hpf ? 1 : 0));
     if (cc.hasHpf && np.hpfFreq !== undefined) out.push(command("HPF_FREQ", cc.y, np.hpfFreq));
+    // Whichever of +48V / HI-Z the plan holds off is sent first, so a write taking the
+    // unit from one to the other never has both on in between. HI-Z always goes out
+    // ahead of A.Gain, which the unit bounds to +40 dB while HI-Z is on.
+    const hiZOffFirst = cc.hasHiZ && np.hiZ !== undefined && !np.hiZ;
+    if (hiZOffFirst) out.push(command("HI_Z", cc.y, 0));
     if (cc.hasMicStrip && np.phantom !== undefined) out.push(command("PHANTOM", cc.y, np.phantom ? 1 : 0));
     if (cc.hasMicStrip && np.clipSafe !== undefined) out.push(command("CLIP_SAFE", cc.y, np.clipSafe ? 1 : 0));
     // Polarity invert: one toggle (mono) or two independent L/R (stereo).
@@ -2076,7 +2086,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       const v = np[ph.key];
       if (v !== undefined) out.push(rawCommand(ph.name, ph.param, "bool", ph.y, v ? 1 : 0));
     }
-    if (cc.hasHiZ && np.hiZ !== undefined) out.push(command("HI_Z", cc.y, np.hiZ ? 1 : 0));
+    if (cc.hasHiZ && np.hiZ !== undefined && !hiZOffFirst) out.push(command("HI_Z", cc.y, np.hiZ ? 1 : 0));
     // COMP/EQ type (COMP->EQ vs SSMCS) is a MONO IN channel feature (= mic strip).
     if (cc.hasMicStrip && np.compEqType !== undefined)
       out.push(command("COMP_EQ_TYPE", cc.y, boundEnum(np.compEqType, COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST)));

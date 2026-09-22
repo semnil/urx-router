@@ -388,6 +388,9 @@ export const en = {
     // it: its own strip and every send aimed at it. The graph dims the node; this is what
     // the CONSOLE says in its place.
     fx2RateLocked: tr("The FX2 bus is unavailable above 96 kHz."),
+    // Why +48V / HI-Z cannot be turned on: the other one is on for the same channel.
+    phantomLockedByHiZ: tr("Turn Hi-Z off first — +48V and Hi-Z are never on together"),
+    hiZLockedByPhantom: tr("Turn +48V off first — +48V and Hi-Z are never on together"),
     channelOn: tr("Channel"),
     sendOn: tr("Send"),
     toSt: dev("TO ST"),
@@ -817,6 +820,8 @@ export const en = {
     streamingSourceUnlisted: tr(
       "The unit's STREAMING was on a state its source list does not offer, so the plan takes STEREO",
     ),
+    // A device read found both on for these channels and took them as they are.
+    phantomHiZBothOn: (channels: string): string => `+48V and Hi-Z are both on for ${channels}`,
     recentRemoved: (name: string): string => `Removed ${name} from the recent plans`,
     planSaved: tr("Plan saved"),
     savedTo: (name: string): string => `Saved to ${name}`,

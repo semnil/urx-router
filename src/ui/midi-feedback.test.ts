@@ -694,3 +694,27 @@ describe("the trace flag", () => {
     }
   });
 });
+
+describe("feedback under HI-Z", () => {
+  // A.Gain's MIDI throw is -8..+40 dB while HI-Z is on, so the same gain sits at a different
+  // position once HI-Z moves, and the controller is sent that position.
+  it("re-sends A.Gain's position when HI-Z is turned on", async () => {
+    const addr = { type: "cc", channel: 0, controller: 8 };
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({ models: { URX44V: [{ control: "ch3/gain", addr, mode: "absolute" }] } }),
+    );
+    const { control, hooks } = install();
+    const plan = hooks.getPlan();
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, gain: 20 };
+    await attached();
+    await openOutput();
+    control.liveReadSettled();
+    await Promise.resolve();
+    expect(mocks.midiSend).toHaveBeenCalledWith([0xb0, 8, Math.round((28 / 78) * 127)]);
+    mocks.midiSend.mockClear();
+    plan.nodeParams.ch3!.hiZ = true;
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(mocks.midiSend).toHaveBeenCalledWith([0xb0, 8, Math.round((28 / 48) * 127)]));
+  });
+});

@@ -198,7 +198,12 @@ def validate(plan, models):
     warnings.extend(collection_warnings(plan))
     warnings.extend(
         node_param_warnings(
-            plan, nodes, model.get("channelPairs"), model.get("fxChannels"), model.get("insertFxParamSpace")
+            plan,
+            nodes,
+            model.get("channelPairs"),
+            model.get("fxChannels"),
+            model.get("insertFxParamSpace"),
+            model.get("hiZ"),
         )
     )
     problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
@@ -972,7 +977,28 @@ def dropped_values(value, path, out):
         out.append((path, f"{value!r} is neither a boolean nor a finite number"))
 
 
-def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None):
+def read_as_on(value):
+    """Whether the app reads a node param as ON: JavaScript truthiness over what the document
+    sanitiser keeps. An array the sanitiser keeps is truthy there however empty it is."""
+    return survives_sanitizer(value) and (isinstance(value, list) or bool(value))
+
+
+def hi_z_bounds(node_id, params, hi_z, bounded):
+    """A channel carrying HI-Z with HI-Z on: the load turns +48V off (HI-Z kept) and bounds
+    A.Gain above the HI-Z ceiling to that ceiling, the pair of repairs `paramRangeProblems`
+    makes. `hi_z` is the `hiZ` entry models.json carries."""
+    if not hi_z or node_id not in hi_z.get("channels", []) or not read_as_on(params.get("hiZ")):
+        return
+    if "phantom" in params and read_as_on(params["phantom"]):
+        bounded.append(
+            (f"{node_id}.phantom", f"{params['phantom']!r} is bounded to False — +48V and HI-Z are never on together")
+        )
+    gain, ceiling = params.get("gain"), hi_z.get("gainMaxDb")
+    if is_number(gain) and ceiling is not None and gain > ceiling:
+        bounded.append((f"{node_id}.gain", f"{gain!r} is bounded to {ceiling!r} — A.Gain stops there while HI-Z is on"))
+
+
+def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=None):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
@@ -981,7 +1007,7 @@ def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None):
     A finite FX value outside what its control admits, and a `type` the channel's menu does
     not offer, are covered too — by `fx_catalogue_warnings`, which reads the `fxChannels`
     entry models.json carries. What needs no catalogue at all is a value that is not a number,
-    which is fx_effect_warnings."""
+    which is fx_effect_warnings. +48V and A.Gain on a HI-Z channel with HI-Z on are hi_z_bounds."""
     out = []
     slot_holders = {}
     node_params = plan.get("nodeParams")
@@ -1005,6 +1031,7 @@ def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None):
             gone = fx_effect_warnings(node_id, params["fxEffect"], dropped)
             if not gone:
                 fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
+        hi_z_bounds(node_id, params, hi_z, bounded)
         for path, why in dropped:
             out.append(f"node param {path}: the app drops this value on load — {why}")
         for path, why in bounded:

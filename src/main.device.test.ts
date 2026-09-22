@@ -42,6 +42,7 @@ import type { Plan } from "./core/plan";
 import { loadHidden } from "./app/view-state";
 import { drag, faceplate, portHit, press, wireHit } from "./ui/graph.test-util";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
+import type { Field } from "./core/control/urxf.test-util";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 
@@ -6731,6 +6732,66 @@ describe("importing a settings file", () => {
     expect(shell.count("vd_set")).toBe(0);
     expect(shell.count("vd_set_str")).toBe(0);
     expect(shell.count("vd_connect")).toBe(0);
+  });
+
+  // A file holding +48V and HI-Z both on for CH 3 (jack y 2), a state the app never sets
+  // itself. The import takes it as it is, where a document's load turns +48V off, and the
+  // status line leads with the note that names the channel.
+  //
+  // The file answers every address the import reads, so the whole plan comes through and
+  // the rest of the line is the full import's own message. The addresses are the ones a
+  // read of the default plan asks when answered with the same values, so the file stays
+  // complete as the read grows.
+  it("takes +48V and HI-Z both on from the file as they are, and leads the line with the note", SLOW, async () => {
+    const { applySourceState } = await import("./core/control/readback");
+    const { defaultPlan } = await import("./models/initial-state");
+    const value = (id: number, y: number): number =>
+      id === PARAMS.SAMPLE_RATE.id
+        ? 48_000
+        : (id === PARAMS.PHANTOM.id || id === PARAMS.HI_Z.id) && y === 2
+          ? 1
+          : unwrittenRead({ paramId: id, x: 0, y });
+    const asked = new Map<number, { str: boolean; len: number }>();
+    const ask = (str: boolean, id: number, y: number): void => {
+      asked.set(id, { str, len: Math.max(asked.get(id)?.len ?? 0, y + 1) });
+    };
+    const expected = await applySourceState(getModel("URX44V"), defaultPlan("URX44V"), {
+      get: async (paramId, x, y) => (ask(false, paramId + x, y), value(paramId + x, y)),
+      getStr: async (paramId, x, y) => (ask(true, paramId + x, y), ""),
+    });
+    expect(expected.errors, "the premise: every address the read asks is answered").toEqual([]);
+    const fields = [...asked].map(([id, a]): Field =>
+      a.str
+        ? { id, typecode: 4, elemSize: 16, values: Array<string>(a.len).fill("") }
+        : (() => {
+            // A value past the signed range is a tagged port ref, which the unit's own files
+            // hold as unsigned.
+            const values = Array.from({ length: a.len }, (_, y) => value(id, y));
+            return { id, typecode: values.some((v) => v > 0x7fffffff) ? 1 : 2, elemSize: 4, values };
+          })(),
+    );
+
+    const shell = await bootImport(buildUrxf([{ chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields }]));
+    $("btn-open-settings").click();
+    await vi.waitFor(
+      () =>
+        expect(statusText()).toBe(
+          `${t().status.phantomHiZBothOn("CH 3")} — ${t().status.settingsImported("backup.urxf", expected.applied)}`,
+        ),
+      { timeout: 15_000 },
+    );
+
+    // The plan holds the file's values, read back through a save: both on for CH 3, both off
+    // for CH 4, the other HI-Z jack.
+    shell.answer("plugin:dialog|save", "/tmp/imported.json");
+    shell.answer("write_text_file", null);
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
+    const saved = shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string };
+    const { nodeParams } = JSON.parse(saved.contents);
+    expect(nodeParams.ch3).toMatchObject({ phantom: true, hiZ: true });
+    expect(nodeParams.ch4).toMatchObject({ phantom: false, hiZ: false });
+    expect(shell.count("vd_set")).toBe(0);
   });
 
   // The file names no model — its header reads "URX" for every variant — so the operator

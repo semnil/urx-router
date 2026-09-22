@@ -8,6 +8,8 @@
 // composed by the UI from the node label + the scope + the param token.
 
 import type { DeviceModel } from "../../models/types";
+import { channelGainRange, hiZPatch, inputOnRefused } from "../input-lock";
+import type { InputSwitch } from "../input-lock";
 import { isMonitorBus } from "../constraints";
 import {
   LEVEL_OFF_DB,
@@ -260,13 +262,24 @@ export interface ControlDesc {
  */
 export type ControlWrite = { kind: "node"; path: string } | { kind: "send"; to: string; param: string };
 
+/** Why a control refuses one write while it accepts others: +48V cannot be turned on while
+ *  HI-Z is on, nor HI-Z while +48V is on. The UI names the reason. */
+export type ControlRefusal = "phantomUnderHiZ" | "hiZUnderPhantom";
+
 /** A control bound to a concrete plan: normalized read/write access. */
 export interface BoundControl extends ControlDesc {
   /** Current value, normalized 0..1 (toggle: 0 | 1). */
   get(): number;
   /** Snap + write a normalized value. False when the control is device-locked
-   *  (FIXED-bus send level, Pan-Link send pan, rate-locked stereo EQ): no edit. */
+   *  (FIXED-bus send level, Pan-Link send pan, rate-locked stereo EQ) or `refuses` the
+   *  value: no edit. */
   set(v: number): boolean;
+  /** The refusal a write of `v` meets, or null when `set` would take it. A refused write
+   *  edits nothing and is reported, where a device lock drops it silently. */
+  refuses?(v: number): ControlRefusal | null;
+  /** The node-param paths the last `set` wrote besides `writes`, on this control's node: a
+   *  HI-Z write that lowered A.Gain names `gain`. Empty when it wrote `writes` alone. */
+  alsoWrote?(): readonly string[];
 }
 
 export function controlId(node: string, param: ControlParam, scope?: string): string {
@@ -505,6 +518,32 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       return true;
     },
   });
+
+  // +48V and HI-Z: turning one on while the other is on is refused, turning either off is
+  // not, and turning HI-Z on carries A.Gain down to +40 dB in the same write.
+  const inputSwitch = (param: InputSwitch): BoundControl => {
+    const refuses = (v: number): ControlRefusal | null =>
+      v >= 0.5 && inputOnRefused(model.id, id, plan.nodeParams[id], param)
+        ? param === "phantom"
+          ? "phantomUnderHiZ"
+          : "hiZUnderPhantom"
+        : null;
+    let alsoWrote: readonly string[] = [];
+    return {
+      ...boolControl(param, false),
+      refuses,
+      set: (v) => {
+        if (refuses(v)) return false;
+        if (param === "hiZ") {
+          const patch = hiZPatch(plan.nodeParams[id], v >= 0.5);
+          alsoWrote = "gain" in patch ? ["gain"] : [];
+          Object.assign(np(), patch);
+        } else np().phantom = v >= 0.5;
+        return true;
+      },
+      alsoWrote: () => alsoWrote,
+    };
+  };
 
   // A continuous control persisted on the node's own params.
   const nodeControl = (
@@ -1114,15 +1153,26 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
 
   const cc = channelControl(model, id);
   if (isChannel && cc?.gain) {
-    // Fallback = the factory value (A.GAIN -8 on mono mic strips, D.GAIN 0).
-    out.push(nodeControl("gain", linearCodec(cc.gain.minDb, cc.gain.maxDb, 1), cc.gain.analog ? -8 : 0));
+    // Fallback = the factory value (A.GAIN -8 on mono mic strips, D.GAIN 0). The codec follows
+    // the channel's range as it stands, so HI-Z maps the full throw to -8..+40 dB.
+    const range = (): { minDb: number; maxDb: number } => channelGainRange(model, id, plan.nodeParams[id])!;
+    out.push(
+      nodeControl(
+        "gain",
+        {
+          get: (x) => linearCodec(range().minDb, range().maxDb, 1).get(x),
+          set: (v) => linearCodec(range().minDb, range().maxDb, 1).set(v),
+        },
+        cc.gain.analog ? -8 : 0,
+      ),
+    );
   }
   if (isChannel) {
     // The mic-strip channels (mono ch1..4) are the only GATE/COMP-bearing strips.
-    if (cc?.hasMicStrip) out.push(boolControl("phantom", false));
+    if (cc?.hasMicStrip) out.push(inputSwitch("phantom"));
     for (const ph of cc?.phases ?? []) out.push(boolControl(ph.key, false));
     if (cc?.hasHpf) out.push(boolControl("hpf", false));
-    if (cc?.hasHiZ) out.push(boolControl("hiZ", false));
+    if (cc?.hasHiZ) out.push(inputSwitch("hiZ"));
     if (cc?.hasMicStrip) out.push(boolControl("gateOn", false));
     if (cc?.hasMicStrip) out.push(boolControl("compOn", false));
   }

@@ -50,6 +50,7 @@ import {
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import { applyParamRange, applyRequiredSources, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
+import { phantomHiZBothOn } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
@@ -547,7 +548,7 @@ const live = DEMO
         // to it — a reverb tuned on the panel appearing in the app. The park the converge
         // takes is not that gesture, and the flush reports what it sends on the same line, so
         // saying it there would announce one repair twice.
-        if (scope.only) setStatus(t().status.liveFollowed(merged.applied));
+        if (scope.only) setStatus(withBothOnNote(t().status.liveFollowed(merged.applied)));
         // Past the gate, because this arrives inside the operator's OWN gesture: a park runs
         // in front of a head write, and the head is a selector they have just chosen in — so
         // the control the gate would hold the rebuild for is the one showing the stale value,
@@ -793,6 +794,25 @@ function reflectFollow(): void {
     // device-side edit under it would otherwise leave stale sliders on screen.
     dynScreen.refresh(ids);
   }
+  // A follow that leaves a channel with +48V and HI-Z both on says so once per change of
+  // the set; the plan keeps the unit's state and the app writes nothing for it.
+  const both = bothOnLabels();
+  if (both && both !== bothOnNoted) setStatus(t().status.phantomHiZBothOn(both));
+  bothOnNoted = both;
+}
+
+// The channels holding +48V and HI-Z both on, as the status line last named them.
+let bothOnNoted = "";
+function bothOnLabels(): string {
+  return phantomHiZBothOn(getModel(modelId), plan)
+    .map((id) => graph.labelOf(id))
+    .join(", ");
+}
+/** A device read's status line, led by the channels it left with +48V and HI-Z both on. The
+ *  plan keeps what the unit holds; the app writes nothing for it. */
+function withBothOnNote(msg: string): string {
+  bothOnNoted = bothOnLabels();
+  return bothOnNoted ? `${t().status.phantomHiZBothOn(bothOnNoted)} — ${msg}` : msg;
 }
 // A reconcile read that fails loses the device-side change it was called for —
 // the notify already fired and nothing re-triggers the read — and the next
@@ -858,7 +878,7 @@ function supplyUnsourced(merged: MergedRead): string | null {
 // them.
 function reapplyHeld(merged: MergedRead): void {
   if (!merged.held.length) {
-    setStatus(t().status.liveFollowed(merged.applied));
+    setStatus(withBothOnNote(t().status.liveFollowed(merged.applied)));
     return;
   }
   // A follow read outlives a session that merely ended (`abandonFollowWork` is not called
@@ -867,7 +887,7 @@ function reapplyHeld(merged: MergedRead): void {
   if (live?.isActive()) {
     live.schedule();
     const held = heldByHold(merged.held);
-    setStatus(t().status.liveHeld(merged.applied, held.unrunnable, held.source));
+    setStatus(withBothOnNote(t().status.liveHeld(merged.applied, held.unrunnable, held.source)));
     return;
   }
   // Nothing left to send them through: the values stay in the plan, and the status line
@@ -3146,7 +3166,7 @@ if (!DEMO) {
           : unread
             ? t().status.fetchedUnread(device.model, merged.applied, unread)
             : t().status.fetchedDevice(device.model, merged.applied);
-        setStatus(supplied ? [supplied, outcome].join(" — ") : outcome);
+        setStatus(withBothOnNote(supplied ? [supplied, outcome].join(" — ") : outcome));
         // Read failures AND values the merge did not apply are otherwise console-only,
         // and a packaged build has no inspector to read a console in: capture a report
         // to offer after disconnect (below). The two travel together because both are
@@ -3750,7 +3770,7 @@ if (!DEMO) {
         // `reapplyHeld`.
         if (merged.authored) live.schedule();
         const on = t().status.liveOn(device.model, merged.applied);
-        setStatus(supplied ? [supplied, on].join(" — ") : on);
+        setStatus(withBothOnNote(supplied ? [supplied, on].join(" — ") : on));
       } catch (err) {
         await failLive(t().status.liveError(errorText(err)));
       } finally {
@@ -3981,9 +4001,11 @@ if (!DEMO) {
     planReadFromDevice();
     const unread = result.unreadNodes.size;
     setStatus(
-      result.errors.length
-        ? t().status.settingsPartial(result.applied, result.errors.length, unread)
-        : t().status.settingsImported(name, result.applied),
+      withBothOnNote(
+        result.errors.length
+          ? t().status.settingsPartial(result.applied, result.errors.length, unread)
+          : t().status.settingsImported(name, result.applied),
+      ),
     );
     await offerErrorReport(
       result.errors.length

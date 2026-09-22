@@ -11,6 +11,8 @@ import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
 import { INSERT_FX_OPTIONS } from "../core/control/params";
 import { monoPairsInto } from "../core/routing";
+import { hasHiZInput } from "../core/control/translate";
+import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
 import {
   insertFxDeviceDriven,
@@ -78,6 +80,9 @@ export interface SkillModel {
       params: Record<string, { control: string; rawMin?: number; rawMax?: number; options?: number[] }>;
     }
   >;
+  /** The channels carrying the HI-Z switch, and A.Gain's upper bound while it is on. With HI-Z
+   *  on, the load turns +48V off and bounds A.Gain to that value. */
+  hiZ: { channels: string[]; gainMaxDb: number };
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -91,6 +96,10 @@ function skillModel(model: DeviceModel): SkillModel {
     requiredSources: { ...model.requiredSources },
     insertFxParamSpace: insertFxParamSpaceBySelector(),
     fxChannels: fxChannelCatalogue(),
+    hiZ: {
+      channels: model.nodes.filter((n) => hasHiZInput(model.id, n.id)).map((n) => n.id),
+      gainMaxDb: HI_Z_A_GAIN_MAX_DB,
+    },
   };
 }
 

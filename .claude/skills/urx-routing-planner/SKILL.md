@@ -196,7 +196,9 @@ conflict, is a plan the app opens only after asking (step 5 says what that looks
 like coming back). It prints those `WARNING:` lines to stderr — always read them: for a wire or value the
 app's loader would silently **drop** (an unknown `kind`, a mistyped `params` /
 node param — the plan loads, just without that piece), for a wire the loader
-**adds** (STREAMING's source, when the plan gives it none), for wrong-`kind` wires, for
+**adds** (STREAMING's source, when the plan gives it none), for a value the loader
+**bounds** (an FX value outside its control's range; on a channel carrying HI-Z with
+`hiZ` on, `phantom` and a `gain` above +40 — `plan-schema.md` has both), for wrong-`kind` wires, for
 Ducker params placed on a non-ducker node (move them to the channel's `out.duckerN`
 id), and for the parameters that need care on hardware (see step 6).
 

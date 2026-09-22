@@ -284,6 +284,8 @@ export const ja: Messages = {
     insFxRateLockedAt: (effect: string, maxRate: string): string =>
       `${maxRate} 超では ${effect} は使用不可 — 強制的に OFF。`,
     fx2RateLocked: "FX2 バスは 96 kHz を超えると使用できません。",
+    phantomLockedByHiZ: "先に Hi-Z を切ってください。+48V と Hi-Z は同時にオンにしません",
+    hiZLockedByPhantom: "先に +48V を切ってください。+48V と Hi-Z は同時にオンにしません",
     insFxLinkLocked: "Signal Type が STEREO の間は Compander のみ使用可。",
     insFxSlotLocked: "Insert FX はすべて使用中 — 各エフェクトは本体全体で 1 スロットを占有。",
     channelOn: "チャンネル",
@@ -621,6 +623,7 @@ export const ja: Messages = {
     streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
     streamingSourceUnlisted: "本体の STREAMING が一覧に無い状態だったため、計画では STEREO にしました",
     planLoaded: "計画を読み込みました",
+    phantomHiZBothOn: (channels: string): string => `${channels} で +48V と Hi-Z が両方オンになっています`,
     recentRemoved: (name: string): string => `${name} を最近使った計画から削除しました`,
     planSaved: "計画を保存しました",
     savedTo: (name: string): string => `${name} に保存しました`,

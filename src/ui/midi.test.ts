@@ -56,6 +56,7 @@ import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
 import { MidiControl, type MidiHooks } from "./midi";
+import { t } from "../i18n";
 
 const MAPPING = {
   control: "ch1/level",
@@ -715,5 +716,49 @@ describe("MidiControl against a control the plan has stopped carrying", () => {
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 256 };
     send(20);
     await vi.waitFor(() => expect(slot()).not.toBe(applied));
+  });
+});
+
+describe("MidiControl under HI-Z", () => {
+  const listen = async (control: string): Promise<ReturnType<typeof install>> => {
+    const addr = { type: "cc", channel: 0, controller: 9 };
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({ models: { URX44V: [{ control, addr, mode: "absolute", button: "state" }] } }),
+    );
+    const rig = install();
+    await attached();
+    dispatch({ type: "ready" });
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+    return rig;
+  };
+
+  it("says why a +48V write under HI-Z is refused, and edits nothing", async () => {
+    const { hooks, plan } = await listen("ch3/phantom");
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: false };
+    mocks.inputReceiver!([0xb0, 9, 127]);
+    expect(hooks.onStatus).toHaveBeenCalledWith(t().inspector.phantomLockedByHiZ);
+    expect(hooks.onApplied).not.toHaveBeenCalled();
+    expect(plan.nodeParams.ch3?.phantom).toBe(false);
+  });
+
+  it("asserts A.Gain among the keys of a HI-Z write that lowered it", async () => {
+    const { hooks, plan } = await listen("ch3/hiZ");
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: false, gain: 60 };
+    mocks.inputReceiver!([0xb0, 9, 127]);
+    expect(plan.nodeParams.ch3).toMatchObject({ hiZ: true, gain: 40 });
+    expect(hooks.onApplied).toHaveBeenCalledWith(expect.anything(), false, [
+      nodeParamContestPath("ch3", "hiZ"),
+      nodeParamContestPath("ch3", "gain"),
+    ]);
+  });
+
+  it("leaves A.Gain out of the keys of a HI-Z write that found it at +40 dB", async () => {
+    const { hooks, plan } = await listen("ch3/hiZ");
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: false, gain: 40 };
+    mocks.inputReceiver!([0xb0, 9, 127]);
+    expect(plan.nodeParams.ch3).toMatchObject({ hiZ: true, gain: 40 });
+    expect(hooks.onApplied).toHaveBeenCalledWith(expect.anything(), false, [nodeParamContestPath("ch3", "hiZ")]);
   });
 });
