@@ -1845,8 +1845,8 @@ neither the row it began on nor the fresh one under the still-held pointer, whic
 driving — and once it ends the rows are drawn again from what the plan holds. The hold in turn asks for the row that is on screen
 rather than the one the gesture started on, since a rebuild may already have replaced it. A rebuilt row
 keeps whatever `disabled` state the rebuild gave it — COMP's 1-knob coming on hands threshold / ratio /
-gain / knee to the device and locks those rows — and it does not get focus back, because no rebuild in
-this app restores focus.
+gain / knee to the device and locks those rows — and it does not get focus back, because the screen's own
+rebuild restores none.
 
 The inspector defers on the same signal, through the gate that already waits out an IME composition and
 an open `<select>` picker. That one is worth naming because a held row is the only one of the three with

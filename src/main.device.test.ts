@@ -1471,6 +1471,62 @@ describe("the model the device turns out to be", () => {
     await vi.waitFor(() => expect(threshold().value).toBe(was), { timeout: 10_000 });
   });
 
+  // The keyboard's counterpart. A key held down goes on repeating into whatever holds the
+  // focus, and the CONSOLE hands the focus on across a rebuild of its strips. A key pressed on
+  // CH 1's fader while a switched read runs is refused; once the switch applies, its repeats
+  // reach no control of the switched plan, which is left with nothing to undo. A fresh press
+  // on the switched plan's own fader is the positive control: it moves the fader, as an edit an
+  // undo takes back.
+  const mainFader = (): HTMLElement =>
+    $("console-host").querySelector(".con-strip")!.querySelector<HTMLElement>(".con-fader")!;
+  /** CH 1's fader readout, which names the level to the step the keys move it by. */
+  const mainLevel = (): string | null =>
+    $("console-host").querySelector(".con-strip")!.querySelector(".con-readout .rv")!.textContent;
+  const arrowUp = (target: EventTarget, repeat: boolean): void => {
+    for (const type of repeat ? ["keydown"] : ["keydown", "keyup"])
+      target.dispatchEvent(new KeyboardEvent(type, { key: "ArrowUp", repeat, bubbles: true, cancelable: true }));
+  };
+  for (const [flow, start, ended] of [
+    ["fetch", () => $("btn-fetch").click(), () => fetchEnded()],
+    [
+      "live start",
+      () => live().click(),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+    ],
+  ] as const) {
+    it(`takes nothing into the switched plan from a key held across a switched ${flow}`, SLOW, async () => {
+      const unit = holdFollowUsb();
+      const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+      $("btn-view-console").click();
+      start();
+      await unit.reading;
+      try {
+        mainFader().focus();
+        mainFader().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+        await tick();
+        expect(statusText(), "the premise: the press was refused").toBe(t().status.busySwitchRead);
+      } finally {
+        unit.release(0);
+      }
+      await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+      const shown = mainLevel();
+      const held = document.activeElement ?? document.body;
+      for (let i = 0; i < 3; i++) arrowUp(held, true);
+      held.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowUp", bubbles: true, cancelable: true }));
+      await ended();
+
+      expect(mainLevel()).toBe(shown);
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+      mainFader().focus();
+      arrowUp(mainFader(), false);
+      expect(mainLevel(), "the positive control: a fresh press moves it").not.toBe(shown);
+      await tick();
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      await vi.waitFor(() => expect(mainLevel()).toBe(shown), { timeout: 10_000 });
+    });
+  }
+
   // Once the read is over, whichever way it ended, the plan on screen takes a drag again and
   // an undo takes it back: the refusal is a property of the read, not of the press.
   const dragBackOnUndo = async (shell: TauriShell, id: string): Promise<void> => {

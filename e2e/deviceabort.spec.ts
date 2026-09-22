@@ -17,8 +17,8 @@ import {
 // whose diff could not be read never writes, a fetch whose Follow USB read is
 // refused leaves the board and its badge as they were, a fetch that switched models
 // and then failed leaves the plan and its model as they were, an edit made while a
-// fetch that switched models is reading is refused, a drag held across that switch writes
-// nothing into the switched plan, a unit whose firmware version
+// fetch that switched models is reading is refused, a drag or a key held across that switch
+// writes nothing into the switched plan, a unit whose firmware version
 // could not be read is not touched at all, and a send that stops part-way offers a
 // retry instead of a breakdown the user cannot act on.
 
@@ -257,6 +257,59 @@ test("a tuning-screen slider held while a switched fetch reads leaves the switch
   await page.keyboard.press("ControlOrMeta+z");
   await expect(page.locator("#statusbar")).toContainText("Nothing to undo");
 });
+
+// The keyboard's counterpart. A key held down goes on repeating into whatever holds the focus,
+// and the CONSOLE hands the focus on across a rebuild of its strips. A key held on CH 1's fader
+// while a switched fetch or live start reads is refused, and once the switch applies its repeats
+// reach no control of the switched plan, which is left with nothing to undo. A fresh press on the
+// switched plan's own fader is the positive control: it moves the fader, as an edit an undo takes
+// back.
+for (const flow of ["fetch", "live start"] as const) {
+  test(`a key held on a fader while a switched ${flow} reads leaves the switched plan alone`, async ({ page }) => {
+    await stubTauriDevice(page, {
+      model: "URX22",
+      confirm: "Ok",
+      values: { 766: 48000, 848: 0 },
+      commands: LIVE_COMMANDS,
+    });
+    // The unit is a URX22 and the plan on screen a URX44V (see DeviceStubOptions.model).
+    await page.addInitScript(() => localStorage.setItem("urx-model", "URX44V"));
+    await page.goto("/");
+    const picker = page.locator("#model-picker");
+    await expect(picker).toHaveValue("URX44V");
+    await page.click("#btn-view-console");
+    const strip = page.locator("#console-host .con-strip").first();
+    const fader = strip.locator(".con-fader");
+    const level = strip.locator(".con-readout .rv").first();
+
+    await setHeldReads(page, [848]);
+    await page.click("#btn-device"); // the device actions live in a menu
+    await page.click(flow === "fetch" ? "#btn-fetch" : "#btn-live");
+    await expect.poll(() => heldReadsOf(page)).toBe(1);
+    await fader.focus();
+    await page.keyboard.down("ArrowUp");
+    await expect(page.locator("#statusbar")).toContainText(
+      "This plan is being replaced by one for the device's model — try that again when the read finishes",
+    );
+    await setHeldReads(page, []);
+    await expect(picker).toHaveValue("URX22");
+    if (flow === "live start") await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    else await expect(page.locator("#btn-fetch")).toHaveText("Fetch from device");
+    const shown = await level.textContent();
+    await page.keyboard.down("ArrowUp"); // a repeat: the key has not been released
+    await page.keyboard.down("ArrowUp");
+    await page.keyboard.up("ArrowUp");
+
+    await expect(level).toHaveText(shown!);
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(page.locator("#statusbar")).toContainText("Nothing to undo");
+    await fader.focus();
+    await page.keyboard.press("ArrowUp");
+    await expect(level).not.toHaveText(shown!);
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(level).toHaveText(shown!);
+  });
+}
 
 test("a unit whose firmware version could not be read is not touched", async ({ page }) => {
   await stubDevice(page, { firmware: null });

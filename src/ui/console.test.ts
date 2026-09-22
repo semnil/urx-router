@@ -113,6 +113,39 @@ describe("Console UI", () => {
     document.body.removeChild(host);
   });
 
+  // Not across a replaced plan, though: the control the focus stood on belongs to the plan
+  // that is gone, so the rebuild for the plan that took its place hands the focus to nothing
+  // — and a key still held on it reaches no control of the new plan. Both places the focus is
+  // carried from: a strip control, and a popover row, which a rebuild hands to its trigger.
+  for (const [where, focusIn] of [
+    ["a strip control", (host: HTMLElement) => host.querySelector<HTMLElement>('.con-strip [role="slider"]')!.focus()],
+    [
+      "a popover row",
+      (host: HTMLElement) => {
+        host.querySelector<HTMLElement>(".con-strip .con-tap")!.click();
+        host.querySelector<HTMLElement>(".con-tappop .crow")!.focus();
+      },
+    ],
+  ] as const) {
+    it(`hands no focus on from ${where} when the plan itself is replaced`, () => {
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const model = getModel("URX44V");
+      let plan = defaultPlan("URX44V");
+      const consoleInstance = new Console(host, { getModel: () => model, getPlan: () => plan, onChange: () => {} });
+      consoleInstance.show();
+
+      focusIn(host);
+      expect(host.contains(document.activeElement), "the premise: the focus is in the console").toBe(true);
+      plan = defaultPlan("URX44V");
+      consoleInstance.refresh();
+      expect(host.contains(document.activeElement)).toBe(false);
+
+      consoleInstance.hide();
+      document.body.removeChild(host);
+    });
+  }
+
   // Above 96 kHz no insert effect can run. The face must not hand over a toggle that
   // silently selects one the device would refuse — and it does not, because a press on a
   // strip holding nothing opens the type list instead of writing anything at all. What

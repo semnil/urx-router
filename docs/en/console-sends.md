@@ -171,7 +171,9 @@ still claims is given back — and that is the state an operator most needs to r
   strip rack alone, and it records a focus inside a popover as the ROW plus the strip the
   popover belongs to. Where it lands is decided by what the rebuild actually did: the same row
   where the popover is open again (a one-strip repaint re-opens two of them), the trigger on
-  the rebuilt strip where it is not. Choosing a meter point from the keyboard goes through the
+  the rebuilt strip where it is not, and nowhere when the plan itself was replaced — the row and
+  the trigger both belong to the plan that is gone (architecture.md, "A re-render keeps what the
+  DOM was carrying"). Choosing a meter point from the keyboard goes through the
   same door — the path leaves the closing to the repaint rather than doing it first.
 - **Escape gives the focus back to what opened the popover, an outside press does not.** Closing
   destroys the row that had the focus, so a KEYBOARD dismissal that left it there would put the

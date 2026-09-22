@@ -1213,8 +1213,10 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   and some edits still take it (the power LED's per-strip dim, a linked partner) as does every device-follow
   read-back. The transient state those elements held is carried across the rebuild rather than lost with them:
   each strip's meter ballistics move onto the fresh lanes when it still meters the same tap (`carryMeterState`,
-  shared with `refreshStrip`), and keyboard focus is handed back to the same control (`markFocus` /
-  `restoreFocus`, matched by strip id + index + class, dropped when the rebuild changed that strip's shape).
+  shared with `refreshStrip`), and keyboard focus is handed back to the same control (`captureFocus`, matched
+  by strip id + index + class, dropped when the rebuild changed that strip's shape, and dropped when the plan
+  itself was replaced — a file load, a model switch — since the control it stood on belongs to the plan that
+  is gone, and a key still held there must reach nothing in the one that took its place).
   The strip rack's scroll offset carries itself and is deliberately not saved and restored: the clear and the
   refill are one task, so the empty rack is never laid out and the offset is never clipped, and the restored
   focus passes `preventScroll` so it does not drag an off-screen control into view. Rewriting the offset around
@@ -2210,7 +2212,7 @@ describes a state it can return to.
 | A device read whose plan was replaced | `readIntoPlan`'s identity guard, after the read resolves | its values belong to a document nothing shows |
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |
 | An edit made while a Fetch's or Live-sync start's read carries a model switch | on the board, before it writes anything (`planTakesEdits`); everywhere else `markChanged`, which puts the plan back to the state the read began from; both say so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
-| A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for) and a tuning screen (`refresh`) | the plan the gesture began on is gone, so a pointer still held writes nothing into the one that replaced it |
+| A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for), a tuning screen (`refresh`) and the CONSOLE (`render`, which hands keyboard focus on only across a rebuild of the same plan) | the plan the gesture began on is gone, so a pointer or a key still held writes nothing into the one that replaced it |
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
 | A MIDI message arriving under those same latches, or during a self-test / `--prepare-modified` run | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
 | A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
@@ -2439,8 +2441,9 @@ the move only when the drag ends: a node drag, a wire, a note, a shelf move and 
 write anything, and a drag already moving when the read begins is ended there and reported as the edit it is. A
 gesture still in progress when the switch applies ends at the switch, so a pointer still held writes nothing into
 the switched plan: the board drops it, the inspector is rebuilt past what its gate holds — an open picker, a
-composition — with its actions answering only for the plan the panel was built for, and a tuning screen
-rebuilds without waiting for a press held on it, which then writes nothing until it ends.
+composition — with its actions answering only for the plan the panel was built for, a tuning screen
+rebuilds without waiting for a press held on it, which then writes nothing until it ends, and the CONSOLE
+hands no keyboard focus on to the switched plan's strips, so a key still held reaches none of its controls.
 
 An undo whose write fails is not a special case: the flush's failure ends the session as any edit's
 would. The plan keeps the undone state and the entry stays **consumed** — re-pushing it would make the
