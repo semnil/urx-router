@@ -2209,7 +2209,8 @@ describes a state it can return to.
 | A notify for Follow USB, 848 | `intercept`, ahead of node resolution | host-owned and outside the plan; it would otherwise force a full re-read |
 | A device read whose plan was replaced | `readIntoPlan`'s identity guard, after the read resolves | its values belong to a document nothing shows |
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |
-| An edit made while a Fetch's or Live-sync start's read carries a model switch | `markChanged`, which puts the plan back to the state the read began from and says so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
+| An edit made while a Fetch's or Live-sync start's read carries a model switch | on the board, before it writes anything (`planTakesEdits`); everywhere else `markChanged`, which puts the plan back to the state the read began from; both say so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
+| A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for) and a tuning screen (`refresh`) | the plan the gesture began on is gone, so a pointer still held writes nothing into the one that replaced it |
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
 | A MIDI message arriving under those same latches, or during a self-test / `--prepare-modified` run | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
 | A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
@@ -2433,6 +2434,13 @@ rides on it; such a fetch's status line says the read was incomplete and nothing
 (`fetchSwitchIncomplete`) rather than giving a count. While that read runs, the plan on screen is the one the switch discards, so an edit to it from any
 surface, an undo / redo and an incoming MIDI change are refused for the read's duration, the status line saying
 so (`busySwitchRead`): the edit funnel (`markChanged`) puts the plan back to the state the read began from.
+The board is asked first (`planTakesEdits`), because it writes a node's place as the pointer moves and reports
+the move only when the drag ends: a node drag, a wire, a note, a shelf move and Arrange are refused before they
+write anything, and a drag already moving when the read begins is ended there and reported as the edit it is. A
+gesture still in progress when the switch applies ends at the switch, so a pointer still held writes nothing into
+the switched plan: the board drops it, the inspector is rebuilt past what its gate holds — an open picker, a
+composition — with its actions answering only for the plan the panel was built for, and a tuning screen
+rebuilds without waiting for a press held on it, which then writes nothing until it ends.
 
 An undo whose write fails is not a special case: the flush's failure ends the session as any edit's
 would. The plan keeps the undone state and the entry stays **consumed** — re-pushing it would make the

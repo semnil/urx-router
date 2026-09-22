@@ -570,6 +570,7 @@ const graph = new Graph(graphHost, getModel(modelId), plan, {
     refreshInspector();
   },
   onHiddenChange: (hidden) => rememberHidden(modelId, hidden),
+  mayEdit: () => planTakesEdits(),
 });
 
 // External MIDI control (desktop only, assigned in the !DEMO block below).
@@ -1366,7 +1367,26 @@ let planHistory: PlanHistory | null = null;
 // window, holding the plan on screen and its state when the read began. An edit from any
 // surface reaches markChanged and is refused there, an undo / redo is refused by the history
 // and an incoming MIDI change by the MIDI gate, each with `busySwitchRead` on the status line.
+// The board asks first (planTakesEdits), since it writes a node's place as the pointer moves
+// and reports the move only once the drag ends.
 let switchRead: { plan: Plan; state: Plan } | null = null;
+
+// Start refusing edits to the plan on screen for a read that carries a switch. A board
+// gesture still in progress is ended first, so what it moved is reported as the edit it is
+// rather than kept against the read.
+function beginSwitchRead(): void {
+  graph.endAllPointers();
+  switchRead = { plan, state: clonePlanState(plan) };
+}
+
+// Whether the plan on screen takes an edit now: not while a switching read runs, and the
+// status line then says so. Asked by a surface before it writes, where markChanged can only
+// put back what an edit has already written.
+function planTakesEdits(): boolean {
+  if (!switchRead) return true;
+  setStatus(t().status.busySwitchRead);
+  return false;
+}
 
 // Refuse an edit made while a switching read runs: put the plan on screen back to the state
 // the read began from and repaint it. Queued behind the funnel that called, which goes on
@@ -1923,13 +1943,25 @@ function rebuildInspector(): void {
     getModel(modelId),
     plan,
     selection,
-    inspectorActions,
+    actionsFor(plan),
     recent,
     live?.isActive() ?? false,
   );
   const focused = restoreFocus();
   if (carried.caret && focused instanceof HTMLInputElement)
     focused.setSelectionRange(carried.caret[0], carried.caret[1]);
+}
+
+// The panel's actions, answering only while the plan the panel was built for is the one on
+// screen: what a control of a panel built for a replaced plan still delivers — a choice from a
+// picker left open, the commit of a composition — reaches nothing.
+function actionsFor(built: Plan): typeof inspectorActions {
+  const guarded = { ...inspectorActions };
+  for (const key of Object.keys(guarded) as (keyof typeof inspectorActions)[]) {
+    const act = inspectorActions[key] as (...args: unknown[]) => unknown;
+    (guarded as Record<string, unknown>)[key] = (...args: unknown[]) => (plan === built ? act(...args) : undefined);
+  }
+  return guarded;
 }
 
 // Recompute the sample-rate constraints and apply them to the graph badges, the
@@ -2106,6 +2138,9 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
     picker.value = modelId;
     graph.setModel(getModel(modelId), plan);
     syncRateUi(); // picker + persisted rate + constraints (also refreshes the console)
+    // Past the gate: what it holds — an open picker, a composition — belongs to the plan
+    // being replaced, so nothing outranks the panel for the one taking its place.
+    rebuildInspectorNow();
     // A channel tuning screen can be open over this: it reads the plan through a closure,
     // so its values are already the new ones — but nothing had told it to redraw, and it
     // sat showing the plan that was just replaced. Refresh re-resolves the binding too, so
@@ -2976,7 +3011,7 @@ if (!DEMO) {
         flow.deviceReadInFlight = true;
         // The plan on screen takes no edit while a read that carries a switch runs (cleared
         // as the read returns or throws, and in the finally below).
-        if (switchTo) switchRead = { plan, state: clonePlanState(plan) };
+        if (switchTo) beginSwitchRead();
         // The read runs against a private copy, so a cancel throws out of it with the
         // plan on screen untouched — "cancel means nothing happened" needs no restore,
         // and the module plan object is never replaced (which is what used to leave
@@ -3559,7 +3594,7 @@ if (!DEMO) {
         flow.deviceReadInFlight = true;
         // The plan on screen takes no edit while a read that carries a switch runs, as for a
         // fetch (cleared as the read returns or throws, and in the finally below).
-        if (switchTo) switchRead = { plan, state: clonePlanState(plan) };
+        if (switchTo) beginSwitchRead();
         midi?.probeMark("live:read:start");
         // Follow USB, which the readback does not carry, is read on the same connection,
         // first inside the read: a failure throws to failLive with nothing merged, and the

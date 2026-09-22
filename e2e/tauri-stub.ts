@@ -128,6 +128,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       const writes: Array<[number, number]> = [];
       const strWrites: Array<[number, number, string]> = [];
       const linkLog: string[] = [];
+      const saved: string[] = [];
       // The device's numeric state, seeded from `values` and UPDATED by every write,
       // so a re-read answers what was written. Without that a converge loop
       // (client.ts sendConverging: send the diff, re-read, re-send whatever still
@@ -142,6 +143,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         __urxWrites: Array<[number, number]>;
         __urxStrWrites: Array<[number, number, string]>;
         __urxLinkLog: string[];
+        __urxSaved: string[];
         __urxInstance: Record<string, number>;
         __urxNotify: { onmessage: (batch: unknown) => void } | null;
         __urxRefuseReads: number[];
@@ -155,6 +157,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       w.__urxWrites = writes;
       w.__urxStrWrites = strWrites;
       w.__urxLinkLog = linkLog;
+      w.__urxSaved = saved;
       w.__urxNotify = null;
       // Per-instance state, empty until something writes. x/y default to 0 so a
       // scalar param has exactly one key whichever way it is addressed.
@@ -230,6 +233,9 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
           // beside the constant answer rather than instead of it, so a spec that never
           // registered the live commands still meets the same refusal it always did.
           if (cmd === "vd_params_subscribe") w.__urxNotify = args?.channel as typeof w.__urxNotify;
+          // Recorded beside the constant answer, so a spec that answers a save can read back
+          // the document it wrote. Without an answer in `commands` the save is refused as before.
+          if (cmd === "write_text_file") saved.push(String(args?.contents ?? ""));
           return cmd in constants
             ? Promise.resolve(constants[cmd])
             : Promise.reject(new Error(`stub: unhandled command ${cmd}`));
@@ -336,6 +342,12 @@ export const notifyBurst = (
     },
     updates as Array<{ paramId: number; y: number; value: number; x?: number }>,
   );
+
+/** The contents of every text file the stub was asked to write, in order — a saved plan is
+ *  its JSON document. Recorded only; pass `write_text_file` (and `plugin:dialog|save`) in
+ *  `commands` for the save to be answered. */
+export const savedFilesOf = (page: Page): Promise<string[]> =>
+  page.evaluate(() => (window as unknown as { __urxSaved: string[] }).__urxSaved);
 
 /** Every link-ledger line the stub was asked to append, in order (raw JSONL). */
 export const linkLogOf = (page: Page): Promise<string[]> =>

@@ -1,8 +1,11 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "./fixtures";
+import { faceplate } from "./graph-helpers";
 import {
   dialogsOf,
   heldReadsOf,
+  LIVE_COMMANDS,
+  savedFilesOf,
   setDeviceValue,
   setHeldReads,
   setRefusedReads,
@@ -14,7 +17,8 @@ import {
 // whose diff could not be read never writes, a fetch whose Follow USB read is
 // refused leaves the board and its badge as they were, a fetch that switched models
 // and then failed leaves the plan and its model as they were, an edit made while a
-// fetch that switched models is reading is refused, a unit whose firmware version
+// fetch that switched models is reading is refused, a drag held across that switch writes
+// nothing into the switched plan, a unit whose firmware version
 // could not be read is not touched at all, and a send that stops part-way offers a
 // retry instead of a breakdown the user cannot act on.
 
@@ -156,6 +160,102 @@ test("an edit made while a fetch that switched models reads is refused", async (
 
   await mute.click();
   await expect(mute).toHaveAttribute("aria-pressed", "true");
+});
+
+// The board writes a node's place as the pointer moves and reports the move once the drag
+// ends. A drag pressed while a fetch or a live start that switched models reads is refused,
+// and a press still held when the switch applies ends there, so the moves after it write
+// nothing into the plan that replaced the one it was pressed on and leave nothing to undo.
+// CH 3 is a mono channel on a URX44V and half of the CH 3/4 pair on a URX22, so a place
+// carried across is one for a node the switched plan does not have. Released before the
+// switch is the control: the refusal alone keeps the plan the switch discards as it was.
+for (const flow of ["fetch", "live start"] as const) {
+  for (const released of ["before", "after"] as const) {
+    test(`a drag held while a switched ${flow} reads, released ${released} the switch, leaves the switched plan alone`, async ({
+      page,
+    }) => {
+      await stubTauriDevice(page, {
+        model: "URX22",
+        confirm: "Ok",
+        values: { 766: 48000, 848: 0 },
+        commands: { ...LIVE_COMMANDS, "plugin:dialog|save": "/tmp/urx-e2e-plan.urxr", write_text_file: null },
+      });
+      // The unit is a URX22 and the plan on screen a URX44V (see DeviceStubOptions.model).
+      await page.addInitScript(() => localStorage.setItem("urx-model", "URX44V"));
+      await page.goto("/");
+      const picker = page.locator("#model-picker");
+      await expect(picker).toHaveValue("URX44V");
+      const ch3 = page.locator('#graph-host g.node[data-id="ch3"]');
+      const place = await ch3.getAttribute("transform");
+
+      await setHeldReads(page, [848]);
+      await page.click("#btn-device"); // the device actions live in a menu
+      await page.click(flow === "fetch" ? "#btn-fetch" : "#btn-live");
+      await expect.poll(() => heldReadsOf(page)).toBe(1);
+      const box = (await faceplate(page, "ch3").boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = box.y + 10;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + 35, y + 20, { steps: 3 });
+      // Refused before the node moves, not put back once it has.
+      await expect(page.locator("#statusbar")).toContainText(
+        "This plan is being replaced by one for the device's model — try that again when the read finishes",
+      );
+      await expect(ch3).toHaveAttribute("transform", place!);
+      if (released === "before") await page.mouse.up();
+      await setHeldReads(page, []);
+      await expect(picker).toHaveValue("URX22");
+      if (flow === "live start") await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+      else await expect(page.locator("#btn-fetch")).toHaveText("Fetch from device");
+      await page.mouse.move(x + 55, y + 30, { steps: 3 });
+      await page.mouse.up();
+
+      await page.evaluate(() => (document.getElementById("btn-save") as HTMLButtonElement).click());
+      await expect.poll(async () => (await savedFilesOf(page)).length).toBe(1);
+      const saved = JSON.parse((await savedFilesOf(page))[0]!) as { modelId: string; positions: object };
+      expect(saved.modelId).toBe("URX22");
+      expect(saved.positions).not.toHaveProperty("ch3");
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(page.locator("#statusbar")).toContainText("Nothing to undo");
+    });
+  }
+}
+
+// A tuning screen holds its rebuild while a pointer is down on it and binds to its node again
+// when the plan changes. A slider held on CH 1's GATE screen while a switched fetch reads is
+// gone with the plan when the switch applies, and the press writes nothing until it ends:
+// moving the pointer afterwards leaves the switched plan with nothing to undo.
+test("a tuning-screen slider held while a switched fetch reads leaves the switched plan alone", async ({ page }) => {
+  await stubTauriDevice(page, { model: "URX22", confirm: "Ok", values: { 766: 48000, 848: 0 } });
+  // The unit is a URX22 and the plan on screen a URX44V (see DeviceStubOptions.model).
+  await page.addInitScript(() => localStorage.setItem("urx-model", "URX44V"));
+  await page.goto("/");
+  const picker = page.locator("#model-picker");
+  await expect(picker).toHaveValue("URX44V");
+  await page.click("#btn-view-console");
+
+  await setHeldReads(page, [848]);
+  await page.click("#btn-device"); // the device actions live in a menu
+  await page.click("#btn-fetch");
+  await expect.poll(() => heldReadsOf(page)).toBe(1);
+  await page.locator(".con-strip").first().locator(".con-chip-open").first().click(); // GATE
+  const slider = page.locator('#dyn-screen-box input[data-dyn="threshold"]');
+  const box = (await slider.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await setHeldReads(page, []);
+  await expect(picker).toHaveValue("URX22");
+  await expect(page.locator("#btn-fetch")).toHaveText("Fetch from device");
+  await page.mouse.move(x - box.width / 3, y, { steps: 5 });
+  await page.mouse.up();
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#dyn-screen-modal")).toBeHidden();
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator("#statusbar")).toContainText("Nothing to undo");
 });
 
 test("a unit whose firmware version could not be read is not touched", async ({ page }) => {

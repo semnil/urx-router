@@ -719,13 +719,19 @@ export class DynScreen {
   private releaseInert: (() => void) | null = null;
 
   /** A pointer is down on this screen, so nothing may rebuild its DOM: the control
-   *  under the pointer would be replaced and the drag would end there. */
+   *  under the pointer would be replaced and the drag would end there. A plan replaced
+   *  under the press is the exception, and ends it (`refresh`). */
   private grabbed = false;
   /** A refresh arrived while grabbed and still has to happen. */
   private refreshPending = false;
   /** How to end the drag currently in flight, for the ends that carry no pointer event
    *  of their own. Set by the gesture, cleared by whichever end runs first. */
   private endDrag: (() => void) | null = null;
+  /** The plan the screen was drawn from. A different one at a refresh is that plan replaced. */
+  private drawnFor: Plan | null = null;
+  /** The press in flight began on a plan since replaced: what it drives writes nothing, and
+   *  the rows go back to what the plan holds once it ends. */
+  private stalePress = false;
 
   constructor(private readonly hooks: DynScreenHooks) {
     this.scrim = document.getElementById("dyn-screen-modal") as HTMLElement;
@@ -738,6 +744,11 @@ export class DynScreen {
     });
     const release = (): void => {
       this.endDrag?.();
+      if (this.stalePress) {
+        this.stalePress = false;
+        this.refresh();
+        return;
+      }
       if (!this.grabbed) return;
       this.grabbed = false;
       if (!this.refreshPending) return;
@@ -820,6 +831,7 @@ export class DynScreen {
     this.bankId = proc.bankIdentity?.({ ...this.ctx(), nodeId, sel }) ?? "";
     this.applyBinding(bound);
     this.peaks.clear();
+    this.drawnFor = this.hooks.getPlan();
     this.render();
     this.releaseInert ??= holdAppInert(this.scrim);
     this.scrim.hidden = false;
@@ -883,6 +895,17 @@ export class DynScreen {
     // the bank verdict closes a screen whose processor the plan no longer emits, and
     // the re-subscription follows a lane whose tap moved on another node.
     if (changed && !this.ownNodes().some((id) => changed.includes(id))) return;
+    // A press belongs to the plan it began on. Replaced under it, the screen rebuilds against
+    // the plan that took its place without waiting for the press, and what the press drives
+    // writes nothing until it ends.
+    const plan = this.hooks.getPlan();
+    if (plan !== this.drawnFor) {
+      this.drawnFor = plan;
+      this.endDrag?.();
+      this.stalePress = this.grabbed;
+      this.grabbed = false;
+      this.refreshPending = false;
+    }
     // Device follow runs on its own clock, and under COMP 1-knob it runs on every
     // step of a drag — the unit recomputes threshold / ratio / gain and announces
     // them, which comes back here. Rebuilding then would replace the control being
@@ -1275,6 +1298,7 @@ export class DynScreen {
   }
 
   private setVals(patch: Record<string, number | boolean>): void {
+    if (this.stalePress) return;
     const ctx = this.ctx();
     this.hooks.onUpdateNodeParams(this.nodeId, this.p().patch(ctx, patch), this.p().written?.(ctx, patch));
   }

@@ -991,7 +991,11 @@ describe("the model the device turns out to be", () => {
   /** The plan on screen, read back through the case's only save (SAVES). */
   const savedPlan = async (
     shell: TauriShell,
-  ): Promise<{ modelId: string; connections: Array<{ from: string; to: string; params?: { level?: number } }> }> => {
+  ): Promise<{
+    modelId: string;
+    connections: Array<{ from: string; to: string; params?: { level?: number } }>;
+    positions: Record<string, unknown>;
+  }> => {
     $("btn-save").click();
     await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
     return JSON.parse((shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string }).contents);
@@ -1252,6 +1256,297 @@ describe("the model the device turns out to be", () => {
     opened.channel.onmessage([{ bytes: [0xb0, CC, 127] }]);
     await vi.waitFor(() => expect(dashed()).toBe("1.5 4"), { timeout: 10_000 });
   });
+
+  // The board writes a node's place as the pointer moves and reports the move once the drag
+  // ends, so a drag is refused before the node moves and ends at that refusal: what the pointer
+  // does after the switch writes nothing into the plan that replaced the one it was pressed on,
+  // and leaves nothing for an undo. CH 3 is a mono channel on a URX44V and
+  // half of the CH 3/4 pair on a URX22, so a place carried across is one for a node the
+  // switched plan does not have.
+  const boardSvg = (): SVGSVGElement => $("graph-host").querySelector("svg")!;
+  const placeOf = (id: string): string | null | undefined =>
+    $("graph-host").querySelector(`g.node[data-id="${id}"]`)?.getAttribute("transform");
+  const pointerAt = (type: string, x: number, y: number): PointerEvent =>
+    new PointerEvent(type, { pointerId: 1, clientX: x, clientY: y, bubbles: true, cancelable: true });
+  /** Press a node's faceplate and move the pointer, without releasing it. */
+  const grabAndMove = (id: string): void => {
+    faceplate($("graph-host"), id)!.dispatchEvent(pointerAt("pointerdown", 0, 0));
+    boardSvg().dispatchEvent(pointerAt("pointermove", 40, 30));
+  };
+  for (const [flow, start, ended] of [
+    ["fetch", () => $("btn-fetch").click(), () => fetchEnded()],
+    [
+      "live start",
+      () => live().click(),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+    ],
+  ] as const) {
+    it(`writes nothing into the switched plan from a drag held across a switched ${flow}`, SLOW, async () => {
+      const unit = holdFollowUsb();
+      const shell = await bootDevice({ ...connectAs("URX22"), ...SAVES, vd_get: unit.vd_get });
+      start();
+      await unit.reading;
+      const before = placeOf("ch3");
+      try {
+        grabAndMove("ch3");
+        expect(placeOf("ch3")).toBe(before);
+        expect(statusText()).toBe(t().status.busySwitchRead);
+      } finally {
+        unit.release(0);
+      }
+      await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+      boardSvg().dispatchEvent(pointerAt("pointermove", 70, 50));
+      boardSvg().dispatchEvent(pointerAt("pointerup", 70, 50));
+      await ended();
+
+      const doc = await savedPlan(shell);
+      expect(doc.modelId).toBe("URX22");
+      expect(doc.positions).not.toHaveProperty("ch3");
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+    });
+  }
+
+  // A press on a jack writes nothing until it moves, so one made during the read and still
+  // held when the switch applies has had nothing to refuse: it is the switch that ends it, and
+  // moved and released afterwards over a jack it could reach, it draws nothing into the
+  // switched plan. CH 2 is the partner of the CH 1 the unit's reads put on the USB output, so
+  // the drop would add it there.
+  it("draws nothing into the switched plan from a jack pressed across a switched fetch", SLOW, async () => {
+    const unit = holdFollowUsb();
+    const shell = await bootDevice({ ...connectAs("URX22"), ...SAVES, vd_get: unit.vd_get });
+    const USB_SUB = "out.usbsub:in";
+    $("btn-fetch").click();
+    await unit.reading;
+    try {
+      $("graph-host")
+        .querySelector('[data-tap="ch2:out"]')!
+        .dispatchEvent(pointerAt("pointerdown", 0, 0));
+    } finally {
+      unit.release(0);
+    }
+    await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+    const into = $("graph-host").querySelector(`[data-ref="${USB_SUB}"]`);
+    expect(into, "the premise: the switched board has the jack").not.toBeNull();
+    expect(wireHit($("graph-host"), "ch2:out", USB_SUB), "the premise: the jack does not hold CH 2").toBeNull();
+    const real = document.elementFromPoint;
+    document.elementFromPoint = (() => into) as typeof document.elementFromPoint;
+    try {
+      boardSvg().dispatchEvent(pointerAt("pointermove", 200, 100));
+      boardSvg().dispatchEvent(pointerAt("pointerup", 200, 100));
+    } finally {
+      document.elementFromPoint = real;
+    }
+    await fetchEnded();
+
+    const doc = await savedPlan(shell);
+    expect(doc.connections.filter((c) => c.from === "ch2:out" && c.to === USB_SUB)).toEqual([]);
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    expect(statusText()).toBe(t().status.nothingToUndo);
+  });
+
+  // A drag already moving when a switched read begins is ended there and reported as the edit
+  // it is, rather than kept against the read: the moves after it write nothing, and once the
+  // read has failed an undo takes the drag back.
+  it("reports a drag already moving when a switched fetch begins, as an edit an undo takes back", SLOW, async () => {
+    const unit = holdFollowUsb();
+    const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+    const before = placeOf("ch1");
+    grabAndMove("ch1");
+    const moved = placeOf("ch1");
+    expect(moved, "the premise: the drag moved the node").not.toBe(before);
+    $("btn-fetch").click();
+    await unit.reading;
+    try {
+      boardSvg().dispatchEvent(pointerAt("pointermove", 90, 70));
+      expect(placeOf("ch1")).toBe(moved);
+      boardSvg().dispatchEvent(pointerAt("pointerup", 90, 70));
+    } finally {
+      unit.release(new Error("read-refused"));
+    }
+    await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.fetchError("read-refused")]), { timeout: 10_000 });
+    await fetchEnded();
+    expect(placeOf("ch1")).toBe(moved);
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(placeOf("ch1")).toBe(before), { timeout: 10_000 });
+  });
+
+  // The same for the inspector, whose rebuild a control can hold — a picker left open, a
+  // composition in flight — while the switch replaces the plan the panel was built for. The
+  // panel is rebuilt past that hold, and what the old control still delivers reaches nothing:
+  // the switched plan is left with nothing to undo.
+  for (const [control, hold, deliver] of [
+    [
+      "a picker",
+      () => {
+        const picker = row(t().inspector.recPoint).querySelector<HTMLSelectElement>("select")!;
+        picker.focus();
+        return picker;
+      },
+      (picker: HTMLElement) => {
+        // Neither the value it showed nor the one the switched plan read (every read here
+        // answers 0), so a choice that landed would move the switched plan.
+        const sel = picker as HTMLSelectElement;
+        sel.value = [...sel.options].find((o) => o.value !== sel.value && o.value !== "0")!.value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+    ],
+    [
+      "a name being composed",
+      () => {
+        const field = row(t().inspector.name).querySelector<HTMLInputElement>("input")!;
+        field.focus();
+        field.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+        return field;
+      },
+      (field: HTMLElement) => {
+        (field as HTMLInputElement).value = "Vox";
+        field.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      },
+    ],
+  ] as const) {
+    it(`takes nothing into the switched plan from ${control} held across a switched fetch`, SLOW, async () => {
+      const unit = holdFollowUsb();
+      const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+      selectNode("ch1");
+      $("btn-fetch").click();
+      await unit.reading;
+      let held: HTMLElement;
+      try {
+        held = hold();
+      } finally {
+        unit.release(0);
+      }
+      await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+      expect(held.isConnected, "the panel built for the replaced plan is gone").toBe(false);
+      deliver(held);
+      await fetchEnded();
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+    });
+  }
+
+  // A tuning screen holds its rebuild while a pointer is down on it, and binds to its node
+  // again when the plan changes under it. A switch replaces the plan: the screen rebuilds past
+  // the press, so the slider the pointer was on is gone with the plan it was built for, and
+  // until that press ends nothing it drives writes — neither the slider it began on nor the
+  // switched plan's own under the pointer.
+  it("ends a tuning-screen press held across a switched fetch", SLOW, async () => {
+    const unit = holdFollowUsb();
+    const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+    $("btn-view-console").click();
+    $("btn-fetch").click();
+    await unit.reading;
+    const threshold = (): HTMLInputElement =>
+      $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="threshold"]')!;
+    let held: HTMLInputElement;
+    try {
+      $("console-host").querySelector(".con-strip")!.querySelector<HTMLElement>(".con-chip-open")!.click(); // GATE
+      held = threshold();
+      held.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    } finally {
+      unit.release(0);
+    }
+    await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+    expect(held.isConnected, "the slider built for the replaced plan is gone").toBe(false);
+    const shown = threshold().value;
+    for (const slider of [held, threshold()]) {
+      slider.value = String(Number(slider.value) - 5);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+    expect(threshold().value, "the rows show what the switched plan holds once the press ends").toBe(shown);
+    await fetchEnded();
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    expect(statusText()).toBe(t().status.nothingToUndo);
+    // The positive control: the switched plan's own slider takes a drag, as an edit an undo
+    // takes back.
+    const fresh = threshold();
+    const was = fresh.value;
+    fresh.value = String(Number(was) - 5);
+    fresh.dispatchEvent(new Event("input", { bubbles: true }));
+    fresh.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(threshold().value).toBe(was), { timeout: 10_000 });
+  });
+
+  // Once the read is over, whichever way it ended, the plan on screen takes a drag again and
+  // an undo takes it back: the refusal is a property of the read, not of the press.
+  const dragBackOnUndo = async (shell: TauriShell, id: string): Promise<void> => {
+    const before = placeOf(id);
+    grabAndMove(id);
+    boardSvg().dispatchEvent(pointerAt("pointerup", 40, 30));
+    expect(placeOf(id), "the drag moved the node").not.toBe(before);
+    await tick(); // the drag's own entry closes
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(placeOf(id)).toBe(before), { timeout: 10_000 });
+  };
+  for (const [flow, start, finish, model] of [
+    [
+      "fetch that switched",
+      () => $("btn-fetch").click(),
+      async (unit: ReturnType<typeof holdFollowUsb>) => {
+        unit.release(0);
+        await fetchEnded();
+      },
+      "URX22",
+    ],
+    [
+      "fetch that failed",
+      () => $("btn-fetch").click(),
+      async (unit: ReturnType<typeof holdFollowUsb>) => {
+        unit.release(new Error("read-refused"));
+        await fetchEnded();
+      },
+      "URX44V",
+    ],
+    [
+      "fetch that was cancelled",
+      () => $("btn-fetch").click(),
+      async (unit: ReturnType<typeof holdFollowUsb>) => {
+        $("btn-fetch").click(); // a second click cancels
+        unit.release(0);
+        await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 10_000 });
+        await fetchEnded();
+      },
+      "URX44V",
+    ],
+    [
+      "live start that switched",
+      () => live().click(),
+      async (unit: ReturnType<typeof holdFollowUsb>) => {
+        unit.release(0);
+        await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+      },
+      "URX22",
+    ],
+    [
+      "live start that failed",
+      () => live().click(),
+      async (unit: ReturnType<typeof holdFollowUsb>) => {
+        unit.release(new Error("read-refused"));
+        await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 25_000 });
+      },
+      "URX44V",
+    ],
+  ] as const) {
+    it(`takes a drag and its undo again after a ${flow}`, SLOW, async () => {
+      const unit = holdFollowUsb();
+      const shell = await bootDevice({ ...connectAs("URX22"), vd_get: unit.vd_get });
+      start();
+      await unit.reading;
+      try {
+        grabAndMove("ch1");
+        expect(statusText(), "the premise: the drag was refused").toBe(t().status.busySwitchRead);
+        boardSvg().dispatchEvent(pointerAt("pointerup", 40, 30));
+      } finally {
+        await finish(unit);
+      }
+      expect($<HTMLSelectElement>("model-picker").value).toBe(model);
+      await dragBackOnUndo(shell, "ch1");
+    });
+  }
 
   // The refusal lasts as long as the read and no longer. Past it the plan on screen is the one
   // that stays — kept by a fetch whose incomplete read switches nothing, or put there by a
