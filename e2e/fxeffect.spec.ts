@@ -250,7 +250,7 @@ test("each face keeps its groups on one row", async ({ page }) => {
   await chooseOption(typeSelect(page), { label: "Rev.R3 Hall" });
   await sec.locator("#btn-fx-screen").click();
   await expect(screenBox(page)).toBeVisible();
-  await sharesARow(["ER/Delay", "E/R Bal."]);
+  await sharesARow(["E/R Delay", "E/R Bal."]);
   const r3Filters = await sharesARow(["HPF", "LPF"]);
   expect(r3Filters).toBeGreaterThan(await rowOf("Density"));
   await closeScreen(page);

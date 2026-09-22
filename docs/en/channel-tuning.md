@@ -1636,7 +1636,7 @@ the face is one panel and the segmented bar reserves its space without drawing.
 | Family | Row 1 | Row 2 | Row 3 |
 | --- | --- | --- | --- |
 | REV-X (Hall / Room / Plate) | Diffusion, Hi.Ratio, Lo.Ratio, Lo.Freq. | Rev.Time, Ini.Delay, Decay, Room Size | HPF, LPF |
-| Rev.R3 (Hall / Room / Plate) | Density, FB.Gain, ER/Delay, E/R Bal. | Rev.Time, Ini.Delay, Hi.Ratio, Diffusion | HPF, LPF |
+| Rev.R3 (Hall / Room / Plate) | Density, FB.Gain, E/R Delay, E/R Bal. | Rev.Time, Ini.Delay, Hi.Ratio, Diffusion | HPF, LPF |
 | Mono Delay / Ping Pong | HPF, LPF, Delay, FB.Gain | Hi.Ratio, Sync, BPM, Note | — |
 
 **The effect array's slot 2 is nowhere in the app.** No control of the unit's own reaches it: its

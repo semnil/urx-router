@@ -458,7 +458,7 @@ export const en = {
         lowRatio: dev("Lo.Ratio"),
         lowFreq: dev("Lo.Freq."),
         feedback: dev("FB.Gain"),
-        erRevDelay: dev("ER/Delay"),
+        erRevDelay: dev("E/R Delay"),
         erRevBalance: dev("E/R Bal."),
         delayTime: dev("Delay"),
         sync: dev("Sync"),
