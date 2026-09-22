@@ -1439,7 +1439,7 @@ segment bar は空間だけ予約して描かない。
 | 系統 | 1 段目 | 2 段目 | 3 段目 |
 | --- | --- | --- | --- |
 | REV-X (Hall / Room / Plate) | Diffusion・Hi.Ratio・Lo.Ratio・Lo.Freq. | Rev.Time・Ini.Delay・Decay・Room Size | HPF・LPF |
-| Rev.R3 (Hall / Room / Plate) | Density・FB.Gain・ER/Delay・E/R Bal. | Rev.Time・Ini.Delay・Hi.Ratio・Diffusion | HPF・LPF |
+| Rev.R3 (Hall / Room / Plate) | Density・FB.Gain・E/R Delay・E/R Bal. | Rev.Time・Ini.Delay・Hi.Ratio・Diffusion | HPF・LPF |
 | Mono Delay / Ping Pong | HPF・LPF・Delay・FB.Gain | Hi.Ratio・Sync・BPM・Note | — |
 
 **エフェクト配列の slot 2 はアプリのどこにも無い。**実機側にこれへ届くコントロールが無い — 実機の

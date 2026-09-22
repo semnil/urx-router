@@ -354,7 +354,7 @@ export const ja: Messages = {
         lowRatio: "Lo.Ratio",
         lowFreq: "Lo.Freq.",
         feedback: "FB.Gain",
-        erRevDelay: "ER/Delay",
+        erRevDelay: "E/R Delay",
         erRevBalance: "E/R Bal.",
         delayTime: "Delay",
         sync: "Sync",
