@@ -151,7 +151,9 @@ carries a one-line map of the same directories and points here.
   backing store: one validated localStorage record `urx-settings`, loaded lazily so the `?reset` clear runs
   first) / `scene-scope.ts` the URX scene boundary in plan terms (capture/apply/strip for scene-scoped
   fetch/save; the write-side mirror is the `sceneExternal` flags in `control/params.ts`, and
-  `scene-scope.test.ts` pins the two encodings together)
+  `scene-scope.test.ts` pins the two encodings together) / `input-lock.ts` the +48V / HI-Z rule every surface reads (turning
+  one on while the other is on is refused, and A.Gain stops at +40 dB while HI-Z is on — known-issues.md
+  "The unit lets +48V and HI-Z be on together; the app does not")
   - `src/core/midi/` — external MIDI control (desktop only). `message.ts` decode/encode of CC/note/pitch
     bend / `mapping.ts` free-mapping model (address, takeover mode absolute/pickup) + persistence validation
     / `controls.ts` catalog of fixed control ids (`node/param[@scope]`) for every CONSOLE control **and
@@ -163,7 +165,8 @@ carries a one-line map of the same directories and points here.
     processor / band (`@gate`, `@comp`, `@eq.low`) — a node has one fader but three thresholds, and a band
     is a scope rather than a cursor because a mapping has to work with the screen closed. Device locks
     reject writes (FIXED bus sends, Pan Link send pan, rate-restricted stereo CH EQ, COMP's device-driven
-    values under 1-knob, EQ band values under 1-knob, the Q/gain a filter type does not read); the enum
+    values under 1-knob, EQ band values under 1-knob, the Q/gain a filter type does not read); +48V and HI-Z
+    each refuse turning on while the other is on (`refuses`, reported rather than dropped); the enum
     selectors (knee / filter type / 1-knob type) carry no control / `engine.ts` incoming-message application
     (14-bit CC pairs; toggles have a per-mapping button behavior named after the sender's button type =
     "Momentary" (edge) / "Toggle" (state), state meaning the value is the state directly, for Stream
@@ -1162,7 +1165,7 @@ MIX 675), which is the scribble power LED. STEREO and the MONITOR buses have no 
 no MUTE chip; their master ON is the power LED alone. A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
 `MONITOR_MONO`, ships OFF) chips. Then +48 / φ /
-HPF on mono MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
+HPF on mono MIC channels (Hi-Z on CH3/4, CH2 on URX22) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
 node hung under them). A mono channel in SSMCS mode carries **SSMCS** between GATE and COMP — the morphing
 strip's own master, and the one head chip whose value is a level down in the plan (`ssmcs.on`), so the strip
@@ -1494,14 +1497,18 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   signal goes, `CH 1 · EQ LOW · Gain` is a stage of this node.
 
   Values cross the boundary normalized (0..1) and are snapped on set to the same grids the surfaces use
-  (the level_gain grid in `levels.ts`, the channel's GAIN dB range, PAN ±63, PHONES 0.1 steps). A tuning
+  (the level_gain grid in `levels.ts`, the channel's GAIN dB range — A.Gain's is -8..+40 while HI-Z is on —
+  PAN ±63, PHONES 0.1 steps). A tuning
   screen's parameter takes its grid from the same `DynField` table its slider is built from; which route
   each side takes to that grid, and what it does and does not put a MIDI value and a dragged slider on, is
   channel-tuning.md "MIDI assignment". Device locks refuse the write: a FIXED bus's send level, a
   Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain and Auto
   Makeup while 1-knob is on (the device computes them), COMP's 1-knob level while it is off, every EQ band
   value while EQ 1-knob is on, and the Q / gain a filter type does not read. The enum selectors (COMP knee,
-  the EQ filter type and 1-knob type) carry no control at all.
+  the EQ filter type and 1-knob type) carry no control at all. +48V and HI-Z refuse differently: turning one
+  on while the other is on for the channel is refused by the control itself (`refuses`) and reported on the
+  status line rather than dropped, and the CONSOLE chip that rule locks stays a learn target
+  (known-issues.md "The unit lets +48V and HI-Z be on together; the app does not").
 - **Engine (`engine.ts`)** — routes incoming events onto bound controls. Take-in modes are per-mapping:
   absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
   pair (n / n+32). Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
@@ -3789,6 +3796,8 @@ reachable sibling is insert FX, whose engine slots are bounded at the emit while
 unit's raw verbatim. That case is untouched here: it diverges the same way and `comparePlan` sees it no
 better. The mechanism is bounded to `paramRangeProblems`' own walk for the same reason that walk is
 (`plan-validate.ts`'s SCOPE note): the FX catalogue is the family whose windows have actually moved.
+The walk's two node keys — a HI-Z channel's +48V and A.Gain — are not taken back: `paramRangeAddrs`
+answers only for an FX `params` entry, and the emit sends both keys as the plan holds them.
 
 One value is **rewritten** rather than dropped in the DESERIALIZER, and it is the only one there — the
 loader rewrites a second class one layer later, after validation, where an FX value outside what the app can
@@ -3798,7 +3807,8 @@ selected type's own default applies rather than one type's guessed in), a `type`
 sanitiser above keeps a boolean and a non-empty object under any key, so an unreadable effect object loads
 and every reader below reads it as absent, and a truthy one is worse still, since the write path then sends
 that channel's factory defaults over whatever the unit holds. Both actions are reported (`plan-validate.ts`), in
-two sentences rather than one count. Here: a **node name** is cut to
+two sentences rather than one count. The same step bounds two keys of a channel whose HI-Z is on — +48V to
+off and A.Gain to +40 dB (`input-lock.ts`) — and counts them with the bounded FX values. In the deserializer: a **node name** is cut to
 **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on
 the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured

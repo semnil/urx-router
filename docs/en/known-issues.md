@@ -111,6 +111,38 @@ protocol, so newer versions are not guaranteed to behave identically.
 | Firmware | V1.3.1.0 |
 | Device Center | 2.2.1 (2.2.1.1) |
 
+## The unit lets +48V and HI-Z be on together; the app does not
+
+The user guide ("INPUT screen", the [+48V] button) says phantom power and HI-Z
+cannot be turned on at the same time. The URX44V (System 1.3.1.0) panel does let
+both be on for one jack: pressing [HI-Z] with [+48V] on, or [+48V] with [HI-Z] on,
+leaves both on, and neither switches the other off.
+
+The app never turns one on while the other is on:
+
+- **Inspector and CONSOLE.** While one of +48V / HI-Z is on for a channel, the
+  other's ON cannot be pressed — the Inspector toggle and the CONSOLE chip are
+  read-only and their tooltip says which one to turn off first. Turning the lit
+  one off is always available.
+- **MIDI.** A write that would turn the other one on is refused and the status
+  line says why; nothing is edited. A write turning either one off goes through.
+- **Opening a plan** (a file, a `?plan=` link or a drop). A document holding both
+  on for one channel opens with +48V off and HI-Z kept, and the status line
+  reports it with the other values the load normalized.
+- **A device read** (Fetch, starting Live sync, the device follow, a `.urxf`
+  import). A unit holding both on is taken as it is and the status line names the
+  channels; the app writes nothing to the unit for it, and either one can then be
+  turned off.
+
+**A.Gain follows HI-Z.** While HI-Z is on, the unit's A.Gain runs -8 … +40 dB, and
+the unit does not apply a value written above +40. The Inspector slider, the
+CONSOLE knob and a MIDI control's full throw take the same range while HI-Z is on.
+Turning HI-Z on in the app with A.Gain above +40 lowers it to +40 in the same edit
+(one undo step restores both), and a plan holding HI-Z on with A.Gain above +40
+opens with A.Gain at +40, reported like the +48V repair. HI-Z is written ahead of
+A.Gain, and whichever of +48V / HI-Z the plan holds off is written ahead of the
+other, so a write never has both on in between.
+
 ## The AUTO (auto gain) trigger is not modeled
 
 The device's input screens offer an **AUTO** button that runs a one-shot
