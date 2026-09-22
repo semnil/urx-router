@@ -1489,8 +1489,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   learn, dropping the armed control instead of committing it under the new model's mapping key.
 - **Feedback (MIDI OUT)** — plan changes (UI edits, device follow, device readbacks, plan loads) are sent back
   through the reverse lookup so motor faders / LEDs follow. It hangs off the shared change funnel
-  (`markChanged`) and its readback twin (`planReadFromDevice`: follow reflect, fetch, the initial readback at
-  Live-sync start), debounced at 120 ms and diffed against a sent cache so only changed values go out. Feedback
+  (`markChanged`) and its readback twin (`planReadFromDevice`: fetch, the initial readback at Live-sync start, the
+  `.urxf` import; the follow reflect calls only `planValuesChanged`, the twin's feedback half), debounced at 120 ms
+  and diffed against a sent cache so only changed values go out. Feedback
   to an address that is still sending is deferred until a 300 ms quiet gap (echo suppression).
 
   **Nothing goes out until a Live-sync readback has completed**, and that moment is also the one full re-send:
@@ -1551,8 +1552,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   (2026-08-09): the whole 8-address resync goes out inside 1 ms, the refusal window ends in the same
   millisecond, and the loopback returns 5 ms later — so that window protected none of it, and one sized to
   cover it would only discard genuine input for as long as it lasted. That measurement is why the resync is
-  **not** kept inside the window: it hangs off `planReadFromDevice` like every other post-readback
-  re-baseline, which runs after the latch clears. What protects the plan is the echo guard above, which
+  **not** kept inside the window: it goes out from `MidiControl.liveReadSettled`, which the Live-sync start calls once
+  the session is up, after the latch clears. What protects the plan is the echo guard above, which
   decides by value and so does not depend on that latency at all. The same run recorded no `vd_set` reaching
   the unit.
 - **Gating** — an incoming message is refused while a device read holds the plan (`deviceReadInFlight`:
@@ -2208,6 +2209,7 @@ describes a state it can return to.
 | A notify for Follow USB, 848 | `intercept`, ahead of node resolution | host-owned and outside the plan; it would otherwise force a full re-read |
 | A device read whose plan was replaced | `readIntoPlan`'s identity guard, after the read resolves | its values belong to a document nothing shows |
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |
+| An edit made while a Fetch's or Live-sync start's read carries a model switch | `markChanged`, which puts the plan back to the state the read began from and says so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
 | A MIDI message arriving under those same latches, or during a self-test / `--prepare-modified` run | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
 | A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
@@ -2407,12 +2409,13 @@ device intact. A write that stops part-way leaves the device holding some of wha
 offers to **run it again** rather than print a breakdown nobody can act on — the retry re-diffs, so whatever landed
 drops out by itself.
 
-The read paths draw the line differently, by what the result is used for. **Fetch tolerates a partial read**: the
-count goes to the status line (`fetchPartial`), the nodes that failed carry `unreadNodes` provenance, a Markdown
+The read paths draw the line differently, by what the result is used for. **Fetch tolerates a partial read** into
+the plan on screen: the count goes to the status line (`fetchPartial`), the nodes that failed carry `unreadNodes` provenance, a Markdown
 report is offered (`formatReadbackReport` / `formatWriteReport`, after the connection is released), and nothing
 arms a write on it. **Live sync does not**, because its snapshot would enshrine the plan's defaults as device truth
 and the first sideEffect edit would converge them onto the hardware unconfirmed — so an incomplete read refuses to
-start the session, and a reconcile that cannot read stops following instead of letting the next converge write a
+start the session and merges none of what it read into the plan (`readIntoPlan`'s `accept`), leaving the undo
+history as it was, and a reconcile that cannot read stops following instead of letting the next converge write a
 stale value back over the operator's own edit on the device. **A silent-address park is the same rule with the write
 still ahead of it**: a read that fails ends the session, and it is the flush's own generation check that stops the
 write behind it, the read being for exactly what that write would replace (channel-tuning.md, "FX EFFECT"; which
@@ -2421,8 +2424,15 @@ failure costs is therefore the park's, not the flush's.** The head-write park ha
 failure there sends **no type at all** — and that is the guarantee for a head that resets a silent family, which is
 the only kind that park runs for. The converge park has only the converge behind it, so a failure there sends no copy
 of the values it could not confirm; where the flush took no head-write park, the head write has already reached the
-unit by then and is not what is being stopped. A cancelled fetch restores the plan it started from, so
-a cancel means nothing happened rather than leaving an unlabelled mixture of old and device values.
+unit by then and is not what is being stopped. A cancelled fetch leaves the plan it started from untouched — its
+read runs against a private copy (`readIntoPlan`) — so a cancel means nothing happened rather than leaving an unlabelled mixture of old and device values. The
+model is part of that: a switch to the unit's model that a fetch or a Live-sync start offered replaces the
+plan only once a complete read into the new plan has landed, so a cancel, a failed read or an incomplete one
+leaves the plan and its model as they were — a fetch included, whose partial read is kept only when no switch
+rides on it; such a fetch's status line says the read was incomplete and nothing was switched
+(`fetchSwitchIncomplete`) rather than giving a count. While that read runs, the plan on screen is the one the switch discards, so an edit to it from any
+surface, an undo / redo and an incoming MIDI change are refused for the read's duration, the status line saying
+so (`busySwitchRead`): the edit funnel (`markChanged`) puts the plan back to the state the read began from.
 
 An undo whose write fails is not a special case: the flush's failure ends the session as any edit's
 would. The plan keeps the undone state and the entry stays **consumed** — re-pushing it would make the
@@ -2530,6 +2540,7 @@ the diff, and settles the rate before anything is sent (`settleSampleRate` in `m
 `client.ts`). Matching rates proceed unchanged. With Follow USB **off**, a mismatch is a plain confirm, since the
 plan's rate is the one that sticks. With it **on**, a modal (`ui/rate-choice.ts`) offers the two real answers —
 write at the device's rate, or turn Follow USB off and write the plan's — rather than guessing which was meant.
+A failed read cancels the write, per the rule above: the rate decides which parameters the write may even contain.
 
 **The plan follows the recorder's ceiling, one way.** `trackCountCeiling` (`core/constraints.ts`) is the single
 statement of what a rate can carry, and `setPlanSampleRate` (`core/plan.ts`) is the only way the plan's rate moves:
@@ -2549,8 +2560,8 @@ refuses every value the app could write it back with. So this is not a feature l
 `trackCountDrop` (`core/constraints.ts`) decide it and `client.ts`'s `readTrackCount` supplies the count, read from
 the DEVICE rather than the plan: an offline plan's count is whatever was last authored, which would both miss real
 drops and invent false ones. A count that already fits is silent, because a loss notice shown to someone losing
-nothing is how a notice stops being read, and a read that fails falls back to the wording that names no numbers
-rather than to silence. Three paths carry it — the plain re-clock confirm, the three-way's RELEASE arm (its own
+nothing is how a notice stops being read, and a read that fails cancels the write, as a failed clock read does.
+Three paths carry it — the plain re-clock confirm, the three-way's RELEASE arm (its own
 element under that button, since adopting the device's rate costs nothing and the shared note speaks for both
 arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
 can read. **URX22 has no recorder and is silent throughout.** Afterwards the write's own epilogue re-reads the
@@ -2559,7 +2570,6 @@ plan is refreshed rather than left waiting for a notify that may never come. The
 send as it RESOLVES — everything but an explicit refusal, since the shell sends before it waits and a write whose
 answer never came may have landed and taken the count down with it — rather than from the outcomes the call
 returns, which a cancel between two sends throws away.
-A failed read cancels the write, per the rule above: the rate decides which parameters the write may even contain.
 
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen
 with no device attached, so there is nothing to compare against until a connection exists.
@@ -3356,7 +3366,9 @@ An undo is refused, with the reason on the status line and **without spending th
   ([above](#a-write-is-not-readable-when-it-is-acked)) and that wait is inside the same in-flight
   membership. Deliberate: the clone and the write witness are open for the whole of it, so an entry
   committed there would freeze this read's own writes into it — and the refusal is a deferral, not a
-  discard, bounded by the settle's own window;
+  discard, bounded by the settle's own window. A fetch or Live-sync start whose read carries a model switch
+  names the switch instead (`busySwitchRead`), as the edit funnel does for the same window
+  ([Aborting on failure](#aborting-on-failure));
 - a **drag** is in progress (a press that has moved), because it holds start values and element
   references in its own closures that the repaint would rebuild from under it;
 - a modal is open — none of them edits the plan, except the channel tuning screen, which is exactly
@@ -3372,10 +3384,16 @@ An undo is refused, with the reason on the status line and **without spending th
 
 Both stacks are dropped, and the baseline re-taken, when no earlier entry describes a state the plan
 can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent row / the model picker
-/ the `?plan=` deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch,
-the cancelled-fetch restore, Live-sync start and the `.urxf` import; plus device-follow's full
-reconcile). A one-node follow readback only re-takes the baseline, keeping the entries already
-recorded.
+/ the model switch a Fetch or Live-sync start offers, applied once its read has landed complete / the `?plan=`
+deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch, Live-sync start
+and the `.urxf` import; plus device-follow's full reconcile). A one-node follow readback only re-takes
+the baseline, keeping the entries already recorded. A Fetch or Live-sync start whose read did not land —
+cancelled, failed, stopped before its read, or incomplete where only a complete read is taken (a Live-sync
+start, and a fetch carrying a model switch) — touches neither the stacks nor the baseline, an entry still
+open included. One whose read landed drops and re-takes both even when it changed no value, an entry
+still open at that moment included — and does so as the read lands, so an edit made after it, while the
+flow is still releasing its link (a fetch) or registering its session (a Live-sync start), opens an entry of
+its own that stays undoable.
 
 The depth cap is 100 entries, oldest dropped. The unsaved flag is untouched: undo and redo set it
 through the same funnel as any edit, so undoing back to the last-saved state still counts as

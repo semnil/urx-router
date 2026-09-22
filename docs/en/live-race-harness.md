@@ -547,7 +547,7 @@ former cost.
 | `analyze.ts` | invariants 1 / 2 / 3 / 4 / 6 / 8 / 12 / 13 / 16 and timeline rendering |
 | `t0`–`t8` plus `t0b`–`tzb` | the cases, by tier |
 | `t2c`–`t2f` | T2's remaining eight cases (the shape-changing params filled in later) |
-| `t9-probe.spec.ts` | the probe's own contract, and invariants 13 and 3 |
+| `t9-probe.spec.ts` | the probe's own contract, and invariants 13 and 3 — including that a landed Fetch's or Live-sync start's read is attributed to `device-action` |
 
 **Every case in the tier tables above is present in a spec**, matched by id — `grep -rF <id> e2e/race`
 answers it for one, and the ids are the census. What is not *driven* is a handful of permanently
@@ -829,7 +829,7 @@ consequence a whole gesture later, or not at all.
 The ledger reuses the differ the undo stack already uses (`clonePlanState` + `diffPlans`). A key that
 reaches the plan without reaching that differ is an edit the user cannot undo, so the ledger and the
 undo entries cannot disagree about what a gesture touched. Writers name themselves through
-`markChanged(source)` / `planReadFromDevice(source)` and the three device-follow paths, undo and load.
+`markChanged(source)` / `planReadFromDevice()` and the three device-follow paths, undo and load.
 
 **The eighth writer has no `WriteSource` of its own, deliberately.** Constraints / integrity never
 writes on a schedule of its own: `constraints.ts` only reads, `routing.ts`'s mirrors

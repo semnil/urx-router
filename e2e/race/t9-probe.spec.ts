@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import {
   installFake,
   goLive,
@@ -257,5 +257,26 @@ test.describe("T9 probe", () => {
     // …and the node the refetch DID read is still re-based from the device, or every
     // value the unit computed would go straight back out as a pending edit.
     expect(snapshot?.["46:0:0"]).toBe(1);
+  });
+
+  // A whole-device read that lands attributes the keys it wrote to the device action, for a
+  // Fetch and for a Live-sync start alike.
+  const deviceActionKeys = async (page: Page): Promise<number> =>
+    (await ledgerOf(page)).filter((l) => l.source === "device-action").length;
+
+  test("a landed Fetch's read is attributed to the device action", async ({ page }) => {
+    expect(await deviceActionKeys(page), "the premise: nothing has read the device yet").toBe(0);
+    await page.click("#btn-device");
+    await page.click("#btn-fetch");
+    await expect(page.locator("#statusbar")).toContainText("Fetched", { timeout: 60_000 });
+    await waitQuiet(page);
+    expect(await deviceActionKeys(page)).toBeGreaterThan(0);
+  });
+
+  test("a landed Live-sync start's read is attributed to the device action", async ({ page }) => {
+    expect(await deviceActionKeys(page), "the premise: nothing has read the device yet").toBe(0);
+    await goLive(page);
+    await waitQuiet(page);
+    expect(await deviceActionKeys(page)).toBeGreaterThan(0);
   });
 });

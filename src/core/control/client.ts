@@ -38,18 +38,17 @@ export async function readClockState(): Promise<ClockState> {
  * doubling here is the same one `readback` applies and the two cannot disagree about the
  * unit.
  *
- * Read on its own rather than folded into `readClockState`, which rejects unless both of
- * its halves answer because a rate write cannot be decided without them. This one is
- * advisory: it decides whether a warning can name the numbers, and a caller that cannot
- * get it warns in the form that names none rather than staying silent.
+ * Read on its own rather than folded into `readClockState`: only a model with a recorder
+ * has the count. Rejects when the read fails, and the write that asked for it then stops
+ * before anything is sent, as it does when `readClockState` rejects.
  */
 export async function readTrackCount(): Promise<number> {
   return (await vdGet(PARAMS.SD_REC_TRACK_COUNT.id, 0, 0)) * 2;
 }
 
 /** Read just the Follow USB policy. Separate from readClockState because the badge
- *  refresh runs right after a full readback, which has already brought the rate
- *  back — re-reading it there would be a round-trip for a value just obtained. */
+ *  read accompanies a full readback, which brings the rate back itself — reading it
+ *  there as well would be a round-trip for a value the readback obtains. */
 export async function readFollowUsb(): Promise<boolean> {
   return (await vdGet(PARAMS.FOLLOW_USB.id, 0, 0)) !== 0;
 }

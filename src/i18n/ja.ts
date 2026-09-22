@@ -632,6 +632,7 @@ export const ja: Messages = {
     pdfExported: "PDF を出力しました",
     arranged: "既定レイアウトに整列しました",
     busyDeviceRead: "本体から読み取り中です — 完了してからもう一度お試しください",
+    busySwitchRead: "この計画はデバイスの機種の計画に差し替え中です — 読み取りが終わってからもう一度お試しください",
     deviceLinkBusy: "別のデバイス操作が接続を掴んでいます — 完了してからもう一度お試しください",
     fetchConnecting: "デバイスに接続しています…",
     fetchedDevice: (model: string, n: number): string => `${model} から ${n} 件の設定を取得しました`,
@@ -639,6 +640,8 @@ export const ja: Messages = {
       `${model} から ${n} 件取得、${unread} ノード未取得`,
     fetchPartial: (n: number, failed: number, unread: number): string =>
       `${n} 件取得、${failed} 件失敗` + (unread ? `、${unread} ノード未取得` : ""),
+    fetchSwitchIncomplete: (failed: number, device: string, ui: string): string =>
+      `読み取りが不完全だった (${failed} 件失敗) ため、${device} へは切り替えず、計画は ${ui} のままです。`,
     settingsImported: (name: string, n: number): string => `${name} から ${n} 件の設定を取り込みました`,
     settingsPartial: (n: number, failed: number, unread: number): string =>
       `${n} 件取り込み、${failed} 件失敗` + (unread ? `、${unread} ノード未取得` : ""),
@@ -956,7 +959,9 @@ export const ja: Messages = {
     followReadIncomplete: (n: number): string =>
       `デバイス側の変更後、${n} 件の設定を読み戻せず、プランが実機と一致しなくなりました。取得し直して同期してください。`,
     clockUnread: (message: string): string =>
-      `デバイスのサンプルレートと Follow USB の状態を読み取れませんでした (${message})。計画のレートが定着するか判断できないため、何も書き込んでいません。`,
+      `デバイスのサンプルレートと Follow USB の状態を読み取れませんでした (${message})。計画のレートを実機と照合していないため、何も書き込んでいません。`,
+    trackCountUnread: (message: string): string =>
+      `microSD レコーダーの Track Count を読み取れませんでした (${message})。レート変更はこの値を元に戻せない形で下げることがあるため、何も書き込んでいません。`,
     followUsbWrite: (message: string): string =>
       `Follow USB を OFF にできませんでした (${message})。何も書き込んでいません。`,
     unknownModel: (model: string): string => `未知の機種: ${model}`,

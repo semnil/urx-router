@@ -31,12 +31,14 @@ import { applySceneExternal, captureSceneExternal, sceneExternalParamNames } fro
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import {
+  applyPatch,
   clonePlanState,
   diffPlans,
   nodeParamContestPath,
   PlanWriteWitness,
   type PatchTouch,
   patchContestNames,
+  patchTouch,
   type PlanPatch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
@@ -203,9 +205,10 @@ const consoleHost = $<HTMLElement>("console-host");
 const statusbar = $<HTMLElement>("statusbar");
 
 // The device's SETUP > Follow USB state, as far as this session has seen it. Null
-// until the app has actually read a device, and back to null when a read fails —
-// an unknown state is drawn as no badge at all rather than as "off", since "off" is
-// the state in which the rate picker is trusted to stick.
+// until a read of the unit succeeds, and back to null when the link it was read over
+// drops (a live session's, or a fetch's part-way through) or the plan switches to
+// another model; a read that fails leaves it as it was. Unknown is never drawn as
+// "off", since "off" is the state in which the rate picker is trusted to stick.
 //
 // Session-scoped on purpose: unlike the model and the rate, this is not a choice the
 // operator makes in the app and carries between sessions. It is the device's own
@@ -1357,6 +1360,31 @@ async function applyPreventSleep(on: boolean): Promise<string | null> {
 // so every funnel reaches it optionally — the same shape as live / midi.
 let planHistory: PlanHistory | null = null;
 
+// A device read that carries a model switch (Fetch / Live-sync start) runs against a plan of
+// the unit's model, and that plan replaces the one on screen once the read lands — so while
+// the read runs, the plan on screen is the one the switch discards. Set for exactly that
+// window, holding the plan on screen and its state when the read began. An edit from any
+// surface reaches markChanged and is refused there, an undo / redo is refused by the history
+// and an incoming MIDI change by the MIDI gate, each with `busySwitchRead` on the status line.
+let switchRead: { plan: Plan; state: Plan } | null = null;
+
+// Refuse an edit made while a switching read runs: put the plan on screen back to the state
+// the read began from and repaint it. Queued behind the funnel that called, which goes on
+// writing the plan and the status line after its markChanged call. A restore that runs once
+// the switch has replaced that plan does nothing: the plan on screen and the status line are
+// then the switch's.
+function refuseSwitchReadEdit(held: { plan: Plan; state: Plan }): void {
+  queueMicrotask(() => {
+    if (plan !== held.plan) return;
+    const patch = diffPlans(plan, held.state);
+    if (patch.length) {
+      applyPatch(plan, patch);
+      repaintPatched(patchTouch(patch));
+    }
+    setStatus(t().status.busySwitchRead);
+  });
+}
+
 // An edit changed the plan: flag it unsaved and (when live) mirror it to the
 // device. Every edit funnel routes through here so neither concern is forgotten.
 // MIDI feedback also hangs off this funnel, so a mapped controller (motor fader /
@@ -1364,6 +1392,10 @@ let planHistory: PlanHistory | null = null;
 // here too, and closes it at the next gesture boundary — which is why the diff is
 // taken then and not now: several funnels mutate the plan further after calling.
 function markChanged(source: WriteSource = "ui", written?: Iterable<string>): void {
+  if (switchRead) {
+    refuseSwitchReadEdit(switchRead);
+    return;
+  }
   dirty = true;
   // Attribute the write before the funnel's own side effects run: note() may commit an
   // entry, and the ledger has to say who authored the keys that entry carries.
@@ -1387,16 +1419,6 @@ function planValuesChanged(): void {
   midi?.scheduleFeedback();
 }
 
-// A device readback of any breadth settled the plan (fetch, Live-sync start, the .urxf
-// import). The history re-takes its whole baseline: a device-authored value must not
-// ride along in the next entry, or undoing an app edit would push it back over the
-// operator's own move on the hardware. The follow-side writers do NOT come through here
-// — each settles the history at its own site, where what the device authored is known:
-// a notify's own keys (applyDirect → absorb), a refetch's patch (refetchNodes →
-// absorb), a reconcile's reset (reflectFollow's full branch), the write-adoption's
-// confirmed keys (adoptConfirmedWrites → absorb), and the position a STEREO pair's snap
-// writes (snapLinkedPairs → absorb), which is the one of the five the device did not
-// author and the only one that needs no reset behind it.
 /** Whether the model has the microSD recorder at all. URX22 does not, so nothing about
  *  Track Count — a menu entry, a ceiling, a warning — belongs on it. Spelled once so the
  *  three sites that ask cannot drift apart.
@@ -1409,13 +1431,24 @@ function hasRecorder(reported: string): boolean {
   return getModel(known ? (reported as ModelId) : modelId).nodes.some((n) => n.id === SDREC_NODE_ID);
 }
 
+// A device readback of any breadth settled the plan (fetch, Live-sync start, the .urxf
+// import). The history re-takes its whole baseline: a device-authored value must not
+// ride along in the next entry, or undoing an app edit would push it back over the
+// operator's own move on the hardware. The follow-side writers do NOT come through here
+// — each settles the history at its own site, where what the device authored is known:
+// a notify's own keys (applyDirect → absorb), a refetch's patch (refetchNodes →
+// absorb), a reconcile's reset (reflectFollow's full branch), the write-adoption's
+// confirmed keys (adoptConfirmedWrites → absorb), and the position a STEREO pair's snap
+// writes (snapLinkedPairs → absorb), which is the one of the five the device did not
+// author and the only one that needs no reset behind it.
 function planReadFromDevice(): void {
   planValuesChanged();
-  // No full re-send here. This funnel is reached by a cancelled fetch and a partly
-  // applied read as well as by a settled one — all three deliberately, since each may
-  // have applied device values the history has to re-baseline. What none of them
-  // establishes is that the plan IS the unit's state, and only that licenses putting
-  // every mapped value on the wire (MidiControl.liveReadSettled, called where the
+  // No full re-send here. This funnel is reached by every read that landed in the plan on
+  // screen — a fetch's partial one included, and one whose values changed nothing — and
+  // the history re-baselines on each; a read that did not land (cancelled, failed, or
+  // incomplete where only a complete one is taken) leaves the history as it was. What none
+  // of them establishes is that the plan IS the unit's state, and only that licenses
+  // putting every mapped value on the wire (MidiControl.liveReadSettled, called where the
   // session is known to be up).
   planHistory?.rebase();
 }
@@ -1950,6 +1983,17 @@ function reflectHistory(touch: PatchTouch): void {
   // here — an undo is a writer like any other, and attributing its keys to "ui" would
   // make a restored value indistinguishable from a fresh edit.
   traceProbe?.sample("undo");
+  repaintPatched(touch);
+  // Last, so the live diff measures the settled plan. This is also what carries the
+  // change to the device: live.ts diffs its snapshot, so only the undone keys go
+  // out. resync() must NOT be called — it would re-base the snapshot to the plan
+  // and suppress the very write the undo needs.
+  markChanged();
+}
+
+// Repaint the views for a patch already applied to the plan in place: an undo / redo, or
+// an edit refused while a switching read runs (refuseSwitchReadEdit).
+function repaintPatched(touch: PatchTouch): void {
   // Before the repaints: commitHidden writes the graph's own set back to the plan,
   // so the persisted mirror has to move first or a later commit would undo the undo.
   if (touch.fields.has("hidden")) rememberHidden(modelId, plan.hidden);
@@ -1968,11 +2012,6 @@ function reflectHistory(touch: PatchTouch): void {
     rebuildInspector();
     consoleView.refresh();
   }
-  // Last, so the live diff measures the settled plan. This is also what carries the
-  // change to the device: live.ts diffs its snapshot, so only the undone keys go
-  // out. resync() must NOT be called — it would re-base the snapshot to the plan
-  // and suppress the very write the undo needs.
-  markChanged();
 }
 
 // Read the whole device into the plan, honoring the Preferences device scope:
@@ -1982,7 +2021,9 @@ function reflectHistory(touch: PatchTouch): void {
 // throw (abort / link loss) nothing is restored — the callers discard or keep
 // the plan wholesale. The plan is a parameter rather than the module one because the
 // read spans seconds: re-reading it after the await would apply the outgoing document's
-// scene-external values to whatever replaced it.
+// scene-external values to whatever replaced it. The model is the target's own, since a
+// read that carries a model switch runs against a plan of the device's model while the
+// one on screen is still the other.
 async function applyDeviceStateScoped(
   target: Plan,
   signal?: AbortSignal,
@@ -1999,7 +2040,15 @@ async function applyDeviceStateScoped(
   // what the read may not have a verdict about, or a selector the unit holds in a shape
   // the plan cannot express stops a session that is not syncing it (readback's own
   // parameter comment carries the case).
-  const result = await applyDeviceState(getModel(modelId), target, signal, undefined, pending, false, keep !== null);
+  const result = await applyDeviceState(
+    getModel(target.modelId),
+    target,
+    signal,
+    undefined,
+    pending,
+    false,
+    keep !== null,
+  );
   if (keep) applySceneExternal(target, keep);
   return result;
 }
@@ -2018,14 +2067,18 @@ function newPlanAtLastRate(id: ModelId): Plan {
 /** Replace the open document. Returns false when the replacement did not happen — a
  *  device read holds the plan, or the new one could not be drawn — and the caller must
  *  not then report the load as having happened. Both refusals report themselves, so no
- *  caller needs a failure surface of its own. */
-function loadPlan(next: Plan): boolean {
+ *  caller needs a failure surface of its own.
+ *
+ *  `readHoldsLatch` is the device read that holds the latch replacing the plan with the
+ *  one it read into — the model switch a Fetch or Live-sync start offered, applied once
+ *  its read has landed complete — and is the one replacement the latch does not refuse. */
+function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boolean } = {}): boolean {
   // A device read (fetch / Live-sync start) is merging into the module `plan`;
   // replacing it now would strand the merge (see deviceReadInFlight). Every external
   // entry point is already blocked at fileFlow / the model picker, so this is the
   // backstop — and it says so, because its one reachable caller went on to announce a
   // load that never happened.
-  if (flow.deviceReadInFlight) {
+  if (flow.deviceReadInFlight && !readHoldsLatch) {
     setStatus(t().status.busyDeviceRead);
     return false;
   }
@@ -2299,8 +2352,9 @@ async function confirmDiscard(): Promise<boolean> {
 // seconds-long window, so a New / Open / drop / recent / .urxf or a model switch
 // mid-read would swap `plan` out from under the read — corrupting it, or (on Live
 // start) snapshotting the swapped-in plan as device truth. The two reads raise it
-// and clear it in their finally; every wholesale plan replacement checks it. The
-// internal model-switch loadPlan runs before the latch is raised.
+// and clear it in their finally; every wholesale plan replacement checks it, except
+// the model switch the read itself offered, which it applies under the latch once the
+// read into the new plan has landed complete (loadPlan's `readHoldsLatch`).
 //
 // The third latch is `deviceLinkHolder` (declared with the lock it drives, above):
 // whoever holds the device link, including the destructive runs, which are the reason
@@ -2334,16 +2388,43 @@ async function confirmFirmware(device: DeviceSummary): Promise<boolean> {
 // The connected device may be a different model than the one selected. Fetch and
 // Live sync offer to switch the UI to a fresh plan of the device's model so the
 // device values map onto the right channels; write and compare refuse instead (they
-// act on the current plan — see refuseModelMismatch). Returns "ready" to proceed
-// (same model, or switched), "unknown" for a model this build does not know, and
-// "canceled" when the switch was declined; the caller formats its own message for
-// the two stops. The loadPlan here runs before any device-read latch is raised.
-async function offerModelSwitch(device: DeviceSummary): Promise<"ready" | "unknown" | "canceled"> {
-  if (device.model === modelId) return "ready";
+// act on the current plan — see refuseModelMismatch). Resolves to the plan the read
+// runs against when it may proceed — null for the plan on screen (same model), or the
+// fresh plan when the switch was taken — "unknown" for a model this build does not
+// know, and "canceled" when the switch was declined; the caller formats its own
+// message for the two stops. Taking the switch replaces nothing yet: the fresh plan
+// replaces the one on screen only once a complete read into it has landed
+// (applyModelSwitch), so a read that fails, is cancelled or comes back incomplete leaves
+// the plan and its model as they were.
+async function offerModelSwitch(device: DeviceSummary): Promise<Plan | null | "unknown" | "canceled"> {
+  if (device.model === modelId) return null;
   if (!MODEL_IDS.includes(device.model as ModelId)) return "unknown";
   if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) return "canceled";
-  loadPlan(emptyPlan(device.model as ModelId));
-  return "ready";
+  const next = emptyPlan(device.model as ModelId);
+  // The connections the model always has, as loadPlan gives a plan it adopts, so the read
+  // measures the unit's values on them against the values this plan holds there.
+  ensureFixedConnections(getModel(next.modelId), next);
+  return next;
+}
+
+// What a device read merges into: the plan on screen, or — for a read that carries a
+// model switch — the switch's plan, for as long as the plan on screen is still the one
+// the read started from. Replaced under the read (which loadPlan refuses while the read
+// latch is up), it answers the replacement, and readIntoPlan then merges nothing.
+function readTarget(switchTo: Plan | null): () => Plan {
+  if (!switchTo) return () => plan;
+  const onScreen = plan;
+  return () => (plan === onScreen ? switchTo : plan);
+}
+
+// Replace the plan on screen with the switch's plan, which a read has just landed in.
+// False when the replacement did not happen (loadPlan reported why). The badge goes
+// back to unknown, as in a switch from the model picker; the read's own Follow USB
+// value is set after this.
+function applyModelSwitch(next: Plan): boolean {
+  if (!loadPlan(next, { readHoldsLatch: true })) return false;
+  setFollowUsbBadge(null);
+  return true;
 }
 
 // Refuse to act on a device whose model differs from the plan's — the plan's
@@ -2617,13 +2698,16 @@ planHistory = new PlanHistory({
   // press is an entry the operator loses — visibly, rather than an edit that may or may
   // not have reached the unit. A modal is refused because none of them edits the plan —
   // except the channel tuning screen, which is exactly what its sliders do, so an undo
-  // taken with it open belongs to the plan behind it.
+  // taken with it open belongs to the plan behind it. A read that carries a model switch
+  // says so instead (see switchRead).
   blocked: () =>
-    flow.busy || followReads.size > 0
-      ? t().status.undoDeviceBusy
-      : modalOpen() && !dynScreen.isOpen()
-        ? t().status.undoModal
-        : null,
+    switchRead
+      ? t().status.busySwitchRead
+      : flow.busy || followReads.size > 0
+        ? t().status.undoDeviceBusy
+        : modalOpen() && !dynScreen.isOpen()
+          ? t().status.undoModal
+          : null,
   rateLocked: () => liveSessionUp,
   // The macOS application menu's Undo / Redo render this state (a no-op elsewhere).
   onDepthChange: () => editMenu.pushState(),
@@ -2788,19 +2872,6 @@ async function offerErrorReport(report: ErrorReport, prompt?: string, label?: st
 // bundle, so this branch — and the control imports it alone references — drops
 // from the demo build.
 if (!DEMO) {
-  // Pick up the device's Follow USB state from a round-trip already being made, so
-  // the badge reflects the unit currently on the link. A failed read leaves the
-  // state unknown (no badge) rather than asserting "off" — nothing else depends on
-  // it, so this is the one device read that does not abort its caller.
-  async function refreshFollowUsbBadge(): Promise<void> {
-    try {
-      setFollowUsbBadge(await readFollowUsb());
-    } catch (err) {
-      console.warn("Follow USB state unread:", err);
-      setFollowUsbBadge(null);
-    }
-  }
-
   // Toggle the device's clock policy from the badge. Turning it ON hands the clock
   // back to the USB host: if the host is on a different rate the device re-clocks to
   // it there and then, so the confirm names that possibility — but when the rates
@@ -2814,9 +2885,8 @@ if (!DEMO) {
       // unknown would have to guess which way, and the operator's first question here
       // is "what is it?", not "change it".
       if (followUsbState === null) {
-        // Not refreshFollowUsbBadge: that one swallows a read failure back to unknown
-        // because nothing depends on it. Here the read IS the requested action, so let
-        // it throw and be reported.
+        // A read that fails is reported through withDevice like any other device read,
+        // and the badge stays unknown.
         await withDevice("follow-usb", t().status.writeConnecting, t().status.writeError, async () => {
           setFollowUsbBadge(await readFollowUsb());
         });
@@ -2891,12 +2961,12 @@ if (!DEMO) {
         // The connected device may be a different model than the one selected.
         // Offer to switch the UI to the device's model (a fresh plan) so the
         // fetched values map onto the right channels; otherwise abort.
-        const sw = await offerModelSwitch(device);
-        if (sw === "unknown") {
+        const switchTo = await offerModelSwitch(device);
+        if (switchTo === "unknown") {
           showError(t().status.fetchError(t().error.unknownModel(device.model)));
           return;
         }
-        if (sw === "canceled") {
+        if (switchTo === "canceled") {
           setStatus(t().status.canceled);
           return;
         }
@@ -2904,15 +2974,40 @@ if (!DEMO) {
         // its epilogue (cleared in the finally below); the read mutates `plan` in
         // place, so a New/Open/switch mid-read would corrupt it.
         flow.deviceReadInFlight = true;
+        // The plan on screen takes no edit while a read that carries a switch runs (cleared
+        // as the read returns or throws, and in the finally below).
+        if (switchTo) switchRead = { plan, state: clonePlanState(plan) };
         // The read runs against a private copy, so a cancel throws out of it with the
         // plan on screen untouched — "cancel means nothing happened" needs no restore,
         // and the module plan object is never replaced (which is what used to leave
-        // every MIDI binding attached to a discarded Plan).
-        const merged = await readIntoPlan(
-          () => plan,
-          (into) => applyDeviceStateScoped(into, controller.signal),
-          planWrites,
-        );
+        // every MIDI binding attached to a discarded Plan). A read that carries a model
+        // switch runs against a copy of the switch's plan instead, and that plan
+        // replaces the one on screen only once the read has landed complete; with the plan
+        // on screen taking no edit meanwhile, that read names no key through the write
+        // witness.
+        //
+        // Follow USB is outside the plan (see params.ts), so the readback does not carry
+        // it. It is read on the same connection, first inside the read: a failure throws
+        // out of it with nothing merged — reported as the cancel when one was asked for,
+        // as a plan read's is — and the badge takes the value only once the plan read has
+        // landed.
+        let followUsb = false;
+        let merged: MergedRead | null;
+        try {
+          merged = await readIntoPlan(
+            readTarget(switchTo),
+            async (into) => {
+              followUsb = await readFollowUsb().catch((err: unknown) => {
+                controller.signal.throwIfAborted();
+                throw err;
+              });
+              return applyDeviceStateScoped(into, controller.signal);
+            },
+            switchTo ? undefined : planWrites,
+          );
+        } finally {
+          switchRead = null;
+        }
         // Unreachable while this handler holds deviceReadInFlight (loadPlan refuses
         // under it), but the contract is stated rather than assumed.
         if (!merged) {
@@ -2920,24 +3015,40 @@ if (!DEMO) {
           return;
         }
         if (merged.errors.length) console.warn("device readback issues:", merged.errors);
-        noteMergeConflicts(merged);
-        notePatchFromDevice(merged.devicePatch);
-        // Follow USB is outside the plan (see params.ts), so the readback does not
-        // carry it — read it on the same connection so the badge matches the values
-        // that just landed.
-        await refreshFollowUsbBadge();
-        // Per-node provenance: nodes whose body read failed still show their plan
-        // default, so the graph/inspector flag them as not read from the device.
-        plan.unreadNodes = merged.unreadNodes;
-        rerenderPlan();
-        dirty = true;
+        // A partial read into the plan on screen is kept. One into the switch's plan is not:
+        // the switch is applied only by a complete read, as a live start's is, so an
+        // incomplete one switches nothing, puts nothing it read on screen and leaves the
+        // badge as it was — and is still reported below, as any incomplete fetch is.
+        if (!switchTo || !merged.errors.length) {
+          if (switchTo && !applyModelSwitch(switchTo)) return;
+          // The undo history re-bases as the read lands, whether or not its values changed
+          // any; an edit made after this — while the link is still being released — is an
+          // entry of its own and stays undoable. A read that did not land (cancelled, failed,
+          // stopped before it, or an incomplete one carrying a switch) leaves the history alone.
+          planReadFromDevice();
+          noteMergeConflicts(merged);
+          notePatchFromDevice(merged.devicePatch);
+          // A link that dropped part-way leaves the badge unknown, as a session's drop does
+          // (stopLiveOnError).
+          setFollowUsbBadge(linkFailureIn(merged.errors) ? null : followUsb);
+          // Per-node provenance: nodes whose body read failed still show their plan
+          // default, so the graph/inspector flag them as not read from the device.
+          plan.unreadNodes = merged.unreadNodes;
+          rerenderPlan();
+          dirty = true;
+        }
         // Nodes the readback tried but could not confirm (left at their plan default).
         const unread = merged.unreadNodes.size;
         setStatus(
           merged.errors.length
             ? // A link that died mid-read is named rather than counted, for the reason
               // linkFailureIn gives; the per-group reasons stay in the report below.
-              (linkFailureIn(merged.errors) ?? t().status.fetchPartial(merged.applied, merged.errors.length, unread))
+              // An incomplete read into the switch's plan applied nothing, and says that instead
+              // of a count.
+              (linkFailureIn(merged.errors) ??
+                (switchTo
+                  ? t().status.fetchSwitchIncomplete(merged.errors.length, device.model, modelId)
+                  : t().status.fetchPartial(merged.applied, merged.errors.length, unread)))
             : unread
               ? t().status.fetchedUnread(device.model, merged.applied, unread)
               : t().status.fetchedDevice(device.model, merged.applied),
@@ -2948,29 +3059,28 @@ if (!DEMO) {
         // "what this fetch did not do", and neither is visible from the status line —
         // which says a plain success when only the second happened.
         if (merged.errors.length || merged.unplaced.length) {
-          report = { filename: `${modelId}-fetch-report.md`, markdown: formatReadbackReport(device.model, merged) };
+          report = {
+            filename: `${device.model}-fetch-report.md`,
+            markdown: formatReadbackReport(device.model, merged),
+          };
           // Which of the two it is decides the prompt. With no read failure nothing
           // failed — the read worked and the merge left the operator's own edits
           // standing — so the default wording would report correct behaviour as a
           // fault, and do it right after the status line said the fetch succeeded.
-          //
-          // NOT PINNED. Reaching this arm needs an edit to land inside the read AND on
-          // a key the read authored, and three attempts at it from src/main.device
-          // produced an empty `unplaced` every time (the edit registered, the fetch
-          // reported a clean 139 settings). What would settle it is an ordinary-tier
-          // E2E case, which drives the real console and the real write witness rather
-          // than reasoning about which of them the jsdom seam misses.
+          // Pinned in src/main.device.test.ts by a fetch whose edit lands inside the read on
+          // a key the read authored: "keeps an edit made while a fetch reads Follow USB"
+          // (the prompt) and "saves the device values a fetch left standing, under the
+          // prompt that says so" (the prompt and the report).
           reportPrompt = merged.errors.length ? undefined : t().confirm.deviceUnappliedExport;
         }
       });
     } finally {
       flow.deviceReadInFlight = false;
+      switchRead = null;
       // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
       midi?.gateReleased();
       fetchAbort = null;
       fetchBtn.textContent = t().toolbar.fetchDevice;
-      // In the finally: even a canceled read may have applied part of the device state.
-      planReadFromDevice();
     }
     await offerErrorReport(report, reportPrompt);
   });
@@ -2984,33 +3094,23 @@ if (!DEMO) {
   //
   // The count comes from the DEVICE, not the plan. An offline plan's count is whatever was
   // last authored, which would both miss real drops and invent false ones. A read that
-  // fails falls back to the sentence that names no numbers rather than to silence — the
-  // numbers are what the read buys, and what it cannot buy is the right to say nothing
-  // about a loss the app cannot undo.
+  // fails throws, and the settle that asked aborts the write on it, as it does on a clock
+  // read that fails.
   // What the settle decided a rate change would cost the recorder, held until the write
   // either sends the rate or does not. NOT a flag set at the confirm: the operator can
   // approve the re-clock and then decline the change count, and the write then sends
   // nothing at all — re-reading there would apply the unit's UNCHANGED count over a plan
   // whose rate had already moved, leaving a count the rate cannot carry and an Inspector
   // whose menu does not contain its own value.
-  let pendingTrackCost: { from: number; to: number } | "unknown" | null = null;
+  let pendingTrackCost: { from: number; to: number } | null = null;
   // Set once the rate has actually gone out, and consumed after the write: the unit does
   // the lowering itself, and whether it announces one is not something this app has
   // measured, so the plan is re-read rather than left to a notify that may never come.
   let trackCountMayHaveDropped = false;
 
-  async function trackCountCost(nextRate: number): Promise<{ from: number; to: number } | "unknown" | null> {
+  async function trackCountCost(nextRate: number): Promise<{ from: number; to: number } | null> {
     if (!hasRecorder(modelId)) return null;
-    let count: number;
-    try {
-      count = await readTrackCount();
-    } catch (err) {
-      // The caller warns without numbers on this; the reason it could not be read reaches
-      // nothing else, so it goes to the console rather than nowhere.
-      console.warn("track count unread:", err);
-      return "unknown";
-    }
-    return trackCountDrop(count, nextRate);
+    return trackCountDrop(await readTrackCount(), nextRate);
   }
 
   // Settle what sample rate this write is going to happen at, before anything is
@@ -3048,19 +3148,20 @@ if (!DEMO) {
     // has to be in front of the decision, not in the release notes. Read from the DEVICE
     // rather than taken from the plan: an offline plan's count is whatever was last
     // authored, and warning from that would both miss real drops and invent false ones.
-    // A read that fails leaves `"unknown"`, and the caller then warns without naming numbers
-    // rather than staying silent; `null` is the model having no recorder at all.
-    const trackCost = await trackCountCost(plan.sampleRate);
+    // A read that fails aborts the write, as the clock read above does; `null` is the model
+    // having no recorder at all, or a count the rate already carries.
+    let trackCost;
+    try {
+      trackCost = await trackCountCost(plan.sampleRate);
+    } catch (err) {
+      showError(t().status.writeError(t().error.trackCountUnread(errorText(err))));
+      return false;
+    }
     if (action === "confirmReclock") {
       // The device will take the rate and hold it. Re-clocking interrupts audio and
       // renegotiates the USB stream, so it is worth stating outright — but it is a
       // plain yes/no: the plan's rate is the one that sticks.
-      const cost =
-        trackCost === "unknown"
-          ? t().confirm.trackCountMayDrop
-          : trackCost
-            ? t().confirm.trackCountDrop(trackCost.from, trackCost.to)
-            : "";
+      const cost = trackCost ? t().confirm.trackCountDrop(trackCost.from, trackCost.to) : "";
       const ask = [t().confirm.reclock(deviceRate, planRate), cost].filter(Boolean).join(" ");
       if (await confirmDialog(ask)) {
         pendingTrackCost = trackCost;
@@ -3082,12 +3183,7 @@ if (!DEMO) {
     // Its own wording, not the confirm's: this arm is one of three answers and the sentence
     // has to say which one it is about. `trackWarning` decides WHETHER, the message decides
     // how it reads here.
-    const releaseNote =
-      trackCost === "unknown"
-        ? t().confirm.trackCountMayDrop
-        : trackCost
-          ? t().rateChoice.trackCountDrop(trackCost.from, trackCost.to)
-          : "";
+    const releaseNote = trackCost ? t().rateChoice.trackCountDrop(trackCost.from, trackCost.to) : "";
     const choice = await askRateChoice(planRate, deviceRate, note, releaseNote);
     if (choice === "cancel") {
       setStatus(t().status.canceled);
@@ -3451,42 +3547,77 @@ if (!DEMO) {
       try {
         // A device of a different model maps onto the wrong channels; offer to
         // switch the UI to a fresh plan of the device's model (mirrors fetch).
-        const sw = await offerModelSwitch(device);
-        if (sw === "unknown") return await failLive(t().status.liveError(t().error.unknownModel(device.model)));
-        if (sw === "canceled") return await abort(t().status.canceled);
+        const switchTo = await offerModelSwitch(device);
+        if (switchTo === "unknown") {
+          return await failLive(t().status.liveError(t().error.unknownModel(device.model)));
+        }
+        if (switchTo === "canceled") return await abort(t().status.canceled);
         // Hold off every wholesale plan replacement until the session is established
         // (cleared in the finally below). The read mutates `plan` in place and
         // live.begin() snapshots it as device truth, so a New/Open/switch landing in
         // between would either corrupt the read or enshrine the swapped-in plan.
         flow.deviceReadInFlight = true;
+        // The plan on screen takes no edit while a read that carries a switch runs, as for a
+        // fetch (cleared as the read returns or throws, and in the finally below).
+        if (switchTo) switchRead = { plan, state: clonePlanState(plan) };
         midi?.probeMark("live:read:start");
+        // Follow USB, which the readback does not carry, is read on the same connection,
+        // first inside the read: a failure throws to failLive with nothing merged, and the
+        // badge takes the value only once the read has landed complete.
+        //
+        // A read that carries a model switch runs against a copy of the switch's plan,
+        // as a fetch's does (see there).
+        //
         // live.begin() then snapshots through the same scope filter, so a kept
         // scene-external value is neither written back nor tracked.
-        const merged = await readIntoPlan(
-          () => plan,
-          (into) => applyDeviceStateScoped(into),
-          planWrites,
-        );
+        let followUsb = false;
+        let merged: MergedRead | null;
+        try {
+          merged = await readIntoPlan(
+            readTarget(switchTo),
+            async (into) => {
+              followUsb = await readFollowUsb();
+              return applyDeviceStateScoped(into);
+            },
+            switchTo ? undefined : planWrites,
+            undefined,
+            // Only a complete read merges (below).
+            (read) => !read.errors.length,
+          );
+        } finally {
+          switchRead = null;
+        }
         midi?.probeMark("live:read:end");
         if (!merged) return await abort(t().status.canceled);
-        noteMergeConflicts(merged);
-        notePatchFromDevice(merged.devicePatch);
-        plan.unreadNodes = merged.unreadNodes;
-        rerenderPlan();
-        // A partial read leaves the plan holding defaults where the device was not
-        // heard from, and the live snapshot would enshrine those as device truth —
-        // the first sideEffect edit then converges the whole plan and writes them
-        // over the real values. Live sync needs a complete read to start from.
+        // A partial read would leave the plan holding defaults where the device was not
+        // heard from, and the live snapshot would enshrine those as device truth — the
+        // first sideEffect edit then converges the whole plan and writes them over the
+        // real values. Live sync needs a complete read to start from, so an incomplete one
+        // merges nothing into the plan, applies no switch and leaves the undo history as it
+        // was.
         if (merged.errors.length) {
           console.warn("live readback issues:", merged.errors);
           return await failLive(
             t().status.liveError(linkFailureIn(merged.errors) ?? t().error.liveReadIncomplete(merged.errors.length)),
           );
         }
+        if (switchTo && !applyModelSwitch(switchTo)) {
+          await releaseLive(device.epoch, "error");
+          return;
+        }
+        // The undo history re-bases as the read lands, as a fetch's does: an edit made while
+        // the session is still registering stays undoable, and a read that did not land
+        // (cancelled, failed, stopped before it, or incomplete) leaves the history alone.
+        planReadFromDevice();
+        noteMergeConflicts(merged);
+        notePatchFromDevice(merged.devicePatch);
+        plan.unreadNodes = merged.unreadNodes;
+        rerenderPlan();
         dirty = false;
-        // Read before the session is up, so the badge is already right when the rate
-        // picker locks — the badge is the only Follow USB control while live.
-        await refreshFollowUsbBadge();
+        // Set before the session is up, so the badge is already right when it becomes
+        // the session's control (syncDeviceActionUi) — the only Follow USB control while
+        // live.
+        setFollowUsbBadge(followUsb);
         // The copy the starting read ran against: without it an edit made during the
         // multi-second read is snapshotted as a value the device was already given.
         live.begin(merged.deviceView);
@@ -3515,14 +3646,14 @@ if (!DEMO) {
         await failLive(t().status.liveError(errorText(err)));
       } finally {
         flow.deviceReadInFlight = false;
+        switchRead = null;
         // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
         midi?.gateReleased();
-        // In the finally: a partially failed readback still applied device values.
-        planReadFromDevice();
         // Gated on the session, not on reaching here: this block is also where a read
-        // that threw or was cancelled lands, and that leaves the plan part device and
-        // part default — the state whose values must not reach the controller or the
-        // bus it shares. With the session up, the plan is the unit's own.
+        // that threw, was cancelled or came back incomplete lands, and so does a start that
+        // failed after its read. None of those establishes that the plan is the unit's
+        // state, which is what licenses putting its values on the controller and the bus
+        // it shares. With the session up, the plan is the unit's own.
         if (liveSessionUp) midi?.liveReadSettled();
       }
     }
@@ -3581,8 +3712,10 @@ if (!DEMO) {
     // made inside one now survives it (readback.readIntoPlan merges rather than
     // assigns), which is what makes leaving them open safe. A modal is not here either:
     // a MIDI desk is a second physical surface, and the panel that configures it is
-    // itself counted by modalOpen().
-    blocked: () => (flow.busy || deviceLinkHolder === "run" ? t().status.midiBusy : null),
+    // itself counted by modalOpen(). A read that carries a model switch says so instead
+    // (see switchRead).
+    blocked: () =>
+      switchRead ? t().status.busySwitchRead : flow.busy || deviceLinkHolder === "run" ? t().status.midiBusy : null,
     // Both arming surfaces repaint: learn mode, the armed control and the mapping
     // set all decide what they draw, and a tuning screen open over the console is
     // the one the operator is looking at.

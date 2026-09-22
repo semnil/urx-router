@@ -826,6 +826,9 @@ export const en = {
     pdfExported: tr("PDF exported"),
     arranged: tr("Arranged to the default layout"),
     busyDeviceRead: tr("Reading from the device — try that again when it finishes"),
+    busySwitchRead: tr(
+      "This plan is being replaced by one for the device's model — try that again when the read finishes",
+    ),
     deviceLinkBusy: tr("Another device operation is holding the connection — try that again when it finishes"),
     fetchConnecting: tr("Connecting to the device…"),
     fetchedDevice: (model: string, n: number): string => `Fetched ${n} setting${n === 1 ? "" : "s"} from ${model}`,
@@ -833,6 +836,8 @@ export const en = {
       `Fetched ${n} from ${model}; ${unread} node${unread === 1 ? "" : "s"} not read`,
     fetchPartial: (n: number, failed: number, unread: number): string =>
       `Fetched ${n}, ${failed} failed` + (unread ? `, ${unread} node${unread === 1 ? "" : "s"} not read` : ""),
+    fetchSwitchIncomplete: (failed: number, device: string, ui: string): string =>
+      `The read was incomplete (${failed} failed), so nothing was switched to ${device} and the plan stays on ${ui}.`,
     settingsImported: (name: string, n: number): string => `Imported ${n} setting${n === 1 ? "" : "s"} from ${name}`,
     settingsPartial: (n: number, failed: number, unread: number): string =>
       `Imported ${n}, ${failed} failed` + (unread ? `, ${unread} node${unread === 1 ? "" : "s"} not read` : ""),
@@ -1215,7 +1220,9 @@ export const en = {
     followReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     clockUnread: (message: string): string =>
-      `The device's sample rate and Follow USB state could not be read (${message}), so there is no way to tell whether the plan's rate would stick. Nothing was written.`,
+      `The device's sample rate and Follow USB state could not be read (${message}), so the plan's rate was not checked against the unit. Nothing was written.`,
+    trackCountUnread: (message: string): string =>
+      `The microSD recorder's Track Count could not be read (${message}), and a rate change can lower it for good. Nothing was written.`,
     followUsbWrite: (message: string): string =>
       `Follow USB could not be turned off (${message}). Nothing was written.`,
     unknownModel: (model: string): string => `Unknown model: ${model}`,
