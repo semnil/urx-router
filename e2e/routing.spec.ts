@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
-import { drag, port, selectWire, tapJack } from "./graph-helpers";
+import { drag, port, selectWire, tapJack, wire } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
 
 // Each committed connection renders one transparent .wire-hit band (plus a
@@ -7,13 +7,17 @@ import { chooseOption } from "./choose-option";
 // targets the element that carries the wire's pointerdown handler.
 const wires = (page: Page) => page.locator("#graph-host .wire-hit");
 
-// Fixed wires are seeded on every plan and shown pre-connected; the diagram never
-// starts empty. Every CH / FX-channel send is fixed now (always wired, on/off in a
-// param), so the STEREO main paths and every CH/FX → MIX/FX send count here. User
-// wires (source / patch / etc.) are appended after them, so the last .wire-hit is
-// the most recent user connection.
-const FIXED = 48; // URX44V: 8 CH→STEREO + 2 FX→STEREO + 4 FX→MIX + 8 CH × (MIX1/2 + FX1/2) + 2 MIX→STEREO
-const FIXED_URX22 = 38; // URX22: 6 CH→STEREO + 2 FX→STEREO + 4 FX→MIX + 6 CH × (MIX1/2 + FX1/2) + 2 MIX→STEREO
+// Every plan starts with its fixed wires and STREAMING's source, shown pre-connected; the
+// diagram never starts empty. Every CH / FX-channel send is fixed now (always wired, on/off
+// in a param), so the STEREO main paths and every CH/FX → MIX/FX send count here, and the
+// unit's STREAMING list has no None, so a new plan carries STEREO → STREAMING. User wires
+// (source / patch / etc.) are appended after them, so the last .wire-hit is the most recent
+// user connection.
+// URX44V: 48 fixed (8 CH→STEREO + 2 FX→STEREO + 4 FX→MIX + 8 CH × (MIX1/2 + FX1/2) + 2 MIX→STEREO)
+// + STEREO→STREAMING. URX22: 38 fixed (6 CH→STEREO + 2 FX→STEREO + 4 FX→MIX + 6 CH × (MIX1/2 +
+// FX1/2) + 2 MIX→STEREO) + STEREO→STREAMING.
+const SEEDED = 49;
+const SEEDED_URX22 = 39;
 
 // A connection is a pointer drag between an output port (.port-out) and an input
 // port (.port-in), in either direction; Playwright's mouse generates the
@@ -44,59 +48,104 @@ test("renders the URX44V nodes on load", async ({ page }) => {
   await expect(port(page, "ch_5_6:in")).toBeVisible();
 });
 
-test("shows the fixed CH / FX -> STEREO wires pre-connected", async ({ page }) => {
-  await expect(wires(page)).toHaveCount(FIXED);
+test("shows the fixed wires and STREAMING's source pre-connected", async ({ page }) => {
+  await expect(wires(page)).toHaveCount(SEEDED);
 });
 
 test("draws a legal wire (micline 1/2 -> ch 5/6)", async ({ page }) => {
-  await expect(wires(page)).toHaveCount(FIXED);
+  await expect(wires(page)).toHaveCount(SEEDED);
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
   await expect(page.locator("#statusbar")).toHaveText("Connected");
 });
 
 test("draws a legal wire dragged from the input side (ch 5/6 <- micline 1/2)", async ({ page }) => {
-  await expect(wires(page)).toHaveCount(FIXED);
+  await expect(wires(page)).toHaveCount(SEEDED);
   // Drag starts on the input port and releases on a legal output port.
   await connect(page, "ch_5_6:in", "in.micline_1_2:out");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
   await expect(page.locator("#statusbar")).toHaveText("Connected");
 });
 
 test("selects the incoming wire when clicking an occupied input port", async ({ page }) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
   // A plain click (no drag) on the occupied input selects its wire, like
   // clicking the wire itself; Delete then removes it.
   const box = await port(page, "ch_5_6:in").boundingBox();
   if (!box) throw new Error("port not found");
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.keyboard.press("Delete");
-  await expect(wires(page)).toHaveCount(FIXED);
+  await expect(wires(page)).toHaveCount(SEEDED);
   await expect(page.locator("#statusbar")).toHaveText("Connection deleted");
 });
 
 test("refuses to delete a fixed CH -> STEREO wire", async ({ page }) => {
-  // The first wire is the seeded fixed CH1 -> STEREO; selecting and pressing
-  // Delete must leave it in place and report it as fixed.
+  // The first wire drawn is a seeded fixed send (off sends paint first); selecting it and
+  // pressing Delete must leave it in place and report it as fixed.
   await wires(page).first().dispatchEvent("pointerdown");
   await page.keyboard.press("Delete");
-  await expect(wires(page)).toHaveCount(FIXED);
+  await expect(wires(page)).toHaveCount(SEEDED);
   await expect(page.locator("#statusbar")).toHaveText("Fixed connection — cannot be removed");
 });
 
 test("rejects a second source into a single-input receiver", async ({ page }) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
   // ch_5_6:in already holds a source; a second one must be refused, not added.
   await connect(page, "in.aux:out", "ch_5_6:in");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
   await expect(page.locator("#statusbar")).toContainText("only one source");
+});
+
+// STREAMING's source list on the unit is STEREO / MIX 1 / MIX 2 with no None, so the board
+// never leaves it without a wire: another source drawn onto it replaces the one it holds (one
+// step to undo), and its last wire is not deleted.
+test("replaces STREAMING's source when another is drawn onto it, as one undo step", async ({ page }) => {
+  await expect(wire(page, "bus.stereo:out", "bus.stream:in")).toHaveCount(1);
+  await connect(page, "bus.mix1:out", "bus.stream:in");
+  await expect(page.locator("#statusbar")).toHaveText("Connected");
+  await expect(wire(page, "bus.mix1:out", "bus.stream:in")).toHaveCount(1);
+  await expect(wire(page, "bus.stereo:out", "bus.stream:in")).toHaveCount(0);
+  await expect(wires(page)).toHaveCount(SEEDED);
+
+  // Dragged from STREAMING's own input, the same.
+  await connect(page, "bus.stream:in", "bus.mix2:out");
+  await expect(wire(page, "bus.mix2:out", "bus.stream:in")).toHaveCount(1);
+  await expect(wire(page, "bus.mix1:out", "bus.stream:in")).toHaveCount(0);
+
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(wire(page, "bus.mix1:out", "bus.stream:in")).toHaveCount(1);
+  await expect(wire(page, "bus.mix2:out", "bus.stream:in")).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(wire(page, "bus.stereo:out", "bus.stream:in")).toHaveCount(1);
+  await expect(wire(page, "bus.mix1:out", "bus.stream:in")).toHaveCount(0);
+  await expect(wires(page)).toHaveCount(SEEDED);
+});
+
+// The Inspector offers no delete on that wire and says, in the refusal's own words, how the
+// source is replaced; the keyboard's Delete still reaches the board and is refused there.
+test("refuses to delete STREAMING's last source from the keyboard, and the Inspector offers no delete", async ({
+  page,
+}) => {
+  const required = "STREAMING always has one source, as on the unit — draw another source onto it to replace this one";
+  const deleteButton = page.locator("#inspector button.danger");
+  await connect(page, "in.micline_1_2:out", "ch_5_6:in");
+  await selectWire(page, "in.micline_1_2:out", "ch_5_6:in");
+  await expect(deleteButton, "the control: a wire the plan may lose offers its delete").toHaveCount(1);
+
+  await selectWire(page, "bus.stereo:out", "bus.stream:in");
+  await expect(page.locator("#inspector p.hint", { hasText: required })).toHaveCount(1);
+  await expect(deleteButton).toHaveCount(0);
+  await page.keyboard.press("Delete");
+  await expect(page.locator("#statusbar")).toHaveText(required);
+  await expect(wire(page, "bus.stereo:out", "bus.stream:in")).toHaveCount(1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
 });
 
 test("round-trips a plan through save and open", async ({ page }, testInfo) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
 
   await page.click("#btn-file");
   const [download] = await Promise.all([page.waitForEvent("download"), page.click("#btn-save")]);
@@ -108,18 +157,18 @@ test("round-trips a plan through save and open", async ({ page }, testInfo) => {
   // just the fixed wires.
   await page.click("#btn-file");
   await page.click("#btn-new");
-  await expect(wires(page)).toHaveCount(FIXED);
+  await expect(wires(page)).toHaveCount(SEEDED);
 
   await page.click("#btn-file");
   const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
   await chooser.setFiles(saved);
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
   await expect(page.locator("#statusbar")).toHaveText("Plan loaded");
 });
 
 test("confirms before discarding unsaved changes on model switch", async ({ page }) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
 
   // Dismiss: stay on URX44V with the wire intact.
   page.once("dialog", (d) => {
@@ -128,36 +177,36 @@ test("confirms before discarding unsaved changes on model switch", async ({ page
   });
   await chooseOption(page.locator("#model-picker"), "URX22");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
 
   // Accept: switch to URX22 and reset to that model's fixed wires.
   page.once("dialog", (d) => void d.accept());
   await chooseOption(page.locator("#model-picker"), "URX22");
   await expect(page.locator("#model-picker")).toHaveValue("URX22");
-  await expect(wires(page)).toHaveCount(FIXED_URX22);
+  await expect(wires(page)).toHaveCount(SEEDED_URX22);
 });
 
 test("deletes a selected connection with the Delete key", async ({ page }) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
 
   // The user wire is the last one drawn; selecting it goes through its
   // pointerdown handler.
   await wires(page).last().dispatchEvent("pointerdown");
   await page.keyboard.press("Delete");
-  await expect(wires(page)).toHaveCount(FIXED);
+  await expect(wires(page)).toHaveCount(SEEDED);
   await expect(page.locator("#statusbar")).toHaveText("Connection deleted");
 });
 
 test("mirrors a paired channel's source onto its partner (CH1/CH2)", async ({ page }) => {
   // Assigning a source to CH1 also wires CH2: two wires for one user action.
   await connect(page, "in.micline_1_2:out", "ch1:in");
-  await expect(wires(page)).toHaveCount(FIXED + 2);
+  await expect(wires(page)).toHaveCount(SEEDED + 2);
 
   // Deleting either source wire clears the partner's mirrored source too.
   await wires(page).last().dispatchEvent("pointerdown");
   await page.keyboard.press("Delete");
-  await expect(wires(page)).toHaveCount(FIXED);
+  await expect(wires(page)).toHaveCount(SEEDED);
 });
 
 test("drops PRE/POST from the fixed CH -> STEREO send but keeps its STEREO-assign ON", async ({ page }) => {
@@ -201,7 +250,7 @@ test("a fixed FX channel → MIX send exposes a Send ON toggle and no delete", a
 
   // Turning the send OFF keeps the (fixed) wire — it is not removed like a CH send.
   await sendRow.locator(".toggle button").filter({ hasText: /^OFF$/ }).click();
-  await expect(wires(page)).toHaveCount(FIXED);
+  await expect(wires(page)).toHaveCount(SEEDED);
 });
 
 test("a fixed MIX → STEREO (TO ST) switch exposes a TO ST toggle and no delete", async ({ page }) => {
@@ -216,14 +265,14 @@ test("a fixed MIX → STEREO (TO ST) switch exposes a TO ST toggle and no delete
 
   // Turning TO ST ON keeps the (fixed) wire — it is never added/removed.
   await toStRow.locator(".toggle button").filter({ hasText: /^ON$/ }).click();
-  await expect(wires(page)).toHaveCount(FIXED);
+  await expect(wires(page)).toHaveCount(SEEDED);
 });
 
 test("a microSD Rec assign carries no level / pan / PRE-POST", async ({ page }) => {
   // SD Rec is a per-track-pair source select (record), not a summing send: a
   // channel pair / STEREO / MIX feeds one track-pair slot, with no mix params.
   await connectFromTap(page, "ch1:out", "out.sdrec.t1:in");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
   await selectWire(page, "ch1:out", "out.sdrec.t1:in");
   await expect(page.locator("#inspector .param")).toHaveCount(0);
   // A channel → SD Rec tap has no mix params; the hint explains it records at the

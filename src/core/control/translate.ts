@@ -42,7 +42,7 @@ import {
   insertFxDeviceDriven,
   insertFxDriverSlots,
 } from "./insert-fx-effect";
-import { isFixedConnection, monoPairOf, sendTapWritable } from "../routing";
+import { isFixedConnection, monoPairOf, requiresSource, sendTapWritable } from "../routing";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
   BUS_TYPE_OPTIONS,
@@ -2337,13 +2337,19 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
 
   // Streaming / USB-out / monitor / analog-patch selects — absolute. One incoming
   // wire → source port(s); the two wires of a mono pair into a USB output → L = the
-  // primary's slot, R = the partner's, whatever order the wires are in; no wire emits
-  // the NONE sentinel so a write clears the selection. Any other set of wires writes
-  // its first wire alone, so every value written is one the unit's own list offers.
+  // primary's slot, R = the partner's, whatever order the wires are in. No wire emits
+  // the NONE sentinel so a write clears the selection — except on a receiver the unit
+  // never leaves without a source (STREAMING, whose list has no None), where no wire
+  // emits nothing at all and the unit keeps the source it holds (leavesUnsourced;
+  // planToFollowOnlyAddrs registers the address instead). Any other set of wires writes
+  // its first wire alone. Every source a wire writes is one the routing rules allow or one
+  // a device read found the unit holding. At STREAMING a read takes no source outside its
+  // list (readback), and every value written there is one the unit's own list offers.
   // Skips selectors whose destination node is absent on this model. See
   // ROUTING_SELECTORS; readback consumes the same table.
   for (const [to, kind, pl, pr, yl, yr] of ROUTING_SELECTORS) {
     if (!model.nodes.some((n) => n.id === to)) continue;
+    if (leavesUnsourced(model, plan, to, kind)) continue;
     const wires = plan.connections.filter((c) => c.to === ref(to, "in") && c.kind === kind);
     const pair =
       kind === "patch"
@@ -2481,6 +2487,15 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   return out;
 }
 
+/** Whether the emit leaves a ROUTING_SELECTORS row out: a receiver the unit never leaves
+ *  without a source that the plan gives no wire of the selector's kind. Read by the emit's
+ *  skip and by the follow-only registration that stands in for it. */
+function leavesUnsourced(model: DeviceModel, plan: Plan, to: string, kind: ConnectionKind): boolean {
+  return (
+    requiresSource(model, ref(to, "in")) && !plan.connections.some((c) => c.to === ref(to, "in") && c.kind === kind)
+  );
+}
+
 /** One address the app READS but never writes, for the device-follow registration. */
 export interface FollowOnlyAddr {
   param: number;
@@ -2505,6 +2520,10 @@ export interface FollowOnlyAddr {
  * insert-FX engine array, and every FX array slot but the one below) are not here, because
  * a registration would do nothing for them.
  *
+ * The routing selectors here are the ones the emit leaves out (`leavesUnsourced`) — STREAMING's
+ * source while the plan gives it no wire. The unit announces a source picked on its own panel
+ * there, one notify per address, as it announces a write there.
+ *
  * This lives beside `planToCommands` on purpose: the tap half is the exact complement of
  * the `sendTapWritable` test that suppresses the write there, and the two were written as
  * separate walks over the same (channel, bus) pairs long enough to disagree about which
@@ -2515,10 +2534,18 @@ export interface FollowOnlyAddr {
  * scene-external values afterwards (`main.ts` applyDeviceStateScoped → scene-scope.ts), so
  * a follow that pulled one in would be the one path in the app where *Scene only* does not
  * hold — the notify-driven read and the full read would disagree about the same value
- * under the same preference. Track Count is `sceneExternal`; the send taps are not.
+ * under the same preference. Track Count and STREAMING's source are `sceneExternal`; the send
+ * taps are not.
  */
 export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: WriteScope = "all"): FollowOnlyAddr[] {
   const out: FollowOnlyAddr[] = [];
+  // A receiver the unit never leaves without a source, while the plan holds no wire into
+  // it: the emit sends nothing there, and this registers the address in its place.
+  for (const [to, kind, pl, pr, yl, yr] of ROUTING_SELECTORS) {
+    if (!model.nodes.some((n) => n.id === to) || !leavesUnsourced(model, plan, to, kind)) continue;
+    out.push({ param: PARAMS[pl].id, x: 0, y: yl, name: pl, node: to });
+    out.push({ param: PARAMS[pr].id, x: 0, y: yr, name: pr, node: to });
+  }
   // CH → FX send taps: the broker publishes max_value 0 on 193/197/320/324, so PRE is
   // unwritable and the emit loop above skips SEND_TAP for them. Same source filter as
   // that loop — an FX-channel source cannot reach an unwritable tap today (its sends go

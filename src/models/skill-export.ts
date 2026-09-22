@@ -34,6 +34,10 @@ export interface SkillModel {
    *  validator derives from these pairs and the patch rules the way routing.ts
    *  `monoPairsInto` does. */
   channelPairs: [string, string][];
+  /** Receivers that always hold exactly one source, keyed by input ref, each with the source
+   *  the app's load gives a document that names none. Carried so the validator reports that
+   *  completion from the model rather than spelling STREAMING out itself. */
+  requiredSources: Record<string, string>;
   /** Per channel insert-FX selector: everything a reader needs to work out what a write
    *  SENDS for that effect's engine values. Model-INDEPENDENT — carried per model because the
    *  file is keyed by model id, and a key beside those would read as a fourth model to
@@ -84,6 +88,7 @@ function skillModel(model: DeviceModel): SkillModel {
     nodes,
     rules: model.rules.map((r) => [r.from, r.to, r.kind, Boolean(r.fixed)]),
     channelPairs: model.channelPairs.map(([a, b]) => [a, b]),
+    requiredSources: { ...model.requiredSources },
     insertFxParamSpace: insertFxParamSpaceBySelector(),
     fxChannels: fxChannelCatalogue(),
   };
@@ -226,7 +231,13 @@ export function renderModelMarkdown(model: DeviceModel): string {
             .map(([a, b]) => `\`${a}:out\` + \`${b}:out\``)
             .join(", ")}), written L = the first channel, R = the second`
         : "";
-      lines.push(`- **-> \`${to}\`**${fixed ? " *(fixed)*" : ""}: ${sources}${pairNote}`);
+      // A receiver the unit never leaves without a source says so, and what a plan naming
+      // none is given on load.
+      const required = model.requiredSources[to];
+      const requiredNote = required
+        ? ` — always exactly one wire (the unit's list offers no None); a plan naming none gets \`${required}\` on load`
+        : "";
+      lines.push(`- **-> \`${to}\`**${fixed ? " *(fixed)*" : ""}: ${sources}${pairNote}${requiredNote}`);
     }
     lines.push("");
   }

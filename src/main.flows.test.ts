@@ -320,6 +320,37 @@ describe("the deep link", () => {
     expect(status()).not.toContain(t().status.paramsDropped(2));
   });
 
+  // STREAMING's list on the unit has no None, so a document that names no STREAMING source
+  // opens with the STEREO a new plan carries — drawn on the board, since the next write sends
+  // it — and the status line says so, since the document did not name it.
+  it("gives a plan with no STREAMING source STEREO, draws it, and says so", async () => {
+    const { encodePlanParam, emptyPlan } = await import("./core/plan");
+    const plan = emptyPlan("URX44V");
+    plan.connections = [];
+
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.planLoaded), APP_SETTLE);
+    expect(status().startsWith(t().status.streamingSourceSupplied)).toBe(true);
+    expect($("load-report").hidden).toBe(true);
+    const drawn = $("graph-host").querySelectorAll('.wire-hit[data-to="bus.stream:in"]');
+    expect([...drawn].map((w) => (w as SVGElement).dataset.from)).toEqual(["bus.stereo:out"]);
+  });
+
+  it("says nothing about STREAMING for a plan that names its source", async () => {
+    const { encodePlanParam, emptyPlan } = await import("./core/plan");
+    const plan = emptyPlan("URX44V");
+    plan.connections = [{ from: "bus.mix2:out", to: "bus.stream:in", kind: "source" }];
+
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toBe(t().status.planLoaded), APP_SETTLE);
+    const drawn = $("graph-host").querySelectorAll('.wire-hit[data-to="bus.stream:in"]');
+    expect([...drawn].map((w) => (w as SVGElement).dataset.from)).toEqual(["bus.mix2:out"]);
+  });
+
   // The bar is where a repair, a partial success and a cancellation are all reported, and it
   // is the only place several of them are said at all. Its sibling `#live-tally` is already a
   // live region; this one was not, so a screen reader was told none of it.

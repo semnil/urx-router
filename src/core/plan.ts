@@ -4,6 +4,7 @@
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../models/types";
 import { parseRef, ref } from "../models/types";
+import { getModel } from "../models";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES, trackCountAtRate } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, migrateFxEffectParams } from "./control/fx-effect";
 import { insertFxFamilyOf, qualifyInsertFxParams } from "./control/insert-fx-effect";
@@ -432,12 +433,33 @@ export class PlanError extends Error {
   }
 }
 
+/** The wire a plan naming no source for `to` is given — one of `DeviceModel.requiredSources`,
+ *  carried under its rule's kind. */
+export function requiredSourceWire(model: DeviceModel, to: string): PlanConnection {
+  const from = model.requiredSources[to];
+  const kind = model.rules.find((r) => r.from === from && r.to === to)!.kind;
+  return { from, to, kind };
+}
+
+/** Give each of `inputs` — receivers in `DeviceModel.requiredSources` — the wire
+ *  `requiredSourceWire` names, wherever the plan holds no wire into it. Returns the wires added. */
+export function supplyRequiredSources(model: DeviceModel, plan: Plan, inputs: string[]): PlanConnection[] {
+  const added = inputs
+    .filter((to) => !plan.connections.some((c) => c.to === to))
+    .map((to) => requiredSourceWire(model, to));
+  plan.connections.push(...added);
+  return added;
+}
+
+// A plan built from nothing still holds the one source each required receiver is never
+// without, the factory's.
 export function emptyPlan(modelId: ModelId): Plan {
+  const model = getModel(modelId) as DeviceModel | undefined;
   return {
     modelId,
     sampleRate: DEFAULT_SAMPLE_RATE,
     positions: {},
-    connections: [],
+    connections: model ? Object.keys(model.requiredSources).map((to) => requiredSourceWire(model, to)) : [],
     nodeParams: {},
     nodeNames: {},
     nodeColors: {},

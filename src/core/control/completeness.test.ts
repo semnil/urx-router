@@ -2,6 +2,9 @@
 // state: a wire-based selector (send / input source / routing / ducker key / OSC
 // assign) absent from the plan is cleared (SEND_ON=0 / NONE / off), not omitted,
 // so a write drives the device fully to the plan rather than only adding to it.
+// STREAMING is the exception: its list has no None, so a new plan carries its STEREO,
+// a plan without the wire sends nothing there (translate.test.ts pins that), and a read
+// that finds it on NONE leaves the plan to be given STEREO, as Fetch and Live start do.
 //
 // The strong guarantee is a fixed point: once the device has been read into a
 // plan, emitting that plan reproduces exactly the values that were read, and
@@ -12,7 +15,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections } from "../plan";
+import { emptyPlan, ensureFixedConnections, supplyRequiredSources } from "../plan";
+import { ref } from "../../models/types";
 
 vi.mock("../platform", () => ({ vdGet: vi.fn() }));
 
@@ -48,18 +52,26 @@ function addrVals(cmds: VdCommand[]): string[] {
   return cmds.map((c) => `${c.paramId}:${c.x}:${c.y}=${c.vdValue}`).sort();
 }
 
-// Read the (mocked) device into a fresh plan, then emit the plan's command set.
-async function readThenEmit(table: Map<string, number>): Promise<VdCommand[]> {
+// Read the (mocked) device into a fresh plan, give it the source a receiver the unit never
+// leaves without one was read without — what Fetch and Live start do with `unsourced` — and
+// emit the plan's command set. `supplied` collects those receivers.
+async function readThenEmit(table: Map<string, number>, supplied: string[] = []): Promise<VdCommand[]> {
   mockDevice(table);
   const plan = emptyPlan("URX44V");
-  await applyDeviceState(model, plan);
+  const read = await applyDeviceState(model, plan);
+  supplied.push(...(read.unsourced ?? []));
+  supplyRequiredSources(
+    model,
+    plan,
+    (read.unsourced ?? []).map((id) => ref(id, "in")),
+  );
   return planToCommands(model, plan);
 }
 
 beforeEach(() => vi.mocked(vdGet).mockReset());
 
 describe("planToCommands absolute-state completeness", () => {
-  it("clears every wire-based selector for an empty plan (OFF / NONE, never omitted)", () => {
+  it("clears every wire-based selector for an empty plan (OFF / NONE, never omitted) but STREAMING's", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
     const cmds = planToCommands(model, plan);
@@ -74,8 +86,6 @@ describe("planToCommands absolute-state completeness", () => {
     // Input source + routing-source + ducker key selectors: all the NONE sentinel.
     for (const n of [
       "INPUT_SOURCE",
-      "STREAM_SRC_L",
-      "STREAM_SRC_R",
       "MONITOR_SRC_L",
       "MONITOR_SRC_R",
       "OUT_PATCH_MAIN",
@@ -89,6 +99,10 @@ describe("planToCommands absolute-state completeness", () => {
       ).toBe(true);
     }
 
+    // STREAMING holds the STEREO a new plan carries, so it is written as that source.
+    expect(named("STREAM_SRC_L").map((c) => c.vdValue)).toEqual([(0x80000000 | 256) >>> 0]);
+    expect(named("STREAM_SRC_R").map((c) => c.vdValue)).toEqual([(0x80000000 | 257) >>> 0]);
+
     // OSC → bus assign: every assignable bus emits its toggle(s), all off.
     for (const n of ["OSC_ASSIGN_STEREO", "OSC_ASSIGN_MIX", "OSC_ASSIGN_FX"]) {
       expect(named(n).length, n).toBeGreaterThan(0);
@@ -100,8 +114,19 @@ describe("planToCommands absolute-state completeness", () => {
   });
 
   it("emit∘readback is a fixed point from device defaults (every param round-trips)", async () => {
-    const c1 = await readThenEmit(new Map());
-    const c2 = await readThenEmit(tableFrom(c1));
+    // Those defaults hold NONE at STREAMING's source, a state its list does not offer. The read
+    // names it, the plan is given STEREO, and the write that follows sends that; the unit's
+    // state after it is then a fixed point like any other.
+    const first: string[] = [];
+    const c1 = await readThenEmit(new Map(), first);
+    expect(first).toEqual(["bus.stream"]);
+    expect(c1.filter((c) => c.paramId === 705 || c.paramId === 706).map((c) => c.vdValue)).toEqual([
+      (0x80000000 | 256) >>> 0,
+      (0x80000000 | 257) >>> 0,
+    ]);
+    const second: string[] = [];
+    const c2 = await readThenEmit(tableFrom(c1), second);
+    expect(second).toEqual([]);
     expect(addrVals(c2)).toEqual(addrVals(c1));
   });
 

@@ -3,15 +3,16 @@ import { drag, port } from "./graph-helpers";
 
 // One .wire-hit band exists per committed connection (the painted path is a sibling).
 const wires = (page: Page) => page.locator("#graph-host .wire-hit");
-// Fixed wires are seeded on every plan (URX44V startup): every CH / FX-channel send
-// is fixed now (STEREO main paths plus every CH/FX → MIX/FX send). They are skipped
-// when an endpoint is shelved, so hiding unused nodes leaves only the user wires
-// whose endpoints stay on the canvas.
-const FIXED = 48;
+// Every plan starts with its fixed wires and STREAMING's source (URX44V startup): every
+// CH / FX-channel send is fixed now (STEREO main paths plus every CH/FX → MIX/FX send),
+// and the unit's STREAMING list has no None, so STEREO → STREAMING is there too — 48 + 1.
+// They are skipped when an endpoint is shelved, so hiding unused nodes leaves only the
+// user wires whose endpoints stay on the canvas.
+const SEEDED = 49;
 // "Hide unused" now shelves only zero-wire nodes, and every channel/bus carries a
-// fixed send. So on an empty URX44V board all 8 channels + 5 buses (STEREO, MIX 1/2,
-// FX 1/2) stay wired; adding one user wire keeps its source node too — 14 in all.
-const WIRED = 14;
+// fixed send. So on an empty URX44V board all 8 channels + 6 buses (STEREO, MIX 1/2,
+// FX 1/2, STREAMING) stay wired; adding one user wire keeps its source node too — 15 in all.
+const WIRED = 15;
 const nodes = (page: Page) => page.locator("#graph-host g.node");
 const chips = (page: Page) => page.locator(".hidden-shelf .chip");
 
@@ -31,19 +32,19 @@ test.beforeEach(async ({ page }) => {
 
 test("Hide unused shelves only zero-wire nodes, keeping every wired node", async ({ page }) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
   await expect(page.locator(".hidden-shelf")).toBeHidden();
 
   await page.click("#btn-view");
   await page.click("#btn-hide-unused");
 
   await expect(page.locator(".hidden-shelf")).toBeVisible();
-  // Every channel and bus carries fixed sends, so they all stay; only nodes with no
-  // wires at all (spare inputs/outputs, OSC, streaming/monitor, duckers) are shelved.
+  // Every channel and bus carries fixed sends, and STREAMING its source, so they all stay;
+  // only nodes with no wires at all (spare inputs/outputs, OSC, monitors, duckers) are shelved.
   await expect(nodes(page)).toHaveCount(WIRED);
   await expect(page.locator("#statusbar")).toContainText("unused node");
-  // No fixed-wire endpoint was hidden, so every fixed wire and the user wire survive.
-  await expect(wires(page)).toHaveCount(FIXED + 1);
+  // No seeded wire's endpoint was hidden, so every seeded wire and the user wire survive.
+  await expect(wires(page)).toHaveCount(SEEDED + 1);
 });
 
 test("a shelf chip restores its node and selects it", async ({ page }) => {

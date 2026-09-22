@@ -252,15 +252,20 @@ describe("ensureFixedConnections idempotency across models", () => {
     expect(JSON.stringify(plan.connections)).toBe(after);
   });
 
-  it.each(MODEL_IDS)("%s: every seeded fixed wire corresponds to a fixed rule", (id) => {
+  // A new plan's wires are the fixed ones the seeding adds, plus the source each required
+  // receiver is never without — STREAMING's STEREO, which is removable by replacing it.
+  it.each(MODEL_IDS)("%s: every seeded wire is a fixed rule or a required receiver's default source", (id) => {
     const model = MODELS[id];
     const plan = emptyPlan(id);
     ensureFixedConnections(model, plan);
+    let defaults = 0;
     for (const c of plan.connections) {
       const rule = model.rules.find((r) => r.from === c.from && r.to === c.to);
       expect(rule, `${c.from} -> ${c.to}`).toBeDefined();
-      expect(rule!.fixed).toBe(true);
+      if (model.requiredSources[c.to] === c.from) defaults++;
+      else expect(rule!.fixed, `${c.from} -> ${c.to}`).toBe(true);
     }
+    expect(defaults).toBe(Object.keys(model.requiredSources).length);
   });
 
   it("seeds the MIX TO ST switch off and FX returns at -inf, then a round-trip keeps them", () => {
@@ -292,8 +297,10 @@ describe("emptyPlan independence", () => {
     const a = emptyPlan("URX44");
     const b = emptyPlan("URX44");
     a.connections.push({ from: "x:out", to: "y:in", kind: "send" });
+    // The one wire a new plan carries is its own object too.
+    a.connections[0].from = "bus.mix1:out";
     a.nodeParams.ch1 = { on: false };
-    expect(b.connections).toEqual([]);
+    expect(b.connections).toEqual([{ from: "bus.stereo:out", to: "bus.stream:in", kind: "source" }]);
     expect(b.nodeParams).toEqual({});
   });
 });
@@ -305,9 +312,12 @@ describe("emptyPlan independence", () => {
 // both when querying (canConnect) and when applying (setExclusiveConnection).
 describe("exclusive-connection mutators (single-input state transitions)", () => {
   const to = ref("ch1", "in");
+  // A plan holding no wire at all, so every count and index below is the mutators' alone
+  // (a new plan carries STREAMING's source).
+  const wireless = (): Plan => ({ ...emptyPlan("URX44"), connections: [] });
 
   it("setExclusiveConnection replaces the prior same-kind wire (selector holds one input)", () => {
-    const plan = emptyPlan("URX44");
+    const plan = wireless();
     setExclusiveConnection(plan, ref("in.aux", "out"), to, "source");
     setExclusiveConnection(plan, ref("in.usbsub", "out"), to, "source");
     const sources = plan.connections.filter((c) => c.to === to && c.kind === "source");
@@ -318,7 +328,7 @@ describe("exclusive-connection mutators (single-input state transitions)", () =>
   it("setExclusiveConnection leaves a wire of a DIFFERENT kind into the same port intact", () => {
     // clearIncoming filters on kind, so a summing send into the port survives a
     // source select — only the source slot is exclusive, the summing bus is not.
-    const plan = emptyPlan("URX44");
+    const plan = wireless();
     plan.connections.push({ from: ref("in.aux", "out"), to, kind: "send" });
     setExclusiveConnection(plan, ref("in.usbsub", "out"), to, "source");
     expect(plan.connections).toHaveLength(2);
@@ -327,7 +337,7 @@ describe("exclusive-connection mutators (single-input state transitions)", () =>
   });
 
   it("clearIncoming removes only the matching kind into the target, by-target scoped", () => {
-    const plan = emptyPlan("URX44");
+    const plan = wireless();
     plan.connections.push(
       { from: ref("in.aux", "out"), to, kind: "source" },
       { from: ref("in.aux", "out"), to, kind: "send" },
@@ -340,7 +350,7 @@ describe("exclusive-connection mutators (single-input state transitions)", () =>
   });
 
   it("incomingConnection finds the wire of the requested kind and returns undefined when absent", () => {
-    const plan = emptyPlan("URX44");
+    const plan = wireless();
     plan.connections.push(
       { from: ref("in.aux", "out"), to, kind: "send" },
       { from: ref("in.usbsub", "out"), to, kind: "source" },
@@ -352,14 +362,14 @@ describe("exclusive-connection mutators (single-input state transitions)", () =>
   it("setExclusiveConnection drops any params on the replaced wire (it writes a bare wire)", () => {
     // The mutator pushes { from, to, kind } with no params; a prior wire's params
     // (a stale level/pan a hand path may have left) do not carry over. Pin it.
-    const plan = emptyPlan("URX44");
+    const plan = wireless();
     plan.connections.push({ from: ref("in.aux", "out"), to, kind: "source", params: { level: -6 } });
     setExclusiveConnection(plan, ref("in.usbsub", "out"), to, "source");
     expect(plan.connections[0].params).toBeUndefined();
   });
 
   it("removeConnection is a no-op for an absent wire (idempotent delete)", () => {
-    const plan = emptyPlan("URX44");
+    const plan = wireless();
     plan.connections.push({ from: ref("in.aux", "out"), to, kind: "source" });
     removeConnection(plan, ref("nope", "out"), ref("nope2", "in"));
     expect(plan.connections).toHaveLength(1);

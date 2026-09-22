@@ -813,6 +813,10 @@ export const en = {
       `${count} stored ${count === 1 ? "value was" : "values were"} outside what this app can write, and now read as the nearest value it can send`,
     paramsDropped: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the effect's own default`,
+    streamingSourceSupplied: tr("The plan named no STREAMING source, so STREAMING takes STEREO"),
+    streamingSourceUnlisted: tr(
+      "The unit's STREAMING was on a state its source list does not offer, so the plan takes STEREO",
+    ),
     recentRemoved: (name: string): string => `Removed ${name} from the recent plans`,
     planSaved: tr("Plan saved"),
     savedTo: (name: string): string => `Saved to ${name}`,
@@ -898,6 +902,9 @@ export const en = {
     connected: tr("Connected"),
     connectionDeleted: tr("Connection deleted"),
     fixedConnection: tr("Fixed connection — cannot be removed"),
+    streamingSourceRequired: tr(
+      "STREAMING always has one source, as on the unit — draw another source onto it to replace this one",
+    ),
     noteMinimized: tr("Note minimized"),
     noteExpanded: tr("Note expanded"),
     hidUnused: (n: number): string => `Hid ${n} unused node${n === 1 ? "" : "s"}`,

@@ -92,7 +92,7 @@ _input source select (single-input: at most one wire into the destination)_
 
 - **-> `bus.mon1:in`**: `bus.stereo:out`, `bus.mix1:out`, `bus.mix2:out`
 - **-> `bus.mon2:in`**: `bus.stereo:out`, `bus.mix1:out`, `bus.mix2:out`
-- **-> `bus.stream:in`**: `bus.stereo:out`, `bus.mix1:out`, `bus.mix2:out`
+- **-> `bus.stream:in`**: `bus.stereo:out`, `bus.mix1:out`, `bus.mix2:out` — always exactly one wire (the unit's list offers no None); a plan naming none gets `bus.stereo:out` on load
 - **-> `ch1:in`**: `in.micline_1_2:out`, `in.micline_3_4:out`, `in.aux:out`, `in.sdplay:out`, `in.usbmain_a:out`, `in.usbmain_b:out`, `in.usbmain_c:out`, `in.usbdaw_1_2:out`, `in.usbdaw_3_4:out`, `in.usbdaw_5_6:out`, `in.usbdaw_7_8:out`, `in.usbdaw_9_10:out`, `in.usbdaw_11_12:out`, `in.usbsub:out`, `in.hdmi:out`
 - **-> `ch2:in`**: `in.micline_1_2:out`, `in.micline_3_4:out`, `in.aux:out`, `in.sdplay:out`, `in.usbmain_a:out`, `in.usbmain_b:out`, `in.usbmain_c:out`, `in.usbdaw_1_2:out`, `in.usbdaw_3_4:out`, `in.usbdaw_5_6:out`, `in.usbdaw_7_8:out`, `in.usbdaw_9_10:out`, `in.usbdaw_11_12:out`, `in.usbsub:out`, `in.hdmi:out`
 - **-> `ch3:in`**: `in.micline_1_2:out`, `in.micline_3_4:out`, `in.aux:out`, `in.sdplay:out`, `in.usbmain_a:out`, `in.usbmain_b:out`, `in.usbmain_c:out`, `in.usbdaw_1_2:out`, `in.usbdaw_3_4:out`, `in.usbdaw_5_6:out`, `in.usbdaw_7_8:out`, `in.usbdaw_9_10:out`, `in.usbdaw_11_12:out`, `in.usbsub:out`, `in.hdmi:out`

@@ -2029,6 +2029,40 @@ describe("LiveSync read-only follow registrations", () => {
     expect(live.lookup(193, 0, 0)?.node).toBe("ch1");
   });
 
+  // STREAMING's list on the unit has no None, and a plan holds no STREAMING wire only where
+  // nothing gave it one — a follow read of a unit on NONE, an undo. The session then writes
+  // nothing there, keeps the address registered so a source picked on the unit's panel is
+  // heard, and sends the source the moment one is drawn — the snapshot holds no value for it,
+  // so the draw is a diff.
+  it("follows STREAMING while the plan holds no source for it, and writes the one drawn onto it", async () => {
+    const plan = basePlan();
+    plan.connections = plan.connections.filter((c) => c.to !== "bus.stream:in");
+    const live = liveFor(plan);
+    live.begin();
+    expect(addrsOf(live).has("705:0:0")).toBe(true);
+    expect(addrsOf(live).has("706:0:0")).toBe(true);
+    expect(live.lookup(705, 0, 0)?.node).toBe("bus.stream");
+
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const ids = vi.mocked(vdSet).mock.calls.map(([id]) => id);
+    expect(ids.length, "the control: the flush sent the fader").toBeGreaterThan(0);
+    expect(ids).not.toContain(705);
+    expect(ids).not.toContain(706);
+
+    vi.mocked(vdSet).mockClear();
+    plan.connections.push({ from: "bus.stereo:out", to: "bus.stream:in", kind: "source" });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const stream = vi
+      .mocked(vdSet)
+      .mock.calls.filter(([id]) => id === 705 || id === 706)
+      .map(([id, , , value]) => `${id}=${value}`);
+    expect(stream.sort()).toEqual([`705=${(0x80000000 | 256) >>> 0}`, `706=${(0x80000000 | 257) >>> 0}`]);
+    expect(addrsOf(live).has("705:0:0")).toBe(true);
+  });
+
   // A guard, not evidence: this one passes with the registrations and without them,
   // because the addresses were never written either way. It is here to fail the day
   // someone widens the registration loop into the emit path.

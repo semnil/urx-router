@@ -89,6 +89,16 @@ order. That pair is the unit's `CH 1/2` / `CH 3/4` selection and is written L = 
 first channel's slot, R = the second's. Any other set of wires into a USB output
 is the `monoPairOnly` validation error.
 
+**STREAMING always has one source:** `bus.stream:in` takes exactly one of
+`bus.stereo:out`, `bus.mix1:out`, `bus.mix2:out` — the unit's own list offers no
+None. A plan that gives it no wire is completed on load with
+`bus.stereo:out -> bus.stream:in` (the factory selection) and the app says so on its
+status line, and its write confirm names STREAMING when the write would move the unit
+onto that source; the validator reports it as a wire the app adds. To route MIX 1 or
+MIX 2 to STREAMING, list that one wire and no other into `bus.stream:in`. In the app,
+drawing another source onto STREAMING replaces the one it holds, and its last wire
+cannot be deleted.
+
 **Fixed sends:** the model reference marks some `send`/`sendSwitch` routes
 `(fixed)` — the channel/FX main paths into STEREO, the CH→MIX/FX sends, and
 MIX→STEREO. They are always present (the app seeds them into every plan) and

@@ -35,7 +35,9 @@ const slotConflictPlan = {
 // operator's to decide, and an FX value outside what the app can write, which is repaired
 // before the document opens. Together they are the only shape that reaches the report row for
 // the second kind, and the only one that exercises the loader's claim that the repair applies
-// even while a decision holds the load. raw 20 is one step below the delay LPF's window.
+// even while a decision holds the load. raw 20 is one step below the delay LPF's window. It
+// names no STREAMING source, so the completion of that receiver is repaired under the same
+// decision.
 const conflictAndBoundedPlan = {
   format: "urx-router-plan",
   version: 2,
@@ -94,6 +96,26 @@ test("a compressed z ?plan= link loads the plan into the viewer", async ({ page 
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await expect(page.locator("#statusbar")).toContainText("Plan loaded");
   await expect(report(page)).toBeHidden();
+});
+
+// STREAMING's list on the unit has no None, so a document naming no STREAMING source opens with
+// the STEREO a new plan carries — drawn, since the next write sends it — and the status line
+// says so ahead of the load, since the document did not name it.
+test("a plan naming no STREAMING source opens with STEREO on it, and says so", async ({ page }) => {
+  await page.goto(`/?plan=${planParam(validPlan)}`);
+  await expect(page.locator("#statusbar")).toHaveText(
+    "The plan named no STREAMING source, so STREAMING takes STEREO — Plan loaded",
+  );
+  await expect(report(page)).toBeHidden();
+  await expect(wire(page, "bus.stereo:out", "bus.stream:in")).toHaveCount(1);
+});
+
+test("a plan naming its STREAMING source opens with that one, and says nothing about it", async ({ page }) => {
+  const plan = { ...validPlan, connections: [{ from: "bus.mix2:out", to: "bus.stream:in", kind: "source" }] };
+  await page.goto(`/?plan=${planParam(plan)}`);
+  await expect(page.locator("#statusbar")).toHaveText("Plan loaded");
+  await expect(wire(page, "bus.mix2:out", "bus.stream:in")).toHaveCount(1);
+  await expect(wire(page, "bus.stereo:out", "bus.stream:in")).toHaveCount(0);
 });
 
 test("a malformed compressed link reports a decode failure", async ({ page }) => {
@@ -180,12 +202,18 @@ test("a repaired value is reported beside the conflict, and is repaired once the
   // from the modal, and a row that named only the conflict would hide the rewrite entirely.
   await expect(page.locator("#load-report-body")).toContainText("[insertFxSlot] amp: ch1, ch2");
   await expect(page.locator("#load-report-body")).toContainText("[paramRange] bus.fx2.delayLpf: 20 -> 21");
+  // The document names no STREAMING source either, and that completion is a row of its own.
+  await expect(page.locator("#load-report-body")).toContainText("[requiredSource] bus.stereo:out -> bus.stream:in");
 
   await page.locator("#load-report-proceed").click();
   await expect(report(page)).toBeHidden();
-  await expect(page.locator("#statusbar")).toContainText("Plan loaded");
-  // The repair survived the decision — the plan the operator agreed to open is the repaired
+  await expect(page.locator("#statusbar")).toHaveText(
+    "1 stored value was outside what this app can write, and now read as the nearest value it can send — " +
+      "The plan named no STREAMING source, so STREAMING takes STEREO — Plan loaded",
+  );
+  // Both repairs survived the decision — the plan the operator agreed to open is the repaired
   // one, not the document as it arrived.
+  await expect(wire(page, "bus.stereo:out", "bus.stream:in")).toHaveCount(1);
   await page.locator('#graph-host g.node[data-id="bus.fx2"]').click();
   // Read off the FX tuning screen, which is where the effect's parameters are drawn. The
   // section's open state is one the Inspector remembers, so it is opened before the launcher

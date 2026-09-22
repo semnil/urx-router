@@ -23,6 +23,7 @@ import {
   installAppGlobals,
   restoreAppGlobals,
   statusText,
+  unwrittenRead,
 } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
@@ -174,7 +175,23 @@ const notifyChannel = (shell: TauriShell): { onmessage: (d: unknown) => void } =
  */
 function clockReads(followUsb: boolean, sampleRate: number): (a: Record<string, unknown>) => number {
   return (a) =>
-    a.paramId === PARAMS.FOLLOW_USB.id ? (followUsb ? 1 : 0) : a.paramId === PARAMS.SAMPLE_RATE.id ? sampleRate : 0;
+    a.paramId === PARAMS.FOLLOW_USB.id
+      ? followUsb
+        ? 1
+        : 0
+      : a.paramId === PARAMS.SAMPLE_RATE.id
+        ? sampleRate
+        : unwrittenRead(a);
+}
+
+/** `read`, on a unit whose STREAMING source is MIX 1 — one a write of STEREO moves. */
+function streamingOnMix1(read: (a: Record<string, unknown>) => number): (a: Record<string, unknown>) => number {
+  return (a) =>
+    a.paramId === PARAMS.STREAM_SRC_L.id
+      ? (0x80000000 | 288) >>> 0
+      : a.paramId === PARAMS.STREAM_SRC_R.id
+        ? (0x80000000 | 289) >>> 0
+        : read(a);
 }
 
 /**
@@ -442,6 +459,30 @@ const insertFxWrites = (shell: TauriShell): number[] =>
     cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.INSERT_FX.id ? [shell.args[i]!.value as number] : [],
   );
 
+/** A unit left on NONE at STREAMING's source (705 / 706), a state its own list does not offer,
+ *  as the table's seed. */
+const STREAMING_ON_NONE = { "705/0/0": 0xffffffff, "706/0/0": 0xffffffff };
+/** STREAMING's DELAY time at its floor (1.00 ms), a value a write sends back as read — the
+ *  table's own 0 is below it, and the write that lifts it names STREAMING for its DELAY. */
+const STREAMING_DELAY_AT_FLOOR = { "708/0/0": 100 };
+/** STEREO, as the unit holds it at STREAMING's source. */
+const STREAMING_STEREO = [(0x80000000 | 256) >>> 0, (0x80000000 | 257) >>> 0];
+
+/** Every write to STREAMING's source, as "param=value" in order. */
+const streamingWrites = (shell: TauriShell): string[] =>
+  shell.invokes.flatMap((cmd, i) => {
+    const a = shell.args[i];
+    return cmd === "vd_set" && (a?.paramId === PARAMS.STREAM_SRC_L.id || a?.paramId === PARAMS.STREAM_SRC_R.id)
+      ? [`${a.paramId}=${a.value}`]
+      : [];
+  });
+
+/** The sources the board draws into STREAMING. */
+const streamingDrawn = (): string[] =>
+  [...$("graph-host").querySelectorAll('.wire-hit[data-to="bus.stream:in"]')].map(
+    (w) => (w as SVGElement).dataset.from ?? "",
+  );
+
 /** Wait until the shell stops being asked anything, so what happens next is the only
  *  thing in flight. A count that has merely grown says nothing about WHOSE reads they
  *  were. */
@@ -702,7 +743,7 @@ describe("Fetch from device", () => {
   // The write witness names what a funnel WROTE, not only what its write MOVED. Selecting
   // an insert effect over one that is already engaged writes `insertFxOn: true` again —
   // the value does not move, so the read's own diff cannot tell that key from one nobody
-  // touched, and the device's value wins it. This stub answers every unwritten address 0,
+  // touched, and the device's value wins it. This stub answers the unwritten bypass with 0,
   // so the unit's bypass reads OFF: the operator's new effect used to land selected and
   // muted, which is the failure the emit order elsewhere exists to prevent.
   it("keeps a bypass the operator's patch asserted while a read was in flight", SLOW, async () => {
@@ -834,6 +875,115 @@ describe("Fetch from device", () => {
     for (const label of stereo) expect(stripsNamed(asked[1]), label).toContain(label);
   });
 
+  // The same document without its STREAMING wire: the load gives it the factory STEREO, and
+  // that wire is the one nobody chose — so the write that moves the unit (on MIX 1) onto it names
+  // STREAMING and nothing else, where the case above shows the document naming STEREO itself
+  // names nothing.
+  it("names STREAMING when the write moves the unit onto the source the load supplied", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const { getModel } = await import("./models");
+    const { fullLabel } = await import("./models/types");
+    const written = defaultPlan("URX44V");
+    written.connections = written.connections.filter((c) => c.to !== "bus.stream:in");
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: streamingOnMix1(clockReads(false, 48_000)) }),
+    }))!;
+    const supplied = [t().status.streamingSourceSupplied, t().status.planLoaded].join(" — ");
+    await vi.waitFor(() => expect(statusText(), "the premise: the load supplied the source").toBe(supplied), {
+      timeout: 10_000,
+    });
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const stream = getModel("URX44V").nodes.find((n) => n.id === "bus.stream")!;
+    expect(stripsNamed(asked[0])).toEqual([fullLabel(stream)]);
+  });
+
+  // A scene-scoped document leaves STREAMING's source to the plan on screen, and that wire keeps
+  // the record it had there: the one the load supplied is still named by the next write.
+  it("still names that source after a scene-scoped document carries it over", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const { getModel } = await import("./models");
+    const { fullLabel } = await import("./models/types");
+    const written = defaultPlan("URX44V");
+    written.connections = written.connections.filter((c) => c.to !== "bus.stream:in");
+    const scene = serialize(defaultPlan("URX44V"), { sceneOnly: true });
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        vd_get: streamingOnMix1(clockReads(false, 48_000)),
+        read_text_file: () => scene,
+      }),
+    }))!;
+    const supplied = [t().status.streamingSourceSupplied, t().status.planLoaded].join(" — ");
+    await vi.waitFor(() => expect(statusText(), "the premise: the load supplied the source").toBe(supplied), {
+      timeout: 10_000,
+    });
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/scene.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("scene.json")), { timeout: 10_000 });
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const stream = getModel("URX44V").nodes.find((n) => n.id === "bus.stream")!;
+    expect(stripsNamed(asked[0])).toEqual([fullLabel(stream)]);
+  });
+
+  // STREAMING's list on the unit has no None. A unit that holds NONE there is read as such, and
+  // the plan takes STEREO in its place: drawn on the board, said ahead of the fetch's own line,
+  // and recorded as the fill's, so the write that then moves the unit onto it names STREAMING.
+  it("gives the plan STEREO where the unit's STREAMING was on NONE, and names it on the next write", SLOW, async () => {
+    const { fullLabel } = await import("./models/types");
+    const stream = getModel("URX44V").nodes.find((n) => n.id === "bus.stream")!;
+    const shell = await bootDevice({}, true, { ...STREAMING_ON_NONE, ...STREAMING_DELAY_AT_FLOOR });
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(() => expect(statusText().startsWith(`${t().status.streamingSourceUnlisted} — `)).toBe(true), {
+      timeout: 10_000,
+    });
+    expect(streamingDrawn()).toEqual(["bus.stereo:out"]);
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    expect(stripsNamed(asked[0])).toContain(fullLabel(stream));
+    expect(streamingWrites(shell).sort()).toEqual([
+      `${PARAMS.STREAM_SRC_L.id}=${STREAMING_STEREO[0]}`,
+      `${PARAMS.STREAM_SRC_R.id}=${STREAMING_STEREO[1]}`,
+    ]);
+  });
+
+  // The control: a unit on a source its list offers says nothing about it, and the write that
+  // follows does not name STREAMING.
+  it("says nothing about STREAMING when the unit holds a source its list offers", SLOW, async () => {
+    const { fullLabel } = await import("./models/types");
+    const stream = getModel("URX44V").nodes.find((n) => n.id === "bus.stream")!;
+    const shell = await bootDevice({}, true, STREAMING_DELAY_AT_FLOOR);
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    // The whole line is the fetch's own, so no note leads it.
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.fetchedDevice("URX44V", n))).not.toBeNaN(), {
+      timeout: 10_000,
+    });
+    expect(streamingDrawn()).toEqual(["bus.stereo:out"]);
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked, for the strips it does move").toHaveLength(1);
+    expect(stripsNamed(asked[0]).length, "the premise: the note names strips").toBeGreaterThan(0);
+    expect(stripsNamed(asked[0])).not.toContain(fullLabel(stream));
+    expect(streamingWrites(shell)).toEqual([]);
+  });
+
   it("reads a unit on the verified firmware without asking anything", SLOW, async () => {
     const shell = await bootDevice({}, false); // every confirm would DECLINE
     $("btn-fetch").click();
@@ -863,7 +1013,7 @@ describe("Fetch from device", () => {
     it(`drops the undo history on a ${flow} whose read changed no value`, SLOW, async () => {
       let unitOsc = 0;
       const shell = await bootDevice({
-        vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.OSC_ON.id ? unitOsc : 0),
+        vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.OSC_ON.id ? unitOsc : unwrittenRead(a)),
       });
       $("btn-fetch").click();
       await invoked(shell, "vd_disconnect");
@@ -1009,7 +1159,7 @@ describe("the model the device turns out to be", () => {
       ...connectAs("URX22"),
       ...SAVES,
       vd_get: (a: Record<string, unknown>) =>
-        a.paramId === PARAMS.CH_FADER.id || a.paramId === STEREO_FADER ? levelToVd(-10) : 0,
+        a.paramId === PARAMS.CH_FADER.id || a.paramId === STEREO_FADER ? levelToVd(-10) : unwrittenRead(a),
     });
     $("btn-fetch").click();
     await invoked(shell, "vd_disconnect");
@@ -1031,9 +1181,10 @@ describe("the model the device turns out to be", () => {
   });
 
   /** A unit whose Follow USB read — the first inside a fetch or a live start — waits until
-   *  `release` answers it, with a value or a refusal. Every other read answers `rest`. */
+   *  `release` answers it, with a value or a refusal. Every other read answers `rest`, which
+   *  defaults to what an unwritten address holds on the unit. */
   const holdFollowUsb = (
-    rest: (a: Record<string, unknown>) => number = () => 0,
+    rest: (a: Record<string, unknown>) => number = unwrittenRead,
   ): {
     reading: Promise<void>;
     release: (answer: number | Error) => void;
@@ -1071,7 +1222,7 @@ describe("the model the device turns out to be", () => {
   // both models carry, so the switch's plan then takes the unit's value for it with nothing
   // contested and nothing left over to report.
   it("refuses an edit to the plan a switched fetch is reading to replace", SLOW, async () => {
-    const unit = holdFollowUsb((a) => (a.paramId === PARAMS.SEND_LEVEL.id ? levelToVd(-10) : 0));
+    const unit = holdFollowUsb((a) => (a.paramId === PARAMS.SEND_LEVEL.id ? levelToVd(-10) : unwrittenRead(a)));
     const shell = await bootDevice({ ...connectAs("URX22"), ...SAVES, vd_get: unit.vd_get });
     $("btn-view-console").click();
     $("btn-fetch").click();
@@ -1708,10 +1859,10 @@ describe("the model the device turns out to be", () => {
   // second can edit at every step from its last read on until the switch is applied.
   it("leaves the switch's status line standing when a refused edit's restore runs after the switch", SLOW, async () => {
     let reads = 0;
-    const count = (): number => (reads++, 0);
+    const count = (a: Record<string, unknown>): number => (reads++, unwrittenRead(a));
     const shell = await bootDevice({
       ...connectAs("URX22"),
-      vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.FOLLOW_USB.id ? 0 : count()),
+      vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.FOLLOW_USB.id ? 0 : count(a)),
     });
     const picker = $<HTMLSelectElement>("model-picker");
     $("btn-view-console").click();
@@ -2044,7 +2195,8 @@ describe("the undo history across a device read that did not land", () => {
     let answer = (): void => {};
     const held = new Promise<void>((r) => (answer = r));
     const shell = await bootDevice({
-      vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.FOLLOW_USB.id ? (asked(), held.then(() => 1)) : 0),
+      vd_get: (a: Record<string, unknown>) =>
+        a.paramId === PARAMS.FOLLOW_USB.id ? (asked(), held.then(() => 1)) : unwrittenRead(a),
     });
     await editHeldAcross(async () => {
       $("btn-fetch").click();
@@ -2174,7 +2326,7 @@ describe("the undo history across a device read that landed", () => {
     it(`drops an entry opened before a ${flow}'s read as the read lands`, SLOW, async () => {
       let unitOsc = 0;
       const shell = await bootDevice({
-        vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.OSC_ON.id ? unitOsc : 0),
+        vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.OSC_ON.id ? unitOsc : unwrittenRead(a)),
       });
       await editPressed();
       // The unit holds what the edit put there, so the read changes no value.
@@ -2358,7 +2510,7 @@ describe("the live session", () => {
         ? 192_000
         : a.paramId === PARAMS.INSERT_FX.id
           ? denormalizeInsertFx(INSERT_FX_NONE)
-          : 0;
+          : unwrittenRead(a);
     };
     shell.answer("vd_get", (a: Record<string, unknown>) =>
       delayMs ? new Promise((r) => setTimeout(() => r(answer(a)), delayMs)) : answer(a),
@@ -2369,6 +2521,62 @@ describe("the live session", () => {
     const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
     channel.onmessage([{ param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 }]);
   };
+
+  // STREAMING's list on the unit has no None. A session started on a unit left on NONE there
+  // gives the plan STEREO and says so ahead of its own line, and sends nothing at the start: the
+  // unit stays on NONE until an edit starts a flush, and that flush carries STREAMING too, since
+  // the read's view held the unit's NONE and the snapshot has nothing there to match.
+  it("gives the plan STEREO where the unit's STREAMING was on NONE, and sends it with an edit", SLOW, async () => {
+    const shell = await bootDevice({}, true, STREAMING_ON_NONE);
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    expect(statusText().startsWith(`${t().status.streamingSourceUnlisted} — `)).toBe(true);
+    expect(streamingDrawn()).toEqual(["bus.stereo:out"]);
+    await quiet(shell);
+    expect(streamingWrites(shell)).toEqual([]);
+
+    selectNode("ch1");
+    pickInsertFx(COMPANDER_H);
+    await vi.waitFor(() => expect(insertFxWrites(shell)).toContain(COMPANDER_H), { timeout: 25_000 });
+    await vi.waitFor(
+      () =>
+        expect(streamingWrites(shell).sort()).toEqual([
+          `${PARAMS.STREAM_SRC_L.id}=${STREAMING_STEREO[0]}`,
+          `${PARAMS.STREAM_SRC_R.id}=${STREAMING_STEREO[1]}`,
+        ]),
+      { timeout: 25_000 },
+    );
+    await endLive();
+  });
+
+  // A source STREAMING's list does not offer — a channel's slot — is not taken from the unit:
+  // the read is incomplete, and the session does not start on it.
+  it("does not start on a unit whose STREAMING source is not in its list", SLOW, async () => {
+    const shell = await bootDevice({}, true, { "705/0/0": 0, "706/0/0": 0 });
+    $("btn-live").click();
+    await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 25_000 });
+    expect(errors(shell)[0]).toBe(t().status.liveError(t().error.liveReadIncomplete(1)));
+    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(streamingWrites(shell)).toEqual([]);
+  });
+
+  // A start that fails on an incomplete read merges nothing, so the unit's NONE never reaches
+  // the plan: STREAMING is left on the source the plan already had, and nothing is sent.
+  it("leaves STREAMING on the plan's own source when a start against a unit on NONE fails", SLOW, async () => {
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId === PARAMS.STREAM_DELAY_TIME.id) throw new Error("read refused");
+        return (STREAMING_ON_NONE as Record<string, number>)[`${a.paramId}/${a.x}/${a.y}`] ?? unwrittenRead(a);
+      },
+    });
+    $("btn-live").click();
+    await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 25_000 });
+    expect(errors(shell)[0]).toBe(t().status.liveError(t().error.liveReadIncomplete(1)));
+    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(streamingDrawn()).toEqual(["bus.stereo:out"]);
+    expect(statusText()).not.toBe(t().status.streamingSourceUnlisted);
+    expect(streamingWrites(shell)).toEqual([]);
+  });
 
   it("says how many values a reconcile kept, and sends them back", SLOW, async () => {
     const shell = await bootDevice();
@@ -2572,7 +2780,7 @@ describe("the live session", () => {
         ? 48_000
         : a.paramId === PARAMS.INSERT_FX.id
           ? denormalizeInsertFx(INSERT_FX_NONE)
-          : 0,
+          : unwrittenRead(a),
     );
     channel.onmessage([
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
@@ -2603,7 +2811,7 @@ describe("the live session", () => {
           ? 48_000
           : a.paramId === PARAMS.INSERT_FX.id
             ? denormalizeInsertFx(INSERT_FX_NONE)
-            : 0;
+            : unwrittenRead(a);
       return new Promise((r) => setTimeout(() => r(v), 5));
     });
     const at = shell.invokes.indexOf("vd_params_subscribe");
@@ -2653,7 +2861,7 @@ describe("the live session", () => {
             ? asked++ === 0
               ? COMPANDER_H
               : denormalizeInsertFx(INSERT_FX_NONE)
-            : 0;
+            : unwrittenRead(a);
       return new Promise((r) => setTimeout(() => r(v), 2));
     });
     const at = shell.invokes.indexOf("vd_params_subscribe");
@@ -2696,7 +2904,7 @@ describe("the live session", () => {
             ? denormalizeInsertFx(INSERT_FX_NONE)
             : a.paramId === PARAMS.INSERT_FX.id && a.y === 0
               ? COMPANDER_H
-              : 0;
+              : unwrittenRead(a);
       return new Promise((r) => setTimeout(() => r(v), 1));
     });
     const at = shell.invokes.indexOf("vd_params_subscribe");
@@ -2764,7 +2972,7 @@ describe("the live session", () => {
           ? 48_000
           : a.paramId === PARAMS.INSERT_FX.id && a.y === 0
             ? unitInsertFx
-            : 0;
+            : unwrittenRead(a);
       return new Promise((r) => setTimeout(() => r(v), 1));
     });
     notifyChannel(shell).onmessage([
@@ -3033,8 +3241,8 @@ describe("the live session", () => {
 });
 
 describe("Write to device", () => {
-  // The store answers every unwritten address 0, the clock included, so the device reads
-  // as being on a rate the plan is not — and the RATE confirm is what comes up. Named for
+  // The store answers the unwritten clock with 0, so the device reads as being on a rate
+  // the plan is not — and the RATE confirm is what comes up. Named for
   // it, because the write-count confirm is a different dialog on a later line and the
   // case below is the one that reaches it.
   it("asks before writing at a rate the device is not on, and writes nothing when declined", SLOW, async () => {
@@ -3648,7 +3856,7 @@ describe("Write to device", () => {
 describe("a value the unit holds and the app cannot write", () => {
   const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
   const BELOW = lpf.rawMin! - 1;
-  // BOTH channels' slots are seeded, from the catalogue rather than by hand: an address the
+  // BOTH channels' slots are seeded, from the catalogue rather than by hand: a slot the
   // table has not been told about reads 0, and 0 is outside several of these windows too, so
   // a partial seed would move the count this case asserts for a reason it is not about.
   const unitHoldingLowLpf = (): Record<string, number> => {
@@ -4345,7 +4553,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
   const at = (a: Record<string, unknown> | undefined): string => `${a?.paramId}:${a?.x}:${a?.y}`;
 
   /** FX1 on Rev-X Hall with its factory array, and a rate to read. Seeded from the
-   *  catalogue rather than by hand: an address the table has not been told about reads 0,
+   *  catalogue rather than by hand: a slot the table has not been told about reads 0,
    *  and 0 is a legal Rev-X raw, so a partial seed would make the unit hold values nobody
    *  chose. */
   const unitOnRevxHall = (): Record<string, number> => {
@@ -5418,7 +5626,7 @@ describe("the Follow USB badge", () => {
     }
     if (a.paramId === PARAMS.SAMPLE_RATE.id) return 48_000;
     if (a.paramId === PARAMS.INSERT_FX.id) return COMPANDER_H;
-    return 0;
+    return unwrittenRead(a);
   };
   beforeEach(() => void (unit.refused = false));
 
@@ -6254,12 +6462,14 @@ describe("dropping a file onto the window", () => {
    *  difference `ensureFixedConnections` leaves after putting the model's fixed wires back
    *  (measured on URX44V: 77 wires on the default plan, 48 on this one), so reading it
    *  means predicting that restoration. */
+  // STREAMING's source is written out, as every plan the app saves carries it: a document
+  // without it loads with a note leading the status line, which is not what this is about.
   const droppedPlan = JSON.stringify({
     format: "urx-router-plan",
     version: 1,
     modelId: "URX44V",
     sampleRate: 96_000,
-    connections: [],
+    connections: [{ from: "bus.stereo:out", to: "bus.stream:in", kind: "source" }],
   });
 
   const advert = (): HTMLElement => $("dropzone");
@@ -6398,6 +6608,19 @@ describe("dropping a file onto the window", () => {
     const rows = [...$("inspector").querySelectorAll(".recent-row")].map((row) => row.textContent ?? "");
     expect(rows.some((text) => text.includes("dropped.json"))).toBe(true);
     expect(localStorage.getItem("urx-recent")).toContain(PLAN_PATH);
+  });
+
+  // A file is a load as a link is: a document naming no STREAMING source opens with the STEREO
+  // a new plan carries, drawn on the board, and the note leads the line that names the file.
+  it("gives a dropped plan naming no STREAMING source STEREO, and says so ahead of the file", SLOW, async () => {
+    const bare = JSON.stringify({ ...JSON.parse(droppedPlan), connections: [] });
+    const shell = await bootDevice({ read_text_file: () => bare });
+
+    expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH] })).toBe(1);
+    await vi.waitFor(() => expect(rate()).toBe("96000"), { timeout: 10_000 });
+    expect(statusText()).toBe([t().status.streamingSourceSupplied, t().status.openedFrom("dropped.json")].join(" — "));
+    const drawn = $("graph-host").querySelectorAll('.wire-hit[data-to="bus.stream:in"]');
+    expect([...drawn].map((w) => (w as SVGElement).dataset.from)).toEqual(["bus.stereo:out"]);
   });
 
   // The other side of that memory: the entry remembers a path only once the plan behind it

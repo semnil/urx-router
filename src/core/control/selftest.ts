@@ -589,20 +589,27 @@ export function perturbedPlan(model: DeviceModel, original: Plan, pass: number, 
  * (prepare.ts): verify the just-connected device matches `model`, then read its
  * current state into a fresh plan. Returns whether the model matched (`ok`), the
  * captured plan, and the read's applied count / errors — the model-mismatch
- * message is already in `errors`. The caller owns connect + disconnect and its own
- * cancel handling: a cancel throws out of applyDeviceState and propagates.
+ * message is already in `errors` — plus the required receivers whose source the read did
+ * not establish (`ReadbackResult.sourceUnread`). The caller owns connect + disconnect and
+ * its own cancel handling: a cancel throws out of applyDeviceState and propagates.
  */
 export async function captureDeviceState(
   model: DeviceModel,
   deviceModel: string,
   signal?: AbortSignal,
-): Promise<{ ok: boolean; plan: Plan; applied: number; errors: string[] }> {
+): Promise<{ ok: boolean; plan: Plan; applied: number; errors: string[]; sourceUnread: string[] }> {
   const plan = emptyPlan(model.id);
   if (deviceModel !== model.id) {
-    return { ok: false, plan, applied: 0, errors: [`connected device is ${deviceModel}, not ${model.id}`] };
+    return {
+      ok: false,
+      plan,
+      applied: 0,
+      errors: [`connected device is ${deviceModel}, not ${model.id}`],
+      sourceUnread: [],
+    };
   }
   const r = await applyDeviceState(model, plan, signal);
-  return { ok: true, plan, applied: r.applied, errors: r.errors };
+  return { ok: true, plan, applied: r.applied, errors: r.errors, sourceUnread: r.sourceUnread ?? [] };
 }
 
 /**
@@ -696,6 +703,15 @@ export async function runSelfTest(
     report.errors.push(...cap.errors);
     if (!cap.ok) return report; // connected device is not this model
     const original = cap.plan;
+    // A STREAMING source the capture did not read is written by nothing in the run: with no
+    // wire there the emit sends nothing to its selector, so no pass moves it, the restore has
+    // nothing to put back, and the unit keeps the source it held.
+    for (const id of cap.sourceUnread) {
+      original.connections = original.connections.filter((c) => c.to !== ref(id, "in"));
+      report.errors.push(
+        `${id}: source not captured, so no pass and not the restore writes it; the unit keeps its own`,
+      );
+    }
     // The capture as device values, for a failing pass's trace: the same inverse the
     // restore writes, indexed once rather than per pass.
     const captured = new Map<number, CapturedValue>();

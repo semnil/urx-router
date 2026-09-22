@@ -107,10 +107,22 @@ const BASE_COMMANDS: Record<string, unknown> = {
 /** One parameter instance's address, as the key of the store below. */
 const addr = (a: Record<string, unknown>): string => `${a.paramId}/${a.x}/${a.y}`;
 
+/** What an address nothing wrote or seeded answers where 0 is not a value the unit can hold
+ *  there: STREAMING's source (705 / 706), whose list offers STEREO / MIX 1 / MIX 2, answers the
+ *  factory STEREO as tagged port refs. Written as the raw values the unit answers rather than
+ *  taken from the app's encoder. */
+const UNWRITTEN: Record<string, number> = { "705/0/0": 0x80000100, "706/0/0": 0x80000101 };
+
+/** What the unit answers at an address nothing wrote or seeded. A reader a case supplies in
+ *  place of the table's falls back to this rather than to a bare 0, so the unit it describes
+ *  starts where a unit does. */
+export const unwrittenRead = (a: Record<string, unknown>): number => UNWRITTEN[addr(a)] ?? 0;
+
 /**
  * A connected unit, on top of the boot table. **A write is readable afterwards**: the
  * unit keeps what was set to it and answers the next read with it, unwritten
- * addresses reading 0 (and "" for the string params). Without that a converging write
+ * addresses reading 0 (and "" for the string params) — STREAMING's source reading the
+ * factory STEREO instead (`UNWRITTEN`). Without that a converging write
  * can never converge — it re-reads what it just sent, is answered 0, and spends every
  * round on a residual that is the stub's doing — so a case asserting "the write
  * succeeded" would in fact be running the non-convergence path and asserting that an
@@ -165,7 +177,7 @@ export function deviceCommands(
       if (a?.epoch === epoch) connected = false;
       return null;
     },
-    vd_get: (a: Record<string, unknown>) => live(() => values.get(addr(a)) ?? 0),
+    vd_get: (a: Record<string, unknown>) => live(() => values.get(addr(a)) ?? unwrittenRead(a)),
     vd_get_str: (a: Record<string, unknown>) => live(() => strings.get(addr(a)) ?? ""),
     vd_set: (a: Record<string, unknown>) =>
       live(() => void (ignoreWrite?.(a) ? undefined : values.set(addr(a), a.value as number))),

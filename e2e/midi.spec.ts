@@ -155,7 +155,12 @@ test.beforeEach(async ({ page }) => {
       onmessage: (data: unknown) => void = () => {};
     }
     // What the vd stub below has been written, by parameter instance.
-    const written = new Map<string, number>();
+    // STREAMING's source (705 / 706) starts on the factory STEREO as tagged port refs: 0 is a
+    // channel's slot, which its list does not offer.
+    const written = new Map<string, number>([
+      ["705/0/0", 0x80000100],
+      ["706/0/0", 0x80000101],
+    ]);
     // The UI relay: each side registers a receiver, and a post reaches the other
     // page only (BroadcastChannel does not echo to its sender, and neither does
     // the Rust relay it stands in for).
@@ -256,7 +261,8 @@ test.beforeEach(async ({ page }) => {
             relay.postMessage({ dir: "window", payload: args.payload });
             return Promise.resolve();
           // Minimal vd surface for the fetch feedback test: a matching device with
-          // no firmware gate, every parameter read answering 0 (CH levels = 0.0 dB).
+          // no firmware gate, every parameter read answering 0 (CH levels = 0.0 dB) but
+          // STREAMING's source (`written` above).
           case "vd_connect":
             // Held open while the flag is set, and failed the moment it is cleared. A
             // self-test is minutes of round-trips against real hardware and cannot be
@@ -878,7 +884,7 @@ test("a toggle ignores the echo of its own feedback", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
   await page.evaluate(() => (window.__midiTest.sent.length = 0));
 
-  // The readback leaves this chip muted (the stub answers 0 for every read, which is the
+  // The readback leaves this chip muted (the stub answers the send's ON with 0, which is the
   // send switched off). Unmute first, so the edit under test feeds back the ON value:
   // an edge toggle ignores a repeat of a release, and the second half below presses the
   // fed message again as a real press.
@@ -921,7 +927,7 @@ test("a device fetch does not open the output port; the live session does", asyn
   await setLearn(page, win, false);
   await pickOutputPort(page, win);
 
-  // Park the fader at -∞ so the stubbed readback (every read = 0 → 0.0 dB) is a real
+  // Park the fader at -∞ so the stubbed readback (CH 1's level reads 0 → 0.0 dB) is a real
   // change rather than a value that would go out as itself.
   const fader = strip(page, "CH 1").locator(".con-fader");
   await fader.click();
@@ -946,7 +952,7 @@ test("a device fetch does not open the output port; the live session does", asyn
 test("Live sync start pushes every assignment to the controller, not just what changed", async ({ page }) => {
   // The session's starting readback makes the plan the unit's own state, and the
   // debounced pass carries only what CHANGED in the plan — here nothing does: the
-  // stub answers 0 for every read, which is already CH 1's level. That is exactly
+  // stub answers CH 1's level with 0, which the plan already holds. That is exactly
   // the value a controller replugged (or moved to another bank) since the sent
   // cache was filled would still be showing wrong, so the session start re-sends
   // every binding once. It is also the only moment that does: the port opening states
@@ -964,8 +970,8 @@ test("Live sync start pushes every assignment to the controller, not just what c
   await page.click("#btn-device");
   await page.click("#btn-live");
   await expect(page.locator("#live-tally")).toBeVisible(); // the session is up
-  // Nothing in the plan moved — the stub answers 0 for every read, which is already
-  // CH 1's level — and the binding is sent anyway.
+  // Nothing in the plan moved — the stub answers CH 1's level with 0, which the plan
+  // already holds — and the binding is sent anyway.
   await expect(readLevel(page, "CH 1")).toHaveText("0.0");
   await expect
     .poll(() => page.evaluate(() => window.__midiTest.sent.filter((b) => b[0] === 0xb0 && b[1] === 7).length))

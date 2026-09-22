@@ -10,6 +10,7 @@ import {
   canConnect,
   directOutTarget,
   isFixedConnection,
+  isLastRequiredSource,
   isNodeInactive,
   isStereoLinkedPair,
   legalSources,
@@ -20,6 +21,7 @@ import {
   partnerChannel,
   possibleSources,
   possibleTargets,
+  requiresSource,
   ruleKind,
   sendHasTap,
   upstreamNodes,
@@ -839,15 +841,7 @@ export class Graph {
   private repaintCandidates(): void {
     const c = this.connect;
     if (c?.mode !== "connecting") return;
-    let legal =
-      c.dir === "out" ? legalTargets(this.model, this.plan, c.ref) : legalSources(this.model, this.plan, c.ref);
-    let possible = c.dir === "out" ? possibleTargets(this.model, c.ref) : possibleSources(this.model, c.ref);
-    if (c.dir === "out") {
-      const fromThisJack = (rs: Set<string>): Set<string> =>
-        new Set([...rs].filter((r) => this.isRecPointTap(c.ref, r) === c.tap));
-      legal = fromThisJack(legal);
-      possible = fromThisJack(possible);
-    }
+    const { legal, possible } = this.connectCandidates(c.ref, c.dir, c.tap);
     this.paintCandidates(c.ref, c.dir, legal, possible);
   }
 
@@ -1817,6 +1811,12 @@ export class Graph {
       this.cb.onStatus(t().status.fixedConnection);
       return;
     }
+    // A receiver the unit never leaves without a source keeps its last wire; another source
+    // drawn onto it replaces that wire instead (finishConnect).
+    if (isLastRequiredSource(this.model, this.plan, from, to)) {
+      this.cb.onStatus(t().status.streamingSourceRequired);
+      return;
+    }
     const kind = ruleKind(this.model, from, to);
     this.plan.connections = this.plan.connections.filter((c) => !(c.from === from && c.to === to));
     // Removing a paired channel's source also clears its partner's mirrored one.
@@ -2230,27 +2230,10 @@ export class Graph {
   // or an input with no legal source — the latter keeps a press on a full input
   // selecting its incoming wire instead of opening a dead rubber-band.
   private beginConnect(from: string, dir: PortDirection, tap: boolean): boolean {
-    let legal = dir === "out" ? legalTargets(this.model, this.plan, from) : legalSources(this.model, this.plan, from);
-    // Possible partners include occupied ones, shown outline-only so the user can
-    // see where a port could route even when the destination is taken.
-    let possible = dir === "out" ? possibleTargets(this.model, from) : possibleSources(this.model, from);
-    // A channel's two source jacks are separate origins: the Rec Point tap offers
-    // only the direct outs and recordings, the right-edge output only the routes
-    // through the mixer stage. So an output drag keeps just the side it left from.
-    // Only outputs need this — a tap is always an output, so an input drag has
-    // nothing to split.
-    // A channel of a STEREO-linked pair dropped onto the USB output holding it alone brings
-    // its partner (finishConnect), so that drop is lit as legal though the wire exists.
-    for (const r of possible)
-      if (dir === "out" ? this.completesLinkedPair(from, r) : this.completesLinkedPair(r, from)) legal.add(r);
-    if (dir === "out") {
-      const fromThisJack = (rs: Set<string>): Set<string> =>
-        new Set([...rs].filter((r) => this.isRecPointTap(from, r) === tap));
-      legal = fromThisJack(legal);
-      possible = fromThisJack(possible);
-    }
+    const { legal, possible } = this.connectCandidates(from, dir, tap);
     // Gate: outputs open on any possible route (occupied targets still highlight);
-    // inputs open only on a legal source, so a full input falls back to wire-select.
+    // inputs open only on a legal source, so a full input falls back to wire-select — unless a
+    // drop there replaces its wire, which connectCandidates lights as legal.
     if (dir === "out" ? !possible.size : !legal.size) return false;
     this.paintCandidates(from, dir, legal, possible);
     this.tempWire = document.createElementNS(SVGNS, "path");
@@ -2262,6 +2245,39 @@ export class Graph {
     this.tempWire.setAttribute("stroke-dasharray", "5 4");
     this.overlay.append(this.tempWire);
     return true;
+  }
+
+  /** The ports a drag from `from` can end on: `legal` the drops the board takes, `possible`
+   *  every rule-defined partner, occupied ones included, shown outline-only so the user can
+   *  see where a port could route even when the destination is taken. Shared by the drag's
+   *  start and by the repaint a render mid-drag needs, so the two light the same set. */
+  private connectCandidates(
+    from: string,
+    dir: PortDirection,
+    tap: boolean,
+  ): { legal: Set<string>; possible: Set<string> } {
+    let legal = dir === "out" ? legalTargets(this.model, this.plan, from) : legalSources(this.model, this.plan, from);
+    let possible = dir === "out" ? possibleTargets(this.model, from) : possibleSources(this.model, from);
+    // Two drops the rule engine refuses are taken by finishConnect, so they are lit as legal:
+    // a channel of a STEREO-linked pair onto the USB output holding it alone (it brings its
+    // partner), and another source onto a receiver the unit never leaves without one (it
+    // replaces the wire there).
+    for (const r of possible) {
+      const [out, into] = dir === "out" ? [from, r] : [r, from];
+      if (this.completesLinkedPair(out, into) || this.replacesSource(out, into)) legal.add(r);
+    }
+    // A channel's two source jacks are separate origins: the Rec Point tap offers
+    // only the direct outs and recordings, the right-edge output only the routes
+    // through the mixer stage. So an output drag keeps just the side it left from.
+    // Only outputs need this — a tap is always an output, so an input drag has
+    // nothing to split.
+    if (dir === "out") {
+      const fromThisJack = (rs: Set<string>): Set<string> =>
+        new Set([...rs].filter((r) => this.isRecPointTap(from, r) === tap));
+      legal = fromThisJack(legal);
+      possible = fromThisJack(possible);
+    }
+    return { legal, possible };
   }
 
   /** Reset every port to its default look, then light the partners: legal ones filled,
@@ -2325,19 +2341,26 @@ export class Graph {
       return;
     }
     const result = canConnect(this.model, this.plan, out, into);
-    if (!result.ok && !this.completesLinkedPair(out, into)) {
+    const replaces = this.replacesSource(out, into);
+    if (!result.ok && !replaces && !this.completesLinkedPair(out, into)) {
       this.cb.onStatus(result.reason ? t().error[result.reason] : t().error.cannotConnect);
       return;
     }
+    // The wire a replacing drop takes the place of goes in the same change, so one undo puts
+    // it back. A selection on it goes with it, as a deleted wire's does.
+    const dropsSelected = replaces && this.selection?.type === "conn" && this.selection.to === into;
+    if (replaces) this.plan.connections = this.plan.connections.filter((c) => c.to !== into);
     // canConnect rejects a route with no rule, so reaching here means kind is set.
-    if (result.ok) this.plan.connections.push({ from: out, to: into, kind: kind! });
+    if (result.ok || replaces) this.plan.connections.push({ from: out, to: into, kind: kind! });
     if (kind === "source") this.mirrorPairSource(out, into);
     if (kind === "patch") {
       const partner = this.linkedPairPartner(out, into);
       if (partner) this.plan.connections.push({ from: partner, to: into, kind: "patch" });
     }
-    // redrawWires ends with refreshPortStates, so the port glow is restored there.
-    this.redrawWires();
+    // redrawWires ends with refreshPortStates, so the port glow is restored there (select
+    // redraws them too).
+    if (dropsSelected) this.select(null);
+    else this.redrawWires();
     this.cb.onChange();
     this.cb.onStatus(t().status.connected);
   }
@@ -2366,6 +2389,12 @@ export class Graph {
       canConnect(this.model, this.plan, out, into).reason === "duplicate" &&
       this.linkedPairPartner(out, into) !== null
     );
+  }
+
+  /** A drop of `out` onto a receiver the unit never leaves without a source, which holds
+   *  another: the board takes it in place of the wire there rather than as a second one. */
+  private replacesSource(out: string, into: string): boolean {
+    return requiresSource(this.model, into) && canConnect(this.model, this.plan, out, into).reason === "singleInput";
   }
 
   /** Whether a wire is on the board: neither of its nodes is on the shelf. */

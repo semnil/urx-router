@@ -62,7 +62,7 @@ describe("possibleTargets / possibleSources are exact inverses of the rule set",
   });
 });
 
-describe("legal* is a subset of possible*, and equal on an empty plan", () => {
+describe("legal* is a subset of possible*, and equal on a plan with no wires", () => {
   it.each(MODEL_IDS)("%s: legalTargets ⊆ possibleTargets always", (id) => {
     const model = MODELS[id];
     const plan = emptyPlan(id);
@@ -75,12 +75,25 @@ describe("legal* is a subset of possible*, and equal on an empty plan", () => {
     }
   });
 
-  it.each(MODEL_IDS)("%s: on an empty plan legalTargets equals possibleTargets (nothing occupied)", (id) => {
+  it.each(MODEL_IDS)("%s: on a plan with no wires legalTargets equals possibleTargets (nothing occupied)", (id) => {
+    const model = MODELS[id];
+    const plan = { ...emptyPlan(id), connections: [] };
+    const froms = new Set(model.rules.map((r) => r.from));
+    for (const from of froms) {
+      expect([...legalTargets(model, plan, from)].sort()).toEqual([...possibleTargets(model, from)].sort());
+    }
+  });
+
+  // A new plan carries the source each required receiver is never without, so that
+  // receiver is the one target it leaves occupied — for every source, the one it holds
+  // included.
+  it.each(MODEL_IDS)("%s: on a new plan only the required receivers are occupied", (id) => {
     const model = MODELS[id];
     const plan = emptyPlan(id);
     const froms = new Set(model.rules.map((r) => r.from));
     for (const from of froms) {
-      expect([...legalTargets(model, plan, from)].sort()).toEqual([...possibleTargets(model, from)].sort());
+      const free = [...possibleTargets(model, from)].filter((to) => !(to in model.requiredSources));
+      expect([...legalTargets(model, plan, from)].sort()).toEqual(free.sort());
     }
   });
 });

@@ -618,6 +618,8 @@ export const ja: Messages = {
       `このアプリが書き込める範囲の外にあった保存値 ${count} 件を、送信できる最も近い値に寄せました`,
     paramsDropped: (count: number): string =>
       `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、エフェクト自身の既定値を使います`,
+    streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
+    streamingSourceUnlisted: "本体の STREAMING が一覧に無い状態だったため、計画では STEREO にしました",
     planLoaded: "計画を読み込みました",
     recentRemoved: (name: string): string => `${name} を最近使った計画から削除しました`,
     planSaved: "計画を保存しました",
@@ -697,6 +699,8 @@ export const ja: Messages = {
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",
     fixedConnection: "固定接続は削除できません",
+    streamingSourceRequired:
+      "STREAMING は本体と同じく常に 1 つのソースを持ちます — 差し替えるには別のソースを STREAMING へ接続してください",
     noteMinimized: "ノートを最小化しました",
     noteExpanded: "ノートを展開しました",
     hidUnused: (n: number): string => `未接続の ${n} ノードを非表示にしました`,

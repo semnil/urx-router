@@ -168,4 +168,21 @@ describe("model structural invariants", () => {
   it.each(MODEL_IDS)("%s: carries exactly its expected number of fixed wires", (id) => {
     expect(MODELS[id].rules.filter((r) => r.fixed).length).toBe(FIXED_COUNT[id]);
   });
+
+  // STREAMING's source list on the unit is STEREO / MIX 1 / MIX 2 with no None, so it is the
+  // receiver that always holds one source, STEREO when a plan names none. It is the only one:
+  // the status lines that refuse its last wire and report its completion name it.
+  it.each(MODEL_IDS)("%s: STREAMING is the one receiver that always holds a source, STEREO by default", (id) => {
+    expect(MODELS[id].requiredSources).toEqual({ "bus.stream:in": "bus.stereo:out" });
+  });
+
+  it.each(MODEL_IDS)("%s: each required receiver's default is a removable single-input rule", (id) => {
+    const m = MODELS[id];
+    for (const [to, from] of Object.entries(m.requiredSources)) {
+      const rule = m.rules.find((r) => r.from === from && r.to === to);
+      expect(rule, `${from} -> ${to}`).toBeDefined();
+      expect(isSingleInput(rule!.kind), `${from} -> ${to}`).toBe(true);
+      expect(rule!.fixed, `${from} -> ${to}`).toBeUndefined();
+    }
+  });
 });

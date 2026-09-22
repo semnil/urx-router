@@ -57,7 +57,7 @@ import {
   mergeReadInsertFxParams,
   qualifyInsertFxParams,
 } from "./insert-fx-effect";
-import { monoPairOf, pairPrimary } from "../routing";
+import { monoPairOf, pairPrimary, requiresSource, ruleKind } from "../routing";
 import { isSceneExternalConnection } from "../scene-scope";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
@@ -228,6 +228,21 @@ export interface ReadbackResult {
    * a question about the hardware from without checking which read filled it.
    */
   deviceSampleRate?: number;
+  /**
+   * Receivers the unit never leaves without a source (`DeviceModel.requiredSources`) that this
+   * read found holding NONE, a state their own source list does not offer. The read reflects it
+   * as no wire, so the plan it wrote into holds the unit's own state; what the plan on screen
+   * holds instead is the caller's to decide. Absent when the read found none.
+   */
+  unsourced?: string[];
+  /**
+   * The same receivers, where this read did not establish the source at all: a read that
+   * failed, a port it could not decode, a source outside the receiver's list. The plan's own
+   * wire stands there, and the receiver is in `unreadNodes` as well — which cannot say the
+   * source was what went unread, since the node carries other reads (STREAMING's DELAY).
+   * Absent when there was none.
+   */
+  sourceUnread?: string[];
 }
 
 /** A node's fixed main path into STEREO — the send connection carrying its
@@ -692,6 +707,8 @@ async function readPass(
   const failed = new Set<string>();
   let applied = 0;
   let deviceSampleRate: number | undefined;
+  const unsourced: string[] = [];
+  const sourceUnread: string[] = [];
 
   for (const node of model.nodes) {
     signal?.throwIfAborted();
@@ -1246,14 +1263,37 @@ async function readPass(
     if (!want(to)) continue;
     if (skipSceneExternal && isSceneExternalConnection({ from: "", to: ref(to, "in"), kind })) continue;
     attempted.add(to);
+    // A receiver the unit never leaves without a source offers exactly the sources its rules
+    // name, and NONE is not one of them.
+    const required = requiresSource(model, ref(to, "in"));
+    // Every way this selector's read fails: said in `errors`, the receiver flagged unread, and
+    // a required receiver named in `sourceUnread` too, since its node carries other reads.
+    const refuse = (message: string): void => {
+      errors.push(message);
+      failed.add(to);
+      if (required) sourceUnread.push(to);
+    };
     try {
       const portL = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
       const portR = vdToPortRef(await vdGet(PARAMS[pr].id, 0, yr));
       const srcL = portL === null ? null : nodeForPort(model, portL);
       const srcR = portR === null ? null : nodeForPort(model, portR);
       if (portL === null && portR === null) {
+        // Taken as the unit holds it — no wire — and named in `unsourced`, since NONE on such a
+        // receiver is a state its own list does not offer. The caller decides what the plan
+        // then holds; this read's own view stays the unit's.
         clearIncoming(plan, ref(to, "in"), kind);
+        if (required) unsourced.push(to);
         applied++;
+      } else if (
+        srcL !== null &&
+        srcL === srcR &&
+        required &&
+        ruleKind(model, ref(srcL, "out"), ref(to, "in")) === undefined
+      ) {
+        // A source that receiver's list does not offer is not one to take into the plan, nor
+        // to write back: the plan's own wire stays, flagged as a value this read did not get.
+        refuse(`${to}: source port ${portL} names ${srcL}, which is not in its source list`);
       } else if (srcL !== null && srcL === srcR) {
         setExclusiveConnection(plan, ref(srcL, "out"), ref(to, "in"), kind);
         applied++;
@@ -1279,16 +1319,14 @@ async function readPass(
         // built on it. The two are separate sentences because they are separate states:
         // a port this build does not know, and two ports it knows separately.
         const undecoded = [portL, portR].find((p) => p !== null && nodeForPort(model, p) === null);
-        errors.push(
+        refuse(
           undecoded !== undefined && undecoded !== null
             ? `${to}: unknown source port ${undecoded}`
             : `${to}: source ports ${portL ?? "NONE"} / ${portR ?? "NONE"} name neither one source nor a mono pair`,
         );
-        failed.add(to);
       }
     } catch (e) {
-      errors.push(`${to}: ${e instanceof Error ? e.message : String(e)}`);
-      failed.add(to);
+      refuse(`${to}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -1353,7 +1391,14 @@ async function readPass(
   // never attempted (inputs, record-track slots) and fully-read nodes stay out.
   const unreadNodes = new Set<string>();
   for (const id of attempted) if (failed.has(id)) unreadNodes.add(id);
-  return { applied, errors, unreadNodes, deviceSampleRate };
+  return {
+    applied,
+    errors,
+    unreadNodes,
+    deviceSampleRate,
+    ...(unsourced.length ? { unsourced } : {}),
+    ...(sourceUnread.length ? { sourceUnread } : {}),
+  };
 }
 
 /**

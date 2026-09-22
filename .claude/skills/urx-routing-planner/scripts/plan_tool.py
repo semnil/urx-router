@@ -11,7 +11,11 @@ loads the plan as authored":
   or position is silently DROPPED rather than refused, so those are reported as
   warnings — the plan loads, just not as written,
 - validation matches core/routing.ts `validatePlan` (noRule / singleInput /
-  monoPairOnly / duplicate), and
+  monoPairOnly / duplicate),
+- a receiver the unit never leaves without a source (STREAMING — models.json
+  `requiredSources`) that the document gives no wire is completed on load with the
+  model's default source (core/plan-validate.ts `requiredSourceProblems`), which is
+  reported as a warning — the plan loads, with a wire it did not name, and
 - the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
   of the raw-deflated UTF-8 JSON, padding stripped), read back by `?plan=` on
   startup. Compression keeps full plans inside GitHub Pages' ~8 KB URL limit;
@@ -25,8 +29,9 @@ Usage:
   python plan_tool.py url <plan.json> [--base https://urx-router.semnil.com/]
 
 Exit code is non-zero when the plan has hard validation problems, so the skill
-can branch on it. Warnings (a dropped wire or value, a misplaced Ducker param,
-raw-encoded params, a destructive effect selector, a contended insert-FX slot)
+can branch on it. Warnings (a dropped wire or value, a wire the load adds, a
+misplaced Ducker param, raw-encoded params, a destructive effect selector, a
+contended insert-FX slot)
 are advisory and never fail the plan — but they all mean something worth telling
 the user.
 """
@@ -189,6 +194,7 @@ def validate(plan, models):
             problems.append(("duplicate", frm, to))
         seen.add(key)
 
+    warnings.extend(required_source_warnings(plan, model, kept))
     warnings.extend(collection_warnings(plan))
     warnings.extend(
         node_param_warnings(
@@ -198,6 +204,23 @@ def validate(plan, models):
     problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
 
     return problems, warnings
+
+
+def required_source_warnings(plan, model, kept):
+    """The wires the app's load adds (core/plan-validate.ts `requiredSourceProblems`): a
+    receiver the unit never leaves without a source that no kept wire reaches is given the
+    model's default source. Any kept wire into it counts, whatever kind it is written under,
+    since the load restates the kind; a wire the loader dropped does not. The warning reads
+    the same for every document, scene-scoped or not."""
+    held = {c["to"] for c in kept}
+    out = []
+    for to, frm in (model.get("requiredSources") or {}).items():
+        if to in held:
+            continue
+        label = model["nodes"].get(node_of(to), {}).get("label", node_of(to))
+        why = f"the unit never leaves {label} without a source, and the document gives it none"
+        out.append(f"connection {frm} -> {to}: the app adds this wire on load — {why}")
+    return out
 
 
 def is_str(v):

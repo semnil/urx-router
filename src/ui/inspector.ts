@@ -9,7 +9,15 @@ import { clipNodeName, processorOn, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
 import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 
-import { isFixedConnection, monoPairsInto, pairPrimary, sendHasOn, sendHasTap, sendTapWritable } from "../core/routing";
+import {
+  isFixedConnection,
+  isLastRequiredSource,
+  monoPairsInto,
+  pairPrimary,
+  sendHasOn,
+  sendHasTap,
+  sendTapWritable,
+} from "../core/routing";
 import {
   effectiveInsertFx,
   busBalance,
@@ -1021,6 +1029,14 @@ export function renderInspector(
       channelDuckerOn(model, plan, parseRef(from).nodeId)
     )
       host.append(hint(m.inspector.duckerPreSend));
+    return;
+  }
+
+  // The last source of a receiver the unit never leaves without one (STREAMING) is not deleted
+  // either: it is replaced by drawing another source onto the receiver, which the note says in
+  // the words the board's own refusal uses.
+  if (isLastRequiredSource(model, plan, from, to)) {
+    host.append(hint(m.status.streamingSourceRequired));
     return;
   }
 

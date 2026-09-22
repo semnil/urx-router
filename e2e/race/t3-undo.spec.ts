@@ -362,7 +362,7 @@ test.describe("T3 undo", () => {
     // The RAW the unit holds before the gesture — the value the undo has to put back on
     // the wire. The readouts below state what the screen shows; only this states what
     // the device was left playing, which is the half the case's own comment claims.
-    // An address the fake was never written to answers 0, which is what the boot
+    // CH 1's fader, never written to the fake, answers 0, which is what the boot
     // readback put in the plan.
     const beforeRaw = (await memOf(page))[CH1_FADER] ?? 0;
     // Hold the very first write of the session: the edit below is the only thing that

@@ -735,6 +735,12 @@ export function connParamContestKey(from: string, to: string, param: string): st
   return contestName("connParams", wireKey(from, to), param);
 }
 
+/** The same, for a wire's presence: the name an edit or a device read that adds or removes
+ *  the wire records it under. */
+export function connectionContestKey(from: string, to: string): string {
+  return contestName("connections", wireKey(from, to));
+}
+
 /** The printable label of the same piece, in the spelling applyPatchInContext reports. */
 function contestLabel(field: PatchField, key?: string, rest?: string[]): string {
   const head = key === undefined ? field : `${field} ${key}`;

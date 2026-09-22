@@ -232,8 +232,10 @@ export function buildModel(p: ModelParams): DeviceModel {
   for (const b of ["bus.stereo", "bus.mix1", "bus.mix2", "bus.fx1", "bus.fx2"])
     r(ref("bus.osc", "out"), ref(b, "in"), "sendSwitch");
 
-  // 5. Streaming source select.
+  // 5. Streaming source select. Its list on the unit is STEREO / MIX 1 / MIX 2 with no None,
+  //    so it always holds one of them; STEREO is the factory selection.
   for (const s of ["bus.stereo", "bus.mix1", "bus.mix2"]) r(ref(s, "out"), ref("bus.stream", "in"), "source");
+  const requiredSources = { [ref("bus.stream", "in")]: ref("bus.stereo", "out") };
 
   // 6. Monitor source select.
   for (const mon of ["bus.mon1", "bus.mon2"])
@@ -286,5 +288,5 @@ export function buildModel(p: ModelParams): DeviceModel {
     for (const s of duckerSources) r(ref(s, "out"), ref(`out.ducker${d}`, "in"), "key");
   }
 
-  return { id: p.id, name: p.name, nodes, rules, channelPairs, hasSD: p.hasSD, hasHDMI: p.hasHDMI };
+  return { id: p.id, name: p.name, nodes, rules, channelPairs, requiredSources, hasSD: p.hasSD, hasHDMI: p.hasHDMI };
 }

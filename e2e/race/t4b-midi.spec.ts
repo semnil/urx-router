@@ -86,8 +86,8 @@ async function boot(page: Page, mappings: Mapping[], ports?: { input?: string; o
   await expect(faderReadout(page, "CH 1")).toBeVisible();
 }
 
-/** A session's readback leaves CH 1 muted — the fake answers 0 for every param nothing
- *  wrote, and 0 on a send's ON is the send switched off. The echo cases need the guard
+/** A session's readback leaves CH 1 muted — the fake answers a send's ON nothing wrote
+ *  with 0, which is the send switched off. The echo cases need the guard
  *  armed by a pass carrying the ON value (an edge toggle ignores a release), so they
  *  un-mute first and let that pass land before stamping. */
 async function unmuteCh1(page: Page): Promise<void> {
@@ -181,8 +181,8 @@ test.describe("T4b midi", () => {
     // the head's value out first.
     await goLive(page);
     await expect.poll(async () => (await midiSentOf(page)).length).toBeGreaterThan(0);
-    // The head's value, and 95 is the readback's own: the fake answers 0 for every param
-    // nothing wrote, which on a send LEVEL is 0.0 dB — the session replaced the factory
+    // The head's value, and 95 is the readback's own: the fake answers a send LEVEL
+    // nothing wrote with 0, which is 0.0 dB — the session replaced the factory
     // -∞ the offline plan carried.
     expect((await midiSentOf(page))[0]).toEqual([0xb0, 7, 95]);
 

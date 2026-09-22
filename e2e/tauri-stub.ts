@@ -138,6 +138,11 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       // read half already was: one axis for both halves, or a write would be
       // invisible to the read that follows it.
       const values: Record<number, number> = { ...(o.values ?? {}) };
+      // What a param nothing wrote or seeded answers where 0 is not a value the unit can hold
+      // there: STREAMING's source (705 / 706), whose list offers STEREO / MIX 1 / MIX 2, answers
+      // the factory STEREO as tagged port refs. Written as the raw values the unit answers
+      // rather than taken from the app's encoder.
+      const unwritten: Record<number, number> = { 705: 0x80000100, 706: 0x80000101 };
       const w = window as unknown as {
         __urxDialogs: string[];
         __urxWrites: Array<[number, number]>;
@@ -203,7 +208,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
               if (at !== undefined) return Promise.resolve(at);
               const v = values[id];
               if (v !== undefined) return Promise.resolve(v);
-              return o.failReads ? Promise.reject(new Error("read timeout")) : Promise.resolve(0);
+              return o.failReads ? Promise.reject(new Error("read timeout")) : Promise.resolve(unwritten[id] ?? 0);
             };
             if (w.__urxHoldReads.includes(id))
               return new Promise<void>((go) => w.__urxHeld.push({ id, go })).then(answer);
