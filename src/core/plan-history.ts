@@ -118,6 +118,13 @@ export function readableContestKey(key: string): string {
   return key.replaceAll(WIRE_SEP, " -> ");
 }
 
+/** Whether one of the labels `dropAuthored` reports names a wire rather than a value.
+ *  Exported so a caller that tells one hold from another asks the encoding rather than
+ *  re-spelling the field name it leads with. */
+export function isConnectionLabel(label: string): boolean {
+  return label.startsWith("connections ") || label.startsWith("connParams ");
+}
+
 function wireKey(from: string, to: string): string {
   return `${from}${WIRE_SEP}${to}`;
 }

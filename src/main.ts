@@ -146,6 +146,7 @@ import {
   applySilentState,
   applySourceState,
   formatReadbackReport,
+  heldByHold,
   insertFxHoldKeys,
   readIntoPlan,
   sourceChoiceHoldKeys,
@@ -812,7 +813,8 @@ function assertReadComplete(merged: MergedRead, label: string): void {
   // The count travels with the teardown's own message: the status line this read would
   // have written is about to be replaced by `stopLiveOnError`, and the console does not
   // reach an installed build.
-  throw new Error(merged.held.length ? t().error.followReadHeld(cause, merged.held.length) : cause);
+  const held = heldByHold(merged.held);
+  throw new Error(merged.held.length ? t().error.followReadHeld(cause, held.unrunnable, held.source) : cause);
 }
 // A merged device read could not place part of its result: a wire the operator removed
 // while it was in flight, or an edit a device-side routing change left nowhere to land.
@@ -864,7 +866,8 @@ function reapplyHeld(merged: MergedRead): void {
   // in the log from a flush that went out.
   if (live?.isActive()) {
     live.schedule();
-    setStatus(t().status.liveHeld(merged.applied, merged.held.length));
+    const held = heldByHold(merged.held);
+    setStatus(t().status.liveHeld(merged.applied, held.unrunnable, held.source));
     return;
   }
   // Nothing left to send them through: the values stay in the plan, and the status line
@@ -3149,7 +3152,7 @@ if (!DEMO) {
         // to offer after disconnect (below). The two travel together because both are
         // "what this fetch did not do", and neither is visible from the status line —
         // which says a plain success when only the second happened.
-        if (merged.errors.length || merged.unplaced.length) {
+        if (merged.errors.length || merged.unplaced.length || merged.held.length) {
           report = {
             filename: `${device.model}-fetch-report.md`,
             markdown: formatReadbackReport(device.model, merged),

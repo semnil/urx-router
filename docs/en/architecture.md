@@ -225,7 +225,11 @@ carries a one-line map of the same directories and points here.
       `deviceView`, which is what the next outgoing diff measures from, so a session writes the operator's
       choice to the unit: a Live-sync start schedules that flush itself for any edit made while its read ran
       — those had no session to flush through — and the reconciles reach the same send-back through
-      `reapplyHeld`. One read is not device truth throughout: Live sync's
+      `reapplyHeld`. What a read kept is reported by which hold kept it (`heldByHold`): a source is the
+      operator's own gesture kept against the unit, an insert FX is the unit's own change undone, and a
+      count alone tells them apart for neither — the status line names each with its own count, and a
+      Fetch's report lists the device values the plan kept its own answer to beside the edits that stand.
+      One read is not device truth throughout: Live sync's
       `sideEffect` refetch hands over the writes the flush just made (`settle.ts` `PendingWrites`) and
       `writeOverlay` answers those addresses
       from **what the unit announced** for them, since the unit does not answer a GET for a write that early

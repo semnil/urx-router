@@ -893,7 +893,12 @@ export const en = {
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: tr("← device…"),
     liveFollowed: (n: number): string => `← device (${n})`,
-    liveHeld: (read: number, held: number): string => `← device (${read}) · ${held} kept and re-sent`,
+    liveHeld: (read: number, unrunnable: number, source: number): string =>
+      [
+        `← device (${read})`,
+        ...(unrunnable ? [`${unrunnable} kept and re-sent (the unit's own sample rate cannot run them)`] : []),
+        ...(source ? [`${source} kept and re-sent (a source drawn here while the read ran)`] : []),
+      ].join(" · "),
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} shares device settings with ${kept}${more > 0 ? ` (+${more} more)` : ""} — only ${kept}'s values reach the device`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
@@ -1221,8 +1226,20 @@ export const en = {
     liveFollowStopped: tr(
       "Device follow stopped while the session was starting, so a change made on the device would not reach the plan. Live sync was not started.",
     ),
-    followReadHeld: (cause: string, n: number): string =>
-      `${cause}; ${n} setting${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} still held in the plan`,
+    followReadHeld: (cause: string, unrunnable: number, source: number): string =>
+      [
+        cause,
+        ...(unrunnable
+          ? [
+              `${unrunnable} setting${unrunnable === 1 ? "" : "s"} the unit cleared ${unrunnable === 1 ? "is" : "are"} still held in the plan`,
+            ]
+          : []),
+        ...(source
+          ? [
+              `${source} source${source === 1 ? "" : "s"} drawn here ${source === 1 ? "is" : "are"} still held in the plan`,
+            ]
+          : []),
+      ].join("; "),
     followReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     clockUnread: (message: string): string =>

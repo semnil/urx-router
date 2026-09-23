@@ -11,7 +11,7 @@ import { vdGet, vdGetStr } from "../platform";
 import { COLOR_PALETTE, dGainParam, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS, silentKey } from "./params";
 import { fxEffectTypes, fxParams } from "./fx-effect";
 import { defaultPlan } from "../../models/initial-state";
-import { applyDeviceState, applySilentState, formatReadbackReport } from "./readback";
+import { applyDeviceState, applySilentState, formatReadbackReport, heldByHold } from "./readback";
 import { readableContestKey } from "../plan-history";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -1390,6 +1390,53 @@ describe("formatReadbackReport", () => {
     });
     expect(md).not.toMatch(/no longer in the plan/i);
     expect(md).toMatch(/edited here while the read was in flight/i);
+  });
+
+  // The other half of a source the operator replaced while the read ran: the section
+  // above lists their own edit as one that stands, and the unit's answer is nowhere in
+  // the report unless this one names it.
+  it("lists the device values the plan kept its own answer to", () => {
+    const md = formatReadbackReport("URX44V", {
+      applied: 40,
+      errors: [],
+      unreadNodes: new Set(),
+      unplaced: ["connections bus.stereo:out\u0000bus.stream:in"],
+      held: ["connections bus.mix1:out\u0000bus.stream:in"],
+    });
+    expect(md).toContain("## Device values the plan kept its own answer to");
+    expect(md).toContain("- connections bus.mix1:out -> bus.stream:in");
+    expect(md).not.toContain("\u0000");
+  });
+
+  it("omits the kept section for a read that held nothing", () => {
+    const md = formatReadbackReport("URX44V", { applied: 40, errors: [], unreadNodes: new Set(), held: [] });
+    expect(md).not.toContain("## Device values the plan kept");
+  });
+});
+
+// The two holds are kept apart because they are held for opposite reasons: one keeps the
+// operator's own gesture against the unit, the other undoes the unit's own change.
+describe("heldByHold", () => {
+  it("counts a wire key as the source the operator chose", () => {
+    expect(heldByHold(["connections bus.mix1:out\u0000bus.stream:in"])).toEqual({ source: 1, unrunnable: 0 });
+  });
+
+  it("counts every other key as an effect the unit's rate cannot run", () => {
+    expect(heldByHold(["nodeParams ch1.insertFx", "nodeParams ch1.insertFxOn"])).toEqual({
+      source: 0,
+      unrunnable: 2,
+    });
+  });
+
+  it("splits a read that held both", () => {
+    expect(heldByHold(["nodeParams ch1.insertFx", "connections bus.mix1:out\u0000bus.stream:in"])).toEqual({
+      source: 1,
+      unrunnable: 1,
+    });
+  });
+
+  it("counts nothing for a read that held nothing", () => {
+    expect(heldByHold([])).toEqual({ source: 0, unrunnable: 0 });
   });
 });
 

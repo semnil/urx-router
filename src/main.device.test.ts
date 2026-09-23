@@ -2564,6 +2564,17 @@ describe("a source replaced on the board while a device read was in flight", () 
       } finally {
         unit.release();
       }
+      // A follow read says what it kept as it lands, and says which of the two holds kept
+      // it: an effect a rate cannot run is the unit's own change undone, a source is the
+      // operator's own gesture kept, and a count alone tells them apart for neither. Taken
+      // here rather than after the settle, since the send-back's own read writes the line
+      // again with nothing held.
+      if (flow.name === "follow read") {
+        await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 0, 1))).not.toBeNaN(), {
+          timeout: 25_000,
+        });
+        expect(countFor(statusText(), (n) => t().status.liveHeld(n, 1, 0))).toBeNaN();
+      }
       await flow.settle(shell);
 
       // The board, and then the document, both hold ONE source, and it is the operator's.
@@ -2978,7 +2989,7 @@ describe("the live session", () => {
     // Two keys held on CH 1 — the selector and its bypass. The third the hold names,
     // the stored engine values, is not in the plan for an effect selected and not yet
     // tuned, and a key the read's patch never carried is not one it can keep.
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
       timeout: 25_000,
     });
     // …and the send-back really was scheduled, rather than only reported.
@@ -3020,7 +3031,7 @@ describe("the live session", () => {
       // The positive control is the case above, which takes this same path with the
       // session up and DOES write: an absence here is the session and not the setup.
       expect(insertFxWrites(shell).length).toBe(written);
-      expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+      expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
       // And the branch above is reachable at all because the LINK outlived the read: the
       // release waits for a follow read still doing round trips (releaseLive). Without the
       // wait the read dies at its next one, on a link taken out from under it — the same
@@ -3146,7 +3157,7 @@ describe("the live session", () => {
     await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
       timeout: 25_000,
     });
-    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
     expect(insertFxWrites(shell).length).toBe(written);
     await endLive();
   });
@@ -3177,7 +3188,7 @@ describe("the live session", () => {
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
     ]);
 
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
       timeout: 25_000,
     });
     await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
@@ -3221,7 +3232,7 @@ describe("the live session", () => {
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
     ]);
 
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
       timeout: 25_000,
     });
     await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
@@ -3268,7 +3279,7 @@ describe("the live session", () => {
     ]);
 
     // …and the replay behind it, which is the first read to see the cleared selector.
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
       timeout: 25_000,
     });
     await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
@@ -3306,7 +3317,7 @@ describe("the live session", () => {
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
     ]);
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
       timeout: 25_000,
     });
     await quiet(shell);
@@ -3317,7 +3328,7 @@ describe("the live session", () => {
     await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
       timeout: 25_000,
     });
-    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
     await endLive();
   });
 
@@ -3369,7 +3380,7 @@ describe("the live session", () => {
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
     ]);
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
       timeout: 25_000,
     });
     // The arrangement itself, asserted rather than assumed: the read that decided from
@@ -3396,7 +3407,7 @@ describe("the live session", () => {
     // line and re-sends, so waiting for this one would report the difference as a bare
     // timeout with the status it did print nowhere in the failure.
     await quiet(shell);
-    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
     expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN();
 
     for (const answer of parked.splice(0)) answer(0);
@@ -3431,7 +3442,7 @@ describe("the live session", () => {
       timeout: 25_000,
     });
     // Neither member held: a partner left out would show as its own two kept keys.
-    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2))).toBeNaN();
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
     expect(insertFxWrites(shell).length).toBe(written);
     await endLive();
   });
@@ -3449,7 +3460,7 @@ describe("the live session", () => {
     // The same two keys the case above counts, inside the cause rather than beside it.
     expect(
       countFor(errors(shell).at(-1) ?? "", (n) =>
-        t().status.liveError(t().error.followReadHeld(t().error.followReadIncomplete(n), 2)),
+        t().status.liveError(t().error.followReadHeld(t().error.followReadIncomplete(n), 2, 0)),
       ),
     ).not.toBeNaN();
   });

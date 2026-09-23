@@ -29,6 +29,7 @@ import {
   applyPatchInContext,
   clonePlanState,
   connectionContestKey,
+  isConnectionLabel,
   diffPlans,
   dropAuthored,
   nodeParamContestKey,
@@ -1578,6 +1579,18 @@ export function sourceChoiceHoldKeys(model: DeviceModel, ctx: HoldContext): Set<
   return held;
 }
 
+/** How many of a read's held keys each hold accounts for. `sourceChoiceHoldKeys` is the
+ *  only one that names a wire, so a wire key is a source the operator chose while the read
+ *  ran and every other key is an effect the unit's own rate cannot run
+ *  (`insertFxHoldKeys`). The two are told apart because they are held for opposite reasons
+ *  — one keeps the operator's gesture, the other undoes the unit's — and a reader told
+ *  only a count cannot act on either. */
+export function heldByHold(held: readonly string[]): { source: number; unrunnable: number } {
+  let source = 0;
+  for (const label of held) if (isConnectionLabel(label)) source += 1;
+  return { source, unrunnable: held.length - source };
+}
+
 /** What a hold is decided from: the plan as the read found it, what the read wrote into
  *  its private copy, the rate the read established on the unit (absent when it read none),
  *  and the keys an edit funnel authored while it was in flight — which the merge has
@@ -2042,7 +2055,7 @@ async function readSsmcs(source: ParamSource, y: number): Promise<SsmcsParams> {
  */
 export function formatReadbackReport(
   model: string,
-  result: ReadbackResult & Partial<Pick<MergedRead, "unplaced">>,
+  result: ReadbackResult & Partial<Pick<MergedRead, "unplaced" | "held">>,
 ): string {
   const lines: string[] = [];
   lines.push(`# URX readback report — ${model}`);
@@ -2075,6 +2088,18 @@ export function formatReadbackReport(
     // A wire key joins its two refs with a separator a document must not carry;
     // plan-history owns that encoding and undoes it.
     for (const key of result.unplaced) lines.push(`- ${readableContestKey(key)}`);
+  }
+  if (result.held?.length) {
+    lines.push("");
+    // The other half of the same event, and the half the section above cannot state: the
+    // operator's own edit is listed there as one that stands, while what the unit answered
+    // is named here as one the plan did not take.
+    lines.push("## Device values the plan kept its own answer to");
+    lines.push("");
+    lines.push("Each is a value the unit holds that the plan keeps on purpose: a source chosen here while");
+    lines.push("the read was in flight, or an effect the unit's own sample rate cannot run.");
+    lines.push("");
+    for (const key of result.held) lines.push(`- ${readableContestKey(key)}`);
   }
   lines.push("");
   return lines.join("\n");
