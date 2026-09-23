@@ -169,3 +169,28 @@ test("a device follow finding both on says so, and again once the unit turns one
     "nothing written for it",
   ).toEqual([]);
 });
+
+// The row is drawn from a snapshot of the plan and a gain slide does not rebuild it — the
+// slider has to keep the pointer — so the value the cap is taken from is the plan's at the
+// moment the switch is pressed.
+test("caps the gain the plan holds when Hi-Z goes on, not the one the panel was drawn with", async ({ page }) => {
+  await open(page, { hiZ: false, phantom: false, gain: 60 });
+  await selectCh3(page);
+  await expect(gainText(page)).toHaveText("+60 dB");
+  await gainSlider(page).fill("20");
+  await expect(gainText(page)).toHaveText("+20 dB");
+  await row(page, "Hi-Z").getByRole("button", { name: "ON", exact: true }).click();
+  await expect(row(page, "Hi-Z").locator("button.on")).toHaveText("ON");
+  await expect(gainText(page), "a gain already under the cap is left where it is").toHaveText("+20 dB");
+
+  // …and the same panel the other way round: raised past the cap since it was drawn, the
+  // gain comes down with the switch, in one undo step.
+  await row(page, "Hi-Z").getByRole("button", { name: "OFF", exact: true }).click();
+  await gainSlider(page).fill("60");
+  await expect(gainText(page)).toHaveText("+60 dB");
+  await row(page, "Hi-Z").getByRole("button", { name: "ON", exact: true }).click();
+  await expect(gainText(page)).toHaveText("+40 dB");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(row(page, "Hi-Z").locator("button.on")).toHaveText("OFF");
+  await expect(gainText(page)).toHaveText("+60 dB");
+});

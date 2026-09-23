@@ -576,7 +576,10 @@ export function renderInspector(
           boolToggle(
             m.inspector.hiZ,
             np.hiZ ?? false,
-            (v) => actions.onUpdateNodeParams(node.id, hiZPatch(np, v)),
+            // The cap reads the plan, not the `np` this row was built from: a gain slide
+            // does not rebuild the panel (the slider has to keep the pointer), so the
+            // snapshot holds the gain as it was when the node was selected.
+            (v) => actions.onUpdateNodeParams(node.id, hiZPatch(plan.nodeParams[node.id], v)),
             inputOnRefused(model.id, node.id, np, "hiZ") ? m.inspector.hiZLockedByPhantom : undefined,
           ),
         );

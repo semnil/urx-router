@@ -27,13 +27,13 @@ import {
 } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
-import { attackToVd, eqFreqToVd, levelToVd, vdToLevel } from "./core/control/vd";
+import { attackToVd, eqFreqToVd, gainToVd, levelToVd, vdToLevel } from "./core/control/vd";
 import { formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, STEREO_FADER } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
-import { insertFxControl, nameControl, planToCommands } from "./core/control/translate";
+import { channelControl, insertFxControl, nameControl, planToCommands } from "./core/control/translate";
 import { getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { DeviceModel } from "./models/types";
@@ -7557,5 +7557,58 @@ describe("an edit funnel against a device read", () => {
     expect(face(t().inspector.hpf)).toBe("ON");
     selectNode("ch2");
     expect(face(t().inspector.hpf)).toBe("ON");
+  });
+});
+
+// +48V and Hi-Z are never on together, and A.Gain stops at +40 dB while Hi-Z is on. The
+// surfaces ask that rule per edit; these are the two paths that reach the plan without
+// being one — applying a history entry, and writing the whole plan — plus the cap, which
+// has to read the gain the plan holds rather than the one the row was built with.
+//
+// A device read that finds both on is taken as it is (docs/en/known-issues.md), so what
+// the rule is asked about is the state the APP is about to create.
+describe("+48V and Hi-Z on one channel", () => {
+  const model = getModel("URX44V");
+  const CH3_Y = channelControl(model, "ch3")!.y;
+  const at = (paramId: number): string => `${paramId}/0/${CH3_Y}`;
+  const RATE = `${PARAMS.SAMPLE_RATE.id}/0/0`;
+
+  /** Every value written to `paramId` on CH 3, in order. Read off the ledger by ADDRESS: a
+   *  plan write sends hundreds of commands, so a `vd_set` count cannot say whether this one
+   *  went out, nor what it carried. */
+  const writesAt = (shell: TauriShell, paramId: number): number[] =>
+    shell.invokes.flatMap((cmd, i) => {
+      const a = shell.args[i];
+      return cmd === "vd_set" && a?.paramId === paramId && a?.y === CH3_Y ? [a.value as number] : [];
+    });
+
+  const pressFace = (label: string, text: string): void =>
+    [...paramRow(label).querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === text)!.click();
+  /** What the A.Gain row PRINTS, which is the plan's own value: the slider clamps its
+   *  displayed position to its own max, so above the cap it reads there as the cap. */
+  const gainShown = (): string => paramRow(t().inspector.gainAnalog).querySelector(".param-val")?.textContent ?? "";
+  const slideGain = (db: number): void => {
+    const slider = paramRow(t().inspector.gainAnalog).querySelector<HTMLInputElement>('input[type="range"]')!;
+    slider.value = String(db);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const liveUp = (): Promise<void> =>
+    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+  it("sends the gain the plan holds when Hi-Z goes on, not the one the panel was drawn with", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [at(PARAMS.HA_GAIN.id)]: gainToVd(60), [RATE]: 48_000 });
+    live().click();
+    await liveUp();
+    selectNode("ch3");
+    expect(gainShown(), "the premise: the panel was drawn from the unit's own +60 dB").toBe("+60 dB");
+
+    slideGain(20);
+    pressFace(t().inspector.hiZ, t().inspector.on);
+    // The gesture's own command, so the readings below are taken past the flush it caused.
+    await vi.waitFor(() => expect(writesAt(shell, PARAMS.HI_Z.id)).toEqual([1]), SLOW);
+    expect({ shown: gainShown(), gains: writesAt(shell, PARAMS.HA_GAIN.id) }).toEqual({
+      shown: "+20 dB",
+      gains: [gainToVd(20)],
+    });
   });
 });

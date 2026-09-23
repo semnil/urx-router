@@ -584,7 +584,11 @@ carries a one-line map of the same directories and points here.
   takes the app with it / `node-param-effects.ts` which repaint a node-parameter edit earns. It is a pure
   function of the patch and the previous values, and the distinction it holds is **relayout versus in
   place**: a toggle changes which controls the inspector shows and must re-render, a value slider must not,
-  since a re-render replaces the element under the pointer and the drag ends there / `flow-latch.ts` the two
+  since a re-render replaces the element under the pointer and the drag ends there. The panel is therefore a
+  SNAPSHOT of the plan between re-renders, and a control whose write depends on another value — the Hi-Z
+  switch, which carries A.Gain down to its cap in the same edit — reads that value out of the plan when it is
+  pressed rather than out of the snapshot, which holds the gain as it was before every slide since
+  / `flow-latch.ts` the two
   re-entry guards and the difference between them — `singleFlight` is a silent rapid-repeat guard on one
   handler, while `FileFlowLatch` is shared across every plan / settings entry point and **reports** a
   refusal caused by a device read (the operator's click went unanswered) while staying silent for a second
