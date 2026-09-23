@@ -126,6 +126,11 @@ The app never turns one on while the other is on:
   one off is always available.
 - **MIDI.** A write that would turn the other one on is refused and the status
   line says why; nothing is edited. A write turning either one off goes through.
+- **Undo / redo.** A step whose result would leave both on for a channel is held
+  back rather than taken: the status line names the channel and says the step is
+  not lost, and the same press works once one of the two is off. A step that
+  leaves a channel exactly as the unit reported it is not held back, and neither
+  is one that moves anything else.
 - **Opening a plan** (a file, a `?plan=` link or a drop). A document holding both
   on for one channel opens with +48V off and HI-Z kept, and the status line
   reports it with the other values the load normalized.
@@ -133,6 +138,11 @@ The app never turns one on while the other is on:
   import). A unit holding both on is taken as it is and the status line names the
   channels; the app writes nothing to the unit for it, and either one can then be
   turned off.
+- **Writing to the device.** A plan holding both on for a channel is not sent:
+  the write stops before the link is opened and the status line names the
+  channel, so nothing reaches the unit. Turning either one off makes the write go
+  through. A read and a `.urxf` import are the only ways that state reaches a
+  plan, and both leave it on screen until you do.
 
 **A.Gain follows HI-Z.** While HI-Z is on, the unit's A.Gain runs -8 … +40 dB, and
 the unit does not apply a value written above +40. The Inspector slider, the

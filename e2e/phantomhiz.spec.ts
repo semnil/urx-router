@@ -194,3 +194,41 @@ test("caps the gain the plan holds when Hi-Z goes on, not the one the panel was 
   await expect(row(page, "Hi-Z").locator("button.on")).toHaveText("OFF");
   await expect(gainText(page)).toHaveText("+60 dB");
 });
+
+// An undo applies its patch whole and asks no surface, so the state it lands on is where
+// the rule has to be asked. The device read above is what leaves a channel holding both,
+// and undoing the operator's way out of it is what would turn one back on.
+test("refuses an undo that would put +48V and Hi-Z back on together, and keeps the step", async ({ page }) => {
+  await stubTauriDevice(page, { values: { 0: 1, 6: 1, 766: 48000, 848: 0 }, confirm: "Ok" });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-fetch");
+  await expect(page.locator("#statusbar")).toContainText("+48V and Hi-Z are both on for CH 3, CH 4", {
+    timeout: 20000,
+  });
+  await selectCh3(page);
+  await row(page, "+48V").getByRole("button", { name: "OFF", exact: true }).click();
+  await expect(row(page, "+48V").locator("button.on")).toHaveText("OFF");
+
+  const held =
+    "This step would leave +48V and Hi-Z both on for CH 3 — turn one of them off there first; the step is held back, not lost";
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator("#statusbar")).toContainText(held);
+  await expect(row(page, "+48V").locator("button.on")).toHaveText("OFF");
+  // Held back rather than taken: the entry is still there to be refused again. The redo in
+  // between is what makes the second refusal readable — it writes a line of its own, so the
+  // one after it is a line the app wrote rather than the first one still standing.
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await expect(page.locator("#statusbar")).toContainText("Nothing to redo");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator("#statusbar")).toContainText(held);
+  // …while the other switch, and an unrelated edit, stay available.
+  await row(page, "Hi-Z").getByRole("button", { name: "OFF", exact: true }).click();
+  await expect(row(page, "Hi-Z").locator("button.on")).toHaveText("OFF");
+  await row(page, "Clip Safe").getByRole("button", { name: "ON", exact: true }).click();
+  await expect(row(page, "Clip Safe").locator("button.on")).toHaveText("ON");
+  // A fetch writes nothing and neither does an edit behind it — what a refused undo keeps
+  // off the link is in the entry suite, where a live session is up.
+  expect((await writesOf(page)).filter(([id]) => id === PARAMS.PHANTOM.id)).toEqual([]);
+});

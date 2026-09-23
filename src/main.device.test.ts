@@ -7572,6 +7572,7 @@ describe("+48V and Hi-Z on one channel", () => {
   const CH3_Y = channelControl(model, "ch3")!.y;
   const at = (paramId: number): string => `${paramId}/0/${CH3_Y}`;
   const RATE = `${PARAMS.SAMPLE_RATE.id}/0/0`;
+  const bothOn = { [at(PARAMS.PHANTOM.id)]: 1, [at(PARAMS.HI_Z.id)]: 1, [RATE]: 48_000 };
 
   /** Every value written to `paramId` on CH 3, in order. Read off the ledger by ADDRESS: a
    *  plan write sends hundreds of commands, so a `vd_set` count cannot say whether this one
@@ -7582,8 +7583,14 @@ describe("+48V and Hi-Z on one channel", () => {
       return cmd === "vd_set" && a?.paramId === paramId && a?.y === CH3_Y ? [a.value as number] : [];
     });
 
+  const litFace = (label: string): string | undefined =>
+    paramRow(label)?.querySelector("button.on")?.textContent ?? undefined;
   const pressFace = (label: string, text: string): void =>
     [...paramRow(label).querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === text)!.click();
+  const switches = (): { phantom: string | undefined; hiZ: string | undefined } => ({
+    phantom: litFace(t().inspector.phantom),
+    hiZ: litFace(t().inspector.hiZ),
+  });
   /** What the A.Gain row PRINTS, which is the plan's own value: the slider clamps its
    *  displayed position to its own max, so above the cap it reads there as the cap. */
   const gainShown = (): string => paramRow(t().inspector.gainAnalog).querySelector(".param-val")?.textContent ?? "";
@@ -7610,5 +7617,83 @@ describe("+48V and Hi-Z on one channel", () => {
       shown: "+20 dB",
       gains: [gainToVd(20)],
     });
+  });
+
+  it("refuses an undo that would put +48V and Hi-Z back on together, and sends nothing for it", SLOW, async () => {
+    const shell = await bootDevice({}, true, bothOn);
+    live().click();
+    await liveUp();
+    selectNode("ch3");
+    expect(switches(), "the premise: the read kept the unit's state").toEqual({ phantom: "ON", hiZ: "ON" });
+
+    pressFace(t().inspector.phantom, t().inspector.off);
+    await vi.waitFor(() => expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([0]), SLOW);
+
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(
+      () =>
+        expect({
+          status: statusText(),
+          phantom: writesAt(shell, PARAMS.PHANTOM.id),
+          face: litFace(t().inspector.phantom),
+        }).toEqual({ status: t().status.undoPhantomHiZ("CH 3"), phantom: [0], face: "OFF" }),
+      { timeout: 10_000 },
+    );
+  });
+
+  it("writes nothing when the plan holds both on, and writes once the channel holds one", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" }, bothOn);
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+    // CH 3's own two switches, so the case can turn them off between the fetch and the
+    // write the way the front panel does — which is what leaves the plan holding a state
+    // the unit does not. A write to them lands here as well, or a converge re-sends what
+    // this went on answering.
+    const panel = new Map<unknown, number>([
+      [PARAMS.PHANTOM.id, 1],
+      [PARAMS.HI_Z.id, 1],
+    ]);
+    const isSwitch = (a: Record<string, unknown>): boolean => a.y === CH3_Y && panel.has(a.paramId);
+    table.vd_get = (a: Record<string, unknown>) => {
+      const held = baseGet(a); // first, so a read while disconnected is still refused
+      return isSwitch(a) ? panel.get(a.paramId)! : held;
+    };
+    table.vd_set = (a: Record<string, unknown>) => {
+      const out = baseSet(a); // …and a write while disconnected, which throws past the line below
+      if (isSwitch(a)) panel.set(a.paramId, a.value as number);
+      return out;
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    selectNode("ch3");
+    expect(switches(), "the premise: the read kept the unit's state").toEqual({ phantom: "ON", hiZ: "ON" });
+    for (const id of panel.keys()) panel.set(id, 0);
+
+    const sent = shell.count("vd_set");
+    $("btn-write").click();
+    await vi.waitFor(
+      () =>
+        expect({
+          status: statusText(),
+          phantom: writesAt(shell, PARAMS.PHANTOM.id),
+          hiZ: writesAt(shell, PARAMS.HI_Z.id),
+        }).toEqual({ status: t().status.writePhantomHiZ("CH 3"), phantom: [], hiZ: [] }),
+      { timeout: 10_000 },
+    );
+    expect(shell.count("vd_set"), "nothing was sent at all").toBe(sent);
+
+    // The positive control: a guard that refused every write passes everything above. With
+    // +48V off the plan is writable again, and the Hi-Z the unit no longer holds goes out.
+    pressFace(t().inspector.phantom, t().inspector.off);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect({
+      status: statusText(),
+      phantom: writesAt(shell, PARAMS.PHANTOM.id),
+      hiZ: writesAt(shell, PARAMS.HI_Z.id),
+    }).not.toEqual({ status: t().status.writePhantomHiZ("CH 3"), phantom: [], hiZ: [] });
+    expect(writesAt(shell, PARAMS.HI_Z.id), "the write reached the link").toEqual([1]);
   });
 });

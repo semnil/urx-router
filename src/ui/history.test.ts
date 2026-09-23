@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDLE_COMMIT_MS, PlanHistory } from "./history";
-import type { PatchTouch } from "../core/plan-history";
-import { nodeParamContestPath } from "../core/plan-history";
+import type { PatchTouch, PlanPatch } from "../core/plan-history";
+import { applyPatch, nodeParamContestPath } from "../core/plan-history";
 import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
 
@@ -16,6 +16,10 @@ interface Harness {
   statuses: string[];
   blocked: string | null;
   rateLocked: boolean;
+  /** What `patchBlocked` answers for the entry it is handed… */
+  patchRefusal: string | null;
+  /** …and every patch it was asked about, so a test can assert WHICH entry was asked. */
+  patchAsked: PlanPatch[];
   /** How many times the depth was reported — one per real transition, not per edit. */
   depthReports: number;
   /** Simulate an edit funnel: mutate, then report it. */
@@ -27,11 +31,16 @@ interface Harness {
 function harness(): Harness {
   const plan = emptyPlan("URX44V");
   const h: Partial<Harness> &
-    Pick<Harness, "reflects" | "statuses" | "blocked" | "rateLocked" | "depthReports" | "authored"> = {
+    Pick<
+      Harness,
+      "reflects" | "statuses" | "blocked" | "rateLocked" | "patchRefusal" | "patchAsked" | "depthReports" | "authored"
+    > = {
     reflects: [],
     statuses: [],
     blocked: null,
     rateLocked: false,
+    patchRefusal: null,
+    patchAsked: [],
     depthReports: 0,
     authored: [],
   };
@@ -40,6 +49,7 @@ function harness(): Harness {
     reflect: (touch) => h.reflects.push(touch),
     blocked: () => h.blocked,
     rateLocked: () => h.rateLocked,
+    patchBlocked: (patch) => (h.patchAsked.push(patch), h.patchRefusal),
     labelOf: (id) => id.toUpperCase(),
     onStatus: (msg) => h.statuses.push(msg),
     onDepthChange: () => (h.depthReports += 1),
@@ -362,6 +372,7 @@ describe("apply", () => {
       },
       blocked: () => null,
       rateLocked: () => false,
+      patchBlocked: () => null,
       labelOf: (id) => id,
       onStatus: () => {},
     });
@@ -525,6 +536,60 @@ describe("refusals", () => {
     h.rateLocked = true;
     h.history.undo();
     expect(h.plan.nodeParams.ch1).toBeUndefined();
+  });
+
+  // The host decides on the state the patch would leave behind (+48V / HI-Z), so what it
+  // has to be shown is the patch that would LAND — for an undo the entry's inverse, not
+  // the entry. The two describe opposite values for the same keys, so a refusal asked
+  // about the wrong one answers about a state nothing is heading for.
+  it("shows the refusal the patch that would land, in both directions", () => {
+    const h = harness();
+    h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
+    idle();
+    h.history.undo();
+    settle();
+    const undid = h.patchAsked.at(-1)!;
+    const replay = { ...h.plan, nodeParams: { ch1: { hpf: true } } } as Plan;
+    applyPatch(replay, undid);
+    expect(replay.nodeParams.ch1, "the undo's patch removes what the edit added").toBeUndefined();
+
+    h.history.redo();
+    settle();
+    const redid = h.patchAsked.at(-1)!;
+    const forward = { ...h.plan, nodeParams: {} } as Plan;
+    applyPatch(forward, redid);
+    expect(forward.nodeParams.ch1, "and the redo's puts it back").toEqual({ hpf: true });
+  });
+
+  it("holds back a step whose result the host refuses, and takes it once it does not", () => {
+    const h = harness();
+    h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
+    idle();
+    h.patchRefusal = "+48V and Hi-Z";
+    h.history.undo();
+    expect(h.statuses.at(-1)).toBe("+48V and Hi-Z");
+    expect(h.plan.nodeParams.ch1, "nothing was applied").toEqual({ hpf: true });
+    // Not consumed: the same press works once the state it would create is allowed.
+    h.patchRefusal = null;
+    h.history.undo();
+    settle();
+    expect(h.plan.nodeParams.ch1).toBeUndefined();
+  });
+
+  it("holds back a redo the same way", () => {
+    const h = harness();
+    h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
+    idle();
+    h.history.undo();
+    settle();
+    h.patchRefusal = "+48V and Hi-Z";
+    h.history.redo();
+    expect(h.statuses.at(-1)).toBe("+48V and Hi-Z");
+    expect(h.plan.nodeParams.ch1).toBeUndefined();
+    h.patchRefusal = null;
+    h.history.redo();
+    settle();
+    expect(h.plan.nodeParams.ch1).toEqual({ hpf: true });
   });
 });
 

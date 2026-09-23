@@ -663,6 +663,8 @@ export const ja: Messages = {
     comparePartial: (differ: number, compared: number, failed: number, ms: number): string =>
       `${compared} 件中 ${differ} 件が相違、${failed} 件は読み取れず (${ms} ms)`,
     compareError: (message: string): string => `デバイスとの照合に失敗しました: ${message}`,
+    writePhantomHiZ: (channels: string): string =>
+      `${channels} で +48V と Hi-Z が両方オンになっています — どちらかを切ってから書き込んでください。何も送信していません`,
     writeConnecting: "デバイスに接続しています…",
     writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
     written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
@@ -730,6 +732,8 @@ export const ja: Messages = {
     undoRateLive: "ライブ同期中のサンプルレートは本体に追従します — ここでは元に戻せません",
     undoRateLiveMixed:
       "この操作はサンプルレートの変更を含みます — ライブ同期中は本体に追従するため、操作全体を保留しました。破棄はしていません。ライブ同期をオフにすれば同じ操作が通ります",
+    undoPhantomHiZ: (channels: string): string =>
+      `この操作は ${channels} で +48V と Hi-Z を両方オンにします — どちらかを切ってからやり直してください。操作は保留しました。破棄はしていません`,
     midiBusy: "本体との通信中またはファイル操作中です — 完了するまで MIDI 入力は無視されます",
     themeDark: "ダークモードに切り替えました",
     themeLight: "ライトモードに切り替えました",

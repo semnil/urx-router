@@ -55,6 +55,13 @@ export interface PlanHistoryHooks {
   /** A localized refusal, or null when the operation may proceed (a device read
    *  mutating the plan across awaits, a file flow, a blocking modal). */
   blocked: () => string | null;
+  /** A localized refusal for the state this patch would leave the plan in, or null. The
+   *  host supplies it because the rule needs the device model, which this layer has no
+   *  business holding — today it is the +48V / HI-Z exclusion (core/input-lock.ts), which
+   *  an entry can otherwise walk around: its patch is applied whole, and nothing between
+   *  the edit that recorded it and this asks what the two switches end up at. Asked on the
+   *  PEEKED entry, so a refusal leaves it where it is. */
+  patchBlocked: (patch: PlanPatch) => string | null;
   /** True while a live session holds the sample rate at the device's value. */
   rateLocked: () => boolean;
   /** Display name for a node id, for the status line. */
@@ -307,6 +314,13 @@ export class PlanHistory {
     // op.take(), and leaving the session makes the same press work.
     if (touch.fields.has("sampleRate") && this.hooks.rateLocked()) {
       this.hooks.onStatus(touch.fields.size === 1 ? s.undoRateLive : s.undoRateLiveMixed);
+      return;
+    }
+    // …and the same for a state the app does not put the plan into, whichever key of the
+    // entry would do it. Held back the same way, before op.take().
+    const stateRefusal = this.hooks.patchBlocked(pending);
+    if (stateRefusal) {
+      this.hooks.onStatus(stateRefusal);
       return;
     }
     const patch = op.take();

@@ -1018,22 +1018,27 @@ export class PlanHistoryStack {
     return { undo: this.undoStack.length, redo: this.redoStack.length };
   }
 
-  /** The next entry to undo, without consuming it — so a refusal that inspects
-   *  what the patch touches does not spend the entry. */
+  /** The patch the next undo would APPLY, without consuming it — so a refusal that
+   *  inspects what the patch touches, or what the plan would become, does not spend the
+   *  entry. It is the entry's INVERSE rather than the entry: `takeUndo` returns this same
+   *  patch, so a caller that reads one and applies the other cannot be looking at a
+   *  different set of values than the one that lands. */
   peekUndo(): PlanPatch | null {
-    return this.undoStack.at(-1) ?? null;
+    const entry = this.undoStack.at(-1);
+    return entry ? invertPatch(entry) : null;
   }
 
+  /** …and the next redo's, which is the entry as recorded. */
   peekRedo(): PlanPatch | null {
     return this.redoStack.at(-1) ?? null;
   }
 
   /** Consume the next undo entry and return the patch to apply (its inverse). */
   takeUndo(): PlanPatch | null {
-    const patch = this.undoStack.pop();
+    const patch = this.peekUndo();
     if (!patch) return null;
-    this.redoStack.push(patch);
-    return invertPatch(patch);
+    this.redoStack.push(this.undoStack.pop()!);
+    return patch;
   }
 
   /** Consume the next redo entry and return the patch to apply (as recorded). */

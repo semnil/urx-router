@@ -50,7 +50,7 @@ import {
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import { applyParamRange, applyRequiredSources, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
-import { phantomHiZBothOn } from "./core/input-lock";
+import { phantomHiZBothOn, phantomHiZNewlyBothOn } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
@@ -2817,6 +2817,17 @@ planHistory = new PlanHistory({
           ? t().status.undoModal
           : null,
   rateLocked: () => liveSessionUp,
+  // Asked of the state the entry would leave behind rather than of the keys it carries: an
+  // undo turns a switch on as much as the gesture it reverses did, and which of the two an
+  // entry moved does not decide the answer. The patch is applied to a copy, which is the
+  // same application the real one performs a moment later rather than a reading of the
+  // patch that would have to agree with it.
+  patchBlocked: (patch) => {
+    const after = clonePlanState(plan);
+    applyPatch(after, patch);
+    const channels = phantomHiZNewlyBothOn(getModel(modelId), plan, after).map((id) => graph.labelOf(id));
+    return channels.length ? t().status.undoPhantomHiZ(channels.join(", ")) : null;
+  },
   // The macOS application menu's Undo / Redo render this state (a no-op elsewhere).
   onDepthChange: () => editMenu.pushState(),
 });
@@ -3342,6 +3353,17 @@ if (!DEMO) {
     writeBtn.addEventListener("click", async () => {
       if (writeAbort) {
         writeAbort.abort();
+        return;
+      }
+      // A plan holding +48V and HI-Z both on for a channel is a plan this app cannot send:
+      // whichever of the two goes out second turns one on while the other is on, so the
+      // order they are emitted in cannot make the write legal. Decided before the link is
+      // opened — nothing is connected and nothing is sent — and the operator turns one of
+      // them off, which every surface allows. The plan can only hold it from the unit's own
+      // state (a read, or a `.urxf` import), which stays displayed until they do.
+      const bothOn = bothOnLabels();
+      if (bothOn) {
+        setStatus(t().status.writePhantomHiZ(bothOn));
         return;
       }
       const controller = new AbortController();

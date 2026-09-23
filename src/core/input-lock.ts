@@ -1,10 +1,12 @@
 // +48V and HI-Z on one channel, and the A.Gain range HI-Z narrows. The app never turns one of
 // the two on while the other is on, and holds A.Gain to -8..+40 dB while HI-Z is on; a device
 // read that finds both on is taken as it is (docs/{en,ja}/known-issues.md). The Inspector, the
-// CONSOLE, the MIDI controls and the device-read status note read the rule from here. Whether
-// HI-Z applies to a channel is `hiZOn`: the +48V refusal, the A.Gain range, the both-on list and
-// the load repair (`paramRangeProblems` in plan-validate.ts, which applies the same two bounds on
-// its own) ask it.
+// CONSOLE, the MIDI controls and the device-read status note read the rule from here, and so do
+// the two paths that reach the plan without being an edit at all: applying a history entry and
+// writing the whole plan, which ask `phantomHiZNewlyBothOn` about the state they would create.
+// Whether HI-Z applies to a channel is `hiZOn`: the +48V refusal, the A.Gain range, the both-on
+// list and the load repair (`paramRangeProblems` in plan-validate.ts, which applies the same two
+// bounds on its own) ask it.
 
 import type { DeviceModel } from "../models/types";
 import type { NodeParams, Plan } from "./plan";
@@ -47,6 +49,22 @@ export function hiZPatch(np: NodeParams | undefined, on: boolean): NodeParams {
   return on && typeof gain === "number" && gain > HI_Z_A_GAIN_MAX_DB
     ? { hiZ: true, gain: HI_Z_A_GAIN_MAX_DB }
     : { hiZ: on };
+}
+
+/**
+ * The channels a change would leave with +48V and HI-Z both on and that do not hold both
+ * on already, in model order.
+ *
+ * What the app must never do is TURN one of the two on while the other is on, which is not
+ * the same as the plan holding both: a device read that finds both on is taken as it is, and
+ * the channels it named stay as they are through every later change that leaves them alone.
+ * So the question is asked of the two states rather than of the one being moved to — which
+ * is what lets the paths that apply a whole plan (a history entry, a device write) ask it
+ * without knowing which key an edit touched.
+ */
+export function phantomHiZNewlyBothOn(model: DeviceModel, before: Plan, after: Plan): string[] {
+  const held = new Set(phantomHiZBothOn(model, before));
+  return phantomHiZBothOn(model, after).filter((id) => !held.has(id));
 }
 
 /** The channels holding +48V and HI-Z both on, in model order. */

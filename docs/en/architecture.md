@@ -153,7 +153,11 @@ carries a one-line map of the same directories and points here.
   fetch/save; the write-side mirror is the `sceneExternal` flags in `control/params.ts`, and
   `scene-scope.test.ts` pins the two encodings together) / `input-lock.ts` the +48V / HI-Z rule every surface reads (turning
   one on while the other is on is refused, and A.Gain stops at +40 dB while HI-Z is on — known-issues.md
-  "The unit lets +48V and HI-Z be on together; the app does not")
+  "The unit lets +48V and HI-Z be on together; the app does not"). The two paths that reach the plan
+  without being an edit ask it about the STATE they would create rather than the key they move —
+  `phantomHiZNewlyBothOn`, which subtracts what the plan already holds so a device read's both-on channel
+  stays as it is: applying a history entry (`ui/history.ts`'s `patchBlocked` hook) and writing the whole
+  plan, which stops before the link is opened
   - `src/core/midi/` — external MIDI control (desktop only). `message.ts` decode/encode of CC/note/pitch
     bend / `mapping.ts` free-mapping model (address, takeover mode absolute/pickup) + persistence validation
     / `controls.ts` catalog of fixed control ids (`node/param[@scope]`) for every CONSOLE control **and
@@ -422,7 +426,9 @@ carries a one-line map of the same directories and points here.
   wording is chosen by `touch.fields.size === 1`: an entry that moved something else too says the whole step
   is held back, since naming only the rate leaves the collateral edits refused in silence. It is a deferral,
   not a discard: the refusal runs on a peeked entry before `take()`, and `deactivateLive` does not reset the
-  history). A text field / textarea / `contenteditable` keeps the chord (no `preventDefault`) — measured on
+  history), and for a patch whose RESULT the host refuses (`patchBlocked` — today the +48V / HI-Z exclusion,
+  asked of the state the patch would leave rather than of the keys it carries; `peekUndo` answers with the
+  patch that would land, which is the entry's inverse). A text field / textarea / `contenteditable` keeps the chord (no `preventDefault`) — measured on
   macOS: the page receives `Cmd+Z` even with a native Edit menu installed, and `preventDefault` is what
   suppresses WebKit's own field undo. `menu(kind)` is the macOS Edit menu's entry point and delegates to
   that field's own undo (`document.execCommand`, measured working in WKWebView) so the menu cannot mean
@@ -2271,6 +2277,7 @@ describes a state it can return to.
 | An edit made while a Fetch's or Live-sync start's read carries a model switch | on the board, before it writes anything (`planTakesEdits`); everywhere else `markChanged`, which puts the plan back to the state the read began from; both say so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
 | A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for), a tuning screen (`refresh`) and the CONSOLE (`render`, which hands keyboard focus on only across a rebuild of the same plan) | the plan the gesture began on is gone, so a pointer or a key still held writes nothing into the one that replaced it |
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
+| An undo / redo whose result would leave +48V and HI-Z both on for a channel | `patchBlocked` on the peeked entry, over the state the patch would create | the app never turns one of the two on while the other is on, and an undo turns one on as much as the gesture it reverses did |
 | A MIDI message arriving under those same latches, or during a self-test / `--prepare-modified` run | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
 | A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
 | A read's value for a key the app wrote while that read was in flight | `readIntoPlan`'s authorship filter, before the patch is applied | the operator authored it after the read sampled the address; comparing values instead would take an edit that returned to where it started for one that never happened |
@@ -2607,6 +2614,11 @@ The sample rate is the one plan value the device can accept and then undo by its
 on, the URX slaves its clock to the USB host: a write to 766 is accepted, re-clocks the hardware, and roughly
 0.4 s later the host's rate is reasserted (measured on a URX44V). Writing straight through would report success
 for a change that did not last.
+
+Ahead of any of it, a plan holding +48V and HI-Z both on for a channel stops the write where it stands: whichever
+of the two went out second would turn one on while the other is on, so no emit order makes it legal, and the
+refusal is taken before the link is opened rather than inside the send (known-issues.md "The unit lets +48V and
+HI-Z be on together; the app does not").
 
 `Write to device` therefore reads the device's clock state — Follow USB (848) and the running rate (766) — before
 the diff, and settles the rate before anything is sent (`settleSampleRate` in `main.ts`, `readClockState` in
@@ -3451,7 +3463,15 @@ An undo is refused, with the reason on the status line and **without spending th
   the entry carries more than the rate, the status line says so (`undoRateLiveMixed`, chosen by
   whether the entry's field set is nothing but `sampleRate`). Either way the entry is held back, not
   lost — the refusal runs on a peeked entry and nothing consumes it, and leaving the session makes
-  the same press work.
+  the same press work;
+- the host refuses the state the patch would leave behind (`patchBlocked`) — today the +48V / HI-Z
+  exclusion, which an entry can otherwise walk around, since its patch is applied whole and nothing
+  between the edit that recorded it and this asks what the two switches end up at. Asked of the state
+  rather than of the keys, because an undo turns a switch on as much as the gesture it reverses did,
+  and which of the two the entry moved does not decide the answer. Held back the same way, and the
+  same press works once the channel holds one of the two. What the hook is handed is the patch that
+  would **land**: `peekUndo` answers with the entry's INVERSE, which is what `takeUndo` applies, so a
+  caller reading one and applying the other cannot be looking at opposite values for the same keys.
 
 ### History clear points
 

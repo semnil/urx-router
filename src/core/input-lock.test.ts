@@ -4,7 +4,7 @@ import { defaultPlan } from "../models/initial-state";
 import type { Plan } from "./plan";
 import { ensureFixedConnections } from "./plan";
 import { planToCommands } from "./control/translate";
-import { channelGainRange, hiZPatch, inputOnRefused, phantomHiZBothOn } from "./input-lock";
+import { channelGainRange, hiZPatch, inputOnRefused, phantomHiZBothOn, phantomHiZNewlyBothOn } from "./input-lock";
 import { applyParamRange, isRefusal, needsDecision, paramRangeProblems, planProblems } from "./plan-validate";
 import { bindControl } from "./midi/controls";
 import type { ControlRefusal } from "./midi/controls";
@@ -47,6 +47,35 @@ describe("+48V and HI-Z on one channel", () => {
     expect(hiZPatch({ gain: 40 }, true)).toEqual({ hiZ: true });
     expect(hiZPatch({ gain: 60 }, false)).toEqual({ hiZ: false });
     expect(hiZPatch(undefined, true)).toEqual({ hiZ: true });
+  });
+
+  it("names the channels a change would turn the second switch on for, and no others", () => {
+    const after = (over: Record<string, unknown>): Plan => {
+      const next = structuredClone(plan);
+      next.nodeParams.ch3 = { ...next.nodeParams.ch3, ...over };
+      return next;
+    };
+    // HI-Z on, +48V going on — and the same the other way round.
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: false };
+    expect(phantomHiZNewlyBothOn(model, plan, after({ phantom: true }))).toEqual(["ch3"]);
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: true };
+    expect(phantomHiZNewlyBothOn(model, plan, after({ hiZ: true }))).toEqual(["ch3"]);
+
+    // A device read's both-on channel is not one: it holds both already, so a change that
+    // leaves it alone — and one that moves something else on the same channel — is not the
+    // app turning anything on.
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: true };
+    expect(phantomHiZNewlyBothOn(model, plan, after({}))).toEqual([]);
+    expect(phantomHiZNewlyBothOn(model, plan, after({ gain: 12 }))).toEqual([]);
+    // …and turning either of the two off is never named.
+    expect(phantomHiZNewlyBothOn(model, plan, after({ phantom: false }))).toEqual([]);
+    expect(phantomHiZNewlyBothOn(model, plan, after({ hiZ: false }))).toEqual([]);
+
+    // A channel with no HI-Z switch carries the key without carrying the rule.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hiZ: true, phantom: false };
+    const withCh1 = structuredClone(plan);
+    withCh1.nodeParams.ch1 = { ...withCh1.nodeParams.ch1, phantom: true };
+    expect(phantomHiZNewlyBothOn(model, plan, withCh1)).toEqual([]);
   });
 
   it("names the channels a plan holds with both on", () => {
