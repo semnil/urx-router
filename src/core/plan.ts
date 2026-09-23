@@ -157,7 +157,7 @@ export interface SsmcsBand {
 export interface SsmcsCompParams {
   attack?: number; // raw 57..283
   release?: number; // raw 24..300
-  ratio?: number; // raw 0..120 (120 = ∞:1)
+  ratio?: number; // raw 0..120, the index of a stop on the ratio ladder (120 = INF:1)
   knee?: number; // enum 0 Soft / 1 Medium / 2 Hard
   threshold?: number; // raw 0..200 (internal)
   makeup?: number; // raw 0..200 (internal)
