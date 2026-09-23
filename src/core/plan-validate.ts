@@ -11,7 +11,7 @@ import { fillFactoryParams } from "../models/initial-state";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
-import { isPlainRecord } from "./plan";
+import { isPlainRecord, requiredSourceWire } from "./plan";
 import type { Plan } from "./plan";
 import { insertFxWireState } from "./control/translate";
 import { validatePlan } from "./routing";
@@ -252,9 +252,44 @@ export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void
   }
 }
 
+/** A receiver the unit never leaves without a source (`DeviceModel.requiredSources`) that the
+ *  document gives no wire. Carries the wire the loader adds: the model's own default source for
+ *  that receiver, which is the unit's factory selection.
+ *
+ *  Completed rather than refused: the unit's list for these offers no "none", so a document
+ *  without the wire describes a state the unit cannot be put in from its own panel, and the one
+ *  value to give it is the one a new plan starts from. Reported, because the load then writes a
+ *  selection the document did not name. Any wire into the receiver counts, whatever kind it is
+ *  stored under — the install restates the kind from the rule table — and a wire the sanitiser
+ *  dropped does not. Like every check in this file it does NOT run on a device readback: Fetch
+ *  and Live start give a unit read on NONE there the same source themselves
+ *  (`ReadbackResult.unsourced`). */
+export interface RequiredSourceProblem {
+  reason: "requiredSource";
+  /** The source the loader wires in. */
+  from: string;
+  /** The receiver's input ref. */
+  to: string;
+}
+
+/** Every required receiver the plan gives no wire, in the model's order. */
+export function requiredSourceProblems(model: DeviceModel, plan: Plan): RequiredSourceProblem[] {
+  return Object.entries(model.requiredSources)
+    .filter(([to]) => !plan.connections.some((c) => c.to === to))
+    .map(([to, from]) => ({ reason: "requiredSource" as const, from, to }));
+}
+
+/** Add each reported wire to the plan. Separate from finding them for the reason
+ *  `applyParamRange` is. */
+export function applyRequiredSources(model: DeviceModel, plan: Plan, problems: RequiredSourceProblem[]): void {
+  for (const p of problems) plan.connections.push(requiredSourceWire(model, p.to));
+}
+
 /** Everything a plan load reports: an illegal wire (refused), a slot claimed twice (the
- *  operator decides), or a value outside its range (normalized, then reported). */
-export type LoadProblem = PlanProblem | InsertFxSlotProblem | InsertFxPairProblem | ParamRangeProblem;
+ *  operator decides), a value outside its range (normalized, then reported), or a receiver
+ *  given no source (completed, then reported). */
+export type LoadProblem =
+  PlanProblem | InsertFxSlotProblem | InsertFxPairProblem | ParamRangeProblem | RequiredSourceProblem;
 
 // Every violation the plan loader reports on a file / ?plan= link / drop, in one
 // list so a load path cannot pick up half of them. The caller splits them by
@@ -266,6 +301,7 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
     ...insertFxPairProblems(model, plan),
     ...insertFxSlotProblems(model, plan),
     ...paramRangeProblems(plan),
+    ...requiredSourceProblems(model, plan),
   ];
 }
 
@@ -274,14 +310,14 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
  *  — the loader, the report's caller and a test — and moving a reason between the sides
  *  in one of them would leave the others agreeing with the old split. */
 export function isRefusal(problem: LoadProblem): boolean {
-  return problem.reason !== "insertFxSlot" && problem.reason !== "paramRange";
+  return problem.reason !== "insertFxSlot" && problem.reason !== "paramRange" && problem.reason !== "requiredSource";
 }
 
 /** Whether a problem stops the load until the operator answers. A refusal does not — there
- *  is nothing to answer — and a normalized range does not either: it is repaired before the
- *  document opens and reported on the status line, which is where architecture.md puts a
- *  partial success. Only the slot collision leaves a document the app can open and the unit
- *  cannot run, which is a decision and nobody else's. */
+ *  is nothing to answer — and neither a normalized range nor a completed source does: each is
+ *  repaired before the document opens and reported on the status line, which is where
+ *  architecture.md puts a partial success. Only the slot collision leaves a document the app
+ *  can open and the unit cannot run, which is a decision and nobody else's. */
 export function needsDecision(problem: LoadProblem): boolean {
   return problem.reason === "insertFxSlot";
 }

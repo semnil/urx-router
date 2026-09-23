@@ -623,14 +623,17 @@ describe("connections", () => {
     expect(wireHit(fx.host, fixed.from, fixed.to)).not.toBeNull();
   });
 
-  // Every wire the factory plan ships is fixed, so the deletable case needs one the
-  // operator drew — which is what the board is for.
+  // A wire the plan may lose is one that is neither fixed nor the last source of a receiver
+  // the unit never leaves without one (STREAMING's); the factory plan ships such wires, and
+  // one the operator drew stands in if it ever ships none.
   it("deletes a wire the plan may lose", () => {
     let free: { from: string; to: string } | null = null;
     fx = graphFixture({
       seed: (plan) => {
         const model = getModel("URX44V");
-        free = plan.connections.find((c) => !isFixedConnection(model, c.from, c.to)) ?? null;
+        free =
+          plan.connections.find((c) => !isFixedConnection(model, c.from, c.to) && !(c.to in model.requiredSources)) ??
+          null;
         if (!free) {
           free = { from: "ch1:out", to: "bus.mix2:in" };
           plan.connections.push({ ...free, kind: "send", params: { level: 0, pan: 0 } });
@@ -750,7 +753,7 @@ describe("a USB output's mono pair", () => {
     tap.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 0, clientY: 0, bubbles: true }));
     tap.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 60, clientY: 0, bubbles: true }));
     const legalFill = jackOf("out.usbmain_b:in").getAttribute("fill");
-    expect(legalFill, "the control: an empty USB output is lit").toBeTruthy();
+    expect(legalFill, "the control: an empty USB output is lit").toBe(PALETTES.dark.legalFill);
     expect(jackOf(USB_A).getAttribute("fill")).toBe(legalFill);
     tap.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
   });
@@ -812,6 +815,158 @@ describe("a USB output's mono pair", () => {
     fx = graphFixture({ seed: seed(false, "ch4", "ch3") });
     press(portHit(fx.host, USB_A)!);
     expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "conn", from: "ch3:out", to: USB_A });
+  });
+});
+
+// STREAMING's source list on the unit is STEREO / MIX 1 / MIX 2 with no None, so the board
+// never leaves it without a wire: deleting the last one is refused, and another source drawn
+// onto it replaces the one it holds, as one change.
+describe("STREAMING always has one source", () => {
+  const STREAM = "bus.stream:in";
+  const sourcesOfStream = (): string[] => fx.plan.connections.filter((c) => c.to === STREAM).map((c) => c.from);
+  const jackOf = (r: string) => fx.host.querySelector(`[data-pin="${r}"]`)!.previousElementSibling!;
+  const pointer = (type: string, x: number) =>
+    new PointerEvent(type, { pointerId: 1, clientX: x, clientY: 0, bubbles: true });
+  const freeUsbB = (plan: Plan): void => {
+    plan.connections = plan.connections.filter((c) => c.to !== "out.usbmain_b:in");
+  };
+
+  it("refuses deleting its last wire, and says why", () => {
+    fx = graphFixture();
+    expect(sourcesOfStream()).toEqual(["bus.stereo:out"]);
+    fx.graph.deleteConnection("bus.stereo:out", STREAM);
+    expect(sourcesOfStream()).toEqual(["bus.stereo:out"]);
+    expect(fx.cb.onChange).not.toHaveBeenCalled();
+    expect(statuses().at(-1)).toBe(t().status.streamingSourceRequired);
+    expect(wireHit(fx.host, "bus.stereo:out", STREAM)).not.toBeNull();
+  });
+
+  // The keyboard's Delete reaches the board through its selection, so a click on the port
+  // followed by a delete is that path; the case above calls the funnel with the wire's two
+  // ends, as the Inspector's button does for a wire it offers a delete on.
+  it("refuses it through the selection too", () => {
+    fx = graphFixture();
+    press(portHit(fx.host, STREAM)!);
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "conn", from: "bus.stereo:out", to: STREAM });
+    fx.graph.deleteSelection();
+    expect(sourcesOfStream()).toEqual(["bus.stereo:out"]);
+    expect(statuses().at(-1)).toBe(t().status.streamingSourceRequired);
+  });
+
+  it.each([
+    ["from the new source's output", "bus.mix1:out", STREAM],
+    ["from STREAMING's input", STREAM, "bus.mix1:out"],
+  ])("replaces the wire it holds when another source is drawn onto it, %s, in one change", (_how, a, b) => {
+    fx = graphFixture();
+    drag(portHit(fx.host, a)!, { x: 400, y: 200 }, portHit(fx.host, b));
+    expect(sourcesOfStream()).toEqual(["bus.mix1:out"]);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+    expect(statuses().at(-1)).toBe(t().status.connected);
+    expect(wireHit(fx.host, "bus.mix1:out", STREAM)).not.toBeNull();
+    expect(wireHit(fx.host, "bus.stereo:out", STREAM)).toBeNull();
+  });
+
+  it("refuses the source it already holds, changing nothing", () => {
+    fx = graphFixture();
+    drag(portHit(fx.host, "bus.stereo:out")!, { x: 400, y: 200 }, portHit(fx.host, STREAM));
+    expect(sourcesOfStream()).toEqual(["bus.stereo:out"]);
+    expect(fx.cb.onChange).not.toHaveBeenCalled();
+    expect(statuses().at(-1)).toBe(t().error.duplicate);
+  });
+
+  it("clears a selection on the wire it replaces", () => {
+    fx = graphFixture();
+    press(portHit(fx.host, STREAM)!);
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "conn", from: "bus.stereo:out", to: STREAM });
+    drag(portHit(fx.host, "bus.mix2:out")!, { x: 400, y: 200 }, portHit(fx.host, STREAM));
+    expect(sourcesOfStream()).toEqual(["bus.mix2:out"]);
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith(null);
+  });
+
+  // A plan holding no wire there — what a follow read of a unit on NONE, or an undo, leaves —
+  // takes a drawn source as an ordinary connection, and that wire is in turn the last one.
+  it("takes a source onto a STREAMING that holds none, and keeps it", () => {
+    fx = graphFixture({ seed: (plan) => void (plan.connections = plan.connections.filter((c) => c.to !== STREAM)) });
+    drag(portHit(fx.host, "bus.mix2:out")!, { x: 400, y: 200 }, portHit(fx.host, STREAM));
+    expect(sourcesOfStream()).toEqual(["bus.mix2:out"]);
+    fx.graph.deleteConnection("bus.mix2:out", STREAM);
+    expect(sourcesOfStream()).toEqual(["bus.mix2:out"]);
+  });
+
+  // The replacing drop is taken, so it is lit as legal while the drag is under way — the
+  // same fill as an empty receiver beside it — and a render landing mid-drag lights it again.
+  it("lights STREAMING as a legal drop for another source, before and after a render mid-drag", () => {
+    fx = graphFixture({ seed: freeUsbB });
+    const src = portHit(fx.host, "bus.mix1:out")!;
+    src.dispatchEvent(pointer("pointerdown", 0));
+    src.dispatchEvent(pointer("pointermove", 60));
+    const legalFill = jackOf("out.usbmain_b:in").getAttribute("fill");
+    expect(legalFill, "the control: an empty USB output is lit").toBe(PALETTES.dark.legalFill);
+    expect(jackOf(STREAM).getAttribute("fill")).toBe(legalFill);
+    fx.graph.render();
+    expect(jackOf("out.usbmain_b:in").getAttribute("fill"), "the control, after the render").toBe(legalFill);
+    expect(jackOf(STREAM).getAttribute("fill")).toBe(legalFill);
+    src.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
+  });
+
+  it("opens a drag from its input, which a full single-input port does not", () => {
+    fx = graphFixture();
+    const src = portHit(fx.host, STREAM)!;
+    src.dispatchEvent(pointer("pointerdown", 0));
+    src.dispatchEvent(pointer("pointermove", 60));
+    expect(fx.host.querySelector(".overlay-temp")).not.toBeNull();
+    src.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
+  });
+
+  // Both are STREAMING's alone: MONITOR's list on the unit offers None, so a second source is
+  // refused there (and not lit as a legal drop), and its last wire can be deleted.
+  it("leaves MONITOR's single-input refusal and its last-wire delete as they were", () => {
+    const MON1 = "bus.mon1:in";
+    const sourcesOfMon = (): string[] => fx.plan.connections.filter((c) => c.to === MON1).map((c) => c.from);
+    fx = graphFixture({ seed: freeUsbB });
+    expect(sourcesOfMon()).toEqual(["bus.stereo:out"]);
+    const src = portHit(fx.host, "bus.mix1:out")!;
+    src.dispatchEvent(pointer("pointerdown", 0));
+    src.dispatchEvent(pointer("pointermove", 60));
+    expect(jackOf("out.usbmain_b:in").getAttribute("fill"), "the control: an empty USB output is lit").toBe(
+      PALETTES.dark.legalFill,
+    );
+    expect(jackOf(MON1).getAttribute("fill")).not.toBe(PALETTES.dark.legalFill);
+    src.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
+    drag(portHit(fx.host, "bus.mix1:out")!, { x: 400, y: 200 }, portHit(fx.host, MON1));
+    expect(sourcesOfMon()).toEqual(["bus.stereo:out"]);
+    expect(statuses().at(-1)).toBe(t().error.singleInput);
+    expect(fx.cb.onChange).not.toHaveBeenCalled();
+    fx.graph.deleteConnection("bus.stereo:out", MON1);
+    expect(sourcesOfMon()).toEqual([]);
+    expect(statuses().at(-1)).toBe(t().status.connectionDeleted);
+  });
+});
+
+// The drop that completes a held linked pair on a USB output is lit as legal when the drag
+// starts, and has to stay lit when a render lands mid-drag: the highlight lives in the port
+// elements a render replaces.
+describe("a USB output's linked-pair drop across a render", () => {
+  it("stays lit as legal after a render mid-drag", () => {
+    const USB_A = "out.usbmain_a:in";
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.connections = plan.connections.filter((c) => c.to !== USB_A && c.to !== "out.usbmain_b:in");
+        plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, stereoLink: true };
+        plan.connections.push({ from: "ch3:out", to: USB_A, kind: "patch" });
+      },
+    });
+    const jackOf = (r: string) => fx.host.querySelector(`[data-pin="${r}"]`)!.previousElementSibling!;
+    const tap = tapHit(fx.host, "ch3:out")!;
+    tap.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 0, clientY: 0, bubbles: true }));
+    tap.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 60, clientY: 0, bubbles: true }));
+    const legalFill = jackOf("out.usbmain_b:in").getAttribute("fill");
+    expect(legalFill, "the control: an empty USB output is lit").toBe(PALETTES.dark.legalFill);
+    expect(jackOf(USB_A).getAttribute("fill")).toBe(legalFill);
+    fx.graph.render();
+    expect(jackOf("out.usbmain_b:in").getAttribute("fill"), "the control, after the render").toBe(legalFill);
+    expect(jackOf(USB_A).getAttribute("fill")).toBe(legalFill);
+    tap.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
   });
 });
 

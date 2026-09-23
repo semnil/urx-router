@@ -14,6 +14,7 @@ import {
   PLAN_FORMAT,
   PLAN_VERSION,
   setPlanSampleRate,
+  supplyRequiredSources,
   type Plan,
 } from "./plan";
 import { defaultPlan } from "../models/initial-state";
@@ -22,16 +23,44 @@ import { MODELS } from "../models/index";
 import { ref } from "../models/types";
 
 describe("emptyPlan", () => {
-  it("starts with the default rate and no positions, connections, hidden nodes or notes", () => {
+  it("starts with the default rate and no positions, hidden nodes or notes", () => {
     const p = emptyPlan("URX44");
     expect(p.modelId).toBe("URX44");
     expect(p.sampleRate).toBe(DEFAULT_SAMPLE_RATE);
     expect(p.positions).toEqual({});
-    expect(p.connections).toEqual([]);
     expect(p.nodeParams).toEqual({});
     expect(p.hidden).toEqual([]);
     expect(p.notes).toEqual({});
     expect(p.noteCollapsed).toEqual([]);
+  });
+
+  // STREAMING's list on the unit has no None, so a plan built from nothing still gives it
+  // the factory STEREO — and nothing else.
+  it.each(Object.keys(MODELS) as (keyof typeof MODELS)[])("%s: carries STEREO -> STREAMING and no other wire", (id) => {
+    expect(emptyPlan(id).connections).toEqual([{ from: "bus.stereo:out", to: "bus.stream:in", kind: "source" }]);
+  });
+});
+
+// A receiver that already holds a wire keeps it, and only it: the supplied source is for a
+// receiver holding none.
+describe("supplyRequiredSources", () => {
+  const model = MODELS.URX44V;
+  const streaming = (p: Plan): string[] => p.connections.filter((c) => c.to === "bus.stream:in").map((c) => c.from);
+
+  it("adds nothing to a STREAMING that holds a wire", () => {
+    const p = emptyPlan("URX44V");
+    p.connections = [{ from: "bus.mix1:out", to: "bus.stream:in", kind: "source" }];
+    expect(supplyRequiredSources(model, p, ["bus.stream:in"])).toEqual([]);
+    expect(streaming(p)).toEqual(["bus.mix1:out"]);
+  });
+
+  it("gives a STREAMING that holds none its STEREO", () => {
+    const p = emptyPlan("URX44V");
+    p.connections = [];
+    expect(supplyRequiredSources(model, p, ["bus.stream:in"])).toEqual([
+      { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" },
+    ]);
+    expect(streaming(p)).toEqual(["bus.stereo:out"]);
   });
 });
 

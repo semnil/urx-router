@@ -484,8 +484,8 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
       // Two exonerations, and the clause is a false-positive machine without them:
       //   - the value is one the app ITSELF sent at some point in the run (its own write
       //     coming back in another order, not a value it never authored);
-      //   - the DEVICE holds it (the quantise case). An address the run never wrote
-      //     answers 0 at the fake, so that is what an absent entry means here.
+      //   - the DEVICE holds it (the quantise case). An address missing from the fake's
+      //     memory answers 0 there, so that is what an absent entry means here.
       if (spec.deviceState === undefined) continue;
       const last = sent[sent.length - 1];
       const truth = spec.deviceState[e.addr] ?? 0;

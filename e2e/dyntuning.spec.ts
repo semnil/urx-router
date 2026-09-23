@@ -114,7 +114,9 @@ test.beforeEach(async ({ page }) => {
       // then puts in the plan. The DUCKER key lane reads the tap that names, so a case
       // about its address would be measuring the stub. Seed the factory value (4 =
       // PRE FADER) and let a case that cares about another stage set it for itself.
-      mem: { "137:0:0": 4 },
+      // STREAMING's source (705 / 706) likewise: 0 is a channel's slot, which its list does
+      // not offer, so it starts on the factory STEREO as tagged port refs.
+      mem: { "137:0:0": 4, "705:0:0": 0x80000100, "706:0:0": 0x80000101 },
       gets: 0,
       subscribes: 0,
       unsubscribes: 0,

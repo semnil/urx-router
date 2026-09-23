@@ -6,9 +6,10 @@ import { stubTauriDevice, writesOf } from "./tauri-stub";
 // stub reports experimental_enabled = true to reveal the Device-menu entry.
 
 test("Compare with device logs every parameter read and writes nothing", async ({ page }) => {
-  // The stub answers every vd_get with 0, so the default plan's non-zero settings
-  // (faders, etc.) all read as different — a comparison guaranteed to find
-  // mismatches without pinning exact encoded values.
+  // The stub answers every vd_get with 0 but STREAMING's source (705/706), which it
+  // answers with the default plan's own STEREO, so the plan's other non-zero settings
+  // (faders, etc.) read as different — a comparison guaranteed to find mismatches
+  // without pinning exact encoded values.
   await stubTauriDevice(page, { commands: { experimental_enabled: true } });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
@@ -29,8 +30,9 @@ test("Compare with device logs every parameter read and writes nothing", async (
 });
 
 test("the full log records the reads that matched, not only the mismatches", async ({ page }) => {
-  // The stub returns 0 for every read, so parameters whose plan value is also 0
-  // (OFF sentinels, centered pans) match while non-zero ones differ. Both must
+  // The stub returns 0 for every read but STREAMING's source (705/706), which returns
+  // the plan's own STEREO, so parameters whose plan value is also 0 (OFF sentinels,
+  // centered pans) match while the other non-zero ones differ. Both must
   // appear in the log — a matched read being logged is exactly what makes an
   // instant "all match" verifiable rather than trusted.
   await stubTauriDevice(page, { commands: { experimental_enabled: true } });

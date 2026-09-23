@@ -85,16 +85,20 @@ const toolPaths = (dir, plan) => {
     .filter((p) => p !== null);
 };
 
-/** The app's own load. THREE stages: deserialize, the load-time repair, and the fill that
- *  completes a document from the model's factory values. The last is optional here because
- *  the two questions below are different — `appChanges` asks what the document's own values
- *  survive, and the fill answers about the ones it did not write. */
+/** The app's own load. THREE stages: deserialize, the load-time repairs (a value outside its
+ *  range, and a receiver given no source), and the fill that completes a document from the
+ *  model's factory values. The last is optional here because the two questions below are
+ *  different — `appChanges` asks what the document's own values survive, and the fill answers
+ *  about the ones it did not write. */
 const appLoad = async (plan, fill) => {
   const { deserializeDocument } = await import("../src/core/plan.ts");
-  const { paramRangeProblems, applyParamRange } = await import("../src/core/plan-validate.ts");
+  const { paramRangeProblems, applyParamRange, requiredSourceProblems, applyRequiredSources } =
+    await import("../src/core/plan-validate.ts");
   const { fillFactoryParams } = await import("../src/models/initial-state.ts");
   const loaded = deserializeDocument(JSON.stringify(plan)).plan;
   applyParamRange(loaded, paramRangeProblems(loaded));
+  const model = getModel(loaded.modelId);
+  applyRequiredSources(model, loaded, requiredSourceProblems(model, loaded));
   if (fill) fillFactoryParams(loaded.modelId, loaded);
   return loaded;
 };
@@ -1474,6 +1478,77 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     // Both answers are real populations: pairs the two keep, and refusals the two share.
     expect(pairs).toBeGreaterThan(0);
     expect(refusals).toBeGreaterThan(0);
+  });
+
+  // STREAMING's list on the unit has no None, so the app's load gives a document that names no
+  // STREAMING source the STEREO a new plan carries. The tool has to name the same wire for the
+  // same documents: a wire the loader keeps counts whatever kind it is written under, a wire
+  // it drops does not, and a scene-scoped document is asked the way the app answers it with
+  // no plan of the same model open — in the same words as any other document. Every model,
+  // since the receiver is a model fact.
+  it("agrees with the app about which documents the load gives a STREAMING source", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { requiredSourceProblems } = await import("../src/core/plan-validate.ts");
+    const into = (from, kind = "source", extra = {}) => [{ from, to: "bus.stream:in", kind, ...extra }];
+    const corpus = [
+      ["no wires", { connections: [] }],
+      ["no connections key", {}],
+      ["connections that are not an array", { connections: "x" }],
+      ["STEREO", { connections: into("bus.stereo:out") }],
+      ["MIX 1", { connections: into("bus.mix1:out") }],
+      ["MIX 2", { connections: into("bus.mix2:out") }],
+      ["MIX 1 written as a send", { connections: into("bus.mix1:out", "send") }],
+      [
+        "a STREAMING wire the loader drops for its params",
+        { connections: into("bus.mix1:out", "source", { params: "x" }) },
+      ],
+      ["a STREAMING wire the loader drops for its kind", { connections: into("bus.mix1:out", "bogus") }],
+      ["a wire into MONITOR 1 only", { connections: [{ from: "bus.mix1:out", to: "bus.mon1:in", kind: "source" }] }],
+      ["a scene-scoped document", { scope: "scene", connections: [] }],
+    ];
+    const added = { yes: 0, no: 0 };
+    /** The warning line each document drew, by its corpus name, for the first model. */
+    const lineOf = new Map();
+    for (const modelId of MODEL_IDS) {
+      for (const [name, body] of corpus) {
+        const plan = {
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          nodeParams: {},
+          ...body,
+        };
+        const loaded = deserializeDocument(JSON.stringify(plan)).plan;
+        const app = requiredSourceProblems(getModel(modelId), loaded)
+          .map((p) => `${p.from} -> ${p.to}`)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split("\n")
+          .map((l) => /^WARNING: connection (\S+ -> \S+): the app adds this wire on load/.exec(l)?.[1])
+          .filter((l) => l !== undefined)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        added[app.length > 0 ? "yes" : "no"]++;
+        if (modelId === MODEL_IDS[0]) {
+          lineOf.set(
+            name,
+            r.stderr.split("\n").find((l) => l.includes("the app adds this wire on load")),
+          );
+        }
+      }
+    }
+    // One warning for every document the load completes: a scene-scoped one reads word for word
+    // as a full one does.
+    expect(lineOf.get("no wires"), "the premise: the full document drew the warning").toBeDefined();
+    expect(lineOf.get("a scene-scoped document")).toBe(lineOf.get("no wires"));
+    // Both answers are real populations: documents the load completes and documents it leaves.
+    expect(added.yes).toBeGreaterThan(0);
+    expect(added.no).toBeGreaterThan(0);
   });
 
   // `True == 1` in Python, and the app's own comparison is `===` — so a boolean comp/EQ type

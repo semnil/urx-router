@@ -84,6 +84,11 @@ export interface DeviceModel {
   rules: RoutingRule[];
   /** Mono-channel pairs (CH1/2, CH3/4) that share one input source selection. */
   channelPairs: [string, string][];
+  /** Receivers that always hold exactly one source, keyed by their input ref, each with the
+   *  output ref a plan naming none is given. The unit's own source list for these offers no
+   *  "none": a plan keeps one wire there, a load completes a document that omits it, and the
+   *  board replaces the wire rather than removing it. */
+  requiredSources: Record<string, string>;
   /** Hardware the model is fitted with. The routing graph expresses most model
    *  differences as node presence, but these two also gate device settings that
    *  have no node at all (the HDMI page, and the Date/Time menu — the clock exists

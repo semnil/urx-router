@@ -98,18 +98,20 @@ describe("microSD Rec header <-> track-slot integrity", () => {
 });
 
 describe("fixed-rule <-> seeded-wire bijection", () => {
-  // plan.audit.test.ts pins that every seeded wire maps to a fixed rule and that a
-  // second pass adds nothing. This closes the other direction: ensureFixedConnections
-  // seeds EVERY fixed rule exactly once, so the two sets are in bijection (no fixed
-  // routing is ever silently left unseeded).
-  it.each(MODEL_IDS)("%s: seeding an empty plan reproduces the fixed-rule set exactly", (id) => {
+  // plan.audit.test.ts pins that every seeded wire maps to a fixed rule or a required
+  // receiver's default and that a second pass adds nothing. This closes the other
+  // direction: ensureFixedConnections seeds EVERY fixed rule exactly once, so the two sets
+  // are in bijection (no fixed routing is ever silently left unseeded). A new plan also
+  // carries each required receiver's default source, which is not fixed.
+  it.each(MODEL_IDS)("%s: seeding a new plan reproduces the fixed-rule set and the required defaults exactly", (id) => {
     const model = MODELS[id];
     const plan = emptyPlan(id);
     ensureFixedConnections(model, plan);
     const seeded = new Set(plan.connections.map((c) => `${c.from} ${c.to}`));
-    const fixed = new Set(model.rules.filter((r) => r.fixed).map((r) => `${r.from} ${r.to}`));
-    expect(plan.connections).toHaveLength(fixed.size);
-    expect(seeded).toEqual(fixed);
+    const fixed = model.rules.filter((r) => r.fixed).map((r) => `${r.from} ${r.to}`);
+    const defaults = Object.entries(model.requiredSources).map(([to, from]) => `${from} ${to}`);
+    expect(plan.connections).toHaveLength(fixed.length + defaults.length);
+    expect(seeded).toEqual(new Set([...fixed, ...defaults]));
   });
 });
 

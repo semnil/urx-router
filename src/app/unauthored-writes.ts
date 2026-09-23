@@ -12,10 +12,22 @@
 // read off the unit, and a key NOBODY recorded is one no funnel claims. The classification is
 // total and falls toward warning, since a leaf that reached the plan unrecorded is exactly the
 // kind this cannot vouch for.
+//
+// A routing selector is the exception, because its value is a WIRE rather than a key: every wire
+// is drawn on the board, so the one it names is the one nobody drew, loaded or read — a wire the
+// app completed (the load, or a Fetch / Live start that found the unit on NONE), recorded
+// `default` under the wire's own contest name.
 
-import { planToCommandOrigins, planToCommands, cmdAddr, type WriteScope } from "../core/control/translate";
+import {
+  planToCommandOrigins,
+  planToCommands,
+  cmdAddr,
+  ROUTING_SELECTORS,
+  type WriteScope,
+} from "../core/control/translate";
 import type { Plan } from "../core/plan";
-import type { DeviceModel } from "../models/types";
+import { connectionContestKey } from "../core/plan-history";
+import { ref, type DeviceModel } from "../models/types";
 
 /**
  * The owner nodes a write would change at addresses the operator never authored.
@@ -46,16 +58,29 @@ export function unauthoredWriteNodes(
     return from === "load" || from === "manual";
   };
 
+  // The receivers whose selector carries a wire the app completed, with that selector's names.
+  const completed = new Map<string, Set<string>>();
+  for (const [to, , pl, pr] of ROUTING_SELECTORS) {
+    const fill = plan.connections.some(
+      (c) => c.to === ref(to, "in") && source?.get(connectionContestKey(c.from, c.to)) === "default",
+    );
+    if (fill) completed.set(to, new Set([pl, pr]));
+  }
+
   const origins = planToCommandOrigins(model, plan, scope);
   const named = new Set<string>();
   for (const c of planToCommands(model, plan, scope)) {
     const addr = cmdAddr(c);
     if (c.node === undefined || !changing.has(addr)) continue;
     const origin = origins.get(addr);
-    // `null` is the emit supplying the value itself, which is nobody's to choose. `undefined`
-    // is a command that carries no record at all — a value this cannot vouch for, which is the
-    // same standing as one the operator did not set, and it must not read as the first.
-    if (origin === null) continue;
+    // `null` is the emit supplying the value itself, which is nobody's to choose — except a
+    // routing selector's, whose value is the wire into its receiver. `undefined` is a command
+    // that carries no record at all — a value this cannot vouch for, which is the same standing
+    // as one the operator did not set, and it must not read as the first.
+    if (origin === null) {
+      if (completed.get(c.node)?.has(c.name)) named.add(c.node);
+      continue;
+    }
     if (origin === undefined || !chose(origin)) named.add(c.node);
   }
   return model.nodes.filter((n) => named.has(n.id)).map((n) => n.id);

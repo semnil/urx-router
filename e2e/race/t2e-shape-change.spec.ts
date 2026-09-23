@@ -499,8 +499,8 @@ test.describe("T2e shape-change", () => {
   }) => {
     // Both sessions start from the same device state: ch1 holding Compander-H (so the
     // "compander" slot is taken and the engine array is in the write set), ch2..ch4 on
-    // No Effect. The fake answers 0 for an unwritten address, and 0 is not an insert-FX
-    // option — the sentinel has to be explicit or every channel reads as "some effect".
+    // No Effect. The fake answers an insert-FX address nothing wrote with 0, and 0 is not an
+    // insert-FX option — the sentinel has to be explicit or every channel reads as "some effect".
     const seed = (p: Page): Promise<void> =>
       seedMem(p, {
         [insertFxAddr(0)]: COMPANDER_H,

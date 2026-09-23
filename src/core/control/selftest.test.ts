@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
+import { emptyPlan, ensureFixedConnections, setExclusiveConnection, type Plan } from "../plan";
 import { defaultPlan } from "../../models/initial-state";
 
 // runSelfTest drives the device through platform connect/get/set/disconnect, so
@@ -170,6 +170,82 @@ function installPairLinkingDevice(seed: Plan): Map<string, number> {
 
 beforeEach(() => {
   for (const m of [vdConnect, vdDisconnect, vdGet, vdSet, vdGetStr]) vi.mocked(m).mockReset();
+});
+
+// A capture that did not read STREAMING's source has nothing to put back there, so nothing in
+// the run writes it — no pass, and not the restore — and the unit keeps the source it held. The
+// report says so among its issues. Only that selector: the rest of a partial capture is still
+// swept and restored.
+describe("runSelfTest with STREAMING's source not captured", () => {
+  const MIX1 = [(0x80000000 | 288) >>> 0, (0x80000000 | 289) >>> 0];
+  const LINE = "bus.stream: source not captured, so no pass and not the restore writes it; the unit keeps its own";
+
+  it("leaves the unit's STREAMING source as it was, and says so", async () => {
+    const seed = populatedPlan();
+    setExclusiveConnection(seed, "bus.mix1:out", "bus.stream:in", "source");
+    const table = installMockDevice(seed);
+    expect([table.get("705:0:0"), table.get("706:0:0")], "the premise: the unit is on MIX 1").toEqual(MIX1);
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation((id, x, y) =>
+      id === PARAMS.STREAM_SRC_R.id ? Promise.reject(new Error("read timeout")) : answer(id, x, y),
+    );
+
+    const report = await runSelfTest(model, 0);
+    expect(report.written, "the control: the run did write").toBeGreaterThan(0);
+    expect(report.phase).toBe("done");
+    expect(vi.mocked(vdSet).mock.calls.filter(([id]) => id === 705 || id === 706)).toEqual([]);
+    expect([table.get("705:0:0"), table.get("706:0:0")]).toEqual(MIX1);
+    expect(report.errors).toContain(LINE);
+    expect(formatSelfTestReport(report)).toContain(`- ${LINE}`);
+  });
+
+  it("says nothing of the kind when the capture read it", async () => {
+    installMockDevice(populatedPlan());
+    const report = await runSelfTest(model, 0);
+    expect(report.errors).not.toContain(LINE);
+    expect(report.restored).toBe(true);
+  });
+
+  // The other side of that line: a capture that did not read STREAMING's DELAY or CH 1's fader
+  // did read both nodes' sources, so both stay in the plan the run sweeps and restores from — CH 1's
+  // is written by the passes and put back, STREAMING's is left where it is — and the issues name
+  // the two failed reads and nothing else.
+  it("keeps the sources of nodes whose other values went unread", async () => {
+    const seed = populatedPlan();
+    setExclusiveConnection(seed, "bus.mix1:out", "bus.stream:in", "source");
+    setExclusiveConnection(seed, `${selectableInputIds(model)[0]}:out`, "ch1:in", "source");
+    const table = installMockDevice(seed);
+    const faderY = channelControl(model, "ch1")!.y;
+    const ch1Source = planToCommands(model, seed)
+      .filter((c) => c.node === "ch1" && c.name === "INPUT_SOURCE")
+      .map((c) => `${c.paramId}:${c.x}:${c.y}`);
+    const sources = [...ch1Source, "705:0:0", "706:0:0"];
+    const held = sources.map((k) => table.get(k));
+    expect(held.slice(-2), "the premise: the unit is on MIX 1").toEqual(MIX1);
+    expect(ch1Source.length, "the premise: CH 1 has a source slot").toBeGreaterThan(0);
+    expect(held.slice(0, -2), "the premise: CH 1 holds a source").not.toContain(PORT_REF_NONE);
+    // Each of the two refuses its first read only, which is the capture's.
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    const refused = new Set<string>();
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      const k = `${id}:${x}:${y}`;
+      const refuse = id === PARAMS.STREAM_DELAY_TIME.id || (id === PARAMS.CH_FADER.id && y === faderY);
+      if (!refuse || refused.has(k)) return answer(id, x, y);
+      refused.add(k);
+      return Promise.reject(new Error("read timeout"));
+    });
+
+    const report = await runSelfTest(model, 0);
+    expect(report.phase).toBe("done");
+    expect(report.errors).toEqual(["CH 1: read timeout", "STREAMING DELAY: read timeout"]);
+    const writesTo = (k: string): number =>
+      vi.mocked(vdSet).mock.calls.filter(([id, x, y]) => `${id}:${x}:${y}` === k).length;
+    expect(
+      ch1Source.filter((k) => writesTo(k) === 0),
+      "every CH 1 source slot is swept",
+    ).toEqual([]);
+    expect(sources.map((k) => table.get(k))).toEqual(held);
+  });
 });
 
 describe("passesFor (model-driven sweep count)", () => {

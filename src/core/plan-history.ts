@@ -118,6 +118,13 @@ export function readableContestKey(key: string): string {
   return key.replaceAll(WIRE_SEP, " -> ");
 }
 
+/** Whether one of the labels `dropAuthored` reports names a wire rather than a value.
+ *  Exported so a caller that tells one hold from another asks the encoding rather than
+ *  re-spelling the field name it leads with. */
+export function isConnectionLabel(label: string): boolean {
+  return label.startsWith("connections ") || label.startsWith("connParams ");
+}
+
 function wireKey(from: string, to: string): string {
   return `${from}${WIRE_SEP}${to}`;
 }
@@ -733,6 +740,12 @@ export function nodeParamContestPath(nodeId: string, path: string): string {
  *  caller should be spelling out. */
 export function connParamContestKey(from: string, to: string, param: string): string {
   return contestName("connParams", wireKey(from, to), param);
+}
+
+/** The same, for a wire's presence: the name an edit or a device read that adds or removes
+ *  the wire records it under. */
+export function connectionContestKey(from: string, to: string): string {
+  return contestName("connections", wireKey(from, to));
 }
 
 /** The printable label of the same piece, in the spelling applyPatchInContext reports. */

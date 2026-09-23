@@ -825,6 +825,34 @@ describe("node controls report their edits", () => {
       expect(panel.textContent).toContain(t().inspector.fixedConnection);
     }
   });
+
+  // STREAMING's list on the unit has no None, so its last wire offers no delete: the panel says
+  // how that source is replaced instead, in the words the board's own refusal uses. MONITOR's
+  // list offers None, so its last wire keeps the button, and a STREAMING that holds a second
+  // wire lets either one go.
+  it("offers no delete on STREAMING's last source, and says how it is replaced", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const hints = (): string[] => [...panel.querySelectorAll("p.hint")].map((p) => p.textContent ?? "");
+    expect(
+      plan.connections.filter((c) => c.to === "bus.stream:in").map((c) => c.from),
+      "the premise: the factory plan holds STEREO -> STREAMING",
+    ).toEqual(["bus.stereo:out"]);
+    renderInspector(panel, model, plan, connSel("bus.stereo:out", "bus.stream:in"), act);
+    expect(panel.querySelector("button.danger")).toBeNull();
+    expect(hints()).toContain(t().status.streamingSourceRequired);
+
+    const mon = plan.connections.find((c) => c.to === "bus.mon1:in")!;
+    renderInspector(panel, model, plan, connSel(mon.from, mon.to), act);
+    expect(panel.querySelector("button.danger"), "the control: MONITOR's last wire is deletable").not.toBeNull();
+    expect(hints()).not.toContain(t().status.streamingSourceRequired);
+
+    plan.connections.push({ from: "bus.mix1:out", to: "bus.stream:in", kind: "source" });
+    renderInspector(panel, model, plan, connSel("bus.stereo:out", "bus.stream:in"), act);
+    panel.querySelector<HTMLButtonElement>("button.danger")!.click();
+    expect(act.onDeleteConnection).toHaveBeenCalledWith("bus.stereo:out", "bus.stream:in");
+    expect(hints()).not.toContain(t().status.streamingSourceRequired);
+  });
 });
 
 describe("insert FX", () => {

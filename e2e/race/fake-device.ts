@@ -338,7 +338,10 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         cfg: config,
         t0,
         log,
-        mem: {},
+        // An address nothing wrote reads 0, except STREAMING's source (705 / 706): its list
+        // on the unit offers STEREO / MIX 1 / MIX 2, so it starts on the factory STEREO, as
+        // tagged port refs.
+        mem: { "705:0:0": 0x80000100, "706:0:0": 0x80000101 },
         memStr: {},
         paramAddrs: [],
         meterAddrs: [],

@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
   applyParamRange,
+  applyRequiredSources,
   insertFxPairProblems,
   insertFxSlotProblems,
   isRefusal,
   needsDecision,
   paramRangeProblems,
   planProblems,
+  requiredSourceProblems,
 } from "./plan-validate";
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
 import { planToCommands } from "./control/translate";
@@ -663,6 +665,63 @@ describe("paramRangeProblems", () => {
     // planProblems is the single seat every load path takes; a check outside it is one a
     // load path can pick up half of, which is what the funnel exists to prevent.
     expect(planProblems(getModel("URX44V"), fx2({ delayLpf: 0 })).map((p) => p.reason)).toEqual(["paramRange"]);
+  });
+});
+
+// STREAMING's list on the unit has no None, so a document that gives it no wire is completed
+// with the STEREO a new plan carries, and the load says so. Any wire into it counts, whatever
+// kind it was written under — the install restates the kind — and a wire the sanitiser drops
+// does not.
+describe("requiredSourceProblems", () => {
+  const STEREO_TO_STREAM = { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" };
+  const doc = (connections: unknown): Plan =>
+    deserialize(JSON.stringify({ format: "urx-router-plan", version: PLAN_VERSION, modelId: "URX44V", connections }));
+  const u44v = getModel("URX44V");
+
+  it.each(MODEL_IDS)("%s: completes a document with no STREAMING wire with STEREO, and says so", (id) => {
+    const m = getModel(id);
+    const plan: Plan = { ...emptyPlan(id), connections: [] };
+    const problems = requiredSourceProblems(m, plan);
+    expect(problems).toEqual([{ reason: "requiredSource", from: "bus.stereo:out", to: "bus.stream:in" }]);
+    expect(planProblems(m, plan)).toEqual(problems);
+    applyRequiredSources(m, plan, problems);
+    expect(plan.connections).toEqual([STEREO_TO_STREAM]);
+    expect(requiredSourceProblems(m, plan)).toEqual([]);
+    // What the write then sends is that source, and never NONE.
+    const sent = planToCommands(m, plan).filter((c) => c.name === "STREAM_SRC_L" || c.name === "STREAM_SRC_R");
+    expect(sent.map((c) => c.vdValue)).toEqual([(0x80000000 | 256) >>> 0, (0x80000000 | 257) >>> 0]);
+  });
+
+  it("leaves a document that names a STREAMING source alone, whichever it names", () => {
+    for (const from of ["bus.stereo:out", "bus.mix1:out", "bus.mix2:out"]) {
+      expect(requiredSourceProblems(u44v, doc([{ from, to: "bus.stream:in", kind: "source" }])), from).toEqual([]);
+    }
+  });
+
+  it("counts a wire written under the wrong kind, which the install restates", () => {
+    expect(requiredSourceProblems(u44v, doc([{ from: "bus.mix1:out", to: "bus.stream:in", kind: "send" }]))).toEqual(
+      [],
+    );
+  });
+
+  it("does not count a wire the sanitiser drops", () => {
+    const plan = doc([{ from: "bus.mix1:out", to: "bus.stream:in", kind: "source", params: "x" }]);
+    expect(plan.connections).toEqual([]);
+    expect(requiredSourceProblems(u44v, plan).map((p) => p.to)).toEqual(["bus.stream:in"]);
+  });
+
+  it("finds nothing in a new plan or the factory plan", () => {
+    for (const id of MODEL_IDS) {
+      expect(requiredSourceProblems(getModel(id), emptyPlan(id)), id).toEqual([]);
+      expect(requiredSourceProblems(getModel(id), defaultPlan(id)), id).toEqual([]);
+    }
+  });
+
+  it("neither refuses the document nor asks the operator about it", () => {
+    const [problem] = requiredSourceProblems(u44v, doc([]));
+    expect(problem).toBeDefined();
+    expect(isRefusal(problem)).toBe(false);
+    expect(needsDecision(problem)).toBe(false);
   });
 });
 

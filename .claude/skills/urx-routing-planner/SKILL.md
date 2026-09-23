@@ -142,7 +142,7 @@ after step 2 with a grounded answer (see "feasibility first" above) and skip the
 rest unless the user wants the plan built.
 
 **1. Identify the model and settle the request.** URX22, URX44, or URX44V — the
-node sets differ (URX44V adds STREAMING; URX22 is smaller). If the model or any
+node sets differ (URX44V adds the HDMI input; URX22 is smaller). If the model or any
 routing-changing detail is unclear, clarify before building (see "feasibility
 first, then a plan"). Default to URX44V only if the user clearly has one.
 
@@ -171,6 +171,10 @@ plan from the unit and edit that. Remember:
      channel. The app writes that L = the pair's first (odd) channel, R = its
      second, whatever order the wires are listed in; no other pair of wires is
      legal there (not two channels of different pairs, not a channel beside a bus).
+   - **STREAMING** (`bus.stream:in`) always has exactly one source — STEREO, MIX 1
+     or MIX 2; the unit's own list has no None. A plan that lists none is given
+     `bus.stereo:out -> bus.stream:in` on load (the validator warns that the app
+     adds it), so list the source the user wants — one wire, never two.
    - **Fixed sends** (marked `(fixed)` in the reference: CH/FX → STEREO, CH →
      MIX/FX, MIX → STEREO) always exist. You don't list them to keep them; you
      list them with `params` to set level/pan or turn them `on` — and listing one
@@ -191,7 +195,8 @@ comment; `OK (N warning(s))` means read them first — one of them, the insert-F
 conflict, is a plan the app opens only after asking (step 5 says what that looks
 like coming back). It prints those `WARNING:` lines to stderr — always read them: for a wire or value the
 app's loader would silently **drop** (an unknown `kind`, a mistyped `params` /
-node param — the plan loads, just without that piece), for wrong-`kind` wires, for
+node param — the plan loads, just without that piece), for a wire the loader
+**adds** (STREAMING's source, when the plan gives it none), for wrong-`kind` wires, for
 Ducker params placed on a non-ducker node (move them to the channel's `out.duckerN`
 id), and for the parameters that need care on hardware (see step 6).
 
@@ -230,7 +235,10 @@ insert-FX slot conflict arrives this way (`[insertFxSlot] <slot>: <node>, <node>
 and `plan_tool.py` reports it as a `WARNING:` line rather than in a report, so it
 never produces that header itself. Treat it as a question about intent — two nodes
 select into the one device-wide slot and the unit runs one at a time — not as a
-document to repair before it can be opened.
+document to repair before it can be opened. The same report also lists what the
+load repairs without asking — `[paramRange]` rows for values it bounds or drops,
+and `[requiredSource] bus.stereo:out -> bus.stream:in` for the STREAMING source
+it adds — and those need no answer.
 
 **6. Flag the parameters that need care.** Two classes the validator warns about;
 `plan-schema.md` carries the detail, and both are worth surfacing to the user:

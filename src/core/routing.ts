@@ -32,6 +32,19 @@ export function isFixedConnection(model: DeviceModel, from: string, to: string):
   return findRule(model, from, to)?.fixed === true;
 }
 
+/** Whether the input `to` is a receiver the unit never leaves without a source
+ *  (`DeviceModel.requiredSources`). */
+export function requiresSource(model: DeviceModel, to: string): boolean {
+  return Object.hasOwn(model.requiredSources, to);
+}
+
+/** Whether `from` -> `to` is the only wire into a receiver the unit never leaves without a
+ *  source: the one wire the board keeps rather than deletes, and replaces when another
+ *  source is drawn onto it. */
+export function isLastRequiredSource(model: DeviceModel, plan: Plan, from: string, to: string): boolean {
+  return requiresSource(model, to) && !plan.connections.some((c) => c.to === to && c.from !== from);
+}
+
 // Whether a send carries a PRE/POST tap: a send's PRE/POST is taken relative to
 // the STEREO main-fader level, so only the STEREO main-fader paths (CH / FX
 // channel → STEREO, which ARE that reference) carry no tap. Every other send

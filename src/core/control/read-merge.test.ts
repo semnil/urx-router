@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
-import { insertFxHoldKeys, readIntoPlan, type ReadbackResult } from "./readback";
+import { ruleKind } from "../routing";
+import { insertFxHoldKeys, readIntoPlan, sourceChoiceHoldKeys, type ReadbackResult } from "./readback";
 import {
   applyPatchInContext,
   clonePlanState,
@@ -892,5 +893,168 @@ describe("insertFxHoldKeys", () => {
     expect(plan.nodeParams.ch1?.hpf).toBe(true);
     expect(plan.nodeParams.ch1?.hpfFreq).toBe(120);
     expect(merged!.held).toHaveLength(3);
+  });
+});
+
+// A receiver the model calls single-input takes ONE choice — one wire, or the two channels
+// of a MONO IN pair on a USB output — while the rest of the merge arbitrates per wire. A
+// replacing drop made while a read is in flight names the removal of the wire it took the
+// place of and the addition of its own, and the read's own source into the same receiver
+// has nothing left to stop it landing beside them.
+describe("sourceChoiceHoldKeys", () => {
+  const hold = (ctx: Parameters<typeof sourceChoiceHoldKeys>[1]): ReadonlySet<string> =>
+    sourceChoiceHoldKeys(model, ctx);
+  const STREAM_IN = "bus.stream:in";
+  const MON_IN = "bus.mon1:in";
+  const USB_B_IN = "out.usbmain_b:in";
+
+  /** Replace every wire into `to` with one from each of `froms`, at the kind the model's own
+   *  rule names — the shape a replacing drop and the read's own selector both leave. */
+  const wire = (plan: Plan, to: string, ...froms: string[]): void => {
+    plan.connections = plan.connections.filter((c) => c.to !== to);
+    for (const from of froms) plan.connections.push({ from, to, kind: ruleKind(model, from, to)! });
+  };
+  const sourcesInto = (plan: Plan, to: string): string[] =>
+    plan.connections
+      .filter((c) => c.to === to)
+      .map((c) => c.from)
+      .sort();
+
+  /** The sources the model's own rules offer a receiver, in the order it declares them. */
+  const sourcesFor = (to: string): string[] => model.rules.filter((r) => r.to === to).map((r) => r.from);
+
+  // Every class of single-input receiver the model carries, one per kind and per surface:
+  // STREAMING and MONITOR (source), an analog and a USB output patch (patch), a channel's
+  // own input (source), a microSD recorder slot (record) and a ducker key (key).
+  for (const to of [
+    STREAM_IN,
+    MON_IN,
+    "out.main:in",
+    USB_B_IN,
+    "ch1:in",
+    "out.sdrec.t1:in",
+    "out.ducker1:in",
+  ] as const) {
+    it(`keeps the source the operator drew onto ${to}, and leaves the unit's in the view`, async () => {
+      const [was, unit, drawn] = sourcesFor(to);
+      expect(new Set([was, unit, drawn]).size, "the premise: the receiver offers three sources").toBe(3);
+      const plan = basePlan();
+      wire(plan, to, was);
+      const witness = new PlanWriteWitness(() => plan);
+
+      const merged = await readIntoPlan(
+        () => plan,
+        async (into) => {
+          wire(into, to, unit);
+          wire(plan, to, drawn);
+          witness.note();
+          return OK;
+        },
+        witness,
+        hold,
+      );
+
+      expect(sourcesInto(plan, to)).toEqual([drawn]);
+      // What the unit holds stays in the view, which is what the next outgoing diff measures
+      // from: the operator's choice is what a session then writes.
+      expect(sourcesInto(merged!.deviceView, to)).toEqual([unit]);
+      expect(merged!.held).toHaveLength(1);
+    });
+  }
+
+  // The control. Without it every assertion above is satisfied by a hold that names every
+  // wire into every single-input receiver whatever the operator did.
+  it("lets the unit's source land on a receiver the operator left alone", async () => {
+    const plan = basePlan();
+    wire(plan, STREAM_IN, "bus.stereo:out");
+    wire(plan, MON_IN, "bus.stereo:out");
+    const witness = new PlanWriteWitness(() => plan);
+
+    await readIntoPlan(
+      () => plan,
+      async (into) => {
+        wire(into, STREAM_IN, "bus.mix1:out");
+        wire(into, MON_IN, "bus.mix1:out");
+        wire(plan, STREAM_IN, "bus.mix2:out");
+        witness.note();
+        return OK;
+      },
+      witness,
+      hold,
+    );
+
+    expect(sourcesInto(plan, STREAM_IN)).toEqual(["bus.mix2:out"]);
+    expect(sourcesInto(plan, MON_IN)).toEqual(["bus.mix1:out"]);
+  });
+
+  // A USB output takes the two channels of one MONO IN pair as two wires, so the rule is the
+  // receiver's own and not a count of what it holds.
+  it("lands a whole mono pair the unit holds on a USB output the operator left alone", async () => {
+    const plan = basePlan();
+    wire(plan, STREAM_IN, "bus.stereo:out");
+    wire(plan, USB_B_IN, "bus.stereo:out");
+    const witness = new PlanWriteWitness(() => plan);
+
+    await readIntoPlan(
+      () => plan,
+      async (into) => {
+        wire(into, USB_B_IN, "ch1:out", "ch2:out");
+        wire(plan, STREAM_IN, "bus.mix2:out");
+        witness.note();
+        return OK;
+      },
+      witness,
+      hold,
+    );
+
+    expect(sourcesInto(plan, USB_B_IN)).toEqual(["ch1:out", "ch2:out"]);
+  });
+
+  // The other half of "the receiver is the unit": a device-side REMOVAL is held too. The
+  // operator completed a pair here by adding its second channel, so only the addition is
+  // theirs — and taking the read's removal of the first channel would leave the pair half
+  // drawn, which is a receiver in a state neither side chose.
+  it("keeps both halves of a pair the operator completed during the read", async () => {
+    const plan = basePlan();
+    wire(plan, USB_B_IN, "ch1:out");
+    const witness = new PlanWriteWitness(() => plan);
+
+    await readIntoPlan(
+      () => plan,
+      async (into) => {
+        wire(into, USB_B_IN, "ch3:out", "ch4:out");
+        plan.connections.push({ from: "ch2:out", to: USB_B_IN, kind: ruleKind(model, "ch2:out", USB_B_IN)! });
+        witness.note();
+        return OK;
+      },
+      witness,
+      hold,
+    );
+
+    expect(sourcesInto(plan, USB_B_IN)).toEqual(["ch1:out", "ch2:out"]);
+  });
+
+  // Only the wires are held: what a read found on the receiver's own node is device truth
+  // like any other, and the drop said nothing about it.
+  it("lands the unit's node values on the receiver whose source it held", async () => {
+    const plan = basePlan();
+    wire(plan, STREAM_IN, "bus.stereo:out");
+    const witness = new PlanWriteWitness(() => plan);
+
+    await readIntoPlan(
+      () => plan,
+      async (into) => {
+        wire(into, STREAM_IN, "bus.mix1:out");
+        into.nodeParams["bus.stream"] = { ...into.nodeParams["bus.stream"], delay: { on: true, time: 12 } };
+        wire(plan, STREAM_IN, "bus.mix2:out");
+        witness.note();
+        return OK;
+      },
+      witness,
+      hold,
+    );
+
+    expect(sourcesInto(plan, STREAM_IN)).toEqual(["bus.mix2:out"]);
+    expect(plan.nodeParams["bus.stream"]?.delay).toEqual({ on: true, time: 12 });
   });
 });

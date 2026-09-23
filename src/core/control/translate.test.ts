@@ -16,6 +16,7 @@ import {
   nameControl,
   planToCommands,
   planToCommandsUncollapsed,
+  planToFollowOnlyAddrs,
   planToNameWrites,
 } from "./translate";
 import type { VdCommand } from "./translate";
@@ -980,6 +981,7 @@ describe("planToCommands", () => {
 
   it("emits streaming source select as a tagged L/R port ref", () => {
     const plan = emptyPlan("URX44V");
+    plan.connections = plan.connections.filter((c) => c.to !== "bus.stream:in");
     plan.connections.push({ from: "bus.mix1:out", to: "bus.stream:in", kind: "source" });
     const cmds = planToCommands(model, plan);
     const l = cmds.find((c) => c.name === "STREAM_SRC_L");
@@ -989,12 +991,39 @@ describe("planToCommands", () => {
     expect(r!.vdValue).toBe((0x80000000 | 289) >>> 0);
   });
 
-  it("emits streaming source as the NONE sentinel when nothing feeds bus.stream", () => {
-    const plan = emptyPlan("URX44V");
-    const cmds = planToCommands(model, plan);
-    // Absolute-state write: an unfed selector is cleared, not omitted.
-    expect(cmds.find((c) => c.name === "STREAM_SRC_L")!.vdValue).toBe(0xffffffff);
-    expect(cmds.find((c) => c.name === "STREAM_SRC_R")!.vdValue).toBe(0xffffffff);
+  it("emits a new plan's streaming source as STEREO", () => {
+    const cmds = planToCommands(model, emptyPlan("URX44V"));
+    expect(cmds.find((c) => c.name === "STREAM_SRC_L")!.vdValue).toBe((0x80000000 | 256) >>> 0);
+    expect(cmds.find((c) => c.name === "STREAM_SRC_R")!.vdValue).toBe((0x80000000 | 257) >>> 0);
+  });
+
+  // STREAMING's list on the unit has no None. A plan that reaches the emit with no wire there —
+  // what a follow read of a unit on NONE, or an undo, leaves — leaves the unit's source where it
+  // is: the write sends neither NONE nor a source the plan does not hold, and the address stays
+  // registered, so a source chosen on the unit's panel still reaches the plan.
+  it.each(MODEL_IDS)("%s: sends nothing to STREAMING when no wire feeds it, and follows it instead", (id) => {
+    const m = getModel(id);
+    const plan = emptyPlan(id);
+    ensureFixedConnections(m, plan);
+    const follows = (p: Plan): string[] =>
+      planToFollowOnlyAddrs(m, p)
+        .filter((f) => f.node === "bus.stream")
+        .map((f) => `${f.name} ${f.param}:${f.x}:${f.y}`);
+    // The control: with its wire, STREAMING is written and so needs no follow-only entry.
+    expect(planToCommands(m, plan).filter((c) => c.name.startsWith("STREAM_SRC"))).toHaveLength(2);
+    expect(follows(plan)).toEqual([]);
+
+    plan.connections = plan.connections.filter((c) => c.to !== "bus.stream:in");
+    const cmds = planToCommands(m, plan);
+    expect(cmds.filter((c) => c.name.startsWith("STREAM_SRC"))).toEqual([]);
+    expect(cmds.some((c) => c.paramId === 705 || c.paramId === 706)).toBe(false);
+    expect(follows(plan)).toEqual(["STREAM_SRC_L 705:0:0", "STREAM_SRC_R 706:0:0"]);
+    // Scene-external, like the write it stands in for.
+    expect(planToFollowOnlyAddrs(m, plan, "scene").some((f) => f.node === "bus.stream")).toBe(false);
+    // MONITOR's list does offer None, so a monitor with no wire is still cleared.
+    const monitor = cmds.filter((c) => c.name === "MONITOR_SRC_L" || c.name === "MONITOR_SRC_R");
+    expect(monitor).toHaveLength(4);
+    expect(monitor.every((c) => c.vdValue === 0xffffffff)).toBe(true);
   });
 
   it("emits USB output source as a raw port ref (bus or channel)", () => {

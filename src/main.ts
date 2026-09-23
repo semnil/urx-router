@@ -3,7 +3,7 @@ import "./style.css";
 import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan, fillFactoryParams } from "./models/initial-state";
 import type { ModelId } from "./models/types";
-import { parseRef } from "./models/types";
+import { parseRef, ref } from "./models/types";
 import {
   applyPairTransition,
   INSERT_FX_PAIR_KEYS,
@@ -26,13 +26,20 @@ import {
   serialize,
   setPlanSampleRate,
   SSMCS_INITIAL,
+  supplyRequiredSources,
 } from "./core/plan";
-import { applySceneExternal, captureSceneExternal, sceneExternalParamNames } from "./core/scene-scope";
+import {
+  applySceneExternal,
+  captureSceneExternal,
+  isSceneExternalConnection,
+  sceneExternalParamNames,
+} from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import {
   applyPatch,
   clonePlanState,
+  connectionContestKey,
   diffPlans,
   nodeParamContestPath,
   PlanWriteWitness,
@@ -42,7 +49,7 @@ import {
   type PlanPatch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
-import { applyParamRange, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
+import { applyParamRange, applyRequiredSources, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
 import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
@@ -139,8 +146,10 @@ import {
   applySilentState,
   applySourceState,
   formatReadbackReport,
+  heldByHold,
   insertFxHoldKeys,
   readIntoPlan,
+  sourceChoiceHoldKeys,
 } from "./core/control/readback";
 import type { MergedRead, ReadbackResult } from "./core/control/readback";
 import type { PendingWrites } from "./core/control/settle";
@@ -797,14 +806,15 @@ function assertReadComplete(merged: MergedRead, label: string): void {
   // plan keeping values the unit does not have with nothing saying so — and reporting it
   // here rather than at each call site is what stops a fourth caller getting that order
   // wrong.
-  if (merged.held.length) console.warn("device read: the plan keeps what the unit cleared", merged.held);
+  if (merged.held.length) console.warn("device read: the plan keeps its own value", merged.held);
   if (!merged.errors.length) return;
   console.warn(label, merged.errors);
   const cause = linkFailureIn(merged.errors) ?? t().error.followReadIncomplete(merged.errors.length);
   // The count travels with the teardown's own message: the status line this read would
   // have written is about to be replaced by `stopLiveOnError`, and the console does not
   // reach an installed build.
-  throw new Error(merged.held.length ? t().error.followReadHeld(cause, merged.held.length) : cause);
+  const held = heldByHold(merged.held);
+  throw new Error(merged.held.length ? t().error.followReadHeld(cause, held.unrunnable, held.source) : cause);
 }
 // A merged device read could not place part of its result: a wire the operator removed
 // while it was in flight, or an edit a device-side routing change left nowhere to land.
@@ -813,17 +823,38 @@ function assertReadComplete(merged: MergedRead, label: string): void {
 function noteMergeConflicts(merged: MergedRead): void {
   if (merged.unplaced.length) console.warn("device read: merge targets no longer in the plan", merged.unplaced);
 }
+/** A Fetch or a Live-sync start found a receiver the unit never leaves without a source on
+ *  NONE (`MergedRead.unsourced`): the plan takes the source a new plan carries, recorded as the
+ *  fill's, so the write confirm names that receiver when a write moves the unit onto it. A plan
+ *  that already holds a wire there — one drawn while the read ran — keeps it. The read's own
+ *  view keeps the unit's state, so the snapshot a Live session starts from holds nothing there
+ *  and its next flush sends the source. Returns the note that leads the status line, or null
+ *  when nothing was supplied. */
+function supplyUnsourced(merged: MergedRead): string | null {
+  const inputs = (merged.unsourced ?? []).map((id) => ref(id, "in"));
+  const wires = supplyRequiredSources(getModel(modelId), plan, inputs);
+  if (!wires.length) return null;
+  markSource(
+    plan,
+    wires.map((w) => connectionContestKey(w.from, w.to)),
+    "default",
+  );
+  return t().status.streamingSourceUnlisted;
+}
 // The send-back, which only a complete read may ask for: a partial read is about to
 // drop the link, and a flush issued into that writes nothing and reports nothing. The
 // snapshot has just re-based onto the unit's values, so plan and device disagree exactly
 // where the read held, and the ordinary outgoing diff is what puts them back — for insert
-// FX, the selector, then the stored engine values, then the bypass intent. Nothing else
-// would schedule that flush: no plan key moved, so no edit funnel ran.
+// FX, the selector, then the stored engine values, then the bypass intent.
 //
-// A read holds only where it has rate evidence (insertFxHoldKeys) — its own, or one the
-// unit announced while it ran. Both reconcile paths hand over the same hold for that
-// reason: a scoped read establishes no rate of its own and is still the first thing to
-// see a selector the unit has just cleared, so the pairing cannot be skipped at one of
+// The insert-FX half schedules a flush nothing else would: no plan key moved, so no edit
+// funnel ran. The source half (sourceChoiceHoldKeys) held against an edit that did run,
+// so its own flush is already scheduled and this one is a second ask for the same values.
+//
+// A read holds insert FX only where it has rate evidence (insertFxHoldKeys) — its own, or
+// one the unit announced while it ran. Both reconcile paths hand over the same hold for
+// that reason: a scoped read establishes no rate of its own and is still the first thing
+// to see a selector the unit has just cleared, so the pairing cannot be skipped at one of
 // them.
 function reapplyHeld(merged: MergedRead): void {
   if (!merged.held.length) {
@@ -835,7 +866,8 @@ function reapplyHeld(merged: MergedRead): void {
   // in the log from a flush that went out.
   if (live?.isActive()) {
     live.schedule();
-    setStatus(t().status.liveHeld(merged.applied, merged.held.length));
+    const held = heldByHold(merged.held);
+    setStatus(t().status.liveHeld(merged.applied, held.unrunnable, held.source));
     return;
   }
   // Nothing left to send them through: the values stay in the plan, and the status line
@@ -960,11 +992,15 @@ async function followRead(
       planWrites,
       (ctx) => {
         establishedRate = ctx.deviceSampleRate !== undefined;
-        return insertFxHoldKeys(getModel(modelId), {
-          ...ctx,
-          announced: new Set(announcedInsertFx.slice(mark)),
-          ratesSeen: announcedRates.map((r) => r.hz),
-        });
+        const model = getModel(modelId);
+        return new Set([
+          ...insertFxHoldKeys(model, {
+            ...ctx,
+            announced: new Set(announcedInsertFx.slice(mark)),
+            ratesSeen: announcedRates.map((r) => r.hz),
+          }),
+          ...sourceChoiceHoldKeys(model, ctx),
+        ]);
       },
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
@@ -2257,6 +2293,16 @@ function loadFromText(text: string, path?: string): boolean | null {
     // because the plan the operator is deciding about is this one.
     const ranged = problems.filter((p) => p.reason === "paramRange");
     applyParamRange(next, ranged);
+    // …and a receiver the unit never leaves without a source gets the one a new plan carries,
+    // reported on the same line: the write then sends a selection the document did not name.
+    // Recorded as the fill's, so the write confirm names that receiver when the write moves it.
+    const supplied = problems.filter((p) => p.reason === "requiredSource");
+    applyRequiredSources(getModel(next.modelId), next, supplied);
+    markSource(
+      next,
+      supplied.map((p) => connectionContestKey(p.from, p.to)),
+      "default",
+    );
     // …and then completed from the model's factory values. A document carries only what
     // someone wrote in it, and what it omits is a key the panel draws a default for and the
     // write does not send — one channel on screen, another on the wire. Run here, after the
@@ -2277,6 +2323,12 @@ function loadFromText(text: string, path?: string): boolean | null {
       for (const name of sceneExternalParamNames(next)) {
         markSource(next, [name], plan.paramSource?.get(name) ?? "default");
       }
+      // The same for the device-wide wires, whose record is the one a load completion leaves.
+      for (const c of next.connections.filter(isSceneExternalConnection)) {
+        const name = connectionContestKey(c.from, c.to);
+        const from = plan.paramSource?.get(name);
+        if (from !== undefined) markSource(next, [name], from);
+      }
     }
     const finishLoad = (): boolean => {
       // Refused (a device read holds the plan): loadPlan said so, and the caller must
@@ -2295,6 +2347,7 @@ function loadFromText(text: string, path?: string): boolean | null {
       const notes = [
         ...(boundCount > 0 ? [t().status.paramsBounded(boundCount)] : []),
         ...(dropCount > 0 ? [t().status.paramsDropped(dropCount)] : []),
+        ...(supplied.length > 0 ? [t().status.streamingSourceSupplied] : []),
       ];
       const line = (what: string): string => [...notes, what].join(" — ");
       if (path) {
@@ -3039,6 +3092,9 @@ if (!DEMO) {
               return applyDeviceStateScoped(into, controller.signal);
             },
             switchTo ? undefined : planWrites,
+            // Paired with the witness above: with no witness there is no authorship to
+            // arbitrate on, and the model this asks would be the one the switch is leaving.
+            switchTo ? undefined : (ctx) => sourceChoiceHoldKeys(getModel(modelId), ctx),
           );
         } finally {
           switchRead = null;
@@ -3054,6 +3110,7 @@ if (!DEMO) {
         // the switch is applied only by a complete read, as a live start's is, so an
         // incomplete one switches nothing, puts nothing it read on screen and leaves the
         // badge as it was — and is still reported below, as any incomplete fetch is.
+        let supplied: string | null = null;
         if (!switchTo || !merged.errors.length) {
           if (switchTo && !applyModelSwitch(switchTo)) return;
           // The undo history re-bases as the read lands, whether or not its values changed
@@ -3063,6 +3120,9 @@ if (!DEMO) {
           planReadFromDevice();
           noteMergeConflicts(merged);
           notePatchFromDevice(merged.devicePatch);
+          // STREAMING holds a source whatever the unit answered, so a read that found none
+          // supplies one before the board is drawn.
+          supplied = supplyUnsourced(merged);
           // A link that dropped part-way leaves the badge unknown, as a session's drop does
           // (stopLiveOnError).
           setFollowUsbBadge(linkFailureIn(merged.errors) ? null : followUsb);
@@ -3074,26 +3134,25 @@ if (!DEMO) {
         }
         // Nodes the readback tried but could not confirm (left at their plan default).
         const unread = merged.unreadNodes.size;
-        setStatus(
-          merged.errors.length
-            ? // A link that died mid-read is named rather than counted, for the reason
-              // linkFailureIn gives; the per-group reasons stay in the report below.
-              // An incomplete read into the switch's plan applied nothing, and says that instead
-              // of a count.
-              (linkFailureIn(merged.errors) ??
-                (switchTo
-                  ? t().status.fetchSwitchIncomplete(merged.errors.length, device.model, modelId)
-                  : t().status.fetchPartial(merged.applied, merged.errors.length, unread)))
-            : unread
-              ? t().status.fetchedUnread(device.model, merged.applied, unread)
-              : t().status.fetchedDevice(device.model, merged.applied),
-        );
+        const outcome = merged.errors.length
+          ? // A link that died mid-read is named rather than counted, for the reason
+            // linkFailureIn gives; the per-group reasons stay in the report below.
+            // An incomplete read into the switch's plan applied nothing, and says that instead
+            // of a count.
+            (linkFailureIn(merged.errors) ??
+            (switchTo
+              ? t().status.fetchSwitchIncomplete(merged.errors.length, device.model, modelId)
+              : t().status.fetchPartial(merged.applied, merged.errors.length, unread)))
+          : unread
+            ? t().status.fetchedUnread(device.model, merged.applied, unread)
+            : t().status.fetchedDevice(device.model, merged.applied);
+        setStatus(supplied ? [supplied, outcome].join(" — ") : outcome);
         // Read failures AND values the merge did not apply are otherwise console-only,
         // and a packaged build has no inspector to read a console in: capture a report
         // to offer after disconnect (below). The two travel together because both are
         // "what this fetch did not do", and neither is visible from the status line —
         // which says a plain success when only the second happened.
-        if (merged.errors.length || merged.unplaced.length) {
+        if (merged.errors.length || merged.unplaced.length || merged.held.length) {
           report = {
             filename: `${device.model}-fetch-report.md`,
             markdown: formatReadbackReport(device.model, merged),
@@ -3565,6 +3624,9 @@ if (!DEMO) {
         await releaseLive(device.epoch, "off");
         setStatus(status);
       };
+      // The note a supplied STREAMING source leads the status line with, kept there when the
+      // start fails after the supply.
+      let supplied: string | null = null;
       const failLive = async (message: string): Promise<void> => {
         // live.begin() flips LiveSync.active before the awaited follow.begin() /
         // vdWatchLink; if one of those throws we land here with a half-started
@@ -3575,7 +3637,7 @@ if (!DEMO) {
         follow?.end();
         live?.end();
         await releaseLive(device.epoch, "error");
-        showError(message);
+        showError(message, supplied ?? "");
       };
       if (!(await confirmFirmware(device))) return await abort(t().status.canceled);
       if (!(await confirmDiscard())) return await abort(t().status.canceled);
@@ -3615,7 +3677,8 @@ if (!DEMO) {
               return applyDeviceStateScoped(into);
             },
             switchTo ? undefined : planWrites,
-            undefined,
+            // Paired with the witness above, as a fetch's is.
+            switchTo ? undefined : (ctx) => sourceChoiceHoldKeys(getModel(modelId), ctx),
             // Only a complete read merges (below).
             (read) => !read.errors.length,
           );
@@ -3646,6 +3709,9 @@ if (!DEMO) {
         planReadFromDevice();
         noteMergeConflicts(merged);
         notePatchFromDevice(merged.devicePatch);
+        // STREAMING holds a source whatever the unit answered, so a read that found none
+        // supplies one before the board is drawn.
+        supplied = supplyUnsourced(merged);
         plan.unreadNodes = merged.unreadNodes;
         rerenderPlan();
         dirty = false;
@@ -3676,7 +3742,15 @@ if (!DEMO) {
         liveEpoch = device.epoch;
         liveSessionUp = true;
         setLiveUi(true);
-        setStatus(t().status.liveOn(device.model, merged.applied));
+        // An edit made while the starting read ran had no session to flush through, so the
+        // plan differs from the snapshot the session just took with nothing else left to
+        // schedule the send — whether the read held that key, lost it, or found the unit
+        // already on the value. A source the read itself supplied is not an edit and waits
+        // for one, as on a fetch. The reconcile paths reach the same send-back through
+        // `reapplyHeld`.
+        if (merged.authored) live.schedule();
+        const on = t().status.liveOn(device.model, merged.applied);
+        setStatus(supplied ? [supplied, on].join(" — ") : on);
       } catch (err) {
         await failLive(t().status.liveError(errorText(err)));
       } finally {

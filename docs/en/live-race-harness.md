@@ -270,7 +270,7 @@ single source of truth. This table states what each case measures.
 | `shape-routing-wire-selectors` | graph | The deliberate NONE sentinel and the accidental hole that says nothing, side by side |
 | `shape-send-emission-wire-presence` | console | The most ordinary operator gesture that reshapes the address set without looking like a mode switch; the read-only FX tap is unfollowable |
 | `shape-refused-and-acked-writes` | mixed | All three refusal shapes, and whether an unclosable diff forms a flush loop |
-| `shape-string-path-writes` | mixed | The writes that bypass the diff engine entirely, benign case beside consequential one; a device-side rename is now delivered and Sweet Spot Data still is not |
+| `shape-string-path-writes` | mixed | The writes that bypass the diff engine entirely, benign case beside consequential one; a device-side rename is now delivered, and so is a Sweet Spot Data preset write, which a refetch repairs |
 | `shape-device-setup-plan-external` | mixed | The params never emitted, read back or registered — so never delivered — and the one intercept hook |
 | `shape-insert-fx-rate-and-slot-availability` | inspector | A constraint expressed as data rather than as an emit gate, and cross-node contention |
 
@@ -389,7 +389,7 @@ must provide the following.
 | n | Post-write read staleness: `staleAfterWrite[addr] = n` makes the next `n` reads after EACH write to that address answer the value it held BEFORE that write, while `mem` stays truthful — the unit ACCEPTED the write and cannot yet report it. Numeric path only. What ENDS the window is not this setting's business: every value-changing write is announced (see below), and that announcement closes any window open on the address whether its scripted reads were spent or not |
 | o | The announcement itself, which is unconditional and needs no case to arm it: a write that CHANGES the value the unit reports is announced `cfg.announceMs` (100, the measured median) after its **ack**. Three silences, all from the one rule — a same-value write (measured: 18 acked in 0-1 ms, none announced), an `ignoreWrites` address (acked and never stored, so nothing it reports moved) and a `diverge`d address (the unit goes on asserting what it already held) |
 
-| p | The same window on the NAME path: `staleAfterWrite` applies to a string address too, so the next `n` reads of it after a `vd_set_str` answer the name it replaced. Measured on a URX44V — 81 ms, so the string path is not exempt and the fake modelled it as exempt for its whole life. **The announcement follows item o's rule too, and both halves of it are measured on this path rather than carried over**: a name write that changes the reported name is announced `announceMs` after its ack and closes the window (32 writes over two runs announced after their own ack, 32/32, at ack+1-102 ms — most of them 66-102, with 2 of the 32 under 10 ms, a low tail the numeric spread does not have and whose cause is not identified), and a same-value name write announces nothing (acked in 0 ms, silent for 2000 ms, bracketed by a changing write on each side so a dead stream could not pass for a silent device). The app hears it, because name addresses joined the registration set when the follow learned to carry a device-side rename; an address that did not — Sweet Spot Data (param 91) — is still dropped at the bridge. `t1d-name-window` is the case that needed the window |
+| p | The same window on the NAME path: `staleAfterWrite` applies to a string address too, so the next `n` reads of it after a `vd_set_str` answer the name it replaced. Measured on a URX44V — 81 ms, so the string path is not exempt and the fake modelled it as exempt for its whole life. **The announcement follows item o's rule too, and both halves of it are measured on this path rather than carried over**: a name write that changes the reported name is announced `announceMs` after its ack and closes the window (32 writes over two runs announced after their own ack, 32/32, at ack+1-102 ms — most of them 66-102, with 2 of the 32 under 10 ms, a low tail the numeric spread does not have and whose cause is not identified), and a same-value name write announces nothing (acked in 0 ms, silent for 2000 ms, bracketed by a changing write on each side so a dead stream could not pass for a silent device). The app hears it, because name addresses joined the registration set when the follow learned to carry a device-side rename; Sweet Spot Data (param 91) joined it too — the SSMCS mode change's own flush subscribes to it (`t2b-shape-change`). `t1d-name-window` is the case that needed the window |
 Plus a **barrier**: `blockAt({ cmd, nth })` holds a specific command, and `release()` lets it through.
 
 Items n, o and p are the ones the fake lived **without** for its whole life, and the omission was not neutral — see
@@ -1013,13 +1013,14 @@ agreement, zero findings.
   when it is in the registered set (`param_addrs`) or is `BULK_CHANGE`. **An address in no
   registration is undeliverable for the whole session**, and the thirteen SETUP > GENERAL addresses
   are the largest family in that position. **Which addresses those are is no longer "the ones the
-  plan never emits"**: the registration was that set once, and three families have been added to it
-  by hand since — the string-path addresses (`NAME`, `SWEET_SPOT`), and the read-only follows (839
-  microSD Track Count, 193/197/320/324 the CH → FX send taps), which the unit announces and the app
-  now listens for without ever writing them. Under device scope `"scene"` the 64 addresses that scope
-  drops are still undeliverable, **and so is Track Count** — the read-only follows take the same
-  `sceneExternal` filter, because a full read under that scope restores the plan's scene-external
-  values afterwards and a followed 839 would contradict it. The earlier "~1350 reads" figure was the fake answering a stimulus the shipped app
+  plan never emits"**: the registration was that set once, and addresses have been added to it by
+  hand since — the string-path addresses and the follow-only cases, which the unit announces and the
+  app listens for without the emit writing them. They are enumerated in one place, architecture.md,
+  "A write is not readable when it is acked" (the name path, and the follow-only table after it).
+  Under device scope `"scene"` the 65 addresses that scope drops are still undeliverable, **and so
+  are the scene-external follow-only cases** (that section names them) — the follow-only list takes
+  the same `sceneExternal` filter, because a full read under that scope restores the plan's
+  scene-external values afterwards and following one of them would contradict it. The earlier "~1350 reads" figure was the fake answering a stimulus the shipped app
   cannot receive. **The fake now mirrors `absorb`** — `pushNotify` filters per entry against the set
   the session registered, traces a refusal as its own `notify-drop` kind, and only `pushBulkChange`
   bypasses it — so those cases now measure the refusal instead. The consequence is worse than the
@@ -1048,7 +1049,7 @@ agreement, zero findings.
   address-free alternative is still the `BULK_CHANGE` sentinel, which bypasses the filter by contract
 - **WITHDRAWN — "scene write scope doubles the cost of a device-side knob move".** The scene-scoped
   session never registered the address, so its notify is refused: the cost is zero, not double. The
-  honest finding is that **the preference silently blinds device follow to the 64 addresses it drops**
+  honest finding is that **the preference silently blinds device follow to the 65 addresses it drops**
   — a MONITOR_LEVEL or OSC_MODE moved on the unit is never learned, for the rest of the session
 - **WITHDRAWN — "839 / 193 / a device-side rename are expensive to follow (2 full reconciles each)".**
   All three were unfollowable, not expensive: no name address was in the registration (names ride the

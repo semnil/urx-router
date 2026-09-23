@@ -813,6 +813,10 @@ export const en = {
       `${count} stored ${count === 1 ? "value was" : "values were"} outside what this app can write, and now read as the nearest value it can send`,
     paramsDropped: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the effect's own default`,
+    streamingSourceSupplied: tr("The plan named no STREAMING source, so STREAMING takes STEREO"),
+    streamingSourceUnlisted: tr(
+      "The unit's STREAMING was on a state its source list does not offer, so the plan takes STEREO",
+    ),
     recentRemoved: (name: string): string => `Removed ${name} from the recent plans`,
     planSaved: tr("Plan saved"),
     savedTo: (name: string): string => `Saved to ${name}`,
@@ -889,8 +893,12 @@ export const en = {
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: tr("← device…"),
     liveFollowed: (n: number): string => `← device (${n})`,
-    liveHeld: (read: number, held: number): string =>
-      `← device (${read}) · ${held} kept and re-sent (the unit's own sample rate cannot run them)`,
+    liveHeld: (read: number, unrunnable: number, source: number): string =>
+      [
+        `← device (${read})`,
+        ...(unrunnable ? [`${unrunnable} kept and re-sent (the unit's own sample rate cannot run them)`] : []),
+        ...(source ? [`${source} kept and re-sent (a source drawn here while the read ran)`] : []),
+      ].join(" · "),
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} shares device settings with ${kept}${more > 0 ? ` (+${more} more)` : ""} — only ${kept}'s values reach the device`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
@@ -898,6 +906,9 @@ export const en = {
     connected: tr("Connected"),
     connectionDeleted: tr("Connection deleted"),
     fixedConnection: tr("Fixed connection — cannot be removed"),
+    streamingSourceRequired: tr(
+      "STREAMING always has one source, as on the unit — draw another source onto it to replace this one",
+    ),
     noteMinimized: tr("Note minimized"),
     noteExpanded: tr("Note expanded"),
     hidUnused: (n: number): string => `Hid ${n} unused node${n === 1 ? "" : "s"}`,
@@ -1215,8 +1226,20 @@ export const en = {
     liveFollowStopped: tr(
       "Device follow stopped while the session was starting, so a change made on the device would not reach the plan. Live sync was not started.",
     ),
-    followReadHeld: (cause: string, n: number): string =>
-      `${cause}; ${n} setting${n === 1 ? "" : "s"} the unit cleared are still held in the plan`,
+    followReadHeld: (cause: string, unrunnable: number, source: number): string =>
+      [
+        cause,
+        ...(unrunnable
+          ? [
+              `${unrunnable} setting${unrunnable === 1 ? "" : "s"} the unit cleared ${unrunnable === 1 ? "is" : "are"} still held in the plan`,
+            ]
+          : []),
+        ...(source
+          ? [
+              `${source} source${source === 1 ? "" : "s"} drawn here ${source === 1 ? "is" : "are"} still held in the plan`,
+            ]
+          : []),
+      ].join("; "),
     followReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     clockUnread: (message: string): string =>

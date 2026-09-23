@@ -107,7 +107,8 @@ Connection kinds (`kind`):
 
 > A `source` / `patch` / `key` / `record` receiver rejects a second selector wire (only one source can
 > feed it). The one exception is a USB output holding one channel of a MONO IN pair: it takes that
-> channel's partner as its second wire, and no other second wire and no third (§6).
+> channel's partner as its second wire, and no other second wire and no third (§6). STREAMING's
+> source is held to exactly one wire rather than at most one — its list on the unit has no None (§4).
 > The `key` wire shares the blue selector color with `source` on the canvas.
 
 ### 1. Channel input source (`source`, one receiver)
@@ -236,6 +237,22 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
 
 - STREAMING input source ← STEREO OUT / MIX 1 OUT / MIX 2 OUT (with DELAY)
 - MONITOR 1–2 source ← STEREO OUT / MIX 1 OUT / MIX 2 OUT (MONO)
+
+**STREAMING always has exactly one source.** The unit's own source sheet for STREAMING offers STEREO,
+MIX 1 and MIX 2 and no None, while MONITOR's offers None as well. The app keeps STREAMING the same
+way (`DeviceModel.requiredSources`, STEREO being the factory selection): a new plan carries STEREO →
+STREAMING; a document that names no STREAMING source is given that wire at load, and the status line
+says so; drawing another source onto STREAMING replaces the wire it holds, as one undo step; and its
+last wire cannot be deleted — the Inspector offers no delete for it and says how it is replaced. The
+write never sends NONE to the STREAMING selector (705 / 706). A unit can still hold NONE there, since a
+software write reaches it: a Fetch or a Live-sync start that finds it gives the plan STEREO in its place
+and says so on the status line, and the next write brings the unit to STEREO (in a Live session, the flush
+the operator's next edit starts). A read that finds a source the list does not offer (a channel's slot) does not take it —
+STREAMING is left unread, and Live sync does not start. A plan can still hold no STREAMING wire after a
+follow read or a `.urxf` import that finds NONE, and after an undo or redo that removes the wire —
+undoing a source drawn onto such a plan, or replaying an entry after a device read has moved STREAMING's
+source under it. A write of such a plan sends nothing to that selector, so the unit keeps its state
+until a source is drawn onto STREAMING.
 
 The STREAMING channel carries a **DELAY** (the DELAY screen, STREAMING channel only): an on/off, a
 **Delay Time** (1.00 … 1000.00 ms, 0.01 ms steps), and a **Frame rate** selector (24 / 25 / 29.97D /

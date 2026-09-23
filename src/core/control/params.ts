@@ -564,7 +564,8 @@ export const PARAMS = {
   /** Analog output patch source L/R (y = 0/1). Raw bus port ref. */
   OUT_PATCH_MAIN: { id: 730, encoding: "portRef", sceneExternal: true },
   OUT_PATCH_LINE: { id: 731, encoding: "portRef", sceneExternal: true },
-  /** Streaming source select L/R (y = 0). Tagged port ref (0x80000000 | port). */
+  /** Streaming source select L/R (y = 0). Tagged port ref (0x80000000 | port). The unit's list
+   *  offers STEREO / MIX 1 / MIX 2 and no None, so the emit never sends NONE here. */
   STREAM_SRC_L: { id: 705, encoding: "portRefTagged", sceneExternal: true },
   STREAM_SRC_R: { id: 706, encoding: "portRefTagged", sceneExternal: true },
   /** USB output source select (y = 0 and 1, the L/R pair). Raw port ref: one bus

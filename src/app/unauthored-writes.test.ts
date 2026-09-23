@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cmdAddr, planToCommands } from "../core/control/translate";
-import { nodeParamContestPath } from "../core/plan-history";
+import { connectionContestKey, nodeParamContestPath } from "../core/plan-history";
 import { markParamSource } from "./param-source";
 import type { ParamSource, Plan } from "../core/plan";
 import { getModel } from "../models";
@@ -403,5 +403,58 @@ describe.each(["compOn", "eqOn"] as const)("an SSMCS %s the document wrote", (le
     const plan = withSsmcs();
     plan.paramSource!.set(nodeParamContestPath("ch1", leaf), "default");
     expect(unauthoredWriteNodes(MODEL, plan, "all", addrs(plan))).toEqual(["ch1"]);
+  });
+});
+
+// A routing selector's value is a wire, and every wire is on the board. The one the note names
+// is the wire the load completed — STREAMING's STEREO for a document that named no STREAMING
+// source — recorded `default` under the wire's own contest name. Every other record, and a wire
+// nothing recorded, is the board as the operator left it.
+describe("a routing wire the load completed", () => {
+  const STREAM_WIRE = connectionContestKey("bus.stereo:out", "bus.stream:in");
+  /** A plan whose every parameter the document wrote, holding the factory STEREO -> STREAMING. */
+  const authored = (): Plan => {
+    const plan = filledPlan();
+    for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "load");
+    expect(
+      plan.connections.filter((c) => c.to === "bus.stream:in").map((c) => c.from),
+      "the premise: the plan holds STEREO -> STREAMING",
+    ).toEqual(["bus.stereo:out"]);
+    return plan;
+  };
+  const streamAddrs = (plan: Plan): Set<number> => {
+    const sel = planToCommands(MODEL, plan, "all").filter(
+      (c) => c.node === "bus.stream" && /^STREAM_SRC_/.test(c.name),
+    );
+    expect(sel.length, "the premise: the selector reaches the wire").toBe(2);
+    return new Set(sel.map(cmdAddr));
+  };
+
+  it.each<[ParamSource | undefined, boolean]>([
+    ["default", true],
+    ["load", false],
+    ["manual", false],
+    ["device", false],
+    [undefined, false],
+  ])("names STREAMING when the write moves a wire recorded as %s: %s", (source, reported) => {
+    const plan = authored();
+    if (source) markParamSource(plan, [STREAM_WIRE], source);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", streamAddrs(plan)).includes("bus.stream")).toBe(reported);
+  });
+
+  // What it warns about is the write: a unit already on STEREO is not moved by it.
+  it("says nothing when the write does not move the selector", () => {
+    const plan = authored();
+    markParamSource(plan, [STREAM_WIRE], "default");
+    const others = new Set([...everyAddr(plan)].filter((a) => !streamAddrs(plan).has(a)));
+    expect(unauthoredWriteNodes(MODEL, plan, "all", others)).not.toContain("bus.stream");
+  });
+
+  // …and a scene-scoped write does not send the selector at all.
+  it("leaves it out of a scene-scoped write", () => {
+    const plan = authored();
+    markParamSource(plan, [STREAM_WIRE], "default");
+    expect(unauthoredWriteNodes(MODEL, plan, "all", everyAddr(plan))).toContain("bus.stream");
+    expect(unauthoredWriteNodes(MODEL, plan, "scene", everyAddr(plan))).not.toContain("bus.stream");
   });
 });

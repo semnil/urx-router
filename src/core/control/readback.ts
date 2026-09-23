@@ -5,7 +5,7 @@
 // onto its fixed STEREO send so the inspector shows the on-device level and pan.
 
 import type { DeviceModel } from "../../models/types";
-import { ref } from "../../models/types";
+import { isSingleInput, ref } from "../../models/types";
 import type {
   ConnParams,
   EqBand,
@@ -28,6 +28,8 @@ import {
 import {
   applyPatchInContext,
   clonePlanState,
+  connectionContestKey,
+  isConnectionLabel,
   diffPlans,
   dropAuthored,
   nodeParamContestKey,
@@ -57,7 +59,7 @@ import {
   mergeReadInsertFxParams,
   qualifyInsertFxParams,
 } from "./insert-fx-effect";
-import { monoPairOf, pairPrimary } from "../routing";
+import { monoPairOf, pairPrimary, requiresSource, ruleKind } from "../routing";
 import { isSceneExternalConnection } from "../scene-scope";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
@@ -228,6 +230,21 @@ export interface ReadbackResult {
    * a question about the hardware from without checking which read filled it.
    */
   deviceSampleRate?: number;
+  /**
+   * Receivers the unit never leaves without a source (`DeviceModel.requiredSources`) that this
+   * read found holding NONE, a state their own source list does not offer. The read reflects it
+   * as no wire, so the plan it wrote into holds the unit's own state; what the plan on screen
+   * holds instead is the caller's to decide. Absent when the read found none.
+   */
+  unsourced?: string[];
+  /**
+   * The same receivers, where this read did not establish the source at all: a read that
+   * failed, a port it could not decode, a source outside the receiver's list. The plan's own
+   * wire stands there, and the receiver is in `unreadNodes` as well — which cannot say the
+   * source was what went unread, since the node carries other reads (STREAMING's DELAY).
+   * Absent when there was none.
+   */
+  sourceUnread?: string[];
 }
 
 /** A node's fixed main path into STEREO — the send connection carrying its
@@ -692,6 +709,8 @@ async function readPass(
   const failed = new Set<string>();
   let applied = 0;
   let deviceSampleRate: number | undefined;
+  const unsourced: string[] = [];
+  const sourceUnread: string[] = [];
 
   for (const node of model.nodes) {
     signal?.throwIfAborted();
@@ -1246,14 +1265,37 @@ async function readPass(
     if (!want(to)) continue;
     if (skipSceneExternal && isSceneExternalConnection({ from: "", to: ref(to, "in"), kind })) continue;
     attempted.add(to);
+    // A receiver the unit never leaves without a source offers exactly the sources its rules
+    // name, and NONE is not one of them.
+    const required = requiresSource(model, ref(to, "in"));
+    // Every way this selector's read fails: said in `errors`, the receiver flagged unread, and
+    // a required receiver named in `sourceUnread` too, since its node carries other reads.
+    const refuse = (message: string): void => {
+      errors.push(message);
+      failed.add(to);
+      if (required) sourceUnread.push(to);
+    };
     try {
       const portL = vdToPortRef(await vdGet(PARAMS[pl].id, 0, yl));
       const portR = vdToPortRef(await vdGet(PARAMS[pr].id, 0, yr));
       const srcL = portL === null ? null : nodeForPort(model, portL);
       const srcR = portR === null ? null : nodeForPort(model, portR);
       if (portL === null && portR === null) {
+        // Taken as the unit holds it — no wire — and named in `unsourced`, since NONE on such a
+        // receiver is a state its own list does not offer. The caller decides what the plan
+        // then holds; this read's own view stays the unit's.
         clearIncoming(plan, ref(to, "in"), kind);
+        if (required) unsourced.push(to);
         applied++;
+      } else if (
+        srcL !== null &&
+        srcL === srcR &&
+        required &&
+        ruleKind(model, ref(srcL, "out"), ref(to, "in")) === undefined
+      ) {
+        // A source that receiver's list does not offer is not one to take into the plan, nor
+        // to write back: the plan's own wire stays, flagged as a value this read did not get.
+        refuse(`${to}: source port ${portL} names ${srcL}, which is not in its source list`);
       } else if (srcL !== null && srcL === srcR) {
         setExclusiveConnection(plan, ref(srcL, "out"), ref(to, "in"), kind);
         applied++;
@@ -1279,16 +1321,14 @@ async function readPass(
         // built on it. The two are separate sentences because they are separate states:
         // a port this build does not know, and two ports it knows separately.
         const undecoded = [portL, portR].find((p) => p !== null && nodeForPort(model, p) === null);
-        errors.push(
+        refuse(
           undecoded !== undefined && undecoded !== null
             ? `${to}: unknown source port ${undecoded}`
             : `${to}: source ports ${portL ?? "NONE"} / ${portR ?? "NONE"} name neither one source nor a mono pair`,
         );
-        failed.add(to);
       }
     } catch (e) {
-      errors.push(`${to}: ${e instanceof Error ? e.message : String(e)}`);
-      failed.add(to);
+      refuse(`${to}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -1353,7 +1393,14 @@ async function readPass(
   // never attempted (inputs, record-track slots) and fully-read nodes stay out.
   const unreadNodes = new Set<string>();
   for (const id of attempted) if (failed.has(id)) unreadNodes.add(id);
-  return { applied, errors, unreadNodes, deviceSampleRate };
+  return {
+    applied,
+    errors,
+    unreadNodes,
+    deviceSampleRate,
+    ...(unsourced.length ? { unsourced } : {}),
+    ...(sourceUnread.length ? { sourceUnread } : {}),
+  };
 }
 
 /**
@@ -1411,6 +1458,15 @@ export interface MergedRead extends ReadbackResult {
    *  `console.warn`, which is a development aid and reaches nobody in a packaged build
    *  (no `devtools` feature) — so for those paths this really is silent, on purpose. */
   unplaced: string[];
+  /** How many keys an edit funnel authored while the read was in flight — `witness`'s own
+   *  answer, asked before the merge wrote anything so that the merge's writes are not
+   *  counted as the app's. Zero for a read that carries no witness.
+   *
+   *  It is the count of edits the read CONTESTED, whether it lost them (`unplaced`), held
+   *  them (`held`) or found them holding what the unit already had. A caller with nothing
+   *  else to flush those values through reads it: none of the three lists is the plan's
+   *  disagreement with `deviceView`, and each is empty for edits of the third kind. */
+  authored: number;
 }
 
 /**
@@ -1486,6 +1542,55 @@ export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<stri
   return held;
 }
 
+/**
+ * The wires a device read must leave alone: every wire into a single-input receiver whose
+ * incoming wires an edit funnel authored while the read was in flight.
+ *
+ * Such a receiver takes ONE choice — one wire, or the two channels of a MONO IN pair on a
+ * USB output — while the rest of the merge arbitrates per WIRE. A replacing drop records
+ * the removal of the wire it took the place of and the addition of its own, so the removal
+ * is the operator's and leaves the patch with them, and the read's own addition into the
+ * same receiver has nothing left to stop it. Both sources then stand in the plan: the emit
+ * sends the first of them, which is the one nobody chose, and the document a save writes
+ * is one the loader refuses (`singleInput`).
+ *
+ * The receiver is the unit of arbitration, so the read writes NOTHING about the wires into
+ * one the operator chose for. An addition of the unit's own source and a removal of a wire
+ * the operator drew are the two halves of one replacement, and a removal taken on its own
+ * leaves a mono pair half drawn.
+ *
+ * What the read established stays in `deviceView`, which is what the next outgoing diff
+ * measures from, so the operator's choice is what a session then writes to the unit.
+ */
+export function sourceChoiceHoldKeys(model: DeviceModel, ctx: HoldContext): Set<string> {
+  const held = new Set<string>();
+  // Which receivers take one choice is read off the MODEL's own rules rather than off the
+  // wires either plan holds: the kind belongs to the route, and a receiver the operator
+  // emptied carries no wire to read one from.
+  const chosen = new Set<string>();
+  for (const rule of model.rules) {
+    if (!isSingleInput(rule.kind)) continue;
+    if (ctx.authored.has(connectionContestKey(rule.from, rule.to))) chosen.add(rule.to);
+  }
+  if (!chosen.size) return held;
+  for (const conn of [...ctx.before.connections, ...ctx.deviceView.connections]) {
+    if (chosen.has(conn.to)) held.add(connectionContestKey(conn.from, conn.to));
+  }
+  return held;
+}
+
+/** How many of a read's held keys each hold accounts for. `sourceChoiceHoldKeys` is the
+ *  only one that names a wire, so a wire key is a source the operator chose while the read
+ *  ran and every other key is an effect the unit's own rate cannot run
+ *  (`insertFxHoldKeys`). The two are told apart because they are held for opposite reasons
+ *  — one keeps the operator's gesture, the other undoes the unit's — and a reader told
+ *  only a count cannot act on either. */
+export function heldByHold(held: readonly string[]): { source: number; unrunnable: number } {
+  let source = 0;
+  for (const label of held) if (isConnectionLabel(label)) source += 1;
+  return { source, unrunnable: held.length - source };
+}
+
 /** What a hold is decided from: the plan as the read found it, what the read wrote into
  *  its private copy, the rate the read established on the unit (absent when it read none),
  *  and the keys an edit funnel authored while it was in flight — which the merge has
@@ -1553,12 +1658,13 @@ const INSERT_FX_KEYS = ["insertFx", "insertFxOn", "insertFxParams"] as const;
  * A read that throws propagates with the live plan untouched: the copy is discarded,
  * so an aborted or link-lost read really is "nothing happened".
  *
- * `hold` names keys the plan keeps whatever the device said, for a device-side change
- * the app is about to undo rather than adopt. It is deliberately NOT a change to
- * `deviceView`: the live snapshot re-bases from that, so the device's own value has to
- * stay in it — the difference between it and the plan is what the next outgoing diff
- * writes back, and a `deviceView` edited to agree with the plan would leave the app
- * holding an intent it had no way left to send.
+ * `hold` names keys the plan keeps whatever the device said: a device-side change the app
+ * is about to undo rather than adopt (insertFxHoldKeys), or a choice the operator made
+ * that the device's own answer may not join rather than replace (sourceChoiceHoldKeys).
+ * It is deliberately NOT a change to `deviceView`: the live snapshot re-bases from that,
+ * so the device's own value has to stay in it — the difference between it and the plan is
+ * what the next outgoing diff writes back, and a `deviceView` edited to agree with the
+ * plan would leave the app holding an intent it had no way left to send.
  *
  * `accept` is asked once the read has returned, before anything is merged. A read it
  * refuses writes nothing into the plan, the same as a read that threw, and still returns
@@ -1579,10 +1685,18 @@ export async function readIntoPlan(
   try {
     const result = await read(target);
     if (current() !== plan) return null;
-    if (accept && !accept(result)) return { ...result, deviceView: target, devicePatch: [], unplaced: [], held: [] };
     // Taken before anything is written, so the merge's own writes are not read back as
     // the app's authorship by a read still in flight beside this one.
     const authored = watch?.authored();
+    if (accept && !accept(result))
+      return {
+        ...result,
+        deviceView: target,
+        devicePatch: [],
+        unplaced: [],
+        held: [],
+        authored: authored?.size ?? 0,
+      };
     // The patch is filtered rather than the apply, so what this read is allowed to
     // author is one list: the history baseline absorbs the same devicePatch, and a key
     // absorbed but not applied would put a value the app never wrote into the next
@@ -1600,7 +1714,7 @@ export async function readIntoPlan(
       }) ?? new Set<string>();
     const { patch: devicePatch, dropped: held } = dropAuthored(contested, holdKeys);
     const unplaced = [...applyPatchInContext(plan, devicePatch), ...dropped];
-    return { ...result, deviceView: target, devicePatch, unplaced, held };
+    return { ...result, deviceView: target, devicePatch, unplaced, held, authored: authored?.size ?? 0 };
   } finally {
     watch?.close();
   }
@@ -1941,7 +2055,7 @@ async function readSsmcs(source: ParamSource, y: number): Promise<SsmcsParams> {
  */
 export function formatReadbackReport(
   model: string,
-  result: ReadbackResult & Partial<Pick<MergedRead, "unplaced">>,
+  result: ReadbackResult & Partial<Pick<MergedRead, "unplaced" | "held">>,
 ): string {
   const lines: string[] = [];
   lines.push(`# URX readback report — ${model}`);
@@ -1974,6 +2088,18 @@ export function formatReadbackReport(
     // A wire key joins its two refs with a separator a document must not carry;
     // plan-history owns that encoding and undoes it.
     for (const key of result.unplaced) lines.push(`- ${readableContestKey(key)}`);
+  }
+  if (result.held?.length) {
+    lines.push("");
+    // The other half of the same event, and the half the section above cannot state: the
+    // operator's own edit is listed there as one that stands, while what the unit answered
+    // is named here as one the plan did not take.
+    lines.push("## Device values the plan kept its own answer to");
+    lines.push("");
+    lines.push("Each is a value the unit holds that the plan keeps on purpose: a source chosen here while");
+    lines.push("the read was in flight, or an effect the unit's own sample rate cannot run.");
+    lines.push("");
+    for (const key of result.held) lines.push(`- ${readableContestKey(key)}`);
   }
   lines.push("");
   return lines.join("\n");

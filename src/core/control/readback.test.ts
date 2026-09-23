@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections, type Plan, type PlanConnection } from "../plan";
+import { emptyPlan, ensureFixedConnections, setExclusiveConnection, type Plan, type PlanConnection } from "../plan";
 import { ref } from "../../models/types";
 
 // readback.ts pulls live values through platform.vdGet, so mock that module: the
@@ -11,7 +11,7 @@ import { vdGet, vdGetStr } from "../platform";
 import { COLOR_PALETTE, dGainParam, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS, silentKey } from "./params";
 import { fxEffectTypes, fxParams } from "./fx-effect";
 import { defaultPlan } from "../../models/initial-state";
-import { applyDeviceState, applySilentState, formatReadbackReport } from "./readback";
+import { applyDeviceState, applySilentState, formatReadbackReport, heldByHold } from "./readback";
 import { readableContestKey } from "../plan-history";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -137,8 +137,9 @@ function richPlan(): Plan {
   });
 
   // Routing selectors: streaming source + monitor1 source from a MIX bus; an
-  // input source on CH2; an output patch on out.main.
-  plan.connections.push({ from: "bus.mix1:out", to: "bus.stream:in", kind: "source" });
+  // input source on CH2; an output patch on out.main. STREAMING's MIX 1 takes the
+  // place of the STEREO a new plan carries, since it holds one source.
+  setExclusiveConnection(plan, "bus.mix1:out", "bus.stream:in", "source");
   plan.connections.push({ from: "bus.mix2:out", to: "bus.mon1:in", kind: "source" });
   plan.connections.push({ from: "in.aux:out", to: "ch2:in", kind: "source" });
   plan.connections.push({ from: "bus.stereo:out", to: "out.main:in", kind: "patch" });
@@ -586,6 +587,101 @@ describe("applyDeviceState round-trip", () => {
 
     expect(result.errors).toEqual([]);
     expect(target.connections.some((c) => c.to === ref("bus.stream", "in") && c.kind === "source")).toBe(false);
+  });
+});
+
+// STREAMING's source list on the unit is STEREO / MIX 1 / MIX 2 and nothing else. NONE there is
+// taken as the unit holds it — the read's own view has no wire — and named in `unsourced`, for
+// the caller to give the plan what that list offers; a decoded source outside the list is not
+// taken at all. MONITOR's list offers None and more, so neither applies to it.
+describe("applyDeviceState and STREAMING's source list", () => {
+  const TAGGED = (port: number): number => (0x80000000 | port) >>> 0;
+  const streamSources = (plan: Plan): string[] =>
+    plan.connections.filter((c) => c.to === ref("bus.stream", "in")).map((c) => c.from);
+  const fresh = (): Plan => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    return plan;
+  };
+
+  it("reflects NONE as no wire, and names STREAMING — and only STREAMING — as unsourced", async () => {
+    const target = fresh();
+    mockVdGetFrom(new Map());
+    const result = await applyDeviceState(model, target);
+    expect(result.errors).toEqual([]);
+    expect(streamSources(target)).toEqual([]);
+    expect(result.unsourced).toEqual(["bus.stream"]);
+    expect(result.sourceUnread).toBeUndefined();
+    expect(result.unreadNodes.has("bus.stream")).toBe(false);
+    // The control: MONITOR 1 read NONE as well, cleared the same way and not named.
+    expect(target.connections.some((c) => c.to === ref("bus.mon1", "in"))).toBe(false);
+  });
+
+  it("names nothing when STREAMING holds a source its list offers", async () => {
+    const target = fresh();
+    mockVdGetFrom(
+      new Map([
+        ["705:0:0", TAGGED(290)],
+        ["706:0:0", TAGGED(291)],
+      ]),
+    );
+    const result = await applyDeviceState(model, target);
+    expect(result.errors).toEqual([]);
+    expect(streamSources(target)).toEqual(["bus.mix2:out"]);
+    expect(result.unsourced).toBeUndefined();
+    expect(result.sourceUnread).toBeUndefined();
+  });
+
+  it("does not take a channel's slot at STREAMING: the plan's wire stays, unread", async () => {
+    const target = fresh();
+    mockVdGetFrom(
+      new Map([
+        ["705:0:0", 0],
+        ["706:0:0", 0],
+        // The control: the same slot at MONITOR 1 is taken, as every other selector takes
+        // what it decodes.
+        [`${PARAMS.MONITOR_SRC_L.id}:0:0`, 0],
+        [`${PARAMS.MONITOR_SRC_R.id}:0:0`, 0],
+      ]),
+    );
+    const result = await applyDeviceState(model, target);
+    expect(streamSources(target)).toEqual(["bus.stereo:out"]);
+    expect(result.errors).toEqual(["bus.stream: source port 0 names ch1, which is not in its source list"]);
+    expect(result.unreadNodes.has("bus.stream")).toBe(true);
+    expect(result.sourceUnread).toEqual(["bus.stream"]);
+    expect(result.unsourced).toBeUndefined();
+    expect(target.connections.filter((c) => c.to === ref("bus.mon1", "in")).map((c) => c.from)).toEqual(["ch1:out"]);
+  });
+
+  // `unreadNodes` names the node, which carries STREAMING's DELAY as well; `sourceUnread` is what
+  // says the source itself went unread, and only for a receiver the unit never leaves without one.
+  it("names STREAMING in sourceUnread when its source read fails, and not when only its DELAY or MONITOR's source does", async () => {
+    const failing = (id: number) => {
+      const table = deviceTableFor(fresh());
+      vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+        if (paramId === id) return Promise.reject(new Error("read timeout"));
+        const hit = table.get(`${paramId}:${x}:${y}`);
+        return Promise.resolve(hit ?? (PORT_REF_PARAMS.has(paramId) ? PORT_REF_NONE : 0));
+      });
+    };
+    failing(PARAMS.STREAM_SRC_R.id);
+    let target = fresh();
+    let result = await applyDeviceState(model, target);
+    expect(result.sourceUnread).toEqual(["bus.stream"]);
+    expect(result.unreadNodes.has("bus.stream")).toBe(true);
+    expect(streamSources(target)).toEqual(["bus.stereo:out"]);
+
+    failing(PARAMS.STREAM_DELAY_TIME.id);
+    target = fresh();
+    result = await applyDeviceState(model, target);
+    expect(result.unreadNodes.has("bus.stream"), "the premise: the node is unread").toBe(true);
+    expect(result.sourceUnread).toBeUndefined();
+
+    failing(PARAMS.MONITOR_SRC_R.id);
+    target = fresh();
+    result = await applyDeviceState(model, target);
+    expect(result.unreadNodes.has("bus.mon1"), "the premise: MONITOR's source read failed").toBe(true);
+    expect(result.sourceUnread).toBeUndefined();
   });
 });
 
@@ -1294,6 +1390,53 @@ describe("formatReadbackReport", () => {
     });
     expect(md).not.toMatch(/no longer in the plan/i);
     expect(md).toMatch(/edited here while the read was in flight/i);
+  });
+
+  // The other half of a source the operator replaced while the read ran: the section
+  // above lists their own edit as one that stands, and the unit's answer is nowhere in
+  // the report unless this one names it.
+  it("lists the device values the plan kept its own answer to", () => {
+    const md = formatReadbackReport("URX44V", {
+      applied: 40,
+      errors: [],
+      unreadNodes: new Set(),
+      unplaced: ["connections bus.stereo:out\u0000bus.stream:in"],
+      held: ["connections bus.mix1:out\u0000bus.stream:in"],
+    });
+    expect(md).toContain("## Device values the plan kept its own answer to");
+    expect(md).toContain("- connections bus.mix1:out -> bus.stream:in");
+    expect(md).not.toContain("\u0000");
+  });
+
+  it("omits the kept section for a read that held nothing", () => {
+    const md = formatReadbackReport("URX44V", { applied: 40, errors: [], unreadNodes: new Set(), held: [] });
+    expect(md).not.toContain("## Device values the plan kept");
+  });
+});
+
+// The two holds are kept apart because they are held for opposite reasons: one keeps the
+// operator's own gesture against the unit, the other undoes the unit's own change.
+describe("heldByHold", () => {
+  it("counts a wire key as the source the operator chose", () => {
+    expect(heldByHold(["connections bus.mix1:out\u0000bus.stream:in"])).toEqual({ source: 1, unrunnable: 0 });
+  });
+
+  it("counts every other key as an effect the unit's rate cannot run", () => {
+    expect(heldByHold(["nodeParams ch1.insertFx", "nodeParams ch1.insertFxOn"])).toEqual({
+      source: 0,
+      unrunnable: 2,
+    });
+  });
+
+  it("splits a read that held both", () => {
+    expect(heldByHold(["nodeParams ch1.insertFx", "connections bus.mix1:out\u0000bus.stream:in"])).toEqual({
+      source: 1,
+      unrunnable: 1,
+    });
+  });
+
+  it("counts nothing for a read that held nothing", () => {
+    expect(heldByHold([])).toEqual({ source: 0, unrunnable: 0 });
   });
 });
 

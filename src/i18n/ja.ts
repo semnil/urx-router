@@ -618,6 +618,8 @@ export const ja: Messages = {
       `このアプリが書き込める範囲の外にあった保存値 ${count} 件を、送信できる最も近い値に寄せました`,
     paramsDropped: (count: number): string =>
       `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、エフェクト自身の既定値を使います`,
+    streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
+    streamingSourceUnlisted: "本体の STREAMING が一覧に無い状態だったため、計画では STEREO にしました",
     planLoaded: "計画を読み込みました",
     recentRemoved: (name: string): string => `${name} を最近使った計画から削除しました`,
     planSaved: "計画を保存しました",
@@ -688,8 +690,12 @@ export const ja: Messages = {
     liveSynced: (n: number): string => `→ デバイス (${n})`,
     liveFollowing: "← デバイス…",
     liveFollowed: (n: number): string => `← デバイス (${n})`,
-    liveHeld: (read: number, held: number): string =>
-      `← デバイス (${read}) · ${held} 件を保持して再送 (実機のサンプルレートでは動かせない設定)`,
+    liveHeld: (read: number, unrunnable: number, source: number): string =>
+      [
+        `← デバイス (${read})`,
+        ...(unrunnable ? [`${unrunnable} 件を保持して再送 (実機のサンプルレートでは動かせない設定)`] : []),
+        ...(source ? [`${source} 件を保持して再送 (読み取り中にここで描いたソース)`] : []),
+      ].join(" · "),
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} は ${kept} と本体上の設定を共有しています${more > 0 ? ` (他 ${more} 件)` : ""} — 本体に届くのは ${kept} の値だけです`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
@@ -697,6 +703,8 @@ export const ja: Messages = {
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",
     fixedConnection: "固定接続は削除できません",
+    streamingSourceRequired:
+      "STREAMING は本体と同じく常に 1 つのソースを持ちます — 差し替えるには別のソースを STREAMING へ接続してください",
     noteMinimized: "ノートを最小化しました",
     noteExpanded: "ノートを展開しました",
     hidUnused: (n: number): string => `未接続の ${n} ノードを非表示にしました`,
@@ -955,7 +963,12 @@ export const ja: Messages = {
       `${n} 件の設定を読み取れず、デバイスの状態を完全には把握できません。Live sync の開始には完全な読み取りが必要です。`,
     liveFollowStopped:
       "セッション開始中にデバイス追従が停止したため、実機側の変更がプランに届かない状態でした。Live sync は開始していません。",
-    followReadHeld: (cause: string, n: number): string => `${cause}。実機が消去した ${n} 件はプランに保持したまま`,
+    followReadHeld: (cause: string, unrunnable: number, source: number): string =>
+      [
+        cause,
+        ...(unrunnable ? [`実機が消去した ${unrunnable} 件はプランに保持したまま`] : []),
+        ...(source ? [`ここで描いたソース ${source} 件はプランに保持したまま`] : []),
+      ].join("。"),
     followReadIncomplete: (n: number): string =>
       `デバイス側の変更後、${n} 件の設定を読み戻せず、プランが実機と一致しなくなりました。取得し直して同期してください。`,
     clockUnread: (message: string): string =>

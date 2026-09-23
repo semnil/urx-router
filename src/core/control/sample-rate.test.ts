@@ -23,6 +23,10 @@ import { rateAction } from "./client";
 
 const model = getModel("URX44V");
 const SAMPLE_RATE_ID = PARAMS.SAMPLE_RATE.id;
+/** What an address this file does not set answers: 0, except STREAMING's source, whose list
+ *  on the unit offers no value that reads as 0 and which starts on STEREO. */
+const unset = (paramId: number): number =>
+  paramId === PARAMS.STREAM_SRC_L.id ? 0x80000100 : paramId === PARAMS.STREAM_SRC_R.id ? 0x80000101 : 0;
 
 beforeEach(() => {
   vi.mocked(vdGet).mockReset();
@@ -112,7 +116,7 @@ describe("sample rate — readback round-trip", () => {
   });
 
   it("counts the sample-rate read in the applied total", async () => {
-    vi.mocked(vdGet).mockResolvedValue(0);
+    vi.mocked(vdGet).mockImplementation((paramId: number) => Promise.resolve(unset(paramId)));
     const target = emptyPlan("URX44V");
     const before = target.sampleRate;
     const result = await applyDeviceState(model, target);
@@ -129,7 +133,7 @@ describe("sample rate — readback failure isolation", () => {
   it("leaves plan.sampleRate untouched and records an error when its read throws", async () => {
     vi.mocked(vdGet).mockImplementation((paramId: number) => {
       if (paramId === SAMPLE_RATE_ID) return Promise.reject(new Error("read timeout"));
-      return Promise.resolve(0);
+      return Promise.resolve(unset(paramId));
     });
     const target = emptyPlan("URX44V");
     target.sampleRate = 88200; // a known pre-read value to prove it is preserved
