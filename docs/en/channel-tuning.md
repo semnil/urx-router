@@ -388,8 +388,10 @@ the top, where the ladder runs 40:1 to 500:1.
 **Both banks reach the top stop.** `36` keeps ratio×100 at every stop — 500.0:1 is 50000 — and puts
 `INF:1` on 65535, the widest raw the field holds. The unit announced one raw per stop while its own
 control was walked one detent at a time from `INF:1` down to `1.00:1`, and the 121 announcements equal
-the ladder's ratio×100 element for element; writing 65535 puts it on `INF:1`, with 500.0:1 written
-first as the control. `98` needs none of that: the index is the whole encoding.
+the ladder's ratio×100 element for element. The other direction holds at every stop too: each stop's
+raw, written in turn, is announced back unchanged — and an announcement is a change of state here,
+since writing the value the unit already holds announces nothing. `98` needs none of that: the index is
+the whole encoding.
 
 **What the plan carries for the top stop is 655.35, not `Infinity`.** A plan is JSON, and a non-finite
 leaf is one the loader drops — so the value is that raw in the parameter's own unit, and the ×100
