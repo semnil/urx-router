@@ -85,6 +85,13 @@ import {
   STEREO_PAN,
 } from "./params";
 import {
+  COMP_RATIO_CH_STEPS,
+  COMP_RATIO_FINEST_STEP,
+  COMP_RATIO_INF,
+  formatCompRatio,
+  nearestStepIndex,
+} from "./comp-ratio";
+import {
   A_GAIN_MAX_DB,
   A_GAIN_MIN_DB,
   attackToVd,
@@ -793,6 +800,11 @@ export interface DynField {
    *  frequency spans three decades, which a linear slider cannot resolve at the
    *  bottom). Absent = the slider carries the value itself. */
   logSteps?: number;
+  /** The values the control stops on, where they are neither a linear grid nor a
+   *  logarithmic one — the compressor Ratio ladder, whose spacing widens in stages
+   *  across its range. The position is an index into this table, and `step` does not
+   *  reach the control. */
+  steps?: readonly number[];
   /** Step the device's push-and-turn fine mode uses for this value, when it has
    *  one. Confirmed for exactly one dynamics parameter (see the COMP gain row);
    *  every other GATE/COMP/DUCKER value is a measured negative, so this is not a
@@ -887,9 +899,20 @@ const GATE_FIELDS: EmittedDynField[] = [
     unit: "ms",
   },
 ];
+// The channel COMP's Ratio (`36`) offers the stops the unit's own control stops on, ending at
+// the one it writes INF:1 for. The finest spacing on the ladder is 0.05, below 4.00:1.
 const COMP_FIELDS: EmittedDynField[] = [
   { key: "threshold", name: "COMP_THRESHOLD", min: -54, max: 0, step: 1, def: -18, unit: "db" },
-  { key: "ratio", name: "COMP_RATIO", min: DYN_RATIO_MIN, max: 20, step: 0.1, def: 3, unit: "ratio" },
+  {
+    key: "ratio",
+    name: "COMP_RATIO",
+    min: DYN_RATIO_MIN,
+    max: COMP_RATIO_INF,
+    step: COMP_RATIO_FINEST_STEP,
+    def: 3,
+    unit: "ratio",
+    steps: COMP_RATIO_CH_STEPS,
+  },
   { key: "gain", name: "COMP_GAIN", min: 0, max: 18, step: 0.5, def: 2, unit: "db", fineStep: 0.1 },
   {
     key: "attack",
@@ -1066,20 +1089,34 @@ export const DUCKER_FIELDS: EmittedDynField[] = [
  * Value → slider position, and back. Identity for a linear field; for a logarithmic
  * one (an EQ band frequency spans three decades, which a linear slider cannot resolve
  * at the bottom) the position is an index into `logSteps` even divisions of the log
- * range. It lives beside the field table rather than in the screen that draws the
- * slider, because the MIDI catalog has to land on the same values. What shares these
- * two is the LOGARITHMIC field: its codec resolves through them, so a normalized MIDI
- * value and a dragged slider cannot drift on one. A linear field's codec is
- * `linearCodec` on the same min / max / step — it agrees at every position the grid
- * holds and bounds the top itself, which channel-tuning.md "MIDI assignment" states.
+ * range, and for a field with a stop table it is an index into that table. It lives
+ * beside the field table rather than in the screen that draws the slider, because the
+ * MIDI catalog has to land on the same values. What shares these two is every field
+ * that carries POSITIONS: its codec resolves through them, so a normalized MIDI value
+ * and a dragged slider cannot drift on one. A linear field's codec is `linearCodec` on
+ * the same min / max / step — it agrees at every position the grid holds and bounds the
+ * top itself, which channel-tuning.md "MIDI assignment" states.
  */
 export function dynToPos(f: DynField, v: number): number {
+  if (f.steps) return nearestStepIndex(f.steps, v);
   if (f.logSteps === undefined) return v;
   return Math.round((f.logSteps * Math.log(v / f.min)) / Math.log(f.max / f.min));
 }
 export function dynFromPos(f: DynField, pos: number): number {
+  // A position off the table, or one that is not a number, reads as an end of it: an
+  // index outside it answers `undefined`, which is not a value any of this may carry.
+  if (f.steps) return f.steps[Number.isFinite(pos) ? Math.min(f.steps.length - 1, Math.max(0, Math.round(pos))) : 0];
   if (f.logSteps === undefined) return pos;
   return Math.round(f.min * Math.exp((Math.log(f.max / f.min) * pos) / f.logSteps));
+}
+
+/** The range a field's slider runs over: the value itself where the position IS the
+ *  value, and indices where it is not. The one place that decides it, so the two screen
+ *  layouts and the MIDI codec cannot spell it three ways. */
+export function dynPosRange(f: DynField): { min: number; max: number; step: number } {
+  if (f.steps) return { min: 0, max: f.steps.length - 1, step: 1 };
+  if (f.logSteps !== undefined) return { min: 0, max: f.logSteps, step: 1 };
+  return { min: f.min, max: f.max, step: f.step };
 }
 
 /** Format one dynamics value for display, by its unit. The single source for the
@@ -1087,7 +1124,7 @@ export function dynFromPos(f: DynField, pos: number): number {
 export function formatDyn(v: number, unit: DynField["unit"]): string {
   if (unit === "raw") return String(v);
   if (unit === "db") return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
-  if (unit === "ratio") return `${v.toFixed(1)}:1`;
+  if (unit === "ratio") return formatCompRatio(v, "comp");
   if (unit === "hz") return formatHz(v);
   if (unit === "q") return v.toFixed(2);
   return v < 1 ? `${v.toFixed(3)} ms` : `${v.toFixed(1)} ms`;
@@ -1134,7 +1171,12 @@ function pushDynCommands(
 ): void {
   for (const f of fields) {
     const v = vals[f.key];
-    if (v !== undefined) out.push(command(f.name, y, v < f.min ? f.min : v > f.max ? f.max : v));
+    if (v === undefined) continue;
+    const bounded = v < f.min ? f.min : v > f.max ? f.max : v;
+    // A field with a stop table sends a stop. The control offers nothing else, but a plan
+    // saved before it had one — or hand-edited — can hold a value between two, and the unit
+    // has no setting there.
+    out.push(command(f.name, y, f.steps ? f.steps[nearestStepIndex(f.steps, bounded)] : bounded));
   }
 }
 

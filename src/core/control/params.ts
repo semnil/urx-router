@@ -238,7 +238,7 @@ export const PARAMS = {
   SSMCS_COMP_ATTACK: { id: 96, encoding: "raw" },
   /** SSMCS comp release (raw 24..300; logarithmic 9.3..999 ms). */
   SSMCS_COMP_RELEASE: { id: 97, encoding: "raw" },
-  /** SSMCS comp ratio (raw 0..120; non-linear 1.0..∞:1). */
+  /** SSMCS comp ratio (raw 0..120 = the index of a stop, 1.00:1 … INF:1). */
   SSMCS_COMP_RATIO: { id: 98, encoding: "raw" },
   /** SSMCS comp knee (0 = Soft / 1 = Medium / 2 = Hard). */
   SSMCS_COMP_KNEE: { id: 99, encoding: "enum" },

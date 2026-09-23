@@ -57,7 +57,7 @@ import {
   subscribeMeters,
 } from "../core/meters";
 import type { MeterTap } from "../core/meters";
-import { dynFromPos, dynToPos, dynValueText, formatDyn } from "../core/control/translate";
+import { dynFromPos, dynPosRange, dynToPos, dynValueText, formatDyn } from "../core/control/translate";
 import type { DynField } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
 import { processorOn } from "../core/plan";
@@ -2054,11 +2054,12 @@ export class DynScreen {
     const ind = el("i", "ind");
     const input = document.createElement("input");
     input.type = "range";
-    // Positions for a logarithmic field, the value itself otherwise — the same mapping
-    // `paramRow` uses, so a field behaves identically in either layout.
-    input.min = String(f.logSteps === undefined ? f.min : 0);
-    input.max = String(f.logSteps ?? f.max);
-    input.step = String(f.logSteps === undefined ? f.step : 1);
+    // Positions where the field carries them, the value itself otherwise — the same
+    // mapping `paramRow` uses, so a field behaves identically in either layout.
+    const range = dynPosRange(f);
+    input.min = String(range.min);
+    input.max = String(range.max);
+    input.step = String(range.step);
     input.value = String(dynToPos(f, value));
     input.dataset.dyn = f.key;
     input.setAttribute("aria-label", label);
@@ -2105,11 +2106,13 @@ export class DynScreen {
     const ctl = el("span", "ctl dev-slider");
     const input = document.createElement("input");
     input.type = "range";
-    // A logarithmic field carries slider positions, not its value: an EQ band
-    // frequency spans three decades, and a linear slider resolves nothing at 20 Hz.
-    input.min = String(f.logSteps === undefined ? f.min : 0);
-    input.max = String(f.logSteps ?? f.max);
-    input.step = String(f.logSteps === undefined ? f.step : 1);
+    // A logarithmic field and one with a stop table carry slider positions, not their
+    // value: an EQ band frequency spans three decades, and a linear slider resolves
+    // nothing at 20 Hz.
+    const range = dynPosRange(f);
+    input.min = String(range.min);
+    input.max = String(range.max);
+    input.step = String(range.step);
     input.value = String(dynToPos(f, value));
     input.dataset.dyn = f.key;
     input.setAttribute("aria-label", label);

@@ -152,6 +152,12 @@ the device default. The full set:
 - `gate` — `{ threshold, range (dB), attack, hold, decay (ms) }`; `gateOn` (bool).
 - `comp` — `{ threshold, ratio, knee (0/1/2), gain, attack, release,
   autoMakeup, oneKnob, oneKnobLevel }`; `compOn` (bool).
+  `ratio` is a ladder of stops rather than a free range: 0.05 spacing from 1.00
+  to 4.00, then 0.1 to 5.0, 0.2 to 7.0, 0.5 to 10, 1 to 20, 2 to 40, 5 to 70,
+  10 to 100, then 150, 200, 300, 500 and the top stop. A value between two stops
+  loads unchanged but reaches the unit as the nearer stop, so write one of them.
+  The top stop is the unit's `INF:1` and is written as **655.35** (JSON has no
+  infinity to carry).
 - `ducker` — `{ threshold, range (dB), attack, decay (ms) }`; `duckerOn` (bool).
   Set these under the **ducker node's id** (`out.ducker1` …, kind `ducker` in
   the model reference), never under the channel it ducks — a channel id

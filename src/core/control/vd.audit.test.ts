@@ -7,9 +7,7 @@
 // clamp() in vd.ts now traps NaN to its low bound (a NaN comparison is otherwise
 // false, so NaN would flow through unclamped and, reaching vdSet, serialize to
 // `null` in the IPC payload — a malformed broker write). The UI never authors NaN,
-// but a hand-edited or corrupt plan would; these tests lock the firewall in. The
-// one remaining KNOWN GAP (ssmcsRatio negative extrapolation) is unreachable from a
-// real device raw and left as-is.
+// but a hand-edited or corrupt plan would; these tests lock the firewall in.
 
 import { describe, expect, it } from "vitest";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "../plan";
@@ -108,11 +106,17 @@ describe("vd decoder (device→plan) robustness", () => {
 });
 
 describe("SSMCS / preset codec defensive edges (documents current behavior)", () => {
-  it("KNOWN GAP: ssmcsRatio extrapolates below the anchor table into negatives", () => {
-    // The device raw is always in [0, 120] (SSMCS_RATIO_RAW_MIN/MAX), so this is
-    // unreachable in practice, but a raw below 0 linearly extrapolates the first
-    // anchor segment and can go negative rather than clamping to the floor 1.0:1.
-    expect(ssmcsRatio(-5)).toBeLessThan(0);
+  it("ssmcsRatio holds a raw outside the stop table at the end it ran past", () => {
+    // Was a KNOWN GAP: the raw used to interpolate a table of anchors, and one below 0
+    // extrapolated the first segment into negative ratios. The raw is the INDEX of a
+    // stop now, so the ends are the ends. The device raw is always in
+    // [SSMCS_RATIO_RAW_MIN, SSMCS_RATIO_RAW_MAX], so none of this is reachable from a
+    // device read; what it pins is that an unreachable raw cannot produce a ratio the
+    // unit has no stop for.
+    expect(ssmcsRatio(-5)).toBe(1);
+    expect(ssmcsRatio(-1e9)).toBe(1);
+    expect(ssmcsRatio(NaN)).toBe(1);
+    expect(ssmcsRatio(1e9)).toBe(Infinity);
     // In-range floor / ceiling are well-defined (see ssmcs-encoding.test.ts).
     expect(ssmcsRatio(0)).toBe(1);
   });

@@ -6,6 +6,7 @@
 import { LEVEL_MIN_DB } from "../core/plan";
 import { formatHz } from "../core/control/fx-effect";
 import { formatDyn } from "../core/control/translate";
+import { formatCompRatio } from "../core/control/comp-ratio";
 import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ, ssmcsFreqHz, ssmcsGainDb, ssmcsQ } from "../core/control/vd";
 
 // The lowest real value shown is LEVEL_MIN_DB (-96.0); formatDb prints -∞ below it.
@@ -26,12 +27,13 @@ export function formatGainDb(v: number): string {
 }
 
 // SSMCS raw-value display formatters: ms (3-tier to match the device's variable
-// precision) and ratio (∞ at the top). Hz and dB reuse formatHz / formatDyn.
+// precision) and ratio (the strip's own three-figure field). Hz and dB reuse formatHz /
+// formatDyn.
 export function fmtSsmcsMs(ms: number): string {
   return ms < 10 ? `${ms.toFixed(3)} ms` : ms < 100 ? `${ms.toFixed(2)} ms` : `${ms.toFixed(1)} ms`;
 }
 export function fmtSsmcsRatio(r: number): string {
-  return r === Infinity ? "∞:1" : `${r.toFixed(2)}:1`;
+  return formatCompRatio(r, "ssmcs");
 }
 export const fmtSsmcsHz = (raw: number): string => formatHz(ssmcsFreqHz(raw));
 export const fmtSsmcsGain = (raw: number): string => formatDyn(ssmcsGainDb(raw), "db");

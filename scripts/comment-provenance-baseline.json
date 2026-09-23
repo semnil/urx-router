@@ -70,7 +70,6 @@
     "src/core/levels.ts": 3,
     "src/core/meters.test.ts": 1,
     "src/core/meters.ts": 7,
-    "src/core/midi/controls.test.ts": 1,
     "src/core/midi/controls.ts": 1,
     "src/core/midi/echo-repro.test.ts": 1,
     "src/core/midi/engine.test.ts": 2,

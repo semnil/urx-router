@@ -34,6 +34,7 @@ import {
   channelControl,
   channelDynamics,
   dynFromPos,
+  dynPosRange,
   dynToPos,
   eqBandFields,
   eqBandHasType,
@@ -359,10 +360,11 @@ const oneKnobCodec = linearCodec(0, 100, 1);
  *  position the grid holds. The top of a field whose rounded last step lands past its
  *  maximum is the exception — the wire stops on the maximum there and the slider on the
  *  last grid value below it, which is less than one step down. A logarithmic field (an
- *  EQ band frequency) carries positions rather than its value. */
+ *  EQ band frequency) and one with a stop table (the compressor Ratio) carry positions
+ *  rather than their value. */
 function dynCodec(f: DynField): { get(x: number): number; set(v: number): number } {
-  if (f.logSteps === undefined) return linearCodec(f.min, f.max, f.step);
-  const steps = f.logSteps;
+  if (f.logSteps === undefined && f.steps === undefined) return linearCodec(f.min, f.max, f.step);
+  const steps = dynPosRange(f).max;
   return {
     get: (x) => clamp01(dynToPos(f, x) / steps),
     set: (v) => dynFromPos(f, Math.round(clamp01(v) * steps)),

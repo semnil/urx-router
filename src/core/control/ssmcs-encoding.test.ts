@@ -31,8 +31,10 @@ import {
   SSMCS_COMP_DRIVE_MIN,
   SSMCS_COMP_DRIVE_MAX,
   SSMCS_RATIO_RAW_MAX,
+  SSMCS_RATIO_RAW_MIN,
   SWEET_SPOT_DATA_MAX,
 } from "./vd";
+import { COMP_RATIO_STEPS } from "./comp-ratio";
 
 describe("SSMCS raw→display encodings (live LCD calibration)", () => {
   it("EQ/SC frequency = 20 × 10^((raw−4)/40): 20 Hz … 20 kHz, 1/12-oct", () => {
@@ -73,18 +75,47 @@ describe("SSMCS raw→display encodings (live LCD calibration)", () => {
     expect(ssmcsReleaseMs(162)).toBeCloseTo(96.39, 1); // geometric midpoint
   });
 
-  it("Comp ratio interpolates the calibrated anchor table, ∞ at the top", () => {
-    // Anchors: raw 0=1.0, 30=2.5, 60=4.0, 75=6.0, 90=14.0, 105=38.0; top detent = ∞.
-    expect(ssmcsRatio(0)).toBe(1);
+  // The raw is the INDEX of a stop, not a point on a curve, so every raw has an exact
+  // answer and the cases below are spot checks on a table rather than tolerances.
+  it("Comp ratio is the stop at that index, INF:1 at the top", () => {
+    expect(ssmcsRatio(SSMCS_RATIO_RAW_MIN)).toBe(1);
+    expect(ssmcsRatio(1)).toBe(1.05); // 0.05 spacing below 4.00:1
     expect(ssmcsRatio(30)).toBe(2.5);
+    expect(ssmcsRatio(45)).toBe(3.25);
+    expect(ssmcsRatio(59)).toBe(3.95); // the last stop before the spacing widens
     expect(ssmcsRatio(60)).toBe(4);
+    expect(ssmcsRatio(61)).toBe(4.1);
+    expect(ssmcsRatio(70)).toBe(5);
     expect(ssmcsRatio(75)).toBe(6);
+    expect(ssmcsRatio(86)).toBe(10);
     expect(ssmcsRatio(90)).toBe(14);
+    expect(ssmcsRatio(96)).toBe(20);
     expect(ssmcsRatio(105)).toBe(38);
-    expect(ssmcsRatio(45)).toBeCloseTo(3.25, 5); // between anchors 30 and 60
-    expect(ssmcsRatio(SSMCS_RATIO_RAW_MAX)).toBe(Infinity); // raw 120 = ∞:1
-    // Between the last real anchor (105) and the ∞ detent (120): held at 38.
-    expect(ssmcsRatio(110)).toBe(38);
+    expect(ssmcsRatio(110)).toBe(60);
+    expect(ssmcsRatio(115)).toBe(100);
+    expect(ssmcsRatio(119)).toBe(500); // the last finite stop
+    expect(ssmcsRatio(SSMCS_RATIO_RAW_MAX)).toBe(Infinity); // raw 120 = INF:1
+  });
+
+  // Every stop the unit's control offers is one this reaches, and no raw reaches a value
+  // the control does not stop on: the descriptor's own 0..120 is the count of the stops.
+  it("covers the whole range with the stops and nothing else", () => {
+    const seen = new Set<number>();
+    for (let raw = SSMCS_RATIO_RAW_MIN; raw <= SSMCS_RATIO_RAW_MAX; raw++) seen.add(ssmcsRatio(raw));
+    expect(seen.size).toBe(SSMCS_RATIO_RAW_MAX - SSMCS_RATIO_RAW_MIN + 1);
+    expect([...seen]).toEqual([...COMP_RATIO_STEPS]);
+    // Ascending, so a raw one step up is never a smaller ratio.
+    for (let raw = SSMCS_RATIO_RAW_MIN; raw < SSMCS_RATIO_RAW_MAX; raw++) {
+      expect(ssmcsRatio(raw + 1)).toBeGreaterThan(ssmcsRatio(raw));
+    }
+  });
+
+  // A raw outside the table reads as the nearest end of it rather than as a value off
+  // the ladder; the device never sends one, and the app must not invent a stop for it.
+  it("clamps a raw outside the table to its ends", () => {
+    expect(ssmcsRatio(-5)).toBe(1);
+    expect(ssmcsRatio(SSMCS_RATIO_RAW_MAX + 40)).toBe(Infinity);
+    expect(ssmcsRatio(NaN)).toBe(1);
   });
 });
 

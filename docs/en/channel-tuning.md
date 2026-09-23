@@ -367,6 +367,43 @@ the parameter's effect has to stay on scale.
 **No screen in SSMCS.** The morphing strip replaces the compressor, `channelDynamics().comp` is
 null, and neither entry point renders.
 
+### Ratio stops where the unit's control stops
+
+The unit's Ratio is a ladder of detents rather than a range with one step: the spacing is 0.05 from
+1.00:1, widens in stages above 4.00:1 until the last stops are hundreds apart, and ends at 500:1 and
+then `INF:1`. The channel COMP (`36`) and the SSMCS strip's compressor (`98`) stop on the same ratios
+and write them differently — `98` carries the INDEX of the stop, which is what its 0…120 descriptor
+range counts, and `36` carries ratio×100. `core/control/comp-ratio.ts` holds the one table both read,
+in a module of its own because `vd.ts` and `translate.ts` both read it at module scope and the two
+sit inside an import cycle.
+
+The field carries the ladder as a `steps` table, so the slider's position is an index and every
+position it can take is a stop the unit has. It was a linear min 1 / max 20 / step 0.1 before, which
+offered values the unit stops on nowhere (5.1:1, 7.3:1) and reached neither the ladder's top nor the
+0.05 spacing at its bottom. The SSMCS side was an interpolation between six calibration anchors: exact
+below 4.00:1, where the spacing really is uniform and the straight line through it is the ladder;
+wrong at every stop between the anchors above that; and flat at the sixth anchor's 38:1 from there to
+the top, where the ladder runs 40:1 to 500:1.
+
+**Both banks reach the top stop.** `36` keeps ratio×100 at every stop — 500.0:1 is 50000 — and puts
+`INF:1` on 65535, the widest raw the field holds. The unit announced one raw per stop while its own
+control was walked one detent at a time from `INF:1` down to `1.00:1`, and the 121 announcements equal
+the ladder's ratio×100 element for element. The other direction holds at every stop too: each stop's
+raw, written in turn, is announced back unchanged — and an announcement is a change of state here,
+since writing the value the unit already holds announces nothing. `98` needs none of that: the index is
+the whole encoding.
+
+**What the plan carries for the top stop is 655.35, not `Infinity`.** A plan is JSON, and a non-finite
+leaf is one the loader drops — so the value is that raw in the parameter's own unit, and the ×100
+encoder turns it back into 65535 with no case of its own. It is the shape the GATE range's `-∞` notch
+already has: a finite value standing for a sentinel the unit owns. The shared table keeps `Infinity` at
+its top for `98`, whose raw is an index and has no such number to carry, and `COMP_RATIO_CH_STEPS` is
+that table with the one substitution.
+
+The two screens differ in one place: the strip's field fits three figures, so it prints `100:1` where
+the channel COMP prints `100.0:1`. Both print `INF:1` at the top, which is what the unit prints and
+what the Effect Reference Guide's `1.0:1–20:1–500:1, INF:1` names.
+
 ## EQ
 
 The 4-band PEQ, on the same host with three things arranged differently — each for a reason the EQ
