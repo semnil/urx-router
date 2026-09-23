@@ -29,12 +29,9 @@
 //                             that skips from inside its own body — `({ skip }) => skip()` —
 //                             is listed exactly like one that asserts, and reports as a skip.
 //                             A guard has to have RUN, so the state it ended in is what is
-//                             read. Its cost is the guard files alone, and it scales with
-//                             how many the ledger names: 0.47 s for one file, 6.9 s for the
-//                             five it names now (measured 2026-08-13; nearly all of it is
-//                             main.device.test.ts booting the app 24 times). ci.yml runs the
-//                             whole unit suite in the same job anyway, so this is seconds
-//                             counted twice rather than minutes added.
+//                             read. Only the named guards execute; the rest of their files
+//                             are collected and report as skipped. The full unit suite runs
+//                             separately in ci.yml.
 //
 // Which is why a guard must be a unit test. The same question about an E2E case can only be
 // answered by running the tier — the bundle built and served, minutes rather than seconds —
@@ -168,13 +165,28 @@ function playwright(project, { args = [], env = {}, tag = project } = {}) {
   return out;
 }
 
-// The guard files, actually run: every case in them with the state vitest ends up giving it.
+// The named guards, actually run, with the state vitest ends up giving them.
 // A file matching nothing is not an error here — the guardedBy naming it is reported as a row
 // problem, which says far more than "no test files found". The reporter's own `fullName` joins
 // on a space, so the name is rebuilt from the structured ancestors instead.
-function vitestRun(files) {
+function vitestRun(guards) {
   const file = join(reports, "vitest-run.json");
-  const args = ["run", "--reporter=json", `--outputFile=${file}`, "--passWithNoTests", ...files];
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // The runner filters on space-joined titles. A ledger separator may
+  // instead be literal text inside a title; both spellings reach the result check,
+  // which still compares the structured name and refuses ambiguous matches.
+  const names = guards.map(({ title }) => title.split(NAME_SEP).map(escape).join("(?: > | )"));
+  const args = [
+    "run",
+    "--reporter=json",
+    `--outputFile=${file}`,
+    "--passWithNoTests",
+    // A partial run must not replace the full suite's file durations and verdicts.
+    "--no-cache",
+    "--testNamePattern",
+    `^(?:${names.join("|")})$`,
+    ...new Set(guards.map((guard) => guard.file)),
+  ];
   const r = run("vitest", "vitest", args);
   const json = readReport(file, r, "vitest run");
   const out = new Map();
@@ -325,7 +337,7 @@ for (const [k, s] of entries) {
 // seconds — so an E2E case is refused as a guard rather than accepted on its declaration.
 // Only the guard's own result is read; a sibling failing in the same file is the suite's
 // business, not this check's.
-const results = guards.length ? vitestRun([...new Set(guards.map((x) => x.entry.guardedBy.file))]) : new Map();
+const results = guards.length ? vitestRun(guards.map((x) => x.entry.guardedBy)) : new Map();
 
 for (const x of guards) {
   const states = results.get(x.gk) ?? [];
