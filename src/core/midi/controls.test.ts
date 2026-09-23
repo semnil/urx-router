@@ -603,9 +603,10 @@ describe("every writable control reaches the device", () => {
 // unit. The engine therefore guards the 7-bit forms and deliberately leaves the 14-bit
 // ones unguarded — a cc14 echo arrives as two halves it cannot match anyway. That
 // exclusion is only safe while the 14-bit round trip is exact for EVERY control, which
-// is what this pins. Measured 2026-08-09: at 7 bits 90 of 282 controls on a URX44V fail
-// the same check (the tuning screens' EQ frequency and Q, GATE attack / hold / decay,
-// COMP attack / release / ratio), which is why the guard exists at all.
+// is what this pins. At 7 bits a whole class of controls fails the same check (the tuning
+// screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER
+// attack / decay), which is why the guard exists at all; architecture.md "External MIDI
+// control" carries the reading.
 describe("feedback round trip", () => {
   const STEPS = 257; // finer than 7-bit, so every CC bucket is entered from both sides
   /** Any 14-bit address; `wireRaw` reads only its resolution here. */
@@ -673,7 +674,9 @@ describe("feedback round trip", () => {
     const short: Row[] = [];
     const collect = (node: string, scope: string, fields: readonly DynField[]): void => {
       for (const f of fields) {
-        if (f.logSteps !== undefined) continue;
+        // Both kinds that carry POSITIONS are out: the arithmetic below is about a field
+        // whose grid is min / max / step, and neither of those has one.
+        if (f.logSteps !== undefined || f.steps !== undefined) continue;
         const span = f.max - f.min;
         const cid = controlId(node, f.key as ControlParam, scope);
         if (!bindControl(m, p, cid)) continue;
@@ -715,6 +718,33 @@ describe("feedback round trip", () => {
       expect(c.set(1), cid).toBe(true);
       expect(held(node, scope, f.key), `${cid} is below its maximum, so nothing bounds it`).toBe(grid);
     }
+  });
+
+  // A field whose values are a STOP TABLE is driven by the same codec, and what it must not
+  // do is land between two stops: the unit has no setting there, and a controller sweeping
+  // the fader would author one at every position the ladder does not hold. Asked in both
+  // directions — nothing off the table is reachable, and nothing on it is unreachable —
+  // because a codec that answered one value for every input would satisfy only the first.
+  it.each(["URX22", "URX44", "URX44V"] as const)("lands on a stop at every wire position on %s", (id) => {
+    const m = getModel(id);
+    const p = seeded(id);
+    ensureFixedConnections(m, p);
+    const dyn = channelDynamics(m, "ch2", COMP_EQ_COMP_FIRST);
+    const f = dyn?.comp?.find((x) => x.key === "ratio");
+    expect(f?.steps, "the COMP ratio field carries a stop table").toBeDefined();
+    const stops = f!.steps!;
+    const c = bindControl(m, p, controlId("ch2", "ratio" as ControlParam, COMP_SCOPE))!;
+    const reached = new Set<number>();
+    for (let i = 0; i < STEPS; i++) {
+      expect(c.set(i / (STEPS - 1))).toBe(true);
+      const v = p.nodeParams.ch2?.comp?.ratio as number;
+      expect(stops, `wire ${i} landed off the ladder at ${v}`).toContain(v);
+      reached.add(v);
+    }
+    expect(
+      [...reached].sort((a, b) => a - b),
+      "every stop is reachable from the wire",
+    ).toEqual([...stops]);
   });
 
   it.each(["URX22", "URX44", "URX44V"] as const)("is exact at 14 bits for every %s control", (id) => {

@@ -16,6 +16,8 @@ import {
 } from "./inspector-format";
 import { LEVEL_MIN_DB } from "../core/plan";
 import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ } from "../core/control/vd";
+import { COMP_RATIO_INF } from "../core/control/comp-ratio";
+import { formatDyn } from "../core/control/translate";
 
 describe("formatDb", () => {
   it("prints one decimal and a leading + above zero", () => {
@@ -64,10 +66,34 @@ describe("fmtSsmcsMs", () => {
 });
 
 describe("fmtSsmcsRatio", () => {
-  it("prints the top of the range as infinity rather than a number", () => {
-    expect(fmtSsmcsRatio(Infinity)).toBe("∞:1");
+  // The strip's own field, which fits three figures: two decimals below 10:1, one from
+  // there, and no decimal at all from 100:1 up, where the channel COMP keeps one.
+  it("prints a ratio the way the strip's screen does", () => {
     expect(fmtSsmcsRatio(1)).toBe("1.00:1");
     expect(fmtSsmcsRatio(3.5)).toBe("3.50:1");
+    expect(fmtSsmcsRatio(9.5)).toBe("9.50:1");
+    expect(fmtSsmcsRatio(10)).toBe("10.0:1");
+    expect(fmtSsmcsRatio(65)).toBe("65.0:1");
+    expect(fmtSsmcsRatio(100)).toBe("100:1");
+    expect(fmtSsmcsRatio(500)).toBe("500:1");
+  });
+
+  it("prints the top of the range the way the unit names it", () => {
+    expect(fmtSsmcsRatio(Infinity)).toBe("INF:1");
+  });
+});
+
+describe("the channel COMP's ratio", () => {
+  // The other bank, whose field is a number a plan can hold rather than Infinity: the value
+  // standing for the unit's INF:1 has to print as INF:1 and not as the number it is.
+  it("prints its top stop as the unit names it, and everything else as a ratio", () => {
+    expect(formatDyn(COMP_RATIO_INF, "ratio")).toBe("INF:1");
+    expect(formatDyn(1, "ratio")).toBe("1.00:1");
+    expect(formatDyn(9.5, "ratio")).toBe("9.50:1");
+    expect(formatDyn(20, "ratio")).toBe("20.0:1");
+    // Where the two banks differ: this one keeps the decimal from 100:1 up.
+    expect(formatDyn(100, "ratio")).toBe("100.0:1");
+    expect(formatDyn(500, "ratio")).toBe("500.0:1");
   });
 });
 

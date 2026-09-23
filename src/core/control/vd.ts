@@ -12,6 +12,7 @@
 // Parameter addresses are "{param_id}:{x}:{y}" where x is 0 except for EQ bands
 // and y is the instance index (input ch 0..11, output 0..7, or a fixed slot).
 
+import { COMP_RATIO_INF, COMP_RATIO_STEPS } from "./comp-ratio";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "../plan";
 
 /** The broker's -∞ / off sentinel for level (centi-dB) parameters. */
@@ -59,7 +60,8 @@ export const EQ_GAIN_MAX_DB = 18;
 //   attack    : ms×1000 (µs), broker 92 … 80000  → 0.092 … 80 ms.
 //   hold      : ms×100,        broker 2  … 196000 → 0.02 … 1960 ms.
 //   release   : ms×10,         broker 93 … 9990   → 9.3 … 999 ms (gate decay too).
-//   ratio     : ratio×100,     broker 100 … 65535 → 1.0 … 655.35 : 1.
+//   ratio     : ratio×100,     broker 100 … 65535 → 1.0 : 1 … the unit's INF:1, which it puts
+//               on the widest raw the field holds.
 export const DYN_ATTACK_MIN_MS = 0.092;
 export const DYN_ATTACK_MAX_MS = 80;
 export const DYN_HOLD_MIN_MS = 0.02;
@@ -67,7 +69,9 @@ export const DYN_HOLD_MAX_MS = 1960;
 export const DYN_RELEASE_MIN_MS = 9.3;
 export const DYN_RELEASE_MAX_MS = 999;
 export const DYN_RATIO_MIN = 1;
-export const DYN_RATIO_MAX = 655.35;
+// The same fact as the ladder's top stop: 65535 is both the widest raw the encoding can carry
+// and the one the unit reads as INF:1, so the ceiling is not a second number.
+export const DYN_RATIO_MAX = COMP_RATIO_INF;
 // Ducker decay shares the ×10 release scale but with a wider range than gate/comp.
 export const DUCKER_DECAY_MIN_MS = 1.3;
 export const DUCKER_DECAY_MAX_MS = 5000;
@@ -143,7 +147,7 @@ export const SSMCS_ATTACK_RAW_MAX = 283;
 export const SSMCS_RELEASE_RAW_MIN = 24;
 export const SSMCS_RELEASE_RAW_MAX = 300;
 export const SSMCS_RATIO_RAW_MIN = 0;
-export const SSMCS_RATIO_RAW_MAX = 120;
+export const SSMCS_RATIO_RAW_MAX = COMP_RATIO_STEPS.length - 1;
 export const SSMCS_Q_RAW_MIN = 0;
 export const SSMCS_Q_RAW_MAX = 60;
 export const SSMCS_FREQ_RAW_MIN = 4;
@@ -199,31 +203,13 @@ export function ssmcsFreqHz(raw: number): number {
 export function ssmcsGainDb(raw: number): number {
   return (raw - 180) / 10;
 }
-// Ratio is a non-linear table (no closed form). Linear-interpolate between the
-// calibrated anchors; the top detent is ∞:1.
-const SSMCS_RATIO_ANCHORS: [number, number][] = [
-  [0, 1.0],
-  [30, 2.5],
-  [60, 4.0],
-  [75, 6.0],
-  [90, 14.0],
-  [105, 38.0],
-];
-/** SSMCS comp ratio raw → N:1 (Infinity at the top of the range). */
+/** SSMCS comp ratio raw → N:1. The raw is the index of the stop, and a raw outside the
+ *  table — or one that is not a number — reads as the nearest end of it. */
 export function ssmcsRatio(raw: number): number {
-  if (raw >= SSMCS_RATIO_RAW_MAX) return Infinity;
-  let lo = SSMCS_RATIO_ANCHORS[0];
-  let hi = SSMCS_RATIO_ANCHORS[SSMCS_RATIO_ANCHORS.length - 1];
-  for (let i = 0; i < SSMCS_RATIO_ANCHORS.length - 1; i++) {
-    if (raw >= SSMCS_RATIO_ANCHORS[i][0] && raw <= SSMCS_RATIO_ANCHORS[i + 1][0]) {
-      lo = SSMCS_RATIO_ANCHORS[i];
-      hi = SSMCS_RATIO_ANCHORS[i + 1];
-      break;
-    }
-  }
-  if (raw > hi[0]) return hi[1]; // between last anchor (105) and 120
-  const span = hi[0] - lo[0];
-  return span === 0 ? lo[1] : lo[1] + ((raw - lo[0]) * (hi[1] - lo[1])) / span;
+  const i = Math.round(raw);
+  if (!(i > SSMCS_RATIO_RAW_MIN)) return COMP_RATIO_STEPS[SSMCS_RATIO_RAW_MIN];
+  if (i >= SSMCS_RATIO_RAW_MAX) return COMP_RATIO_STEPS[SSMCS_RATIO_RAW_MAX];
+  return COMP_RATIO_STEPS[i];
 }
 
 /**

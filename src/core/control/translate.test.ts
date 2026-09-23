@@ -8,9 +8,13 @@ import { COLOR_OFF_INDEX, COLOR_PALETTE, EQ_TYPE_PASS, PARAMS, colorIndexToHex, 
 import type { ParamSpec } from "./params";
 import {
   addrKey,
+  channelDynamics,
   cmdAddr,
   collisionKey,
   collisionOwners,
+  dynFromPos,
+  dynPosRange,
+  dynToPos,
   formatAddrKey,
   insertFxControl,
   nameControl,
@@ -19,7 +23,8 @@ import {
   planToFollowOnlyAddrs,
   planToNameWrites,
 } from "./translate";
-import type { VdCommand } from "./translate";
+import type { DynField, VdCommand } from "./translate";
+import { COMP_RATIO_CH_STEPS, COMP_RATIO_INF, COMP_RATIO_STEPS } from "./comp-ratio";
 import { GATE_RANGE_OFF_DB, VD_LEVEL_OFF } from "./vd";
 
 // The broker REST uri a command addresses ("/vd/parameters/{id}:{x}:{y}?operation=value").
@@ -1243,6 +1248,115 @@ describe("pushDynCommands clamping", () => {
     plan.nodeParams["out.ducker1"] = { ducker: { range: -120 } };
     const cmds = planToCommands(model, plan);
     expect(vOf(cmds, "DUCKER_RANGE")).toBe(-70 * 100); // clamped to -70 dB (no -∞)
+  });
+});
+
+// The channel COMP's Ratio is a ladder of stops rather than a range with one step, shared
+// with the SSMCS strip's compressor and held in `comp-ratio.ts`. Three things a field can
+// get wrong about it are pinned here: which stops it offers, that a slider position IS a
+// stop, and that nothing off the ladder reaches the unit.
+describe("COMP ratio ladder", () => {
+  const model = getModel("URX44V");
+  const vOf = (cmds: ReturnType<typeof planToCommands>, name: string) =>
+    cmds.find((c) => c.name === name && c.y === 0)!.vdValue;
+  const ratioField = (): DynField => {
+    const dyn = channelDynamics(model, "ch1", 0);
+    const f = dyn?.comp?.find((x) => x.key === "ratio");
+    if (!f) throw new Error("no COMP ratio field");
+    return f;
+  };
+  const stops = (): readonly number[] => {
+    const s = ratioField().steps;
+    if (!s) throw new Error("the COMP ratio field carries no stop table");
+    return s;
+  };
+
+  it("offers the unit's own stops and nothing between them", () => {
+    const f = ratioField();
+    // The shared ladder, whole, with the top stop in the spelling a plan can hold.
+    expect([...stops()]).toEqual([...COMP_RATIO_CH_STEPS]);
+    expect(stops().length).toBe(COMP_RATIO_STEPS.length);
+    expect(stops()[0]).toBe(f.min);
+    expect(stops()[stops().length - 1]).toBe(f.max);
+    // Values the linear field used to offer that the unit stops on nowhere…
+    expect(stops()).not.toContain(5.1);
+    expect(stops()).not.toContain(7.3);
+    // …and the 0.05 spacing below 4.00:1 that a 0.1 step could not reach.
+    expect(stops()).toContain(1.05);
+    expect(stops()).toContain(3.95);
+    // …and the stops past the old 20:1 ceiling.
+    expect(stops()).toContain(500);
+  });
+
+  it("carries the top stop as a value a plan can hold, and writes the unit's own raw for it", () => {
+    // The unit puts INF:1 on 65535, and a plan is JSON: Infinity does not survive it, and a
+    // non-finite leaf is one the loader drops. So the top stop is that raw in the parameter's
+    // own unit, which the ×100 encoder turns back into 65535 with no case of its own.
+    expect(ratioField().max).toBe(COMP_RATIO_INF);
+    expect(Number.isFinite(COMP_RATIO_INF)).toBe(true);
+    expect(JSON.parse(JSON.stringify({ ratio: COMP_RATIO_INF })).ratio).toBe(COMP_RATIO_INF);
+    expect(stops()).not.toContain(Infinity);
+    // The SSMCS side keeps Infinity, because its raw is an index and carries no such value.
+    expect(COMP_RATIO_STEPS.at(-1)).toBe(Infinity);
+
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { comp: { ratio: COMP_RATIO_INF } };
+    expect(vOf(planToCommands(model, plan), "COMP_RATIO")).toBe(65535);
+  });
+
+  it("puts every slider position on a stop, and every stop on a position", () => {
+    const f = ratioField();
+    expect(dynPosRange(f)).toEqual({ min: 0, max: stops().length - 1, step: 1 });
+    const reached = new Set<number>();
+    for (let pos = 0; pos < stops().length; pos++) {
+      const v = dynFromPos(f, pos);
+      expect(stops()).toContain(v);
+      expect(dynToPos(f, v)).toBe(pos);
+      reached.add(v);
+    }
+    expect(reached.size).toBe(stops().length);
+  });
+
+  it("answers a stop for a position off the table, so nothing carries a non-value", () => {
+    const f = ratioField();
+    expect(dynFromPos(f, -4)).toBe(stops()[0]);
+    expect(dynFromPos(f, stops().length + 40)).toBe(f.max);
+    expect(dynFromPos(f, NaN)).toBe(stops()[0]);
+  });
+
+  it("reads a value between two stops as the nearer one", () => {
+    const f = ratioField();
+    // A plan saved while the field was linear holds values like these.
+    expect(dynFromPos(f, dynToPos(f, 5.15))).toBe(5.2);
+    expect(dynFromPos(f, dynToPos(f, 7.3))).toBe(7.5);
+    // A tie keeps the lower stop, so the mapping is total rather than order-dependent.
+    expect(dynFromPos(f, dynToPos(f, 5.1))).toBe(5);
+  });
+
+  it("sends a stop for a plan value that is not one", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { comp: { ratio: 5.1 } };
+    // ×100 of the stop beside it, not of the plan's own value (510).
+    expect(vOf(planToCommands(model, plan), "COMP_RATIO")).toBe(500);
+    plan.nodeParams.ch1 = { comp: { ratio: 7.3 } };
+    expect(vOf(planToCommands(model, plan), "COMP_RATIO")).toBe(750);
+    // A stop is sent as itself, which is what says the snap is not moving everything.
+    plan.nodeParams.ch1 = { comp: { ratio: 3.95 } };
+    expect(vOf(planToCommands(model, plan), "COMP_RATIO")).toBe(395);
+  });
+
+  it("clamps past the ceiling before it snaps, so nothing above it is sent", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { comp: { ratio: 9999 } };
+    expect(vOf(planToCommands(model, plan), "COMP_RATIO")).toBe(65535);
+    // And a value between the last two stops lands on one of them rather than between.
+    plan.nodeParams.ch1 = { comp: { ratio: 600 } };
+    expect(vOf(planToCommands(model, plan), "COMP_RATIO")).toBe(65535);
+    plan.nodeParams.ch1 = { comp: { ratio: 520 } };
+    expect(vOf(planToCommands(model, plan), "COMP_RATIO")).toBe(50000);
   });
 });
 
