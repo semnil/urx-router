@@ -198,7 +198,11 @@ carries a one-line map of the same directories and points here.
     gang whose members sit at different values crosses over on the head's value
   - `src/core/control/` — live device control (vd protocol). Writes and Live sync are always enabled on
     desktop; only the round-trip diagnostics in `selftest.ts` require an `--experimental` launch
-    - `vd.ts` value encoding / `translate.ts` plan→commands (**one device address yields exactly one
+    - `comp-ratio.ts` the ratios a compressor's Ratio control stops on — the channel COMP and the SSMCS
+      strip's compressor stop on the same ones and write them differently, and a module of its own is what
+      lets both of the layers below read the table at module scope (channel-tuning.md "Ratio stops where
+      the unit's control stops") /
+      `vd.ts` value encoding / `translate.ts` plan→commands (**one device address yields exactly one
       command**: an insert effect's parameters live in one engine array per effect family with no channel
       axis, so two nodes holding the same family emit the same addresses — `collapseSharedAddrs` keeps the
       LAST, at its own position, because a type selector repopulates the array it binds and a hoisted
@@ -1559,8 +1563,10 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   bound to a note echoes back as full scale, which is the worst case in the family. The **14-bit forms are
   deliberately unguarded**: a cc14 echo arrives as two 7-bit halves that cannot be matched, and needs no
   matching, because at 14 bits every control round-trips onto the same plan value (pinned in
-  `core/midi/controls.test.ts`; at 7 bits 90 of 282 controls on a URX44V do not — the tuning screens' EQ
-  frequency and Q, GATE attack / hold / decay, COMP attack / release / ratio).
+  `core/midi/controls.test.ts`; measured 2026-09-23, at 7 bits 97 of 311 controls on a URX44V do not — the
+  tuning screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack /
+  decay. COMP **ratio** left that list when its field became the unit's own stop ladder — the ladder holds
+  fewer stops than the wire holds positions, so a 7-bit echo decodes onto the stop it left from).
   Setting `localStorage["urx-midi-log"]` traces every rx/tx
   byte string and the engine's per-message decision (drop/ignore/apply) to the console; a dev build also
   carries `window.__urxMidiProbe` (`ui/midi-probe.ts`), which records the same stream **with timestamps** on
