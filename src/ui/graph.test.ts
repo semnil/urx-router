@@ -591,6 +591,25 @@ describe("hide and show", () => {
 });
 
 describe("connections", () => {
+  it.each(["empty", "node"])("leaves the plan and wires intact when deleting with %s selection", (selection) => {
+    fx = graphFixture();
+    press(faceplate(fx.host, "ch1")!);
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "node", id: "ch1" });
+    if (selection === "empty") {
+      fx.graph.clearSelection();
+      expect(fx.cb.onSelect).toHaveBeenLastCalledWith(null);
+    }
+    const before = structuredClone(fx.plan);
+    const wires = fx.host.querySelectorAll(".wire-hit").length;
+    expect(wires).toBeGreaterThan(0);
+    fx.cb.onChange.mockClear();
+
+    fx.graph.deleteSelection();
+    expect(fx.plan).toEqual(before);
+    expect(fx.host.querySelectorAll(".wire-hit")).toHaveLength(wires);
+    expect(fx.cb.onChange).not.toHaveBeenCalled();
+  });
+
   // A wire the block diagram makes permanent belongs to the device, not the plan.
   it("refuses to delete a fixed wire and says why", () => {
     fx = graphFixture();

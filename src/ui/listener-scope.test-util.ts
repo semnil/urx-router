@@ -18,11 +18,11 @@
 interface Recorded {
   type: string;
   fn: EventListenerOrEventListenerObject;
-  opts?: boolean | AddEventListenerOptions;
+  capture: boolean;
 }
 
 /**
- * Start recording `window` registrations.
+ * Start recording registrations on an event target.
  *
  * `window.addEventListener` is already an OWN accessor property of jsdom's window
  * — the recorder does not make it one — so assigning runs its setter and the
@@ -37,27 +37,37 @@ interface Recorded {
  * installed by an out-of-order stop forwards without recording rather than
  * collecting registrations for a scope that is finished with.
  */
-export function recordWindowListeners(): { stop: () => void; release: () => void } {
+export function recordListeners(target: EventTarget): { stop: () => void; release: () => void } {
   const seen: Recorded[] = [];
-  const real = window.addEventListener;
+  const real = target.addEventListener;
+  const own = Object.hasOwn(target, "addEventListener");
   let recording = true;
   // Forwarded as the tuple the real signature takes, so the pass-through cannot
   // drift from it — a hand-written parameter list has to restate the nullable
   // callback and the boolean-or-options third argument, and gets one of them wrong.
-  const patched = function (this: Window, ...args: Parameters<typeof window.addEventListener>): void {
+  const patched = function (this: EventTarget, ...args: Parameters<typeof target.addEventListener>): void {
     const [type, fn, opts] = args;
-    if (recording && fn) seen.push({ type, fn, opts });
+    const capture = typeof opts === "boolean" ? opts : (opts?.capture ?? false);
     real.apply(this, args);
-  } as typeof window.addEventListener;
-  window.addEventListener = patched;
+    if (recording && fn) seen.push({ type, fn, capture });
+  };
+  target.addEventListener = patched;
 
   return {
     stop: () => {
       recording = false;
-      if (window.addEventListener === patched) window.addEventListener = real;
+      if (target.addEventListener === patched) {
+        if (own) target.addEventListener = real;
+        else delete (target as Partial<EventTarget>).addEventListener;
+      }
     },
     release: () => {
-      for (const { type, fn, opts } of seen.splice(0)) window.removeEventListener(type, fn, opts);
+      for (const { type, fn, capture } of seen.splice(0)) target.removeEventListener(type, fn, capture);
     },
   };
+}
+
+/** Start recording registrations on the window. */
+export function recordWindowListeners(): ReturnType<typeof recordListeners> {
+  return recordListeners(window);
 }

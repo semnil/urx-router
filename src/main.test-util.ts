@@ -23,6 +23,7 @@ import { vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
+import { recordListeners } from "./ui/listener-scope.test-util";
 
 /** The app's real markup, so every getElementById in main.ts resolves the element it
  *  does in the browser rather than one a test invented. */
@@ -325,8 +326,24 @@ export interface BootOptions {
   consent?: boolean;
 }
 
+let releaseAppListeners: (() => void) | undefined;
+
+/** Scope window and document listeners to the app boot that registered them. */
+function trackAppListeners(): void {
+  releaseAppListeners?.();
+  const scopes = [window, document].map(recordListeners);
+  releaseAppListeners = () => {
+    for (const scope of scopes) {
+      scope.stop();
+      scope.release();
+    }
+    releaseAppListeners = undefined;
+  };
+}
+
 /** Install the markup and the globals, then run the module top to bottom. */
 export async function bootApp(opts: BootOptions = {}): Promise<TauriShell | null> {
+  trackAppListeners();
   document.body.innerHTML = APP_BODY; // innerHTML does not execute the <script type=module>
   localStorage.clear();
   localStorage.setItem("urx-lang", "en");
@@ -384,6 +401,7 @@ export function installAppGlobals(): void {
 
 /** Undo everything `installAppGlobals` and `tauriShell` put on the page. */
 export function restoreAppGlobals(): void {
+  releaseAppListeners?.();
   installedShell = null;
   vi.unstubAllGlobals();
   delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
