@@ -33,10 +33,14 @@ import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, STEREO_FADER } from
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
-import { insertFxControl, nameControl } from "./core/control/translate";
+import { insertFxControl, nameControl, planToCommands } from "./core/control/translate";
 import { getModel } from "./models";
+import { defaultPlan } from "./models/initial-state";
+import type { DeviceModel } from "./models/types";
+import { ruleKind } from "./core/routing";
+import type { Plan } from "./core/plan";
 import { loadHidden } from "./app/view-state";
-import { faceplate, press, wireHit } from "./ui/graph.test-util";
+import { drag, faceplate, portHit, press, wireHit } from "./ui/graph.test-util";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
@@ -2341,6 +2345,392 @@ describe("the undo history across a device read that landed", () => {
       expect(statusText()).toBe(t().status.nothingToUndo);
     });
   }
+});
+
+// A single-input receiver whose source the operator replaced on the board while a device
+// read was in flight. The unit holds one source, the read is carrying it back, and the
+// board has been given another onto the SAME receiver meanwhile. Such a receiver takes one
+// choice (`isSingleInput`), so the two cannot both stand: a plan holding both is one the
+// write emits the wrong wire from and the loader refuses.
+describe("a source replaced on the board while a device read was in flight", () => {
+  const STREAM_IN = "bus.stream:in";
+  const MON_IN = "bus.mon1:in";
+  const USB_B_IN = "out.usbmain_b:in";
+  const model = (): DeviceModel => getModel("URX44V");
+
+  /** A plan wired the way `wire` says, from the model's own defaults. */
+  const planWired = (wire: (plan: Plan) => void): Plan => {
+    const p = defaultPlan("URX44V");
+    wire(p);
+    return p;
+  };
+
+  /** Replace every wire into `to` with one from each of `froms`, at the kind the model's
+   *  own rule names — so a case states the ROUTING and nothing about how it is stored. */
+  const sourced =
+    (to: string, ...froms: string[]) =>
+    (plan: Plan): void => {
+      plan.connections = plan.connections.filter((c) => c.to !== to);
+      for (const from of froms) plan.connections.push({ from, to, kind: ruleKind(model(), from, to)! });
+    };
+
+  /** Every address `planToCommands` writes for a plan wired like `wire`, keyed the way the
+   *  device table keys one. Taken from the emit rather than written out: the encoding is
+   *  then the app's own, and a case says only which source the unit is on. */
+  const unitHolding = (wire: (plan: Plan) => void): Record<string, number> => {
+    const seed: Record<string, number> = {};
+    const unit = planWired(wire);
+    for (const c of planToCommands(model(), unit)) seed[`${c.paramId}/${c.x}/${c.y}`] = c.vdValue;
+    seed[`${PARAMS.SAMPLE_RATE.id}/0/0`] = unit.sampleRate;
+    return seed;
+  };
+
+  /** The addresses at which a unit wired like `wire` differs from the plan the app opens
+   *  with — which is what a case has to move the unit to, and nothing else. */
+  const unitMovedTo = (wire: (plan: Plan) => void): Record<string, number> => {
+    const same = unitHolding(() => {});
+    return Object.fromEntries(Object.entries(unitHolding(wire)).filter(([at, v]) => same[at] !== v));
+  };
+
+  interface Held {
+    /** Resolves once the read is stopped at the address. */
+    reached: Promise<void>;
+    release: () => void;
+    /** Arm the stop. The follow-read flow needs it: the session's own start read asks the
+     *  same address first, and stopping THAT one holds a read the case is not about. */
+    arm: () => void;
+    /** Move the unit off what the plan holds, at the addresses given. A write to one of
+     *  them takes it back, the way the table's own store does — without that a write can
+     *  never converge, and a case asserting one reaches the non-convergence path. */
+    moveTo: (at: Record<string, number>) => void;
+    tauri: Record<string, unknown>;
+  }
+
+  /** A connected unit whose read stops at `paramId` — the first one after `arm()` — and
+   *  goes on when `release()` is called. */
+  const heldRead = (paramId: number, { late = false } = {}): Held => {
+    let ask = (): void => {};
+    const reached = new Promise<void>((r) => (ask = r));
+    let go = (): void => {};
+    const released = new Promise<void>((r) => (go = r));
+    let armed = !late;
+    let stopped = false;
+    const moved: Record<string, number> = {};
+    const tauri = deviceCommands(
+      { "plugin:dialog|message": "Ok", ...SAVES },
+      unitHolding(() => {}),
+    );
+    const get = tauri.vd_get as (a: Record<string, unknown>) => number;
+    const set = tauri.vd_set as (a: Record<string, unknown>) => void;
+    const at = (a: Record<string, unknown>): string => `${a.paramId}/${a.x}/${a.y}`;
+    tauri.vd_get = (a: Record<string, unknown>) => {
+      const read = (): number => (at(a) in moved ? moved[at(a)] : get(a));
+      if (stopped || !armed || a.paramId !== paramId) return read();
+      stopped = true;
+      ask();
+      return released.then(read);
+    };
+    tauri.vd_set = (a: Record<string, unknown>) => {
+      delete moved[at(a)];
+      return set(a);
+    };
+    return {
+      reached,
+      release: () => go(),
+      arm: () => (armed = true),
+      moveTo: (next) => void Object.assign(moved, next),
+      tauri,
+    };
+  };
+
+  /** Draw `from` onto `to`, the way a replacing drop reaches the board. `elementFromPoint`
+   *  is what the release resolves the target with, and the app's own boot answers null. */
+  const draw = (from: string, to: string): void => {
+    const host = $("graph-host");
+    const jack = host.querySelector(`[data-ref="${to}"]`);
+    expect(jack, `the premise: the board draws ${to}`).not.toBeNull();
+    const real = document.elementFromPoint;
+    document.elementFromPoint = (() => jack) as typeof document.elementFromPoint;
+    try {
+      drag(portHit(host, from)!, { x: 400, y: 200 }, jack);
+    } finally {
+      document.elementFromPoint = real;
+    }
+  };
+
+  /** The wires the saved document carries into `to`. */
+  const savedSources = async (shell: TauriShell, to: string): Promise<{ from: string[]; problems: unknown[] }> => {
+    const { deserialize } = await import("./core/plan");
+    const { validatePlan } = await import("./core/routing");
+    const before = shell.count("write_text_file");
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+    const doc = deserialize(
+      String((shell.args[shell.invokes.lastIndexOf("write_text_file")] as { contents: string }).contents),
+    );
+    return {
+      from: doc.connections
+        .filter((c) => c.to === to)
+        .map((c) => c.from)
+        .sort(),
+      problems: validatePlan(model(), doc),
+    };
+  };
+
+  /** What a write of a plan wired like `wire` sends to STREAMING's source, in
+   *  `streamingWrites`' own spelling. */
+  const streamingFor = (wire: (plan: Plan) => void): string[] =>
+    planToCommands(model(), planWired(wire))
+      .filter((c) => c.paramId === PARAMS.STREAM_SRC_L.id || c.paramId === PARAMS.STREAM_SRC_R.id)
+      .map((c) => `${c.paramId}=${c.vdValue}`)
+      .sort();
+
+  const stopLive = async (): Promise<void> => {
+    if (live().getAttribute("aria-pressed") !== "true") return;
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+  };
+  const liveUp = (): Promise<void> =>
+    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+  interface Flow {
+    name: string;
+    /** The address to stop the read at, and whether the stop has to be armed late. */
+    at: number;
+    late: boolean;
+    /** Put the unit where the case needs it and start the read; returns once it is held. */
+    begin: (shell: TauriShell, unit: Held, move: Record<string, number>) => Promise<void>;
+    /** Returns once the flow has landed. */
+    settle: (shell: TauriShell) => Promise<void>;
+  }
+
+  const FLOWS: Flow[] = [
+    {
+      name: "Fetch",
+      at: PARAMS.FOLLOW_USB.id,
+      late: false,
+      begin: async (_shell, unit, move) => {
+        unit.moveTo(move);
+        $("btn-fetch").click();
+        await unit.reached;
+      },
+      settle: async (shell) => {
+        await invoked(shell, "vd_disconnect");
+        await fetchEnded();
+      },
+    },
+    {
+      name: "Live-sync start",
+      at: PARAMS.FOLLOW_USB.id,
+      late: false,
+      begin: async (_shell, unit, move) => {
+        unit.moveTo(move);
+        live().click();
+        await unit.reached;
+      },
+      settle: async () => await liveUp(),
+    },
+    {
+      name: "follow read",
+      // STREAMING's own source address: a reconcile scoped to that node asks it, and the
+      // session's start read asks it too — which is what the late arming is for.
+      at: PARAMS.STREAM_SRC_L.id,
+      late: true,
+      begin: async (shell, unit, move) => {
+        live().click();
+        await liveUp();
+        await quiet(shell);
+        // The session started on a unit that agreed with the plan, so the move below is a
+        // change made on the unit's own panel — announced on one address, which is what
+        // sends the follow layer to re-read the node.
+        unit.moveTo(move);
+        unit.arm();
+        notifyChannel(shell).onmessage([{ param_id: PARAMS.STREAM_DELAY_TIME.id, x: 0, y: 0, value: 200 }]);
+        await unit.reached;
+      },
+      settle: async (shell) => await quiet(shell),
+    },
+  ];
+
+  for (const flow of FLOWS) {
+    it(`keeps only the source the board was given during a ${flow.name}`, SLOW, async () => {
+      const unit = heldRead(flow.at, { late: flow.late });
+      const shell = (await bootApp({ tauri: unit.tauri }))!;
+      expect(streamingDrawn(), "the premise: the plan opens on STEREO").toEqual(["bus.stereo:out"]);
+      await flow.begin(shell, unit, unitMovedTo(sourced(STREAM_IN, "bus.mix1:out")));
+      try {
+        draw("bus.mix2:out", STREAM_IN);
+        expect(streamingDrawn(), "the premise: the drop replaced the source").toEqual(["bus.mix2:out"]);
+      } finally {
+        unit.release();
+      }
+      await flow.settle(shell);
+
+      // The board, and then the document, both hold ONE source, and it is the operator's.
+      await vi.waitFor(() => expect(streamingDrawn()).toEqual(["bus.mix2:out"]), { timeout: 25_000 });
+      await quiet(shell);
+      expect(streamingDrawn()).toEqual(["bus.mix2:out"]);
+      // Nothing the read is about to do can still be in flight: a live session goes on
+      // reading, so the assertions below are taken after it has gone quiet.
+      if (live().getAttribute("aria-pressed") === "true") {
+        // The session sends the operator's choice rather than the unit's, and never NONE.
+        expect(streamingWrites(shell)).not.toHaveLength(0);
+        expect([...new Set(streamingWrites(shell))].sort()).toEqual(streamingFor(sourced(STREAM_IN, "bus.mix2:out")));
+      }
+      // A follow read says what it kept, and says which of the two holds kept it: the
+      // effects a rate cannot run are the unit's own change undone, a source is the
+      // operator's own gesture kept, and the count alone tells them apart for neither.
+      await stopLive();
+      const doc = await savedSources(shell, STREAM_IN);
+      expect(doc.problems).toEqual([]);
+      expect(doc.from).toEqual(["bus.mix2:out"]);
+    });
+  }
+
+  // A unit already holding what the plan opens with is the same window with nothing for the
+  // read to carry back: the drop is still an edit with no session to flush it through, and
+  // the snapshot the session takes is the read's copy, which does not have it. Until it is
+  // sent, the unit holds the source the operator replaced — and the next thing the unit
+  // announces sends a follow read that reads it back over their choice.
+  it("sends the source drawn under a Live-sync start the unit agreed with", SLOW, async () => {
+    const unit = heldRead(PARAMS.FOLLOW_USB.id);
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    expect(streamingDrawn(), "the premise: the plan opens on the source the unit holds").toEqual(["bus.stereo:out"]);
+    live().click();
+    await unit.reached;
+    try {
+      draw("bus.mix2:out", STREAM_IN);
+    } finally {
+      unit.release();
+    }
+    await liveUp();
+    await quiet(shell);
+    expect([...new Set(streamingWrites(shell))].sort()).toEqual(streamingFor(sourced(STREAM_IN, "bus.mix2:out")));
+
+    // The unit announces something of STREAMING's own, which sends a follow read over that
+    // node: the source it reads back is the one the session just wrote.
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.STREAM_DELAY_TIME.id, x: 0, y: 0, value: 200 }]);
+    await quiet(shell);
+    expect(streamingDrawn()).toEqual(["bus.mix2:out"]);
+    await stopLive();
+  });
+
+  // The write a Fetch leaves the plan ready for: it moves the unit onto the operator's own
+  // source, and NONE — which STREAMING's list does not offer — is sent for nothing.
+  it("writes the source the board was given, and never NONE", SLOW, async () => {
+    const unit = heldRead(PARAMS.FOLLOW_USB.id);
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    unit.moveTo(unitMovedTo(sourced(STREAM_IN, "bus.mix1:out")));
+    $("btn-fetch").click();
+    await unit.reached;
+    try {
+      draw("bus.mix2:out", STREAM_IN);
+    } finally {
+      unit.release();
+    }
+    await invoked(shell, "vd_disconnect");
+    await fetchEnded();
+    expect(streamingWrites(shell), "the premise: the fetch itself wrote nothing").toEqual([]);
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    await quiet(shell);
+    expect([...new Set(streamingWrites(shell))].sort()).toEqual(streamingFor(sourced(STREAM_IN, "bus.mix2:out")));
+  });
+
+  // The undo entry the drop opened describes ONE source on either side of it, so the
+  // replacing drop that follows the read can be taken back and put again.
+  it("undoes and redoes a later drop back to that one source", SLOW, async () => {
+    const unit = heldRead(PARAMS.FOLLOW_USB.id);
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    unit.moveTo(unitMovedTo(sourced(STREAM_IN, "bus.mix1:out")));
+    $("btn-fetch").click();
+    await unit.reached;
+    try {
+      draw("bus.mix2:out", STREAM_IN);
+    } finally {
+      unit.release();
+    }
+    await invoked(shell, "vd_disconnect");
+    await fetchEnded();
+
+    draw("bus.stereo:out", STREAM_IN);
+    expect(streamingDrawn(), "the premise: the later drop replaced it").toEqual(["bus.stereo:out"]);
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(streamingDrawn()).toEqual(["bus.mix2:out"]), { timeout: 10_000 });
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_REDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(streamingDrawn()).toEqual(["bus.stereo:out"]), { timeout: 10_000 });
+  });
+
+  // The control: with nothing drawn during the read, the unit's own source lands. Without
+  // it every assertion above is satisfied by a read that took nothing at all.
+  it("takes the unit's own source when the board was given none", SLOW, async () => {
+    const unit = heldRead(PARAMS.FOLLOW_USB.id);
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    unit.moveTo(unitMovedTo(sourced(STREAM_IN, "bus.mix1:out")));
+    $("btn-fetch").click();
+    await unit.reached;
+    unit.release();
+    await invoked(shell, "vd_disconnect");
+    await fetchEnded();
+
+    expect(streamingDrawn()).toEqual(["bus.mix1:out"]);
+    const doc = await savedSources(shell, STREAM_IN);
+    expect(doc.problems).toEqual([]);
+    expect(doc.from).toEqual(["bus.mix1:out"]);
+  });
+
+  // The window is the READ's, not the receiver's: a second read with nothing drawn under it
+  // takes the unit's source, the operator's choice having had a session to reach the unit.
+  it("takes the unit's source on the next read, nothing being drawn under that one", SLOW, async () => {
+    const unit = heldRead(PARAMS.FOLLOW_USB.id);
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    unit.moveTo(unitMovedTo(sourced(STREAM_IN, "bus.mix1:out")));
+    $("btn-fetch").click();
+    await unit.reached;
+    try {
+      draw("bus.mix2:out", STREAM_IN);
+    } finally {
+      unit.release();
+    }
+    await invoked(shell, "vd_disconnect");
+    await fetchEnded();
+    expect(streamingDrawn(), "the premise: the first read kept the operator's source").toEqual(["bus.mix2:out"]);
+
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect", 2);
+    await fetchEnded();
+    expect(streamingDrawn()).toEqual(["bus.mix1:out"]);
+  });
+
+  // The positive control for every receiver the operator did NOT touch: the unit's own
+  // MONITOR source lands, and a USB output's MONO IN pair lands as the two wires it is —
+  // the receiver's rule is what the arbitration reads, not how many wires it holds.
+  it("lands the unit's values on every receiver the board was not given a source for", SLOW, async () => {
+    const unit = heldRead(PARAMS.FOLLOW_USB.id);
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    const moved = (p: Plan): void => {
+      sourced(STREAM_IN, "bus.mix1:out")(p);
+      sourced(MON_IN, "bus.mix1:out")(p);
+      sourced(USB_B_IN, "ch1:out", "ch2:out")(p);
+    };
+    unit.moveTo(unitMovedTo(moved));
+    $("btn-fetch").click();
+    await unit.reached;
+    try {
+      draw("bus.mix2:out", STREAM_IN);
+    } finally {
+      unit.release();
+    }
+    await invoked(shell, "vd_disconnect");
+    await fetchEnded();
+
+    const stream = await savedSources(shell, STREAM_IN);
+    expect(stream.problems).toEqual([]);
+    expect(stream.from).toEqual(["bus.mix2:out"]);
+    expect((await savedSources(shell, MON_IN)).from).toEqual(["bus.mix1:out"]);
+    expect((await savedSources(shell, USB_B_IN)).from).toEqual(["ch1:out", "ch2:out"]);
+  });
 });
 
 describe("the live session", () => {

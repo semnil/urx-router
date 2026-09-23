@@ -210,8 +210,24 @@ carries a one-line map of the same directories and points here.
       through `readIntoPlan` — a read works on a private clone of the plan and merges back with the
       `plan-history` differ (device truth first, the edits made while it was in flight over the top), so a
       whole-node assign cannot overwrite a gesture made inside a window hundreds of milliseconds to tens of
-      seconds wide. One read is not device truth throughout: Live sync's `sideEffect` refetch hands over the
-      writes the flush just made (`settle.ts` `PendingWrites`) and `writeOverlay` answers those addresses
+      seconds wide. **A single-input receiver's source is arbitrated per RECEIVER rather than per wire**
+      (`sourceChoiceHoldKeys`, handed to `readIntoPlan`'s `hold` by the follow read, the Fetch and the
+      Live-sync start alike): such a receiver takes one choice — one wire, or the two channels of a MONO IN
+      pair on a USB output (`isSingleInput` with `monoPairsInto`) — while the rest of the merge arbitrates
+      one wire at a time, and a replacing drop names the removal of the wire it took the place of and the
+      addition of its own. Per wire, the removal is the operator's and leaves the patch with them, and the
+      read's own source into the same receiver has nothing left to stop it landing beside theirs: both then
+      stand, the emit sends the first of them (the one nobody chose), and the document a save writes is one
+      the loader refuses (`singleInput`). So where an edit funnel authored any wire into such a receiver while
+      the read was in flight, the read writes nothing about WHICH wires go into it — additions and removals
+      alike, since taking a removal on its own leaves a mono pair half drawn. The receiver is then exactly as
+      the operator left it, which is a state `canConnect` passed. What the read established stays in
+      `deviceView`, which is what the next outgoing diff measures from, so a session writes the operator's
+      choice to the unit: a Live-sync start schedules that flush itself for any edit made while its read ran
+      — those had no session to flush through — and the reconciles reach the same send-back through
+      `reapplyHeld`. One read is not device truth throughout: Live sync's
+      `sideEffect` refetch hands over the writes the flush just made (`settle.ts` `PendingWrites`) and
+      `writeOverlay` answers those addresses
       from **what the unit announced** for them, since the unit does not answer a GET for a write that early
       — every other read path hands over nothing, and names are the one class the overlay never answers for:
       `readPass` skips them entirely while `pending` is present, for the reason given under `settle.ts`
@@ -1736,7 +1752,8 @@ written at all:
   the rate; coming back to a supported rate restores nothing. The read that rate notify escalates to is the
   first thing that sees the cleared values, so this one is settled in the MERGE: `insertFxHoldKeys` names the
   keys a device-follow read keeps the plan's own value for, and `readIntoPlan`'s `hold` takes them out of the
-  patch. The device view still carries what the unit answered — that is what leaves the plan and the live
+  patch (the source arbitration under `readback.ts` in "Source layout" is that parameter's other user). The
+  device view still carries what the unit answered — that is what leaves the plan and the live
   snapshot disagreeing, and the ordinary outgoing diff is then what sends the effect back, selector first,
   then the stored engine values, then the bypass intent. Measured on a URX44V on 2026-08-18: that re-send is
   accepted at the rate that cleared the effect and survives the return, checked across all 64 engine slots

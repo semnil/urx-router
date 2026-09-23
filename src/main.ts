@@ -148,6 +148,7 @@ import {
   formatReadbackReport,
   insertFxHoldKeys,
   readIntoPlan,
+  sourceChoiceHoldKeys,
 } from "./core/control/readback";
 import type { MergedRead, ReadbackResult } from "./core/control/readback";
 import type { PendingWrites } from "./core/control/settle";
@@ -804,7 +805,7 @@ function assertReadComplete(merged: MergedRead, label: string): void {
   // plan keeping values the unit does not have with nothing saying so — and reporting it
   // here rather than at each call site is what stops a fourth caller getting that order
   // wrong.
-  if (merged.held.length) console.warn("device read: the plan keeps what the unit cleared", merged.held);
+  if (merged.held.length) console.warn("device read: the plan keeps its own value", merged.held);
   if (!merged.errors.length) return;
   console.warn(label, merged.errors);
   const cause = linkFailureIn(merged.errors) ?? t().error.followReadIncomplete(merged.errors.length);
@@ -842,13 +843,16 @@ function supplyUnsourced(merged: MergedRead): string | null {
 // drop the link, and a flush issued into that writes nothing and reports nothing. The
 // snapshot has just re-based onto the unit's values, so plan and device disagree exactly
 // where the read held, and the ordinary outgoing diff is what puts them back — for insert
-// FX, the selector, then the stored engine values, then the bypass intent. Nothing else
-// would schedule that flush: no plan key moved, so no edit funnel ran.
+// FX, the selector, then the stored engine values, then the bypass intent.
 //
-// A read holds only where it has rate evidence (insertFxHoldKeys) — its own, or one the
-// unit announced while it ran. Both reconcile paths hand over the same hold for that
-// reason: a scoped read establishes no rate of its own and is still the first thing to
-// see a selector the unit has just cleared, so the pairing cannot be skipped at one of
+// The insert-FX half schedules a flush nothing else would: no plan key moved, so no edit
+// funnel ran. The source half (sourceChoiceHoldKeys) held against an edit that did run,
+// so its own flush is already scheduled and this one is a second ask for the same values.
+//
+// A read holds insert FX only where it has rate evidence (insertFxHoldKeys) — its own, or
+// one the unit announced while it ran. Both reconcile paths hand over the same hold for
+// that reason: a scoped read establishes no rate of its own and is still the first thing
+// to see a selector the unit has just cleared, so the pairing cannot be skipped at one of
 // them.
 function reapplyHeld(merged: MergedRead): void {
   if (!merged.held.length) {
@@ -985,11 +989,15 @@ async function followRead(
       planWrites,
       (ctx) => {
         establishedRate = ctx.deviceSampleRate !== undefined;
-        return insertFxHoldKeys(getModel(modelId), {
-          ...ctx,
-          announced: new Set(announcedInsertFx.slice(mark)),
-          ratesSeen: announcedRates.map((r) => r.hz),
-        });
+        const model = getModel(modelId);
+        return new Set([
+          ...insertFxHoldKeys(model, {
+            ...ctx,
+            announced: new Set(announcedInsertFx.slice(mark)),
+            ratesSeen: announcedRates.map((r) => r.hz),
+          }),
+          ...sourceChoiceHoldKeys(model, ctx),
+        ]);
       },
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
@@ -3081,6 +3089,9 @@ if (!DEMO) {
               return applyDeviceStateScoped(into, controller.signal);
             },
             switchTo ? undefined : planWrites,
+            // Paired with the witness above: with no witness there is no authorship to
+            // arbitrate on, and the model this asks would be the one the switch is leaving.
+            switchTo ? undefined : (ctx) => sourceChoiceHoldKeys(getModel(modelId), ctx),
           );
         } finally {
           switchRead = null;
@@ -3663,7 +3674,8 @@ if (!DEMO) {
               return applyDeviceStateScoped(into);
             },
             switchTo ? undefined : planWrites,
-            undefined,
+            // Paired with the witness above, as a fetch's is.
+            switchTo ? undefined : (ctx) => sourceChoiceHoldKeys(getModel(modelId), ctx),
             // Only a complete read merges (below).
             (read) => !read.errors.length,
           );
@@ -3727,6 +3739,13 @@ if (!DEMO) {
         liveEpoch = device.epoch;
         liveSessionUp = true;
         setLiveUi(true);
+        // An edit made while the starting read ran had no session to flush through, so the
+        // plan differs from the snapshot the session just took with nothing else left to
+        // schedule the send — whether the read held that key, lost it, or found the unit
+        // already on the value. A source the read itself supplied is not an edit and waits
+        // for one, as on a fetch. The reconcile paths reach the same send-back through
+        // `reapplyHeld`.
+        if (merged.authored) live.schedule();
         const on = t().status.liveOn(device.model, merged.applied);
         setStatus(supplied ? [supplied, on].join(" — ") : on);
       } catch (err) {

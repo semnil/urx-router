@@ -5,7 +5,7 @@
 // onto its fixed STEREO send so the inspector shows the on-device level and pan.
 
 import type { DeviceModel } from "../../models/types";
-import { ref } from "../../models/types";
+import { isSingleInput, ref } from "../../models/types";
 import type {
   ConnParams,
   EqBand,
@@ -28,6 +28,7 @@ import {
 import {
   applyPatchInContext,
   clonePlanState,
+  connectionContestKey,
   diffPlans,
   dropAuthored,
   nodeParamContestKey,
@@ -1456,6 +1457,15 @@ export interface MergedRead extends ReadbackResult {
    *  `console.warn`, which is a development aid and reaches nobody in a packaged build
    *  (no `devtools` feature) — so for those paths this really is silent, on purpose. */
   unplaced: string[];
+  /** How many keys an edit funnel authored while the read was in flight — `witness`'s own
+   *  answer, asked before the merge wrote anything so that the merge's writes are not
+   *  counted as the app's. Zero for a read that carries no witness.
+   *
+   *  It is the count of edits the read CONTESTED, whether it lost them (`unplaced`), held
+   *  them (`held`) or found them holding what the unit already had. A caller with nothing
+   *  else to flush those values through reads it: none of the three lists is the plan's
+   *  disagreement with `deviceView`, and each is empty for edits of the third kind. */
+  authored: number;
 }
 
 /**
@@ -1531,6 +1541,43 @@ export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<stri
   return held;
 }
 
+/**
+ * The wires a device read must leave alone: every wire into a single-input receiver whose
+ * incoming wires an edit funnel authored while the read was in flight.
+ *
+ * Such a receiver takes ONE choice — one wire, or the two channels of a MONO IN pair on a
+ * USB output — while the rest of the merge arbitrates per WIRE. A replacing drop records
+ * the removal of the wire it took the place of and the addition of its own, so the removal
+ * is the operator's and leaves the patch with them, and the read's own addition into the
+ * same receiver has nothing left to stop it. Both sources then stand in the plan: the emit
+ * sends the first of them, which is the one nobody chose, and the document a save writes
+ * is one the loader refuses (`singleInput`).
+ *
+ * The receiver is the unit of arbitration, so the read writes NOTHING about the wires into
+ * one the operator chose for. An addition of the unit's own source and a removal of a wire
+ * the operator drew are the two halves of one replacement, and a removal taken on its own
+ * leaves a mono pair half drawn.
+ *
+ * What the read established stays in `deviceView`, which is what the next outgoing diff
+ * measures from, so the operator's choice is what a session then writes to the unit.
+ */
+export function sourceChoiceHoldKeys(model: DeviceModel, ctx: HoldContext): Set<string> {
+  const held = new Set<string>();
+  // Which receivers take one choice is read off the MODEL's own rules rather than off the
+  // wires either plan holds: the kind belongs to the route, and a receiver the operator
+  // emptied carries no wire to read one from.
+  const chosen = new Set<string>();
+  for (const rule of model.rules) {
+    if (!isSingleInput(rule.kind)) continue;
+    if (ctx.authored.has(connectionContestKey(rule.from, rule.to))) chosen.add(rule.to);
+  }
+  if (!chosen.size) return held;
+  for (const conn of [...ctx.before.connections, ...ctx.deviceView.connections]) {
+    if (chosen.has(conn.to)) held.add(connectionContestKey(conn.from, conn.to));
+  }
+  return held;
+}
+
 /** What a hold is decided from: the plan as the read found it, what the read wrote into
  *  its private copy, the rate the read established on the unit (absent when it read none),
  *  and the keys an edit funnel authored while it was in flight — which the merge has
@@ -1598,12 +1645,13 @@ const INSERT_FX_KEYS = ["insertFx", "insertFxOn", "insertFxParams"] as const;
  * A read that throws propagates with the live plan untouched: the copy is discarded,
  * so an aborted or link-lost read really is "nothing happened".
  *
- * `hold` names keys the plan keeps whatever the device said, for a device-side change
- * the app is about to undo rather than adopt. It is deliberately NOT a change to
- * `deviceView`: the live snapshot re-bases from that, so the device's own value has to
- * stay in it — the difference between it and the plan is what the next outgoing diff
- * writes back, and a `deviceView` edited to agree with the plan would leave the app
- * holding an intent it had no way left to send.
+ * `hold` names keys the plan keeps whatever the device said: a device-side change the app
+ * is about to undo rather than adopt (insertFxHoldKeys), or a choice the operator made
+ * that the device's own answer may not join rather than replace (sourceChoiceHoldKeys).
+ * It is deliberately NOT a change to `deviceView`: the live snapshot re-bases from that,
+ * so the device's own value has to stay in it — the difference between it and the plan is
+ * what the next outgoing diff writes back, and a `deviceView` edited to agree with the
+ * plan would leave the app holding an intent it had no way left to send.
  *
  * `accept` is asked once the read has returned, before anything is merged. A read it
  * refuses writes nothing into the plan, the same as a read that threw, and still returns
@@ -1624,10 +1672,18 @@ export async function readIntoPlan(
   try {
     const result = await read(target);
     if (current() !== plan) return null;
-    if (accept && !accept(result)) return { ...result, deviceView: target, devicePatch: [], unplaced: [], held: [] };
     // Taken before anything is written, so the merge's own writes are not read back as
     // the app's authorship by a read still in flight beside this one.
     const authored = watch?.authored();
+    if (accept && !accept(result))
+      return {
+        ...result,
+        deviceView: target,
+        devicePatch: [],
+        unplaced: [],
+        held: [],
+        authored: authored?.size ?? 0,
+      };
     // The patch is filtered rather than the apply, so what this read is allowed to
     // author is one list: the history baseline absorbs the same devicePatch, and a key
     // absorbed but not applied would put a value the app never wrote into the next
@@ -1645,7 +1701,7 @@ export async function readIntoPlan(
       }) ?? new Set<string>();
     const { patch: devicePatch, dropped: held } = dropAuthored(contested, holdKeys);
     const unplaced = [...applyPatchInContext(plan, devicePatch), ...dropped];
-    return { ...result, deviceView: target, devicePatch, unplaced, held };
+    return { ...result, deviceView: target, devicePatch, unplaced, held, authored: authored?.size ?? 0 };
   } finally {
     watch?.close();
   }

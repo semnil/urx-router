@@ -893,8 +893,7 @@ export const en = {
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: tr("← device…"),
     liveFollowed: (n: number): string => `← device (${n})`,
-    liveHeld: (read: number, held: number): string =>
-      `← device (${read}) · ${held} kept and re-sent (the unit's own sample rate cannot run them)`,
+    liveHeld: (read: number, held: number): string => `← device (${read}) · ${held} kept and re-sent`,
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} shares device settings with ${kept}${more > 0 ? ` (+${more} more)` : ""} — only ${kept}'s values reach the device`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
@@ -1223,7 +1222,7 @@ export const en = {
       "Device follow stopped while the session was starting, so a change made on the device would not reach the plan. Live sync was not started.",
     ),
     followReadHeld: (cause: string, n: number): string =>
-      `${cause}; ${n} setting${n === 1 ? "" : "s"} the unit cleared are still held in the plan`,
+      `${cause}; ${n} setting${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} still held in the plan`,
     followReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     clockUnread: (message: string): string =>
