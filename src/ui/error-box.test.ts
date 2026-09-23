@@ -54,8 +54,26 @@ describe("an error box raised over another modal", () => {
   };
 
   afterEach(() => {
+    $("error-box-close")?.click();
+    $("licenses-close")?.click();
     document.body.innerHTML = "";
     document.head.querySelectorAll("style").forEach((s) => s.remove());
+  });
+
+  it("keeps content presses inside the box and dismisses only on its scrim", () => {
+    open();
+    expect($("error-box-body").textContent).toBe("boom");
+
+    $("error-box-body").dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect($("error-box-modal").hidden).toBe(false);
+    expect($("error-box-body").textContent).toBe("boom");
+    expect(document.activeElement).toBe($("error-box-close"));
+
+    $("error-box-modal").dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect($("error-box-modal").hidden).toBe(true);
+    expect($("error-box-body").childElementCount).toBe(0);
+    expect($("licenses-modal").hidden).toBe(false);
+    expect(document.activeElement).toBe($("licenses-close"));
   });
 
   it("closes on Escape without taking the modal underneath with it", () => {

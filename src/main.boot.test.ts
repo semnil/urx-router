@@ -376,6 +376,23 @@ describe("menus", () => {
 });
 
 describe("keyboard", () => {
+  const outputWire = '.wire-hit[data-to="out.usbmain_a:in"]';
+  const selectOutputWire = (): void => {
+    const wire = $("graph-host").querySelector(outputWire);
+    expect(wire).not.toBeNull();
+    wire!.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    wire!.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+  };
+
+  it.each(["Delete", "Backspace"])("deletes the selected graph wire on %s", async (key) => {
+    await boot();
+    selectOutputWire();
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect($("graph-host").querySelector(outputWire)).toBeNull();
+  });
+
   it("clears the graph selection on Escape", async () => {
     await boot();
     const wire = $("graph-host").querySelector(".wire-hit")!;
@@ -389,10 +406,11 @@ describe("keyboard", () => {
   // view — the console renders no deletable kinds.
   it("does not delete from the CONSOLE view", async () => {
     await boot();
+    selectOutputWire();
     $("btn-view-console").click();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
     $("btn-view-graph").click();
-    expect($("graph-host").querySelectorAll(".wire-hit").length).toBeGreaterThan(0);
+    expect($("graph-host").querySelector(outputWire)).not.toBeNull();
   });
 });
 

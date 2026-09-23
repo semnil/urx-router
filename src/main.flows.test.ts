@@ -457,6 +457,29 @@ describe("the modals", () => {
 });
 
 describe("undo and redo", () => {
+  it("undoes and redoes hidden nodes in the board and persisted view state", async () => {
+    await boot({ "urx-hidden": JSON.stringify({ URX44V: [] }) });
+    const visible = (): string[] =>
+      [...$("graph-host").querySelectorAll<SVGGElement>("g.node[data-id]")].map((node) => node.dataset.id!).sort();
+    const persisted = (): string[] => JSON.parse(localStorage.getItem("urx-hidden")!).URX44V;
+    const before = visible();
+    expect(persisted()).toEqual([]);
+
+    $("btn-hide-unused").click();
+    const hidden = persisted();
+    const after = visible();
+    expect(hidden.length).toBeGreaterThan(0);
+    expect(after).toEqual(before.filter((id) => !hidden.includes(id)));
+
+    chord("z", { ctrlKey: true });
+    expect(visible()).toEqual(before);
+    expect(persisted()).toEqual([]);
+
+    chord("z", { ctrlKey: true, shiftKey: true });
+    expect(visible()).toEqual(after);
+    expect(persisted()).toEqual(hidden);
+  });
+
   // The boundary: a plan edit is one entry, and the chord walks it. Driven through
   // the CONSOLE, whose fader writes through the same change funnel the graph does.
   it("undoes and redoes a console edit", async () => {
@@ -951,6 +974,20 @@ describe("menu keyboard navigation", () => {
   const items = (): HTMLButtonElement[] => [
     ...$("file-menu").querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled]):not([hidden])'),
   ];
+
+  it("leaves focus and the default action intact for an unrelated key", async () => {
+    await boot();
+    $("btn-file").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    const first = items()[0];
+    expect(document.activeElement).toBe(first);
+    expect($("file-menu").hidden).toBe(false);
+
+    const event = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+    first.dispatchEvent(event);
+    expect(document.activeElement).toBe(first);
+    expect($("file-menu").hidden).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+  });
 
   // What this does NOT establish: that End lands somewhere the operator can see. jsdom
   // focuses a non-rendered button happily where a real engine refuses, so a build-time
