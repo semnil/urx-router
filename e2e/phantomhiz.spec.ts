@@ -11,6 +11,7 @@ import {
   writesOf,
 } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
+import { chooseOption } from "./choose-option";
 
 // +48V and HI-Z are never on together in the app, and A.Gain stops at +40 dB while HI-Z is
 // on (docs/en/known-issues.md, "The unit lets +48V and HI-Z be on together; the app does not").
@@ -380,4 +381,29 @@ test("a Hi-Z ON pressed while a follow read brings in the unit's own +48V ON sen
     hiZ: [],
     gain: [],
   });
+});
+
+// A converge re-sends what differs across the write scope. A Hi-Z the unit turned on at its own
+// panel differs from a plan the follow read has not reached yet, and is not written off.
+test("a converge ahead of the follow read does not write off a Hi-Z the unit's panel turned on", async ({ page }) => {
+  test.setTimeout(120_000);
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS, values: { 766: 48000, 848: 0 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await startLive(page);
+  await liveOn(page);
+  await selectCh3(page);
+  const type = page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select");
+  await expect(type).toBeVisible();
+
+  await setDeviceValue(page, PARAMS.HI_Z.id, 2, 1);
+  await notifyParam(page, PARAMS.HI_Z.id, 2, 1);
+  await chooseOption(type, "1");
+  await expect.poll(() => switchWrites(page, PARAMS.COMP_EQ_TYPE.id), { timeout: 30_000 }).toEqual([1]);
+  // The follow read that announcement scheduled lands behind the converge. The select keeps
+  // focus, which holds the Inspector's rebuild, so the node is pressed once the read is in.
+  await expect(page.locator("#statusbar")).toContainText(/← device \(\d+\)/, { timeout: 30_000 });
+  expect(await switchWrites(page, PARAMS.HI_Z.id), "the unit's own Hi-Z is never written").toEqual([]);
+  await selectCh3(page);
+  await expect(face(page, "Hi-Z")).toHaveText("ON");
 });

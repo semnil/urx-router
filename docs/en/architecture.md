@@ -161,12 +161,13 @@ carries a one-line map of the same directories and points here.
   plan that had not heard what the unit holds, so the rule is asked twice more against the unit itself:
   where the read lands (`readRefusedSwitches`, applied by `readIntoPlan` to every read — the ON and the keys
   the same edit carried go back to the unit's values, and `PlanHistory.retract` takes the edit out of the
-  undo stack), and per command where a live flush sends (`onExcludedBy`, against the snapshot and the unit's
-  announcements in `live.ts`). A
+  undo stack), and per command where a live flush or a converge round sends (`onExcludedBy`, against the
+  snapshot and the unit's announcements in `live.ts`, and against the round's own read in `client.ts`). A
   live session's read also asks what the session knows (`SwitchSession`): an ON its flush already sent is
   on the unit and is not refused, and an ON the flush held back that the read's own value replaced is
   refused all the same (`unsentRefusedSwitches`). The flush holds the +40 dB A.Gain a held HI-Z ON lowered
-  with it (`carrierOf`)
+  with it (`carrierOf`), and its converge leaves a switch the unit announced it turned on at its panel, with
+  the other one on that channel, to the follow read that announcement scheduled
   - `src/core/midi/` — external MIDI control (desktop only). `message.ts` decode/encode of CC/note/pitch
     bend / `mapping.ts` free-mapping model (address, takeover mode absolute/pickup) + persistence validation
     / `controls.ts` catalog of fixed control ids (`node/param[@scope]`) for every CONSOLE control **and
@@ -2288,7 +2289,8 @@ describes a state it can return to.
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
 | An undo / redo whose result would leave +48V and HI-Z both on for a channel | `patchBlocked` on the peeked entry, over the state the patch would create | the app never turns one of the two on while the other is on, and an undo turns one on as much as the gesture it reverses did |
 | An ON of +48V / HI-Z made while a device read was in flight, on a channel where that read finds the other one on | `readIntoPlan`, after the merge (`readRefusedSwitches`): the switch and the keys the witness saw the same edit write go back to the read's values, and the edit leaves the undo stack (`PlanHistory.retract`). In a live session, an ON its flush already sent is on the unit and is not refused (`SwitchSession.holdsOn`), and an ON the flush held back that the merge replaced with the read's value is reported and retracted the same way (`unsentRefusedSwitches`) | the surface asked the rule of a plan that had not heard what the unit holds; the unit's own switch is what the read found, and it stays |
-| A +48V / HI-Z ON the unit would receive while holding the other one on, and the +40 dB A.Gain a held HI-Z ON lowered | the live flush's send loop (`onExcludedBy` against the snapshot and what the unit announced since, which a follow read has not yet brought into the plan; `carrierOf` for the A.Gain) | left in the plan, not dropped: a read that finds the other one on takes it back, and a later announcement or capture asks the flush again |
+| A +48V / HI-Z ON the unit would receive while holding the other one on, and the +40 dB A.Gain a held HI-Z ON lowered | the live flush's send loop (`onExcludedBy` against the snapshot and what the unit announced since, which a follow read has not yet brought into the plan; `carrierOf` for the A.Gain) and each converge round (against the round's own read) | left in the plan, not dropped: a read that finds the other one on takes it back, and a later announcement or capture asks the flush again |
+| A live converge's write to a +48V / HI-Z the unit announced it turned on at its panel, and to the other switch on that channel | the live flush, before its converge (`exclude`, joined by an announcement that arrives while it runs, which each later read and round send of the converge asks again); the capture behind it keeps what the snapshot and the announcements held there | the switch is the unit's until the follow read the announcement scheduled brings it in, and the plan's older OFF would write it off |
 | A MIDI message arriving under those same latches, or during a self-test / `--prepare-modified` run | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
 | A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
 | A read's value for a key the app wrote while that read was in flight | `readIntoPlan`'s authorship filter, before the patch is applied | the operator authored it after the read sampled the address; comparing values instead would take an edit that returned to where it started for one that never happened |
@@ -2629,7 +2631,14 @@ for a change that did not last.
 Ahead of any of it, a plan holding +48V and HI-Z both on for a channel stops the write where it stands: whichever
 of the two went out second would turn one on while the other is on, so no emit order makes it legal, and the
 refusal is taken before the link is opened rather than inside the send (known-issues.md "The unit lets +48V and
-HI-Z be on together; the app does not").
+HI-Z be on together; the app does not"). Every converge round then asks the same rule per command against what its
+own read found, in send order (`withoutExcludedOns` in `client.ts`), so a round that turns the other switch off
+first still sends the ON behind it. That is what the live flush's converge needs: it re-sends a plan the unit's
+panel may have moved since, and a plan holding both on from a read would otherwise put a switch the panel turned
+off back on beside the other one. The live flush also leaves out of its converge a switch the unit has announced it
+turned on at its panel and no read has brought in yet, with the other switch on that channel, since the plan's
+older OFF would otherwise go out over it. An announcement that arrives while the converge runs joins that set, and
+each later read and round send asks it again (`exclude`); a round whose sends were already chosen goes out as chosen.
 
 `Write to device` therefore reads the device's clock state — Follow USB (848) and the running rate (766) — before
 the diff, and settles the rate before anything is sent (`settleSampleRate` in `main.ts`, `readClockState` in

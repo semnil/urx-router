@@ -394,6 +394,68 @@ describe("sendConverging", () => {
     expect(r.readErrors.length).toBeGreaterThan(0);
     expect(r.rounds).toBeLessThan(3);
   });
+
+  // +48V and HI-Z: a round never sends one of them ON while the unit, as the round's own read
+  // found it, holds the other one on — and a round that turns the other one off first still
+  // sends it, since the command order puts the OFF ahead of it.
+  describe("+48V and HI-Z", () => {
+    const Y = 2; // CH 3
+    const key = (id: number): string => `${id}:0:${Y}`;
+    const switchWrites = (): Array<[number, number]> =>
+      vi
+        .mocked(vdSet)
+        .mock.calls.filter(([id, , y]) => y === Y && (id === PARAMS.PHANTOM.id || id === PARAMS.HI_Z.id))
+        .map(([id, , , v]) => [id, v]);
+
+    it("does not turn +48V back on while the unit holds HI-Z on", async () => {
+      // The plan holds both on, as a read of a unit holding both leaves it; the unit's panel
+      // has since turned +48V off.
+      const plan = basePlan();
+      plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, phantom: true, hiZ: true };
+      const table = installDevice();
+      for (const [k, v] of deviceTableFor(plan)) table.set(k, v);
+      table.set(key(PARAMS.PHANTOM.id), 0);
+      const r = await sendConverging(model, plan, { settleMs: 0 });
+      expect(switchWrites(), "no +48V ON over the unit's HI-Z").toEqual([]);
+      expect(table.get(key(PARAMS.HI_Z.id)), "the unit's HI-Z is left as it is").toBe(1);
+      expect(r.residual.map((d) => d.command.name)).toEqual(["PHANTOM"]);
+    });
+
+    // The live flush adds to `exclude` while the loop runs, as the unit announces a switch turned
+    // on at its own panel, and a round sends nothing to an address it names by then.
+    it("sends nothing to an address excluded after the round's read found it", async () => {
+      const plan = basePlan();
+      plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, phantom: false, hiZ: false };
+      const table = installDevice();
+      for (const [k, v] of deviceTableFor(plan)) table.set(k, v);
+      table.set(key(PARAMS.HI_Z.id), 1);
+      const exclude = new Set<number>();
+      const answer = vi.mocked(vdGet).getMockImplementation()!;
+      vi.mocked(vdGet).mockImplementation(async (id, x, y) => {
+        const v = await answer(id, x, y);
+        if (id === PARAMS.HI_Z.id && y === Y) exclude.add(addrKey(id, x, y));
+        return v;
+      });
+      await sendConverging(model, plan, { settleMs: 0, exclude });
+      expect(exclude.size, "the premise: the read found it before it was excluded").toBe(1);
+      expect(switchWrites(), "the unit's own HI-Z is left on").toEqual([]);
+    });
+
+    it("sends +48V ON behind the HI-Z OFF the same round sends", async () => {
+      const plan = basePlan();
+      plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, phantom: true, hiZ: false };
+      const table = installDevice();
+      for (const [k, v] of deviceTableFor(plan)) table.set(k, v);
+      table.set(key(PARAMS.PHANTOM.id), 0);
+      table.set(key(PARAMS.HI_Z.id), 1);
+      const r = await sendConverging(model, plan, { settleMs: 0 });
+      expect(switchWrites()).toEqual([
+        [PARAMS.HI_Z.id, 0],
+        [PARAMS.PHANTOM.id, 1],
+      ]);
+      expect(r.residual).toEqual([]);
+    });
+  });
 });
 
 describe("formatWriteReport", () => {

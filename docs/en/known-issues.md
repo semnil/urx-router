@@ -152,7 +152,8 @@ The app never turns one on while the other is on:
 - **During Live sync, a switch turned on at the unit's panel.** From the moment
   the unit announces it, the app sends no ON of the other one for that channel —
   including one already pressed and waiting to be sent, and the +40 A.Gain a
-  Hi-Z press lowered with it. The read the
+  Hi-Z press lowered with it — and no write it decides on after the announcement
+  turns the unit's switch back off before a read has brought it in. The read the
   announcement starts refuses
   a press made meanwhile as above, whether it was made before that read began or
   while it ran.
@@ -161,7 +162,11 @@ The app never turns one on while the other is on:
   channel, so nothing reaches the unit. Turning either one off makes the write go
   through. A plan holds both on only where the unit it was read from held both
   on, and a read or a `.urxf` import is the only way that state reaches a plan;
-  it stays on screen until you turn one off.
+  it stays on screen until you turn one off. Once a plan is on the unit,
+  re-sending it (Live sync's own repair after a change that makes the unit reset
+  other settings) does not turn one back on while the unit holds the other on
+  either, nor turn off a switch turned on at the unit's panel that the app has
+  not read yet.
 
 **A.Gain follows HI-Z.** While HI-Z is on, the unit's A.Gain runs -8 … +40 dB, and
 the unit does not apply a value written above +40. The Inspector slider, the

@@ -2436,4 +2436,86 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
       expect(gainSends()).toEqual([gainToVd(50)]);
     });
   });
+
+  // A converge re-sends whatever differs across the write scope, and a switch the unit turned on
+  // at its own panel differs from a plan that has not heard yet. The converge leaves that
+  // channel's two switches to the follow read the announcement scheduled, and the capture behind
+  // it learns nothing about them.
+  describe("behind a converge", () => {
+    /** The unit: what `plan` holds now, with CH 3's two switches as `sw` says at each read. */
+    const unitAnswers = (plan: Plan, sw: { phantom: number; hiZ: number }): void => {
+      const values = new Map(planToCommands(model, plan).map((c) => [cmdAddr(c), c.vdValue] as const));
+      vi.mocked(vdGet).mockImplementation(async (id: number, x: number, y: number) => {
+        if (y === Y && id === PARAMS.PHANTOM.id) return sw.phantom;
+        if (y === Y && id === PARAMS.HI_Z.id) return sw.hiZ;
+        return values.get(addrKey(id, x, y)) ?? 0;
+      });
+    };
+
+    it("does not write a HI-Z the unit turned on at its panel back off, and holds +48V against it", async () => {
+      const plan = planWith({ phantom: false, hiZ: false });
+      const live = liveFor(plan);
+      live.begin();
+      live.isEcho(PARAMS.HI_Z.id, 0, Y, 1);
+      setCh1CompEqType(plan, 1);
+      unitAnswers(plan, { phantom: 0, hiZ: 1 });
+      await flush(live);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(vi.mocked(vdGet), "the premise: the converge read the unit").toHaveBeenCalled();
+      expect(switchSends(), "the unit's own HI-Z is left on").toEqual([]);
+
+      plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+      await flush(live);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(switchSends(), "no +48V ON while the unit holds HI-Z on").toEqual([]);
+    });
+
+    it("sends a +48V ON it held across a converge once the unit turns HI-Z off", async () => {
+      const plan = planWith({ phantom: false, hiZ: false });
+      const live = liveFor(plan);
+      live.begin();
+      const sw = { phantom: 0, hiZ: 1 };
+      live.isEcho(PARAMS.HI_Z.id, 0, Y, 1);
+      plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+      await flush(live);
+      expect(switchSends(), "the premise: the ON is held").toEqual([]);
+
+      setCh1CompEqType(plan, 1);
+      unitAnswers(plan, sw);
+      await flush(live);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(switchSends(), "still held behind the converge").toEqual([]);
+
+      sw.hiZ = 0;
+      live.isEcho(PARAMS.HI_Z.id, 0, Y, 0);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(switchSends()).toEqual([[PARAMS.PHANTOM.id, 1]]);
+    });
+
+    // The panel can move while the converge runs. The CH 1 fader never takes the value the
+    // converge sends, so the converge goes round again after the announcement lands.
+    it("leaves a HI-Z the unit turns on while the converge runs", async () => {
+      const plan = planWith({ phantom: false, hiZ: false });
+      const live = liveFor(plan);
+      live.begin();
+      setCh1CompEqType(plan, 1);
+      const unit = clonePlanState(plan);
+      setCh1Fader(unit, -20);
+      const sw = { phantom: 0, hiZ: 0 };
+      let faderSends = 0;
+      vi.mocked(vdSet).mockImplementation(async (id: number, _x: number, y: number) => {
+        if (id !== PARAMS.CH_FADER.id || y !== 0) return;
+        faderSends += 1;
+        if (faderSends === 1) {
+          sw.hiZ = 1;
+          live.isEcho(PARAMS.HI_Z.id, 0, Y, 1);
+        }
+      });
+      unitAnswers(unit, sw);
+      await flush(live);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(faderSends, "the premise: a round went out after the announcement").toBeGreaterThan(1);
+      expect(switchSends(), "the unit's own HI-Z is left on").toEqual([]);
+    });
+  });
 });

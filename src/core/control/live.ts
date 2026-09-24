@@ -242,6 +242,10 @@ export class LiveSync {
   // supersedes: issued after the announcement, over the node the address belongs to, and
   // reading the address.
   private readonly announced = new Map<number, { value: number; at: number }>();
+  // The converge in flight: what it leaves out (`exclude`), and the part of that which is a
+  // switch the unit turned on at its own panel and the other switch on the same channel
+  // (`ownOns`). An announcement arriving while it runs can add to both (`isEcho`).
+  private converge: { ownOns: Set<number>; exclude: Set<number> } | null = null;
   // A switch ON the exclusion held back is still waiting in the plan, and the A.Gain it
   // lowered with it (`carrierOf`). Whatever can move the view it was held against — an
   // announcement, a capture — schedules a flush to ask again, since no edit will. A read that
@@ -499,6 +503,13 @@ export class LiveSync {
     // up holding.
     this.announced.set(k, { value, at: ++this.directSeq });
     if (this.onHeld) this.schedule();
+    const converge = this.converge;
+    const name = converge ? this.index.get(k)?.name : undefined;
+    if (converge && name)
+      for (const own of this.ownOnPair({ name, paramId, x, y })) {
+        converge.ownOns.add(own);
+        converge.exclude.add(own);
+      }
     // Pending first, and it CONSUMES the entry it matches: this notify is that write's
     // announcement, so leaving it queued would let a later device-side change back to
     // the same value be swallowed for the rest of the retention window.
@@ -527,6 +538,17 @@ export class LiveSync {
     if (value === undefined || this.snapshot.get(k) === value) return false;
     const other = onExcludedBy(c, value);
     return other !== null && Boolean(this.unitHolds(other));
+  }
+
+  /** For a +48V / HI-Z command whose switch the unit turned on at its own panel — announced
+   *  ON, and not what the snapshot holds — that address and the other switch's on the same
+   *  channel; nothing for any other command. */
+  private ownOnPair(c: Pick<VdCommand, "name" | "paramId" | "x" | "y">): number[] {
+    const k = addrKey(c.paramId, c.x, c.y);
+    const a = this.announced.get(k);
+    if (a === undefined || this.snapshot.get(k) === a.value) return [];
+    const other = onExcludedBy(c, a.value);
+    return other === null ? [] : [k, other];
   }
 
   /** Append a write we have just been acked for, so its late announcement is still
@@ -652,7 +674,7 @@ export class LiveSync {
     return new Map(planToCommands(model, plan, scope).map((c) => [cmdAddr(c), c.vdValue] as const));
   }
 
-  private capture(deviceView?: Plan, since?: number, nodes?: ReadonlySet<string>): void {
+  private capture(deviceView?: Plan, since?: number, nodes?: ReadonlySet<string>, unread?: ReadonlySet<number>): void {
     // A re-base re-authors the plan from the device, so a collision reported against the
     // pre-read plan may already be gone — a reconcile reads the shared address once and
     // assigns it to both owners, which erases the divergence. Nothing schedules a flush
@@ -666,6 +688,9 @@ export class LiveSync {
     // Every caller passes a private copy (readback's clone, or the converge's own),
     // so a view is never the live plan itself.
     const device = deviceView ? this.commandValues(model, deviceView, scope) : null;
+    // `unread`: addresses the read behind this view left out. The snapshot goes on holding
+    // what it held there, and their announcements stand.
+    const kept = unread ? [...unread].map((k) => [k, this.snapshot.get(k)] as const) : [];
     this.snapshot.clear();
     this.nameSnapshot.clear();
     const commands = planToCommands(model, plan, scope);
@@ -677,6 +702,7 @@ export class LiveSync {
       const known = device ? device.get(k) : c.vdValue;
       if (known !== undefined) this.snapshot.set(k, known);
     }
+    for (const [k, v] of kept) if (v !== undefined && this.snapshot.has(k)) this.snapshot.set(k, v);
     this.rebuildFollowSet(model, plan, scope, commands);
     for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
     if (since !== undefined) {
@@ -693,6 +719,7 @@ export class LiveSync {
     // unit's last word.
     for (const [k, a] of this.announced) {
       if (since !== undefined && a.at > since) continue;
+      if (unread?.has(k)) continue;
       const node = this.index.get(k)?.node;
       if (nodes && (node === undefined || !nodes.has(node))) continue;
       this.announced.delete(k);
@@ -1108,10 +1135,20 @@ export class LiveSync {
           for (const c of commands) {
             if (c.node !== undefined && driven.get(c.node)?.has(c.name)) exclude.add(cmdAddr(c));
           }
+        // A switch the unit turned on at its own panel, which no read has brought into the plan
+        // yet, is the unit's: the converge would write the plan's older OFF over it. It leaves
+        // that switch and the other one on the same channel to the follow read the announcement
+        // scheduled, and the capture below learns nothing about either.
+        const ownOns = new Set<number>();
+        for (const c of commands) for (const k of this.ownOnPair(c)) ownOns.add(k);
+        for (const k of ownOns) exclude.add(k);
+        this.converge = { ownOns, exclude };
         const r = await sendConverging(model, converged, {
           scope: this.scope(),
           pending: seedPending,
-          exclude: exclude.size ? exclude : undefined,
+          exclude,
+        }).finally(() => {
+          this.converge = null;
         });
         // Same rule as the send loops, and before the failure check on purpose: once the
         // session is gone there is nobody left to report a failed converge to, and the
@@ -1135,7 +1172,7 @@ export class LiveSync {
           // teardown that names nothing.
           throw new Error(failed?.error || r.readErrors[0] || "converge failed");
         }
-        this.capture(converged, since);
+        this.capture(converged, since, undefined, ownOns);
       }
       // A refetch after the converge, if both happened: converge rebuilds the snapshot
       // from the plan, and the read that follows is what makes the plan right.

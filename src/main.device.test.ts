@@ -8154,6 +8154,41 @@ describe("+48V and Hi-Z on one channel", () => {
       });
     });
 
+    // A converge re-sends what differs across the write scope. A Hi-Z the unit turned on at its
+    // own panel differs from a plan the follow read has not reached yet, and is not written off.
+    it(
+      "does not write off a Hi-Z the unit's panel turned on when a converge runs ahead of the follow read",
+      SLOW,
+      async () => {
+        const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.HI_Z.id, false);
+        const shell = (await bootApp({ tauri: table }))!;
+        live().click();
+        await liveUp();
+
+        hold.panel(PARAMS.HI_Z.id, 1);
+        notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+        selectNode("ch3");
+        const type = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+        type.value = String(COMP_EQ_SSMCS);
+        type.dispatchEvent(new Event("change", { bubbles: true }));
+        await vi.waitFor(() => expect(writesAt(shell, PARAMS.COMP_EQ_TYPE.id)).toEqual([COMP_EQ_SSMCS]), {
+          timeout: 10_000,
+        });
+        const typeAt = shell.invokes.reduce(
+          (last, cmd, i) => (cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.COMP_EQ_TYPE.id ? i : last),
+          -1,
+        );
+        await quiet(shell);
+        expect(
+          shell.invokes.some((cmd, i) => i > typeAt && cmd === "vd_get"),
+          "the premise: the converge read the unit",
+        ).toBe(true);
+        expect(writesAt(shell, PARAMS.HI_Z.id), "the unit's own Hi-Z is never written").toEqual([]);
+        selectNode("ch3");
+        expect(litFace(t().inspector.hiZ), "the follow read brought it in").toBe("ON");
+      },
+    );
+
     // An ON pressed after the unit announced the other one on and before the follow read that
     // announcement schedules is issued: the flush holds it, and the read, which did not see it
     // made, writes the unit's OFF over it. That is the refusal, and the status line says so.

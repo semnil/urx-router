@@ -5,8 +5,8 @@
 // the two paths that reach the plan without being an edit at all: applying a history entry and
 // writing the whole plan, which ask `phantomHiZNewlyBothOn` about the state they would create.
 // A device read asks it where it lands (`readRefusedSwitches`, and in a live session
-// `unsentRefusedSwitches`, applied by readback.ts `readIntoPlan`), and the live flush asks it
-// per command (`onExcludedBy` and `carrierOf`, live.ts), since
+// `unsentRefusedSwitches`, applied by readback.ts `readIntoPlan`), and the live flush and every
+// converge round ask it per command (`onExcludedBy` and `carrierOf`, live.ts and client.ts), since
 // an ON taken while a read is in flight was taken from a plan that had not heard what the unit
 // holds. Whether HI-Z applies to a
 // channel is `hiZOn`: the +48V refusal, the A.Gain range, the both-on list and the load repair
@@ -188,7 +188,7 @@ export function unsentRefusedSwitches(
  * an OFF and for every other command. The live flush asks it per command against its own view
  * of the unit, because that view can move while an ON waits in the plan: the unit turns the
  * other switch on at its own panel, and says so, before a follow read has brought it into the
- * plan.
+ * plan. A converge round asks it against what its own read found.
  */
 export function onExcludedBy(c: Pick<VdCommand, "name" | "x" | "y">, value: number): number | null {
   if (!value) return null;
