@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
 import { SSMCS_INITIAL, emptyPlan, ensureFixedConnections, type Plan } from "../plan";
-import { clonePlanState } from "../plan-history";
+import { PlanWriteWitness, clonePlanState } from "../plan-history";
 
 // LiveSync drives the device through platform.vdSet / vdSetStr and re-reads via
 // vdGet on a converge; mock those. The point of these tests is the flush cadence
@@ -17,7 +17,7 @@ import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
 import { MBC_ONE_KNOB, insertFxParamKey } from "./insert-fx-effect";
 import { fxParams } from "./fx-effect";
-import { applyNodeState } from "./readback";
+import { applyNodeState, readIntoPlan } from "./readback";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { gainToVd } from "./vd";
@@ -1384,6 +1384,667 @@ describe("LiveSync sideEffect refetch", () => {
     expect(typeof [...(marks[0] ?? new Map()).values()][0]).toBe("number");
   });
 
+  // An edit made while a refetch head's write is on the wire is carried by none of the
+  // flush's writes, and the read is opened only once they have returned — so the flush opens
+  // the edit watch where it takes its values and hands that same watch to the read. A flush
+  // with no refetch head opens none: the watch samples every edit while it is open.
+  it("watches edits from where the flush takes its values and hands the watch to the refetch", async () => {
+    const plan = basePlan();
+    setCh1CompEqType(plan, COMP_EQ_SSMCS);
+    const seen: string[] = [];
+    const watch = {
+      authored: () => new Set<string>(),
+      edits: () => new Map<string, number>(),
+      close: () => void seen.push("close"),
+    };
+    const handed: unknown[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      watchEdits: () => {
+        seen.push("watch");
+        return watch;
+      },
+      refetchNodes: async (_nodes, _pending, edits) => {
+        seen.push("refetch");
+        handed.push(edits);
+        return null;
+      },
+    });
+    vi.mocked(vdSet).mockImplementation(async () => void seen.push("write"));
+    live.begin();
+    setCh1Morphing(plan, 60);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(seen).toEqual(["watch", "write", "refetch", "close"]);
+    expect(handed).toEqual([watch]);
+
+    // The control: a fader move provokes no read, and opens no watch.
+    seen.length = 0;
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(seen).toEqual(["write"]);
+  });
+
+  // The refetch keeps an edit made after the value a refetch head carries was taken, wherever
+  // the flush takes it: its first list, a re-take inside the numeric loop, or the name loop's
+  // own list. These run the app's own read and merge over a unit that keeps what it is sent,
+  // with a write held open while the operator edits, and ask what the plan and the wire end up
+  // holding.
+  describe("an edit made while a refetch head's write is on the wire", () => {
+    /** `recompute` is the unit working out what a write drives, on the values it holds. */
+    const heldUnit = (plan: Plan, recompute?: (addr: number, value: number, numbers: Map<number, number>) => void) => {
+      const numbers = new Map(planToCommands(model, plan).map((c) => [cmdAddr(c), c.vdValue] as const));
+      const refetched: string[][] = [];
+      const names = new Map<string, string>();
+      type Match = (id: number, x: number, y: number) => boolean;
+      const hold: { set: Match | null; str: Match | null } = { set: null, str: null };
+      const waiting: Array<() => void> = [];
+      const gate = async (kind: "set" | "str", id: number, x: number, y: number): Promise<void> => {
+        const match = hold[kind];
+        if (!match?.(id, x, y)) return;
+        hold[kind] = null;
+        await new Promise<void>((r) => waiting.push(r));
+      };
+      vi.mocked(vdSet).mockImplementation(async (id: number, x: number, y: number, v: number) => {
+        numbers.set(addrKey(id, x, y), v);
+        recompute?.(addrKey(id, x, y), v, numbers);
+        await gate("set", id, x, y);
+      });
+      vi.mocked(vdSetStr).mockImplementation(async (id: number, x: number, y: number, v: string) => {
+        names.set(`${id}:${x}:${y}`, v);
+        await gate("str", id, x, y);
+      });
+      vi.mocked(vdGet).mockImplementation(
+        async (id: number, x: number, y: number) => numbers.get(addrKey(id, x, y)) ?? 0,
+      );
+      vi.mocked(vdGetStr).mockImplementation(
+        async (id: number, x: number, y: number) => names.get(`${id}:${x}:${y}`) ?? "",
+      );
+      const witness = new PlanWriteWitness(() => plan);
+      const live = new LiveSync({
+        getModel: () => model,
+        getPlan: () => plan,
+        onError: () => {},
+        onSent: () => {},
+        onCollapsed: () => {},
+        watchEdits: () => witness.watch(),
+        refetchNodes: async (nodes, pending, edits) =>
+          (refetched.push([...nodes]),
+          await readIntoPlan(
+            () => plan,
+            (into) => applyNodeState(model, into, nodes, undefined, pending, true),
+            edits ? { watch: () => edits } : witness,
+          ))?.deviceView ?? null,
+      });
+      return {
+        live,
+        numbers,
+        /** The nodes each refetch read back, in order. */
+        refetched,
+        /** The edit funnel: the plan moves, the witness is told, and a flush is asked for. */
+        edit: (change: () => void): void => {
+          change();
+          witness.note();
+          live.schedule();
+        },
+        /** Hold the next write of this kind — to this address, when one is named — until `release`. */
+        holdNext: (kind: "set" | "str", at?: { paramId: number; x: number; y: number }): void =>
+          void (hold[kind] = at ? (id, x, y) => id === at.paramId && x === at.x && y === at.y : () => true),
+        held: (): number => waiting.length,
+        release: (): void => waiting.shift()?.(),
+      };
+    };
+
+    const withPreset = (plan: Plan, n: number): void => {
+      plan.nodeParams.ch1 = {
+        ...plan.nodeParams.ch1,
+        compEqType: COMP_EQ_SSMCS,
+        ssmcs: { ...structuredClone(SSMCS_INITIAL), ...plan.nodeParams.ch1?.ssmcs, sweetSpotData: n },
+      };
+    };
+    const setFader = (plan: Plan, node: string, db: number): void => {
+      const conn = plan.connections.find((c) => c.from === `${node}:out`)!;
+      conn.params = { ...conn.params, level: db };
+    };
+    /** The values written to one command's address, in order. */
+    const writesTo = (plan: Plan, name: string, node: string): number[] => {
+      const c = planToCommands(model, plan).find((x) => x.name === name && x.node === node)!;
+      return vi
+        .mocked(vdSet)
+        .mock.calls.filter(([id, x, y]) => id === c.paramId && x === c.x && y === c.y)
+        .map((w) => w[3]);
+    };
+    const valueOf = (plan: Plan, name: string, node: string): number =>
+      planToCommands(model, plan).find((x) => x.name === name && x.node === node)!.vdValue;
+    const presetWrites = (): string[] => vi.mocked(vdSetStr).mock.calls.map((c) => c[3]);
+
+    // The head is in the flush from its start — a preset and a fader together — so the watch
+    // opens before the first write, and an edit to either while its own write is on the wire
+    // stays: the fader moved during the fader write, the preset during the preset write.
+    it("keeps edits made during a flush that carried a preset from its start", async () => {
+      const plan = basePlan();
+      withPreset(plan, 1);
+      const unit = heldUnit(plan);
+      unit.live.begin();
+
+      unit.holdNext("set");
+      unit.edit(() => {
+        setFader(plan, "ch1", -6);
+        withPreset(plan, 2);
+      });
+      await vi.advanceTimersByTimeAsync(120);
+      expect(unit.held(), "the premise: the fader write is held").toBe(1);
+      const faderFirst = valueOf(plan, "CH_FADER", "ch1");
+      unit.edit(() => setFader(plan, "ch1", -12));
+      const faderLast = valueOf(plan, "CH_FADER", "ch1");
+      unit.holdNext("str");
+      unit.release();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(presetWrites(), "the premise: preset 2 went out in the same flush").toEqual(["0002"]);
+      unit.edit(() => withPreset(plan, 3));
+      unit.release();
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+
+      expect({ fader: valueOf(plan, "CH_FADER", "ch1"), preset: plan.nodeParams.ch1?.ssmcs?.sweetSpotData }).toEqual({
+        fader: faderLast,
+        preset: 3,
+      });
+      expect(writesTo(plan, "CH_FADER", "ch1")).toEqual([faderFirst, faderLast]);
+      expect(presetWrites()).toEqual(["0002", "0003"]);
+    });
+
+    // The numeric twin: a 1-knob level and a fader together, each moved again during its own write.
+    it("keeps edits made during a flush that carried a 1-knob level from its start", async () => {
+      const plan = basePlan();
+      setCh1OneKnob(plan, { on: true, level: 0 });
+      const unit = heldUnit(plan);
+      unit.live.begin();
+
+      unit.holdNext("set");
+      unit.edit(() => {
+        setCh1OneKnob(plan, { level: 40 });
+        setFader(plan, "ch1", -6);
+      });
+      await vi.advanceTimersByTimeAsync(120);
+      expect(writesTo(plan, "EQ_ONE_KNOB_LEVEL", "ch1"), "the premise: the level write is held").toHaveLength(1);
+      const levelFirst = valueOf(plan, "EQ_ONE_KNOB_LEVEL", "ch1");
+      unit.edit(() => setCh1OneKnob(plan, { level: 80 }));
+      const levelLast = valueOf(plan, "EQ_ONE_KNOB_LEVEL", "ch1");
+      unit.holdNext("set");
+      unit.release();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(writesTo(plan, "CH_FADER", "ch1"), "the premise: the fader write is held").toHaveLength(1);
+      const faderFirst = valueOf(plan, "CH_FADER", "ch1");
+      unit.edit(() => setFader(plan, "ch1", -12));
+      const faderLast = valueOf(plan, "CH_FADER", "ch1");
+      unit.release();
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+
+      expect(plan.nodeParams.ch1?.eqOneKnob?.level).toBe(80);
+      expect(valueOf(plan, "CH_FADER", "ch1")).toBe(faderLast);
+      expect(writesTo(plan, "EQ_ONE_KNOB_LEVEL", "ch1")).toEqual([levelFirst, levelLast]);
+      expect(writesTo(plan, "CH_FADER", "ch1")).toEqual([faderFirst, faderLast]);
+    });
+
+    // The head turns up only after sending began — a preset chosen during a fader write, with
+    // the fader moved again too. It waits for the next flush, which watches from its start.
+    it("keeps edits made around a preset the name loop found after sending began", async () => {
+      const plan = basePlan();
+      withPreset(plan, 1);
+      const unit = heldUnit(plan);
+      unit.live.begin();
+
+      unit.holdNext("set");
+      unit.edit(() => setFader(plan, "ch1", -6));
+      await vi.advanceTimersByTimeAsync(120);
+      expect(unit.held(), "the premise: the fader write is held").toBe(1);
+      const faderFirst = valueOf(plan, "CH_FADER", "ch1");
+      unit.edit(() => {
+        withPreset(plan, 2);
+        setFader(plan, "ch1", -12);
+      });
+      const faderLast = valueOf(plan, "CH_FADER", "ch1");
+      unit.holdNext("str");
+      unit.release();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(presetWrites(), "the premise: preset 2 went out").toEqual(["0002"]);
+      unit.edit(() => withPreset(plan, 3));
+      unit.release();
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+
+      expect(plan.nodeParams.ch1?.ssmcs?.sweetSpotData).toBe(3);
+      expect(valueOf(plan, "CH_FADER", "ch1")).toBe(faderLast);
+      expect(presetWrites()).toEqual(["0002", "0003"]);
+      expect(writesTo(plan, "CH_FADER", "ch1")).toEqual([faderFirst, faderLast]);
+    });
+
+    it("keeps an SSMCS preset chosen while the preset a name re-take picked up is being written", async () => {
+      const plan = basePlan();
+      plan.nodeParams.ch1 = {
+        ...plan.nodeParams.ch1,
+        compEqType: COMP_EQ_SSMCS,
+        ssmcs: { ...structuredClone(SSMCS_INITIAL), sweetSpotData: 1 },
+      };
+      const unit = heldUnit(plan);
+      const setPreset = (n: number): void =>
+        unit.edit(() => {
+          plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, ssmcs: { ...plan.nodeParams.ch1?.ssmcs, sweetSpotData: n } };
+        });
+      const ch3Fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch3")!;
+      unit.live.begin();
+
+      // The name loop takes a rename alone. While it is on the wire the preset moves and the
+      // unit's panel moves something else, so the loop re-takes its names and the preset goes
+      // out as a refetch head its own list did not carry…
+      unit.holdNext("str");
+      unit.edit(() => (plan.nodeNames = { ...plan.nodeNames, ch1: "Vox" }));
+      await vi.advanceTimersByTimeAsync(120);
+      expect(unit.held(), "the premise: the rename is held").toBe(1);
+      setPreset(2);
+      unit.live.noteDirect(ch3Fader.paramId, ch3Fader.x, ch3Fader.y, ch3Fader.vdValue);
+      // …and preset 3 is chosen while the write of 2 is on the wire.
+      unit.holdNext("str");
+      unit.release();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(
+        vi.mocked(vdSetStr).mock.calls.map((c) => c[3]),
+        "the premise: the rename, then preset 2",
+      ).toEqual(["Vox", "0002"]);
+      setPreset(3);
+      unit.release();
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+
+      expect(plan.nodeParams.ch1?.ssmcs?.sweetSpotData).toBe(3);
+      expect(vi.mocked(vdSetStr).mock.calls.map((c) => c[3])).toEqual(["Vox", "0002", "0003"]);
+    });
+
+    it("keeps an SSMCS morph set while the morph a numeric re-take picked up is being written", async () => {
+      const plan = basePlan();
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, gain: 20 };
+      plan.nodeParams.ch2 = {
+        ...plan.nodeParams.ch2,
+        compEqType: COMP_EQ_SSMCS,
+        ssmcs: { ...structuredClone(SSMCS_INITIAL), morphing: 0 },
+      };
+      const setMorph = (n: number): void => {
+        plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, ssmcs: { ...plan.nodeParams.ch2?.ssmcs, morphing: n } };
+      };
+      const unit = heldUnit(plan);
+      const at = (name: string, node: string): number =>
+        planToCommands(model, plan).findIndex((c) => c.name === name && c.node === node);
+      expect(at("HA_GAIN", "ch1"), "the premise: CH 1's A.Gain goes out ahead of CH 2's morph").toBeLessThan(
+        at("SSMCS_MORPHING", "ch2"),
+      );
+      const morphCmd = () => planToCommands(model, plan).find((c) => c.name === "SSMCS_MORPHING" && c.node === "ch2")!;
+      const morphWrites = (): number[] => {
+        const c = morphCmd();
+        return vi
+          .mocked(vdSet)
+          .mock.calls.filter(([id, x, y]) => id === c.paramId && x === c.x && y === c.y)
+          .map((w) => w[3]);
+      };
+      const ch3Fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch3")!;
+      unit.live.begin();
+
+      // The flush takes CH 1's A.Gain alone. While it is on the wire CH 2's morph moves and the
+      // unit's panel moves something else, so the loop re-takes its values and the morph goes
+      // out as a refetch head the flush's first list did not carry…
+      unit.holdNext("set");
+      unit.edit(() => (plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, gain: 30 }));
+      unit.live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      expect(unit.held(), "the premise: the A.Gain write is held").toBe(1);
+      const ch2FaderFirst = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch2")!.vdValue;
+      unit.edit(() => {
+        setMorph(40);
+        const conn = plan.connections.find((c) => c.from === "ch2:out")!;
+        conn.params = { ...conn.params, level: -12 };
+      });
+      const taken = morphCmd().vdValue;
+      const ch2FaderLast = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch2")!.vdValue;
+      unit.live.noteDirect(ch3Fader.paramId, ch3Fader.x, ch3Fader.y, ch3Fader.vdValue);
+      // …and the morph moves again while that write is on the wire.
+      unit.holdNext("set", morphCmd());
+      unit.release();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(morphWrites(), "the premise: the re-taken morph went out").toEqual([taken]);
+      unit.edit(() => setMorph(80));
+      const last = morphCmd().vdValue;
+      unit.release();
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+
+      expect(plan.nodeParams.ch2?.ssmcs?.morphing).toBe(80);
+      expect(morphWrites()).toEqual([taken, last]);
+      const ch2Fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch2")!;
+      expect(ch2Fader.vdValue, "CH 2's fader moved with the morph stays").toBe(ch2FaderLast);
+      expect(
+        vi
+          .mocked(vdSet)
+          .mock.calls.filter(([id, x, y]) => id === ch2Fader.paramId && x === ch2Fader.x && y === ch2Fader.y)
+          .map((w) => w[3]),
+      ).toEqual(ch2FaderFirst === ch2FaderLast ? [] : [ch2FaderLast]);
+    });
+
+    // A refetch reads the nodes its heads drive, and nothing else: CH 3's morph moves, so the
+    // flush reads CH 3 back. A value another write carried at the value the flush took, and
+    // then moved again while that write was on the wire, is still owed to the unit — the read
+    // says nothing about it, so the snapshot keeps what was sent there and the next flush
+    // sends the rest.
+    describe("beside another node's read-back", () => {
+      const withCh3Bank = (plan: Plan): void => {
+        plan.nodeParams.ch3 = {
+          ...plan.nodeParams.ch3,
+          compEqType: COMP_EQ_SSMCS,
+          ssmcs: { ...structuredClone(SSMCS_INITIAL), morphing: 0 },
+        };
+      };
+      const moveCh3Morph = (plan: Plan): void => {
+        plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, ssmcs: { ...plan.nodeParams.ch3?.ssmcs, morphing: 20 } };
+      };
+
+      it("sends a CH name renamed while its write was on the wire from the next flush", async () => {
+        const plan = basePlan();
+        withCh3Bank(plan);
+        const unit = heldUnit(plan);
+        unit.live.begin();
+
+        unit.holdNext("str");
+        unit.edit(() => {
+          plan.nodeNames = { ...plan.nodeNames, ch2: "KICK" };
+          moveCh3Morph(plan);
+        });
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: the name write is held").toBe(1);
+        unit.edit(() => (plan.nodeNames = { ...plan.nodeNames, ch2: "SNARE" }));
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(unit.refetched[0], "the premise: the flush read CH 3 back").toEqual(["ch3"]);
+        expect(presetWrites(), "the rename went out after the name the flush took").toEqual(["KICK", "SNARE"]);
+      });
+
+      // The node the refetch DID read is no different for its name: the refetch reads each
+      // node's body and not its name, so a rename of CH 3 made while another name was on the
+      // wire is one the read never saw.
+      it("sends a rename of the node it read back from the next flush, since that read carries no name", async () => {
+        const plan = basePlan();
+        withCh3Bank(plan);
+        const unit = heldUnit(plan);
+        unit.live.begin();
+
+        unit.holdNext("str");
+        unit.edit(() => {
+          plan.nodeNames = { ...plan.nodeNames, ch4: "KICK" };
+          moveCh3Morph(plan);
+        });
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: CH 4's name write is held").toBe(1);
+        unit.edit(() => (plan.nodeNames = { ...plan.nodeNames, ch3: "SNARE" }));
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(unit.refetched[0], "the premise: the flush read CH 3 back").toEqual(["ch3"]);
+        expect(plan.nodeNames.ch3, "the rename stands in the plan").toBe("SNARE");
+        expect(presetWrites(), "and went out after the name the flush took").toEqual(["KICK", "SNARE"]);
+      });
+
+      it("sends a rate moved while its write was on the wire from the next flush", async () => {
+        const plan = basePlan();
+        withCh3Bank(plan);
+        const rateAt = planToCommands(model, plan).find((c) => c.name === "SAMPLE_RATE")!;
+        expect(rateAt.node, "the premise: the rate belongs to no node").toBeUndefined();
+        const unit = heldUnit(plan);
+        unit.live.begin();
+
+        unit.holdNext("set", rateAt);
+        unit.edit(() => {
+          plan.sampleRate = 44100;
+          moveCh3Morph(plan);
+        });
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: the rate write is held").toBe(1);
+        unit.edit(() => (plan.sampleRate = 96000));
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(unit.refetched[0], "the premise: the flush read CH 3 back").toEqual(["ch3"]);
+        const rateWrites = vi
+          .mocked(vdSet)
+          .mock.calls.filter(([id, x, y]) => addrKey(id, x, y) === cmdAddr(rateAt))
+          .map((w) => w[3]);
+        expect(rateWrites, "the rate that moved went out").toEqual([44100, 96000]);
+      });
+    });
+
+    // A converge in the same flush re-sends whatever differs across the write scope. A refetch
+    // head the operator moved that the flush did not send — deferred after a re-take, passed at
+    // the value the flush took, or at an address that appeared while it ran — must not go out
+    // from there: the unit recomputes what it drives, no read follows, and the converge writes
+    // the plan's older copies back. The converge leaves it alone, and the next flush sends it
+    // and reads its node back.
+    describe("beside a converge", () => {
+      const ratioOf = (plan: Plan) =>
+        planToCommands(model, plan).find((c) => c.name === "SSMCS_COMP_RATIO" && c.node === "ch2")!;
+      const morphOf = (plan: Plan) =>
+        planToCommands(model, plan).find((c) => c.name === "SSMCS_MORPHING" && c.node === "ch2")!;
+      // A stop index on the SSMCS ratio's own scale (vd.ts SSMCS_RATIO_RAW_MAX).
+      const RECOMPUTED = 37;
+
+      it.each([
+        ["deferred after a re-take", true],
+        ["passed at the value the flush took", false],
+      ])("sends an SSMCS morph %s from the next flush, and reads its node back", async (_how, retake) => {
+        const plan = basePlan();
+        plan.nodeParams.ch2 = {
+          ...plan.nodeParams.ch2,
+          compEqType: COMP_EQ_SSMCS,
+          ssmcs: { ...structuredClone(SSMCS_INITIAL), morphing: 0 },
+        };
+        const morphAddr = cmdAddr(morphOf(plan));
+        const ratioAddr = cmdAddr(ratioOf(plan));
+        expect(PARAMS.SSMCS_MORPHING.drives, "the premise: the morph drives the ratio").toContain("SSMCS_COMP_RATIO");
+        expect(ratioOf(plan).vdValue, "the premise: the recomputed ratio differs from the plan's").not.toBe(RECOMPUTED);
+        const unit = heldUnit(plan, (addr, _v, numbers) => {
+          if (addr === morphAddr) numbers.set(ratioAddr, RECOMPUTED);
+        });
+        const ch3Fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch3")!;
+        unit.live.begin();
+
+        // CH 1's COMP/EQ Type — a converge head — is on the wire when CH 2's morph moves.
+        unit.holdNext("set");
+        unit.edit(() => setCh1CompEqType(plan, COMP_EQ_SSMCS));
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: the type write is held").toBe(1);
+        unit.edit(() => {
+          plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, ssmcs: { ...plan.nodeParams.ch2?.ssmcs, morphing: 40 } };
+        });
+        const morphed = morphOf(plan).vdValue;
+        if (retake) unit.live.noteDirect(ch3Fader.paramId, ch3Fader.x, ch3Fader.y, ch3Fader.vdValue);
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        const morphWrites = vi
+          .mocked(vdSet)
+          .mock.calls.filter(([id, x, y]) => addrKey(id, x, y) === morphAddr)
+          .map((w) => w[3]);
+        expect(morphWrites, "the morph went out once").toEqual([morphed]);
+        expect(unit.refetched, "and its node was read back").toContainEqual(["ch2"]);
+        expect(unit.numbers.get(ratioAddr), "the unit's recomputed ratio stands").toBe(RECOMPUTED);
+        expect(ratioOf(plan).vdValue, "and the plan took it").toBe(RECOMPUTED);
+      });
+
+      it("sends a preset deferred beside a converge from the next flush", async () => {
+        const plan = basePlan();
+        plan.nodeParams.ch1 = {
+          ...plan.nodeParams.ch1,
+          compEqType: COMP_EQ_SSMCS,
+          ssmcs: { ...structuredClone(SSMCS_INITIAL), sweetSpotData: 1 },
+        };
+        const unit = heldUnit(plan);
+        unit.live.begin();
+
+        // CH 2's COMP/EQ Type — a converge head — is on the wire when CH 1's preset moves, and the
+        // name loop meets the preset with no watch open.
+        unit.holdNext("set");
+        unit.edit(() => (plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, compEqType: COMP_EQ_SSMCS }));
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: the type write is held").toBe(1);
+        unit.edit(() => {
+          plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, ssmcs: { ...plan.nodeParams.ch1?.ssmcs, sweetSpotData: 2 } };
+        });
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(vi.mocked(vdSetStr).mock.calls.map((c) => c[3])).toEqual(["0002"]);
+        expect(unit.refetched).toContainEqual(["ch1"]);
+        expect(plan.nodeParams.ch1?.ssmcs?.sweetSpotData).toBe(2);
+      });
+
+      // The head's address can also first appear inside the flush: CH 2 is switched to SSMCS
+      // while another write is on the wire, so its morph is in none of the lists the flush took
+      // and the snapshot has never held it. The converge leaves it for the next flush all the same.
+      it.each([
+        ["with no preset", false],
+        ["with a preset", true],
+      ])(
+        "sends a morph whose address appeared during the flush %s from the next flush, and reads its node back",
+        async (_how, preset) => {
+          const plan = basePlan();
+          const { sweetSpotData, ...bank } = structuredClone(SSMCS_INITIAL);
+          plan.nodeParams.ch2 = {
+            ...plan.nodeParams.ch2,
+            ssmcs: { ...bank, ...(preset ? { sweetSpotData } : {}), morphing: 0 },
+          };
+          expect(
+            planToCommands(model, plan).some((c) => c.name === "SSMCS_MORPHING" && c.node === "ch2"),
+            "the premise: CH 2 emits no morph before its type moves",
+          ).toBe(false);
+          const switched = structuredClone(plan);
+          switched.nodeParams.ch2 = {
+            ...switched.nodeParams.ch2,
+            compEqType: COMP_EQ_SSMCS,
+            ssmcs: { ...switched.nodeParams.ch2?.ssmcs, morphing: 40 },
+          };
+          const morphAddr = cmdAddr(morphOf(switched));
+          const ratioAddr = cmdAddr(ratioOf(switched));
+          expect(ratioOf(switched).vdValue, "the premise: the recomputed ratio differs from the plan's").not.toBe(
+            RECOMPUTED,
+          );
+          const unit = heldUnit(plan, (addr, _v, numbers) => {
+            if (addr === morphAddr) numbers.set(ratioAddr, RECOMPUTED);
+          });
+          unit.live.begin();
+
+          unit.holdNext("set");
+          unit.edit(() => setCh1CompEqType(plan, COMP_EQ_SSMCS));
+          await vi.advanceTimersByTimeAsync(120);
+          expect(unit.held(), "the premise: the type write is held").toBe(1);
+          unit.edit(() => (plan.nodeParams.ch2 = structuredClone(switched.nodeParams.ch2)));
+          unit.release();
+          await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+          const morphWrites = vi
+            .mocked(vdSet)
+            .mock.calls.filter(([id, x, y]) => addrKey(id, x, y) === morphAddr)
+            .map((w) => w[3]);
+          expect(morphWrites, "the morph went out once").toEqual([morphOf(switched).vdValue]);
+          expect(unit.refetched, "and its node was read back").toContainEqual(["ch2"]);
+          expect(unit.numbers.get(ratioAddr), "the unit's recomputed ratio stands").toBe(RECOMPUTED);
+          expect(ratioOf(plan).vdValue, "and the plan took it").toBe(RECOMPUTED);
+        },
+      );
+
+      // The same morph, left unsent by a flush whose refetch reads ANOTHER node back: CH 3's
+      // morph moves with CH 1's type, so the flush reads CH 3 and re-bases the snapshot from
+      // that read. CH 2 was not read, so the snapshot has to go on saying the unit holds nothing
+      // at its morph, or the next flush finds no difference to send.
+      it.each([
+        ["with no preset", false],
+        ["with a preset", true],
+      ])("sends a morph left unsent beside another node's read-back %s from the next flush", async (_how, preset) => {
+        const plan = basePlan();
+        const bankOf = () => {
+          const { sweetSpotData, ...bank } = structuredClone(SSMCS_INITIAL);
+          return { ...bank, ...(preset ? { sweetSpotData } : {}), morphing: 0 };
+        };
+        plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, ssmcs: bankOf() };
+        plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, compEqType: COMP_EQ_SSMCS, ssmcs: bankOf() };
+        const switched = structuredClone(plan);
+        switched.nodeParams.ch2 = {
+          ...switched.nodeParams.ch2,
+          compEqType: COMP_EQ_SSMCS,
+          ssmcs: { ...switched.nodeParams.ch2?.ssmcs, morphing: 40 },
+        };
+        const morphAddr = cmdAddr(morphOf(switched));
+        const ratioAddr = cmdAddr(ratioOf(switched));
+        const unit = heldUnit(plan, (addr, _v, numbers) => {
+          if (addr === morphAddr) numbers.set(ratioAddr, RECOMPUTED);
+        });
+        unit.live.begin();
+
+        unit.holdNext("set");
+        unit.edit(() => {
+          setCh1CompEqType(plan, COMP_EQ_SSMCS);
+          plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, ssmcs: { ...plan.nodeParams.ch3?.ssmcs, morphing: 20 } };
+        });
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: the type write is held").toBe(1);
+        unit.edit(() => (plan.nodeParams.ch2 = structuredClone(switched.nodeParams.ch2)));
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(unit.refetched[0], "the premise: the first flush read CH 3 back").toContain("ch3");
+        const morphWrites = vi
+          .mocked(vdSet)
+          .mock.calls.filter(([id, x, y]) => addrKey(id, x, y) === morphAddr)
+          .map((w) => w[3]);
+        expect(morphWrites, "CH 2's morph went out once").toEqual([morphOf(switched).vdValue]);
+        expect(unit.refetched, "and CH 2 was read back").toContainEqual(["ch2"]);
+        expect(unit.numbers.get(ratioAddr), "the unit's recomputed ratio stands").toBe(RECOMPUTED);
+        expect(ratioOf(plan).vdValue, "and the plan took it").toBe(RECOMPUTED);
+      });
+
+      // A head the operator did not move is still the converge's: whatever the converge head
+      // reset on the unit, the converge puts the plan's value back. The unit here resets CH 1's
+      // morph with the PAN/BAL write, standing for any reset that reaches a refetch head.
+      it("restores a refetch head the operator did not move after a converge head resets it", async () => {
+        const plan = basePlan();
+        plan.nodeParams.ch1 = {
+          ...plan.nodeParams.ch1,
+          compEqType: COMP_EQ_SSMCS,
+          ssmcs: { ...structuredClone(SSMCS_INITIAL), morphing: 40 },
+        };
+        const at = (name: string) =>
+          cmdAddr(planToCommands(model, plan).find((c) => c.name === name && c.node === "ch1")!);
+        const morphAddr = at("SSMCS_MORPHING");
+        const panned = structuredClone(plan);
+        panned.nodeParams.ch1 = { ...panned.nodeParams.ch1, panBal: 1 };
+        const panBalAddr = cmdAddr(
+          planToCommands(model, panned).find((c) => c.name === "PAN_BAL" && c.node === "ch1")!,
+        );
+        const morphed = valueOf(plan, "SSMCS_MORPHING", "ch1");
+        expect(morphed, "the premise: the reset moves the morph").not.toBe(0);
+        const unit = heldUnit(plan, (addr, _v, numbers) => {
+          if (addr === panBalAddr) numbers.set(morphAddr, 0);
+        });
+        unit.live.begin();
+
+        unit.edit(() => (plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, panBal: 1 }));
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(writesTo(plan, "PAN_BAL", "ch1"), "the premise: the converge head went out").toHaveLength(1);
+        expect(unit.numbers.get(morphAddr), "the converge put the morph back").toBe(morphed);
+      });
+    });
+  });
+
   // A converge and a refetch can land in one flush — PAN/BAL and the morphing knob inside
   // one 120 ms window is enough — and the converge runs first. It makes the unit match the
   // plan across the whole write scope, so every strip value the unit has just recomputed
@@ -1870,21 +2531,17 @@ describe("LiveSync sideEffect refetch", () => {
     expect(sent.has(addrOf(grown[0]))).toBe(true);
   });
 
-  it("records a name the refetch read from the device instead of re-sending it", async () => {
+  // A scoped reconcile DOES read the names of the nodes it covers, so a rename made on the unit
+  // lands in the plan and in the view together, and the re-base records it as the unit's. The
+  // refetch reads no names at all; that half is under "beside another node's read-back".
+  it("records a name a scoped reconcile read from the device instead of re-sending it", async () => {
     const plan = basePlan();
-    const live = liveFor(plan, async () => {
-      // A scoped read DOES carry names (nameControl is gated only by the node filter),
-      // so a device-side rename lands in the plan and in the view together.
-      plan.nodeNames = { ...plan.nodeNames, ch1: "VOX" };
-      return clonePlanState(plan);
-    });
+    const live = liveFor(plan);
     live.begin();
-    setCh1OneKnob(plan, { on: true });
-    live.schedule();
-    await vi.advanceTimersByTimeAsync(120);
-    await vi.advanceTimersByTimeAsync(2000);
+    const since = live.directMark();
+    plan.nodeNames = { ...plan.nodeNames, ch1: "VOX" };
+    live.resync(clonePlanState(plan), since, new Set(["ch1"]));
 
-    vi.mocked(vdSetStr).mockClear();
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
     expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();

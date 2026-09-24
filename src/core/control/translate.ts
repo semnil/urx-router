@@ -2649,13 +2649,13 @@ export interface NameWrite {
   value: string;
   /** The catalog entry this write is, for the string writes that ARE one. A node's name
    *  is not — its address comes from `nameControl` and it has no `PARAMS` row — so it
-   *  carries neither this nor `node`, and the live flush treats it as it always has.
+   *  carries no entry, and the live flush sends it as an ordinary write.
    *  Present so a string write can be a `sideEffect` head at all: the flush reads the
    *  flag off this rather than reverse-mapping a param id back to a catalog row. */
   name?: ParamName;
   /** The node that owns the write, for the reason `VdCommand.node` exists: a `"refetch"`
-   *  head is repaired by re-reading its owner, and a write with no owner names nothing
-   *  to read. */
+   *  head is repaired by re-reading its owner, and a read scoped to some nodes carries
+   *  the names of those nodes and no others. */
   node?: string;
 }
 
@@ -2678,7 +2678,7 @@ export function planToNameWrites(model: DeviceModel, plan: Plan): NameWrite[] {
     if (!name) continue;
     const nc = nameControl(model, node.id);
     if (!nc) continue;
-    for (const y of nc.instances) out.push({ param: nc.param, y, value: normalizeNodeName(name) });
+    for (const y of nc.instances) out.push({ param: nc.param, y, value: normalizeNodeName(name), node: node.id });
   }
   // SSMCS Sweet Spot Data preset (param 91): a 4-digit zero-padded string, so it
   // rides this string-write path. MONO IN channels in SSMCS mode that carry an

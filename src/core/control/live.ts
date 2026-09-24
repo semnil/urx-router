@@ -28,6 +28,7 @@ import { confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { carrierOf, onExcludedBy, otherSwitchId } from "../input-lock";
+import type { PlanWriteWatch } from "../plan-history";
 
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
 // single-threaded device worker is not flooded; the snapshot diff means only the
@@ -111,7 +112,9 @@ export interface LiveSyncHooks {
    *  build, and the tests that do not exercise it). Resolves the private copy its read
    *  ran against (readback.readIntoPlan) — that copy is what the device holds as far as
    *  the read established it, and so what the snapshot re-base measures from. Null when
-   *  the plan it read into has been replaced: there is then nothing to re-base.
+   *  the plan it read into has been replaced: there is then nothing to re-base. The read
+   *  carries each node's body and not the node's own name, so the re-base keeps what the
+   *  snapshot held for those names.
    *
    *  `pending` is what THIS flush put on the device and the device acked. The unit acks
    *  a write before the value is readable, and this read is issued in the same
@@ -125,7 +128,13 @@ export interface LiveSyncHooks {
    *  Without it the read put the value the edit had just replaced back into the plan, the
    *  capture below recorded it as device truth, and the unit's own notify for our write
    *  then failed isEcho and was reconciled as a device-side change. */
-  refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>;
+  refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites, edits?: PlanWriteWatch) => Promise<Plan | null>;
+  /** Start watching the plan's edits (plan-history.PlanWriteWitness). A flush whose writes
+   *  will provoke a refetch opens one before its first write, and hands it to that read: an
+   *  edit made after that instant is carried by none of the writes, and the read, opened only
+   *  once the writes have returned, keeps it as one made while it runs. Absent = the read
+   *  watches from its own start, and a refetch head is never held back for the next flush. */
+  watchEdits?: () => PlanWriteWatch;
   /**
    * Read the addresses the unit announces nothing for into the plan, in front of a write
    * that would go out over them (`readback.applySilentState`).
@@ -708,7 +717,14 @@ export class LiveSync {
     return new Map(planToCommands(model, plan, scope).map((c) => [cmdAddr(c), c.vdValue] as const));
   }
 
-  private capture(deviceView?: Plan, since?: number, nodes?: ReadonlySet<string>, unread?: ReadonlySet<number>): void {
+  private capture(
+    deviceView?: Plan,
+    since?: number,
+    nodes?: ReadonlySet<string>,
+    unread?: ReadonlySet<number>,
+    /** Whether the read behind this view carried the covered nodes' own names. */
+    readNames = true,
+  ): void {
     // A re-base re-authors the plan from the device, so a collision reported against the
     // pre-read plan may already be gone — a reconcile reads the shared address once and
     // assigns it to both owners, which erases the divergence. Nothing schedules a flush
@@ -725,6 +741,13 @@ export class LiveSync {
     // `unread`: addresses the read behind this view left out. The snapshot goes on holding
     // what it held there, and their announcements stand.
     const kept = unread ? [...unread].map((k) => [k, this.snapshot.get(k)] as const) : [];
+    // A read that covered some nodes (`nodes`) says nothing about the others: there the
+    // snapshot goes on holding what it held — nothing, where it held nothing — names included,
+    // so a value the plan holds and the unit was never sent stays a difference. A read that
+    // carried no node names (`readNames`) says nothing about those either, on any node.
+    const prior = nodes ? new Map(this.snapshot) : null;
+    const priorNames = nodes || !readNames ? new Map(this.nameSnapshot) : null;
+    const covered = (node: string | undefined): boolean => !nodes || (node !== undefined && nodes.has(node));
     this.snapshot.clear();
     this.nameSnapshot.clear();
     const commands = planToCommands(model, plan, scope);
@@ -733,12 +756,16 @@ export class LiveSync {
       // An address the view does not carry grew after the read was issued (a structural
       // edit made during it). It is a pending write, not device truth, so it is left out
       // of the snapshot entirely and the next diff sends it.
-      const known = device ? device.get(k) : c.vdValue;
+      const known = !covered(c.node) ? prior?.get(k) : device ? device.get(k) : c.vdValue;
       if (known !== undefined) this.snapshot.set(k, known);
     }
     for (const [k, v] of kept) if (v !== undefined && this.snapshot.has(k)) this.snapshot.set(k, v);
     this.rebuildFollowSet(model, plan, scope, commands);
-    for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
+    for (const w of planToNameWrites(model, deviceView ?? plan)) {
+      const key = nameKey(w);
+      const value = covered(w.node) && (readNames || w.name !== undefined) ? w.value : priorNames?.get(key);
+      if (value !== undefined) this.nameSnapshot.set(key, value);
+    }
     if (since !== undefined) {
       // Restore what the view could not know: a notify the device sent after the read was
       // issued. Confined to the addresses this capture registered, so the shape still comes
@@ -883,6 +910,7 @@ export class LiveSync {
     this.flushing = true;
     // Asked again by this flush: a held ON it still cannot send sets it back.
     this.onHeld = false;
+    let edits: PlanWriteWatch | undefined;
     try {
       // The session this flush is for. `model` and `plan` below are captured once and the
       // re-take at the head of the loop reads those captures, so once the generation moves
@@ -976,6 +1004,23 @@ export class LiveSync {
         // Derived again: the park merged the unit's own values into the plan.
         commands = planToCommands(model, plan, scope);
       }
+      // A write that provokes a refetch has that read issued only once the flush's writes have
+      // returned, and the read covers the whole node — so an edit made after this flush took its
+      // values, to the head or to anything else that node holds, is carried by none of the
+      // writes. When the values taken here hold such a write, among the numbers or the names, the
+      // watch opens here, before anything is sent, and goes to the read, which keeps that edit as
+      // it keeps one made while it runs. A head that turns up only later — in a re-take, or in the
+      // list the name loop takes for itself — while no watch is open is left for the next flush,
+      // which opens one from its own start: no read follows a send nothing watched.
+      const numericHead = (c: VdCommand): boolean => c.node !== undefined && REFETCH.has(c.name);
+      const nameHead = (w: NameWrite): boolean => w.node !== undefined && w.name !== undefined && REFETCH.has(w.name);
+      if (
+        commands.some((c) => numericHead(c) && this.snapshot.get(cmdAddr(c)) !== c.vdValue) ||
+        planToNameWrites(model, plan).some((w) => nameHead(w) && this.nameSnapshot.get(nameKey(w)) !== w.value)
+      )
+        edits = this.hooks.watchEdits?.();
+      // A head nothing is watching for goes out with the next flush instead of this one.
+      const unwatched = (): boolean => this.hooks.watchEdits !== undefined && edits === undefined;
       // Both lists below are frozen at flush start; the snapshots they are diffed against
       // are not. Any await can let a device-side change land (noteDirect's one entry, or a
       // reconcile's whole capture), and what a frozen list carries is then older than what
@@ -1006,6 +1051,10 @@ export class LiveSync {
         if (value === undefined) continue;
         const had = this.snapshot.get(k);
         if (had === value) continue;
+        if (numericHead(c) && unwatched()) {
+          this.pending = true;
+          continue;
+        }
         // +48V or HI-Z ON while the unit holds the other one on: not sent, and left in the
         // plan rather than dropped (see `onHeld`). The command order sends a switch the plan
         // turns off ahead of the other one's ON, so a flush moving from one to the other
@@ -1093,6 +1142,10 @@ export class LiveSync {
         const value = freshNames ? freshNames.get(k) : w.value;
         if (value === undefined) continue;
         if (this.nameSnapshot.get(k) === value) continue;
+        if (nameHead(w) && unwatched()) {
+          this.pending = true;
+          continue;
+        }
         // Before the write, for the reason the numeric loop takes one: only a notify after
         // it can be this write's announcement.
         const nameMark = writeSettle.mark();
@@ -1193,6 +1246,24 @@ export class LiveSync {
         const ownOns = new Set<number>();
         for (const c of commands) for (const k of this.ownOnPair(c)) ownOns.add(k);
         for (const k of ownOns) exclude.add(k);
+        // A refetch head the operator moved that this flush did not send — left for the next
+        // flush, passed at a value the plan no longer holds, or at an address that first appeared
+        // while the flush ran — is not the converge's to send: the unit would recompute what it
+        // drives with no read behind it, and the converge would write the plan's older copies
+        // back over the recomputation. It stays out of the converge's reads and sends, and the
+        // capture below keeps what the snapshot says the unit holds there — nothing, for a new
+        // address — names included, so the next flush sends it and reads its node back.
+        const unsentHeads = new Map<number, number | undefined>();
+        for (const c of planToCommands(model, converged, scope)) {
+          if (!numericHead(c)) continue;
+          const k = cmdAddr(c);
+          const had = this.snapshot.get(k);
+          if (c.vdValue !== had) unsentHeads.set(k, had);
+        }
+        for (const k of unsentHeads.keys()) exclude.add(k);
+        const unsentNameHeads = planToNameWrites(model, converged)
+          .filter((w) => nameHead(w) && this.nameSnapshot.get(nameKey(w)) !== w.value)
+          .map((w) => [nameKey(w), this.nameSnapshot.get(nameKey(w))] as const);
         this.converge = { ownOns, exclude };
         const r = await sendConverging(model, converged, {
           scope: this.scope(),
@@ -1223,7 +1294,12 @@ export class LiveSync {
           // teardown that names nothing.
           throw new Error(failed?.error || r.readErrors[0] || "converge failed");
         }
-        this.capture(converged, since, undefined, ownOns);
+        this.capture(converged, since, undefined, new Set([...ownOns, ...unsentHeads.keys()]));
+        for (const [k, v] of unsentHeads) if (v === undefined) this.snapshot.delete(k);
+        for (const [k, v] of unsentNameHeads) {
+          if (v === undefined) this.nameSnapshot.delete(k);
+          else this.nameSnapshot.set(k, v);
+        }
       }
       // A refetch after the converge, if both happened: converge rebuilds the snapshot
       // from the plan, and the read that follows is what makes the plan right.
@@ -1271,19 +1347,23 @@ export class LiveSync {
           else if (w.changed) mustAnnounce.add(k);
         }
         for (const k of nameSettle.keys()) mustSettle.add(k);
-        const deviceView = await this.hooks.refetchNodes(refetch, {
-          written,
-          mustSettle,
-          mustAnnounce,
-          expected,
-          ...(nameSettle.size ? { boundaryMarks: nameSettle } : {}),
-        });
+        const deviceView = await this.hooks.refetchNodes(
+          refetch,
+          {
+            written,
+            mustSettle,
+            mustAnnounce,
+            expected,
+            ...(nameSettle.size ? { boundaryMarks: nameSettle } : {}),
+          },
+          edits,
+        );
         if (this.sessionGen !== gen) return;
         // The read ran against its own copy of the plan (readback.readIntoPlan), so the
         // copy is what the device holds: re-base from it and an edit made during the
         // await — on the read node or any other — stays a diff. Null = the plan it read
         // into is gone, and there is nothing a snapshot could describe.
-        if (deviceView) this.capture(deviceView, since, refetch);
+        if (deviceView) this.capture(deviceView, since, refetch, undefined, false);
       }
       // A flush with NEITHER epilogue — the ordinary edit: a fader, a mute, a pan, a rename
       // — issues no read at all, so nothing here would ever notice the unit silently
@@ -1349,6 +1429,7 @@ export class LiveSync {
       this.hooks.onError(e instanceof Error ? e.message : String(e));
       return;
     } finally {
+      edits?.close();
       this.flushing = false;
     }
     if (this.pending) {

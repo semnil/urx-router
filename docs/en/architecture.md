@@ -2210,7 +2210,7 @@ sequenceDiagram
     Note over L: an edit that arrived during the converge is still a diff<br/>baking it in here would drop it in silence
   else refetch: the unit authored values the plan only mirrors
     L->>H: refetchNodes for the owner nodes, with what this flush just wrote
-    H->>H: clone the plan, open the write witness
+    H->>H: clone the plan, with the write witness the flush opened as it took its values
     D-->>H: the notify for each write inside this read's scope, or 300 ms
     H->>D: read those nodes into that clone, answering an announced address from the announcement
     D-->>H: values
@@ -2233,7 +2233,18 @@ notify position each was sent from, and which of them this read is going to ask 
 deliberately not in it; they are not an input to any answer the settle gives. Both halves of what the handle buys —
 the wait and answering an announced address from the announcement — happen **inside** the read, after
 `readIntoPlan` has cloned the plan and opened the write witness. Taken outside, the wait would be a window in which
-an operator edit lands in neither, and the merge would revert it. That does widen the window undo is refused in,
+an operator edit lands in neither, and the merge would revert it. The witness itself opens earlier still: the flush
+opens it before its first write whenever the values it takes then hold a refetch head, among the numbers or the
+names (`watchEdits`), and hands it to the read, because the read covers the whole node and an edit made to any of it
+while the flush's writes are on the wire is carried by none of them. A head that turns up only after sending began —
+in a re-take after a device-side change, or in the list the name loop takes for itself — while no watch is open goes
+out with the next flush instead, which watches from its own start. A converge sharing the flush leaves such a
+head alone — one held for the next flush, one sent at a value the plan has since moved past, and one at an address
+that first appeared while the flush ran — and the snapshot goes on holding what it held there (nothing, for a new
+address), names included, so the next flush still finds it to send: sent from the
+converge, it would have the unit recompute what it drives with no read behind it, and the converge would then write
+the plan's older copies of those values back. A head the operator did not move stays the converge's to restore. A
+flush with no refetch head opens none. That does widen the window undo is refused in,
 since the wait sits inside the same in-flight set as the read it belongs to; kept that way deliberately, because
 committing an entry against an open clone and witness would freeze this read's own writes into it, and the refusal
 is a deferral bounded by the settle's own window.
@@ -2249,7 +2260,12 @@ as device truth, plan and snapshot agree, no later flush finds a diff, and only 
 Every re-base takes its values from **the private clone a read ran against**, never from the live plan, and the
 snapshot's *shape* from the live plan: an address the operator moved during the read then holds their value in
 the plan and the device's in the clone, so it stays a diff and the next flush sends it. An address the plan only
-just grew is absent from the clone and is left out of the snapshot entirely, for the same reason.
+just grew is absent from the clone and is left out of the snapshot entirely, for the same reason. A scoped read — a
+reconcile of some nodes, or a refetch's read of the nodes its heads drive — re-bases only the addresses of the nodes
+it covered, names included; everywhere else the snapshot keeps what it held, holding nothing included, because the
+read says nothing there and a value the plan holds that the unit was never sent is still owed to it. The refetch's
+read carries each node's body and not the node's own name, so the same holds for every node's name there, the nodes
+it read included; a reconcile reads the names of the nodes it covers and takes them.
 
 | Event | Live snapshot | History baseline |
 | --- | --- | --- |

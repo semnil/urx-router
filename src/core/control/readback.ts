@@ -1664,7 +1664,9 @@ const INSERT_FX_KEYS = ["insertFx", "insertFxOn", "insertFxParams"] as const;
  * `before` value, so it is indistinguishable from a key nobody touched — and a read that
  * sampled the device at B (both writes went out, the read caught the middle one) would
  * write B back in silence. The witness names the keys an edit funnel authored while the
- * read was in flight, and those are skipped whatever they now hold.
+ * read was in flight, and those are skipped whatever they now hold. A caller whose read
+ * answers values it took earlier hands over a watch it opened then, and the read skips
+ * what was authored since that instant instead.
  *
  * `current` is re-read after the await, and must resolve the caller's live plan rather
  * than a captured object — a read whose plan has been replaced (File > New, a model
@@ -1702,7 +1704,7 @@ const INSERT_FX_KEYS = ["insertFx", "insertFxOn", "insertFxParams"] as const;
 export async function readIntoPlan(
   current: () => Plan,
   read: (into: Plan) => Promise<ReadbackResult>,
-  witness?: PlanWriteWitness,
+  witness?: Pick<PlanWriteWitness, "watch">,
   hold?: (ctx: HoldContext) => ReadonlySet<string>,
   accept?: (result: ReadbackResult) => boolean,
   session?: SwitchSession,

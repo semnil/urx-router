@@ -448,6 +448,41 @@ test.describe("T2c shape-change", () => {
     // assignment: the plan would hold `flushed`, and the diff would already be closed on
     // it, so the step would leave neither a value on screen nor a command on the wire.
     expect(afterBlock).toContain(stepped);
+
+    // ---- arm D: an edit made while the flush's own write is on the wire -----------
+    // The window arm C leaves out. A flush takes its values when it starts, and the
+    // readback it provokes is opened once its write has returned, so a step made while
+    // that write is outstanding is neither the value the write carries nor an edit made
+    // during the read. Held at the write this time, stepped, released:
+    //   - kept: the plan holds the step, and the flush queued behind the readback sends it;
+    //   - lost: the readback answers the value the write carried, the plan takes it, and
+    //     the diff closes on it, so the step leaves neither a value on screen nor a
+    //     command on the wire — the drag's last position going missing looks like this.
+    const writeStart = Number(await level.inputValue());
+    await mark(page, "held-write");
+    await blockAt(page, "vd_set", 1);
+    await level.press("ArrowUp"); // flush → its write, held
+    await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 15_000 });
+    const carried = Number(await level.inputValue());
+    await level.press("ArrowUp");
+    const onWire = Number(await level.inputValue());
+    await releaseBarrier(page);
+    await settleAfter(page, "held-write", 1200);
+
+    trace = await traceOf(page);
+    const aroundWrite = setsBetween(trace, CH1_ONE_KNOB_LEVEL, markTime(trace, "held-write")!);
+    const kept = Number(await level.inputValue());
+    console.log(
+      `held write: level ${writeStart} → ${carried} (flushed, write held) → stepped to ${onWire} while it was` +
+        ` on the wire → ${kept} once it resolved; writes on ${CH1_ONE_KNOB_LEVEL}: [${aroundWrite.join(", ")}]`,
+    );
+    expect(carried).toBe(writeStart + 1);
+    expect(onWire).toBe(carried + 1);
+    // The held write carried the value from before the step…
+    expect(aroundWrite[0]).toBe(carried);
+    // …the plan kept the step, and a later flush sent it.
+    expect(kept).toBe(onWire);
+    expect(aroundWrite).toContain(onWire);
   });
 
   // shape-insert-fx-engine-array-collision. Two plan owners, one device address.

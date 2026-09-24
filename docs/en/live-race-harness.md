@@ -988,6 +988,13 @@ agreement, zero findings.
   Measured after the fix: `1 entry / Ctrl+Z: 91 → 0 (where the press started) / 1-knob still on`. The
   storm itself is the design and stays (one node readback per flush window that carried the level); the
   effective flush period goes 205 ms → 330 ms, each window paying ~67 `vd_get` plus a `vd_get_str`
+- **A step made while the flush's own write was on the wire was reverted by the refetch — fixed.** The
+  flush takes its values when it starts and the refetch opens once its writes have returned, so an edit
+  made in between was carried by no write and was not one made during the read either: the read answered
+  the value the write carried and the plan took it. Arm D of the same case holds the write at a barrier and
+  steps the level — before the fix `2 → 3 (write held) → stepped to 4 → 3`, writes `[3]`; after it `→ 4`,
+  writes `[3, 4]`. It is also the drag arm's intermittent failure, the last position (91) never written and
+  the plan ending at 86: 1 of 24 on main under `--repeat-each=12 --workers=4`, 0 of 48 on the fix
 - **An FX effect-type undo is incomplete by construction — and measuring "incomplete" split it in
   two.** Rev-X (12 slots) → Mono Delay (10): 3 arrive, 5 depart, 7 shared. **That the undo does not
   restore the departing slots is not a defect**: the selector re-types the array, so an unselected

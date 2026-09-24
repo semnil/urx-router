@@ -43,6 +43,7 @@ import {
   diffPlans,
   nodeParamContestPath,
   PlanWriteWitness,
+  type PlanWriteWatch,
   type PatchTouch,
   patchContestNames,
   patchTouch,
@@ -477,16 +478,24 @@ const live = DEMO
       // belongs to. Left that way: the clone and the witness are open for the whole of
       // it, so committing an entry there would freeze this read's own writes into it —
       // and the refusal is a deferral, bounded by the settle's own window.
-      refetchNodes: async (nodeIds, pending) => {
+      //
+      // `edits` is the watch the flush opened where it took the values it sent: an edit made
+      // while those writes were on the wire is carried by none of them, and the read skips it
+      // as it skips one made while it runs.
+      watchEdits: () => planWrites.watch(),
+      refetchNodes: async (nodeIds, pending, edits) => {
         // Named for the hook, not for a member of it: the EQ 1-knob was the only
         // sideEffect: "refetch" param when this was written, and SSMCS morphing now takes
         // the same path. A diagnostic that names one of them puts the wrong cause in the
         // log for the other.
-        const merged = await followRead("side-effect refetch", (into, signal) =>
-          // The one caller that skips the names, and it says so itself — the reconciles
-          // below carry pending writes too, and reading names is what makes a rename
-          // made on the unit arrive (readback.ts's name section).
-          applyNodeState(getModel(modelId), into, nodeIds, signal, pending, true),
+        const merged = await followRead(
+          "side-effect refetch",
+          (into, signal) =>
+            // The one caller that skips the names, and it says so itself — the reconciles
+            // below carry pending writes too, and reading names is what makes a rename
+            // made on the unit arrive (readback.ts's name section).
+            applyNodeState(getModel(modelId), into, nodeIds, signal, pending, true),
+          edits,
         );
         // The plan this read was issued for is gone (a file flow replaced it): its
         // values belong to a document nothing shows, and no snapshot can describe it.
@@ -1046,10 +1055,12 @@ const switchSession: SwitchSession = {
  *  longer the open document — every caller returns without its epilogue, which is what
  *  keeps a status line, a provenance stamp and a history reset off a document the read
  *  never touched. The drop reaches the console only: the replacement that discarded the
- *  plan ended the session and printed its own line. */
+ *  plan ended the session and printed its own line. `edits`, when given, is a watch the
+ *  caller opened before the read, and the merge skips what was authored since then. */
 async function followRead(
   label: string,
   read: (into: Plan, signal: AbortSignal) => Promise<ReadbackResult>,
+  edits?: PlanWriteWatch,
 ): Promise<MergedRead | null> {
   const controller = new AbortController();
   // The `done` half is what the session's own release waits on (releaseLive).
@@ -1069,7 +1080,7 @@ async function followRead(
     const merged = await readIntoPlan(
       () => plan,
       (into) => read(into, controller.signal),
-      planWrites,
+      edits ? { watch: () => edits } : planWrites,
       (ctx) => {
         establishedRate = ctx.deviceSampleRate !== undefined;
         const model = getModel(modelId);
