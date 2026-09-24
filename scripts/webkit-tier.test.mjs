@@ -34,6 +34,7 @@ const rel = (p) => relative(repo, p).split(sep).join("/");
 // count, so adding a case to the class needs no edit here — and every file above its floor
 // is printed in this map's own shape, so raising one is a paste.
 const FLOOR = {
+  "e2e/chrome.spec.ts": 1,
   "e2e/console.spec.ts": 2,
   "e2e/fxeffect.spec.ts": 2,
   "e2e/prefs.spec.ts": 1,
