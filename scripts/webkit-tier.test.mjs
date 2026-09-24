@@ -38,6 +38,7 @@ const FLOOR = {
   "e2e/console.spec.ts": 2,
   "e2e/fxeffect.spec.ts": 2,
   "e2e/prefs.spec.ts": 1,
+  "e2e/shelf-scrollbar.spec.ts": 1,
 };
 
 const require = createRequire(import.meta.url);
