@@ -1862,11 +1862,18 @@ input[type="range"]:focus-visible,
   /* Comfortable touch targets for the rack and the inspector controls. */
   .tools button,
   .menu-trigger,
-  .model-select select,
   #inspector .toggle button,
   #inspector .recent-row,
   .insp-section > summary {
     min-height: 40px;
+  }
+
+  /* The same target for a select, given as a height: WebKit keeps these selects at the
+     platform's own height whatever min-height says, and takes a height while keeping
+     the platform control. */
+  .model-select select,
+  #inspector select {
+    height: 40px;
   }
 
   .insp-section > summary {
