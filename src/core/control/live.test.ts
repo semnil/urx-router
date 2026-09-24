@@ -1335,8 +1335,10 @@ describe("LiveSync sideEffect refetch", () => {
   // with a write held open while the operator edits, and ask what the plan and the wire end up
   // holding.
   describe("an edit made while a refetch head's write is on the wire", () => {
-    const heldUnit = (plan: Plan) => {
+    /** `recompute` is the unit working out what a write drives, on the values it holds. */
+    const heldUnit = (plan: Plan, recompute?: (addr: number, value: number, numbers: Map<number, number>) => void) => {
       const numbers = new Map(planToCommands(model, plan).map((c) => [cmdAddr(c), c.vdValue] as const));
+      const refetched: string[][] = [];
       const names = new Map<string, string>();
       type Match = (id: number, x: number, y: number) => boolean;
       const hold: { set: Match | null; str: Match | null } = { set: null, str: null };
@@ -1349,6 +1351,7 @@ describe("LiveSync sideEffect refetch", () => {
       };
       vi.mocked(vdSet).mockImplementation(async (id: number, x: number, y: number, v: number) => {
         numbers.set(addrKey(id, x, y), v);
+        recompute?.(addrKey(id, x, y), v, numbers);
         await gate("set", id, x, y);
       });
       vi.mocked(vdSetStr).mockImplementation(async (id: number, x: number, y: number, v: string) => {
@@ -1370,16 +1373,18 @@ describe("LiveSync sideEffect refetch", () => {
         onCollapsed: () => {},
         watchEdits: () => witness.watch(),
         refetchNodes: async (nodes, pending, edits) =>
-          (
-            await readIntoPlan(
-              () => plan,
-              (into) => applyNodeState(model, into, nodes, undefined, pending, true),
-              edits ? { watch: () => edits } : witness,
-            )
-          )?.deviceView ?? null,
+          (refetched.push([...nodes]),
+          await readIntoPlan(
+            () => plan,
+            (into) => applyNodeState(model, into, nodes, undefined, pending, true),
+            edits ? { watch: () => edits } : witness,
+          ))?.deviceView ?? null,
       });
       return {
         live,
+        numbers,
+        /** The nodes each refetch read back, in order. */
+        refetched,
         /** The edit funnel: the plan moves, the witness is told, and a flush is asked for. */
         edit: (change: () => void): void => {
           change();
@@ -1622,6 +1627,122 @@ describe("LiveSync sideEffect refetch", () => {
           .mock.calls.filter(([id, x, y]) => id === ch2Fader.paramId && x === ch2Fader.x && y === ch2Fader.y)
           .map((w) => w[3]),
       ).toEqual(ch2FaderFirst === ch2FaderLast ? [] : [ch2FaderLast]);
+    });
+
+    // A converge in the same flush re-sends whatever differs across the write scope. A refetch
+    // head the operator moved that the flush did not send — deferred after a re-take, or passed
+    // at the value the flush took — must not go out from there: the unit recomputes what it
+    // drives, no read follows, and the converge writes the plan's older copies back. The
+    // converge leaves it alone, and the next flush sends it and reads its node back.
+    describe("beside a converge", () => {
+      const ratioOf = (plan: Plan) =>
+        planToCommands(model, plan).find((c) => c.name === "SSMCS_COMP_RATIO" && c.node === "ch2")!;
+      const morphOf = (plan: Plan) =>
+        planToCommands(model, plan).find((c) => c.name === "SSMCS_MORPHING" && c.node === "ch2")!;
+      // A stop index on the SSMCS ratio's own scale (vd.ts SSMCS_RATIO_RAW_MAX).
+      const RECOMPUTED = 37;
+
+      it.each([
+        ["deferred after a re-take", true],
+        ["passed at the value the flush took", false],
+      ])("sends an SSMCS morph %s from the next flush, and reads its node back", async (_how, retake) => {
+        const plan = basePlan();
+        plan.nodeParams.ch2 = {
+          ...plan.nodeParams.ch2,
+          compEqType: COMP_EQ_SSMCS,
+          ssmcs: { ...structuredClone(SSMCS_INITIAL), morphing: 0 },
+        };
+        const morphAddr = cmdAddr(morphOf(plan));
+        const ratioAddr = cmdAddr(ratioOf(plan));
+        expect(PARAMS.SSMCS_MORPHING.drives, "the premise: the morph drives the ratio").toContain("SSMCS_COMP_RATIO");
+        expect(ratioOf(plan).vdValue, "the premise: the recomputed ratio differs from the plan's").not.toBe(RECOMPUTED);
+        const unit = heldUnit(plan, (addr, _v, numbers) => {
+          if (addr === morphAddr) numbers.set(ratioAddr, RECOMPUTED);
+        });
+        const ch3Fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch3")!;
+        unit.live.begin();
+
+        // CH 1's COMP/EQ Type — a converge head — is on the wire when CH 2's morph moves.
+        unit.holdNext("set");
+        unit.edit(() => setCh1CompEqType(plan, COMP_EQ_SSMCS));
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: the type write is held").toBe(1);
+        unit.edit(() => {
+          plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, ssmcs: { ...plan.nodeParams.ch2?.ssmcs, morphing: 40 } };
+        });
+        const morphed = morphOf(plan).vdValue;
+        if (retake) unit.live.noteDirect(ch3Fader.paramId, ch3Fader.x, ch3Fader.y, ch3Fader.vdValue);
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        const morphWrites = vi
+          .mocked(vdSet)
+          .mock.calls.filter(([id, x, y]) => addrKey(id, x, y) === morphAddr)
+          .map((w) => w[3]);
+        expect(morphWrites, "the morph went out once").toEqual([morphed]);
+        expect(unit.refetched, "and its node was read back").toContainEqual(["ch2"]);
+        expect(unit.numbers.get(ratioAddr), "the unit's recomputed ratio stands").toBe(RECOMPUTED);
+        expect(ratioOf(plan).vdValue, "and the plan took it").toBe(RECOMPUTED);
+      });
+
+      it("sends a preset deferred beside a converge from the next flush", async () => {
+        const plan = basePlan();
+        plan.nodeParams.ch1 = {
+          ...plan.nodeParams.ch1,
+          compEqType: COMP_EQ_SSMCS,
+          ssmcs: { ...structuredClone(SSMCS_INITIAL), sweetSpotData: 1 },
+        };
+        const unit = heldUnit(plan);
+        unit.live.begin();
+
+        // CH 2's COMP/EQ Type — a converge head — is on the wire when CH 1's preset moves, and the
+        // name loop meets the preset with no watch open.
+        unit.holdNext("set");
+        unit.edit(() => (plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, compEqType: COMP_EQ_SSMCS }));
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: the type write is held").toBe(1);
+        unit.edit(() => {
+          plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, ssmcs: { ...plan.nodeParams.ch1?.ssmcs, sweetSpotData: 2 } };
+        });
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(vi.mocked(vdSetStr).mock.calls.map((c) => c[3])).toEqual(["0002"]);
+        expect(unit.refetched).toContainEqual(["ch1"]);
+        expect(plan.nodeParams.ch1?.ssmcs?.sweetSpotData).toBe(2);
+      });
+
+      // A head the operator did not move is still the converge's: whatever the converge head
+      // reset on the unit, the converge puts the plan's value back. The unit here resets CH 1's
+      // morph with the PAN/BAL write, standing for any reset that reaches a refetch head.
+      it("restores a refetch head the operator did not move after a converge head resets it", async () => {
+        const plan = basePlan();
+        plan.nodeParams.ch1 = {
+          ...plan.nodeParams.ch1,
+          compEqType: COMP_EQ_SSMCS,
+          ssmcs: { ...structuredClone(SSMCS_INITIAL), morphing: 40 },
+        };
+        const at = (name: string) =>
+          cmdAddr(planToCommands(model, plan).find((c) => c.name === name && c.node === "ch1")!);
+        const morphAddr = at("SSMCS_MORPHING");
+        const panned = structuredClone(plan);
+        panned.nodeParams.ch1 = { ...panned.nodeParams.ch1, panBal: 1 };
+        const panBalAddr = cmdAddr(
+          planToCommands(model, panned).find((c) => c.name === "PAN_BAL" && c.node === "ch1")!,
+        );
+        const morphed = valueOf(plan, "SSMCS_MORPHING", "ch1");
+        expect(morphed, "the premise: the reset moves the morph").not.toBe(0);
+        const unit = heldUnit(plan, (addr, _v, numbers) => {
+          if (addr === panBalAddr) numbers.set(morphAddr, 0);
+        });
+        unit.live.begin();
+
+        unit.edit(() => (plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, panBal: 1 }));
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(writesTo(plan, "PAN_BAL", "ch1"), "the premise: the converge head went out").toHaveLength(1);
+        expect(unit.numbers.get(morphAddr), "the converge put the morph back").toBe(morphed);
+      });
     });
   });
 

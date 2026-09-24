@@ -1188,6 +1188,24 @@ export class LiveSync {
         const ownOns = new Set<number>();
         for (const c of commands) for (const k of this.ownOnPair(c)) ownOns.add(k);
         for (const k of ownOns) exclude.add(k);
+        // A refetch head the operator moved that this flush did not send — left for the next
+        // flush, or passed at a value the plan no longer holds — is not the converge's to send:
+        // the unit would recompute what it drives with no read behind it, and the converge would
+        // write the plan's older copies back over the recomputation. It stays out of the
+        // converge's reads and sends, and the capture below keeps what the snapshot says the unit
+        // holds there, names included, so the next flush sends it and reads its node back.
+        const convergedValues = this.commandValues(model, converged, scope);
+        const unsentHeads = new Set<number>();
+        for (const c of commands) {
+          if (!numericHead(c)) continue;
+          const k = cmdAddr(c);
+          const value = convergedValues.get(k);
+          if (value !== undefined && value !== this.snapshot.get(k)) unsentHeads.add(k);
+        }
+        for (const k of unsentHeads) exclude.add(k);
+        const unsentNameHeads = planToNameWrites(model, converged)
+          .filter((w) => nameHead(w) && this.nameSnapshot.get(nameKey(w)) !== w.value)
+          .map((w) => [nameKey(w), this.nameSnapshot.get(nameKey(w))] as const);
         this.converge = { ownOns, exclude };
         const r = await sendConverging(model, converged, {
           scope: this.scope(),
@@ -1218,7 +1236,11 @@ export class LiveSync {
           // teardown that names nothing.
           throw new Error(failed?.error || r.readErrors[0] || "converge failed");
         }
-        this.capture(converged, since, undefined, ownOns);
+        this.capture(converged, since, undefined, new Set([...ownOns, ...unsentHeads]));
+        for (const [k, v] of unsentNameHeads) {
+          if (v === undefined) this.nameSnapshot.delete(k);
+          else this.nameSnapshot.set(k, v);
+        }
       }
       // A refetch after the converge, if both happened: converge rebuilds the snapshot
       // from the plan, and the read that follows is what makes the plan right.
