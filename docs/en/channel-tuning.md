@@ -819,9 +819,25 @@ is the same assumption the shipped COMP curve carries.
   not need it still joins its legs exactly. **With the measured reaches it never engages**: the worst
   case over the whole ratio range is 2.18 against a bound of 3, and a Hard knee is zero wide so the
   branch does not run at all. It stays because the reaches are measured values that can move again.
-- **The EQ.** Three fixed bands: LOW shelving, MID peaking, HIGH shelving. The shelf convention is the
-  4-band model's — the nominal frequency is the point 3 dB below the plateau — and the peaking Q is
-  **not**: the 4-band's "the unit's Q is twice the biquad Q" does not hold here. MID takes the same
+- **The EQ.** Three fixed bands: LOW shelving, MID peaking, HIGH shelving. **Neither filter is the
+  4-band model's.** The shelves are **first-order**, and their half-gain point sits a fixed factor from
+  the nominal frequency — 0.406 of it for HIGH, 1/0.406 of it for LOW — so the nominal frequency passes
+  about 0.8 of the gain at every gain, where the 4-band's S = 1 shelf passes |gain| − 3 dB (half the
+  gain under 6 dB). Read on the unit at a 1 kHz nominal, each point averaged over a 1 dB walk of the input
+  level:
+
+  | Shelf | 250 Hz | 500 Hz | 707 Hz | 1 kHz | 1.41 kHz | 2 kHz | 4 kHz |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | HIGH +4 | 0.9 | 2.1 | 2.7 | 3.2 | 3.6 | 3.7 | 3.9 |
+  | HIGH +12 | 3.6 | 7.1 | 8.7 | 10.0 | 10.9 | 11.3 | 11.7 |
+  | HIGH −12 | −3.7 | −7.2 | −8.8 | −10.0 | −10.9 | −11.4 | −11.9 |
+  | LOW +12 | 11.8 | 11.4 | 10.9 | 10.0 | 8.7 | 7.1 | 3.5 |
+
+  A second-order shelf fits none of the four at any slope but S ≈ 0.5, which is the first-order shape
+  (the S = 1 shelf misses the ±12 dB rows by 1.2 dB RMS), and the single ratio fits all 28 points to
+  0.12 dB RMS, 0.3 dB at worst. Drawn the 4-band way, the ±12 dB shelves were 4.7 dB out an octave
+  from the nominal frequency. The peaking Q is not the 4-band's either: the 4-band's "the unit's Q is
+  twice the biquad Q" does not hold here. MID takes the same
   gain-dependent law as the side-chain filter below, because the two are the same filter; the 4-band's
   constant sits adjacent to it in `eq-response.ts` so neither block's can be carried to the other by
   accident. A band switched off leaves the response and keeps its marker, which sits on the composite

@@ -272,13 +272,43 @@ describe("the SSMCS strip's three-band EQ", () => {
   it("shelves LOW below its frequency and HIGH above it", () => {
     const low = only(band({ kind: "low", freq: 200, gain: 12 }));
     expect(low(20)).toBeCloseTo(12, 0); // the plateau
-    expect(low(200)).toBeCloseTo(9, 0); // the nominal, 3 dB below it
-    expect(low(20000)).toBeCloseTo(0, 1); // nothing left at the far end
+    expect(low(20000)).toBeCloseTo(0, 0); // nothing left at the far end
 
     const high = only(band({ kind: "high", freq: 4000, gain: -9 }));
     expect(high(20000)).toBeCloseTo(-9, 0);
-    expect(high(4000)).toBeCloseTo(-6, 0);
-    expect(high(20)).toBeCloseTo(0, 1);
+    expect(high(20)).toBeCloseTo(0, 0);
+  });
+
+  /**
+   * The shelves ARE the sweep. Nominal 1002 Hz (raw 72), read on a URX44V as `112` − `111`
+   * with each point averaged over a 1 dB walk of the input level, so a point carries about
+   * 0.1 dB of its own. Four shelves across the transition, plus single readings AT the
+   * nominal frequency for the small gains, where the 4-band model's rule would put the
+   * nominal inside its plateau's −3 dB point and draw half the gain there.
+   *
+   * What the four separate: the S = 1 second-order shelf the 4-band model draws cannot
+   * reach 3.6 dB two octaves below a +12 dB HIGH shelf's nominal frequency at any design
+   * frequency that also reads 10.0 at the nominal one — the transition is wider than that
+   * shape has. A cut mirrors the boost, and LOW mirrors HIGH about the nominal frequency.
+   * 0.5 dB is the per-point tolerance: the model's worst point on this data is 0.3.
+   */
+  const SHELF_SWEEP: readonly { label: string; kind: "low" | "high"; gain: number; db: Record<number, number> }[] = [
+    // prettier-ignore
+    { label: "HIGH +4", kind: "high", gain: 4, db: { 250: 0.9, 500: 2.1, 707: 2.7, 1000: 3.2, 1414: 3.6, 2000: 3.7, 4000: 3.9 } },
+    // prettier-ignore
+    { label: "HIGH +12", kind: "high", gain: 12, db: { 250: 3.6, 500: 7.1, 707: 8.7, 1000: 10.0, 1414: 10.9, 2000: 11.3, 4000: 11.7 } },
+    // prettier-ignore
+    { label: "HIGH -12", kind: "high", gain: -12, db: { 250: -3.7, 500: -7.2, 707: -8.8, 1000: -10.0, 1414: -10.9, 2000: -11.4, 4000: -11.9 } },
+    // prettier-ignore
+    { label: "LOW +12", kind: "low", gain: 12, db: { 250: 11.8, 500: 11.4, 707: 10.9, 1000: 10.0, 1414: 8.7, 2000: 7.1, 4000: 3.5 } },
+    { label: "HIGH +5 at the nominal", kind: "high", gain: 5, db: { 1000: 4.1 } },
+    { label: "HIGH -4 at the nominal", kind: "high", gain: -4, db: { 1000: -3.3 } },
+    { label: "LOW +4 at the nominal", kind: "low", gain: 4, db: { 1000: 3.2 } },
+  ];
+
+  it.each(SHELF_SWEEP)("draws the $label shelf where the unit measured it", ({ kind, gain, db }) => {
+    const w = worstOf(only(band({ kind, freq: 1002.4, gain })), db);
+    expect(w.err, `${w.hz} Hz: drew ${w.got.toFixed(2)}, unit read ${w.want}`).toBeLessThan(0.5);
   });
 
   // The shelves have no Q parameter on the device, so a value parked on one by a

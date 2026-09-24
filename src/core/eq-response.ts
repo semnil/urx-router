@@ -258,8 +258,22 @@ function sumDb(parts: ((hz: number) => number)[]): (hz: number) => number {
 // is no type to read and no pass filter, which is why this is a function of its own
 // rather than four bands with two of them switched off.
 //
-// What it shares with the 4-band model above is the shelf convention — the nominal
-// frequency is the point 3 dB below the plateau — and nothing else.
+// It shares no filter with the 4-band model above. Its shelves are first-order and
+// designed at a fixed ratio of the nominal frequency, where the 4-band shelves are S = 1
+// with a gain-dependent design frequency; its peaking Q is its own.
+
+/** How far from its nominal frequency an SSMCS shelf is designed: a HIGH shelf's half-gain
+ *  point sits this factor below the nominal frequency, a LOW shelf's the same factor above. */
+const SSMCS_SHELF_DESIGN_RATIO = 0.406;
+
+/** A first-order shelf through the bilinear transform, passing half its gain in dB at
+ *  `hz` and symmetric about it on a log axis — a cut is the exact inverse of a boost. */
+function firstOrderShelfCoefs(hz: number, gainDb: number, high: boolean, fs: number): Coefs {
+  const A = Math.pow(10, gainDb / 40);
+  const K = Math.tan((Math.PI * hz) / fs);
+  if (high) return { b0: A * (A + K), b1: A * (K - A), b2: 0, a0: 1 + A * K, a1: A * K - 1, a2: 0 };
+  return { b0: A * (1 + A * K), b1: A * (A * K - 1), b2: 0, a0: A + K, a1: K - A, a2: 0 };
+}
 
 /** One SSMCS band. `kind` decides the filter outright; the device has no type slot. */
 export interface SsmcsBandState {
@@ -279,7 +293,8 @@ function ssmcsBandResponse(b: SsmcsBandState, fs: number): (hz: number) => numbe
     return (hz) => magDb(c, hz, fs);
   }
   const high = b.kind === "high";
-  const c = shelfCoefs(shelfDesignFreq(b.freq, b.gain, high, fs), b.gain, high, fs);
+  const design = high ? b.freq * SSMCS_SHELF_DESIGN_RATIO : b.freq / SSMCS_SHELF_DESIGN_RATIO;
+  const c = firstOrderShelfCoefs(design, b.gain, high, fs);
   return (hz) => magDb(c, hz, fs);
 }
 
