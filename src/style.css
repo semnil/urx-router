@@ -1566,6 +1566,7 @@ input[type="range"]:focus-visible,
    an HTML overlay so it stays out of the SVG export). Sits above the grain /
    vignette pseudo-layers and only appears while something is shelved. */
 .hidden-shelf {
+  --shelf-pad-y: 11px;
   position: absolute;
   left: 0;
   right: 0;
@@ -1574,7 +1575,7 @@ input[type="range"]:focus-visible,
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 11px 16px;
+  padding: var(--shelf-pad-y) 16px;
   background: var(--bar);
   border-top: 1px solid var(--line);
   box-shadow: 0 -10px 26px rgba(0, 0, 0, 0.4);
@@ -1610,10 +1611,20 @@ input[type="range"]:focus-visible,
   box-shadow: 0 0 7px color-mix(in srgb, var(--led-face) 45%, transparent);
 }
 
+/* The row reaches down through the shelf's bottom padding and its horizontal
+   scrollbar sits there: the chips are 2px shorter than the Show all button that
+   sets the line (the line-heights below pin that), so a scrollbar up to the padding
+   plus those 2px — 13px — fits without the shelf's height depending on it. WebKit
+   can size the shelf before the row's scrollbar exists and count it only at a later
+   relayout, so a shelf sized around its scrollbar changes height the first time
+   anything relays it out — a hover over a chip is enough. */
 .shelf-chips {
   display: flex;
   flex: 1;
+  align-self: stretch;
+  align-items: flex-start;
   min-width: 0;
+  margin-bottom: calc(-1 * var(--shelf-pad-y));
   gap: 8px;
   overflow-x: auto;
   scrollbar-width: thin;
@@ -1626,6 +1637,7 @@ input[type="range"]:focus-visible,
   gap: 8px;
   font-family: var(--mono);
   font-size: 11px;
+  line-height: 17px;
   letter-spacing: 0.04em;
   color: var(--ctl-text);
   padding: 6px 10px 6px 9px;
@@ -1645,6 +1657,7 @@ input[type="range"]:focus-visible,
   white-space: nowrap;
   font-family: var(--mono);
   font-size: 11px;
+  line-height: 17px;
   letter-spacing: 0.06em;
   color: var(--ctl-text);
   padding: 7px 12px;
