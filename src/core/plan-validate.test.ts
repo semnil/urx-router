@@ -576,10 +576,12 @@ describe("paramRangeProblems", () => {
   // against the SAME document with the key simply left out: the repair has to land on the plan
   // that says what this one turned out to say.
   //
-  // One of them moves the wire, in the safe direction: an unreadable effect object that happens
-  // to be TRUTHY reaches the emit and writes that channel's factory defaults over whatever the
-  // unit holds, from a value that says nothing. Dropping it leaves the channel alone, which is what
-  // the plan format's silence means. The other three land on the same wire they were already on.
+  // One of them moves the wire of the plan compared here, which is built without the load's
+  // factory fill: an unreadable effect object that happens to be TRUTHY reaches the emit as that
+  // channel's factory defaults, and dropped it emits nothing for the channel. The other three land
+  // on the same wire they were already on. Through a real load the dropped key is completed from
+  // the model's factory values like any other omission, so the write sends the channel's factory
+  // effect and its confirm names the strip (main.device.test.ts).
   it("reports an unreadable effect, parameter map or type, and repairs to the plan without it", () => {
     const model = getModel("URX44V");
     const wire = (plan: Plan): string =>

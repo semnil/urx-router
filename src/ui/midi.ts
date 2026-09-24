@@ -140,9 +140,10 @@ export class MidiControl {
   // trace every rx/tx byte string and the engine's per-message decision to the
   // console — the ground truth for "this press did not land" reports.
   private traceLog = traceEnabled() ? (msg: string) => console.debug("[midi]", msg) : undefined;
-  // Dev-build measurement buffer (ui/midi-probe.ts). Null in a production build, so
-  // every use below folds away with it.
-  private probe = midiProbe;
+  // The dev-build measurement buffer (ui/midi-probe.ts) is used as `midiProbe` itself
+  // rather than through a field: it is null in a production build, and a direct
+  // reference is what lets each `midiProbe?.` call below fold away with it. That
+  // leaves `probeMark` an empty method there, and main.ts's calls to it remain.
   private learnOn = false;
   private armed: string | null = null;
   private closeInput: (() => void) | null = null;
@@ -193,18 +194,18 @@ export class MidiControl {
   /** One line about what the MIDI layer just decided, to whichever diagnostics are
    *  there. Left undefined when neither is, so `hooks.trace?.()` never even builds the
    *  engine's strings in a production build. */
-  private note = this.traceLog || this.probe ? (msg: string) => this.record(msg) : undefined;
+  private note = this.traceLog || midiProbe ? (msg: string) => this.record(msg) : undefined;
 
   private record(msg: string): void {
     this.traceLog?.(msg);
-    this.probe?.note(msg);
+    midiProbe?.note(msg);
   }
 
   /** Drop a lifecycle mark on the measurement buffer (dev builds only), so a burst can
    *  be placed against the window in which incoming MIDI is refused. Called for the
    *  session's own moments — this class marks its own from where they happen. */
   probeMark(label: string): void {
-    this.probe?.mark(label);
+    midiProbe?.mark(label);
   }
 
   constructor(private hooks: MidiHooks) {
@@ -243,16 +244,11 @@ export class MidiControl {
         hooks.onApplied(control, pairMirrored || insFxMirrored, keys);
         this.scheduleFeedback();
       },
+      // Reached only from `runFeedback`'s synchronous pass, which returns before the
+      // engine runs when no output port is open.
       send: (bytes) => {
-        if (!this.outputPort) {
-          // Recorded rather than returned silently: this branch is indistinguishable
-          // from "the engine emitted nothing" in every log the app keeps, and telling
-          // the two apart is the whole point of the probe.
-          this.probe?.txDropped(bytes, "no output port");
-          return;
-        }
         this.traceLog?.(`tx [${bytes.join(" ")}]`);
-        this.probe?.tx(bytes);
+        midiProbe?.tx(bytes);
         void midiSend(bytes).then(
           () => {
             // A send that lands says the port is alive. The streak below is about a
@@ -411,7 +407,7 @@ export class MidiControl {
     // The instant incoming MIDI stops being refused. A reply the resync above provoked
     // that lands after this is applied as an ordinary edit, so the distance between
     // the two is the measurement the probe exists to take.
-    this.probe?.mark("midi:gate-open");
+    midiProbe?.mark("midi:gate-open");
     this.engine.gateReleased();
   }
 
@@ -482,14 +478,14 @@ export class MidiControl {
         this.traceLog?.(`rx [${bytes.join(" ")}]`);
         // Stamped before the engine runs, so the arrival time is the message's own and
         // not the time its decision finished being taken.
-        this.probe?.rx(bytes);
+        midiProbe?.rx(bytes);
         this.engine.onMessage(bytes);
       });
       this.closeInput = close;
       this.inputPort = port;
       // The two opens run on independent queues, so this is what says whether the input
       // was listening yet when the output's own resync burst went out.
-      this.probeMark("midi:port-open:in");
+      midiProbe?.mark("midi:port-open:in");
     } catch (err) {
       this.closeInput = null;
       this.inputPort = null;
@@ -662,7 +658,7 @@ export class MidiControl {
     // cause travels to this one site rather than each caller marking its own: a mark of
     // its own would sit immediately before this one with an empty tx window between them,
     // and `report()` attributes every send to the most recent mark.
-    if (cause) this.probe?.mark(`midi:resync (${cause})`);
+    if (cause) midiProbe?.mark(`midi:resync (${cause})`);
     // Nothing goes ON THE WIRE until a Live-sync readback has completed and the plan
     // IS the unit's state. Before that the plan is whatever was loaded — a new
     // document's defaults, a file, a partly applied read — and a pass would put those
@@ -679,10 +675,9 @@ export class MidiControl {
     // offline stretch, so the next twitch of a physical fader tracked from wherever it
     // stood and pulled the plan value with it.
     //
-    // Through `note` rather than `probe`: `probe` is a dev build's, and a release
+    // Through `note` rather than `midiProbe`: `midiProbe` is a dev build's, and a release
     // build's own diagnostic (`urx-midi-log`) would otherwise show incoming messages
-    // with no outgoing ones and no line saying why — the same shape `send()`'s
-    // txDropped exists to avoid.
+    // with no outgoing ones and no line saying why.
     if (!this.deviceStateKnown) this.note?.(`feedback held — device state not established (resync=${resync})`);
     // Nothing goes out while a learn is armed. On a reflecting transport (the shared
     // IAC bus, or a controller that re-sends its state when feedback moves it — both
@@ -699,15 +694,15 @@ export class MidiControl {
     // Nothing is lost by waiting: `setLearn(false)` resyncs, so the controller is
     // brought back into agreement the moment the arming ends.
     if (this.engine.isLearning()) {
-      this.probe?.note(`feedback suspended — learn armed (resync=${resync})`);
+      midiProbe?.note(`feedback suspended — learn armed (resync=${resync})`);
       return;
     }
     if (!this.outputPort) {
-      this.probe?.note(`feedback skipped — no output port (resync=${resync})`);
+      midiProbe?.note(`feedback skipped — no output port (resync=${resync})`);
       return;
     }
     const deferred = this.engine.feedback(resync, this.deviceStateKnown);
-    if (deferred) this.probe?.note("feedback deferred behind an in-progress sweep");
+    if (deferred) midiProbe?.note("feedback deferred behind an in-progress sweep");
     if (deferred && !this.settleTimer) {
       this.settleTimer = window.setTimeout(() => {
         this.settleTimer = 0;

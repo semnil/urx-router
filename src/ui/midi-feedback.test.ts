@@ -5,9 +5,9 @@
 // and what learning a binding does. `midi.test.ts` owns the inbound half (relay
 // intents, incoming messages, the gate).
 //
-// Two silences matter here and neither is an error: a send with no output port open,
-// and a feedback pass that returned early. Both are the shapes that read as "nothing
-// happened" in every log the app keeps, so each has a case rather than an assumption.
+// A feedback pass that sends nothing is not an error — no output port open, or a live
+// readback not yet settled — and it reads as "nothing happened" in every log the app
+// keeps, so each of those has a case rather than an assumption.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

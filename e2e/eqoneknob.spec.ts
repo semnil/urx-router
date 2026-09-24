@@ -5,7 +5,8 @@ import { pickPlot, screenBox } from "./dyn-helpers";
 // ON toggle and a launcher). What it does on the device is measured and recorded in
 // reference/work/vd: writing a TYPE loads a preset and initialises LEVEL to that type's
 // neutral point, and while 1-knob is on the device computes all four bands and announces
-// every recomputation — so the band rows stay on screen, read-only.
+// every recomputation — so the band rows stay in the document and are not shown, and a
+// note in their place says why.
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const row = (page: Page, label: string) =>
   screenBox(page)
@@ -35,9 +36,9 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 });
 
-// Every EQ instance offers all three preset types, measured on a URX44V: the catalog
-// used to carry two subsets (mono = Intensity/Vocal, else Intensity/Loudness) and both
-// halves were wrong. A mono channel and an output bus resolve their EQ down different
+// Each of the four EQ kinds offers all three preset types (docs/en/device-model.md names
+// the instance of each the unit was asked): the catalog used to carry two subsets
+// (mono = Intensity/Vocal, else Intensity/Loudness) and both halves were wrong. A mono channel and an output bus resolve their EQ down different
 // paths, so each is pinned.
 const ALL_TYPES = ["Intensity", "Vocal", "Loudness"];
 

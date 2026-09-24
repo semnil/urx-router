@@ -30,7 +30,8 @@ export interface Finding {
    * What KIND of question the finding answers, which the number cannot carry: invariant
    * 6 alone spans all three. "product" = the app misbehaved, "case" = the case may have
    * measured nothing, "harness" = the harness contradicted itself. Absent means
-   * "product", which every invariant but 6 is.
+   * "product"; besides invariant 6, the one other finding that carries a class is
+   * invariant 16's missing quiesce mark, reported as "harness".
    */
   class?: "product" | "case" | "harness";
   name: string;

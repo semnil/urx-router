@@ -399,9 +399,11 @@ describe("the live ruleset, compared with the manifest", () => {
 });
 
 // GitHub matches a ruleset's ref patterns with Ruby's File.fnmatch under FNM_PATHNAME and
-// without backslash quoting. Every expectation below was measured against Ruby, and the
-// differential test at the foot of this file re-measures them wherever ruby exists — the
-// table alone would only pin whatever the implementation happened to do on the day.
+// without backslash quoting. Every expectation below except the two `~` rows (`~ALL` and
+// `~DEFAULT_BRANCH`, which are GitHub's own tokens rather than patterns) was measured
+// against Ruby, and the differential test at the foot of this file re-measures them
+// wherever ruby exists — the table alone would only pin whatever the implementation
+// happened to do on the day.
 const PATTERNS = [
   ["~ALL", "refs/heads/main", true],
   ["~DEFAULT_BRANCH", "refs/heads/main", true],
