@@ -2186,6 +2186,10 @@ address in `live.test.ts`. The exclusion applies to the converge's reads **and**
 because group expansion would otherwise carry an excluded address back in on a sibling's difference
 without it ever having been compared.
 
+A head the flush did **not** send — held for the next flush, or sent at a value the plan has since moved past — is
+left out of the converge altogether, and the next flush sends it and reads its node back
+(`docs/en/architecture.md`, "The internal re-bases: the snapshot and the history baseline").
+
 It is **not free**, and the cost is measurable. The unit does not answer for a write at the moment it
 acks it (`docs/en/architecture.md`, "A write is not readable when it is acked"), and the refetch is
 issued in that same millisecond — so the read waits the write out from inside the flush, and one

@@ -413,8 +413,9 @@ export class LiveSync {
    *  echoes). Pass the copy the readback ran against, or an edit made during that read
    *  is recorded as device truth and stops being a diff — and `since`, the mark taken
    *  when that read was issued, or the direct notifies it could not carry are dropped.
-   *  `nodes` are the nodes that read covered (absent = the whole device): the unit's
-   *  announcements on them from before `since` are what the read has now carried. */
+   *  `nodes` are the nodes that read covered (absent = the whole device): only their
+   *  addresses are re-based, and the unit's announcements on them from before `since` are
+   *  what the read has now carried. */
   resync(deviceView?: Plan, since?: number, nodes?: ReadonlySet<string>): void {
     this.capture(deviceView, since, nodes);
   }
