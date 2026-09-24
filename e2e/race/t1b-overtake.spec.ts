@@ -19,11 +19,12 @@ import { stepLevel } from "../../src/core/levels";
 import { CH1_FADER, CH1_PAN, CH1_PAN_ADDR, CH2_FADER, pickInsertFx, readoutOf } from "./ui";
 
 // T1b overtake — the T1 cases the first pass did not reach
-// (docs/{en,ja}/live-race-harness.md, "T1 overtake"). Four of the nine are here:
+// (docs/{en,ja}/live-race-harness.md, "T1 overtake"). Five of the ten are here:
 //
 //   overtake-converge-latch-starvation             the only liveness case in the catalog
 //   overtake-notify-echo-vs-genuine-during-flush   the discrimination the app cannot make
 //   overtake-direct-notify-ahead-of-the-send-loop  the frozen command list vs a moving snapshot
+//   overtake-foreign-notify-inside-our-write       a device value our in-flight write replaces
 //   overtake-edit-during-flush-send-loop           the send loop's own re-entrancy
 //
 // Each is a DIFFERENTIAL: one variable moves between two otherwise identical runs, so a
@@ -539,6 +540,81 @@ test.describe("T1b overtake", () => {
       expect(panSets).toHaveLength(0);
       expect(mem[CH1_PAN_ADDR]).toBe(movedPan);
       expect(snapshot?.[CH1_PAN_ADDR]).toBe(movedPan);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // overtake-foreign-notify-inside-our-write
+  //
+  // A device-side value for the address our own write is on the wire to, arriving before
+  // that write's announcement. The unit announces changes in the order it makes them, so
+  // this is the value our write replaces and the device ends on ours. The plan has to end
+  // there as well and stay there in between: the notify is not applied to the plan, the
+  // board keeps showing the operator's value, and no flush sends the replaced value back.
+  //
+  // The differential is a second edit inside the window: `quiet` has none, `busy` moves
+  // CH 2 while the notify's value would otherwise be sitting in the plan.
+  // ---------------------------------------------------------------------------
+  for (const variant of ["quiet", "busy"] as const) {
+    test(`a device value our in-flight write replaces is neither shown nor written back (${variant})`, async ({
+      page,
+    }) => {
+      await goLive(page);
+      await page.click("#btn-view-console");
+      await expect(faderReadout(page, "CH 1")).toBeVisible();
+      const before = Math.round(Number(await faderReadout(page, "CH 1").textContent()) * 100);
+
+      await blockAt(page, "vd_set", 1);
+      await mark(page, "edit");
+      expect(await faderKey(page, "CH 1", "ArrowUp")).toBe(true);
+      await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 15_000 });
+      expect(heldSet(await traceOf(page))?.addr).toBe(CH1_FADER);
+      const edited = (await faderReadout(page, "CH 1").textContent())!;
+      const ours = (await memOf(page))[CH1_FADER];
+      // One detent past our own value, which no gesture in this case produces.
+      const foreign = ours + (ours - before);
+      expect(foreign).not.toBe(ours);
+
+      await mark(page, "notify");
+      await pushNotifyDelivered(page, [[139, 0, 0, foreign]]);
+      await mark(page, "release");
+      await releaseBarrier(page);
+      // Past our write's announcement (ANNOUNCE_MS after the ack) and short of the idle
+      // sweep, which is where the board used to show the replaced value.
+      await page.waitForTimeout(300);
+      const midReadout = (await faderReadout(page, "CH 1").textContent())!;
+      if (variant === "busy") {
+        await mark(page, "other-edit");
+        expect(await faderKey(page, "CH 2", "ArrowUp")).toBe(true);
+      }
+      await setLatency(page, { get: 0, set: 0 });
+      await settleThroughIdleNet(page, "notify");
+
+      const trace = await traceOf(page);
+      const ch1Sets = setsOf(trace)
+        .filter((s) => s.addr === CH1_FADER && s.start >= markTime(trace, "edit")!)
+        .map((s) => s.value);
+      const mem = await memOf(page);
+      const snapshot = await snapshotOf(page);
+      const finalReadout = (await faderReadout(page, "CH 1").textContent())!;
+      const findings = analyze(trace, {
+        edits: [{ label: "CH 1 fader", addr: CH1_FADER, at: markTime(trace, "edit")! }],
+        snapshot,
+      });
+
+      console.log(timeline(trace, { from: markTime(trace, "edit")! - 100 }));
+      console.log(report(`device value inside our write (${variant})`, findings));
+      console.log(
+        `ours=${ours} foreign=${foreign}; readout edited=${edited} mid=${midReadout} final=${finalReadout}; ` +
+          `CH 1 writes=[${ch1Sets.join(", ")}]; device=${mem[CH1_FADER]} snapshot=${snapshot?.[CH1_FADER]}`,
+      );
+
+      expect(findings.filter((f) => f.class === "case")).toHaveLength(0);
+      expect(midReadout).toBe(edited);
+      expect(ch1Sets).not.toContain(foreign);
+      expect(mem[CH1_FADER]).toBe(ours);
+      expect(snapshot?.[CH1_FADER]).toBe(ours);
+      expect(finalReadout).toBe(edited);
     });
   }
 
