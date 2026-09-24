@@ -466,8 +466,9 @@ Parameters 見出しからバンド名が外れ、プロットのマーカーも
 実測した — mono CH1 と STEREO マスターは実機の画面と書き込みで、stereo CH5/6 と MIX1 は書き込みで。
 [device-model.md](device-model.md)「固定 (結線不可) の要素」も同じことを述べる。
 
-4 種の EQ (mono / stereo チャンネル・MIX・STEREO マスター) のどれでも、Type を選ぶと各バンドの ON も書き換わる — Loudness は 4 バンドとも ON、Vocal は LOW を OFF・残り 3 つを
-ON — 直前に各バンドが持っていた ON に関係なく。1-knob 自体を ON にしてもバンドの ON は動かない。
+1-knob ON 中に Vocal か Loudness を選ぶと、各バンドの ON も書き換わる。4 種の EQ (mono / stereo
+チャンネル・MIX・STEREO マスター) のどれでも同じで、Loudness は 4 バンドとも ON、Vocal は LOW を OFF・
+残り 3 つを ON — 直前に各バンドが持っていた ON に関係なく。1-knob 自体を ON にしてもバンドの ON は動かない。
 そのため 1-knob を OFF にして戻ってくるバンドの行は、離れたときと違う ON/OFF になりうる: ライブ同期中は
 refetch がノードの他の値と一緒に読み戻し、同期していないときはプランが持っていた ON のまま残る。
 

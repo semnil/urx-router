@@ -522,10 +522,10 @@ The 1-knob Type offers three presets — Intensity / Vocal / Loudness — on mon
 of each of the four EQ kinds. [device-model.md](device-model.md), "Fixed (non-wireable) elements", states
 the same.
 
-On every EQ kind — mono and stereo channels, MIX and the STEREO master — choosing a Type also sets each
-band's ON — Loudness turns all four on, Vocal turns LOW off and the other three on — whatever the bands
-held before, while turning 1-knob itself on leaves them alone. So the band rows that turning 1-knob off hands back can be switched differently from how they
-were left: with a live session the refetch reads them back with the rest of the node, and without one the
+With 1-knob on, choosing Vocal or Loudness also sets each band's ON, on every EQ kind — mono and stereo
+channels, MIX and the STEREO master: Loudness turns all four on, Vocal turns LOW off and the other three
+on, whatever the bands held before. Turning 1-knob itself on leaves them alone. So the band rows that
+turning 1-knob off hands back can be switched differently from how they were left: with a live session the refetch reads them back with the rest of the node, and without one the
 plan keeps the ONs it held.
 
 ### Above 96 kHz
