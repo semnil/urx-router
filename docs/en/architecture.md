@@ -2244,7 +2244,10 @@ as device truth, plan and snapshot agree, no later flush finds a diff, and only 
 Every re-base takes its values from **the private clone a read ran against**, never from the live plan, and the
 snapshot's *shape* from the live plan: an address the operator moved during the read then holds their value in
 the plan and the device's in the clone, so it stays a diff and the next flush sends it. An address the plan only
-just grew is absent from the clone and is left out of the snapshot entirely, for the same reason.
+just grew is absent from the clone and is left out of the snapshot entirely, for the same reason. A scoped read — a
+reconcile of some nodes, or a refetch's read of the nodes its heads drive — re-bases only the addresses of the nodes
+it covered, names included; everywhere else the snapshot keeps what it held, holding nothing included, because the
+read says nothing there and a value the plan holds that the unit was never sent is still owed to it.
 
 | Event | Live snapshot | History baseline |
 | --- | --- | --- |

@@ -1629,6 +1629,72 @@ describe("LiveSync sideEffect refetch", () => {
       ).toEqual(ch2FaderFirst === ch2FaderLast ? [] : [ch2FaderLast]);
     });
 
+    // A refetch reads the nodes its heads drive, and nothing else: CH 3's morph moves, so the
+    // flush reads CH 3 back. A value another write carried at the value the flush took, and
+    // then moved again while that write was on the wire, is still owed to the unit — the read
+    // says nothing about it, so the snapshot keeps what was sent there and the next flush
+    // sends the rest.
+    describe("beside another node's read-back", () => {
+      const withCh3Bank = (plan: Plan): void => {
+        plan.nodeParams.ch3 = {
+          ...plan.nodeParams.ch3,
+          compEqType: COMP_EQ_SSMCS,
+          ssmcs: { ...structuredClone(SSMCS_INITIAL), morphing: 0 },
+        };
+      };
+      const moveCh3Morph = (plan: Plan): void => {
+        plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, ssmcs: { ...plan.nodeParams.ch3?.ssmcs, morphing: 20 } };
+      };
+
+      it("sends a CH name renamed while its write was on the wire from the next flush", async () => {
+        const plan = basePlan();
+        withCh3Bank(plan);
+        const unit = heldUnit(plan);
+        unit.live.begin();
+
+        unit.holdNext("str");
+        unit.edit(() => {
+          plan.nodeNames = { ...plan.nodeNames, ch2: "KICK" };
+          moveCh3Morph(plan);
+        });
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: the name write is held").toBe(1);
+        unit.edit(() => (plan.nodeNames = { ...plan.nodeNames, ch2: "SNARE" }));
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(unit.refetched[0], "the premise: the flush read CH 3 back").toEqual(["ch3"]);
+        expect(presetWrites(), "the rename went out after the name the flush took").toEqual(["KICK", "SNARE"]);
+      });
+
+      it("sends a rate moved while its write was on the wire from the next flush", async () => {
+        const plan = basePlan();
+        withCh3Bank(plan);
+        const rateAt = planToCommands(model, plan).find((c) => c.name === "SAMPLE_RATE")!;
+        expect(rateAt.node, "the premise: the rate belongs to no node").toBeUndefined();
+        const unit = heldUnit(plan);
+        unit.live.begin();
+
+        unit.holdNext("set", rateAt);
+        unit.edit(() => {
+          plan.sampleRate = 44100;
+          moveCh3Morph(plan);
+        });
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: the rate write is held").toBe(1);
+        unit.edit(() => (plan.sampleRate = 96000));
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(unit.refetched[0], "the premise: the flush read CH 3 back").toEqual(["ch3"]);
+        const rateWrites = vi
+          .mocked(vdSet)
+          .mock.calls.filter(([id, x, y]) => addrKey(id, x, y) === cmdAddr(rateAt))
+          .map((w) => w[3]);
+        expect(rateWrites, "the rate that moved went out").toEqual([44100, 96000]);
+      });
+    });
+
     // A converge in the same flush re-sends whatever differs across the write scope. A refetch
     // head the operator moved that the flush did not send — deferred after a re-take, passed at
     // the value the flush took, or at an address that appeared while it ran — must not go out
@@ -1766,6 +1832,56 @@ describe("LiveSync sideEffect refetch", () => {
           expect(ratioOf(plan).vdValue, "and the plan took it").toBe(RECOMPUTED);
         },
       );
+
+      // The same morph, left unsent by a flush whose refetch reads ANOTHER node back: CH 3's
+      // morph moves with CH 1's type, so the flush reads CH 3 and re-bases the snapshot from
+      // that read. CH 2 was not read, so the snapshot has to go on saying the unit holds nothing
+      // at its morph, or the next flush finds no difference to send.
+      it.each([
+        ["with no preset", false],
+        ["with a preset", true],
+      ])("sends a morph left unsent beside another node's read-back %s from the next flush", async (_how, preset) => {
+        const plan = basePlan();
+        const bankOf = () => {
+          const { sweetSpotData, ...bank } = structuredClone(SSMCS_INITIAL);
+          return { ...bank, ...(preset ? { sweetSpotData } : {}), morphing: 0 };
+        };
+        plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, ssmcs: bankOf() };
+        plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, compEqType: COMP_EQ_SSMCS, ssmcs: bankOf() };
+        const switched = structuredClone(plan);
+        switched.nodeParams.ch2 = {
+          ...switched.nodeParams.ch2,
+          compEqType: COMP_EQ_SSMCS,
+          ssmcs: { ...switched.nodeParams.ch2?.ssmcs, morphing: 40 },
+        };
+        const morphAddr = cmdAddr(morphOf(switched));
+        const ratioAddr = cmdAddr(ratioOf(switched));
+        const unit = heldUnit(plan, (addr, _v, numbers) => {
+          if (addr === morphAddr) numbers.set(ratioAddr, RECOMPUTED);
+        });
+        unit.live.begin();
+
+        unit.holdNext("set");
+        unit.edit(() => {
+          setCh1CompEqType(plan, COMP_EQ_SSMCS);
+          plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, ssmcs: { ...plan.nodeParams.ch3?.ssmcs, morphing: 20 } };
+        });
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: the type write is held").toBe(1);
+        unit.edit(() => (plan.nodeParams.ch2 = structuredClone(switched.nodeParams.ch2)));
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(unit.refetched[0], "the premise: the first flush read CH 3 back").toContain("ch3");
+        const morphWrites = vi
+          .mocked(vdSet)
+          .mock.calls.filter(([id, x, y]) => addrKey(id, x, y) === morphAddr)
+          .map((w) => w[3]);
+        expect(morphWrites, "CH 2's morph went out once").toEqual([morphOf(switched).vdValue]);
+        expect(unit.refetched, "and CH 2 was read back").toContainEqual(["ch2"]);
+        expect(unit.numbers.get(ratioAddr), "the unit's recomputed ratio stands").toBe(RECOMPUTED);
+        expect(ratioOf(plan).vdValue, "and the plan took it").toBe(RECOMPUTED);
+      });
 
       // A head the operator did not move is still the converge's: whatever the converge head
       // reset on the unit, the converge puts the plan's value back. The unit here resets CH 1's

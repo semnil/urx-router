@@ -698,6 +698,12 @@ export class LiveSync {
     // `unread`: addresses the read behind this view left out. The snapshot goes on holding
     // what it held there, and their announcements stand.
     const kept = unread ? [...unread].map((k) => [k, this.snapshot.get(k)] as const) : [];
+    // A read that covered some nodes (`nodes`) says nothing about the others: there the
+    // snapshot goes on holding what it held — nothing, where it held nothing — names included,
+    // so a value the plan holds and the unit was never sent stays a difference.
+    const prior = nodes ? new Map(this.snapshot) : null;
+    const priorNames = nodes ? new Map(this.nameSnapshot) : null;
+    const covered = (node: string | undefined): boolean => !nodes || (node !== undefined && nodes.has(node));
     this.snapshot.clear();
     this.nameSnapshot.clear();
     const commands = planToCommands(model, plan, scope);
@@ -706,12 +712,16 @@ export class LiveSync {
       // An address the view does not carry grew after the read was issued (a structural
       // edit made during it). It is a pending write, not device truth, so it is left out
       // of the snapshot entirely and the next diff sends it.
-      const known = device ? device.get(k) : c.vdValue;
+      const known = !covered(c.node) ? prior?.get(k) : device ? device.get(k) : c.vdValue;
       if (known !== undefined) this.snapshot.set(k, known);
     }
     for (const [k, v] of kept) if (v !== undefined && this.snapshot.has(k)) this.snapshot.set(k, v);
     this.rebuildFollowSet(model, plan, scope, commands);
-    for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
+    for (const w of planToNameWrites(model, deviceView ?? plan)) {
+      const key = nameKey(w);
+      const value = covered(w.node) ? w.value : priorNames?.get(key);
+      if (value !== undefined) this.nameSnapshot.set(key, value);
+    }
     if (since !== undefined) {
       // Restore what the view could not know: a notify the device sent after the read was
       // issued. Confined to the addresses this capture registered, so the shape still comes
