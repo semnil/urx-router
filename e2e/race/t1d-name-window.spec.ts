@@ -32,9 +32,12 @@ import {
   pushNameNotify,
   mark,
   settleAfter,
+  settleThroughIdleNet,
+  blockAt,
+  releaseBarrier,
 } from "./fake-device";
-import { getsOf } from "./analyze";
-import { openEqScreen } from "./ui";
+import { getsOf, markTime } from "./analyze";
+import { openEqScreen, sampleShown, shownOf } from "./ui";
 
 /** CH1's name (vd-params.md `18`: 64-byte fixed-length string, one instance per mono
  *  channel). The only name address this case touches. */
@@ -47,6 +50,9 @@ const CH1_ONE_KNOB_ON = "46:0:0";
 /** The graph node, addressed the way rename.spec.ts does. */
 const node = (page: Page, id: string): ReturnType<Page["locator"]> =>
   page.locator(`#graph-host g.node[data-id="${id}"]`);
+
+/** Where the CH 1 label sampler records. */
+const LABEL_SAMPLE = "__ch1LabelShown";
 
 const nameInput = (page: Page): ReturnType<Page["locator"]> => page.locator("#inspector input[type='text']");
 
@@ -196,4 +202,62 @@ test.describe("T1d name window", () => {
     expect(why2).toEqual([""]);
     await expect(node(page, "ch1").locator("text").first()).toHaveText("TypedApp");
   });
+
+  // The name twin of t1b's overtake-foreign-notify-inside-our-write. A rename the unit
+  // announces while the app's own rename of the same channel is on the wire is one that
+  // rename replaces: the unit announces changes in the order it makes them. It is not
+  // placed in the plan, the label never shows it, and no flush sends it back — the one
+  // rename that goes out is the app's, and it is what the unit ends on.
+  //
+  // `held` keeps the rename write on the wire past the follow settle, so the re-read of
+  // the node falls due while it is unacked and the name read answers the pre-write name.
+  // `released` lets the write land at once.
+  for (const variant of ["held", "released"] as const) {
+    test(`a rename our own rename in flight replaces is neither shown nor written back (${variant})`, async ({
+      page,
+    }) => {
+      await goLive(page);
+      await page.click("#btn-view");
+      await page.locator("#btn-labels").click();
+      await page.click("#btn-view-graph");
+      await node(page, "ch1").click();
+      await expect(nameInput(page)).toHaveCount(1);
+      // The unit answers a just-written address with the value the write replaced until it
+      // announces the write, so a read issued inside that span meets what the hardware gives it.
+      await staleReadsAt(page, CH1_NAME, 1000);
+
+      await blockAt(page, "vd_set_str", 1);
+      await mark(page, "rename");
+      await nameInput(page).fill("AppName");
+      await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 15_000 });
+      await expect(node(page, "ch1").locator("text").first()).toHaveText("AppName");
+      await sampleShown(page, LABEL_SAMPLE, '#graph-host g.node[data-id="ch1"] text', null);
+
+      await mark(page, "notify");
+      expect(await pushNameNotify(page, CH1_NAME, "Panel")).toEqual([""]);
+      // The push stores what it announces, which puts the unit's change AFTER the app's
+      // rename. This case is about a change the unit made BEFORE taking that rename, so the
+      // name it holds is the app's.
+      await page.evaluate(([k, v]) => void (window.__urxFake.memStr[k] = v), [CH1_NAME, "AppName"] as [string, string]);
+      // Twice the follow settle (300 ms), so the re-read falls due with the write still held.
+      if (variant === "held") await page.waitForTimeout(600);
+      await mark(page, "release");
+      await releaseBarrier(page);
+      await settleThroughIdleNet(page, "notify");
+
+      const trace = await traceOf(page);
+      const renames = trace.filter(
+        (e) =>
+          e.kind === "ipc-start" && e.cmd === "vd_set_str" && e.addr === CH1_NAME && e.t >= markTime(trace, "rename")!,
+      );
+      const held = await memStrOf(page);
+      const shown = await shownOf(page, LABEL_SAMPLE);
+      console.log(`renames=${renames.length} device=${held[CH1_NAME]} shown=[${shown.join(", ")}]`);
+
+      expect(renames).toHaveLength(1);
+      expect(held[CH1_NAME]).toBe("AppName");
+      expect(shown).toEqual(["AppName"]);
+      await expect(node(page, "ch1").locator("text").first()).toHaveText("AppName");
+    });
+  }
 });

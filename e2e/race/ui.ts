@@ -123,8 +123,10 @@ export const CH2_FADER = "139:0:1";
 export const CH1_PAN: [number, number, number] = [141, 0, 0];
 export const CH1_PAN_ADDR = CH1_PAN.join(":");
 
-/** HPF_FREQ on the first mono channel, as a notify tuple. */
+/** HPF_FREQ on the first mono channel, as a notify tuple and as the address a write is
+ *  matched by. */
 export const CH1_HPF_FREQ: [number, number, number] = [26, 0, 0];
+export const CH1_HPF_ADDR = CH1_HPF_FREQ.join(":");
 
 /** The fake's stored raw value rendered the way the console renders the plan's
  *  (src/ui/console.ts fmtDb over src/core/control/vd.ts vdToLevel), so "the screen shows
@@ -203,3 +205,32 @@ export async function settleValue(
     await target.page().waitForTimeout(step);
   }
 }
+
+/**
+ * Record every distinct value `selector` shows, one reading per animation frame, under `key`
+ * on the page, in the order each was first shown. A value the screen showed for a few
+ * frames between two assertions is recorded here and missed by both of them. `attr` names
+ * the attribute to read; null reads the text. The element is looked up on every frame,
+ * since a follow repaint replaces it.
+ */
+export const sampleShown = (page: Page, key: string, selector: string, attr: string | null): Promise<void> =>
+  page.evaluate(
+    ([k, sel, a]) => {
+      const seen: string[] = [];
+      (window as unknown as Record<string, string[]>)[k] = seen;
+      const tick = (): void => {
+        const el = document.querySelector(sel);
+        if (el) {
+          const v = a ? (el.getAttribute(a) ?? "") : (el.textContent ?? "");
+          if (!seen.includes(v)) seen.push(v);
+        }
+        requestAnimationFrame(tick);
+      };
+      tick();
+    },
+    [key, selector, attr] as [string, string, string | null],
+  );
+
+/** What `sampleShown` recorded under `key`. */
+export const shownOf = (page: Page, key: string): Promise<string[]> =>
+  page.evaluate((k) => [...((window as unknown as Record<string, string[]>)[k] ?? [])], key);

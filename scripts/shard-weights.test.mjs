@@ -443,14 +443,21 @@ describe("inspectWeights", () => {
   });
 
   // Mutation 2: the counts that come back when the variable is ignored are Playwright's own
-  // equal-count split. Every shard is wrong, and each says so on its own line.
+  // equal-count split. Every shard whose weight differs from that split is wrong, and each
+  // says so on its own line; a weight that happens to equal it has nothing to say.
   it("reports the counts an ignored variable produces", () => {
     // Playwright's own equal-count split of the same corpus, derived rather than written out.
     const n = WEIGHTS.length;
     const equal = WEIGHTS.map((_, i) => Math.floor(TOTAL / n) + (i < TOTAL % n ? 1 : 0));
+    const differs = WEIGHTS.map((w, i) => w !== equal[i]);
+    // An array equal to the split everywhere would make an ignored variable unobservable.
+    expect(differs.some(Boolean)).toBe(true);
     const found = messages({ shardCounts: equal });
-    expect(found).toHaveLength(n);
-    expect(found[0]).toMatch(new RegExp(`--shard=1/${n} collects ${equal[0]} case\\(s\\).*not the ${WEIGHTS[0]}`, "s"));
+    expect(found).toHaveLength(differs.filter(Boolean).length);
+    const k = differs.indexOf(true);
+    expect(found[0]).toMatch(
+      new RegExp(`--shard=${k + 1}/${n} collects ${equal[k]} case\\(s\\).*not the ${WEIGHTS[k]}`, "s"),
+    );
     expect(found.every((m) => /stopped reading PWTEST_SHARD_WEIGHTS/.test(m))).toBe(true);
   });
 
