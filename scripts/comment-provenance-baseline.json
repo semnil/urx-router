@@ -40,7 +40,7 @@
     "playwright.config.ts": 1,
     "scripts/check-assets-index.mjs": 8,
     "scripts/check-assets-index.test.mjs": 2,
-    "scripts/check-race-skips.mjs": 2,
+    "scripts/check-race-skips.mjs": 1,
     "scripts/race-shard-weights.mjs": 2,
     "scripts/release-tag.test.mjs": 1,
     "scripts/shard-weights.mjs": 3,
