@@ -2222,8 +2222,9 @@ names (`watchEdits`), and hands it to the read, because the read covers the whol
 while the flush's writes are on the wire is carried by none of them. A head that turns up only after sending began —
 in a re-take after a device-side change, or in the list the name loop takes for itself — while no watch is open goes
 out with the next flush instead, which watches from its own start. A converge sharing the flush leaves such a
-head alone — one held for the next flush, and one sent at a value the plan has since moved past — and the snapshot
-goes on holding what it held there, names included, so the next flush still finds it to send: sent from the
+head alone — one held for the next flush, one sent at a value the plan has since moved past, and one at an address
+that first appeared while the flush ran — and the snapshot goes on holding what it held there (nothing, for a new
+address), names included, so the next flush still finds it to send: sent from the
 converge, it would have the unit recompute what it drives with no read behind it, and the converge would then write
 the plan's older copies of those values back. A head the operator did not move stays the converge's to restore. A
 flush with no refetch head opens none. That does widen the window undo is refused in,

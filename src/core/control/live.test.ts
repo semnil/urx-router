@@ -1630,10 +1630,11 @@ describe("LiveSync sideEffect refetch", () => {
     });
 
     // A converge in the same flush re-sends whatever differs across the write scope. A refetch
-    // head the operator moved that the flush did not send — deferred after a re-take, or passed
-    // at the value the flush took — must not go out from there: the unit recomputes what it
-    // drives, no read follows, and the converge writes the plan's older copies back. The
-    // converge leaves it alone, and the next flush sends it and reads its node back.
+    // head the operator moved that the flush did not send — deferred after a re-take, passed at
+    // the value the flush took, or at an address that appeared while it ran — must not go out
+    // from there: the unit recomputes what it drives, no read follows, and the converge writes
+    // the plan's older copies back. The converge leaves it alone, and the next flush sends it
+    // and reads its node back.
     describe("beside a converge", () => {
       const ratioOf = (plan: Plan) =>
         planToCommands(model, plan).find((c) => c.name === "SSMCS_COMP_RATIO" && c.node === "ch2")!;
@@ -1711,6 +1712,60 @@ describe("LiveSync sideEffect refetch", () => {
         expect(unit.refetched).toContainEqual(["ch1"]);
         expect(plan.nodeParams.ch1?.ssmcs?.sweetSpotData).toBe(2);
       });
+
+      // The head's address can also first appear inside the flush: CH 2 is switched to SSMCS
+      // while another write is on the wire, so its morph is in none of the lists the flush took
+      // and the snapshot has never held it. The converge leaves it for the next flush all the same.
+      it.each([
+        ["with no preset", false],
+        ["with a preset", true],
+      ])(
+        "sends a morph whose address appeared during the flush %s from the next flush, and reads its node back",
+        async (_how, preset) => {
+          const plan = basePlan();
+          const { sweetSpotData, ...bank } = structuredClone(SSMCS_INITIAL);
+          plan.nodeParams.ch2 = {
+            ...plan.nodeParams.ch2,
+            ssmcs: { ...bank, ...(preset ? { sweetSpotData } : {}), morphing: 0 },
+          };
+          expect(
+            planToCommands(model, plan).some((c) => c.name === "SSMCS_MORPHING" && c.node === "ch2"),
+            "the premise: CH 2 emits no morph before its type moves",
+          ).toBe(false);
+          const switched = structuredClone(plan);
+          switched.nodeParams.ch2 = {
+            ...switched.nodeParams.ch2,
+            compEqType: COMP_EQ_SSMCS,
+            ssmcs: { ...switched.nodeParams.ch2?.ssmcs, morphing: 40 },
+          };
+          const morphAddr = cmdAddr(morphOf(switched));
+          const ratioAddr = cmdAddr(ratioOf(switched));
+          expect(ratioOf(switched).vdValue, "the premise: the recomputed ratio differs from the plan's").not.toBe(
+            RECOMPUTED,
+          );
+          const unit = heldUnit(plan, (addr, _v, numbers) => {
+            if (addr === morphAddr) numbers.set(ratioAddr, RECOMPUTED);
+          });
+          unit.live.begin();
+
+          unit.holdNext("set");
+          unit.edit(() => setCh1CompEqType(plan, COMP_EQ_SSMCS));
+          await vi.advanceTimersByTimeAsync(120);
+          expect(unit.held(), "the premise: the type write is held").toBe(1);
+          unit.edit(() => (plan.nodeParams.ch2 = structuredClone(switched.nodeParams.ch2)));
+          unit.release();
+          await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+          const morphWrites = vi
+            .mocked(vdSet)
+            .mock.calls.filter(([id, x, y]) => addrKey(id, x, y) === morphAddr)
+            .map((w) => w[3]);
+          expect(morphWrites, "the morph went out once").toEqual([morphOf(switched).vdValue]);
+          expect(unit.refetched, "and its node was read back").toContainEqual(["ch2"]);
+          expect(unit.numbers.get(ratioAddr), "the unit's recomputed ratio stands").toBe(RECOMPUTED);
+          expect(ratioOf(plan).vdValue, "and the plan took it").toBe(RECOMPUTED);
+        },
+      );
 
       // A head the operator did not move is still the converge's: whatever the converge head
       // reset on the unit, the converge puts the plan's value back. The unit here resets CH 1's
