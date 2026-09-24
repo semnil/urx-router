@@ -463,7 +463,7 @@ wrong curve without it:
 | --- | --- |
 | Peaking | **The unit's Q is twice the biquad Q.** A "Q 1.00" +12 dB bell measured +12/+10/+7/+3 dB at 1k/700/500/300 Hz — a biquad Q of 0.5. Taking the number at face value draws every bell half as wide as the device's. |
 | HPF / LPF | Fixed 2nd-order Butterworth: -3.0 dB exactly at the nominal frequency, 12 dB/octave beyond. **The band's Q slot is ignored** — Q 0.71 and Q 4.00 measured identical, with no corner resonance. Honouring it draws a +12 dB peak that is not there. |
-| Shelving | The S = 1 shape, but **the nominal frequency is the point 3 dB below the plateau**, not the midpoint: a +18 dB shelf at 1 kHz measured +15 dB there and reached +18 dB by 4 kHz. So the design frequency is solved for, and the search direction flips with the gain's sign — reusing the boost direction for a cut is 4.2 dB out. |
+| Shelving | The S = 1 shape, but **the nominal frequency is the point 3 dB below the plateau**, not the midpoint: a +18 dB shelf at 1 kHz measured +15 dB there and reached +18 dB by 4 kHz. So the design frequency is solved for, and the search direction flips with the gain's sign — reusing the boost direction for a cut is 4.2 dB out. **Under 6 dB of gain the shelf stays designed at its nominal frequency**: there the rule would move the design frequency inside the nominal one, and the unit does not — at 1 kHz, +4 / +5 / −4 dB high shelves and a +4 dB low shelf measured +2.4 / +3.1 / −2.5 / +2.4 dB, against +2.0 / +2.5 / −2.0 / +2.0 for a nominal-frequency design and +1.0 / +2.0 / −1.0 / +1.0 for the moved one. |
 
 Two further measurements bound what the model is worth: **bands sum in dB** (a LOW shelf +12 and a
 HIGH-MID peaking -9 measured together matched the sum of the two measured separately, within the
@@ -521,6 +521,12 @@ The 1-knob Type offers three presets — Intensity / Vocal / Loudness — on mon
 (the unit's own screen, and a write of each) and on stereo CH5/6 and MIX1 (a write of each): one instance
 of each of the four EQ kinds. [device-model.md](device-model.md), "Fixed (non-wireable) elements", states
 the same.
+
+With 1-knob on, choosing Vocal or Loudness also sets each band's ON, on every EQ kind — mono and stereo
+channels, MIX and the STEREO master: Loudness turns all four on, Vocal turns LOW off and the other three
+on, whatever the bands held before. Turning 1-knob itself on leaves them alone. So the band rows that
+turning 1-knob off hands back can be switched differently from how they were left: with a live session the refetch reads them back with the rest of the node, and without one the
+plan keeps the ONs it held.
 
 ### Above 96 kHz
 

@@ -20,7 +20,9 @@
 //             below the plateau, not the midpoint: a +18 dB shelf at 1 kHz measured
 //             +15 dB at 1 kHz and reached +18 dB only by 4 kHz. So the design
 //             frequency is solved for, and the search direction flips with the gain's
-//             sign — reusing the boost direction for a cut was 4.2 dB out.
+//             sign — reusing the boost direction for a cut was 4.2 dB out. Under
+//             6 dB of gain the solved frequency would sit inside the nominal one;
+//             the unit designs such a shelf at its nominal frequency instead.
 //
 // Two further measurements bound what this model is worth: bands sum in dB (a LOW
 // shelf +12 and a HIGH-MID peaking -9 measured together matched the sum of the two

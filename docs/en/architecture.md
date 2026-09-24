@@ -145,7 +145,7 @@ carries a one-line map of the same directories and points here.
   an optional `modelId` and silently fall back to the URX44 table without it, so every resolution site must
   pass `getModel().id`) / `eq-response.ts` the 4-band PEQ's measured frequency response (RBJ biquads with
   the three corrections measuring the unit forced: its Q is twice the biquad Q, pass filters ignore Q, a
-  shelf's nominal frequency is its −3 dB-from-plateau point; pinned against the device sweeps in
+  shelf's nominal frequency is its −3 dB-from-plateau point from 6 dB of gain up; pinned against the device sweeps in
   `eq-response.test.ts`) / `env.ts` build-time flags (`DEMO`: demo builds hide save/image export and instead
   show share-URL / plan-JSON download buttons) / `settings.ts` user preferences (the Preferences modal's
   backing store: one validated localStorage record `urx-settings`, loaded lazily so the `?reset` clear runs
@@ -575,7 +575,8 @@ carries a one-line map of the same directories and points here.
   lane rack alone; `DynPlotProcessor` keeps `plotGeo` / `drawAxes` / `drawCurve` required together wherever one
   of them is supplied, and the descriptor's own `display` decides per family whether the column carries a plot
   at all. The EQ's filter model is `core/eq-response.ts` (measured: the unit's Q is twice the biquad Q,
-  pass filters ignore Q, a shelf's nominal frequency is its −3 dB-from-plateau point). **Every plot draws
+  pass filters ignore Q, a shelf's nominal frequency is its −3 dB-from-plateau point from 6 dB of gain up).
+  **Every plot draws
   its curve at the true value and the host clips it to the plot area** — the `drawAxes` / `drawCurve` split
   exists to enforce that: clamping a value onto the axis draws a horizontal bar along the edge, i.e. a
   response the processor does not have (an annotation *of* a value may still be clamped, deliberately, so it
