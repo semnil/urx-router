@@ -2272,9 +2272,9 @@ it read included; a reconcile reads the names of the nodes it covers and takes t
 | Session start | `begin` from the starting read's clone | `reset` |
 | App edit, `markChanged` | per address, as its own write returns | entry opened, closed at the gesture boundary |
 | Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands, and an entry already recorded takes a nested `nodeParams` / `connParams` leaf only where its `before` AND its `after` both hold what the read measured from — both sides then take the read's value, and a whole field is never folded |
-| Reconcile readback, scoped or full | `resync` from the read's clone, then the direct journal's entries stamped after the read was issued | `reset`, in the reflect |
-| EQ 1-knob refetch | `capture` from the read's clone, then the same journal replay | `absorb` of the device-authored keys only |
-| Converge round | `capture` from the frozen clone | untouched |
+| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect |
+| Side-effect refetch | `capture` from the read's clone for the nodes it read, their names excepted since the read carries none, then the same journal replay | `absorb` of the device-authored keys only |
+| Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel | untouched |
 
 #### The display update
 
