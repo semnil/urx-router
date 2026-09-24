@@ -561,6 +561,30 @@ test.describe("T8 stress", () => {
         const startRaw = (await memOf(page))[CH1_FADER] ?? 0;
         const expectedRaw = Math.round(TRAIN.reduce((db, d) => stepLevel(db, d), startRaw / 100) * 100);
 
+        // The second chain goes on the link BEFORE the train. A reconcile does not start
+        // while a flush is armed or running (follow.ts `deferReconcile`), and the train keeps
+        // one armed from its first detent to its last, so a reconcile the train's own window
+        // provokes waits for it to end. The gate moves once first, and the train starts only
+        // once that node's re-read is reading: at this latency one channel's read outlasts
+        // the train, and every flush the train makes goes out beside it.
+        await mark(page, "gate-first");
+        await page.evaluate(
+          ([p, x, y]) => {
+            window.__urxFake.mem[`${p}:${x}:${y}`] = -2600;
+            window.__urxFake.pushNotify([[p, x, y, -2600]]);
+          },
+          chAddr(P_GATE_THRESHOLD, 3),
+        );
+        await page.waitForFunction(
+          () => {
+            const log = window.__urxFake.log;
+            const m = log.find((e) => e.kind === "mark" && e.detail === "gate-first");
+            return m !== undefined && log.some((e) => e.kind === "ipc-start" && e.cmd === "vd_get" && e.t > m.t);
+          },
+          null,
+          { timeout: 15_000 },
+        );
+
         await mark(page, "train-start");
         await page.evaluate(
           ({ ms, tick, train, fader, gate }) => {
@@ -615,14 +639,15 @@ test.describe("T8 stress", () => {
                 n++;
               }, 600),
             );
-            // A scoped param on a third channel, three times across the train: its
+            // A scoped param on a third channel, three more times across the train: its
             // settle turns into a readback of that node, which is the second chain on
-            // the link (and the later two land while the first is still reading, so
-            // the reconcile's pending replay is exercised too). Without it the whole
-            // run is a single chain — a direct-only window re-bases and reads nothing
-            // — and a single chain cannot be reordered by anything. Three distinct
-            // controls per window is the concentration ceiling: a fourth would
-            // escalate every settle to a full re-read of the device.
+            // the link. These land while the read of its first move (made above, before
+            // the train) is still reading, so the reconcile's pending replay is exercised
+            // too, and the replay itself waits for the train's flushes to stop. Without
+            // it the whole run is a single chain — a direct-only window re-bases and reads
+            // nothing — and a single chain cannot be reordered by anything. Three distinct
+            // controls per window is the concentration ceiling: a fourth would escalate
+            // every settle to a full re-read of the device.
             for (const [at, v] of [
               [1500, -2500],
               [3000, -2400],

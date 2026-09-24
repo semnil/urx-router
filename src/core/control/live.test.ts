@@ -349,7 +349,7 @@ describe("LiveSync sideEffect converge", () => {
 
   // The park is a READ, and two readers on one link is what the harness catches as invariant
   // 4. Device follow holds its reconcile off while this answers true, so the window has to
-  // open at the park rather than at the converge behind it.
+  // be closed at the park as well as at the converge behind it.
   it("holds a reconcile off from the outgoing park onward", async () => {
     const plan = basePlan();
     const seen: boolean[] = [];
@@ -359,7 +359,7 @@ describe("LiveSync sideEffect converge", () => {
       onError: () => {},
       onSent: () => {},
       onCollapsed: () => {},
-      parkSilent: async () => void seen.push(live.isConverging()),
+      parkSilent: async () => void seen.push(live.isWriting()),
     });
     live.begin();
     plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
@@ -368,7 +368,32 @@ describe("LiveSync sideEffect converge", () => {
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(seen[0], "already closed to a reconcile inside the first park").toBe(true);
-    expect(live.isConverging(), "and open again once the flush is done").toBe(false);
+    expect(live.isWriting(), "and open again once the flush is done").toBe(false);
+  });
+
+  // An edit is exposed to a read from the moment it is made, not from the moment its write
+  // goes out: the flush window holds it in the plan with the unit still at the old value.
+  it("holds a reconcile off from the edit, through the write, until the flush is done", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    expect(live.isWriting(), "nothing to send").toBe(false);
+    let ack!: () => void;
+    vi.mocked(vdSet).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          ack = resolve;
+        }),
+    );
+    setCh1Fader(plan, -6);
+    live.schedule();
+    expect(live.isWriting(), "inside the flush window, nothing sent yet").toBe(true);
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+    expect(live.isWriting(), "the write is on the wire").toBe(true);
+    ack();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live.isWriting(), "acked, and nothing else to send").toBe(false);
   });
 
   // A disconnect can land in that read the way it can in the converge's, and everything
@@ -848,6 +873,84 @@ describe("LiveSync direct-follow journal across a read", () => {
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+});
+
+describe("LiveSync unannounced write", () => {
+  it("answers true from the moment a write is issued until its announcement is taken", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    let ack!: () => void;
+    vi.mocked(vdSet).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          ack = resolve;
+        }),
+    );
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const cmd = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    // Issued, not acked.
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(true);
+    // Acked, announcement still to come.
+    ack();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(true);
+    // The announcement is taken as an echo, which consumes the queued write.
+    expect(live.isEcho(cmd.paramId, cmd.x, cmd.y, cmd.vdValue)).toBe(true);
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(false);
+  });
+
+  it("answers false once the retention window passes with no announcement", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const cmd = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(true);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(false);
+  });
+
+  it("answers false for an address this session did not write", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const cmd = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x + 1, cmd.y)).toBe(false);
+  });
+
+  it("answers the same for a rename, from the moment it is issued until its announcement is taken", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    let ack!: () => void;
+    vi.mocked(vdSetStr).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          ack = resolve;
+        }),
+    );
+    plan.nodeNames = { ...plan.nodeNames, ch1: "AppName" };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+    expect(live.hasUnannouncedName(param, y)).toBe(true);
+    // A numeric write to the same address is a different question.
+    expect(live.hasUnannouncedWrite(param, 0, y)).toBe(false);
+    ack();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live.hasUnannouncedName(param, y)).toBe(true);
+    expect(live.isEchoName(param, y, "AppName")).toBe(true);
+    expect(live.hasUnannouncedName(param, y)).toBe(false);
   });
 });
 

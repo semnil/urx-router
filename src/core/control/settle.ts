@@ -21,11 +21,14 @@
 // A notify counts as the announcement of OUR write only if it arrived after that
 // address's own vdSet was issued, which is why the caller hands over a mark PER
 // ADDRESS rather than one for the flush: the write loop awaits per command, so a device
-// notify for the fader can easily land before the fader was reached. Getting that
-// attribution wrong is SELF-CORRECTING in either direction — the real write's notify
-// arrives later and overwrites the value, and a notify that predates the write leaves
-// the address to be read off the unit — so the mark removes a spurious reconcile
-// rather than carrying the correctness of the merge.
+// notify for the fader can easily land before the fader was reached. A device notify
+// that lands after the mark and before the write's own announcement is counted here as
+// that announcement; the follow layer does not put its value into the plan and re-reads
+// the node once the write's own announcement has arrived (follow.ts, `isSuperseded`), so a
+// settle is not asked about the address while the replaced value is the last thing the
+// unit said about it. A notify that predates the write leaves the address to be read off
+// the unit. So the mark removes a spurious reconcile rather than carrying the correctness
+// of the merge.
 //
 // Two ways the wait ends, both measured:
 //   - the address's own notify (exact). What every write the snapshot held a DIFFERENT

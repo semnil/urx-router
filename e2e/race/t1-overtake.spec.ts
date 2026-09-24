@@ -353,11 +353,10 @@ test.describe("T1 overtake", () => {
   // refetch's node read (about 50) is spent well before a whole-device sweep's tail.
   // Barrier placements leaving 30, 60 and 120 reads were measured and none of them left
   // the refetch open at the moment of consumption, so restoring the gate leaves this case
-  // green. It is held in the unit tier instead, where the refetch's own read can be parked
-  // and the full read run to the end inside it — main.device.test.ts, "consumes the
-  // announcement with a side-effect refetch still open", which the gate fails. What this
-  // case carries that the unit tier cannot is the other end: the addresses and values a
-  // held clearing actually re-sends.
+  // green. The gate and the sequence differ only for a read that STARTS while the refetch
+  // is still open, and none can: a reconcile does not start while a flush, which a refetch
+  // runs inside, is armed or running (follow.ts `deferReconcile`). What this case carries
+  // is the other end: the addresses and values a held clearing actually re-sends.
   test("a full read consumes the rate announcement it decided from", async ({ page }) => {
     await goLive(page);
     await graphNode(page, "ch1").click();

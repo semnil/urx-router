@@ -12,19 +12,34 @@ import {
   settleAfter,
   settleThroughIdleNet,
   snapshotOf,
+  staleReadsAt,
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf, getsOf, type Span } from "./analyze";
 import { stepLevel } from "../../src/core/levels";
-import { CH1_FADER, CH1_PAN, CH1_PAN_ADDR, CH2_FADER, pickInsertFx, readoutOf } from "./ui";
+import {
+  CH1_FADER,
+  CH1_HPF_ADDR,
+  CH1_HPF_FREQ,
+  CH1_PAN,
+  CH1_PAN_ADDR,
+  CH2_FADER,
+  pickInsertFx,
+  readoutOf,
+  sampleShown,
+  shownOf,
+} from "./ui";
 
 // T1b overtake — the T1 cases the first pass did not reach
-// (docs/{en,ja}/live-race-harness.md, "T1 overtake"). Four of the nine are here:
+// (docs/{en,ja}/live-race-harness.md, "T1 overtake"). Seven of the twelve are here:
 //
-//   overtake-converge-latch-starvation             the only liveness case in the catalog
-//   overtake-notify-echo-vs-genuine-during-flush   the discrimination the app cannot make
-//   overtake-direct-notify-ahead-of-the-send-loop  the frozen command list vs a moving snapshot
-//   overtake-edit-during-flush-send-loop           the send loop's own re-entrancy
+//   overtake-converge-latch-starvation                 the only liveness case in the catalog
+//   overtake-notify-echo-vs-genuine-during-flush       the discrimination the app cannot make
+//   overtake-direct-notify-ahead-of-the-send-loop      the frozen command list vs a moving snapshot
+//   overtake-foreign-notify-inside-our-write           a device value our in-flight write replaces
+//   overtake-foreign-notify-with-an-edit-on-the-strip  the same, with an edit on the node still unsent
+//   overtake-edit-in-the-flush-window-vs-follow-read   an ordinary re-read against an unsent edit
+//   overtake-edit-during-flush-send-loop               the send loop's own re-entrancy
 //
 // Each is a DIFFERENTIAL: one variable moves between two otherwise identical runs, so a
 // firing verdict names its cause rather than a symptom. The bare form of each was
@@ -105,6 +120,36 @@ const faderKey = (page: Page, label: string, key: "ArrowUp" | "ArrowDown"): Prom
     },
     [label, key] as [string, string],
   );
+
+/** A named strip, as a selector a query inside the page can take. */
+const stripSelector = (label: string): string => `.con-strip:has(.con-fader[aria-label="${label}"])`;
+
+/** A named strip's PAN knob, as the same kind of selector. */
+const panSel = (label: string): string => `${stripSelector(label)} .con-head .con-knob[aria-label="PAN"]`;
+
+/** One arrow key on a named strip's PAN knob, dispatched the way `faderKey` dispatches. */
+const panKey = (page: Page, label: string, key: "ArrowLeft" | "ArrowRight"): Promise<boolean> =>
+  page.evaluate(
+    ([sel, k]) => {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (!el) return false;
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+      return true;
+    },
+    [panSel(label), key] as [string, string],
+  );
+
+/** The value a named strip's PAN knob shows. */
+const panValue = (page: Page, label: string): Promise<string | null> =>
+  page.locator(panSel(label)).getAttribute("aria-valuenow");
+
+/** Where the pan and fader-readout samplers record. */
+const PAN_SAMPLE = "__panShown";
+const FADER_SAMPLE = "__faderShown";
+
+/** A CH 1 HPF frequency a device-side change moves to: 100 Hz, on the unit's 20 Hz grid
+ *  and away from the 40 Hz floor the fake's unwritten 0 decodes to. */
+const MOVED_HPF = 1000;
 
 /** The "→ device (N)" lines the status bar printed, in order — one per flush that sent
  *  anything (main.ts onSent). The only machine-readable flush counter available without
@@ -541,6 +586,312 @@ test.describe("T1b overtake", () => {
       expect(snapshot?.[CH1_PAN_ADDR]).toBe(movedPan);
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // overtake-foreign-notify-inside-our-write
+  //
+  // A device-side value for the address our own write is on the wire to, arriving before
+  // that write's announcement. The unit announces changes in the order it makes them, so
+  // this is the value our write replaces and the device ends on ours. The plan has to end
+  // there as well and stay there in between: the notify is not applied to the plan, the
+  // board keeps showing the operator's value, and no flush sends the replaced value back.
+  //
+  // The differential is a second edit inside the window: `quiet` has none, `busy` moves
+  // CH 2 while the notify's value would otherwise be sitting in the plan. `acked` releases
+  // the write 280 ms after the notify, so the node's re-read falls due at 300 ms between the
+  // write's ack and its announcement — the one span in which the replaced value is the last
+  // thing the unit said about the address.
+  // ---------------------------------------------------------------------------
+  for (const variant of ["quiet", "busy", "acked"] as const) {
+    test(`a device value our in-flight write replaces is neither shown nor written back (${variant})`, async ({
+      page,
+    }) => {
+      await goLive(page);
+      await page.click("#btn-view-console");
+      await expect(faderReadout(page, "CH 1")).toBeVisible();
+      const before = Math.round(Number(await faderReadout(page, "CH 1").textContent()) * 100);
+      // The unit answers a just-written address with the value the write replaced until it
+      // announces the write, so a read issued inside that span meets what the hardware gives it.
+      await staleReadsAt(page, CH1_FADER, 1000);
+
+      await blockAt(page, "vd_set", 1);
+      await mark(page, "edit");
+      expect(await faderKey(page, "CH 1", "ArrowUp")).toBe(true);
+      await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 15_000 });
+      expect(heldSet(await traceOf(page))?.addr).toBe(CH1_FADER);
+      const edited = (await faderReadout(page, "CH 1").textContent())!;
+      const ours = (await memOf(page))[CH1_FADER];
+      // One detent past our own value, which no gesture in this case produces.
+      const foreign = ours + (ours - before);
+      expect(foreign).not.toBe(ours);
+      await sampleShown(page, FADER_SAMPLE, `${stripSelector("CH 1")} .con-readout .rd:not(.mtr) .rv`, null);
+
+      await mark(page, "notify");
+      if (variant === "acked") {
+        const why = await page.evaluate(
+          (n) => {
+            const f = window.__urxFake;
+            const verdict = f.pushNotify([n]);
+            setTimeout(() => {
+              f.mark("release");
+              f.release();
+            }, 280);
+            return verdict;
+          },
+          [139, 0, 0, foreign] as [number, number, number, number],
+        );
+        expect(why).toEqual([""]);
+        await page.waitForFunction(() => window.__urxFake.log.some((e) => e.kind === "mark" && e.detail === "release"));
+      } else {
+        await pushNotifyDelivered(page, [[139, 0, 0, foreign]]);
+        await mark(page, "release");
+        await releaseBarrier(page);
+      }
+      // Past our write's announcement (ANNOUNCE_MS after the ack) and short of the idle
+      // sweep, which is where the board used to show the replaced value.
+      await page.waitForTimeout(300);
+      const midReadout = (await faderReadout(page, "CH 1").textContent())!;
+      if (variant === "busy") {
+        await mark(page, "other-edit");
+        expect(await faderKey(page, "CH 2", "ArrowUp")).toBe(true);
+      }
+      await setLatency(page, { get: 0, set: 0 });
+      await settleThroughIdleNet(page, "notify");
+
+      const trace = await traceOf(page);
+      const ch1Sets = setsOf(trace)
+        .filter((s) => s.addr === CH1_FADER && s.start >= markTime(trace, "edit")!)
+        .map((s) => s.value);
+      const mem = await memOf(page);
+      const snapshot = await snapshotOf(page);
+      const finalReadout = (await faderReadout(page, "CH 1").textContent())!;
+      const faderSeen = await shownOf(page, FADER_SAMPLE);
+      const findings = analyze(trace, {
+        edits: [{ label: "CH 1 fader", addr: CH1_FADER, at: markTime(trace, "edit")! }],
+        snapshot,
+      });
+
+      console.log(timeline(trace, { from: markTime(trace, "edit")! - 100 }));
+      console.log(report(`device value inside our write (${variant})`, findings));
+      console.log(
+        `ours=${ours} foreign=${foreign}; readout edited=${edited} mid=${midReadout} final=${finalReadout} ` +
+          `seen=[${faderSeen.join(", ")}]; ` +
+          `CH 1 writes=[${ch1Sets.join(", ")}]; device=${mem[CH1_FADER]} snapshot=${snapshot?.[CH1_FADER]}`,
+      );
+
+      expect(findings.filter((f) => f.class === "case")).toHaveLength(0);
+      expect(midReadout).toBe(edited);
+      expect(faderSeen).toEqual([edited]);
+      expect(ch1Sets).not.toContain(foreign);
+      expect(mem[CH1_FADER]).toBe(ours);
+      expect(snapshot?.[CH1_FADER]).toBe(ours);
+      expect(finalReadout).toBe(edited);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // overtake-foreign-notify-with-an-edit-on-the-strip
+  //
+  // The replaced value's node is re-read, and that read covers the whole strip. CH 1's PAN
+  // is moved while the fader contest is on, so the pan edit waits in the plan for a flush.
+  // It has to reach the unit and stay on screen throughout: a read of the node answered
+  // before the pan is sent returns the pan the unit still holds, and the merge takes it.
+  //
+  // `held` moves the pan while the fader write is held, and keeps the write on the wire
+  // past the follow settle, so the re-read falls due while it is unacked and every read of
+  // the node answers pre-write values. `released` lets the write land at once. `external`
+  // is `held` plus a device-side change on the same node — CH 1's HPF frequency, a scoped
+  // param — which the re-read has to take. `late` lets the write land at once and moves the
+  // pan 250 ms after the notify, so the pan is still inside the flush's 120 ms window when
+  // the re-read falls due. A closing CH 2 edit then flushes in every variant, so a plan left
+  // holding a value the unit does not would write it out.
+  // ---------------------------------------------------------------------------
+  for (const variant of ["held", "released", "external", "late"] as const) {
+    test(`an edit waiting on the strip survives the re-read a replaced device value takes (${variant})`, async ({
+      page,
+    }) => {
+      await goLive(page);
+      await page.click("#btn-view-console");
+      await expect(faderReadout(page, "CH 1")).toBeVisible();
+      const before = Math.round(Number(await faderReadout(page, "CH 1").textContent()) * 100);
+      const start = await memOf(page);
+      const startPan = start[CH1_PAN_ADDR] ?? 0;
+      // The unit answers a just-written address with the value the write replaced until it
+      // announces the write, so a read issued inside that span meets what the hardware gives it.
+      await staleReadsAt(page, CH1_FADER, 1000);
+      await staleReadsAt(page, CH1_PAN_ADDR, 1000);
+
+      await blockAt(page, "vd_set", 1);
+      await mark(page, "edit");
+      expect(await faderKey(page, "CH 1", "ArrowUp")).toBe(true);
+      await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 15_000 });
+      expect(heldSet(await traceOf(page))?.addr).toBe(CH1_FADER);
+      const edited = (await faderReadout(page, "CH 1").textContent())!;
+      const ours = (await memOf(page))[CH1_FADER];
+      const foreign = ours + (ours - before);
+      await sampleShown(page, FADER_SAMPLE, `${stripSelector("CH 1")} .con-readout .rd:not(.mtr) .rv`, null);
+
+      if (variant === "late") {
+        // One in-page task, so the three steps keep their spacing whatever the driver does.
+        await page.evaluate(
+          ([n, sel]) => {
+            const f = window.__urxFake;
+            f.mark("notify");
+            f.pushNotify([n]);
+            f.mark("release");
+            f.release();
+            setTimeout(() => {
+              f.mark("pan");
+              document
+                .querySelector(sel)
+                ?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+            }, 250);
+          },
+          [[139, 0, 0, foreign], panSel("CH 1")] as [[number, number, number, number], string],
+        );
+        await page.waitForFunction(() => window.__urxFake.log.some((e) => e.kind === "mark" && e.detail === "pan"));
+      } else {
+        await mark(page, "pan");
+        expect(await panKey(page, "CH 1", "ArrowRight")).toBe(true);
+        if (variant === "external") await seedMem(page, { [CH1_HPF_ADDR]: MOVED_HPF });
+        await mark(page, "notify");
+        await pushNotifyDelivered(page, [
+          [139, 0, 0, foreign],
+          ...(variant === "external" ? [[...CH1_HPF_FREQ, MOVED_HPF] as [number, number, number, number]] : []),
+        ]);
+      }
+      const panShown = await panValue(page, "CH 1");
+      expect(panShown).not.toBeNull();
+      await sampleShown(page, PAN_SAMPLE, panSel("CH 1"), "aria-valuenow");
+      if (variant !== "late") {
+        // Twice the follow settle (300 ms), so the re-read falls due with the write still held.
+        if (variant !== "released") await page.waitForTimeout(600);
+        await mark(page, "release");
+        await releaseBarrier(page);
+      }
+      await setLatency(page, { get: 0, set: 0 });
+      await settleThroughIdleNet(page, "notify");
+      await mark(page, "closing-edit");
+      expect(await faderKey(page, "CH 2", "ArrowUp")).toBe(true);
+      await settleAfter(page, "closing-edit");
+
+      const trace = await traceOf(page);
+      const setsAfter = (addr: string, m: string): Array<number | undefined> =>
+        setsOf(trace)
+          .filter((s) => s.addr === addr && s.start >= markTime(trace, m)!)
+          .map((s) => s.value);
+      const panSets = setsAfter(CH1_PAN_ADDR, "pan");
+      const ch1Sets = setsAfter(CH1_FADER, "edit");
+      const hpfSets = setsAfter(CH1_HPF_ADDR, "notify");
+      const mem = await memOf(page);
+      const snapshot = await snapshotOf(page);
+      const panSeen = await shownOf(page, PAN_SAMPLE);
+      const faderSeen = await shownOf(page, FADER_SAMPLE);
+      const findings = analyze(trace, {
+        edits: [
+          { label: "CH 1 fader", addr: CH1_FADER, at: markTime(trace, "edit")! },
+          { label: "CH 1 pan", addr: CH1_PAN_ADDR, at: markTime(trace, "pan")! },
+        ],
+        snapshot,
+      });
+
+      console.log(timeline(trace, { from: markTime(trace, "edit")! - 100 }));
+      console.log(report(`edit waiting on the strip (${variant})`, findings));
+      console.log(
+        `pan start=${startPan} shown=${panShown} seen=[${panSeen.join(", ")}] writes=[${panSets.join(", ")}] ` +
+          `device=${mem[CH1_PAN_ADDR]} snapshot=${snapshot?.[CH1_PAN_ADDR]}; ` +
+          `fader ours=${ours} foreign=${foreign} seen=[${faderSeen.join(", ")}] writes=[${ch1Sets.join(", ")}] device=${mem[CH1_FADER]}; ` +
+          `hpf writes=[${hpfSets.join(", ")}] device=${mem[CH1_HPF_ADDR]} snapshot=${snapshot?.[CH1_HPF_ADDR]}`,
+      );
+
+      expect(findings.filter((f) => f.class === "case")).toHaveLength(0);
+      // The pan edit went out once, is what the unit holds, and the knob showed nothing else.
+      expect(panSets).toHaveLength(1);
+      expect(mem[CH1_PAN_ADDR]).toBe(panSets[0]);
+      expect(mem[CH1_PAN_ADDR]).not.toBe(startPan);
+      expect(snapshot?.[CH1_PAN_ADDR]).toBe(mem[CH1_PAN_ADDR]);
+      expect(panSeen).toEqual([panShown]);
+      // The fader is ours, as in the case above, and the readout showed nothing else.
+      expect(faderSeen).toEqual([edited]);
+      expect(ch1Sets).not.toContain(foreign);
+      expect(mem[CH1_FADER]).toBe(ours);
+      expect(await faderReadout(page, "CH 1").textContent()).toBe(edited);
+      if (variant === "external") {
+        // The unit's own change is taken: the snapshot holds it and no flush wrote another value over it.
+        expect(hpfSets).toEqual([]);
+        expect(mem[CH1_HPF_ADDR]).toBe(MOVED_HPF);
+        expect(snapshot?.[CH1_HPF_ADDR]).toBe(MOVED_HPF);
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // overtake-edit-in-the-flush-window-vs-follow-read
+  //
+  // The same pan edit against a re-read an ordinary device-side change takes: CH 1's HPF
+  // frequency moved on the unit, with no write of ours anywhere near it. The pan is moved
+  // 250 ms after the notify, so it is still inside the flush's 120 ms window when the
+  // re-read of the node falls due at 300 ms. The unit's HPF has to reach the plan, and the
+  // pan has to reach the unit.
+  // ---------------------------------------------------------------------------
+  test("an edit waiting in the flush window survives the re-read an ordinary device change takes", async ({ page }) => {
+    await goLive(page);
+    await page.click("#btn-view-console");
+    await expect(faderReadout(page, "CH 1")).toBeVisible();
+    const startPan = (await memOf(page))[CH1_PAN_ADDR] ?? 0;
+    // The unit answers a just-written address with the value the write replaced until it
+    // announces the write, so a read issued inside that span meets what the hardware gives it.
+    await staleReadsAt(page, CH1_PAN_ADDR, 1000);
+
+    await seedMem(page, { [CH1_HPF_ADDR]: MOVED_HPF });
+    await page.evaluate(
+      ([n, sel]) => {
+        const f = window.__urxFake;
+        f.mark("notify");
+        f.pushNotify([n]);
+        setTimeout(() => {
+          f.mark("pan");
+          document
+            .querySelector(sel)
+            ?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        }, 250);
+      },
+      [[...CH1_HPF_FREQ, MOVED_HPF], panSel("CH 1")] as [[number, number, number, number], string],
+    );
+    await page.waitForFunction(() => window.__urxFake.log.some((e) => e.kind === "mark" && e.detail === "pan"));
+    const panShown = await panValue(page, "CH 1");
+    await sampleShown(page, PAN_SAMPLE, panSel("CH 1"), "aria-valuenow");
+    await settleThroughIdleNet(page, "notify");
+    await mark(page, "closing-edit");
+    expect(await faderKey(page, "CH 2", "ArrowUp")).toBe(true);
+    await settleAfter(page, "closing-edit");
+
+    const trace = await traceOf(page);
+    const panSets = setsOf(trace)
+      .filter((s) => s.addr === CH1_PAN_ADDR && s.start >= markTime(trace, "pan")!)
+      .map((s) => s.value);
+    const hpfSets = setsOf(trace)
+      .filter((s) => s.addr === CH1_HPF_ADDR && s.start >= markTime(trace, "notify")!)
+      .map((s) => s.value);
+    const mem = await memOf(page);
+    const snapshot = await snapshotOf(page);
+    const panSeen = await shownOf(page, PAN_SAMPLE);
+    console.log(timeline(trace, { from: markTime(trace, "notify")! - 100 }));
+    console.log(
+      `pan start=${startPan} shown=${panShown} seen=[${panSeen.join(", ")}] writes=[${panSets.join(", ")}] ` +
+        `device=${mem[CH1_PAN_ADDR]} snapshot=${snapshot?.[CH1_PAN_ADDR]}; ` +
+        `hpf writes=[${hpfSets.join(", ")}] device=${mem[CH1_HPF_ADDR]} snapshot=${snapshot?.[CH1_HPF_ADDR]}`,
+    );
+
+    expect(panSets).toHaveLength(1);
+    expect(mem[CH1_PAN_ADDR]).toBe(panSets[0]);
+    expect(mem[CH1_PAN_ADDR]).not.toBe(startPan);
+    expect(snapshot?.[CH1_PAN_ADDR]).toBe(mem[CH1_PAN_ADDR]);
+    expect(panSeen).toEqual([panShown]);
+    expect(hpfSets).toEqual([]);
+    expect(mem[CH1_HPF_ADDR]).toBe(MOVED_HPF);
+    expect(snapshot?.[CH1_HPF_ADDR]).toBe(MOVED_HPF);
+  });
 
   // ---------------------------------------------------------------------------
   // overtake-edit-during-flush-send-loop

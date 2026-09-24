@@ -1134,9 +1134,10 @@ const follow =
         // The plan's follow set plus Follow USB, which the plan deliberately does
         // not carry (params.ts) but the badge has to keep in step with the device.
         addrs: () => [...(live?.followAddrs() ?? []), FOLLOW_USB_ADDR],
-        // Held off while a converge runs: it is rewriting the unit round after round,
-        // and its reads and this one otherwise interleave on the one link.
-        deferReconcile: () => live?.isConverging() ?? false,
+        // Held off while a flush is armed, running or queued: a read taken then answers an
+        // edit the flush has not sent, or a write the unit has not announced, with the value
+        // it replaces, and the merge takes that value over the operator's edit.
+        deferReconcile: () => live?.isWriting() ?? false,
         intercept: (p) => {
           const [id, x, y] = FOLLOW_USB_ADDR;
           if (p.paramId !== id || p.x !== x || p.y !== y) return false;
@@ -1150,6 +1151,13 @@ const follow =
           (p.valueStr !== undefined
             ? live?.isEchoName(p.paramId, p.y, p.valueStr)
             : live?.isEcho(p.paramId, p.x, p.y, p.value)) ?? false,
+        // Dispatched on the value's type for the reason `isEcho` is: names are queued apart
+        // from the numeric writes.
+        isSuperseded: (p) =>
+          (p.valueStr !== undefined
+            ? live?.hasUnannouncedName(p.paramId, p.y)
+            : live?.hasUnannouncedWrite(p.paramId, p.x, p.y)) ?? false,
+        nameOwner: (paramId, x, y) => live?.lookupName(paramId, x, y),
         lookup: (paramId, x, y) => live?.lookup(paramId, x, y),
         // Read for one thing only: which routes the unit announced an insert-FX change
         // on while a read was running (see `announcedInsertFx`). A Signal Type notify

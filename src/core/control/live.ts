@@ -277,6 +277,13 @@ export class LiveSync {
   // no notifies, no advance — and that is exactly when an unannounced write should be
   // forgotten. SETTLE_TIMEOUT_MS is borrowed for the LENGTH, not the axis.
   private readonly pendingValues = new Map<number, PendingQueue<number>>();
+  // Addresses whose numeric write is on the wire and not yet acked. A flush sends one
+  // command at a time and never overlaps another flush, so an address is in here at most
+  // once. Together with `pendingValues` it answers `hasUnannouncedWrite`: from the moment
+  // a write is issued until its announcement is taken as an echo.
+  private readonly inFlight = new Set<number>();
+  // The same for the string writes, keyed as `pendingNames` is.
+  private readonly inFlightNames = new Set<string>();
   /**
    * Every address this session wrote recently, with the settle mark taken before its
    * own `vdSet` — the same record the flush builds for its own refetch, kept at session
@@ -322,10 +329,6 @@ export class LiveSync {
   private snapshotEpoch = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
-  // Inside a flush's reading phases: the park in front of its head writes, the park ahead
-  // of its converge, and the converge loop. What device follow holds a reconcile off (see
-  // `isConverging`).
-  private converging = false;
   private pending = false;
   // The last flush had to converge (a sideEffect param went out), which re-reads
   // the whole write scope and settles between rounds — seconds, not milliseconds.
@@ -349,18 +352,19 @@ export class LiveSync {
   }
 
   /**
-   * Whether a flush is READING the unit — the park in front of its head writes, the park
-   * ahead of its converge, and the converge's own rounds. What device follow holds a
-   * reconcile off (`DeviceFollowHooks` `deferReconcile`).
+   * Whether a flush is armed, running, or queued behind the running one: the plan may hold
+   * an edit the unit has not been sent, or a write is on the wire. What device follow holds
+   * a reconcile off (`DeviceFollowHooks` `deferReconcile`).
    *
-   * Those phases and not the whole flush. A converge round re-reads the WHOLE write scope
-   * and sends behind it, over and over: a read taken there reads a unit this app is
-   * part-way through rewriting, and the reads of the two interleave for as long as it runs.
-   * An ordinary flush is a handful of writes and no read at all, so a reconcile beside one
-   * is the app's ordinary two-chain contention rather than a reader of a moving device.
+   * A read taken then answers such an address with the value the edit replaces — the flush
+   * has not sent it, or the unit answers the pre-write value until it announces the write —
+   * and the merge takes a read's value wherever the plan still holds what it held when the
+   * read was issued, which an edit made before that does. Once this answers false every
+   * edit has been sent and acked, and the read's settle waits out their announcements
+   * (`recentPending`). A converge round is inside a flush, so a read never lands in one.
    */
-  isConverging(): boolean {
-    return this.converging;
+  isWriting(): boolean {
+    return this.timer !== null || this.flushing;
   }
 
   private scope(): WriteScope {
@@ -382,6 +386,8 @@ export class LiveSync {
     // reopen the hole this queue exists to close. The retention bounds that judgement.
     this.pendingValues.clear();
     this.pendingNames.clear();
+    this.inFlight.clear();
+    this.inFlightNames.clear();
     // Same session boundary: a mark taken on a previous link means nothing on this one.
     this.recentWrites.clear();
     this.capture(deviceView);
@@ -551,6 +557,32 @@ export class LiveSync {
     return other === null ? [] : [k, other];
   }
 
+  /**
+   * Whether this session has a numeric write to this address that the unit has not yet
+   * announced: issued and not acked, or acked with its announcement still queued inside
+   * the retention window. A device-side value that arrives in that span is one the unit
+   * held before our write took effect, since the unit announces changes in the order it
+   * makes them; the write replaces it once it lands.
+   */
+  hasUnannouncedWrite(paramId: number, x: number, y: number): boolean {
+    return this.unannounced(this.inFlight, this.pendingValues, addrKey(paramId, x, y));
+  }
+
+  /** The string half of `hasUnannouncedWrite`: a name or a catalogued string write to
+   *  this address that the unit has not yet announced. */
+  hasUnannouncedName(paramId: number, y: number): boolean {
+    return this.unannounced(this.inFlightNames, this.pendingNames, `${paramId}:${y}`);
+  }
+
+  private unannounced<K, V>(inFlight: ReadonlySet<K>, queues: Map<K, PendingQueue<V>>, key: K): boolean {
+    if (inFlight.has(key)) return true;
+    const q = queues.get(key);
+    if (!q) return false;
+    dropExpired(q, Date.now() - SETTLE_TIMEOUT_MS);
+    if (!q.length) queues.delete(key);
+    return q.length > 0;
+  }
+
   /** Append a write we have just been acked for, so its late announcement is still
    *  recognisable after the snapshot has moved past it. */
   private notePending<K, V>(queues: Map<K, PendingQueue<V>>, key: K, value: V): void {
@@ -602,6 +634,8 @@ export class LiveSync {
     this.onHeld = false;
     this.pendingValues.clear();
     this.pendingNames.clear();
+    this.inFlight.clear();
+    this.inFlightNames.clear();
     this.recentWrites.clear();
     this.pending = false;
     this.lastFlushConverged = false;
@@ -937,10 +971,6 @@ export class LiveSync {
         outgoing.add(silentKey(family, c.node));
       }
       if (outgoing.size) {
-        // A read on the link, so device follow holds its reconcile off from here rather than
-        // from the converge: two readers on one link is what invariant 4 catches, and this
-        // one is in front of the writes instead of behind them.
-        this.converging = true;
         await this.hooks.parkSilent?.({ only: outgoing, keepHeads: true });
         if (this.sessionGen !== gen) return;
         // Derived again: the park merged the unit's own values into the plan.
@@ -1011,12 +1041,16 @@ export class LiveSync {
         }
         // Taken before the send, not after it: a notify that lands while this very
         // vdSet is in flight cannot be placed on either side of it, and the safe
-        // reading is that it is the answer to this write. A misattribution either way
-        // is self-correcting — the real answer arrives later and overwrites it — so
-        // what the mark buys is one fewer spurious reconcile, not the merge's
-        // correctness (settle.ts).
+        // reading is that it is the answer to this write. Such a notify is also one
+        // `hasUnannouncedWrite` answers for, so the follow layer re-reads its node
+        // rather than putting its value into the plan (settle.ts).
         const mark = writeSettle.mark();
-        await vdSet(c.paramId, c.x, c.y, value);
+        this.inFlight.add(k);
+        try {
+          await vdSet(c.paramId, c.x, c.y, value);
+        } finally {
+          this.inFlight.delete(k);
+        }
         // Nothing below this line belongs to a session that has gone: the remaining
         // commands would go out over a disconnected link, and the snapshot they would be
         // recorded in has already been rebuilt by whatever ended (or replaced) it.
@@ -1067,7 +1101,12 @@ export class LiveSync {
         // catalogued string writes — the SSMCS preset — are read by their own refetch, and
         // watching them here as well would report one silence twice.
         const nameAddr = addrKey(w.param, 0, w.y);
-        await vdSetStr(w.param, 0, w.y, value);
+        this.inFlightNames.add(k);
+        try {
+          await vdSetStr(w.param, 0, w.y, value);
+        } finally {
+          this.inFlightNames.delete(k);
+        }
         if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
         this.notePending(this.pendingNames, k, value);
@@ -1109,7 +1148,6 @@ export class LiveSync {
       }
       this.lastFlushConverged = sideEffect;
       if (sideEffect) {
-        this.converging = true;
         // The device reset dependents; converge against its post-reset state and
         // rebuild the snapshot so the next diff measures from the device truth.
         // Converge against a frozen copy, not the live plan: an edit that arrives
@@ -1312,7 +1350,6 @@ export class LiveSync {
       return;
     } finally {
       this.flushing = false;
-      this.converging = false;
     }
     if (this.pending) {
       this.pending = false;

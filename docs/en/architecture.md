@@ -1949,16 +1949,23 @@ that cannot read **stops following** instead of leaving the plan claiming values
 notify already fired and nothing re-triggers the read, so the next converge would write the stale value back
 over the operator's own move on the hardware.
 
-**A reconcile waits while a converge is running** (`DeviceFollowHooks` `deferReconcile` → `live.isConverging`).
-Two reasons, and the first is the one that would still hold with one link and infinite bandwidth: a converge
-rewrites the whole write scope round after round, so a read taken there is a read of a device the app is part-way
-through changing. The second is the link itself — the two readers interleave on it for as long as the round runs,
-which is what the race harness reports as invariant 4. **The converge and not the whole flush**: an ordinary
-flush is a handful of writes and no read at all, and a reconcile beside one is the app's ordinary two-chain
-contention rather than a reader of a moving device. The window is **kept, not spent**: every node the burst named
-is still re-read, on the settle timer's own re-arm, which is also what ends the wait — nothing in `follow.ts`
-hears a converge finish. A pass deferred past `IDLE_FULL_MS` stays the full sweep rather than being downgraded by
-the timer that retries it.
+**A reconcile waits while a flush is writing** (`DeviceFollowHooks` `deferReconcile` → `live.isWriting`): from the
+edit that schedules a flush until that flush, and any queued behind it, is done. A read taken earlier answers an
+edited address with the value the edit replaces — the flush has not sent it yet, or the unit still answers the
+pre-write value — and the merge takes a read's value wherever the plan holds what it held when the read was issued,
+which an edit made before the read does; what the merge protects is an edit made during the read. Measured with the
+race harness on 2026-09-24 (`t1b-overtake.spec.ts`, "an edit waiting in the flush window survives the re-read an
+ordinary device change takes"): a CH 1 PAN move made 250 ms after a device-side change to CH 1's HPF frequency, so
+still inside the flush's 120 ms window when the node's re-read fell due, was taken back to its old value on screen
+and never written, at `a94d0b28` as well. Once the wait ends every edit has been sent and acked, and the read's
+settle waits out their announcements. A converge runs inside a flush, so the wait covers it too, for two further
+reasons: a converge rewrites the whole write scope round after round, so a read taken there is a read of a device
+the app is part-way through changing, and the two readers interleave on the link for as long as the round runs,
+which is what the race harness reports as invariant 4. A read already running when an edit is made is not stopped:
+the flush that edit schedules goes out beside it, and the merge keeps the edit. The window is **kept, not spent**:
+every node the burst named is still re-read, on the settle timer's own re-arm, which is also what ends the wait —
+nothing in `follow.ts` hears a flush finish. A pass deferred past `IDLE_FULL_MS` stays the full sweep rather than
+being downgraded by the timer that retries it.
 
 #### A write is not readable when it is acked
 
@@ -1989,10 +1996,20 @@ path has always taken and the one answer that cannot enshrine a divergence.
 intercept filters — the answer to our own write IS an echo, so a settle fed after those would never see the one
 message it waits for. A notify counts as OUR write's announcement only if it arrived after that address's own
 `vdSet` was issued, so the mark is taken **per address** rather than once per flush: the loop awaits per command, so
-a device-side notify for the fader can easily land before the fader was reached. Getting that attribution wrong is
-self-correcting in either direction — the real write's answer arrives later and overwrites it, and a notify that
-predates the write leaves the address to be read off the unit — so the mark buys one fewer spurious reconcile, not
-the correctness of the merge.
+a device-side notify for the fader can easily land before the fader was reached. A notify that lands after our
+write was issued and before that write's own announcement reports a value the write replaces, since the unit
+announces changes in the order it makes them: the follow layer does not put it into the plan
+(`LiveSync.hasUnannouncedWrite`, and `hasUnannouncedName` for a rename, which `DeviceFollow` asks as
+`isSuperseded`) and re-reads that node instead, and a notify that predates the write leaves the address to be read
+off the unit. The re-read is held until no write a notify in its window stands behind is still unannounced: until
+then the replaced value is the last thing the unit said about the address after the mark, so the settle would
+answer the address with it, and a read of the address answers the pre-write value. What keeps the merge right when
+the attribution is wrong is that held re-read; the mark buys one fewer spurious reconcile. Measured with the race
+harness on 2026-09-24 (`t1b-overtake.spec.ts`, "a device value our in-flight write replaces is neither shown nor
+written back", all three variants, and `t1d-name-window.spec.ts`, "a rename our own rename in flight replaces is
+neither shown nor written back"): the board keeps the operator's value throughout, and no flush sends the replaced
+value back. With the re-read not held, the `acked` variant — the write released 280 ms after the notify, so the
+re-read falls due between the write's ack and its announcement — showed the replaced value until the idle sweep.
 
 Two ways the wait ends, and which one an address gets is decided by what the snapshot held:
 
@@ -2155,7 +2172,7 @@ COMP/EQ type, a bus type, a Signal Type and a PAN/BAL are the converging heads w
 hears — and the head write is then already on the unit by the time that park runs, which is what decides what a
 failure there costs ([Aborting on failure](#aborting-on-failure)). An FX EFFECT TYPE or an insert-FX selector
 takes both. Whichever it takes, they and the converge are one reading phase for device follow, which holds its
-reconcile off across all of it (`live.isConverging`): two readers on one link is what the race harness catches
+reconcile off across all of it (`live.isWriting`, which answers for the whole flush): two readers on one link is what the race harness catches
 as invariant 4 (channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
