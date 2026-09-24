@@ -3479,10 +3479,14 @@ So the pair is replaced by app-owned items (`src-tauri/src/lib.rs` `build_menu`,
 platform installs a menu). `Menu::default()` is rebuilt and only those two items are swapped, located by
 the predefined items' own text rather than by position; a miss leaves the default menu untouched and
 says so on stderr. A click arrives as a menu event the frontend routes into `menuUndo` / `menuRedo`,
-which hand a **focused text surface its own undo instead** (`document.execCommand`, deprecated but the
-only way to reach WebKit's field undo from script; measured working in WKWebView, a typing burst being
-one unit as it is for the chord). That is what makes the menu agree with the chord instead of meaning
-something different.
+which hand a **focused text surface its own undo instead** (`document.execCommand`, deprecated; it is the
+route this code takes to WebKit's field undo, measured working in WKWebView, a typing burst being one
+unit as it is for the chord). That is what makes the menu agree with the chord instead of meaning
+something different. The native side reaches the same undo: in an off-screen macOS 27 WKWebView
+(2026-09-24), `WKWebView.undoManager.undo()` and an `undo:` sent down the window's responder chain each
+reverted a field edit, as `execCommand("undo")` did, while a run that sent nothing kept it. The edit
+there was made with `execCommand("insertText")` rather than by typing, in a bare WKWebView rather than
+under Tauri.
 
 Their enabled state and labels are pushed from the frontend (`set_edit_menu_state` /
 `set_edit_menu_labels`), so they grey out with the history and follow the app's language — the rest of

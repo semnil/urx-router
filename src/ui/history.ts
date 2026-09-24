@@ -230,10 +230,10 @@ export class PlanHistory {
    *  same command means two different things depending on how it was invoked. */
   menu(kind: Direction): void {
     // The focused text surface owns the command, exactly as it owns the chord.
-    // execCommand is deprecated but is the only way to reach WebKit's field undo from
-    // script, and it was measured working in WKWebView (a typing burst is one unit,
-    // as it is for the chord). Handled either way: a field with nothing to undo is
-    // the field's answer, not a reason to undo the plan behind it.
+    // execCommand is deprecated; it is the route this code takes to WebKit's field
+    // undo, and it works in WKWebView (a typing burst is one unit, as it is for the
+    // chord). Handled either way: a field with nothing to undo is the field's answer,
+    // not a reason to undo the plan behind it.
     if (ownsNativeUndo(document.activeElement)) {
       document.execCommand(kind);
       return;

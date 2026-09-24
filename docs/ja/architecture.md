@@ -3071,8 +3071,12 @@ predefined 項目は実行時に有効・無効も切り替えられない。
 位置ではなく predefined 項目自身のテキストで探す。見つからない場合は既定メニューをそのまま残し、
 その旨を stderr に出す。クリックはメニューイベントとしてフロントに届き、`menuUndo` / `menuRedo` に
 入る。両者は**テキストフィールドにフォーカスがある場合はそのフィールド自身の undo に委譲する**
-(`document.execCommand`。非推奨だがスクリプトから WebKit のフィールド undo に届く唯一の手段で、
-WKWebView で動作を実測済み。chord と同様、連続打鍵は 1 単位)。これがメニューを chord と一致させている。
+(`document.execCommand`。非推奨で、このコードが WebKit のフィールド undo へ届く経路。WKWebView で
+動作を実測済み。chord と同様、連続打鍵は 1 単位)。これがメニューを chord と一致させている。ネイティブ側も
+同じ undo に届く: 画面外の macOS 27 の WKWebView (2026-09-24) で、`WKWebView.undoManager.undo()` と
+ウィンドウのレスポンダチェーンへ送った `undo:` はどちらも `execCommand("undo")` と同じくフィールドの
+編集を戻し、何も送らない走行では編集が残った。そこでの編集は打鍵ではなく `execCommand("insertText")`
+で入れたもので、Tauri 上ではなく素の WKWebView での測定。
 
 有効・無効とラベルはフロントから push する (`set_edit_menu_state` / `set_edit_menu_labels`)。
 履歴に合わせてグレーアウトし、アプリの言語に追従する — そのバーの残りは AppKit のものなので
