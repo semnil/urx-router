@@ -138,11 +138,30 @@ The app never turns one on while the other is on:
   import). A unit holding both on is taken as it is and the status line names the
   channels; the app writes nothing to the unit for it, and either one can then be
   turned off.
+- **An ON pressed while a device read is in flight.** Until the read lands, the
+  app does not know what the unit holds, so it takes the press. Where the read
+  finds the other one on for that channel, the press is refused as it would have
+  been had the app known: the switch goes back off, the status line says so and
+  names the channel, and nothing is sent for it. The unit's own switch is left as
+  it is. A Hi-Z press that lowered A.Gain to +40 is refused whole — A.Gain goes
+  back to what the unit holds, and the +40 is never sent — and no undo step is
+  left that would put the press back. An edit made in the same window that has
+  nothing to do with the two lands as usual, and turning either one off is never
+  refused. A press the app had already sent before the unit turned the other one
+  on is on the unit, which then holds both, and is taken as it is.
+- **During Live sync, a switch turned on at the unit's panel.** From the moment
+  the unit announces it, the app sends no ON of the other one for that channel —
+  including one already pressed and waiting to be sent, and the +40 A.Gain a
+  Hi-Z press lowered with it. The read the
+  announcement starts refuses
+  a press made meanwhile as above, whether it was made before that read began or
+  while it ran.
 - **Writing to the device.** A plan holding both on for a channel is not sent:
   the write stops before the link is opened and the status line names the
   channel, so nothing reaches the unit. Turning either one off makes the write go
-  through. A read and a `.urxf` import are the only ways that state reaches a
-  plan, and both leave it on screen until you do.
+  through. A plan holds both on only where the unit it was read from held both
+  on, and a read or a `.urxf` import is the only way that state reaches a plan;
+  it stays on screen until you turn one off.
 
 **A.Gain follows HI-Z.** While HI-Z is on, the unit's A.Gain runs -8 … +40 dB, and
 the unit does not apply a value written above +40. The Inspector slider, the

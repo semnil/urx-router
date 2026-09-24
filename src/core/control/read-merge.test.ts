@@ -3,6 +3,7 @@ import { getModel } from "../../models";
 import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
 import { ruleKind } from "../routing";
 import { insertFxHoldKeys, readIntoPlan, sourceChoiceHoldKeys, type ReadbackResult } from "./readback";
+import type { SwitchSession } from "../input-lock";
 import {
   applyPatchInContext,
   clonePlanState,
@@ -1056,5 +1057,194 @@ describe("sourceChoiceHoldKeys", () => {
 
     expect(sourcesInto(plan, STREAM_IN)).toEqual(["bus.mix2:out"]);
     expect(plan.nodeParams["bus.stream"]?.delay).toEqual({ on: true, time: 12 });
+  });
+});
+
+// +48V and HI-Z are never turned on together, and a read in flight is a window in which the
+// plan has not heard what the unit holds: a surface asks the rule of the plan, so it takes an
+// ON the unit's own state would refuse. The merge asks the rule again where the read lands.
+describe("readIntoPlan and the +48V / HI-Z rule", () => {
+  /** CH 3's two switches and its A.Gain, as a read or an edit leaves them. */
+  const ch3 = (plan: Plan): { phantom?: boolean; hiZ?: boolean; gain?: number } => {
+    const np = plan.nodeParams.ch3;
+    return { phantom: np?.phantom, hiZ: np?.hiZ, gain: np?.gain };
+  };
+  const setCh3 = (plan: Plan, patch: Record<string, unknown>): void => {
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, ...patch };
+  };
+  /** One edit funnel, the way markChanged reports it: the keys it wrote, in one sample. */
+  const edit = (witness: PlanWriteWitness, plan: Plan, patch: Record<string, unknown>): void => {
+    setCh3(plan, patch);
+    witness.note(Object.keys(patch).map((k) => nodeParamContestKey("ch3", k)));
+  };
+  const planWith = (patch: Record<string, unknown>): Plan => {
+    const plan = basePlan();
+    setCh3(plan, patch);
+    return plan;
+  };
+
+  it("takes back a +48V ON made during the read on a channel the read found HI-Z on", async () => {
+    const plan = planWith({ phantom: false, hiZ: false, gain: 20 });
+    const witness = new PlanWriteWitness(() => plan);
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        setCh3(into, { hiZ: true });
+        edit(witness, plan, { phantom: true });
+        return OK;
+      },
+      witness,
+    );
+    expect(ch3(plan)).toEqual({ phantom: false, hiZ: true, gain: 20 });
+    expect(merged!.refusedOn).toEqual([{ nodeId: "ch3", key: "phantom" }]);
+    expect(merged!.refused).toEqual([
+      {
+        field: "nodeParams",
+        key: "ch3",
+        before: { phantom: { present: true, value: true } },
+        after: { phantom: { present: true, value: false } },
+      },
+    ]);
+    // The unit is described as the read found it, which is what the next diff measures from.
+    expect(ch3(merged!.deviceView)).toEqual({ phantom: false, hiZ: true, gain: 20 });
+  });
+
+  it("takes back a HI-Z ON with the A.Gain the same edit lowered, at the unit's gain", async () => {
+    const plan = planWith({ phantom: false, hiZ: false, gain: 60 });
+    const witness = new PlanWriteWitness(() => plan);
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        setCh3(into, { phantom: true, gain: 55 });
+        edit(witness, plan, { hiZ: true, gain: 40 }); // hiZPatch's two keys, one edit
+        return OK;
+      },
+      witness,
+    );
+    expect(ch3(plan)).toEqual({ phantom: true, hiZ: false, gain: 55 });
+    expect(merged!.refusedOn).toEqual([{ nodeId: "ch3", key: "hiZ" }]);
+    // Placed now, so it is no longer reported as a key the merge left to the operator.
+    expect(merged!.unplaced).toEqual([]);
+  });
+
+  it("leaves an A.Gain the operator moved in a later edit where they put it", async () => {
+    const plan = planWith({ phantom: false, hiZ: false, gain: 60 });
+    const witness = new PlanWriteWitness(() => plan);
+    await readIntoPlan(
+      () => plan,
+      async (into) => {
+        setCh3(into, { phantom: true, gain: 55 });
+        edit(witness, plan, { hiZ: true, gain: 40 });
+        edit(witness, plan, { gain: 35 });
+        return OK;
+      },
+      witness,
+    );
+    expect(ch3(plan)).toEqual({ phantom: true, hiZ: false, gain: 35 });
+  });
+
+  it("carries a key back only on the witness's word that the same edit wrote it", async () => {
+    const plan = planWith({ phantom: false, hiZ: false, gain: 60 });
+    await readIntoPlan(
+      () => plan,
+      async (into) => {
+        setCh3(into, { phantom: true, gain: 55 });
+        setCh3(plan, { hiZ: true, gain: 40 });
+        return OK;
+      },
+    );
+    expect(ch3(plan)).toEqual({ phantom: true, hiZ: false, gain: 40 });
+  });
+
+  it("keeps both on when the read found the unit holding both on", async () => {
+    const plan = planWith({ phantom: false, hiZ: false });
+    const witness = new PlanWriteWitness(() => plan);
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        setCh3(into, { phantom: true, hiZ: true });
+        edit(witness, plan, { phantom: true });
+        return OK;
+      },
+      witness,
+    );
+    expect(ch3(plan)).toMatchObject({ phantom: true, hiZ: true });
+    expect(merged!.refusedOn).toEqual([]);
+    expect(merged!.refused).toEqual([]);
+  });
+
+  it("keeps an OFF made during the read, and an edit that has nothing to do with the two", async () => {
+    const plan = planWith({ phantom: true, hiZ: false, clipSafe: false });
+    const witness = new PlanWriteWitness(() => plan);
+    const merged = await readIntoPlan(
+      () => plan,
+      async (into) => {
+        setCh3(into, { phantom: true, hiZ: true });
+        edit(witness, plan, { phantom: false });
+        edit(witness, plan, { clipSafe: true });
+        return OK;
+      },
+      witness,
+    );
+    expect({ ...ch3(plan), clipSafe: plan.nodeParams.ch3?.clipSafe }).toMatchObject({
+      phantom: false,
+      hiZ: true,
+      clipSafe: true,
+    });
+    expect(merged!.refusedOn).toEqual([]);
+  });
+
+  // What a live session knows beyond the read: an ON its flush sent after the read sampled the
+  // address, and an ON it never sent at all.
+  describe("with a live session", () => {
+    const session = (sent: string[], holds: string[]): SwitchSession => ({
+      sentOn: (nodeId, key) => sent.includes(`${nodeId}.${key}`),
+      holdsOn: (nodeId, key) => holds.includes(`${nodeId}.${key}`),
+    });
+
+    it("keeps an ON the session sent after the read sampled it, where the unit turned the other on", async () => {
+      const plan = planWith({ phantom: false, hiZ: false });
+      const witness = new PlanWriteWitness(() => plan);
+      const merged = await readIntoPlan(
+        () => plan,
+        async (into) => {
+          edit(witness, plan, { phantom: true }); // sent by the flush, after the read sampled +48V
+          setCh3(into, { hiZ: true });
+          return OK;
+        },
+        witness,
+        undefined,
+        undefined,
+        session(["ch3.phantom"], ["ch3.phantom"]),
+      );
+      expect(ch3(plan)).toMatchObject({ phantom: true, hiZ: true });
+      expect(merged!.refusedOn).toEqual([]);
+    });
+
+    it("reports an ON the unit never received that the merge took back, with the gain it carried", async () => {
+      // HI-Z pressed before the read was issued, and held by the flush with the A.Gain it lowered.
+      const plan = planWith({ phantom: false, hiZ: true, gain: 40 });
+      const merged = await readIntoPlan(
+        () => plan,
+        async (into) => {
+          setCh3(into, { phantom: true, hiZ: false, gain: 60 });
+          return OK;
+        },
+        undefined,
+        undefined,
+        undefined,
+        session([], []),
+      );
+      expect(ch3(plan)).toEqual({ phantom: true, hiZ: false, gain: 60 });
+      expect(merged!.refusedOn).toEqual([{ nodeId: "ch3", key: "hiZ" }]);
+      expect(merged!.refused).toEqual([
+        {
+          field: "nodeParams",
+          key: "ch3",
+          before: { hiZ: { present: true, value: true }, gain: { present: true, value: 40 } },
+          after: { hiZ: { present: true, value: false }, gain: { present: true, value: 60 } },
+        },
+      ]);
+    });
   });
 });

@@ -157,7 +157,16 @@ carries a one-line map of the same directories and points here.
   without being an edit ask it about the STATE they would create rather than the key they move —
   `phantomHiZNewlyBothOn`, which subtracts what the plan already holds so a device read's both-on channel
   stays as it is: applying a history entry (`ui/history.ts`'s `patchBlocked` hook) and writing the whole
-  plan, which stops before the link is opened
+  plan, which stops before the link is opened. An ON taken while a device read is in flight was taken from a
+  plan that had not heard what the unit holds, so the rule is asked twice more against the unit itself:
+  where the read lands (`readRefusedSwitches`, applied by `readIntoPlan` to every read — the ON and the keys
+  the same edit carried go back to the unit's values, and `PlanHistory.retract` takes the edit out of the
+  undo stack), and per command where a live flush sends (`onExcludedBy`, against the snapshot and the unit's
+  announcements in `live.ts`). A
+  live session's read also asks what the session knows (`SwitchSession`): an ON its flush already sent is
+  on the unit and is not refused, and an ON the flush held back that the read's own value replaced is
+  refused all the same (`unsentRefusedSwitches`). The flush holds the +40 dB A.Gain a held HI-Z ON lowered
+  with it (`carrierOf`)
   - `src/core/midi/` — external MIDI control (desktop only). `message.ts` decode/encode of CC/note/pitch
     bend / `mapping.ts` free-mapping model (address, takeover mode absolute/pickup) + persistence validation
     / `controls.ts` catalog of fixed control ids (`node/param[@scope]`) for every CONSOLE control **and
@@ -2278,6 +2287,8 @@ describes a state it can return to.
 | A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for), a tuning screen (`refresh`) and the CONSOLE (`render`, which hands keyboard focus on only across a rebuild of the same plan) | the plan the gesture began on is gone, so a pointer or a key still held writes nothing into the one that replaced it |
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
 | An undo / redo whose result would leave +48V and HI-Z both on for a channel | `patchBlocked` on the peeked entry, over the state the patch would create | the app never turns one of the two on while the other is on, and an undo turns one on as much as the gesture it reverses did |
+| An ON of +48V / HI-Z made while a device read was in flight, on a channel where that read finds the other one on | `readIntoPlan`, after the merge (`readRefusedSwitches`): the switch and the keys the witness saw the same edit write go back to the read's values, and the edit leaves the undo stack (`PlanHistory.retract`). In a live session, an ON its flush already sent is on the unit and is not refused (`SwitchSession.holdsOn`), and an ON the flush held back that the merge replaced with the read's value is reported and retracted the same way (`unsentRefusedSwitches`) | the surface asked the rule of a plan that had not heard what the unit holds; the unit's own switch is what the read found, and it stays |
+| A +48V / HI-Z ON the unit would receive while holding the other one on, and the +40 dB A.Gain a held HI-Z ON lowered | the live flush's send loop (`onExcludedBy` against the snapshot and what the unit announced since, which a follow read has not yet brought into the plan; `carrierOf` for the A.Gain) | left in the plan, not dropped: a read that finds the other one on takes it back, and a later announcement or capture asks the flush again |
 | A MIDI message arriving under those same latches, or during a self-test / `--prepare-modified` run | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
 | A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
 | A read's value for a key the app wrote while that read was in flight | `readIntoPlan`'s authorship filter, before the patch is applied | the operator authored it after the read sampled the address; comparing values instead would take an edit that returned to where it started for one that never happened |
@@ -3480,7 +3491,13 @@ can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent
 / the model switch a Fetch or Live-sync start offers, applied once its read has landed complete / the `?plan=`
 deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch, Live-sync start
 and the `.urxf` import; plus device-follow's full reconcile). A one-node follow readback only re-takes
-the baseline, keeping the entries already recorded. A Fetch or Live-sync start whose read did not land —
+the baseline, keeping the entries already recorded. A read that refuses a +48V / HI-Z ON — made while it was in
+flight, or held back by a live flush and never sent — takes that one edit out instead (`PlanHistory.retract`):
+the newest entry carrying each key it took back loses the key when that entry still holds the refused value, an
+entry left empty leaves the stack, and the baseline takes the refusal so it is not recorded as an edit of its own.
+The reads that drop the stacks anyway
+leave nothing for it to find; it is the read that keeps them — the refetch a `sideEffect: "refetch"` write
+takes — where the entry would otherwise outlive the refusal. A Fetch or Live-sync start whose read did not land —
 cancelled, failed, stopped before its read, or incomplete where only a complete read is taken (a Live-sync
 start, and a fetch carrying a model switch) — touches neither the stacks nor the baseline, an entry still
 open included. One whose read landed drops and re-takes both even when it changed no value, an entry

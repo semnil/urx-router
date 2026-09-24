@@ -194,6 +194,14 @@ export class PlanHistory {
     this.stack.absorb(patch);
   }
 
+  /** A device read refused an edit made while it was in flight and took the edit's keys back
+   *  to the unit's values: the edit leaves the history, so nothing re-applies it
+   *  (`PlanHistoryStack.retract`). An entry still open measures from where it began. */
+  retract(patch: PlanPatch): void {
+    this.stack.retract(patch);
+    this.notifyDepth();
+  }
+
   /** A different document, or every value re-authored by the device: drop both
    *  stacks. No earlier entry describes a state this plan can return to. */
   reset(): void {

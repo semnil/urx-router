@@ -1,6 +1,15 @@
 import { test, expect, type Page } from "./fixtures";
 import { planParamZ } from "./plan-param";
-import { LIVE_COMMANDS, notifyBurst, notifyParam, setDeviceValue, stubTauriDevice, writesOf } from "./tauri-stub";
+import {
+  LIVE_COMMANDS,
+  heldReadsOf,
+  notifyBurst,
+  notifyParam,
+  setDeviceValue,
+  setHeldReads,
+  stubTauriDevice,
+  writesOf,
+} from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 
 // +48V and HI-Z are never on together in the app, and A.Gain stops at +40 dB while HI-Z is
@@ -231,4 +240,144 @@ test("refuses an undo that would put +48V and Hi-Z back on together, and keeps t
   // A fetch writes nothing and neither does an edit behind it — what a refused undo keeps
   // off the link is in the entry suite, where a live session is up.
   expect((await writesOf(page)).filter(([id]) => id === PARAMS.PHANTOM.id)).toEqual([]);
+});
+
+// A read in flight is a window in which the plan has not heard what the unit holds, so the
+// Inspector takes an ON the unit's own state would refuse. The rule is asked again where the
+// read lands: that ON goes back off, the status line says why, and it never reaches the unit.
+const switchWrites = async (page: Page, paramId: number): Promise<number[]> =>
+  (await writesOf(page)).filter(([id]) => id === paramId).map(([, v]) => v);
+const face = (page: Page, label: string) => row(page, label).locator("button.on");
+const pressOn = (page: Page, label: string) =>
+  row(page, label).getByRole("button", { name: "ON", exact: true }).click();
+const startLive = async (page: Page): Promise<void> => {
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+};
+const liveOn = (page: Page) =>
+  expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+
+test("a +48V ON pressed while Live sync's starting read runs is refused where the read finds Hi-Z on", async ({
+  page,
+}) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS, values: { [PARAMS.HI_Z.id]: 1, 766: 48000, 848: 0 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await selectCh3(page);
+  await setHeldReads(page, [PARAMS.PHANTOM.id]);
+  await startLive(page);
+  await expect.poll(() => heldReadsOf(page), { timeout: 30_000 }).toBeGreaterThan(0);
+  await pressOn(page, "+48V");
+  await expect(face(page, "+48V"), "the plan had not heard of the unit's Hi-Z").toHaveText("ON");
+  await setHeldReads(page, []);
+  await liveOn(page);
+
+  await expect(page.locator("#statusbar")).toContainText(
+    "+48V was not turned on for CH 3 — the unit holds Hi-Z on there, and +48V and Hi-Z are never on together",
+  );
+  await selectCh3(page);
+  await expect(face(page, "+48V")).toHaveText("OFF");
+  await expect(face(page, "Hi-Z")).toHaveText("ON");
+  // An unrelated edit is the flush that would carry a +48V ON the plan still held.
+  await pressOn(page, "Clip Safe");
+  await expect.poll(() => switchWrites(page, PARAMS.CLIP_SAFE.id), { timeout: 30_000 }).toEqual([1]);
+  expect(await switchWrites(page, PARAMS.PHANTOM.id)).toEqual([]);
+});
+
+test("a Hi-Z ON pressed while Live sync's starting read runs is refused where the read finds +48V on", async ({
+  page,
+}) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS, values: { [PARAMS.PHANTOM.id]: 1, 766: 48000, 848: 0 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await selectCh3(page);
+  await setHeldReads(page, [PARAMS.HI_Z.id]);
+  await startLive(page);
+  await expect.poll(() => heldReadsOf(page), { timeout: 30_000 }).toBeGreaterThan(0);
+  await pressOn(page, "Hi-Z");
+  await expect(face(page, "Hi-Z")).toHaveText("ON");
+  await setHeldReads(page, []);
+  await liveOn(page);
+
+  await expect(page.locator("#statusbar")).toContainText(
+    "Hi-Z was not turned on for CH 3 — the unit holds +48V on there, and +48V and Hi-Z are never on together",
+  );
+  await selectCh3(page);
+  await expect(face(page, "Hi-Z")).toHaveText("OFF");
+  await expect(face(page, "+48V")).toHaveText("ON");
+  await pressOn(page, "Clip Safe");
+  await expect.poll(() => switchWrites(page, PARAMS.CLIP_SAFE.id), { timeout: 30_000 }).toEqual([1]);
+  expect(await switchWrites(page, PARAMS.HI_Z.id)).toEqual([]);
+});
+
+test("a +48V ON pressed while a follow read brings in the unit's own Hi-Z ON never reaches the unit", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS, values: { 766: 48000, 848: 0 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await startLive(page);
+  await liveOn(page);
+
+  // CH 3 is y 2. Hi-Z goes on at the unit's panel, and the read its notify schedules is held
+  // before it has asked the unit about CH 3.
+  await setDeviceValue(page, PARAMS.HI_Z.id, 2, 1);
+  await setHeldReads(page, [PARAMS.PHANTOM.id]);
+  await notifyParam(page, PARAMS.HI_Z.id, 2, 1);
+  await expect.poll(() => heldReadsOf(page), { timeout: 30_000 }).toBeGreaterThan(0);
+  await selectCh3(page);
+  await expect(face(page, "Hi-Z"), "the plan has not heard yet").toHaveText("OFF");
+  await pressOn(page, "+48V");
+  await pressOn(page, "Clip Safe");
+  // Clip Safe goes out behind +48V in one flush, so its write says the flush is past it.
+  await expect.poll(() => switchWrites(page, PARAMS.CLIP_SAFE.id), { timeout: 30_000 }).toEqual([1]);
+  expect(await switchWrites(page, PARAMS.PHANTOM.id), "no +48V ON while the unit holds Hi-Z on").toEqual([]);
+
+  await setHeldReads(page, []);
+  await expect(page.locator("#statusbar")).toContainText("+48V was not turned on for CH 3", { timeout: 30_000 });
+  await selectCh3(page);
+  await expect(face(page, "+48V")).toHaveText("OFF");
+  await expect(face(page, "Hi-Z")).toHaveText("ON");
+  expect(await switchWrites(page, PARAMS.PHANTOM.id)).toEqual([]);
+  expect(await switchWrites(page, PARAMS.HI_Z.id), "the unit's own Hi-Z is never written").toEqual([]);
+});
+
+// The mirror, and the A.Gain the press lowers goes with it: a refused press moves nothing on the
+// unit.
+test("a Hi-Z ON pressed while a follow read brings in the unit's own +48V ON sends none of it", async ({ page }) => {
+  test.setTimeout(120_000);
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS, values: { [PARAMS.HA_GAIN.id]: 6000, 766: 48000, 848: 0 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await startLive(page);
+  await liveOn(page);
+  await selectCh3(page);
+  await expect(gainText(page)).toHaveText("+60 dB");
+
+  await setDeviceValue(page, PARAMS.PHANTOM.id, 2, 1);
+  await setHeldReads(page, [PARAMS.HI_Z.id]);
+  await notifyParam(page, PARAMS.PHANTOM.id, 2, 1);
+  await expect.poll(() => heldReadsOf(page), { timeout: 30_000 }).toBeGreaterThan(0);
+  await selectCh3(page);
+  await pressOn(page, "Hi-Z");
+  await expect(gainText(page), "the press lowered A.Gain with it").toHaveText("+40 dB");
+  // CH 4 comes after CH 3 in a flush, so its Clip Safe write says the flush is past CH 3's A.Gain.
+  await page.locator(`#graph-host g.node[data-id="ch4"]`).click();
+  await pressOn(page, "Clip Safe");
+  await expect.poll(() => switchWrites(page, PARAMS.CLIP_SAFE.id), { timeout: 30_000 }).toEqual([1]);
+  expect({ hiZ: await switchWrites(page, PARAMS.HI_Z.id), gain: await switchWrites(page, PARAMS.HA_GAIN.id) }).toEqual({
+    hiZ: [],
+    gain: [],
+  });
+
+  await setHeldReads(page, []);
+  await selectCh3(page);
+  await expect(face(page, "Hi-Z")).toHaveText("OFF", { timeout: 30_000 });
+  await expect(face(page, "+48V")).toHaveText("ON");
+  await expect(gainText(page), "A.Gain is the unit's again").toHaveText("+60 dB");
+  expect({ hiZ: await switchWrites(page, PARAMS.HI_Z.id), gain: await switchWrites(page, PARAMS.HA_GAIN.id) }).toEqual({
+    hiZ: [],
+    gain: [],
+  });
 });

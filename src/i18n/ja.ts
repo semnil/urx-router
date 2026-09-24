@@ -624,6 +624,10 @@ export const ja: Messages = {
     streamingSourceUnlisted: "本体の STREAMING が一覧に無い状態だったため、計画では STEREO にしました",
     planLoaded: "計画を読み込みました",
     phantomHiZBothOn: (channels: string): string => `${channels} で +48V と Hi-Z が両方オンになっています`,
+    phantomRefusedByRead: (channels: string): string =>
+      `${channels} の +48V はオンにしませんでした — 本体で Hi-Z がオンになっています。+48V と Hi-Z は同時にオンにしません`,
+    hiZRefusedByRead: (channels: string): string =>
+      `${channels} の Hi-Z はオンにしませんでした — 本体で +48V がオンになっています。+48V と Hi-Z は同時にオンにしません`,
     recentRemoved: (name: string): string => `${name} を最近使った計画から削除しました`,
     planSaved: "計画を保存しました",
     savedTo: (name: string): string => `${name} に保存しました`,

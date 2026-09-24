@@ -20,6 +20,7 @@ import { fxParams } from "./fx-effect";
 import { applyNodeState } from "./readback";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
+import { gainToVd } from "./vd";
 
 const model = getModel("URX44V");
 
@@ -2289,5 +2290,150 @@ describe("LiveSync recentPending", () => {
     expect(live.recentPending().written.size).toBeGreaterThan(0);
     live.end();
     expect(live.recentPending().written.size).toBe(0);
+  });
+});
+
+// +48V and HI-Z are never on together. The flush asks the rule of what it knows the unit
+// holds — the snapshot, and what the unit announced since — because an ON can wait in the plan
+// while the unit turns the other switch on at its own panel, before the follow read that notify
+// schedules has brought it into the plan.
+describe("LiveSync and the +48V / HI-Z exclusion", () => {
+  const Y = 2; // CH 3
+  const switchSends = (): Array<[number, number]> =>
+    vi
+      .mocked(vdSet)
+      .mock.calls.filter(([id, , y]) => y === Y && (id === PARAMS.PHANTOM.id || id === PARAMS.HI_Z.id))
+      .map(([id, , , v]) => [id, v]);
+  const planWith = (ch3: { phantom: boolean; hiZ: boolean }): Plan => {
+    const plan = basePlan();
+    plan.nodeParams.ch3 = ch3;
+    return plan;
+  };
+  const flush = async (live: LiveSync): Promise<void> => {
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+  };
+
+  it("sends a +48V ON the plan holds (the control)", async () => {
+    const plan = planWith({ phantom: false, hiZ: false });
+    const live = liveFor(plan);
+    live.begin();
+    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    await flush(live);
+    expect(switchSends()).toEqual([[PARAMS.PHANTOM.id, 1]]);
+  });
+
+  it("holds a +48V ON while the unit has announced HI-Z on, and sends it once the unit says it is off", async () => {
+    const plan = planWith({ phantom: false, hiZ: false });
+    const live = liveFor(plan);
+    live.begin();
+    expect(live.isEcho(PARAMS.HI_Z.id, 0, Y, 1), "the premise: a change at the unit's panel").toBe(false);
+    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    await flush(live);
+    expect(switchSends()).toEqual([]);
+    // Nothing edits the plan from here: the announcement alone asks again.
+    live.isEcho(PARAMS.HI_Z.id, 0, Y, 0);
+    await vi.advanceTimersByTimeAsync(120);
+    expect(switchSends()).toEqual([[PARAMS.PHANTOM.id, 1]]);
+  });
+
+  it("holds it against the snapshot as well, where a read found HI-Z on", async () => {
+    const plan = planWith({ phantom: false, hiZ: true });
+    const live = liveFor(plan);
+    live.begin();
+    plan.nodeParams.ch3 = { phantom: true, hiZ: true };
+    await flush(live);
+    expect(switchSends()).toEqual([]);
+  });
+
+  it("sends +48V ON behind the HI-Z OFF the same flush sends", async () => {
+    const plan = planWith({ phantom: false, hiZ: true });
+    const live = liveFor(plan);
+    live.begin();
+    live.isEcho(PARAMS.HI_Z.id, 0, Y, 1);
+    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    await flush(live);
+    expect(switchSends()).toEqual([
+      [PARAMS.HI_Z.id, 0],
+      [PARAMS.PHANTOM.id, 1],
+    ]);
+  });
+
+  // A notify can be lost. The read that re-reads the node after the announcement carries what
+  // the unit holds, and a HI-Z the read found off lets the held ON out; a read of another node
+  // carries nothing about CH 3, so the announcement still stands.
+  it("lets the held ON out once a read issued after the announcement covers the channel", async () => {
+    const plan = planWith({ phantom: false, hiZ: false });
+    const live = liveFor(plan);
+    live.begin();
+    live.isEcho(PARAMS.HI_Z.id, 0, Y, 1);
+    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    await flush(live);
+    expect(switchSends()).toEqual([]);
+
+    const view = (): Plan => {
+      const unit = clonePlanState(plan);
+      unit.nodeParams.ch3 = { phantom: false, hiZ: false };
+      return unit;
+    };
+    live.resync(view(), live.directMark(), new Set(["ch1"]));
+    await vi.advanceTimersByTimeAsync(120);
+    expect(switchSends(), "a read of another node").toEqual([]);
+
+    live.resync(view(), live.directMark(), new Set(["ch3"]));
+    await vi.advanceTimersByTimeAsync(120);
+    expect(switchSends()).toEqual([[PARAMS.PHANTOM.id, 1]]);
+  });
+
+  // HI-Z's ON lowers A.Gain in the same edit (`hiZPatch`), and that A.Gain waits with the ON it
+  // came with: a press the read then refuses has moved nothing on the unit.
+  describe("the A.Gain a HI-Z ON carries", () => {
+    const gainSends = (): number[] =>
+      vi
+        .mocked(vdSet)
+        .mock.calls.filter(([id, , y]) => id === PARAMS.HA_GAIN.id && y === Y)
+        .map(([, , , v]) => v);
+
+    it("waits with a held HI-Z ON, and goes out with it once the unit says +48V is off", async () => {
+      const plan = basePlan();
+      plan.nodeParams.ch3 = { phantom: false, hiZ: false, gain: 60 };
+      const live = liveFor(plan);
+      live.begin();
+      live.isEcho(PARAMS.PHANTOM.id, 0, Y, 1);
+      plan.nodeParams.ch3 = { phantom: false, hiZ: true, gain: 40 };
+      await flush(live);
+      expect({ switches: switchSends(), gain: gainSends() }).toEqual({ switches: [], gain: [] });
+
+      live.isEcho(PARAMS.PHANTOM.id, 0, Y, 0);
+      await vi.advanceTimersByTimeAsync(120);
+      expect({ switches: switchSends(), gain: gainSends() }).toEqual({
+        switches: [[PARAMS.HI_Z.id, 1]],
+        gain: [gainToVd(40)],
+      });
+    });
+
+    it("sends an A.Gain the operator set on their own while a HI-Z ON waits", async () => {
+      const plan = basePlan();
+      plan.nodeParams.ch3 = { phantom: false, hiZ: false, gain: 60 };
+      const live = liveFor(plan);
+      live.begin();
+      live.isEcho(PARAMS.PHANTOM.id, 0, Y, 1);
+      plan.nodeParams.ch3 = { phantom: false, hiZ: true, gain: 40 };
+      await flush(live);
+      plan.nodeParams.ch3 = { phantom: false, hiZ: true, gain: 30 };
+      await flush(live);
+      expect({ switches: switchSends(), gain: gainSends() }).toEqual({ switches: [], gain: [gainToVd(30)] });
+    });
+
+    it("sends an A.Gain moved with no HI-Z ON waiting, while +48V is on (the control)", async () => {
+      const plan = basePlan();
+      plan.nodeParams.ch3 = { phantom: false, hiZ: false, gain: 60 };
+      const live = liveFor(plan);
+      live.begin();
+      live.isEcho(PARAMS.PHANTOM.id, 0, Y, 1);
+      plan.nodeParams.ch3 = { phantom: false, hiZ: false, gain: 50 };
+      await flush(live);
+      expect(gainSends()).toEqual([gainToVd(50)]);
+    });
   });
 });

@@ -822,6 +822,12 @@ export const en = {
     ),
     // A device read found both on for these channels and took them as they are.
     phantomHiZBothOn: (channels: string): string => `+48V and Hi-Z are both on for ${channels}`,
+    // A device read found the other switch on for these channels, so the ON pressed while it
+    // was in flight was taken back to the unit's OFF.
+    phantomRefusedByRead: (channels: string): string =>
+      `+48V was not turned on for ${channels} — the unit holds Hi-Z on there, and +48V and Hi-Z are never on together`,
+    hiZRefusedByRead: (channels: string): string =>
+      `Hi-Z was not turned on for ${channels} — the unit holds +48V on there, and +48V and Hi-Z are never on together`,
     recentRemoved: (name: string): string => `Removed ${name} from the recent plans`,
     planSaved: tr("Plan saved"),
     savedTo: (name: string): string => `Saved to ${name}`,

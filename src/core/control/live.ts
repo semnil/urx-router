@@ -27,6 +27,7 @@ import type { SharedOwners, NameWrite, VdCommand, WriteScope } from "./translate
 import { confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
+import { carrierOf, onExcludedBy } from "../input-lock";
 
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
 // single-threaded device worker is not flooded; the snapshot diff means only the
@@ -230,6 +231,24 @@ export class LiveSync {
   // address however long the session runs.
   private readonly directJournal = new Map<number, { value: number; at: number }>();
   private directSeq = 0;
+  // The last value the unit announced per address, echo or not, at the journal position it
+  // arrived at (`directSeq`, shared with the direct journal so one mark orders both). The
+  // diff never reads it: a non-direct change waits in the plan for the follow read it
+  // scheduled, and sending against it would write the plan's older value over the unit's
+  // own change before that read lands. The +48V / HI-Z exclusion reads it (`unitHolds`),
+  // because an ON that goes out reaches the unit as the unit IS — HI-Z turned on at its
+  // panel is on from its announcement, not from the read. A later announcement replaces an
+  // entry, the flush's own write removes it, and a capture removes the ones its read
+  // supersedes: issued after the announcement, over the node the address belongs to, and
+  // reading the address.
+  private readonly announced = new Map<number, { value: number; at: number }>();
+  // A switch ON the exclusion held back is still waiting in the plan, and the A.Gain it
+  // lowered with it (`carrierOf`). Whatever can move the view it was held against — an
+  // announcement, a capture — schedules a flush to ask again, since no edit will. A read that
+  // finds the other switch on takes the ON back, and the plan then agrees with the snapshot; an
+  // ON pressed while that read ran and not refused goes out; and one pressed before it was
+  // issued takes the read's value, as every key nobody edited while it ran does.
+  private onHeld = false;
   // Writes the device has ACKED but not yet announced. The snapshot cannot represent
   // them: it holds ONE value per address, so a second write to the same address moves
   // it past the first, and when the first write's announcement finally arrives it no
@@ -290,7 +309,7 @@ export class LiveSync {
   // A COUNTER rather than a dirty flag, because the flush has two independent consumers
   // (the value loop and the name loop) and a flag one of them cleared would be invisible to
   // the other. Each holds its own last-seen value instead. Separate from `directSeq`, which
-  // counts only `noteDirect` and whose marks the journal compares with `>`.
+  // orders the direct journal and the announcements and whose marks both compare with `>`.
   //
   // It is a SNAPSHOT write standing in for a PLAN write, which works only because every
   // device-side plan write is synchronously followed by one (follow.ts applyDirect →
@@ -351,6 +370,8 @@ export class LiveSync {
   begin(deviceView?: Plan): void {
     this.directJournal.clear();
     this.directSeq = 0;
+    this.announced.clear();
+    this.onHeld = false;
     // Session boundary: nothing acked on a previous link can be an echo on this one.
     // Deliberately NOT cleared in capture() — a write acked just before a resync is
     // exactly the one whose announcement is still in flight, and clearing there would
@@ -372,14 +393,17 @@ export class LiveSync {
    *  device truth (and so device-side notifies for the just-read values register as
    *  echoes). Pass the copy the readback ran against, or an edit made during that read
    *  is recorded as device truth and stops being a diff — and `since`, the mark taken
-   *  when that read was issued, or the direct notifies it could not carry are dropped. */
-  resync(deviceView?: Plan, since?: number): void {
-    this.capture(deviceView, since);
+   *  when that read was issued, or the direct notifies it could not carry are dropped.
+   *  `nodes` are the nodes that read covered (absent = the whole device): the unit's
+   *  announcements on them from before `since` are what the read has now carried. */
+  resync(deviceView?: Plan, since?: number, nodes?: ReadonlySet<string>): void {
+    this.capture(deviceView, since, nodes);
   }
 
   /** The journal position to hand back to resync() with the view a read produces. Taken
    *  when the read is ISSUED: every direct notify after it is device truth the read's
-   *  private clone predates, and is restored over the rebuild. */
+   *  private clone predates, and is restored over the rebuild — and every announcement
+   *  after it stays the unit's last word (`announced`). */
   directMark(): number {
     return this.directSeq;
   }
@@ -470,10 +494,39 @@ export class LiveSync {
    *  change worth reconciling). */
   isEcho(paramId: number, x: number, y: number, value: number): boolean {
     const k = addrKey(paramId, x, y);
+    // Every numeric notify passes here once, echo or not, so this is where the unit's last
+    // word per address is kept — an echo included, since the unit announces what it ended
+    // up holding.
+    this.announced.set(k, { value, at: ++this.directSeq });
+    if (this.onHeld) this.schedule();
     // Pending first, and it CONSUMES the entry it matches: this notify is that write's
     // announcement, so leaving it queued would let a later device-side change back to
     // the same value be swallowed for the rest of the retention window.
     return this.takePending(this.pendingValues, k, value) || this.snapshot.get(k) === value;
+  }
+
+  /** What the unit holds at an address as far as this session knows: its last announcement
+   *  where one came after the snapshot last learned the address, else the snapshot — which
+   *  holds an ON the flush sent, whatever a read in flight sampled before it. Asked about the
+   *  +48V / HI-Z switches alone (see `announced`). */
+  private unitHolds(k: number): number | undefined {
+    return this.announced.get(k)?.value ?? this.snapshot.get(k);
+  }
+
+  /** `unitHolds` for a device read deciding which +48V / HI-Z ONs it refuses
+   *  (input-lock.ts `SwitchSession.holdsOn`). */
+  unitHoldsOn(paramId: number, x: number, y: number): boolean {
+    return Boolean(this.unitHolds(addrKey(paramId, x, y)));
+  }
+
+  /** Whether the switch command `c` stands for is an ON `values` (the plan's) holds, the unit
+   *  has not taken, and the exclusion holds back. */
+  private onWaits(c: Pick<VdCommand, "name" | "paramId" | "x" | "y">, values: ReadonlyMap<number, number>): boolean {
+    const k = addrKey(c.paramId, c.x, c.y);
+    const value = values.get(k);
+    if (value === undefined || this.snapshot.get(k) === value) return false;
+    const other = onExcludedBy(c, value);
+    return other !== null && Boolean(this.unitHolds(other));
   }
 
   /** Append a write we have just been acked for, so its late announcement is still
@@ -523,6 +576,8 @@ export class LiveSync {
   end(): void {
     this.active = false;
     this.sessionGen++;
+    this.announced.clear();
+    this.onHeld = false;
     this.pendingValues.clear();
     this.pendingNames.clear();
     this.recentWrites.clear();
@@ -597,7 +652,7 @@ export class LiveSync {
     return new Map(planToCommands(model, plan, scope).map((c) => [cmdAddr(c), c.vdValue] as const));
   }
 
-  private capture(deviceView?: Plan, since?: number): void {
+  private capture(deviceView?: Plan, since?: number, nodes?: ReadonlySet<string>): void {
     // A re-base re-authors the plan from the device, so a collision reported against the
     // pre-read plan may already be gone — a reconcile reads the shared address once and
     // assigns it to both owners, which erases the divergence. Nothing schedules a flush
@@ -624,13 +679,25 @@ export class LiveSync {
     }
     this.rebuildFollowSet(model, plan, scope, commands);
     for (const w of planToNameWrites(model, deviceView ?? plan)) this.nameSnapshot.set(nameKey(w), w.value);
-    if (since === undefined) return;
-    // Restore what the view could not know: a notify the device sent after the read was
-    // issued. Confined to the addresses this capture registered, so the shape still comes
-    // from the live plan alone.
-    for (const [k, entry] of this.directJournal) {
-      if (entry.at > since && this.index.has(k)) this.snapshot.set(k, entry.value);
+    if (since !== undefined) {
+      // Restore what the view could not know: a notify the device sent after the read was
+      // issued. Confined to the addresses this capture registered, so the shape still comes
+      // from the live plan alone.
+      for (const [k, entry] of this.directJournal) {
+        if (entry.at > since && this.index.has(k)) this.snapshot.set(k, entry.value);
+      }
     }
+    // An announcement the read behind this capture was issued after, on a node that read
+    // covered (`nodes`; absent = the whole device), is carried by the rebuilt snapshot. One
+    // that arrived while the read was in flight, or on a node it did not read, is still the
+    // unit's last word.
+    for (const [k, a] of this.announced) {
+      if (since !== undefined && a.at > since) continue;
+      const node = this.index.get(k)?.node;
+      if (nodes && (node === undefined || !nodes.has(node))) continue;
+      this.announced.delete(k);
+    }
+    if (this.onHeld) this.schedule();
   }
 
   /**
@@ -753,6 +820,8 @@ export class LiveSync {
       return;
     }
     this.flushing = true;
+    // Asked again by this flush: a held ON it still cannot send sets it back.
+    this.onHeld = false;
     try {
       // The session this flush is for. `model` and `plan` below are captured once and the
       // re-take at the head of the loop reads those captures, so once the generation moves
@@ -866,6 +935,8 @@ export class LiveSync {
       // in the windows where a notify or a reconcile actually landed inside the loop.
       let valuesAt = this.snapshotEpoch;
       let fresh: Map<number, number> | null = null;
+      // The frozen list's values by address, built the first time a command asks for another's.
+      let frozen: Map<number, number> | null = null;
       for (const c of commands) {
         const k = cmdAddr(c);
         if (this.snapshotEpoch !== valuesAt) {
@@ -878,6 +949,26 @@ export class LiveSync {
         if (value === undefined) continue;
         const had = this.snapshot.get(k);
         if (had === value) continue;
+        // +48V or HI-Z ON while the unit holds the other one on: not sent, and left in the
+        // plan rather than dropped (see `onHeld`). The command order sends a switch the plan
+        // turns off ahead of the other one's ON, so a flush moving from one to the other
+        // has already written the OFF into the snapshot by the time it asks.
+        const excludedBy = onExcludedBy(c, value);
+        if (excludedBy !== null && this.unitHolds(excludedBy)) {
+          this.onHeld = true;
+          continue;
+        }
+        // A.Gain waits with a HI-Z ON held on its channel (`carrierOf`), in this flush or the
+        // one before it: the press that lowered it has not reached the unit, and the read that
+        // lands may refuse it.
+        const carrier = carrierOf(c, value);
+        if (
+          carrier !== null &&
+          this.onWaits(carrier, fresh ?? (frozen ??= new Map(commands.map((x) => [cmdAddr(x), x.vdValue] as const))))
+        ) {
+          this.onHeld = true;
+          continue;
+        }
         // Taken before the send, not after it: a notify that lands while this very
         // vdSet is in flight cannot be placed on either side of it, and the safe
         // reading is that it is the answer to this write. A misattribution either way
@@ -891,6 +982,7 @@ export class LiveSync {
         // recorded in has already been rebuilt by whatever ended (or replaced) it.
         if (this.sessionGen !== gen) return;
         this.snapshot.set(k, value);
+        this.announced.delete(k);
         this.notePending(this.pendingValues, k, value);
         writes.set(k, { mark, node: c.node, changed: had !== undefined, value });
         this.recentWrites.set(k, { mark, node: c.node, at: Date.now() });
@@ -1103,7 +1195,7 @@ export class LiveSync {
         // copy is what the device holds: re-base from it and an edit made during the
         // await — on the read node or any other — stays a diff. Null = the plan it read
         // into is gone, and there is nothing a snapshot could describe.
-        if (deviceView) this.capture(deviceView, since);
+        if (deviceView) this.capture(deviceView, since, refetch);
       }
       // A flush with NEITHER epilogue — the ordinary edit: a fader, a mute, a pan, a rename
       // — issues no read at all, so nothing here would ever notice the unit silently

@@ -3,8 +3,22 @@ import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { Plan } from "./plan";
 import { ensureFixedConnections } from "./plan";
-import { planToCommands } from "./control/translate";
-import { channelGainRange, hiZPatch, inputOnRefused, phantomHiZBothOn, phantomHiZNewlyBothOn } from "./input-lock";
+import { addrKey, channelControl, planToCommands } from "./control/translate";
+import { PARAMS } from "./control/params";
+import { clonePlanState, nodeParamContestKey } from "./plan-history";
+import {
+  carrierOf,
+  channelGainRange,
+  hiZPatch,
+  inputOnRefused,
+  onExcludedBy,
+  phantomHiZBothOn,
+  phantomHiZNewlyBothOn,
+  readRefusedSwitches,
+  unsentRefusedSwitches,
+} from "./input-lock";
+import type { SwitchSession } from "./input-lock";
+import { gainToVd } from "./control/vd";
 import { applyParamRange, isRefusal, needsDecision, paramRangeProblems, planProblems } from "./plan-validate";
 import { bindControl } from "./midi/controls";
 import type { ControlRefusal } from "./midi/controls";
@@ -171,5 +185,130 @@ describe("MIDI under HI-Z", () => {
     expect(gain.get()).toBeCloseTo(48 / 78, 6);
     gain.set(1);
     expect(plan.nodeParams.ch3?.gain).toBe(70);
+  });
+});
+
+// Where a device read lands and where a flush sends, the same rule is asked of what the unit
+// holds rather than of what the plan held when a surface took the edit.
+describe("+48V and HI-Z against what the unit holds", () => {
+  const unitWith = (ch3: Record<string, unknown>): Plan => {
+    const unit = clonePlanState(plan);
+    unit.nodeParams.ch3 = { ...unit.nodeParams.ch3, ...ch3 };
+    return unit;
+  };
+  const planWith = (ch3: Record<string, unknown>): Plan => {
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, ...ch3 };
+    return plan;
+  };
+
+  it("names the switch the plan turned on over the one the unit holds on", () => {
+    expect(
+      readRefusedSwitches(unitWith({ phantom: false, hiZ: true }), planWith({ phantom: true, hiZ: true })),
+    ).toEqual([{ nodeId: "ch3", key: "phantom" }]);
+    expect(
+      readRefusedSwitches(unitWith({ phantom: true, hiZ: false }), planWith({ phantom: true, hiZ: true })),
+    ).toEqual([{ nodeId: "ch3", key: "hiZ" }]);
+  });
+
+  it("names nothing where the unit holds both on, or where the plan does not hold both", () => {
+    expect(readRefusedSwitches(unitWith({ phantom: true, hiZ: true }), planWith({ phantom: true, hiZ: true }))).toEqual(
+      [],
+    );
+    expect(
+      readRefusedSwitches(unitWith({ phantom: false, hiZ: true }), planWith({ phantom: false, hiZ: true })),
+    ).toEqual([]);
+    // A channel with no HI-Z switch holds nothing the rule is about.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, phantom: true, hiZ: true };
+    expect(readRefusedSwitches(clonePlanState(defaultPlan("URX44V")), plan)).toEqual([]);
+  });
+
+  // An ON the live session sent after the read sampled the address is on the unit whatever the
+  // read found there, so the unit holds both and the state is taken as it is.
+  it("names nothing the unit is known to hold on beyond what the read found", () => {
+    const sent = (nodeId: string, key: string): boolean => nodeId === "ch3" && key === "phantom";
+    expect(
+      readRefusedSwitches(unitWith({ phantom: false, hiZ: true }), planWith({ phantom: true, hiZ: true }), sent),
+    ).toEqual([]);
+    // Asked per switch: the one the session did not send is still refused.
+    expect(
+      readRefusedSwitches(unitWith({ phantom: true, hiZ: false }), planWith({ phantom: true, hiZ: true }), sent),
+    ).toEqual([{ nodeId: "ch3", key: "hiZ" }]);
+  });
+
+  it("names the HI-Z command an A.Gain at +40 dB waits with, on the channel's own A.Gain only", () => {
+    const cc = channelControl(model, "ch3")!;
+    const gain = { name: "HA_GAIN" as const, paramId: cc.gain!.param, x: 0, y: cc.y };
+    expect(carrierOf(gain, gainToVd(40))).toEqual({ name: "HI_Z", paramId: PARAMS.HI_Z.id, x: 0, y: cc.y });
+    // Any other A.Gain is the operator's own, not the one a HI-Z ON lowered it to.
+    expect(carrierOf(gain, gainToVd(30))).toBeNull();
+    // A stereo channel's D.Gain shares the command name and an instance index with a mono
+    // channel, and carries no HI-Z.
+    const stereo = channelControl(model, "ch_5_6")!;
+    for (const y of stereo.gain!.instances)
+      expect(carrierOf({ name: "HA_GAIN", paramId: stereo.gain!.param, x: 0, y }, gainToVd(40))).toBeNull();
+    expect(carrierOf({ name: "CLIP_SAFE", paramId: PARAMS.CLIP_SAFE.id, x: 0, y: cc.y }, 1)).toBeNull();
+  });
+
+  // An ON the plan held when a read was issued, which the session never put on the unit, is one
+  // the merge writes the read's OFF over like any key nobody edited. Where the unit holds the
+  // other switch on, that is a refusal, and it is named so the status line can say why.
+  describe("an ON the unit never received", () => {
+    const session = (sent: string[] = [], holds: string[] = []): SwitchSession => ({
+      sentOn: (nodeId, key) => sent.includes(`${nodeId}.${key}`),
+      holdsOn: (nodeId, key) => holds.includes(`${nodeId}.${key}`),
+    });
+    const before = (): Plan => {
+      const p = clonePlanState(plan);
+      p.nodeParams.ch3 = { ...p.nodeParams.ch3, phantom: true, hiZ: false };
+      return p;
+    };
+    const merged = (): Plan => unitWith({ phantom: false, hiZ: true });
+
+    it("is named where the unit holds the other switch on", () => {
+      expect(unsentRefusedSwitches(before(), merged(), merged(), session(), new Set())).toEqual([
+        { nodeId: "ch3", key: "phantom" },
+      ]);
+      // The other switch known on from the session alone.
+      expect(
+        unsentRefusedSwitches(
+          before(),
+          unitWith({ phantom: false, hiZ: false }),
+          merged(),
+          session([], ["ch3.hiZ"]),
+          new Set(),
+        ),
+      ).toEqual([{ nodeId: "ch3", key: "phantom" }]);
+    });
+
+    it("is not named where the session had put it on, the operator turned it off, or the other one is off", () => {
+      expect(unsentRefusedSwitches(before(), merged(), merged(), session(["ch3.phantom"]), new Set())).toEqual([]);
+      expect(
+        unsentRefusedSwitches(
+          before(),
+          merged(),
+          merged(),
+          session(),
+          new Set([nodeParamContestKey("ch3", "phantom")]),
+        ),
+      ).toEqual([]);
+      expect(
+        unsentRefusedSwitches(
+          before(),
+          unitWith({ phantom: false, hiZ: false }),
+          unitWith({ phantom: false, hiZ: false }),
+          session(),
+          new Set(),
+        ),
+      ).toEqual([]);
+    });
+  });
+
+  it("gives the other switch's address for an ON of either, and nothing for an OFF", () => {
+    const y = channelControl(model, "ch3")!.y;
+    const at = (name: "PHANTOM" | "HI_Z"): { name: "PHANTOM" | "HI_Z"; x: number; y: number } => ({ name, x: 0, y });
+    expect(onExcludedBy(at("PHANTOM"), 1)).toBe(addrKey(PARAMS.HI_Z.id, 0, y));
+    expect(onExcludedBy(at("HI_Z"), 1)).toBe(addrKey(PARAMS.PHANTOM.id, 0, y));
+    expect(onExcludedBy(at("PHANTOM"), 0)).toBeNull();
+    expect(onExcludedBy({ name: "CLIP_SAFE", x: 0, y }, 1)).toBeNull();
   });
 });
