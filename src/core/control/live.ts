@@ -112,7 +112,9 @@ export interface LiveSyncHooks {
    *  build, and the tests that do not exercise it). Resolves the private copy its read
    *  ran against (readback.readIntoPlan) — that copy is what the device holds as far as
    *  the read established it, and so what the snapshot re-base measures from. Null when
-   *  the plan it read into has been replaced: there is then nothing to re-base.
+   *  the plan it read into has been replaced: there is then nothing to re-base. The read
+   *  carries each node's body and not the node's own name, so the re-base keeps what the
+   *  snapshot held for those names.
    *
    *  `pending` is what THIS flush put on the device and the device acked. The unit acks
    *  a write before the value is readable, and this read is issued in the same
@@ -681,7 +683,14 @@ export class LiveSync {
     return new Map(planToCommands(model, plan, scope).map((c) => [cmdAddr(c), c.vdValue] as const));
   }
 
-  private capture(deviceView?: Plan, since?: number, nodes?: ReadonlySet<string>, unread?: ReadonlySet<number>): void {
+  private capture(
+    deviceView?: Plan,
+    since?: number,
+    nodes?: ReadonlySet<string>,
+    unread?: ReadonlySet<number>,
+    /** Whether the read behind this view carried the covered nodes' own names. */
+    readNames = true,
+  ): void {
     // A re-base re-authors the plan from the device, so a collision reported against the
     // pre-read plan may already be gone — a reconcile reads the shared address once and
     // assigns it to both owners, which erases the divergence. Nothing schedules a flush
@@ -700,9 +709,10 @@ export class LiveSync {
     const kept = unread ? [...unread].map((k) => [k, this.snapshot.get(k)] as const) : [];
     // A read that covered some nodes (`nodes`) says nothing about the others: there the
     // snapshot goes on holding what it held — nothing, where it held nothing — names included,
-    // so a value the plan holds and the unit was never sent stays a difference.
+    // so a value the plan holds and the unit was never sent stays a difference. A read that
+    // carried no node names (`readNames`) says nothing about those either, on any node.
     const prior = nodes ? new Map(this.snapshot) : null;
-    const priorNames = nodes ? new Map(this.nameSnapshot) : null;
+    const priorNames = nodes || !readNames ? new Map(this.nameSnapshot) : null;
     const covered = (node: string | undefined): boolean => !nodes || (node !== undefined && nodes.has(node));
     this.snapshot.clear();
     this.nameSnapshot.clear();
@@ -719,7 +729,7 @@ export class LiveSync {
     this.rebuildFollowSet(model, plan, scope, commands);
     for (const w of planToNameWrites(model, deviceView ?? plan)) {
       const key = nameKey(w);
-      const value = covered(w.node) ? w.value : priorNames?.get(key);
+      const value = covered(w.node) && (readNames || w.name !== undefined) ? w.value : priorNames?.get(key);
       if (value !== undefined) this.nameSnapshot.set(key, value);
     }
     if (since !== undefined) {
@@ -1315,7 +1325,7 @@ export class LiveSync {
         // copy is what the device holds: re-base from it and an edit made during the
         // await — on the read node or any other — stays a diff. Null = the plan it read
         // into is gone, and there is nothing a snapshot could describe.
-        if (deviceView) this.capture(deviceView, since, refetch);
+        if (deviceView) this.capture(deviceView, since, refetch, undefined, false);
       }
       // A flush with NEITHER epilogue — the ordinary edit: a fader, a mute, a pan, a rename
       // — issues no read at all, so nothing here would ever notice the unit silently

@@ -2247,7 +2247,9 @@ the plan and the device's in the clone, so it stays a diff and the next flush se
 just grew is absent from the clone and is left out of the snapshot entirely, for the same reason. A scoped read — a
 reconcile of some nodes, or a refetch's read of the nodes its heads drive — re-bases only the addresses of the nodes
 it covered, names included; everywhere else the snapshot keeps what it held, holding nothing included, because the
-read says nothing there and a value the plan holds that the unit was never sent is still owed to it.
+read says nothing there and a value the plan holds that the unit was never sent is still owed to it. The refetch's
+read carries each node's body and not the node's own name, so the same holds for every node's name there, the nodes
+it read included; a reconcile reads the names of the nodes it covers and takes them.
 
 | Event | Live snapshot | History baseline |
 | --- | --- | --- |

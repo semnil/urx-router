@@ -1667,6 +1667,31 @@ describe("LiveSync sideEffect refetch", () => {
         expect(presetWrites(), "the rename went out after the name the flush took").toEqual(["KICK", "SNARE"]);
       });
 
+      // The node the refetch DID read is no different for its name: the refetch reads each
+      // node's body and not its name, so a rename of CH 3 made while another name was on the
+      // wire is one the read never saw.
+      it("sends a rename of the node it read back from the next flush, since that read carries no name", async () => {
+        const plan = basePlan();
+        withCh3Bank(plan);
+        const unit = heldUnit(plan);
+        unit.live.begin();
+
+        unit.holdNext("str");
+        unit.edit(() => {
+          plan.nodeNames = { ...plan.nodeNames, ch4: "KICK" };
+          moveCh3Morph(plan);
+        });
+        await vi.advanceTimersByTimeAsync(120);
+        expect(unit.held(), "the premise: CH 4's name write is held").toBe(1);
+        unit.edit(() => (plan.nodeNames = { ...plan.nodeNames, ch3: "SNARE" }));
+        unit.release();
+        await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 3000);
+
+        expect(unit.refetched[0], "the premise: the flush read CH 3 back").toEqual(["ch3"]);
+        expect(plan.nodeNames.ch3, "the rename stands in the plan").toBe("SNARE");
+        expect(presetWrites(), "and went out after the name the flush took").toEqual(["KICK", "SNARE"]);
+      });
+
       it("sends a rate moved while its write was on the wire from the next flush", async () => {
         const plan = basePlan();
         withCh3Bank(plan);
@@ -2403,21 +2428,17 @@ describe("LiveSync sideEffect refetch", () => {
     expect(sent.has(addrOf(grown[0]))).toBe(true);
   });
 
-  it("records a name the refetch read from the device instead of re-sending it", async () => {
+  // A scoped reconcile DOES read the names of the nodes it covers, so a rename made on the unit
+  // lands in the plan and in the view together, and the re-base records it as the unit's. The
+  // refetch reads no names at all; that half is under "beside another node's read-back".
+  it("records a name a scoped reconcile read from the device instead of re-sending it", async () => {
     const plan = basePlan();
-    const live = liveFor(plan, async () => {
-      // A scoped read DOES carry names (nameControl is gated only by the node filter),
-      // so a device-side rename lands in the plan and in the view together.
-      plan.nodeNames = { ...plan.nodeNames, ch1: "VOX" };
-      return clonePlanState(plan);
-    });
+    const live = liveFor(plan);
     live.begin();
-    setCh1OneKnob(plan, { on: true });
-    live.schedule();
-    await vi.advanceTimersByTimeAsync(120);
-    await vi.advanceTimersByTimeAsync(2000);
+    const since = live.directMark();
+    plan.nodeNames = { ...plan.nodeNames, ch1: "VOX" };
+    live.resync(clonePlanState(plan), since, new Set(["ch1"]));
 
-    vi.mocked(vdSetStr).mockClear();
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
     expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
