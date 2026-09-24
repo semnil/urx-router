@@ -31,9 +31,9 @@
 // kHz whatever the plan's rate, and says so rather than pretending otherwise.
 //
 // The SSMCS strip's own 3-band EQ is at the foot of this file. It is a different DSP
-// block reached by switching the channel's COMP/EQ type, so it shares the shelf
-// convention and nothing else: its peaking Q is its own, and the two must not be
-// carried across.
+// block reached by switching the channel's COMP/EQ type, and it shares no filter with
+// this one: its shelves and its peaking Q are its own, and neither must be carried
+// across.
 
 import { EQ_TYPE_PASS, EQ_TYPE_SHELVING } from "./control/params";
 
@@ -258,8 +258,32 @@ function sumDb(parts: ((hz: number) => number)[]): (hz: number) => number {
 // is no type to read and no pass filter, which is why this is a function of its own
 // rather than four bands with two of them switched off.
 //
-// What it shares with the 4-band model above is the shelf convention — the nominal
-// frequency is the point 3 dB below the plateau — and nothing else.
+// It shares no filter with the 4-band model above. Its shelves are first-order, with the
+// half-gain point placed from the nominal frequency by a factor that depends on the gain,
+// where the 4-band shelves are S = 1; its peaking Q is its own.
+
+/** The factor an SSMCS shelf's half-gain point is placed by, in the bilinear transform's
+ *  prewarped frequency: `scale · 10^(−exp · |gain| / 40)`, so it narrows as the gain grows. */
+const SSMCS_SHELF_K_SCALE = 0.506;
+const SSMCS_SHELF_K_GAIN_EXP = 0.335;
+
+/** An SSMCS shelf's half-gain point as the bilinear transform's `K`: the nominal
+ *  frequency's prewarped `tan(π f / fs)`, multiplied by the factor for HIGH and divided by
+ *  it for LOW. */
+function ssmcsShelfK(nominal: number, gainDb: number, high: boolean, fs: number): number {
+  const factor = SSMCS_SHELF_K_SCALE * Math.pow(10, (-SSMCS_SHELF_K_GAIN_EXP * Math.abs(gainDb)) / 40);
+  const k = Math.tan((Math.PI * nominal) / fs);
+  return high ? k * factor : k / factor;
+}
+
+/** A first-order shelf through the bilinear transform, passing half its gain in dB where
+ *  the prewarped frequency is `K`, and symmetric about it on a log axis — a cut is the
+ *  exact inverse of a boost. */
+function firstOrderShelfCoefs(K: number, gainDb: number, high: boolean): Coefs {
+  const A = Math.pow(10, gainDb / 40);
+  if (high) return { b0: A * (A + K), b1: A * (K - A), b2: 0, a0: 1 + A * K, a1: A * K - 1, a2: 0 };
+  return { b0: A * (1 + A * K), b1: A * (A * K - 1), b2: 0, a0: A + K, a1: K - A, a2: 0 };
+}
 
 /** One SSMCS band. `kind` decides the filter outright; the device has no type slot. */
 export interface SsmcsBandState {
@@ -279,7 +303,7 @@ function ssmcsBandResponse(b: SsmcsBandState, fs: number): (hz: number) => numbe
     return (hz) => magDb(c, hz, fs);
   }
   const high = b.kind === "high";
-  const c = shelfCoefs(shelfDesignFreq(b.freq, b.gain, high, fs), b.gain, high, fs);
+  const c = firstOrderShelfCoefs(ssmcsShelfK(b.freq, b.gain, high, fs), b.gain, high);
   return (hz) => magDb(c, hz, fs);
 }
 

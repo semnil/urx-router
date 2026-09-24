@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
-import { panelHeight, pickBand, screenBox } from "./dyn-helpers";
+import { panelHeight, pickBand, pickPlot, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
@@ -402,6 +402,28 @@ test.describe("the tuning screen's three faces", () => {
       const locked = band !== "mid";
       await expect(screenRow(page, "Q"), band).toHaveClass(locked ? /locked/ : /^((?!locked).)*$/);
       expect(await panelHeight(page), band).toBe(first);
+    }
+  });
+
+  // Every band ships at 0 dB, which draws nothing at all, so a shelf's own filter runs only
+  // once a gain is set on it. What this holds is that a shelf gain set on the face reaches
+  // the plot: the readout moves and the curve is redrawn. The curve's shape is the unit
+  // suite's, which pins it against the unit's own sweeps.
+  test("a shelf gain set on the EQ face redraws the curve", async ({ page }) => {
+    await openFace(page, "ssmcsEq", /^EQ$/);
+    const image = () => pickPlot(page).evaluate((c: HTMLCanvasElement) => c.toDataURL());
+    for (const [i, band] of [
+      [0, "low"],
+      [2, "high"],
+    ] as const) {
+      await pickBand(page, i);
+      const gain = screenRow(page, "Gain").locator("input[type=range]");
+      const readout = screenRow(page, "Gain").locator(".gt-val");
+      const before = await image();
+      await gain.fill(String(Number(await gain.inputValue()) + 60)); // +6.0 dB
+      await gain.dispatchEvent("input");
+      await expect(readout, band).toHaveText(/\+6\.0\s*dB/);
+      await expect.poll(image, { message: `${band}: the curve is redrawn` }).not.toBe(before);
     }
   });
 });
