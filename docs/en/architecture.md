@@ -1117,10 +1117,14 @@ That dim encoded a step against a NEIGHBOUR, and the mode paints the two the sam
 step nothing to say and a legibility cost to pay; a lock's dim encodes one control against its own
 unlocked state, which the mode leaves intact.
 
-One assertion in that spec reads painted pixels rather than a computed style, and has to: a range
-input's track and thumb are `::-webkit-` pseudo elements whose author declarations this engine does not
-report through `getComputedStyle`. The rule that draws the track computes to `0px none` while the track
-is on screen, so the frame is the only place the pair can be checked.
+One case in that spec reads painted pixels as well as computed styles. A range input's track and thumb
+are `::-webkit-` pseudo elements whose author declarations this engine does not report through
+`getComputedStyle`: the rule that draws the track computes to `0px none` while the track is on screen.
+The DevTools protocol does reach them — the input's user-agent shadow tree carries the two as `#track`
+and `#thumb`, and `CSS.getComputedStyleForNode` on those returns the forced-colors values (2026-09-24,
+Chromium 153: the track `1px solid`, the thumb an opaque Canvas fill) — so the case asserts the two
+declarations there, and each assertion fails with its own rule removed. What it reads from the pixels is what no declaration states: that
+the painted thumb covers the painted track.
 
 Its border-width assertions ask for **more than zero**, not for at least one pixel. A 1px border is snapped
 to the device pixel grid and reported as its used value, so at a 1.25 display scale `border-top-width`

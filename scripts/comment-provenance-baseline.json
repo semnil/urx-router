@@ -14,7 +14,7 @@
     "e2e/eqoneknob.spec.ts": 2,
     "e2e/fine.spec.ts": 2,
     "e2e/fixtures.ts": 1,
-    "e2e/forced-colors.spec.ts": 6,
+    "e2e/forced-colors.spec.ts": 5,
     "e2e/inventory.spec.ts": 1,
     "e2e/midi.spec.ts": 2,
     "e2e/race/fake-device.ts": 6,

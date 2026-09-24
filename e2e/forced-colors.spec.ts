@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, type Locator, type Page } from "./fixtures";
 
 // Windows high contrast (`forced-colors: active`). Chromium only, which the app
 // tier already is — WebView2 is the engine that ships, and its own answer is not
@@ -31,13 +31,49 @@ const openGate = async (page: Page) => {
   await expect(page.locator("#dyn-screen-box")).toBeVisible();
 };
 
+/** The computed style of a range input's two shadow parts, read over the DevTools
+ *  protocol. `getComputedStyle(input, "::-webkit-slider-runnable-track")` answers
+ *  `0px none` for these pseudo elements; the input's user-agent shadow tree carries
+ *  them as `#track` and `#thumb`, and those nodes hold the values that won. */
+const sliderParts = async (page: Page, input: Locator) => {
+  type DomNode = { nodeId: number; attributes?: string[]; children?: DomNode[]; shadowRoots?: DomNode[] };
+  const attr = (n: DomNode, name: string) => {
+    const a = n.attributes ?? [];
+    for (let i = 0; i < a.length; i += 2) if (a[i] === name) return a[i + 1];
+    return undefined;
+  };
+  const find = (n: DomNode, hit: (n: DomNode) => boolean): DomNode | undefined => {
+    if (hit(n)) return n;
+    for (const c of [...(n.children ?? []), ...(n.shadowRoots ?? [])]) {
+      const found = find(c, hit);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  await input.evaluate((el) => el.setAttribute("data-slider-parts", ""));
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const { root } = (await cdp.send("DOM.getDocument", { depth: -1, pierce: true })) as { root: DomNode };
+    await cdp.send("CSS.enable");
+    const host = find(root, (n) => attr(n, "data-slider-parts") !== undefined);
+    if (!host) throw new Error("the range input is not in the document the protocol returned");
+    const style = async (id: string) => {
+      const part = find(host, (n) => attr(n, "id") === id);
+      if (!part) throw new Error(`no #${id} in the range input's shadow tree`);
+      const { computedStyle } = await cdp.send("CSS.getComputedStyleForNode", { nodeId: part.nodeId });
+      return Object.fromEntries(computedStyle.map((p) => [p.name, p.value]));
+    };
+    return { track: await style("track"), thumb: await style("thumb") };
+  } finally {
+    await cdp.detach();
+  }
+};
+
 /** An element's painted pixels, row-major, each as an "r,g,b" key.
  *
- *  Every other assertion in this file reads a computed style, and one pair cannot be
- *  read that way at all: a range input's track and thumb are `::-webkit-` pseudo
- *  elements whose author declarations this engine does not report — measured, the rule
- *  that draws the track computes to `0px none` while the track is plainly on screen.
- *  The painted frame is the only place that pair can be asserted. */
+ *  What these answer is what no declaration states: which of two painted parts ends up
+ *  on top. The slider case reads its declarations through `sliderParts` and its
+ *  layering from here. */
 const pixels = async (page: Page, shot: Buffer): Promise<string[][]> =>
   page.evaluate(
     async (uri) => {
@@ -230,6 +266,13 @@ test("a parameter slider keeps its track, and the thumb still covers it", async 
   await expect(input).toBeVisible();
 
   await page.emulateMedia({ forcedColors: "active" });
+
+  // The pair of rules itself, so a failure names the declaration that went missing:
+  // the track outlined, the thumb filled opaque.
+  const parts = await sliderParts(page, input);
+  expect(parts.track["border-top-style"], "the track is outlined").toBe("solid");
+  expect(parseFloat(parts.track["border-top-width"]), "the track is outlined").toBeGreaterThan(0);
+  expect(parts.thumb["background-color"], "the thumb is filled opaque").toMatch(/^rgb\(/);
 
   const rows = await pixels(page, await input.screenshot());
   const [h, w] = [rows.length, rows[0].length];
