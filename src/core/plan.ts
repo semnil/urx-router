@@ -9,6 +9,7 @@ import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES, trackCountAtRate } from "./constrain
 import { FX_CHANNEL_NODE_INDEX, migrateFxEffectParams } from "./control/fx-effect";
 import { insertFxFamilyOf, qualifyInsertFxParams } from "./control/insert-fx-effect";
 import { NODE_NAME_MAX_CHARS } from "./control/params";
+import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "./control/vd";
 import { stripSceneExternal } from "./scene-scope";
 
 /**
@@ -32,13 +33,9 @@ export function setPlanSampleRate(plan: Plan, rate: number): void {
  *  key on it. */
 export const SDREC_NODE_ID = "out.sdrec";
 
-// LEVEL fader / send range in dB (the device level_gain table, shared by every
-// fader, send and the monitor — UG "Range: -∞ dB to +10.00 dB"). The slider's
-// bottom notch (LEVEL_OFF_DB) is -∞ / off; one step up is the lowest real value
-// LEVEL_MIN_DB (-96.0). Verified against the broker level_gain metadata.
-export const LEVEL_MIN_DB = -96;
-export const LEVEL_MAX_DB = 10;
-export const LEVEL_OFF_DB = -96.5;
+// The level range is defined beside the level encoders in control/vd.ts and reached from
+// here as well, as part of the plan's own vocabulary.
+export { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB };
 
 export interface ConnParams {
   level?: number;

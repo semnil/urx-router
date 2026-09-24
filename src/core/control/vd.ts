@@ -12,8 +12,19 @@
 // Parameter addresses are "{param_id}:{x}:{y}" where x is 0 except for EQ bands
 // and y is the instance index (input ch 0..11, output 0..7, or a fixed slot).
 
+// This module imports nothing from the core modules — only leaves. translate.ts builds its
+// field tables from these constants at module scope, inside an import cycle with the plan,
+// and a binding read there is initialised whichever module is imported first only when it
+// comes from outside that cycle.
 import { COMP_RATIO_INF, COMP_RATIO_STEPS } from "./comp-ratio";
-import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "../plan";
+
+// LEVEL fader / send range in dB (the device level_gain table, shared by every
+// fader, send and the monitor — UG "Range: -∞ dB to +10.00 dB"). The slider's
+// bottom notch (LEVEL_OFF_DB) is -∞ / off; one step up is the lowest real value
+// LEVEL_MIN_DB (-96.0). Verified against the broker level_gain metadata.
+export const LEVEL_MIN_DB = -96;
+export const LEVEL_MAX_DB = 10;
+export const LEVEL_OFF_DB = -96.5;
 
 /** The broker's -∞ / off sentinel for level (centi-dB) parameters. */
 export const VD_LEVEL_OFF = -32768;
