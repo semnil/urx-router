@@ -246,7 +246,9 @@ single source of truth. This table states what each case measures.
 | `overtake-converge-latch-starvation` | console | A liveness defect: whether sustained editing stops reaching the device entirely |
 | `overtake-notify-echo-vs-genuine-during-flush` | console | Phase and address held fixed while only the message's truth varies |
 | `overtake-direct-notify-ahead-of-the-send-loop` | console | A device-side change on an address the frozen command list has not reached yet |
-| `overtake-foreign-notify-inside-our-write` | console | A device-side value for the address our write is on the wire to, before that write's announcement; with and without a second edit in the window |
+| `overtake-foreign-notify-inside-our-write` | console | A device-side value for the address our write is on the wire to, before that write's announcement; with and without a second edit in the window, and with the node's re-read due between the write's ack and its announcement |
+| `overtake-foreign-notify-with-an-edit-on-the-strip` | console | The same replaced value with an edit on the node's other controls not yet sent: the write held past the follow settle, released at once, beside a device-side change on the node, and the edit made inside the flush window |
+| `overtake-edit-in-the-flush-window-vs-follow-read` | console | An edit still inside the flush window when the re-read an ordinary device-side change takes of its node falls due |
 | `overtake-reconcile-during-reconcile` | mixed | The reconcile queue's own re-entrancy, with no operator involved |
 | `overtake-direct-scoped-coalesce-boundary` | console | Whether a reconcile resolving inside the coalesce upgrades an unrelated direct reflect |
 | `overtake-drag-flush-backpressure` | console | A realistic gesture on a realistic link, and the convergence latency an operator perceives |
@@ -1392,10 +1394,12 @@ nothing it is green too — the reads are what moves the round, and what the rou
 there. Every value assertion in the case passed throughout, so what invariant 4 caught was the structure
 rather than a loss.
 
-The fix is in `follow.ts`: a reconcile is deferred while `live.isConverging()`, and the window is kept
-rather than spent, so the nodes the burst named are still re-read on the settle timer's own re-arm.
-Deliberately the converge and not the whole flush — an ordinary flush is a handful of writes and no read,
-and a reconcile beside one is the two-chain contention `t8-stress` asserts as its own precondition.
+The fix is in `follow.ts`: a reconcile is deferred while a flush is writing (`live.isWriting()`), which a
+converge is part of, and the window is kept rather than spent, so the nodes the burst named are still
+re-read on the settle timer's own re-arm. The wait is at the reconcile's start only: a flush an edit
+schedules while a reconcile is reading goes out beside it, which is the two-chain contention `t8-stress`
+asserts as its own precondition. That case puts the read on the link before its edit train starts: a
+reconcile the train itself provokes waits until the train's last flush is done.
 
 ### 13. A device value that our own write replaces (`live.ts` / `follow.ts`)
 
@@ -1410,12 +1414,48 @@ read +0.8 300 ms after the release, the idle sweep ~0.9 s later brought it back 
 that window sent +0.8 to CH 1 and left the unit there (4 of 4 runs). A 1-knob EQ level write, which ends in a
 refetch, was held at our value in the same window.
 
+The same happened to a rename: a name notify for the channel our rename is on the wire to was placed in the
+plan as it arrived. Measured 2026-09-24 with the rename held at a barrier and a notify of another name
+injected for the same channel: the board label showed the injected name.
+
 The fix: `LiveSync.hasUnannouncedWrite` answers whether our numeric write to an address is issued and not
-yet announced (in flight, or acked with its value still in the queue of unannounced writes), and
-`DeviceFollow` asks it as `isSuperseded` before a direct apply. A notify it answers yes for is not put into
-the plan; it takes the scoped read a non-direct value takes, which reads the node once our write has landed.
-`overtake-foreign-notify-inside-our-write` (`t1b-overtake.spec.ts`, `quiet` and `busy`) asserts the board, the
-writes, the snapshot and the unit, and fails in both variants with the check disabled.
+yet announced (in flight, or acked with its value still in the queue of unannounced writes),
+`hasUnannouncedName` the same for a string write, and `DeviceFollow` asks them as `isSuperseded` before a
+direct apply and before placing a rename. A notify it answers yes for is not put into the plan; its node is
+re-read, and the re-read is held until no notify in its window still stands behind an unannounced write.
+Read earlier, the settle takes the replaced value — the last thing the unit said about the address after the
+write's mark — for the write's own announcement and answers the address with it, and a read of the address
+answers the pre-write value. `overtake-foreign-notify-inside-our-write` (`t1b-overtake.spec.ts`: `quiet`,
+`busy`, and `acked`, which releases the write 280 ms after the notify so the re-read falls due between the
+write's ack and its announcement) and the rename case in `t1d-name-window.spec.ts` (`held`, `released`)
+sample the board every frame and assert it, the writes, the snapshot and the unit, with the unit's
+pre-write read modelled (`staleReadsAt`). Measured 2026-09-24: with the check disabled `quiet` and `busy`
+fail; with the re-read not held, `acked` shows the replaced value until the idle sweep; with renames placed
+as they arrive, both rename variants show the replaced name.
+
+### 14. An edit a follow read takes back before it is sent (`follow.ts` / `live.ts`)
+
+A follow reconcile issued while an edit was still inside the flush's 120 ms window, or while its write was
+on the wire, read the edited address at the value the edit replaces — the unit had not been sent it, or was
+still answering the pre-write value — and the merge took that value, since the plan still held what it held
+when the read was issued. The reconcile then re-based the snapshot on what it read, so plan and snapshot
+agreed and nothing was written for the edit. Measured 2026-09-24: a CH 1 PAN move made 250 ms after a
+device-side change to CH 1's HPF frequency went back to its old value on screen and was never written, at
+`a94d0b28` and with the hold of §13 in place; the same PAN move behind a replaced fader value did the same.
+
+The fix: `DeviceFollow` defers a reconcile while `live.isWriting()` — a flush armed, running or queued —
+keeping the window, so the read starts once every edit has been sent and acked, and its settle waits out
+their announcements (§12 carries what the wait does not stop). `overtake-edit-in-the-flush-window-vs-follow-read`
+and `overtake-foreign-notify-with-an-edit-on-the-strip` (`held`, `released`, `external`, `late`) sample the
+pan knob every frame and assert it, the one pan write, the snapshot and the unit, and — in `external` and
+the ordinary case — that the unit's own HPF change reaches the snapshot with nothing written over it.
+Measured 2026-09-24: with the deferral removed, the ordinary case and `late` fail.
+
+A scene recall made on the unit during an app-side drag is read either in a gap between two of the
+drag's flushes — the few milliseconds between one flush's ack and the next move — or after the release;
+`tzb-tail`'s BULK_CHANGE cases assert what each has to hold. In the first the fader leaves the document
+and the gesture ends there; in the second the drag writes to the end and the recalled value lands on the
+key it held once it is released.
 
 ## What the harness itself got wrong
 
@@ -1643,13 +1683,16 @@ fixed or withdrawn.
 - **A plan EDIT never appears in the IPC trace** — only its write does, lagged by up to the 120 ms
   flush window and continuing after the read has resolved. So no predicate over the trace can decide
   "did an edit land inside the read's window", which became a load-bearing question once the readback
-  started merging. One case turns on it (`tzb`'s BULK_CHANGE sentinel: `-7.0`, the recalled scene,
-  running alone; `-14.0`, a value the drag passed through, under `--workers=4`). Deciding it needs the
-  edit placed on a barrier, but that case's variable is already where the recall falls inside the
-  gesture, so a barrier would replace the variable rather than add to it. Today the unconditional half
-  is asserted and the pointer's key is logged — including **whether the plan and the unit end up apart
-  on it**, which is the same interleaving read from the other side and was asserted until CI produced
-  the case where they agree (both `-7.2` at D=1500). Two CI retries had been hiding it
+  started merging. One case turns on it (`tzb`'s BULK_CHANGE sentinel, when the recall's read begins
+  inside the drag: `-7.0`, the recalled scene, running alone; `-14.0`, a value the drag passed through,
+  under `--workers=4`). Deciding it needs the edit placed on a barrier, but that case's variable is
+  already where the recall falls inside the gesture, so a barrier would replace the variable rather
+  than add to it. The pointer's key is logged there — including **whether the plan and the unit end up
+  apart on it**, which is the same interleaving read from the other side and was asserted until CI
+  produced the case where they agree (both `-7.2` at D=1500). Two CI retries had been hiding it. The
+  read begins inside the drag only in the gap between one flush's ack and the next move, since a
+  reconcile does not start while a flush is armed or running; when it begins after the release no edit
+  is made while it reads, and the pointer's key taking the recalled value is asserted
 - The string path (`vd_set_str`: channel names, Sweet Spot Data) is outside every address-set
   invariant — neither has a snapshot entry — so clause B is silent on it by construction. **Measured
   on hardware (2026-07-31)**: renaming a channel broadcasts exactly one notify,
