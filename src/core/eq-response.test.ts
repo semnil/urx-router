@@ -280,35 +280,58 @@ describe("the SSMCS strip's three-band EQ", () => {
   });
 
   /**
-   * The shelves ARE the sweep. Nominal 1002 Hz (raw 72), read on a URX44V as `112` − `111`
-   * with each point averaged over a 1 dB walk of the input level, so a point carries about
-   * 0.1 dB of its own. Four shelves across the transition, plus single readings AT the
-   * nominal frequency for the small gains, where the 4-band model's rule would put the
-   * nominal inside its plateau's −3 dB point and draw half the gain there.
+   * The shelves ARE the sweep. Read on a URX44V at 48 kHz as `112` − `111`, each point
+   * averaged over a 1 dB walk of the input level, so a point carries about 0.1 dB of its own.
+   * Nominals of 1002 Hz (raw 72) across the transition, plus single readings there for the
+   * small gains; 7962 Hz (raw 108); and the top of the HIGH range, 15887 Hz (raw 120) and
+   * 20000 Hz (raw 124). Above 1 kHz the tones are offset from the divisors of 48 kHz, since
+   * the meters read sample peaks and a tone that divides the rate under-reads after the
+   * filter's phase shift. The 8 kHz rows and the +4 dB row at 20 kHz are nominals and gains
+   * the law was not fitted to.
    *
-   * What the four separate: the S = 1 second-order shelf the 4-band model draws cannot
-   * reach 3.6 dB two octaves below a +12 dB HIGH shelf's nominal frequency at any design
-   * frequency that also reads 10.0 at the nominal one — the transition is wider than that
-   * shape has. A cut mirrors the boost, and LOW mirrors HIGH about the nominal frequency.
-   * 0.5 dB is the per-point tolerance: the model's worst point on this data is 0.3.
+   * What they separate: the S = 1 second-order shelf the 4-band model draws cannot reach
+   * 3.6 dB two octaves below a +12 dB HIGH shelf's 1 kHz nominal at any design frequency that
+   * also reads 10.0 there; a half-gain point at a fixed ratio of the nominal frequency fits
+   * 1 kHz and misses the 20 kHz rows by up to 5 dB, because the unit places it from the
+   * PREWARPED nominal; and one factor for every gain misses +18 against +12 at the same
+   * nominal. A cut mirrors the boost, and LOW mirrors HIGH about the nominal frequency.
+   * 0.3 dB is the per-point tolerance: the model's worst point on this data is 0.18.
    */
-  const SHELF_SWEEP: readonly { label: string; kind: "low" | "high"; gain: number; db: Record<number, number> }[] = [
+  const SHELF_SWEEP: readonly {
+    label: string;
+    kind: "low" | "high";
+    freq: number;
+    gain: number;
+    db: Record<number, number>;
+  }[] = [
     // prettier-ignore
-    { label: "HIGH +4", kind: "high", gain: 4, db: { 250: 0.9, 500: 2.1, 707: 2.7, 1000: 3.2, 1414: 3.6, 2000: 3.7, 4000: 3.9 } },
+    { label: "HIGH +4 at 1 kHz", kind: "high", freq: 1002.4, gain: 4, db: { 250: 0.9, 500: 2.1, 707: 2.7, 1000: 3.2, 1414: 3.6, 2000: 3.7, 4000: 3.9 } },
     // prettier-ignore
-    { label: "HIGH +12", kind: "high", gain: 12, db: { 250: 3.6, 500: 7.1, 707: 8.7, 1000: 10.0, 1414: 10.9, 2000: 11.3, 4000: 11.7 } },
+    { label: "HIGH +12 at 1 kHz", kind: "high", freq: 1002.4, gain: 12, db: { 250: 3.6, 500: 7.1, 707: 8.7, 1000: 10.0, 1414: 10.9, 2000: 11.3, 4000: 11.7 } },
     // prettier-ignore
-    { label: "HIGH -12", kind: "high", gain: -12, db: { 250: -3.7, 500: -7.2, 707: -8.8, 1000: -10.0, 1414: -10.9, 2000: -11.4, 4000: -11.9 } },
+    { label: "HIGH -12 at 1 kHz", kind: "high", freq: 1002.4, gain: -12, db: { 250: -3.7, 500: -7.2, 707: -8.8, 1000: -10.0, 1414: -10.9, 2000: -11.4, 4000: -11.9 } },
     // prettier-ignore
-    { label: "LOW +12", kind: "low", gain: 12, db: { 250: 11.8, 500: 11.4, 707: 10.9, 1000: 10.0, 1414: 8.7, 2000: 7.1, 4000: 3.5 } },
-    { label: "HIGH +5 at the nominal", kind: "high", gain: 5, db: { 1000: 4.1 } },
-    { label: "HIGH -4 at the nominal", kind: "high", gain: -4, db: { 1000: -3.3 } },
-    { label: "LOW +4 at the nominal", kind: "low", gain: 4, db: { 1000: 3.2 } },
+    { label: "LOW +12 at 1 kHz", kind: "low", freq: 1002.4, gain: 12, db: { 250: 11.8, 500: 11.4, 707: 10.9, 1000: 10.0, 1414: 8.7, 2000: 7.1, 4000: 3.5 } },
+    { label: "HIGH +5 at its 1 kHz nominal", kind: "high", freq: 1002.4, gain: 5, db: { 1000: 4.1 } },
+    { label: "HIGH -4 at its 1 kHz nominal", kind: "high", freq: 1002.4, gain: -4, db: { 1000: -3.3 } },
+    { label: "LOW +4 at its 1 kHz nominal", kind: "low", freq: 1002.4, gain: 4, db: { 1000: 3.2 } },
+    // prettier-ignore
+    { label: "HIGH +18 at 15.9 kHz", kind: "high", freq: 15887, gain: 18, db: { 2003: 1.3, 4007: 3.9, 8011: 8.6, 12013: 12.2, 16019: 15.1, 19997: 17.2 } },
+    // prettier-ignore
+    { label: "HIGH +18 at 20 kHz", kind: "high", freq: 20000, gain: 18, db: { 2003: 0.3, 4007: 1.2, 8011: 3.9, 12013: 7.1, 16019: 10.8, 19997: 15.0 } },
+    // prettier-ignore
+    { label: "HIGH +12 at 20 kHz", kind: "high", freq: 20000, gain: 12, db: { 2003: 0.1, 4007: 0.5, 8011: 1.8, 12013: 4.0, 16019: 6.8, 19997: 10.0 } },
+    // prettier-ignore
+    { label: "HIGH +4 at 20 kHz", kind: "high", freq: 20000, gain: 4, db: { 2003: 0.0, 4007: 0.1, 8011: 0.4, 12013: 1.0, 16019: 1.9, 19997: 3.2 } },
+    // prettier-ignore
+    { label: "HIGH +8 at 8 kHz", kind: "high", freq: 7962.1, gain: 8, db: { 2003: 1.8, 4007: 4.1, 8011: 6.6, 12013: 7.5, 16019: 7.8, 19997: 7.9 } },
+    // prettier-ignore
+    { label: "HIGH -8 at 8 kHz", kind: "high", freq: 7962.1, gain: -8, db: { 2003: -1.8, 4007: -4.2, 8011: -6.6, 12013: -7.5, 16019: -7.8, 19997: -8.0 } },
   ];
 
-  it.each(SHELF_SWEEP)("draws the $label shelf where the unit measured it", ({ kind, gain, db }) => {
-    const w = worstOf(only(band({ kind, freq: 1002.4, gain })), db);
-    expect(w.err, `${w.hz} Hz: drew ${w.got.toFixed(2)}, unit read ${w.want}`).toBeLessThan(0.5);
+  it.each(SHELF_SWEEP)("draws the $label shelf where the unit measured it", ({ kind, freq, gain, db }) => {
+    const w = worstOf(only(band({ kind, freq, gain })), db);
+    expect(w.err, `${w.hz} Hz: drew ${w.got.toFixed(2)}, unit read ${w.want}`).toBeLessThan(0.3);
   });
 
   // The shelves have no Q parameter on the device, so a value parked on one by a
