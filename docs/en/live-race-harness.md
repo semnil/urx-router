@@ -246,6 +246,7 @@ single source of truth. This table states what each case measures.
 | `overtake-converge-latch-starvation` | console | A liveness defect: whether sustained editing stops reaching the device entirely |
 | `overtake-notify-echo-vs-genuine-during-flush` | console | Phase and address held fixed while only the message's truth varies |
 | `overtake-direct-notify-ahead-of-the-send-loop` | console | A device-side change on an address the frozen command list has not reached yet |
+| `overtake-foreign-notify-inside-our-write` | console | A device-side value for the address our write is on the wire to, before that write's announcement; with and without a second edit in the window |
 | `overtake-reconcile-during-reconcile` | mixed | The reconcile queue's own re-entrancy, with no operator involved |
 | `overtake-direct-scoped-coalesce-boundary` | console | Whether a reconcile resolving inside the coalesce upgrades an unrelated direct reflect |
 | `overtake-drag-flush-backpressure` | console | A realistic gesture on a realistic link, and the convergence latency an operator perceives |
@@ -1395,6 +1396,26 @@ The fix is in `follow.ts`: a reconcile is deferred while `live.isConverging()`, 
 rather than spent, so the nodes the burst named are still re-read on the settle timer's own re-arm.
 Deliberately the converge and not the whole flush — an ordinary flush is a handful of writes and no read,
 and a reconcile beside one is the two-chain contention `t8-stress` asserts as its own precondition.
+
+### 13. A device value that our own write replaces (`live.ts` / `follow.ts`)
+
+A device-side notify for the address our write is on the wire to, arriving before that write's own
+announcement, was applied to the plan as a direct follow and patched into the snapshot. Our write's ack then
+set the snapshot to our value and its announcement was taken as an echo, so the plan kept the device's
+earlier value: the board showed a value the unit no longer held until the idle sweep re-read the device, and
+a flush for any other edit inside that window diffed the plan against the snapshot and sent the earlier value
+back to the unit over the operator's own. Measured 2026-09-24 with a probe that held our CH 1 fader write
+(+0.4) at a barrier and injected a notify of +0.8 for the same address: in Chromium and in WebKit the board
+read +0.8 300 ms after the release, the idle sweep ~0.9 s later brought it back to +0.4, and a CH 2 edit in
+that window sent +0.8 to CH 1 and left the unit there (4 of 4 runs). A 1-knob EQ level write, which ends in a
+refetch, was held at our value in the same window.
+
+The fix: `LiveSync.hasUnannouncedWrite` answers whether our numeric write to an address is issued and not
+yet announced (in flight, or acked with its value still in the queue of unannounced writes), and
+`DeviceFollow` asks it as `isSuperseded` before a direct apply. A notify it answers yes for is not put into
+the plan; it takes the scoped read a non-direct value takes, which reads the node once our write has landed.
+`overtake-foreign-notify-inside-our-write` (`t1b-overtake.spec.ts`, `quiet` and `busy`) asserts the board, the
+writes, the snapshot and the unit, and fails in both variants with the check disabled.
 
 ## What the harness itself got wrong
 

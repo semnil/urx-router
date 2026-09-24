@@ -235,6 +235,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | `overtake-converge-latch-starvation` | console | 送信が枯れる方向の欠陥。連続編集中にデバイスへ何も届かなくなるか |
 | `overtake-notify-echo-vs-genuine-during-flush` | console | 位相とアドレスを固定し、真の echo かどうかだけを変える |
 | `overtake-direct-notify-ahead-of-the-send-loop` | console | 凍結されたコマンド列がまだ到達していないアドレスへのデバイス側変化 |
+| `overtake-foreign-notify-inside-our-write` | console | 自分の書込が送信中のアドレスに、その告知より前に届くデバイス側の値。窓の中の 2 つ目の編集の有無で分ける |
 | `overtake-reconcile-during-reconcile` | 混合 | 照合自体の再入。操作者を入れずに測る |
 | `overtake-direct-scoped-coalesce-boundary` | console | 反映合流窓の縁で、直接反映が全体反映へ格上げされるか |
 | `overtake-drag-flush-backpressure` | console | 現実的なドラッグと現実的な回線。操作者が体感する収束時間 |
@@ -1305,6 +1306,24 @@ device-follow の reconcile と converge のラウンドが、同じリンクを
 名指ししたノードは settle タイマー自身の再アームで読み直される。flush 全体ではなく converge だけにしたのは
 意図的で、通常の flush は数回の書込のみで読みを持たず、その隣の reconcile は `t8-stress` が自らの前提として
 主張する 2 本のチェーンの競合そのものだからである。
+
+### 13. 自分の書込が上書きする実機側の値 (`live.ts` / `follow.ts`)
+
+自分の書込が送信中のアドレスに、その書込の告知より前に届いた実機側の notify は、直接追従としてプランへ入り、
+スナップショットにも書かれていた。続いて書込の ack がスナップショットを自分の値にし、その告知は echo として
+消費されるので、プランには実機の手前の値が残った。盤面は全体掃引が実機を読み直すまで実機がもう持っていない
+値を出し、その窓の中で別の編集があると、そのフラッシュがプランとスナップショットの差を拾って手前の値を
+操作者の値の上から実機へ書き戻した。2026-09-24 に、CH 1 フェーダーの自分の書込 (+0.4) をバリアで止めて
+同じアドレスへ +0.8 の notify を注入する probe で実測: Chromium と WebKit の両方で、解放の 300 ms 後の盤面は
++0.8、約 0.9 秒後の全体掃引で +0.4 に戻り、その窓の中の CH 2 の編集は CH 1 へ +0.8 を送って実機をその値に
+した (4 走行中 4)。refetch で終わる 1-knob EQ レベルの書込は、同じ窓で自分の値を保っていた。
+
+修正: `LiveSync.hasUnannouncedWrite` が、あるアドレスへの自分の数値書込が送信済みでまだ告知されていないか
+(送信中、または ack 済みで未告知の書込の待ち行列に値が残っている) を答え、`DeviceFollow` が直接反映の手前でそれを
+`isSuperseded` として問う。真と答えた notify はプランへ入れず、直接反映でない値と同じノード単位の読み直しへ
+回す。その読みは自分の書込が着地した後のノードを読む。`t1b-overtake.spec.ts` の
+`overtake-foreign-notify-inside-our-write` (`quiet` と `busy`) が盤面・書込・スナップショット・実機を検証し、
+この判定を無効にすると両変種とも落ちる。
 
 ## ハーネス側で学んだこと
 

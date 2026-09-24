@@ -1989,10 +1989,15 @@ path has always taken and the one answer that cannot enshrine a divergence.
 intercept filters — the answer to our own write IS an echo, so a settle fed after those would never see the one
 message it waits for. A notify counts as OUR write's announcement only if it arrived after that address's own
 `vdSet` was issued, so the mark is taken **per address** rather than once per flush: the loop awaits per command, so
-a device-side notify for the fader can easily land before the fader was reached. Getting that attribution wrong is
-self-correcting in either direction — the real write's answer arrives later and overwrites it, and a notify that
-predates the write leaves the address to be read off the unit — so the mark buys one fewer spurious reconcile, not
-the correctness of the merge.
+a device-side notify for the fader can easily land before the fader was reached. A notify that lands after our
+write was issued and before that write's own announcement reports a value the write replaces, since the unit
+announces changes in the order it makes them: the follow layer does not put it into the plan
+(`LiveSync.hasUnannouncedWrite`, which `DeviceFollow` asks as `isSuperseded`) and re-reads that node instead, and
+a notify that predates the write leaves the address to be read off the unit. What keeps the merge right when the
+attribution is wrong is that re-read; the mark buys one fewer spurious reconcile. Measured with the race harness on
+2026-09-24 (`t1b-overtake.spec.ts`, "a device value our in-flight write replaces is neither shown nor written
+back", both variants): the board keeps the operator's value throughout, and no flush sends the replaced value
+back.
 
 Two ways the wait ends, and which one an address gets is decided by what the snapshot held:
 
