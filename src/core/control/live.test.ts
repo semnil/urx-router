@@ -876,12 +876,6 @@ describe("LiveSync direct-follow journal across a read", () => {
   });
 });
 
-// The unit announces a numeric write 58-151 ms after acking it, against a 120 ms flush
-// window — so the second write of a drag can move the snapshot before the first write's
-// announcement arrives. The snapshot holds one value per address and cannot represent
-// the write it has moved past, so that announcement used to read as a device-side
-// change: the plan was written back to a value the operator had already replaced, and
-// the idle reconcile that followed wiped every undo entry.
 describe("LiveSync unannounced write", () => {
   it("answers true from the moment a write is issued until its announcement is taken", async () => {
     const plan = basePlan();
@@ -935,6 +929,12 @@ describe("LiveSync unannounced write", () => {
   });
 });
 
+// The unit announces a numeric write 58-151 ms after acking it, against a 120 ms flush
+// window — so the second write of a drag can move the snapshot before the first write's
+// announcement arrives. The snapshot holds one value per address and cannot represent
+// the write it has moved past, so that announcement used to read as a device-side
+// change: the plan was written back to a value the operator had already replaced, and
+// the idle reconcile that followed wiped every undo entry.
 describe("LiveSync late echo of a write the snapshot has moved past", () => {
   /** The ch1 STEREO send fader command at a given dB — its address and raw value. */
   function ch1FaderCmd(db: number) {
