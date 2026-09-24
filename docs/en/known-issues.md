@@ -15,12 +15,11 @@ A Pre/Post changed **on the unit while live sync is connected** does reach the
 app: the unit announces the change, and the app subscribes to these addresses
 even though it never writes them. The control follows within about a second.
 
-This was not always true, and the reason it was not is worth stating, because
-the same shape can recur: the notify registration used to be exactly the set of
-addresses the app emits, so an address the app only ever reads was in no
-registration and the unit's announcement reached nobody. The value then caught up
-only at the next full read. Nothing was wrong with the device or the protocol —
-the registration was the only thing missing.
+The subscription is what carries it, and the shape can recur elsewhere: a notify
+registration made of exactly the addresses the app emits leaves an address the app
+only ever reads in no registration, so the unit's announcement reaches nobody and
+the value catches up only at the next full read. Nothing is wrong with the device
+or the protocol in that case — the registration is the only thing missing.
 
 The Pre/Post of **CH → MIX** and **FX-channel → MIX** sends can be written to the
 device as usual.
@@ -93,10 +92,10 @@ Live device control was developed and verified against a real **URX44V**. The
 **URX44** reuses the URX44V control map verbatim (the only hardware difference
 is the HDMI input, which is not routed by default), so it is expected to match
 but has not been verified on hardware. On the **URX22**, the CONSOLE live-meter
-routing has now been confirmed against real hardware by a URX22 owner (the stereo
+routing has been confirmed against real hardware by a URX22 owner (the stereo
 channels' meters are indexed by stereo-pair position, which shifts on the URX22
 because it has only two mono channels, so its first stereo channel is CH3/4). Its
-control (write) map and factory-initial plan, however, remain a conjectured mirror
+control (write) map and factory-initial plan, however, are a conjectured mirror
 of the URX44V and are unverified, so those values may not match the device exactly.
 Offline planning, the plan JSON and image export are unaffected; this concerns
 only live sync on those two models.
@@ -256,7 +255,7 @@ sends for a control it has removed has not been measured.
 The block diagram shows two meters on the STREAMING channel — one before the
 DELAY and one after it. Only the **post-DELAY** meter is exposed by the device
 broker; the **pre-DELAY** meter has no address at all (verified on a real
-URX44V — the address once taken for it turned out to be the CUE bus's meter).
+URX44V).
 The CONSOLE STREAMING strip therefore shows the post-DELAY (output) meter only,
 with no meter-point selector. The pre/post readings do differ in
 timing once a delay is set, but the device offers no pre-DELAY reading to show —
@@ -348,8 +347,8 @@ A **scene** on the unit stores the **mixing** setup — input channel processing
 (HA, HPF, EQ, gate, comp), sends, fader levels and pan, MIX / FX bus settings,
 insert FX, mute / on and channel names — and a recall restores it exactly.
 
-The URX keeps the following as **device-wide settings, outside any scene**, so
-saving and recalling a scene on the unit leaves them as they are:
+In **Standard Mode**, the URX keeps the following as **device-wide settings, outside any
+scene**, so saving and recalling a scene on the unit leaves them as they are:
 
 - **MONITOR 1 / 2** source, level and mono
 - **PHONES** level
@@ -359,9 +358,11 @@ saving and recalling a scene on the unit leaves them as they are:
 
 The **Monitor source** staying put after a recall is the most visible example.
 Yamaha's user guide states the same exclusions at a screen-category level: the
-SETUP, MONITOR, microSD and STREAMING settings are "not saved" to a scene.
+SETUP, MONITOR, microSD and STREAMING settings are "not saved" to a scene. The same passage
+adds that **in Simple Mode** the Output Patch and Monitor settings are saved to a scene as
+necessary. URX Router's scene-scoped save and load use the Standard Mode boundary above.
 
-> Confirmed by comparing the unit's scene and live state.
+> Confirmed in Standard Mode by comparing the unit's scene and live state.
 
 ## Device Center sometimes needs a force quit after a long session
 

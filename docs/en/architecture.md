@@ -82,8 +82,8 @@ carries a one-line map of the same directories and points here.
   the device-read merge: `entryInContext` narrows a contested nested group (comp / gate / eqBands / …) to
   its LEAVES — however deep they sit — so an app edit and a device edit to *different* fields of one group
   both survive. Depth is not a detail: `fxEffect.params` is a record inside a record, and a walk that stopped
-  at the first one made the whole map a single contested key, so an edit to a reverb time and the device's own
-  room size were the same key and the app won both. The SSMCS bank's sections and eqBands, whose bands are
+  at the first one would make the whole map a single contested key, so an edit to a reverb time and the device's own
+  room size would be the same key and the app would win both. The SSMCS bank's sections and eqBands, whose bands are
   objects inside an array, have the same shape. And
   `PlanWriteWitness` records **which keys the app wrote while a read was in flight**, so `readIntoPlan`
   drops those by authorship rather than by value — an edit that went A→B→A is indistinguishable from an
@@ -95,9 +95,9 @@ carries a one-line map of the same directories and points here.
   the "unavailable" params at 192 kHz (measured), so the write set is never gated by rate — see "Sample rate
   and Follow USB". It also owns the insert-FX menu (`insertFxMenu` returns every option with its lock
   reason, `"rate" | "link" | "slot" | null`, so the inspector and the console are both defined over the one
-  table. What that buys was measured when the third reason arrived: the inspector took it with no edit at all,
-  since it renders a locked option as disabled whatever the reason, while the console names each reason in a
-  row and so needed a branch and a message of its own. A surface that only has to know THAT an entry is locked
+  table. The inspector renders a locked option as disabled whatever the reason, so a new reason reaches it with
+  no edit at all, while the console names each reason in a row and so needs a branch and a message of its own
+  for each. A surface that only has to know THAT an entry is locked
   follows for free; one that says WHY does not. A caller rendering many menus at
   once passes in one `insertFxCensus` sweep instead of paying it per node). And Ducker bypass detection
   (`channelDuckerOn` = PRE-send notes, `duckerBypassWarnings` = pre-fader tap warnings for USB direct outs;
@@ -211,9 +211,9 @@ carries a one-line map of the same directories and points here.
     one message reaches two
     gangs at once and a member on the other one must not decide for this one. In BAL that is every
     control on the pair, since the mirror replaces the partner's node params and every send, while PAN carries
-    across the insert effect alone — written in turn they were two, and a mirror
+    across the insert effect alone — written in turn they would be two, and a mirror
     settles on whichever went last, so a pair that starts at different values (a plan can hold one, and it
-    loads without complaint) ended wherever the learn order put it. A member that decided to do NOTHING keeps its group's seat, since a
+    loads without complaint) would end wherever the learn order put it. A member that decided to do NOTHING keeps its group's seat, since a
     gang may mix edge and state deliberately and a release one member ignores is not the other's to
     act on. What the order still decides is PICKUP,
     and that is the head's own design rather than an oversight: engagement is the head's to own, so a pickup
@@ -279,7 +279,7 @@ carries a one-line map of the same directories and points here.
       source, and `follow.ts` arms its existing idle full reconcile (class (b) must not, or a legitimate
       silence orders an ~800-read sweep). A flush with NEITHER epilogue — the ordinary edit, which issues no read
       at all — gets the same report through a **watch without a wait**: there is nothing to hold open, and
-      without it the everyday fader, mute or pan was the one write nothing was checking. **An address's
+      without it the everyday fader, mute or pan would be the one write nothing checks. **An address's
       outstanding obligations merge FORWARD**: the unit announces the value it ended up holding and says
       nothing about what a write passed through, so a run of writes to one address — a drag, which flushes
       more often than an announcement comes back — is answered by ONE notify carrying the last of them. The
@@ -311,9 +311,9 @@ carries a one-line map of the same directories and points here.
       not readable when it is acked" / `params.ts` catalog of confirmed parameters
     - `preferred-numbers.ts` the ISO 3 (Renard) grade tables R40 and R20, and the lookup that reads one.
       The unit's frequency tables step in these rather than in octave divisions, and the two catalogues
-      below both index them — one seat, because each carried its own copy until they disagreed in float
+      below both index them — one seat, because two copies disagree in float
       (a 1.0-based mantissa multiplies up to 112.00000000000001 where the grade is 112, and the crossover
-      screen then printed "112.0 Hz" for a frequency the unit shows as "112")
+      screen would then print "112.0 Hz" for a frequency the unit shows as "112")
     - `fx-effect.ts` catalog of FX-channel effects (Rev-X/Rev.R3/Mono Delay/Ping Pong) — slot addressing of
       the type selector + parameter arrays, and raw↔display encoding. The two filter tables are R20 (REV-X)
       and R40 (Rev.R3 / delay) at their own offsets, and each family is PRINTED at its own precision: FX1
@@ -348,7 +348,7 @@ carries a one-line map of the same directories and points here.
       app log directory a line a minute (path from the bundle identifier, so `tauri dev` and the installed
       app share ONE file — hence the `build` / `version` stamp on every line; rotated at 2 MiB keeping one
       generation, so the record is bounded at ~4 MiB and nothing in the app deletes it), which is the
-      **point** — the symptom it was built for (Device Center needing a force quit) appears after the app is
+      **point** — the symptom it exists for (Device Center needing a force quit) appears after the app is
       gone, so a reading that lives only on screen is missing exactly when it is wanted. Latency, queue
       depth and feed rates are deliberately NOT in it: they measure how the link feels from this side, and a
       broker answers promptly right up to the moment its own teardown deadlocks. The share of notifies the
@@ -363,7 +363,7 @@ carries a one-line map of the same directories and points here.
       round SENDS is `roundCommands`, not the diff: a `VdCommand.group` is a **reset chain**, where writing
       one member makes the device discard the ones emitted after it, so a round re-sends every member of a
       group any differing command belongs to. Emit order alone covers a whole send and not a partial
-      re-send, which is how the EQ 1-knob's ON → TYPE → LEVEL chain used to consume one round per link and
+      re-send: without the group, the EQ 1-knob's ON → TYPE → LEVEL chain would consume one round per link and
       run out — see "Reset chains, and what a converge round sends"; `translate.test.ts` pins which
       `sideEffect` heads carry a group and which are knowingly left without one) +
       `comparePlan`/`compareNames`/`formatCompareReport` (the read-only "Compare with device" —
@@ -388,7 +388,7 @@ carries a one-line map of the same directories and points here.
       (`noteDirect`, `capture`) — so both bump a `snapshotEpoch` and a flush that sees it move re-takes the
       translate for its remaining VALUES only: the order is the flush's own and binds meaning, and an
       address that grew mid-flush is a pending app edit whose `markChanged` already scheduled the trailing
-      flush. Without it the loop sent the value the plan had stopped holding — the device's own previous one
+      flush. Without it the loop would send the value the plan has stopped holding — the device's own previous one
       — back over a knob still being turned. Names are held in a SECOND snapshot, `nameSnapshot`, with an echo
       test and a note of its own (`isEchoName` / `noteDirectName`): the numeric snapshot has no entry for a
       name, so asking it would read the app's own rename as a device-side change and bounce it back)
@@ -400,7 +400,7 @@ carries a one-line map of the same directories and points here.
       answers for both paths** — the host dispatches it on `valueStr`, because the numeric and name snapshots
       are separate maps and neither can answer for the other. One gate rather than two, and the unit makes
       that matter: it announces every name write it accepts, so the operator's own rename in the app comes
-      back as an echo, and counting that echo as a followed change armed a full reconcile — whose reflect
+      back as an echo, and counting that echo as a followed change would arm a full reconcile — whose reflect
       calls `planHistory.reset()` — after every rename. Past the gate, `applyName` answers with the owning
       node, which keeps a rename a direct follow (one repaint, no readback), or undefined for a string notify
       on an address that is not a name, which falls through to the unknown-address path)
@@ -500,7 +500,7 @@ carries a one-line map of the same directories and points here.
   plan. Both directions are Tauri Channels through one Rust relay (`src-tauri/src/midiwin.rs`), so the
   second window needs no capability beyond core. It raises itself when learn turns ON and deliberately NOT
   when a binding lands — measured on macOS: a click on a window that is not active does not reach the
-  webview (`accept_first_mouse` defaults to false), so raising per binding made every following assignment
+  webview (`accept_first_mouse` defaults to false), so raising per binding would make every following assignment
   two clicks; gang members render contiguously below their head with a Linked tag, and the Behavior column's
   vocabularies are printed as a key under the table — for the vocabularies the list actually uses, since a
   native dropdown cannot annotate its own options and a hover-revealed card is an affordance nobody finds /
@@ -548,7 +548,7 @@ carries a one-line map of the same directories and points here.
   closing one screen and opening another. It carries no EFFECT TYPE row deliberately — a selector write refills
   the bound engine array with that type's defaults and is not reversible (`core/control/insert-fx-effect.ts`) —
   and its fields name an engine SLOT rather than a parameter, since those values live in `insertFxParams` keyed
-  by family and slot. It shows every family the app edits at all — nothing is edited in the inspector any more,
+  by family and slot. It shows every family the app edits at all — nothing is edited in the inspector,
   so a value cannot be authored on two surfaces — and a family whose state the flat catalogue does not carry
   supplies its own rows beside the catalogue's: Pitch Fix its Key, Scale and note mask, and the multi-band
   compressor the 1-knob pair the app reads and never writes. `fx-effect-screen.ts` is the second of that kind and stands for the three parameter
@@ -582,7 +582,7 @@ carries a one-line map of the same directories and points here.
   stays readable). See `docs/{en,ja}/channel-tuning.md`) / `device-setup.ts` the Device setup modal (Device
   menu, desktop only: reads the unit's SETUP > GENERAL settings on open, batches edits, applies the diff;
   rows for a page the model lacks render locked with a model tag) / `prefs.ts` Preferences modal (toolbar
-  gear, every build: language + theme (moved off the toolbar; they keep their own stores `urx-lang` /
+  gear, every build: language + theme (kept off the toolbar; they keep their own stores `urx-lang` /
   `urx-theme`, read before settings load) + device read/write scope + plan-file save scope + update check +
   warning visibility + wheel step + fine style + the idle-sleep hold (taken only while Live sync is up, and
   stored only once the OS agreed) + export scale/background + recent plans; rows needing the desktop shell
@@ -591,8 +591,8 @@ carries a one-line map of the same directories and points here.
   `No answer`) at the right end of the status bar and the full ledger on click, live while a session is up
   and **only under `--experimental`**. The bar is a subset held to it by
   `LINK_BAR_KEYS satisfies readonly LinkLedgerKey[]`, printing the panel's labels and the one `ledgerValue`
-  — it briefly had a shorter vocabulary of its own and nothing said its `cmd` and the panel's `Sent` were
-  one number — the counters and the log run in every desktop build, since a record that only exists when the
+  — a shorter vocabulary of its own would leave nothing saying that a `cmd` on the bar and the panel's `Sent`
+  are one number — the counters and the log run in every desktop build, since a record that only exists when the
   operator remembered a flag records nothing. `#statusbar` is therefore a message span plus this readout,
   and `setStatus` writes the span (a `statusbar.textContent =` would take the readout down on the next
   message). Introduces no colour: the only cell that may change is the no-answer one, since a broker that
@@ -644,9 +644,8 @@ carries a one-line map of the same directories and points here.
   app's quit all leave the same way, and the drain stops at the socket's first read timeout rather than
   spending the Quit on a quiet broker; the app is `build`+`run` rather than `run` so a `RunEvent::Exit`
   handler can call `vd::shutdown_blocking`, which WAITS, bounded, for those frames to reach the wire.
-  Quitting used to abandon the session instead: nothing tore it down on exit, only on a page load. Whether
-  an abandoned session is what leaves Device Center needing a force quit is **not established** — this
-  removes it from the candidates, which is a different claim; see `docs/{en,ja}/known-issues.md`) + the MIDI
+  Whether an abandoned session is what leaves Device Center needing a force quit is **not established** —
+  tearing it down on quit removes it from the candidates, which is a different claim; see `docs/{en,ja}/known-issues.md`) + the MIDI
   control window and the relay between it and the main window (`midiwin.rs`: `open_midi_window` — async on
   purpose, since building a webview from a blocking command deadlocks on Windows — `close_midi_window`,
   `focus_midi_window`, `pin_midi_window`, `midi_window_open`, and four Channel relay commands; the main window's
@@ -911,12 +910,10 @@ the inspector, and the open modal itself.
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
 > `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **Those five apply to prose as much
 > as to labels** — a sentence, hint or tooltip that names one writes it in English, so the same term
-> cannot read `Ducker` in a heading and in kana in the line under it. It had split exactly that way:
-> the node kinds, the legend and the screen titles kept the English while **nine** strings in `ja.ts`
-> transliterated it — seven of them sentences, plus two that are labels rather than prose (the console
-> PRE tooltip and the Preferences warning row), which is why "the labels kept it" is true only of the
-> ones the type system pins. Nothing could catch any of it, because the `dev()` / `fixed()` / `tr()`
-> marks force a string's *identity* and say nothing about which words a translated sentence may use.
+> cannot read `Ducker` in a heading and in kana in the line under it. The type system pins the labels
+> alone: the `dev()` / `fixed()` / `tr()` marks force a string's *identity* and say nothing about which
+> words a translated sentence may use, so this rule is the only thing that keeps a sentence and the
+> label above it in one spelling.
 > The rule reaches the Japanese documents for the same reason: they quote these labels.
 > **A row that reproduces a control
 > on one of the unit's own screens keeps that screen's English label, in every app language** — the unit
@@ -937,15 +934,14 @@ the inspector, and the open modal itself.
 > is why the app supplies its own (`Modulation`) and marks it `fixed()` rather than `dev()`: there is
 > no device string for a `dev()` to reproduce. Every insert-FX row the unit does name is
 > initial-capital, not shouted, which is what the guitar panel's card labels follow — and what the
-> shouted ones above were violating.
+> guide's shouted spellings above do not.
 >
 > **A face bar segment the app named itself is `fixed()`, not `dev()`** — the multi-band compressor's
 > `Main` and the SSMCS bank's `Main` / `Comp` / `EQ`. The rest of what those two bars print is not the
 > app's: `Low` / `Mid` / `High` are the unit's band names, which the same catalogue entry also spells
 > on a row (`Low Gain`), and `Side Chain` is a row of the unit's own SSMCS screen — so `Low`, `Mid`,
-> `High` and `Side Chain` stay `dev()`. The app's own three were declared `dev()` until 2026-08-30,
-> which is what the marker cannot catch on its own: it stops a translation at compile time and says
-> nothing about whether the claim it makes is true.
+> `High` and `Side Chain` stay `dev()`. The marker cannot tell the two kinds apart on its own: it stops
+> a translation at compile time and says nothing about whether the claim it makes is true.
 >
 > So the whole of those seven screens is untranslated: the GATE / COMP / DUCKER rows including
 > `Range` and `Ratio`, the EQ band, filter type, frequency and gain, the input HPF frequency, the level
@@ -1024,11 +1020,11 @@ to one of `select` / `send` / `out`, and both layers are keyed by that group rat
 `source` and `key` are `select`, `send` and `sendSwitch` are `send`, `patch` and `record` are `out`.
 The three merged distinctions are already carried by geometry — a `key` is a `source` that lands on a
 ducker, a `sendSwitch` is a `send` with an on/off, a `record` is an output selection that lands on a
-microSD track — so a hue spent on each bought nothing and cost separability: measured under
-deuteranopia, the old `record` and `source` were 1.6 apart in OKLab (x100), which is to say the same
-color. `WIRE_GROUP` is `Record<ConnectionKind, WireGroup>`, so a new kind does not compile until it is
-placed; the read site takes no fallback, because the previous `?? "#888"` drew a missed kind in grey
-with no halo and said nothing.
+microSD track — so a hue spent on each buys nothing and costs separability: measured under
+deuteranopia on a palette with one hue per kind, `record` and `source` were 1.6 apart in OKLab (x100), which is to
+say the same color. `WIRE_GROUP` is `Record<ConnectionKind, WireGroup>`, so a new kind does not compile until it is
+placed; the read site takes no fallback, because a fallback such as `?? "#888"` would draw a missed kind in grey
+with no halo and say nothing.
 
 > As with model/rule consistency (device-model.md ↔ models/), **keep the theme palette in sync
 > between the CSS variables in style.css and `PALETTES` in graph.ts** — wire (`--w-*` ↔ `PALETTES.wire`),
@@ -1049,9 +1045,9 @@ with no halo and said nothing.
 > funnel for surfaces a CSS variable cannot reach on its own: the SVG graph (built from a palette) and
 > an open tuning screen's plot (a canvas that reads its theme tokens once per render — and auto mode
 > can flip underneath it with no press at all). **The CONSOLE is deliberately not in that funnel, and
-> that is now an assumption rather than a free ride.** Its scribble ink stopped being a stylesheet
-> value when `inkOn()` began picking black or white from the ground it lands on: for a strip wearing a
-> rail colour, that ground is a theme token, so the inline ink a switch leaves behind was computed
+> that rests on an assumption.** Its scribble ink is not a stylesheet value: `inkOn()` picks black or
+> white from the ground it lands on, and for a strip wearing a rail colour that ground is a theme token,
+> so the inline ink a switch leaves behind was computed
 > against the ground that just left. Measured 2026-08-07: harmless, because **all five rails resolve to
 > white in both themes**, so the stale answer is the right one. Move a rail to a ground where the two
 > themes disagree and it becomes a strip inked for the theme that left; the fix is one
@@ -1075,16 +1071,16 @@ states the value instead, and cargo applies it to both (see "Build and distribut
 
 A Windows contrast theme turns on the CSS `forced-colors` mode, which replaces every background and
 every text colour with a handful of OS system colours, deletes `box-shadow` outright, and paints an
-opaque backplate behind text. Anything this UI says with colour alone stops saying it: measured before
-the rule block existed, the default board's 51 lit chips and 73 unlit ones all computed to the same
+opaque backplate behind text. Anything this UI says with colour alone stops saying it: measured without
+the rule block, the default board's 51 lit chips and 73 unlit ones all compute to the same
 colour — one rectangle each, with no way to tell an engaged control from an idle one.
 
 Two mechanisms survive, and the one `@media (forced-colors: active)` block in `src/style.css` is built
 from them. Nothing in it touches a declaration used outside the query, so the ordinary themes stay
 pixel-identical.
 
-- **An outline.** An engaged control takes `3px double CanvasText`, the one weight the system palette
-  cannot flatten into its neighbours. Anything whose job is to mark a position or a path — the knob
+- **An outline.** An engaged control takes `3px double CanvasText`, a weight measured to keep its three
+  pixel rows distinct under the system palette (the other widths of a double border were not measured). Anything whose job is to mark a position or a path — the knob
   pointer, the fader and mini-fader cap bars, the 0-dB lines, the slot each cap rides in, and the
   parameter sliders' track — trades its fill for an outline of the same geometry.
 - **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
@@ -1100,18 +1096,17 @@ ride over the way an opaque handle does in the ordinary themes, which is the lay
 written against. An *author* colour cannot be used this way; the mode replaces it. An outlined track
 without this is worse than no rule at all: the line reads straight through the handle.
 
-Two traps are worth stating, because each has already produced a defect here.
+Two traps are worth stating.
 
 - **A part repeats another part's grammar under its own selectors**, so a rule naming one does not
-  reach the other. `.con-vfad` shares the groove / cap / 0-dB grammar with `.con-fader` by convention;
-  the first version of the block named only `.con-fader`, and the mini-fader silently lost its 0-dB
-  line and its cap bar. The same trap fired twice more, and both times on a surface the block had never
-  named at all: the tuning screens' meter lane is the CONSOLE meter's grammar, and the parameter
-  slider's track is the fader groove's — both were left out, and both were invisible until a real
-  contrast theme was on screen.
+  reach the other. `.con-vfad` shares the groove / cap / 0-dB grammar with `.con-fader` by convention,
+  so a block naming only `.con-fader` leaves the mini-fader without its 0-dB line and its cap bar. The
+  same holds on surfaces far from the fader: the tuning screens' meter lane is the CONSOLE meter's
+  grammar, and the parameter slider's track is the fader groove's — and a part the block leaves out is
+  invisible until a real contrast theme is on screen.
 - **A state's own rule can out-specify the block.** A media query adds no specificity, so
-  `.con-scol.off .con-vfad .cap::after` (four classes) beats `.con-vfad .cap::after` (two) and kept a
-  filled bar in a send column that had been switched off. Every state that repaints one of these parts
+  `.con-scol.off .con-vfad .cap::after` (four classes) beats `.con-vfad .cap::after` (two), and without a
+  rule of its own in the block a send column that is switched off keeps a filled bar. Every state that repaints one of these parts
   has to be named in the block.
 
 `e2e/forced-colors.spec.ts` pins all of the above under Chromium's emulation of the mode and asserts no
@@ -1120,8 +1115,7 @@ was measured against a real Windows contrast theme in WebView2 (2026-08-07) and 
 values are unguessable from their names, the opaque text backplate makes the usual
 `Highlight` / `HighlightText` idiom unreadable, `3px double` resolves as three distinct pixel rows, and
 the meter island keeps its three zones. The tuning-screen lane and the slider track were measured the
-same way (2026-08-08, hcblack and hcwhite) — both were found broken there and are fixed and re-measured
-under both themes.
+same way (2026-08-08, hcblack and hcwhite) and hold under both themes.
 
 **A locked control is a question this block does not answer**, because `opacity` is one of the few things
 forced colors leaves alone, so the read-only dims written elsewhere are supposed to survive it. Measured
@@ -1209,13 +1203,12 @@ press on the **bare track jumps** the cap centre to the pointer, which is what a
 does when clicked away from its thumb (the mini-fader has no jump at all — one pixel there is most of a
 detent; see [console-sends.md](console-sends.md)). Either way the rest of the gesture is **relative** and
 measured against the cap's own travel — the fader element's full height, since `--pos` is a percentage of
-it under a `-50%` translate. Both halves used to be one absolute mapping over the *groove's* inset span
-(`height - 12`), which made the press position agree with the cap at mid-travel only and put a plain press
+it under a `-50%` translate. One absolute mapping over the *groove's* inset span (`height - 12`) for both
+halves would make the press position agree with the cap at mid-travel only and put a plain press
 on the cap's edge up to 1.7 detents out at the default window size (3.6 at the minimum one) — reaching the
-unit, live, before the operator had moved. The channel tuning screens' threshold cap already had the split
+unit, live, before the operator had moved. The channel tuning screens' threshold cap has the same split
 (`dyn-screen.ts`: the cap's own listener grabs it, the slot's jumps and defers to the cap with
-`e.target === cap`), so the two surfaces now share one press grammar — the CONSOLE fader was the one that
-did not have it.
+`e.target === cap`), so the two surfaces share one press grammar.
 
 The ordinary tier pins this in Playwright's Chromium (`e2e/console.spec.ts`) and **nothing pins it in
 WebKit** — every `@webkit` case in the race tier is about a strip rebuilt under a live pointer or about the
@@ -1327,7 +1320,7 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   colour fall back to the rail colour.
 - **Layout / scroll** — `#console-host` uses `min-width:0; overflow:hidden` to stay within `#stage`, keeping
   horizontal scroll inside the strip grid (`.con-strips`, its bar above the status bar). It does not scroll
-  vertically except on very short windows (then within the strip grid). The master (STEREO) is no longer
+  vertically except on very short windows (then within the strip grid). The master (STEREO) is not
   pinned to the right; it scrolls with the rest. **The head area (name / chips / knobs) is locked to the
   tallest strip** across every channel (measured by laying the strips out off-screen in `mainHeadHeight`,
   cached by model + hidden set); the fixed-height SENDS rack sits below it, and the fader / level-meter zone
@@ -1364,7 +1357,7 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   while the feed is running: on a QUIET link the drain ends at the socket's own read timeout instead, and the
   worker is not looking at the command channel until it does — measured on a URX44V, the first live write after
   a quiet gap waited 152 ms against a 200 ms timeout, which is why that timeout is 50 ms (`READ_TIMEOUT`), not
-  the 30 ms budget. Changing the budget would not have moved it: on a quiet link the loop leaves at the drained
+  the 30 ms budget. Changing the budget does not move it: on a quiet link the loop leaves at the drained
   branch and never reaches the budget check.
   A subscribed notify that lands while a command awaits its response (the `do_set` / `do_get_value` loops) is
   absorbed into the same pending batch instead of discarded, and the batch flushes on the pump cadence
@@ -1380,7 +1373,7 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   register every writable address and forward each `notify` (batched per drain, like the meter path). A notify carries the changed address **and its
   new value**, so detection is free and exact. The broker sends a notify to **every** connected client, not just
   the one that registered the address, so both forwarders drop what this session did not register (the worker
-  keeps its registered sets in `Subs` for exactly this, alongside the unregister-on-replace they already served).
+  keeps its registered sets in `Subs` for exactly this, alongside the unregister-on-replace they also serve).
   Without that filter another broker client's registrations ride in, and so does the unit's own clock — one push
   every 10 s, which resolves to no node and escalates to a full readback every 10 s for the whole session. The
   address-less bulk-change sentinel below is the one exemption: it belongs to no address by design.
@@ -1435,7 +1428,7 @@ CH 1's A.Gain (`HA_GAIN`, a direct follow) with that channel selected repaints t
 composition open, **all 6 are held and exactly one runs, at the commit** — one compositionstart, one
 compositionend, the name whole.
 
-The same measurement corrected what the gate's own backstop is worth. Across 349 rebuilds that took the composing
+The same measurement shows what the gate's own backstop is worth. Across 349 rebuilds that took the composing
 field away, **zero compositionend and zero focusout reached the host**. `focusout` backstops a field that loses
 focus, not one that is removed — so nothing releases the gate if the composing field disappears by some other path,
 and what makes that unreachable is that `renderInspector` has exactly **one** call site, behind the gate. A second
@@ -1460,8 +1453,8 @@ window pushes and reports intents back (`ui/midi-protocol.ts`); everything that 
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —
-a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where the AppKit parent it used to
-have was measured and dropped. Closing the main window closes it; closing it drops learn mode, which would
+a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where an AppKit parent was measured
+and is not used. Closing the main window closes it; closing it drops learn mode, which would
 otherwise stay armed against a control nothing on screen names.
 
 Because it is a window rather than an overlay it can drift behind another application — and on macOS, where
@@ -1476,7 +1469,7 @@ It deliberately does **not** raise itself when a binding lands, which is measure
 returns the `accept_first_mouse` attribute, and Tauri's default for it is `false`
 (`tauri-runtime/src/webview.rs`; the `tauri.conf.json` window key is `acceptFirstMouse`). Measured both ways —
 with the MIDI window focused a single click on a console fader neither armed it nor moved it, and with the main
-window focused the same click armed it. Raising on every binding therefore turned each following assignment
+window focused the same click armed it. Raising on every binding would therefore turn each following assignment
 into two clicks, one to activate and one to arm, right in the middle of the run of gestures that assigning a
 bank of controls is. Turning `acceptFirstMouse` on would buy the click back at the price of a focus-click
 moving whatever control is under the pointer, which on a mixer is a fader jumping.
@@ -1493,8 +1486,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   under "Session teardown" does — cannot be reported, because the side that closes it is talking about a page
   that is going away. So it is **read instead of pushed**: `midi_open_ports` answers which ports are actually
   open, and every port refresh checks this side's record against it (`reconcileOpenPorts`), adopting the
-  shell's answer. Without that the frontend went on naming a port nothing was listening on and the window
-  went on offering it as chosen — with no way back, since re-picking the same entry fires no `change`. The
+  shell's answer. Without that the frontend would go on naming a port nothing is listening on and the window
+  would go on offering it as chosen — with no way back, since re-picking the same entry fires no `change`. The
   reconcile stands down for anything that opens a port: the two commands are answered on different threads,
   and a reply that overtook the open it describes would clear a port that is being connected right now. In
   flight when it starts is not enough on its own — an open that begins and ends inside the round trip leaves
@@ -1597,7 +1590,7 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   matching, because at 14 bits every control round-trips onto the same plan value (pinned in
   `core/midi/controls.test.ts`; measured 2026-09-23, at 7 bits 97 of 311 controls on a URX44V do not — the
   tuning screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack /
-  decay. COMP **ratio** left that list when its field became the unit's own stop ladder — the ladder holds
+  decay. COMP **ratio** is not on that list because its field is the unit's own stop ladder — the ladder holds
   fewer stops than the wire holds positions, so a 7-bit echo decodes onto the stop it left from).
   Setting `localStorage["urx-midi-log"]` traces every rx/tx
   byte string and the engine's per-message decision (drop/ignore/apply) to the console; a dev build also
@@ -1650,7 +1643,7 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   Device menu's entry still reads Cancel self-test, and a refusal nobody is told about is the worse
   trade. Three windows are deliberately outside it: an open modal (the MIDI
   panel itself is one, and a desk is a second physical surface), a live flush's converge / refetch await
-  (it recurs per flush of a 1-knob drag, and an edit made inside one now survives it, since the read merges
+  (it recurs per flush of a 1-knob drag, and an edit made inside one survives it, since the read merges
   rather than assigns), and MIDI learn (it binds a control, it does not edit the plan).
 - **Applying edits** — an incoming edit runs the same funnel as a console edit: the pair mirror
   (`mirrorLinkedPair`) → `markChanged` (dirty + Live sync) → the ~20 Hz reflect shared with device follow
@@ -1703,16 +1696,14 @@ that ordinary rather than rare. A notify names the address it is about, so match
 lets one answer the command: a read returns the pushed value instead of the read, and a write, finding no
 `response_code`, reports a write that landed as refused and aborts. Replies are therefore matched on **verb
 and address together** (`reply_for`), and each command keeps the verb it sent and the verb it will accept in
-one place so the two cannot drift. Notifies for a subscribed channel are still absorbed into that channel's
-batch rather than dropped, as they were before.
+one place so the two cannot drift. Notifies for a subscribed channel are absorbed into that channel's
+batch rather than dropped.
 
-**Measured on both platforms.** Windows was the open question, since a difference in the endpoints or the
-reply shapes would have meant the Windows build could not connect at all. On Windows 11 with a URX44V it is
+**Measured on both platforms.** A difference in the endpoints or the
+reply shapes would mean the Windows build could not connect at all. On Windows 11 with a URX44V it is
 the same: the same endpoints, the same replies, the same handshake, and live sync plus a write both reaching
 the unit. One number differs — a sequential sweep of the broker's whole address space (7074 reads, 0
-unreadable on either platform) takes **≈1.9 s on Windows against ≈0.3 s on macOS**. That is per-round-trip
-cost on the local socket rather than anything about the protocol, and the whole-device readback behind a Fetch
-and a Live-sync start pays it in the same proportion.
+unreadable on either platform) takes **≈1.9 s on Windows against ≈0.3 s on macOS**.
 
 **The shell has one connection slot, so "a second connection" is not what happens.** `VdState::install`
 stops the worker already installed before putting the new one in, and commands are addressed to whatever is
@@ -1745,7 +1736,7 @@ call `vdConnect` from `core` and so cannot be funnelled any lower.
 `syncDeviceActionUi` is that latch's affordance: while the link is held, every device entry greys **except
 its holder's own**, which is that holder's Cancel (fetch, write, compare, the self-test) or its stop (Live
 sync). The rate picker locks for every holder — a rate change re-clocks the unit and renegotiates the USB
-stream. The model picker locks for a live **session** only, which is now the one entry that unlocks at the toggle
+stream. The model picker locks for a live **session** only, which is the one entry that unlocks at the toggle
 rather than at the disconnect: a switch replaces the plan wholesale (which is
 why `loadPlan` ends a session), and while live the picker is the only surface naming the unit on the wire —
 the on-air tally prints the tag alone rather than repeating a model the picker already states, since a
@@ -1798,8 +1789,13 @@ written at all:
   device view still carries what the unit answered — that is what leaves the plan and the live
   snapshot disagreeing, and the ordinary outgoing diff is then what sends the effect back, selector first,
   then the stored engine values, then the bypass intent. Measured on a URX44V on 2026-08-18: that re-send is
-  accepted at the rate that cleared the effect and survives the return, checked across all 64 engine slots
-  with non-default sentinels, which is why the app does not wait for the rate to come back before sending.
+  accepted at the rate that cleared the effect and survives the return, which is why the app does not wait
+  for the rate to come back before sending. The read-back compared the 64 slots of each of the three
+  engines in the run (Pitch Fix, the input Compander, the output MBC) with their values before the
+  transition and found them equal, but one slot per engine carried a non-default sentinel (Pitch Fix Speed
+  37, the Compander's Threshold -32.10 dB, the MBC's LOW Threshold raw 99): the selector write refills the
+  array with the type's defaults, so on the other 63 slots of each a match cannot tell a re-send that
+  landed from the refill.
   What separates it from the OTHER clearing — a Signal Type transition, which drops the effect on both
   members of a pair — is the notify stream rather than the read's own values: measured on a URX44V, the
   transition announces the selector and the bypass on both members while the excursion announces the rate and
@@ -1818,12 +1814,12 @@ written at all:
   it escalates to. That scoped read is where both halves matter: it never asks for the rate address, and it
   is not therefore blind — it reads a node's insert FX like any other body value, so one already running when
   the unit clears an effect is the FIRST to see the cleared selector. Deciding only from a read's own rate
-  left it adopting the clearing, with nothing for the full read behind it to keep.
+  would leave it adopting the clearing, with nothing for the full read behind it to keep.
   What separates this from an operator's own No Effect on the unit is the rate the READ has evidence of —
   the one it established (`ReadbackResult.deviceSampleRate`) or one the unit announced while it ran — never
   the plan's own copy, which under the *Scene only* device scope is restored across a read and can name a
   rate the unit left long ago. A read with NEITHER holds nothing, so an operator clearing an effect by hand
-  is adopted as it always was. The status line says how many values were kept, since the console is not reachable in an installed
+  is adopted. The status line says how many values were kept, since the console is not reachable in an installed
   build.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
@@ -1887,7 +1883,7 @@ The command list is translated once, at the top of the flush, but the snapshot e
 is not frozen with it: the follow side writes into it from inside those awaits — `noteDirect` for a direct
 notify, `capture()` for a reconcile's whole re-base. Both bump a counter the loop checks between commands, and
 a flush that sees it move **re-takes the translate** and reads its remaining values from that. Without it the
-loop reached an address the device had just moved and sent the value the plan had stopped holding — the
+loop would reach an address the device has just moved and send the value the plan has stopped holding — the
 device's own previous one, back over the hand still on the knob, with the idle safety net then reading that
 reverted value into the plan. Only the values are re-taken: the order stays the flush's own (a type selector
 types the array after it), an address that grew during the flush stays out (it is an app edit, and its own
@@ -1989,8 +1985,8 @@ discarded is indistinguishable from one it took, so answering from the send woul
 that the unit does not hold — with plan and snapshot then agreeing, no diff left to retry, and the unit never
 speaking about it again. It is also why a write the unit quantised, clamped or refused needs no case of its own: a
 notify is a confirmation whatever value it carries, and that value is the answer. An address the unit has said
-nothing about is simply absent from the result and comes off the device like any other, which is the blind read this
-path has always taken and the one answer that cannot enshrine a divergence.
+nothing about is simply absent from the result and comes off the device like any other, which is an ordinary blind
+read and the one answer that cannot enshrine a divergence.
 
 `DeviceFollow` registers its notify subscription with the settle and feeds it every notify **before** the echo and
 intercept filters — the answer to our own write IS an echo, so a settle fed after those would never see the one
@@ -2038,8 +2034,8 @@ out of what the unit ANNOUNCED for it, and no name announcement can reach it: na
 overlay is built from — it records a mark for a catalog string write (the SSMCS preset, as `boundaryMarks`), and a
 name is not one, so a name address is never in the `PendingWrites` handle. A settle on one would always spend its
 whole bound, and answering from the send is what this section forbids. The notify itself does arrive —
-name addresses joined the registration set when the follow learned to carry a device-side rename, which is the
-paragraph below; before that they were in no registration and `Subs::absorb` dropped every one of them. So the refetch does not read names at
+name addresses are in the registration set because the follow carries a device-side rename, which is the
+paragraph below; an address in no registration has every notify dropped by `Subs::absorb`. So the refetch does not read names at
 all: the read exists to collect what the unit RECOMPUTED, and no parameter write makes the unit recompute a name.
 Leaving it in could only do harm — a rename flushed in the same window comes back as the name it replaced and
 goes into the plan and the name snapshot together, so they agree, no diff remains, and the rename is reverted
@@ -2072,8 +2068,8 @@ no capture behind it — but **every connection the default plan carries is fixe
 and of the **310 routes** the model would let an operator draw, the emitted set moves for **none**. The property
 holds by construction instead of by that inventory staying true.
 
-Nothing asked the follow layer to re-subscribe from a flush at all, so an address a mode change added stayed
-unheard until the next reconcile happened to run. The flush now asks at its END, never inside itself: a
+Without a request from the flush, an address a mode change adds would stay unheard until the next reconcile
+happens to run. The flush asks the follow layer to re-subscribe at its END, never inside itself: a
 re-registration unsubscribes before it subscribes, and doing that mid-flush would drop the notifies the refetch's
 settle is waiting for. `DeviceFollow.refresh` compares the set's identity and returns without touching the broker
 when it has not moved, so an ordinary flush costs one comparison and no traffic; it is deliberately not `begin`,
@@ -2092,9 +2088,9 @@ exists to prevent. And a rejection leaves the registration by exception, so it n
 generation guard: `refresh`'s catch compares the generation it started with before it stops anything, or a refusal
 arriving after its session ended stops the live one instead, with nothing to restart it.
 
-**Four follow-only cases join for the same reason**, and the name path is their precedent rather than a
-coincidence: an address the app only READS was in no registration, so the unit's announcement reached nobody and
-the value caught up only at the next full read. The first two were measured announcing a front-panel change on a URX44V
+**Four follow-only cases join for the same reason as the names**: an address the app only READS is in no
+registration unless it is listed here, so the unit's announcement would reach nobody and the value would catch up
+only at the next full read. The first two were measured announcing a front-panel change on a URX44V
 (2026-08-11, System V1.3.1.0), which is what separates them from the addresses that genuinely stay silent — D.Gain
 and the FX / insert-FX engine arrays emit nothing when the panel moves them, and for those a registration would be
 useless for that purpose. **A device-side RECOMPUTE is a different trigger and does announce**: writing an FX
@@ -2128,7 +2124,7 @@ that preference does not hold — the notify-driven read and the full read would
 setting. Track Count and STREAMING's source are `sceneExternal` and drop out under *Scene only*; the send taps are scene state and stay. **The index entry and the readback gate are one decision, not two.** Naming an owner node is
 correct only while `readback` reads that address on a scoped read of that node — 839 is gated on
 `want("out.sdrec")` for exactly this reason, and the full-read behaviour is identical either way because `want` is
-`only === undefined || only.has(id)`. Were that gate to go back to `only === undefined`, every front-panel Track
+`only === undefined || only.has(id)`. Were that gate `only === undefined`, every front-panel Track
 Count turn would take a scoped read that never touches 839: the follow runs, the read succeeds, and the value does
 not change. The opposite mistake — leaving the owner node off — works, at a whole-device read per turn. Sample
 rate keeps `only === undefined` because `plan.sampleRate` is a plan-level scalar no node owns, which is a
@@ -2143,9 +2139,9 @@ Two things bound it. It leaves out what the heads this flush wrote have RESET (`
 is what made the unit hold that value, and the converge is what puts the operator's back, so a read there would adopt
 the reset and the restore would never go out. Per FAMILY and not per node — a channel carries a COMP/EQ type and an
 insert effect at once and only one of them is ever the head's, so leaving the NODE out took a family the head never
-touched with it, and the converge then wrote the plan's copy of that engine array over whatever the panel had done to
+touched with it, and the converge would then write the plan's copy of that engine array over whatever the panel had done to
 it. A head that resets an ANNOUNCED bank names nothing at all: COMP/EQ, bus type and pan are device follow's, and the
-park never read them. And it answers with the PLAN's value wherever the unit is still holding what this session last sent
+park never reads them. And it answers with the PLAN's value wherever the unit is still holding what this session last sent
 (`live.holdsSent`), which keeps it off an edit sitting in the plan waiting for the next flush — the merge protects
 an edit made DURING a read, and that one was made before it. That answer is the plan's own emit, and an emit is LAID
 OUT by the plan's copy of the layout heads — an FX channel's EFFECT TYPE, a node's insert-FX selector. So each head is
@@ -2181,14 +2177,14 @@ has ever been measured — the 1-2 ms figure above belongs to the `refetch` fami
 round also sends `roundCommands`, whole groups, so a wait that ended at the read diff's own notifies would return
 while the rest of a group was still inside its window.
 
-**What the wait costs was measured on the unit, not estimated** (2026-08-02, URX44V V1.3.1.0, a throwaway build of
-this branch carrying the diagnostic instrumentation). A 1-knob LEVEL drag produced ten flush cycles, and the settle
+**What the wait costs was measured on the unit, not estimated** (2026-08-02, URX44V V1.3.1.0, a throwaway build
+carrying the diagnostic instrumentation). A 1-knob LEVEL drag produced ten flush cycles, and the settle
 ended at the device's own notify in **10 of 10** — 42-203 ms after the write was issued, write to read-complete
 58-298 ms. **The 300 ms bound was never reached.** Two things follow. Lowering `SETTLE_TIMEOUT_MS` cannot make a
 drag faster, because what ends the wait is the announcement and not the bound — the constant governs class (b)
 alone. And the added latency IS the device's announcement window, so the only ways to remove it are not to read at
 all (which leaves the plan's band gains stale for the whole drag, and the EQ plot then draws a curve the unit is not
-producing) or to read inside the window, which is the defect this exists to fix.
+producing) or to read inside the window, which is the defect this exists to prevent.
 
 #### The internal re-bases: the snapshot and the history baseline
 
@@ -2238,12 +2234,11 @@ since the wait sits inside the same in-flight set as the read it belongs to; kep
 committing an entry against an open clone and witness would freeze this read's own writes into it, and the refusal
 is a deferral bounded by the settle's own window.
 
-Nothing is withdrawn from that handle before it travels, and the earlier design that withdrew two things is gone.
-The reason it can be gone is that the answer is the unit's own announcement and **the last one wins**: an address
-the operator moved on the board after our write announces THEIR value, which is the answer the withdrawal used to
-reach by falling back to a read. A `capture()` landing inside the flush needs no answer either — it re-authors the
+Nothing is withdrawn from that handle before it travels, and nothing needs to be: the answer is the unit's own
+announcement and **the last one wins**, so an address the operator moved on the board after our write announces
+THEIR value. A `capture()` landing inside the flush needs no answer either — it re-authors the
 snapshot from a device read, and a device read cannot contradict a later word from the same device. What the
-withdrawal was protecting against remains real and is what the whole mechanism exists for: answer a written address
+whole mechanism exists for is real: answer a written address
 from OUR value and the merge reverts the operator's move on the hardware, the `capture` after it records our value
 as device truth, plan and snapshot agree, no later flush finds a diff, and only the idle reconcile heals it.
 
@@ -2464,8 +2459,9 @@ re-sends only what still differs**, and that is where order alone stops being en
 
 The measured case is the EQ 1-knob, on a URX44V. Writing ON (`46`) discards the type back to Intensity; writing the
 type (`47`) discards the level (`48`) to that type's neutral point (Intensity 50, the presets 0). Three links. When a
-COMP/EQ bank switch reset all three at once, the loop walked the chain one link per round: round 2 re-sent ON and
-un-set the type, round 3 re-sent the type and un-set the level, and the 3-round budget ran out with the level wrong —
+COMP/EQ bank switch resets all three at once, a loop that re-sends only what differs walks the chain one link per
+round: round 2 re-sends ON and un-sets the type, round 3 re-sends the type and un-sets the level, and the 3-round
+budget runs out with the level wrong —
 reported as a residual the device had in fact accepted every time it was written.
 
 `VdCommand.group` names the chain, and `roundCommands` (client.ts) expands a round to **every member of a group any
@@ -2488,13 +2484,12 @@ plan as device truth with no diff left to retry.
 
 The flush therefore hands `sendConverging` the same `PendingWrites` handle the refetch gets, and the loop holds the
 seed read until the unit has spoken for **every** address it wrote — the whole set, not one node's worth, because
-the seed read asks about the whole write scope. This was left open when the refetch was fixed, on the reading that
-it would cost a flat +300 ms on every `sendConverging`. Measuring the window on hardware is what changed the answer:
-the wait ends at the device's own notify, 17-84 ms across four probe runs on a URX44V, and the 300 ms bound is the
-fallback rather than the price. Callers that hand over `initialDiffs` — the Write button — never seed and are
+the seed read asks about the whole write scope. The wait does not cost a flat +300 ms on every `sendConverging`:
+measured on hardware, it ends at the device's own notify, 17-84 ms across four probe runs on a URX44V, and the 300 ms
+bound is the fallback rather than the price. Callers that hand over `initialDiffs` — the Write button — never seed and are
 untouched. The reads *between* rounds stay blind, for the two reasons in that section.
 
-Seeding the loop from the flush's own send list instead was tried and is wrong — those values freeze at send time,
+Seeding the loop from the flush's own send list instead would be wrong — those values freeze at send time,
 so an address the operator moved on the unit during the flush's awaits would be written straight back off the board.
 
 ### Aborting on failure
@@ -2568,7 +2563,7 @@ controller that was never opened, and a file write goes through a temp file and 
 destroy the copy already on disk.
 
 **Four exceptions are permanent**, and each is a place where aborting would be the weaker behavior. They are
-listed here so they are not proposed again as gaps:
+listed here so they are not proposed as gaps:
 
 1. **The self-test aggregates instead of stopping.** It is the diagnostic, not a user action: its job is to
    report every parameter that failed a round trip in one pass, so a partial capture still runs the sweep and
@@ -2591,7 +2586,7 @@ listed here so they are not proposed again as gaps:
    power cycle read back by eye on the unit's own screen). `diag` reports what a run could not send; the
    save-off is outside even that, and the private reference tree carries the measurements.
 
-   **And what a pass writes is no longer only values.** Every MONO IN pair's Signal Type is swept: the run is
+   **And what a pass writes is not only values.** Every MONO IN pair's Signal Type is swept: the run is
    two blocks, unlinked first and STEREO-linked second, because a linked pair is a different device state
    rather than a variation of one — it holds a single set of channel values between its two members and
    mirrors a write to either onto the other. A run that kept whatever the unit was captured in would leave
@@ -2602,8 +2597,8 @@ listed here so they are not proposed again as gaps:
    answer to what a pair shares, which leaves the head amp and, outside BAL, each member's pan alone. A capture
    taken while the pair was UNLINKED is free to disagree about any of the rest, and that is exactly the capture
    this block has to be able to write. The capture carries the unit's own Signal Type and
-   PAN/BAL and the restore writes them back, so a run that finishes ends where it started. What changes is a
-   run that does not: it leaves the pairs in the block it died in, with the pans the unit slams at either
+   PAN/BAL and the restore writes them back, so a run that finishes ends where it started. A run that does
+   not finish leaves the pairs in the block it died in, with the pans the unit slams at either
    transition — a perturbed pair structure, not only perturbed values.
 
    **One selector a partial capture leaves alone instead: STREAMING's source.** A capture that did not read it
@@ -2645,7 +2640,7 @@ second and later calls return early because `deactivateLive` clears that flag sy
 
 ### Sample rate and Follow USB
 
-The sample rate is the one plan value the device can accept and then undo by itself. With **SETUP > Follow USB**
+The sample rate is a plan value the device can accept and then undo by itself. With **SETUP > Follow USB**
 on, the URX slaves its clock to the USB host: a write to 766 is accepted, re-clocks the hardware, and roughly
 0.4 s later the host's rate is reasserted (measured on a URX44V). Writing straight through would report success
 for a change that did not last.
@@ -2707,8 +2702,8 @@ written with a single `vdSet`. Live sync registers 848 for notifies alongside th
 **intercepts** it ahead of node resolution (`DeviceFollow`'s `intercept` hook) — an address with no owner node
 would otherwise escalate every change to a full device re-read. The **FOLLOW USB** badge beside the Rate picker
 shows and toggles the state. Before any device has been read it is drawn as a dimmed "unknown" (clicking it then
-reads the state rather than toggling), never as "off" — hiding it until a device action meant the warning only
-arrived once the operator had already committed to one. It is session-scoped rather than persisted, since a
+reads the state rather than toggling), never as "off", and in the desktop build it is never hidden — hiding it until a device action
+would mean the warning only arrives once the operator has already committed to one. It is session-scoped rather than persisted, since a
 remembered value would be a claim about
 hardware that may not even be attached. The Rate picker itself locks while Live sync is on, because re-clocking
 renegotiates the USB stream, interrupting audio and putting the held connection at risk. The badge stays live:
@@ -2717,8 +2712,8 @@ toggling Follow USB only re-clocks when the host is on a different rate, and the
 Above 96 kHz the device drops whole features (stereo channel EQ, insert FX, the FX2 bus), but it still **accepts
 and holds writes to their parameters** — measured on a URX44V at 192 kHz for the stereo CH EQ (213), FX2's fader,
 send and effect type, and the insert FX selector (135). "The feature is unavailable" does not mean "the parameter
-is unwritable": only the DSP is gone, the stored value survives. So the write set is not gated by rate. Doing so
-was tried and reverted: it did not prevent a non-convergence (there was none to prevent), it only stopped the plan
+is unwritable": only the DSP is gone, the stored value survives. So the write set is not gated by rate: a gate
+would prevent no non-convergence (there is none to prevent), it would only stop the plan
 from reaching the device, which would leave settings the plan never asked for in place once the rate came back
 down. The UI still reflects the functional limits (`channelEqUnavailable` / `insertFxMenu` lock the EQ and
 INS FX chips, `rateConstraints` dims FX2), because those features genuinely do not run at those rates.
@@ -2737,8 +2732,8 @@ end of the status bar with the full ledger behind a click (`src/ui/link-stats.ts
 The bar carries **two** of the ledger's rows, `Link up` and `No answer`: the two whose value is in being
 glanced at, on a strip it shares with the message text. It prints them with the panel's own labels and the
 panel's own figures — `LINK_BAR_KEYS satisfies readonly LinkLedgerKey[]`, and one `ledgerValue` for both
-surfaces. That is not tidiness. The bar briefly had a shorter vocabulary of its own, and a reader had no way
-to tell that its `cmd` and the panel's `Sent` were one number.
+surfaces. That is not tidiness: with a shorter vocabulary of its own, a reader would have no way
+to tell that a `cmd` on the bar and the panel's `Sent` are one number.
 
 ### What it records, and what it deliberately does not
 
@@ -2764,7 +2759,7 @@ not symptoms.
 
 ### Why a file, and what its lines mean
 
-The symptom the ledger was built for shows up **after the app is gone**, so a reading that lives only in the
+The symptom the ledger exists for shows up **after the app is gone**, so a reading that lives only in the
 status bar is missing exactly when it is wanted. Each session appends JSONL to `link-ledger.jsonl` in the
 app's log directory (`append_link_log`): one line when the session opens, one a minute while it runs, and one
 as it ends carrying `end: "off"` or `end: "error"`.
@@ -2777,9 +2772,9 @@ The path comes from the **bundle identifier** and does not vary by build profile
 
 **Lifecycle.** The file rotates at 2 MiB, keeping one previous generation (`link-ledger.1.jsonl`), so the whole
 record is bounded at roughly 4 MiB however long the install lives. 2 MiB is on the order of ten thousand lines
-— over a hundred hours of continuous session — so the run before an incident is still on disk. An age cap was
-rejected (it needs every line parsed on every append) and so was truncate-from-the-front (it rewrites the file
-each time); one rotation is the cheapest thing that bounds it. Nothing in the app deletes the log: it is the
+— over a hundred hours of continuous session — so the run before an incident is still on disk. An age cap
+would need every line parsed on every append, and truncating from the front would rewrite the file
+each time; one rotation is the cheapest thing that bounds it. Nothing in the app deletes the log: it is the
 record of the sessions before this one, which is the only thing that makes it useful.
 
 There is deliberately no `end` value for "the app exited". A dying page's IPC is not guaranteed to leave before
@@ -2822,11 +2817,11 @@ native rather than a `pagehide` handler in the page, because the IPC a dying pag
 leave before the webview is torn down. It ends **what that page holds, and nothing else**: each hold records
 the webview that took it (`vd::shutdown_owned_by`, `midi::close_owned_by`, `keepawake::release_owned_by`), so
 the question is answered by the hold rather than by a rule about which windows exist. The app has two
-webviews and the difference was measured the hard way — the MIDI control window owns no plan, no session and
-no port, and its own load used to end the main window's session and close the MIDI input that window had
-already restored. Nothing told the frontend: it went on showing the port as selected, and re-picking the same
-entry fires no `change`, so the only way back was picking "none" and the port again. Opening MIDI control
-therefore left MIDI learn unable to receive anything at all, which is what a control window is opened to do.
+webviews, and the MIDI control window owns no plan, no session and no port. Were its own load to end everything,
+it would end the main window's session and close the MIDI input that window had already restored, and nothing
+would tell the frontend: the port would go on showing as selected, and re-picking the same entry fires no
+`change`, so the only way back would be picking "none" and the port again. Opening MIDI control would then
+leave MIDI learn unable to receive anything at all, which is what a control window is opened to do.
 A third window inherits the right behaviour without anyone remembering to add it to a list.
 
 Whether an abandoned session is what leaves Device Center needing a force quit is **not established**. Closing
@@ -2848,7 +2843,7 @@ an address may be written down) and flags them **`planExternal`** — no `transl
 no `readback.ts` group reads them, so `sceneExternal`'s write-scope filter is inert for them. The flag is
 what the contract test derives its "never emitted" guarantee from, rather than a hand-copied name list
 that fails nothing when someone forgets to extend it; Follow USB (848) carries it too.
-`core/control/device-setup.ts` is their whole surface, in the shape Follow USB already established: bare
+`core/control/device-setup.ts` is their whole surface, in the same shape as Follow USB: bare
 `vdGet` / `vdSet`, no diff engine, no snapshot. The reason is that a plan travels — as
 a saved file, a recent-files entry and a `?plan=` link — and `planToCommands` writes absolute state, so
 carrying these would push one operator's screen brightness, menu language, power-off timer and knob
@@ -2900,15 +2895,14 @@ the device — it would leave the unit showing a triple no menu could have produ
 
 Two OS windows exist: `main`, declared in `tauri.conf.json`, and `midi`, built on demand by
 `open_midi_window`. Three rules apply to both, and all three live in the shell — nothing about where a
-window sits reaches the frontend any more.
+window sits reaches the frontend.
 
 **Where each window was is remembered.** `tauri-plugin-window-state` keeps a position, a size and the
 maximized flag per window label in `<app config dir>/.window-state.json`, written when a window closes and
 when the app exits. `VISIBLE` and `FULLSCREEN` are deliberately outside the saved set: restoring a window
 that was hidden at quit as hidden is an app with no window and no way to ask for one, and fullscreen is a
-mode entered for a session rather than a place a window sits. The MIDI window used to remember its own
-rectangle in `localStorage`, beside the port choice and the mappings; that half is gone, and both windows
-are now remembered the same way, in one place.
+mode entered for a session rather than a place a window sits. Both windows are remembered the same way,
+in one place.
 
 **A window is never placed outside a display.** `winfit.rs` corrects a remembered rectangle against the
 work areas of the attached displays — each monitor minus its menu bar / taskbar. The whole window is
@@ -2930,10 +2924,10 @@ process. On **macOS** the desk is in points, because a "physical" rectangle ther
 factor of *the object it belongs to* — a monitor by its own, a window by its own — so displays at different
 scales are not measured in one space at all. Measured on a 1512x982@2.0 built-in panel beside a
 2560x1440@1.0 external one: the two work areas report as (0,66 3024x1898) and (1512,-458 2560x1380),
-which **overlap by 1,294,272 px² where the displays themselves share nothing**. That overlap fed the
-decision about which display a window belonged to, and the clamp into that display's rectangle
-afterwards. The module did its arithmetic in physical pixels until 2026-08-09 on the grounds that both
-monitors and windows are reported in them — true, and not the same as being reported in one space.
+which **overlap by 1,294,272 px² where the displays themselves share nothing**. Arithmetic in physical
+pixels would feed that overlap into the decision about which display a window belongs to, and into the
+clamp into that display's rectangle afterwards: monitors and windows are both reported in physical
+pixels, which is not the same as being reported in one space.
 
 **A restored window is also raised to its own minimum, measured on the display it is going to.** The
 remembered size is in desk units and the configured minimum in logical pixels, so the two agree only where
@@ -2958,35 +2952,36 @@ its position and its size. The plugin's schema belongs to the dependency, so the
 our own, written at the two moments the plugin captures a rectangle — a window closing and the app exiting
 — both of which re-read the live window, so the pair cannot drift.
 
-For a state file written before that field existed, the scale is **derived by trial**: assume each display
+For a state file with no recorded scale, the scale is **derived by trial**: assume each display
 in turn, convert with its scale factor, and accept the display the result lands inside. Measured over the
 two displays above, 98% of the positions a 1234x813 window can take resolve uniquely and 87% of a 440x620
 one, with **no position resolving to the wrong display** — and two holes that are the reason the value is
-recorded going forward rather than only derived. A rectangle inside the region both displays' desk
+recorded rather than only derived. A rectangle inside the region both displays' desk
 rectangles cover is consistent either way, and a rectangle that is no longer on any display — the case this
-module exists for — matches nothing. Both fall back to the window's own scale factor, which is what every
-restore used unconditionally before.
+module exists for — matches nothing. Both fall back to the window's own scale factor.
 
 **The correction is applied to numbers, not to a window.** At startup a window cannot be read back: a
 `set_position` issued from the setup hook is queued, and both that hook and `RunEvent::Ready` still report
-the position the window was BORN at — measured, after assuming the opposite. A read-then-correct at either
+the position the window was BORN at — measured. A read-then-correct at either
 point is therefore worse than nothing: it finds the birth rectangle, declares it fine, and the restore
 moves the window off the display afterwards. So **both** windows' restores are taken away from the plugin
 (`skip_initial_state` for each), and a saved rectangle is read from the state file, corrected, and applied
 once — one `restore_window`, called from the setup hook for `main` and from the end of `open_midi_window`
 for `midi`. What is left of the plugin is the half that works: the saving, which re-reads the live window at
-each capture. The MIDI window used to keep the plugin's restore and correct the result afterwards, which
+each capture. Keeping the plugin's restore and correcting the result afterwards
 cannot work — the restore has already lost the rectangle by then, and a correction can only enforce "inside
-a work area", not recover what was intended. The end of `open_midi_window` is still the only place its call
-can go: a plugin hook of our own, registered behind the window-state plugin so that any future window would
-inherit the treatment, was tried and **measured not to work** — inside a `window_created` hook the window
-still reports the position it was born at, because a `set_position` issued from one is queued exactly like one
-issued at startup. A third window built that way has to make the same call.
+a work area", not recover what was intended. The MIDI window's call goes at the end of `open_midi_window`,
+where the move has landed by the time `build()` returns. The other places tried do not see it: the setup
+hook and `RunEvent::Ready` above, and a plugin hook of our own registered behind the window-state plugin so
+that any future window would inherit the treatment — **measured not to work**, since inside a
+`window_created` hook the window still reports the position it was born at, a `set_position` issued from
+one being queued exactly like one issued at startup. A hook on the MIDI window's page load, or a command
+that page calls, has not been tried. A third window built that way has to make the same call.
 
 Measured end to end on macOS (2026-08-09, a seeded state file read by a dev build under its own bundle
 identifier — so the operator's own geometry was never touched — with the window rectangle read back through
 `CGWindowListCopyWindowInfo`), on a 1512x982 built-in panel at 2.0 beside a 2560x1440 external at 1.0, and
-re-run unchanged after the two-pass work below:
+re-run unchanged with the two-pass placement below:
 
 | remembered | scale file | came back |
 | --- | --- | --- |
@@ -3025,8 +3020,8 @@ So the pass is simply **repeated once the move has landed**, where both are read
 a second time in the destination's own pixels. A placement is therefore stated as a position and an INNER
 size, never as an outer rectangle: an outer rectangle can only be built by adding a frame, and until the
 window has moved, the only frame anyone holds is the departure display's. Building it in the caller loses
-the difference between the two frames at *every* launch — measured over four consecutive launches while the
-outer rectangle was what travelled, the outer width fell 1516, 1510, 1504, 1498. The rescale
+the difference between the two frames at *every* launch — measured over four consecutive launches with the
+outer rectangle travelling, the outer width fell 1516, 1510, 1504, 1498. The rescale
 is synchronous (Windows sends `WM_DPICHANGED` inside the move's `SetWindowPos` and `tao` resizes from within
 that handler), so the second pass sees the new state immediately. Waiting for the `ScaleFactorChanged` event
 instead would not work at all: the main window is placed from the setup hook, before the event loop delivers
@@ -3036,10 +3031,9 @@ built while the loop runs, which is exactly what makes it useless as the trigger
 Measured end to end on Windows 11 (2026-08-09, a 2560x1440 primary at 100% and a 1920x1080 secondary at
 150%, rectangles read back through `GetWindowRect` in a per-monitor-DPI-aware probe and cross-checked
 against the app's own `outer_size`): a rectangle remembered on the 100% display and restored onto the 150%
-one now lands entirely inside its work area and reproduces byte for byte over three further launches, and
+one lands entirely inside its work area and reproduces byte for byte over three further launches, and
 the reverse direction returns the remembered rectangle exactly. On macOS the desk is in points and the scale
-factor does not change, so the loop runs once and nothing about that platform's path moves — re-measured on
-macOS afterwards across the five cases in the table above, all unchanged. The raw readings behind the
+factor does not change, so the loop runs once there, and the five macOS cases in the table above hold with it. The raw readings behind the
 2026-08-09 numbers were taken in `reference/work/windows-verify/`, whose settled sections are folded into
 this document and then deleted; they are read back out of that ledger's history. **The 2026-08-13 run's are
 not**, so the folded text is all there is: this document for the fader press, the MIDI window and the
@@ -3048,16 +3042,16 @@ ordinary-theme half, beside the screenshots that directory keeps.
 
 **The MIDI window is an owned window on Windows and an independent one on macOS** — the `.parent(&main)`
 call sits behind `#[cfg(target_os = "windows")]`. On Windows that ownership is what keeps the panel in
-front: an owned window is always above its owner in the z-order. `addChildWindow` did the same on macOS
-until what it cost there was measured, and the relationship was dropped; what holds the panel in front
-there now is `pin_midi_window`, for as long as a learn is armed. "Always on top" for the whole session was
-deliberately not taken on either platform. `focus_midi_window` still exists and is still called when learn
+front: an owned window is always above its owner in the z-order. On macOS `addChildWindow` would do the
+same, at the cost measured below, so the relationship is not used there; what holds the panel in front
+on macOS is `pin_midi_window`, for as long as a learn is armed. "Always on top" for the whole session was
+deliberately not taken on either platform. `focus_midi_window` is called when learn
 turns on — raising this window above another application is a different thing from ordering these two
 windows against each other.
 
 What the relationship costs, measured on both platforms — and **the two do not agree**:
 
-| | macOS (AppKit child — **dropped**) | Windows (Win32 owner — in place) |
+| | macOS (AppKit child — **not used**) | Windows (Win32 owner — in place) |
 | --- | --- | --- |
 | Stays above its owner | yes | yes — measured with the owner activated by a real click |
 | Hidden while the owner is minimized | yes | yes |
@@ -3070,8 +3064,8 @@ panel is a top-level **owned** window, not a child of the main window's client a
 only moves the latter with its parent — so there is nothing that could implement the follow, whatever
 issues the move. Measured through a drag's own message sequence as well as a plain programmatic move.
 
-The macOS column is what the relationship cost while it was there; what that platform does now, with the
-panel independent, is not measured here. Three of the four Windows cells were measured on 2026-08-13 (debug
+The macOS column is what the relationship costs; how the independent panel behaves on that platform is
+not measured here. Three of the four Windows cells were measured on 2026-08-13 (debug
 build, WebView2 151.0.4129.78, a 2560x1440 primary and a 1920x1080 secondary, both at 100%) — every row
 except **hidden while the owner is minimized**, which stands on the 2026-08-08 run and was not re-run.
 
@@ -3109,7 +3103,7 @@ the canvas OFF display.
 A hand-folded section persists its open/closed state per section kind to `localStorage`
 (`urx-inspector-sections`), so it survives re-renders and reloads; toggling a section's ON value clears
 that override so the fold reverts to following the on-state. Within a section, the INPUT toggles flow
-two-up; the EQ's band editor is not here at all — it moved to the tuning screen with GATE's and COMP's
+two-up; the EQ's band editor is not here at all — it lives on the tuning screen with GATE's and COMP's
 sliders, for the same reason (a second copy reads a render-time snapshot and writes stale values back). Its visibility is driven by CSS alone:
 `main.ts` toggles a single `has-selection` class on `<body>` from whether anything is selected, and
 `body.has-selection #inspector` raises the sheet with `transform: translateY(0)` (off-screen at
@@ -3195,8 +3189,8 @@ an export) as rail-colored chips; clicking a chip restores that one, and "Show a
   ignores it).
 - The hidden set is also mirrored per model in `localStorage("urx-hidden")` (a model-id → node-id-array
   map); `newPlan` restores that model's entry on startup, model switch and new plan, so the layout
-  survives an app restart for the live device-control workflow. A loaded file's `hidden` still wins
-  (overriding the current state as before), and `loadPlan` re-records it into `urx-hidden` so the current
+  survives an app restart for the live device-control workflow. A loaded file's `hidden` wins
+  (it overrides the current state), and `loadPlan` re-records it into `urx-hidden` so the current
   state and localStorage stay in sync. An undo of a hide re-records the mirror too, before the repaints
   — the graph keeps its own copy of the set and writes it back on the next commit, so a stale one would
   resurrect what was just undone ([below](#undo--redo)).
@@ -3265,7 +3259,7 @@ The jack is drawn whether or not it is wired (otherwise the drag origin would be
 lit only while it carries an audible route; its wire climbs a short straight riser into the row gutter
 before sweeping across. That exit is the point: a route leaving the top visibly bypasses the Ducker
 hung below the channel, so the same fact the inspector states in words is also readable from the
-geometry. A single cubic bent upward was tried first and rejected — it dives back through the
+geometry. A single cubic bent upward would dive back through the
 channel's own faceplate whenever the destination sits below, hiding the exit entirely.
 
 The two jacks are **separate origins**, not two handles on one port: a drag from the tap offers only
@@ -3338,11 +3332,10 @@ and the selected-wire hint from **one** classifier, so the two carriers cannot d
 return type also refuses a new case until that case has its own wording). The row shows on an unpatched
 output too — the state a note on a wire can never reach, since there is no wire.
 
-Routing the hover through that classifier **widened it**: the title used to be keyed on the direct-out
-destinations alone, so a channel-sourced **ducker key** carried an explanation when selected and none on
-hover. It now carries the same sentence in both places, which is what the older comment already claimed
-for the taps. That is a behaviour change with no visible tell, so `e2e/directout.spec.ts` pins it by
-reading the panel's hint and comparing the wire's `<title>` against it rather than against a literal.
+Because the hover goes through that classifier, a channel-sourced **ducker key** carries the same sentence
+on hover as when selected, as the taps do. Nothing on screen tells whether the two carriers agree, so
+`e2e/directout.spec.ts` pins it by reading the panel's hint and comparing the wire's `<title>` against it
+rather than against a literal.
 
 The row is scoped to MAIN / LINE because they are the only outputs whose lock a routing change can
 remove: a USB output cannot take a MONITOR source at all (`device-model.md` §6), so a standing note
@@ -3406,12 +3399,12 @@ the destination chain to factory, and linking a STEREO pair moves the partner's 
 the diff at the boundary is what puts those in the same entry as the edit that caused them.
 
 The boundaries are global and observational (capture phase, never preventing or stopping anything).
-Per-control begin/end bracketing was rejected: it would be twenty places to remember, and a missed
+Per-control begin/end bracketing would be twenty places to remember, and a missed
 one is an edit that silently cannot be undone.
 
 | Boundary | Ends | Timing |
 | --- | --- | --- |
-| `pointerup` / `pointercancel` / window `blur` | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — measured 2026-08-14 on Chromium (over its own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so on the unit-facing build the CONSOLE fader went on following the pointer, and writing, while another application was frontmost. The drags in `console.ts` / `dyn-screen.ts` now end at that same event, confirmed in WKWebView on the fixed build (the same gesture left the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely |
+| `pointerup` / `pointercancel` / window `blur` | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — measured 2026-08-14 on Chromium (over its own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so without this boundary the CONSOLE fader on the unit-facing build would go on following the pointer, and writing, while another application is frontmost. The drags in `console.ts` / `dyn-screen.ts` end at that same event, confirmed in WKWebView (the same gesture leaves the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely |
 | `keyup` of an Arrow / Page / Home / End / Enter / Space key, outside a text field | Keyboard stepping on a fader or knob, which autorepeats one edit per repeat with no other terminator | At once. Nothing is dispatched after a keyup on the gesture's behalf, and the next press is a new gesture — deferring would let an autorepeat outrun the macrotask and merge two presses |
 | `focusout` | The node-name field and the in-frame note editor, which edit the plan on every keystroke | At once |
 | 300 ms idle, re-arming | A wheel-notch burst and an incoming MIDI sweep, which produce no DOM gesture at all | Only armed for edits with no boundary of their own: suppressed while a pointer is down, and while a text field has focus (its `focusout` is the boundary, so a name typed with a pause between letters must not cost an entry per letter) |
@@ -3460,17 +3453,13 @@ link). Every view resolves through its `getPlan()` hook per use and so follows i
 included: it memoizes nothing, because a bound control closes over the insert-FX family, the
 processor and the send it was built for, and a plan is edited IN PLACE — so a memo keyed on the plan
 OBJECT, the one thing an in-place edit never changes, keeps answering for an effect the node no
-longer holds. (That memo existed, and it was written for a second replacement path — a cancelled
-Fetch, which restored a pre-read clone by replacing the object and left every MIDI binding attached
-to a plan nothing else referenced. The read works on a private copy now, so the cancel leaves the
-plan on screen untouched, and the memo was guarding the one case that cannot happen while missing
-every case that can.) An undo never replaces the object: it patches in
+longer holds. An undo never replaces the object: it patches in
 place, then re-derives the
 view state held *outside* the plan and repaints: `graph.refresh()` (which re-derives the shelved and
 note-collapse sets — `commitHidden` writes them back, so a stale set would resurrect the undone state
 — and re-validates the selection), the persisted hidden mirror, the channel tuning screen, and then
 either the rate UI or the inspector + console (the rate path repaints both through
-`applyRateConstraints`, so stacking them cost a second full strip rebuild). `graph.setModel` is
+`applyRateConstraints`, so stacking them would cost a second full strip rebuild). `graph.setModel` is
 deliberately not used: it refits the viewport, and an undo must not reframe the canvas.
 
 Convergence to the device goes through `markChanged()` alone, last, so the live diff measures the
@@ -3493,7 +3482,7 @@ An undo is refused, with the reason on the status line and **without spending th
   not have reached the unit. Those three deliberately do **not** refuse a file flow: they start on
   their own and nothing on screen names them, so the plan-replacement side is handled at the read
   instead (`loadPlan` ends the session and abandons the read; the read is bound to the plan it was
-  issued for and drops its result if that plan is gone). The 1-knob refetch now holds the refusal
+  issued for and drops its result if that plan is gone). The 1-knob refetch holds the refusal
   open for **up to 300 ms longer** than the read itself takes, because it waits the flush's writes
   out from inside the read
   ([above](#a-write-is-not-readable-when-it-is-acked)) and that wait is inside the same in-flight
@@ -3608,15 +3597,15 @@ licenses modal — the capture-phase wiring all three share lives in `ui/dom.ts`
 Settings persist as one
 validated localStorage record (`urx-settings`, `core/settings.ts`,
 loaded lazily so the `?reset` clear runs first). Language and theme are the exception: they keep
-their pre-existing stores (`urx-lang` / `urx-theme`), read before settings load so the first paint
+their own stores (`urx-lang` / `urx-theme`), read before settings load so the first paint
 is already localized and themed. Rows whose feature needs the desktop shell
 (device scope, update check, firmware warning, computer sleep, recent plans — plus the export rows in the demo)
 render disabled with a dashed "Desktop app only" tag instead of hiding, so the demo still shows
 what the desktop app offers.
 
 - **Language & theme** — the UI language (a dropdown of native names, ready for more languages)
-  and the three-way theme mode (auto / dark / light; see Display themes). Both rows moved off the
-  toolbar, which was overflowing into a horizontal scrollbar at narrow widths.
+  and the three-way theme mode (auto / dark / light; see Display themes). Both rows sit here rather than
+  on the toolbar, which would overflow into a horizontal scrollbar at narrow widths.
 - **Device read / write scope** — one bidirectional scope for fetch, write and Live sync: "All
   supported" (default) or "Scene only", which leaves the URX's device-wide settings untouched
   (monitor / phones, output + USB / SD patches, streaming, oscillator, sample rate — the set a
@@ -3680,7 +3669,7 @@ what the desktop app offers.
 }
 ```
 
-Phase 1 implemented save/load with browser standards (Blob download / file input). Phase 2 adds
+In a browser, save and load use browser standards (Blob download / file input). The desktop build adds
 native save/open dialogs (`tauri-plugin-dialog`) plus a recent-plans list; file IO uses small
 app commands (`read_text_file` / `read_binary_file` / `write_text_file` / `write_binary_file`), each
 `async` with the `std::fs` work on a worker thread (`spawn_blocking`, like the vd commands) and each
@@ -3698,9 +3687,8 @@ export surfaces as a modal error dialog (`status.saveError` / `status.exportErro
 keeps the plan dirty. A recent-plans entry whose file no longer loads (moved / deleted /
 corrupted) is dropped from the list automatically — keeping it would only reproduce the same
 error — and the status line says so; declining the discard confirm attempts nothing and keeps
-the entry. The plan format is
-unchanged apart from the added `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
-`noteCollapsed` fields (older files default them on load). Loading (`deserialize`) is tolerant of
+the entry. The `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
+`noteCollapsed` fields are optional (a file without them gets their defaults on load). Loading (`deserialize`) is tolerant of
 corrupt input at two levels. A collection that is not the right container at all falls back to its
 empty default (`positions` included, symmetrically); within a collection each element is validated on
 its own and a non-conforming one is dropped rather than the document refused — a wire that is null,
@@ -3708,7 +3696,7 @@ wrong-typed or carries an unknown `kind`; a node parameter leaf that is not a fi
 boolean; a note, name or colour that is not a string; a hidden / note-collapsed id that is not a
 string; a position whose coordinates are not both finite. This keeps garbled values from a hand edit,
 a generator or an older build out of the plan, where they would break routing invariants or reach a
-formatter that throws on them — a note written as an object used to load cleanly and then take the
+formatter that throws on them — a note written as an object would load cleanly and then take the
 canvas down on its first paint.
 
 ### An FX channel the plan does not describe
@@ -3716,9 +3704,8 @@ canvas down on its first paint.
 `planToCommands` emits an FX channel only when the plan carries an `fxEffect` for it, and **the loader
 never leaves one absent**: `fillFactoryParams` completes a document from the model's factory values, so a
 channel a document says nothing about reaches the write path carrying that channel's factory effect.
-Silence used to be a statement — the way a plan said "leave this channel as the unit has it", which the
-skill's `SKILL.md` and `references/plan-schema.md` both instructed an author to use — and it is not one
-any more. A plan that has to keep the unit's effect carries its values: fetch the plan back, then edit.
+Silence is therefore not a way for a plan to say "leave this channel as the unit has it". A plan that has to
+keep the unit's effect carries its values: fetch the plan back, then edit.
 
 What the write costs there is irreversible. An EFFECT TYPE write refills the engine array with that
 type's defaults, and selecting the old type back does not bring the old values with it. So the decision
@@ -3738,7 +3725,7 @@ not. What the command CARRIES need not be what the key holds: the emit inverts (
 COMP and EQ send ON as 0), rounds and clamps, and each of those is that key's value going out. A
 run of commands sending one value to every linked instance takes the name from the one before it,
 matched on the parameter as well as the value — matched on the value alone, a channel's fader, which
-comes off a connection rather than a node parameter, took whichever parameter had last been read
+comes off a connection rather than a node parameter, would take whichever parameter had last been read
 carrying a zero.
 
 Three answers, not two. A key the plan does not carry names nothing: the emit asks before it decides
@@ -3770,8 +3757,7 @@ exactly as a document naming a type does, and omitting only `fxEffect.params` pr
 **The panel and the wire agree on a document the loader completed.** `inspector.ts` reads an absent
 `fxEffect` as `{}` and draws the resolved type, and the tuning screen each descriptor's own
 default; the fill puts those same values into the plan, so the row and the command carry one number. Aligning the *emit* to
-the panel is the other way to close that gap and it is the destructive one — it was written, measured and
-reverted — which is why the plan is completed at the LOAD, where the operator can be told what it means.
+the panel is the other way to close that gap and it is the destructive one, which is why the plan is completed at the LOAD, where the operator can be told what it means.
 Where the fill does not run the two still diverge: a node a device read could not answer for stays sparse
 on purpose, and the Inspector's own stand-in for an absent value is not always the model's factory one.
 
@@ -3826,21 +3812,21 @@ where the window does, but the wire does not, and an earlier build of this app c
 After a write, the plan takes those values back. What decides it is the set of ADDRESSES the device
 confirmed, not whether the write succeeded, and the two come apart exactly here: a live session whose
 snapshot already agrees with the unit sends nothing, so a flush can succeed without carrying the address
-in question at all. A first version keyed on the run's success and adopted values no write had touched —
-an unrelated fader move was enough to reproduce it.
+in question at all. Keyed on the run's success instead, it would adopt values no write had touched —
+an unrelated fader move is enough to produce that.
 
 `confirmedAddrs` (`control/client.ts`) is that set, read off the converge's own **ledger**: an address is
 in it when a send was acknowledged AND a read has since found the device holding the plan's value. Having
 been READ is the load-bearing half — subtracting the read failures is not enough, because a diff stops at
 its first one and leaves every later address unasked, in neither the differences nor the failures and
-sent, which reported it confirmed. The ledger is kept CURRENT rather than rebuilt at the end of each
+sent, which would report it confirmed. The ledger is kept CURRENT rather than rebuilt at the end of each
 round: every read writes it as it goes, and every send that LANDS takes the address it just overwrote
 back out — every address, when what landed is a `sideEffect` head, since which values such a write moves
 is what this loop settles by re-reading rather than something the catalogue enumerates. What invalidates
 is the send RESOLVING and not the round: a command the broker declined moved nothing, and neither did one
 a cancel stopped before it went out, so what an earlier read established about every other address still
-holds. Invalidating on the round being PLANNED instead discarded a confirmed value every time a later
-round's side-effect head was refused.
+holds. Invalidating on the round being PLANNED instead would discard a confirmed value every time a later
+round's side-effect head is refused.
 
 **Only an explicit refusal says a write did not land.** `vd.rs`'s `do_set` SENDS and then waits, so by
 the time anything can go wrong with the answer the request is already on the wire. `SendOutcome.result`
@@ -3892,9 +3878,10 @@ would lose a name for being long, and keeping one the unit could not have produc
 the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured
 on a URX44V, the broker accepts a 20-character name and reads it back unchanged, and the settings
 file's 64-byte NUL-padded element is the container rather than the limit — reading that width as the
-limit is the mistake this rule replaced. The name is also the one plan string that leaves the app
-over the device link, where the numeric leaves have `boundRaw` and strings had nothing, so the cut is
-applied again at the emit site: a name reaches the plan from a device read and from a rename made on
+limit would be a mistake. The name is also the one plan string the unit is sent as a string
+(`planToNameWrites`: the SSMCS Sweet Spot Data preset rides the same path, but the plan holds it as a numeric index,
+and an enum string such as a send's `tap` goes out as a number). The numeric leaves have `boundRaw` and a string has
+no bound of its own, so the cut is applied again at the emit site: a name reaches the plan from a device read and from a rename made on
 the unit itself, neither of which passes this funnel. Notes and colours are the app's own and stay
 unbounded.
 
@@ -3971,7 +3958,7 @@ Two things a settings file cannot supply, both stated in the import confirm:
 One parameter — the oscillator's ON state (710) — has no descriptor in the format at all: the unit
 does not persist it and loads with it off. So the source supplies off (0) rather than failing on it,
 and a clean file imports with no failures and no unread nodes. This is a whitelisted gap; anything
-else genuinely absent still surfaces as a read failure.
+else genuinely absent surfaces as a read failure.
 
 Import is gated behind `--experimental` (File > Import settings file, and `.urxf` in the drop
 target's accept list), and is **read-only**: writing a settings file back is not implemented, because
@@ -3998,7 +3985,12 @@ Windows ships NSIS only; no MSI (WiX) is built. WiX points the Start Menu shortc
 `%WINDIR%\Installer\{ProductCode}\ProductIcon`, and the ProductCode is regenerated on every build while the
 major upgrade deletes the old ProductCode's cache — so every update leaves a pinned taskbar shortcut aimed at
 a path that no longer exists, which the shell draws as a blank icon. An NSIS shortcut targets
-`$INSTDIR\urx-router.exe` directly, so it cannot happen. An existing MSI install is detected by the NSIS
+`$INSTDIR\urx-router.exe` directly and takes its icon from that executable, and an update leaves it where it is:
+under `/UPDATE` the uninstaller skips its unpin-and-delete block and the installer skips recreating the
+shortcut, while the install directory is restored from the previous install (tauri-bundler's
+`installer.nsi` at the `@tauri-apps/cli-v2.11.4` tag, the version `pnpm-lock.yaml` resolves —
+installer.nsi:823-849, :914-954 and :897-901). The path a pinned shortcut points at is the one the update
+rewrites in place, so it cannot happen. An existing MSI install is detected by the NSIS
 installer (matching `DisplayName` + `Publisher`) and uninstalled first — this runs even under the updater's
 passive mode — but the install location moves to `%LOCALAPPDATA%\URX Router`, so that one migration prompts
 for the MSI uninstall and elevation, and an existing pin has to be re-pinned.
@@ -4041,7 +4033,7 @@ is the one that agrees with the declared version, so the recorded value describe
 took place rather than only what the file asked for. `post-merge.yml`'s `warm-cache` matrix and
 `ci.yml`'s `rust` job name the same image — the first so the cache a release restores describes the
 build it is about to do, the second so a pull request compiles the crate under the release's SDK.
-The workflow headers carry the retirement that made the move urgent.
+The workflow headers carry the runner-image retirement behind that choice.
 
 The `build` matrix restores its Rust cache read-only: a run can restore caches from its own ref or the
 default branch only, and every tag is its own scope, so a cache saved during a release is unreachable
@@ -4152,8 +4144,11 @@ wired into CI as the reusable `licenses.yml` workflow, which runs `cargo about g
 dependency carries a license outside `about.toml`, so a dependency change can't silently drop a notice.
 `post-merge.yml` calls it as that gate; `release.yml` calls it once and hands the result to both platform
 builds as an artifact. Generating it once is safe because the output is host-independent — `about.toml`
-declares no `targets`, so cargo-about keeps every target's crates whatever the runner is — and it avoids
-building cargo-about from source on each one. The page
+declares no `targets`, so cargo-about keeps every target's crates whatever the runner is (measured 2026-09-24
+at `a94d0b28` with cargo-about 0.9.1: the notice generated on macOS arm64 and the one the post-merge run
+generated on ubuntu-latest are byte-identical, and both list the Windows-only `windows-sys` and
+`webview2-com`, the macOS-only `objc2-app-kit` and the Linux-only `webkit2gtk`) — and it avoids building
+cargo-about from source on each one. The page
 also ships inside the desktop app: `bundle.resources` packages it as a Tauri resource — and `tauri-build`
 copies that resource at compile time, so even a bare `cargo build` of the crate needs the file present
 (which is why the `warm-cache` job, which never bundles, writes a placeholder). The

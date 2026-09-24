@@ -10,18 +10,18 @@ in `src/ui/console.ts` (rack builder), `src/style.css` (`.con-sends` / `.con-spo
 
 ## Background
 
-The tabbed design had two structural problems:
+A tabbed "Send to" design has two structural problems:
 
-1. Muting one send required a tab switch first, and the switch flipped the whole view's context.
-2. Sends to different buses could never be seen or operated at the same time.
+1. Muting one send requires a tab switch first, and the switch flips the whole view's context.
+2. Sends to different buses can never be seen or operated at the same time.
 
-The rack gives every strip always-available controls for all of its sends, so the "Send to" tabs,
-the send-on-fader mode, and the console mode bar (`Output [MAIN]` / `Send to [...]`) are removed.
-The head MUTE chip keeps controlling the → STEREO main path (on the strips that have that send: channels,
+The rack gives every strip always-available controls for all of its sends, so the CONSOLE has no "Send to"
+tabs, no send-on-fader mode and no console mode bar (`Output [MAIN]` / `Send to [...]`).
+The head MUTE chip controls the → STEREO main path (on the strips that have that send: channels,
 FX channels, MIX buses); the rack never touches the main path. The node master ON/OFF (CH_ON / MIX 675 /
 STEREO / MONITOR, all `np.on`, and the oscillator's `osc.on`) is a **power LED** on the scribble — the whole
 scribble is its button; when off the strip dims (the shared `isNodeInactive` predicate, matching the graph),
-so the old red "CH MUTE" badge is gone. STEREO and the MONITOR buses have no → STEREO send, so they carry no
+so there is no separate red "CH MUTE" badge. STEREO and the MONITOR buses have no → STEREO send, so they carry no
 MUTE chip; the power LED is their only on/off.
 
 ## Layout
@@ -29,7 +29,7 @@ MUTE chip; the power LED is their only on/off.
 A fixed-height section between the strip head and the fader zone:
 
 ```text
-├─ head (unchanged) ────────────┤
+├─ head ────────────────────────┤
 │ SENDS                     ▾   │  header: label / transient value readout / collapse
 │ [F1]   [F2]   [M1]   [M2]     │  send enable chips (amber = on)
 │ [PRE]  [PRE]  [PRE]  [PRE]    │  pre-fader toggles (amber = pre)
@@ -50,9 +50,9 @@ visually fuse into one 0 dB reference line, so a strip's send distribution reads
 
 ### Slots
 
-- Fixed column order: FX 1, FX 2, MIX 1, MIX 2 (the previous tab order).
+- Fixed column order: FX 1, FX 2, MIX 1, MIX 2.
 - The slot set per model = `SEND_TARGETS` whose bus exists in the model and is not hidden. A
-  shelved bus drops its column on **every** strip (same rule as the old tabs), so columns stay
+  shelved bus drops its column on **every** strip, so columns stay
   aligned across strips.
 - A strip that lacks a particular send leaves that column blank (e.g. FX channels show only
   MIX 1 / MIX 2). Strips with no sends at all (MIX / MONITOR / STEREO / OSCILLATOR / STREAMING)
@@ -77,8 +77,8 @@ Two treatments, and which one a control gets is decided by what it IS:
   it to open, so there is nothing to draw disabled; a way IN to an empty list is not a state.
 - **Its slot stays, and the face beside it keeps the width it has at every other rate.** Two
   things hold that. The face declares its own width (`.con-chip.paired`, `flex: 0 0`) rather
-  than reading whether a disclosure follows it, which is what a `:has(+ .con-chip-open)` rule
-  used to do — dropping one resized the button beside it from 58px to 39px. And the empty half
+  than reading whether a disclosure follows it: read through a `:has(+ .con-chip-open)` rule,
+  dropping one would resize the button beside it from 58px to 39px. And the empty half
   is filled by a hidden placeholder (`appendOpener`), because the chips are a wrapping
   two-per-row flow: without it the parity filler lands elsewhere, every strip gains a row and
   the head — clamped to the tallest — grows 292px to 304px.
@@ -102,8 +102,8 @@ still claims is given back — and that is the state an operator most needs to r
 - Toggles the send connection's `tap` (`pre` / `post`); lit = PRE. This is the only tap indicator
   (no extra marker), and it stays readable while the send itself is off.
 - CH → FX taps cannot be written to the device: while live-connected the button renders read-only
-  with the existing `inspector.prePostLcdOnly` tooltip (`sendTapWritable`).
-- A hover tooltip (new i18n key) spells out the pre-fader meaning, mirroring the C.INT tooltip
+  with the `inspector.prePostLcdOnly` tooltip (`sendTapWritable`).
+- A hover tooltip spells out the pre-fader meaning, mirroring the C.INT tooltip
   mechanism.
 
 ### Column fader
@@ -165,8 +165,8 @@ still claims is given back — and that is the state an operator most needs to r
   closing it (see "Live sync / follow").
 - **The focus decision is taken BEFORE anything is destroyed, in one place.** A rebuild that
   closes a popover removes the row the operator may be standing on, so a capture taken after
-  the close has nothing left to record — which is how a whole-rack repaint, the one Live sync
-  runs on every device-side edit that needs a read-back, put an operator on `<body>` without
+  the close has nothing left to record — and a whole-rack repaint, the one Live sync
+  runs on every device-side edit that needs a read-back, would then put an operator on `<body>` without
   their doing anything. `captureFocus` runs first and covers the whole console rather than the
   strip rack alone, and it records a focus inside a popover as the ROW plus the strip the
   popover belongs to. Where it lands is decided by what the rebuild actually did: the same row
@@ -191,7 +191,7 @@ still claims is given back — and that is the state an operator most needs to r
   handed back to does not — the close re-resolves that trigger from the strip that is there now.
 - **A selection that rebuilds the strip lands on the same strip, not on the element that is gone.**
   The INS FX disclosure first, since it is what was pressed; the FACE where a sample rate has
-  emptied the menu and dropped the disclosure, which is the case that fell to `<body>`; and the
+  emptied the menu and dropped the disclosure, the case that would otherwise fall to `<body>`; and the
   strip's own root under both, so a strip carrying neither still keeps the operator's place. A
   chip the rate turned read-only is out of the tab order and can still RECEIVE focus, which is
   what makes it usable as that anchor.
@@ -202,10 +202,10 @@ exactly one home.
 
 ### MIDI control
 
-- Send level / send on-off / send pan reuse the existing send-scoped control ids
-  (`controlId(node, param, target)`), so mappings made against the old send tabs keep working
-  unchanged. The rack chips, column faders, and SEND PAN knobs are armable in learn mode.
-- New: a `tap` control per MIX send (toggle). CH → FX taps are rejected as device-locked, like the
+- Send level / send on-off / send pan use the send-scoped control ids
+  (`controlId(node, param, target)`), so a mapping names the send it was made on rather than a
+  position in the rack. The rack chips, column faders, and SEND PAN knobs are armable in learn mode.
+- A `tap` control per MIX send (toggle). CH → FX taps are rejected as device-locked, like the
   other locked controls.
 
 ### Live sync / follow
@@ -222,7 +222,7 @@ display by design.
 
 | Alternative | Rejection reason |
 | --- | --- |
-| Global "Send to" tabs (previous design) | Mute needs tab switch; no cross-send visibility |
+| Global "Send to" tabs | Mute needs tab switch; no cross-send visibility |
 | Per-strip flip tabs / TotalMix-style side panel | One send visible at a time / horizontal growth per strip |
 | Horizontal mini-fader rows | Only horizontal control on the console; reads as a balance slider — sends really have a pan, so "the visible slider is the send pan" is a coherent wrong model that causes live mis-writes |
 | Rotary send knobs in rows | Needle angle is the weakest at-a-glance encoding; misreads as per-send pan below the GAIN/PAN knobs; 3 px adjacent-knob gap |
@@ -233,19 +233,14 @@ display by design.
 
 ## Implementation notes
 
-- `src/ui/console.ts`: rack builder replaces the mode bar / `renderModes` / send-mode strip
-  filtering; `Mode` state and `usesSend`-driven head swapping are removed (heads always render the
-  MAIN control set).
+- `src/ui/console.ts`: the rack builder; heads always render the MAIN control set.
 - `src/style.css`: rack styles; keep light-theme parity (grooves stay dark per `--groove`).
-- `src/i18n/{en,ja}.ts`: retire `outputLabel` / `sendToLabel`; add keys for `SENDS`, `SEND PAN`,
-  and the PRE tooltip.
-- `src/core/midi/controls.ts` + `engine.ts`: add the `tap` toggle control for MIX sends.
-- E2E: rewrite `console.spec.ts` mode-tab tests as rack tests (chip toggle, PRE toggle, fader
-  keyboard grid steps, global collapse + persistence, dots, SEND PAN popover, readout, blank
-  slots, sendless strips, FX-tap read-only while live-stubbed); extend `midi.spec.ts` for rack
-  arming. Unit: controls catalog / engine tap handling.
-- Update `docs/{en,ja}/architecture.md` (CONSOLE section) and the README screenshots after
-  implementation.
+- `src/i18n/{en,ja}.ts`: keys for `SENDS`, `SEND PAN`, and the PRE tooltip.
+- `src/core/midi/controls.ts` + `engine.ts`: the `tap` toggle control for MIX sends.
+- E2E: `console.spec.ts` covers the rack (chip toggle, PRE toggle, fader keyboard grid steps,
+  global collapse + persistence, dots, SEND PAN popover, readout, blank slots, sendless strips);
+  `midi.spec.ts` covers rack arming. Unit: controls catalog / engine tap handling, and the FX tap
+  read-only while live in `src/ui/console-sends.test.ts`.
 
 ## Accepted trade-offs / watch items
 
@@ -253,7 +248,7 @@ display by design.
   mitigates).
 - Sub-24 px touch targets in the browser demo (desktop-first product; relative drag and keyboard
   paths mitigate).
-- Comparing one send across many strips is slightly slower than the old horizontal rows (the
+- Comparing one send across many strips is slightly slower than on horizontal rows (the
   fixed-y-band advantage is traded for grammar consistency and the elimination of the pan
   misread).
 - 19 px column pitch relies on pointer capture + the drag threshold to avoid adjacent-column
