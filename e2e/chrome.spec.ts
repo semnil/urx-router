@@ -224,6 +224,30 @@ test.describe("toolbar", () => {
     expect((await face("model-picker")).backgroundColor).toBe(await colorToken(page, "--ctl-bg"));
   });
 
+  // At phone width the breakpoint gives the rack and the inspector a 40px touch target,
+  // and a select takes it only as a height: WebKit keeps a styled select at the
+  // platform's own height whatever min-height says. The count is part of the check, so
+  // a run that found no inspector select cannot pass on an empty loop.
+  test("at phone width the rack and inspector selects take the 40px touch target @webkit", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => localStorage.setItem("urx-model", "URX44V"));
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await page.locator('#graph-host g.node[data-id="ch1"]').click();
+    await expect(page.locator("#inspector select").first()).toBeVisible();
+    const heights = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLSelectElement>(".model-select select, #inspector select")]
+        .filter((el) => el.getClientRects().length > 0)
+        .map((el) => ({
+          id: el.id || (el.closest<HTMLElement>(".param")?.dataset.paramLabel ?? "an inspector select"),
+          h: el.getBoundingClientRect().height,
+        })),
+    );
+    expect(heights.filter((s) => s.id === "model-picker" || s.id === "rate-picker")).toHaveLength(2);
+    expect(heights.length, "the inspector shows a select").toBeGreaterThan(2);
+    for (const s of heights) expect(s.h, `${s.id} is a 40px target`).toBeGreaterThanOrEqual(40);
+  });
+
   // The Device menu only shows under the Tauri shell; stub the bridge so its
   // grouping is testable in the browser.
   async function gotoWithDeviceMenu(page: Page, experimental: boolean): Promise<void> {
