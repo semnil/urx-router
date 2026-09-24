@@ -216,6 +216,18 @@ describe("EQ response against the device", () => {
     expect(shelfDesignFreq(1000, -18, true)).toBeLessThan(1000);
     expect(shelfDesignFreq(1000, -18, false)).toBeGreaterThan(1000);
   });
+
+  it("designs a shelf under 6 dB of gain at its nominal frequency, passing half its gain there", () => {
+    // Between 3 and 6 dB the solve would move the design frequency inside the nominal one;
+    // the unit keeps it at the nominal frequency.
+    for (const gain of [4, 5, -4, -5]) {
+      for (const high of [true, false]) {
+        expect(shelfDesignFreq(1000, gain, high), `${high ? "HIGH" : "LOW"} ${gain} dB`).toBe(1000);
+        const at = bandResponse(band({ index: high ? 3 : 0, type: EQ_TYPE_SHELVING, freq: 1000, gain }))(1000);
+        expect(at, `${high ? "HIGH" : "LOW"} ${gain} dB at 1 kHz`).toBeCloseTo(gain / 2, 1);
+      }
+    }
+  });
 });
 
 // The mid bands are fixed peaking on the unit — it rejects a type write there

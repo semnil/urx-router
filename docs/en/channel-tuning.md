@@ -463,7 +463,7 @@ wrong curve without it:
 | --- | --- |
 | Peaking | **The unit's Q is twice the biquad Q.** A "Q 1.00" +12 dB bell measured +12/+10/+7/+3 dB at 1k/700/500/300 Hz — a biquad Q of 0.5. Taking the number at face value draws every bell half as wide as the device's. |
 | HPF / LPF | Fixed 2nd-order Butterworth: -3.0 dB exactly at the nominal frequency, 12 dB/octave beyond. **The band's Q slot is ignored** — Q 0.71 and Q 4.00 measured identical, with no corner resonance. Honouring it draws a +12 dB peak that is not there. |
-| Shelving | The S = 1 shape, but **the nominal frequency is the point 3 dB below the plateau**, not the midpoint: a +18 dB shelf at 1 kHz measured +15 dB there and reached +18 dB by 4 kHz. So the design frequency is solved for, and the search direction flips with the gain's sign — reusing the boost direction for a cut is 4.2 dB out. |
+| Shelving | The S = 1 shape, but **the nominal frequency is the point 3 dB below the plateau**, not the midpoint: a +18 dB shelf at 1 kHz measured +15 dB there and reached +18 dB by 4 kHz. So the design frequency is solved for, and the search direction flips with the gain's sign — reusing the boost direction for a cut is 4.2 dB out. **Under 6 dB of gain the shelf stays designed at its nominal frequency**: there the rule would move the design frequency inside the nominal one, and the unit does not — at 1 kHz, +4 / +5 / −4 dB high shelves and a +4 dB low shelf measured +2.4 / +3.1 / −2.5 / +2.4 dB, against +2.0 / +2.5 / −2.0 / +2.0 for a nominal-frequency design and +1.0 / +2.0 / −1.0 / +1.0 for the moved one. |
 
 Two further measurements bound what the model is worth: **bands sum in dB** (a LOW shelf +12 and a
 HIGH-MID peaking -9 measured together matched the sum of the two measured separately, within the
@@ -814,7 +814,7 @@ is the same assumption the shipped COMP curve carries.
   case over the whole ratio range is 2.18 against a bound of 3, and a Hard knee is zero wide so the
   branch does not run at all. It stays because the reaches are measured values that can move again.
 - **The EQ.** Three fixed bands: LOW shelving, MID peaking, HIGH shelving. The shelf convention is the
-  4-band model's — the nominal frequency is the point 3 dB below the plateau — and the peaking Q is
+  4-band model's — the nominal frequency is the point 3 dB below the plateau from 6 dB of gain up — and the peaking Q is
   **not**: the 4-band's "the unit's Q is twice the biquad Q" does not hold here. MID takes the same
   gain-dependent law as the side-chain filter below, because the two are the same filter; the 4-band's
   constant sits adjacent to it in `eq-response.ts` so neither block's can be carried to the other by
