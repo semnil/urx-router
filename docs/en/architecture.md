@@ -2193,7 +2193,7 @@ sequenceDiagram
     Note over L: an edit that arrived during the converge is still a diff<br/>baking it in here would drop it in silence
   else refetch: the unit authored values the plan only mirrors
     L->>H: refetchNodes for the owner nodes, with what this flush just wrote
-    H->>H: clone the plan, open the write witness
+    H->>H: clone the plan, with the write witness the flush opened as it took its values
     D-->>H: the notify for each write inside this read's scope, or 300 ms
     H->>D: read those nodes into that clone, answering an announced address from the announcement
     D-->>H: values
@@ -2216,7 +2216,10 @@ notify position each was sent from, and which of them this read is going to ask 
 deliberately not in it; they are not an input to any answer the settle gives. Both halves of what the handle buys —
 the wait and answering an announced address from the announcement — happen **inside** the read, after
 `readIntoPlan` has cloned the plan and opened the write witness. Taken outside, the wait would be a window in which
-an operator edit lands in neither, and the merge would revert it. That does widen the window undo is refused in,
+an operator edit lands in neither, and the merge would revert it. The witness itself opens earlier still: the flush
+opens it at the instant it takes the values it sends, whenever one of them is a refetch head (`watchEdits`), and
+hands it to the read, because an edit made while those writes are on the wire is carried by none of them and would
+otherwise be reverted the same way. That does widen the window undo is refused in,
 since the wait sits inside the same in-flight set as the read it belongs to; kept that way deliberately, because
 committing an entry against an open clone and witness would freeze this read's own writes into it, and the refusal
 is a deferral bounded by the settle's own window.

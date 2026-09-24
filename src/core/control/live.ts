@@ -28,6 +28,7 @@ import { confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { carrierOf, onExcludedBy, otherSwitchId } from "../input-lock";
+import type { PlanWriteWatch } from "../plan-history";
 
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
 // single-threaded device worker is not flooded; the snapshot diff means only the
@@ -125,7 +126,13 @@ export interface LiveSyncHooks {
    *  Without it the read put the value the edit had just replaced back into the plan, the
    *  capture below recorded it as device truth, and the unit's own notify for our write
    *  then failed isEcho and was reconciled as a device-side change. */
-  refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites) => Promise<Plan | null>;
+  refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites, edits?: PlanWriteWatch) => Promise<Plan | null>;
+  /** Start watching the plan's edits (plan-history.PlanWriteWitness). A flush whose writes
+   *  will provoke a refetch opens one where it takes the values it sends, and hands it to
+   *  that read: an edit made after that instant is carried by none of the writes, and the
+   *  read, opened only once the writes have returned, keeps it as one made while it runs.
+   *  Absent = the read watches from its own start. */
+  watchEdits?: () => PlanWriteWatch;
   /**
    * Read the addresses the unit announces nothing for into the plan, in front of a write
    * that would go out over them (`readback.applySilentState`).
@@ -849,6 +856,7 @@ export class LiveSync {
     this.flushing = true;
     // Asked again by this flush: a held ON it still cannot send sets it back.
     this.onHeld = false;
+    let edits: PlanWriteWatch | undefined;
     try {
       // The session this flush is for. `model` and `plan` below are captured once and the
       // re-take at the head of the loop reads those captures, so once the generation moves
@@ -946,6 +954,22 @@ export class LiveSync {
         // Derived again: the park merged the unit's own values into the plan.
         commands = planToCommands(model, plan, scope);
       }
+      // Where the values below are taken. A write among them that provokes a refetch has that
+      // read issued only once the writes have returned, so an edit made from here on — carried
+      // by none of them — is watched from here and handed to the read, which keeps it as it
+      // keeps an edit made while it runs.
+      const refetchAhead =
+        commands.some(
+          (c) => c.node !== undefined && REFETCH.has(c.name) && this.snapshot.get(cmdAddr(c)) !== c.vdValue,
+        ) ||
+        planToNameWrites(model, plan).some(
+          (w) =>
+            w.node !== undefined &&
+            w.name !== undefined &&
+            REFETCH.has(w.name) &&
+            this.nameSnapshot.get(nameKey(w)) !== w.value,
+        );
+      if (refetchAhead) edits = this.hooks.watchEdits?.();
       // Both lists below are frozen at flush start; the snapshots they are diffed against
       // are not. Any await can let a device-side change land (noteDirect's one entry, or a
       // reconcile's whole capture), and what a frozen list carries is then older than what
@@ -1233,13 +1257,17 @@ export class LiveSync {
           else if (w.changed) mustAnnounce.add(k);
         }
         for (const k of nameSettle.keys()) mustSettle.add(k);
-        const deviceView = await this.hooks.refetchNodes(refetch, {
-          written,
-          mustSettle,
-          mustAnnounce,
-          expected,
-          ...(nameSettle.size ? { boundaryMarks: nameSettle } : {}),
-        });
+        const deviceView = await this.hooks.refetchNodes(
+          refetch,
+          {
+            written,
+            mustSettle,
+            mustAnnounce,
+            expected,
+            ...(nameSettle.size ? { boundaryMarks: nameSettle } : {}),
+          },
+          edits,
+        );
         if (this.sessionGen !== gen) return;
         // The read ran against its own copy of the plan (readback.readIntoPlan), so the
         // copy is what the device holds: re-base from it and an edit made during the
@@ -1311,6 +1339,7 @@ export class LiveSync {
       this.hooks.onError(e instanceof Error ? e.message : String(e));
       return;
     } finally {
+      edits?.close();
       this.flushing = false;
       this.converging = false;
     }

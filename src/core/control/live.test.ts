@@ -1281,6 +1281,54 @@ describe("LiveSync sideEffect refetch", () => {
     expect(typeof [...(marks[0] ?? new Map()).values()][0]).toBe("number");
   });
 
+  // An edit made while a refetch head's write is on the wire is carried by none of the
+  // flush's writes, and the read is opened only once they have returned — so the flush opens
+  // the edit watch where it takes its values and hands that same watch to the read. A flush
+  // with no refetch head opens none: the watch samples every edit while it is open.
+  it("watches edits from where the flush takes its values and hands the watch to the refetch", async () => {
+    const plan = basePlan();
+    setCh1CompEqType(plan, COMP_EQ_SSMCS);
+    const seen: string[] = [];
+    const watch = {
+      authored: () => new Set<string>(),
+      edits: () => new Map<string, number>(),
+      close: () => void seen.push("close"),
+    };
+    const handed: unknown[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      watchEdits: () => {
+        seen.push("watch");
+        return watch;
+      },
+      refetchNodes: async (_nodes, _pending, edits) => {
+        seen.push("refetch");
+        handed.push(edits);
+        return null;
+      },
+    });
+    vi.mocked(vdSet).mockImplementation(async () => void seen.push("write"));
+    live.begin();
+    setCh1Morphing(plan, 60);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(seen).toEqual(["watch", "write", "refetch", "close"]);
+    expect(handed).toEqual([watch]);
+
+    // The control: a fader move provokes no read, and opens no watch.
+    seen.length = 0;
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(seen).toEqual(["write"]);
+  });
+
   // A converge and a refetch can land in one flush — PAN/BAL and the morphing knob inside
   // one 120 ms window is enough — and the converge runs first. It makes the unit match the
   // plan across the whole write scope, so every strip value the unit has just recomputed
