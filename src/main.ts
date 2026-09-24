@@ -50,6 +50,8 @@ import {
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import { applyParamRange, applyRequiredSources, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
+import { phantomHiZBothOn, phantomHiZNewlyBothOn, switchAddr } from "./core/input-lock";
+import type { InputSwitch, SwitchSession } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
 import {
   baseName,
@@ -441,7 +443,11 @@ const live = DEMO
       onSent: (n) => {
         const taken = liveAdopted;
         liveAdopted = 0;
-        setStatus(t().status.liveSynced(n) + (taken ? ` — ${t().status.paramsBounded(taken)}` : ""));
+        const notes = flushReadNotes;
+        flushReadNotes = [];
+        setStatus(
+          [...notes, t().status.liveSynced(n) + (taken ? ` — ${t().status.paramsBounded(taken)}` : "")].join(" — "),
+        );
       },
       onConfirmed: (confirmed, sent) => {
         liveAdopted += adoptConfirmedWrites(confirmed, sent);
@@ -495,6 +501,7 @@ const live = DEMO
         if (snapped || changesLinkState(merged.devicePatch)) followFull = true;
         traceProbe?.sample("refetch");
         noteMergeConflicts(merged);
+        flushReadNotes.push(...refusalNotes(merged));
         for (const id of nodeIds) followDirtyNodes.add(id);
         // The device recomputed values the plan only mirrors (the 1-knob bands), so they
         // are its authorship, not an edit: take exactly those keys into the history
@@ -547,7 +554,7 @@ const live = DEMO
         // to it — a reverb tuned on the panel appearing in the app. The park the converge
         // takes is not that gesture, and the flush reports what it sends on the same line, so
         // saying it there would announce one repair twice.
-        if (scope.only) setStatus(t().status.liveFollowed(merged.applied));
+        if (scope.only) setStatus(withSwitchNotes(t().status.liveFollowed(merged.applied), merged));
         // Past the gate, because this arrives inside the operator's OWN gesture: a park runs
         // in front of a head write, and the head is a selector they have just chosen in — so
         // the control the gate would hold the rebuild for is the one showing the stale value,
@@ -793,7 +800,65 @@ function reflectFollow(): void {
     // device-side edit under it would otherwise leave stale sliders on screen.
     dynScreen.refresh(ids);
   }
+  // A follow that leaves a channel with +48V and HI-Z both on says so once per change of
+  // the set; the plan keeps the unit's state and the app writes nothing for it.
+  const both = bothOnLabels();
+  if (both && both !== bothOnNoted) setStatus(t().status.phantomHiZBothOn(both));
+  bothOnNoted = both;
 }
+
+// The channels holding +48V and HI-Z both on, as the status line last named them.
+let bothOnNoted = "";
+function bothOnLabels(): string {
+  return phantomHiZBothOn(getModel(modelId), plan)
+    .map((id) => graph.labelOf(id))
+    .join(", ");
+}
+/** A device read's status line, led by what it did about +48V / HI-Z: the ONs it refused
+ *  (`merged`, when the read is one that can refuse), then the channels it left with both on.
+ *  The plan keeps what the unit holds; the app writes nothing for either.
+ *
+ *  A line that replaces one still leading with a read's refusals goes on leading with them:
+ *  the full read device follow runs once a burst goes quiet lands on that line, and a line
+ *  anything else has replaced since carries nothing forward. */
+function withSwitchNotes(msg: string, merged?: MergedRead): string {
+  bothOnNoted = bothOnLabels();
+  const both = bothOnNoted ? [t().status.phantomHiZBothOn(bothOnNoted)] : [];
+  let notes = refusalNotes(merged);
+  if (!notes.length && refusalLine && statusbar.textContent === refusalLine.line) notes = refusalLine.notes;
+  const line = [...notes, ...both, msg].join(" — ");
+  refusalLine = notes.length ? { line, notes } : null;
+  return line;
+}
+/** The last status line that led with a read's refusals, and those refusals. */
+let refusalLine: { line: string; notes: string[] } | null = null;
+/** One sentence per switch a read refused (`MergedRead.refusedOn`), channels in model order. */
+function refusalNotes(merged: MergedRead | undefined): string[] {
+  if (!merged?.refusedOn.length) return [];
+  const order = getModel(modelId).nodes.map((n) => n.id);
+  const named = (key: InputSwitch): string =>
+    order
+      .filter((id) => merged.refusedOn.some((r) => r.nodeId === id && r.key === key))
+      .map((id) => graph.labelOf(id))
+      .join(", ");
+  const phantom = named("phantom");
+  const hiZ = named("hiZ");
+  return [
+    ...(phantom ? [t().status.phantomRefusedByRead(phantom)] : []),
+    ...(hiZ ? [t().status.hiZRefusedByRead(hiZ)] : []),
+  ];
+}
+/** A read refused ONs the operator made while it was in flight and took their keys back to the
+ *  unit's values (`MergedRead.refused`): the edit leaves the undo history, so no entry puts it
+ *  back, and the keys are recorded as the unit's. */
+function takeRefusedEdits(merged: MergedRead): void {
+  if (!merged.refused.length) return;
+  planHistory?.retract(merged.refused);
+  notePatchFromDevice(merged.refused);
+}
+// What the refetch inside a flush refused, for the line the flush writes once it has sent — the
+// refetch writes none of its own, and that line would replace it.
+let flushReadNotes: string[] = [];
 // A reconcile read that fails loses the device-side change it was called for —
 // the notify already fired and nothing re-triggers the read — and the next
 // converge would then write the plan's stale value back over the operator's own
@@ -858,7 +923,7 @@ function supplyUnsourced(merged: MergedRead): string | null {
 // them.
 function reapplyHeld(merged: MergedRead): void {
   if (!merged.held.length) {
-    setStatus(t().status.liveFollowed(merged.applied));
+    setStatus(withSwitchNotes(t().status.liveFollowed(merged.applied), merged));
     return;
   }
   // A follow read outlives a session that merely ended (`abandonFollowWork` is not called
@@ -867,7 +932,7 @@ function reapplyHeld(merged: MergedRead): void {
   if (live?.isActive()) {
     live.schedule();
     const held = heldByHold(merged.held);
-    setStatus(t().status.liveHeld(merged.applied, held.unrunnable, held.source));
+    setStatus(withSwitchNotes(t().status.liveHeld(merged.applied, held.unrunnable, held.source), merged));
     return;
   }
   // Nothing left to send them through: the values stay in the plan, and the status line
@@ -961,6 +1026,21 @@ function abandonFollowWork(): void {
   followAuthored = 0;
 }
 
+/** What the live session knows about the unit's +48V / HI-Z beyond what a follow read finds
+ *  (input-lock.ts `SwitchSession`): what it last sent and captured, and what the unit has
+ *  announced since. A session that has ended still holds the first two for the read it lets
+ *  finish. */
+const switchSession: SwitchSession = {
+  holdsOn: (nodeId, key) => {
+    const a = live ? switchAddr(getModel(modelId), nodeId, key) : null;
+    return a !== null && Boolean(live?.unitHoldsOn(a.paramId, a.x, a.y));
+  },
+  sentOn: (nodeId, key) => {
+    const a = live ? switchAddr(getModel(modelId), nodeId, key) : null;
+    return a !== null && Boolean(live?.holdsSent(a.paramId, a.x, a.y, 1));
+  },
+};
+
 /** Run a follow-side device read as a merged read (readback.readIntoPlan), carrying the
  *  abort handle that makes it abandonable. Null means the plan it was issued for is no
  *  longer the open document — every caller returns without its epilogue, which is what
@@ -1002,9 +1082,14 @@ async function followRead(
           ...sourceChoiceHoldKeys(model, ctx),
         ]);
       },
+      undefined,
+      switchSession,
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
-    else notePatchFromDevice(merged.devicePatch);
+    else {
+      notePatchFromDevice(merged.devicePatch);
+      takeRefusedEdits(merged);
+    }
     return merged;
   } finally {
     followReads.delete(entry);
@@ -1142,7 +1227,7 @@ const follow =
           // ran against says what the device holds, it is not reachable from there, and
           // the reflect's delay is a window in which an undo would diff against a
           // snapshot that still describes the pre-read plan.
-          live?.resync(merged.deviceView, since);
+          live?.resync(merged.deviceView, since, nodeIds);
           // Before assertReadComplete, which throws: a partial read's authored keys
           // still invalidate the history, exactly as followFull / requestReflect
           // already survive that throw.
@@ -1340,6 +1425,8 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   midi?.liveEnded();
   follow?.end();
   live?.end();
+  // The flush that would have reported them has ended with the session.
+  flushReadNotes = [];
   void releaseLive(liveEpoch, end);
   setLiveUi(false);
   // A CH → FX tap shown read-only while live becomes editable again off-line.
@@ -2797,6 +2884,17 @@ planHistory = new PlanHistory({
           ? t().status.undoModal
           : null,
   rateLocked: () => liveSessionUp,
+  // Asked of the state the entry would leave behind rather than of the keys it carries: an
+  // undo turns a switch on as much as the gesture it reverses did, and which of the two an
+  // entry moved does not decide the answer. The patch is applied to a copy, which is the
+  // same application the real one performs a moment later rather than a reading of the
+  // patch that would have to agree with it.
+  patchBlocked: (patch) => {
+    const after = clonePlanState(plan);
+    applyPatch(after, patch);
+    const channels = phantomHiZNewlyBothOn(getModel(modelId), plan, after).map((id) => graph.labelOf(id));
+    return channels.length ? t().status.undoPhantomHiZ(channels.join(", ")) : null;
+  },
   // The macOS application menu's Undo / Redo render this state (a no-op elsewhere).
   onDepthChange: () => editMenu.pushState(),
 });
@@ -3120,6 +3218,7 @@ if (!DEMO) {
           planReadFromDevice();
           noteMergeConflicts(merged);
           notePatchFromDevice(merged.devicePatch);
+          takeRefusedEdits(merged);
           // STREAMING holds a source whatever the unit answered, so a read that found none
           // supplies one before the board is drawn.
           supplied = supplyUnsourced(merged);
@@ -3146,7 +3245,7 @@ if (!DEMO) {
           : unread
             ? t().status.fetchedUnread(device.model, merged.applied, unread)
             : t().status.fetchedDevice(device.model, merged.applied);
-        setStatus(supplied ? [supplied, outcome].join(" — ") : outcome);
+        setStatus(withSwitchNotes(supplied ? [supplied, outcome].join(" — ") : outcome, merged));
         // Read failures AND values the merge did not apply are otherwise console-only,
         // and a packaged build has no inspector to read a console in: capture a report
         // to offer after disconnect (below). The two travel together because both are
@@ -3322,6 +3421,17 @@ if (!DEMO) {
     writeBtn.addEventListener("click", async () => {
       if (writeAbort) {
         writeAbort.abort();
+        return;
+      }
+      // A plan holding +48V and HI-Z both on for a channel is a plan this app cannot send:
+      // whichever of the two goes out second turns one on while the other is on, so the
+      // order they are emitted in cannot make the write legal. Decided before the link is
+      // opened — nothing is connected and nothing is sent — and the operator turns one of
+      // them off, which every surface allows. The plan can only hold it from the unit's own
+      // state (a read, or a `.urxf` import), which stays displayed until they do.
+      const bothOn = bothOnLabels();
+      if (bothOn) {
+        setStatus(t().status.writePhantomHiZ(bothOn));
         return;
       }
       const controller = new AbortController();
@@ -3709,6 +3819,7 @@ if (!DEMO) {
         planReadFromDevice();
         noteMergeConflicts(merged);
         notePatchFromDevice(merged.devicePatch);
+        takeRefusedEdits(merged);
         // STREAMING holds a source whatever the unit answered, so a read that found none
         // supplies one before the board is drawn.
         supplied = supplyUnsourced(merged);
@@ -3750,7 +3861,7 @@ if (!DEMO) {
         // `reapplyHeld`.
         if (merged.authored) live.schedule();
         const on = t().status.liveOn(device.model, merged.applied);
-        setStatus(supplied ? [supplied, on].join(" — ") : on);
+        setStatus(withSwitchNotes(supplied ? [supplied, on].join(" — ") : on, merged));
       } catch (err) {
         await failLive(t().status.liveError(errorText(err)));
       } finally {
@@ -3981,9 +4092,11 @@ if (!DEMO) {
     planReadFromDevice();
     const unread = result.unreadNodes.size;
     setStatus(
-      result.errors.length
-        ? t().status.settingsPartial(result.applied, result.errors.length, unread)
-        : t().status.settingsImported(name, result.applied),
+      withSwitchNotes(
+        result.errors.length
+          ? t().status.settingsPartial(result.applied, result.errors.length, unread)
+          : t().status.settingsImported(name, result.applied),
+      ),
     );
     await offerErrorReport(
       result.errors.length

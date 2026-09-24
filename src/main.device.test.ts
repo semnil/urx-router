@@ -11,7 +11,7 @@
 // belong to `e2e/race/fake-device.ts`; a second, thinner imitation of it here would be
 // a fixture that agrees with nothing.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
@@ -27,13 +27,13 @@ import {
 } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { formatRate } from "./core/constraints";
-import { attackToVd, eqFreqToVd, levelToVd, vdToLevel } from "./core/control/vd";
+import { attackToVd, eqFreqToVd, gainToVd, levelToVd, vdToLevel } from "./core/control/vd";
 import { formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, STEREO_FADER } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
-import { insertFxControl, nameControl, planToCommands } from "./core/control/translate";
+import { channelControl, insertFxControl, nameControl, planToCommands } from "./core/control/translate";
 import { getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { DeviceModel } from "./models/types";
@@ -42,6 +42,7 @@ import type { Plan } from "./core/plan";
 import { loadHidden } from "./app/view-state";
 import { drag, faceplate, portHit, press, wireHit } from "./ui/graph.test-util";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
+import type { Field } from "./core/control/urxf.test-util";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 
@@ -6733,6 +6734,66 @@ describe("importing a settings file", () => {
     expect(shell.count("vd_connect")).toBe(0);
   });
 
+  // A file holding +48V and HI-Z both on for CH 3 (jack y 2), a state the app never sets
+  // itself. The import takes it as it is, where a document's load turns +48V off, and the
+  // status line leads with the note that names the channel.
+  //
+  // The file answers every address the import reads, so the whole plan comes through and
+  // the rest of the line is the full import's own message. The addresses are the ones a
+  // read of the default plan asks when answered with the same values, so the file stays
+  // complete as the read grows.
+  it("takes +48V and HI-Z both on from the file as they are, and leads the line with the note", SLOW, async () => {
+    const { applySourceState } = await import("./core/control/readback");
+    const { defaultPlan } = await import("./models/initial-state");
+    const value = (id: number, y: number): number =>
+      id === PARAMS.SAMPLE_RATE.id
+        ? 48_000
+        : (id === PARAMS.PHANTOM.id || id === PARAMS.HI_Z.id) && y === 2
+          ? 1
+          : unwrittenRead({ paramId: id, x: 0, y });
+    const asked = new Map<number, { str: boolean; len: number }>();
+    const ask = (str: boolean, id: number, y: number): void => {
+      asked.set(id, { str, len: Math.max(asked.get(id)?.len ?? 0, y + 1) });
+    };
+    const expected = await applySourceState(getModel("URX44V"), defaultPlan("URX44V"), {
+      get: async (paramId, x, y) => (ask(false, paramId + x, y), value(paramId + x, y)),
+      getStr: async (paramId, x, y) => (ask(true, paramId + x, y), ""),
+    });
+    expect(expected.errors, "the premise: every address the read asks is answered").toEqual([]);
+    const fields = [...asked].map(([id, a]): Field =>
+      a.str
+        ? { id, typecode: 4, elemSize: 16, values: Array<string>(a.len).fill("") }
+        : (() => {
+            // A value past the signed range is a tagged port ref, which the unit's own files
+            // hold as unsigned.
+            const values = Array.from({ length: a.len }, (_, y) => value(id, y));
+            return { id, typecode: values.some((v) => v > 0x7fffffff) ? 1 : 2, elemSize: 4, values };
+          })(),
+    );
+
+    const shell = await bootImport(buildUrxf([{ chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields }]));
+    $("btn-open-settings").click();
+    await vi.waitFor(
+      () =>
+        expect(statusText()).toBe(
+          `${t().status.phantomHiZBothOn("CH 3")} — ${t().status.settingsImported("backup.urxf", expected.applied)}`,
+        ),
+      { timeout: 15_000 },
+    );
+
+    // The plan holds the file's values, read back through a save: both on for CH 3, both off
+    // for CH 4, the other HI-Z jack.
+    shell.answer("plugin:dialog|save", "/tmp/imported.json");
+    shell.answer("write_text_file", null);
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
+    const saved = shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string };
+    const { nodeParams } = JSON.parse(saved.contents);
+    expect(nodeParams.ch3).toMatchObject({ phantom: true, hiZ: true });
+    expect(nodeParams.ch4).toMatchObject({ phantom: false, hiZ: false });
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
   // The file names no model — its header reads "URX" for every variant — so the operator
   // vouches for the one on screen. Declining that confirm must leave the plan alone, and
   // the status has to say the import did not happen.
@@ -7496,5 +7557,838 @@ describe("an edit funnel against a device read", () => {
     expect(face(t().inspector.hpf)).toBe("ON");
     selectNode("ch2");
     expect(face(t().inspector.hpf)).toBe("ON");
+  });
+});
+
+// +48V and Hi-Z are never on together, and A.Gain stops at +40 dB while Hi-Z is on. The
+// surfaces ask that rule per edit; these are the two paths that reach the plan without
+// being one — applying a history entry, and writing the whole plan — plus the cap, which
+// has to read the gain the plan holds rather than the one the row was built with.
+//
+// A device read that finds both on is taken as it is (docs/en/known-issues.md), so what
+// the rule is asked about is the state the APP is about to create.
+describe("+48V and Hi-Z on one channel", () => {
+  const model = getModel("URX44V");
+  const CH3_Y = channelControl(model, "ch3")!.y;
+  const at = (paramId: number): string => `${paramId}/0/${CH3_Y}`;
+  const RATE = `${PARAMS.SAMPLE_RATE.id}/0/0`;
+  const bothOn = { [at(PARAMS.PHANTOM.id)]: 1, [at(PARAMS.HI_Z.id)]: 1, [RATE]: 48_000 };
+
+  /** Every value written to `paramId` on CH 3, in order. Read off the ledger by ADDRESS: a
+   *  plan write sends hundreds of commands, so a `vd_set` count cannot say whether this one
+   *  went out, nor what it carried. */
+  const writesAt = (shell: TauriShell, paramId: number): number[] =>
+    shell.invokes.flatMap((cmd, i) => {
+      const a = shell.args[i];
+      return cmd === "vd_set" && a?.paramId === paramId && a?.y === CH3_Y ? [a.value as number] : [];
+    });
+
+  const litFace = (label: string): string | undefined =>
+    paramRow(label)?.querySelector("button.on")?.textContent ?? undefined;
+  const pressFace = (label: string, text: string): void =>
+    [...paramRow(label).querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === text)!.click();
+  const switches = (): { phantom: string | undefined; hiZ: string | undefined } => ({
+    phantom: litFace(t().inspector.phantom),
+    hiZ: litFace(t().inspector.hiZ),
+  });
+  /** What the A.Gain row PRINTS, which is the plan's own value: the slider clamps its
+   *  displayed position to its own max, so above the cap it reads there as the cap. */
+  const gainShown = (): string => paramRow(t().inspector.gainAnalog).querySelector(".param-val")?.textContent ?? "";
+  const slideGain = (db: number): void => {
+    const slider = paramRow(t().inspector.gainAnalog).querySelector<HTMLInputElement>('input[type="range"]')!;
+    slider.value = String(db);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const liveUp = (): Promise<void> =>
+    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+  it("sends the gain the plan holds when Hi-Z goes on, not the one the panel was drawn with", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [at(PARAMS.HA_GAIN.id)]: gainToVd(60), [RATE]: 48_000 });
+    live().click();
+    await liveUp();
+    selectNode("ch3");
+    expect(gainShown(), "the premise: the panel was drawn from the unit's own +60 dB").toBe("+60 dB");
+
+    slideGain(20);
+    pressFace(t().inspector.hiZ, t().inspector.on);
+    // The gesture's own command, so the readings below are taken past the flush it caused.
+    await vi.waitFor(() => expect(writesAt(shell, PARAMS.HI_Z.id)).toEqual([1]), SLOW);
+    expect({ shown: gainShown(), gains: writesAt(shell, PARAMS.HA_GAIN.id) }).toEqual({
+      shown: "+20 dB",
+      gains: [gainToVd(20)],
+    });
+  });
+
+  it("refuses an undo that would put +48V and Hi-Z back on together, and sends nothing for it", SLOW, async () => {
+    const shell = await bootDevice({}, true, bothOn);
+    live().click();
+    await liveUp();
+    selectNode("ch3");
+    expect(switches(), "the premise: the read kept the unit's state").toEqual({ phantom: "ON", hiZ: "ON" });
+
+    pressFace(t().inspector.phantom, t().inspector.off);
+    await vi.waitFor(() => expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([0]), SLOW);
+
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(
+      () =>
+        expect({
+          status: statusText(),
+          phantom: writesAt(shell, PARAMS.PHANTOM.id),
+          face: litFace(t().inspector.phantom),
+        }).toEqual({ status: t().status.undoPhantomHiZ("CH 3"), phantom: [0], face: "OFF" }),
+      { timeout: 10_000 },
+    );
+  });
+
+  it("writes nothing when the plan holds both on, and writes once the channel holds one", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" }, bothOn);
+    const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+    const baseSet = table.vd_set as (a: Record<string, unknown>) => void;
+    // CH 3's own two switches, so the case can turn them off between the fetch and the
+    // write the way the front panel does — which is what leaves the plan holding a state
+    // the unit does not. A write to them lands here as well, or a converge re-sends what
+    // this went on answering.
+    const panel = new Map<unknown, number>([
+      [PARAMS.PHANTOM.id, 1],
+      [PARAMS.HI_Z.id, 1],
+    ]);
+    const isSwitch = (a: Record<string, unknown>): boolean => a.y === CH3_Y && panel.has(a.paramId);
+    table.vd_get = (a: Record<string, unknown>) => {
+      const held = baseGet(a); // first, so a read while disconnected is still refused
+      return isSwitch(a) ? panel.get(a.paramId)! : held;
+    };
+    table.vd_set = (a: Record<string, unknown>) => {
+      const out = baseSet(a); // …and a write while disconnected, which throws past the line below
+      if (isSwitch(a)) panel.set(a.paramId, a.value as number);
+      return out;
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    selectNode("ch3");
+    expect(switches(), "the premise: the read kept the unit's state").toEqual({ phantom: "ON", hiZ: "ON" });
+    for (const id of panel.keys()) panel.set(id, 0);
+
+    const sent = shell.count("vd_set");
+    $("btn-write").click();
+    await vi.waitFor(
+      () =>
+        expect({
+          status: statusText(),
+          phantom: writesAt(shell, PARAMS.PHANTOM.id),
+          hiZ: writesAt(shell, PARAMS.HI_Z.id),
+        }).toEqual({ status: t().status.writePhantomHiZ("CH 3"), phantom: [], hiZ: [] }),
+      { timeout: 10_000 },
+    );
+    expect(shell.count("vd_set"), "nothing was sent at all").toBe(sent);
+
+    // The positive control: a guard that refused every write passes everything above. With
+    // +48V off the plan is writable again, and the Hi-Z the unit no longer holds goes out.
+    pressFace(t().inspector.phantom, t().inspector.off);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect({
+      status: statusText(),
+      phantom: writesAt(shell, PARAMS.PHANTOM.id),
+      hiZ: writesAt(shell, PARAMS.HI_Z.id),
+    }).not.toEqual({ status: t().status.writePhantomHiZ("CH 3"), phantom: [], hiZ: [] });
+    expect(writesAt(shell, PARAMS.HI_Z.id), "the write reached the link").toEqual([1]);
+  });
+
+  // A read in flight is a window in which the plan has not heard what the unit holds, so a
+  // surface takes an ON the rule would refuse had the plan known. The rule is asked again
+  // where the read lands: that ON goes back to the unit's OFF, the status line says why, and
+  // no ON for it reaches the unit. The unit's own switch is never written.
+  describe("against a device read in flight", () => {
+    /** A unit whose reads of `paramId` on CH 3 wait until `release()`, each answering what
+     *  the unit held when it was asked — a read that sampled the address before the press.
+     *  `arm()` starts holding; `asked` counts the reads held so far. */
+    const holdingUnit = (seed: Record<string, number>, paramId: number, armed = true) => {
+      const table = deviceCommands({ "plugin:dialog|message": "Ok" }, seed);
+      const baseGet = table.vd_get as (a: Record<string, unknown>) => number;
+      const waiting: Array<() => void> = [];
+      const hold = {
+        armed,
+        asked: 0,
+        arm: (): void => void (hold.armed = true),
+        release: (): void => {
+          hold.armed = false;
+          for (const go of waiting.splice(0)) go();
+        },
+        /** The unit's own panel moving `id` on CH 3, which writes nothing through the app. */
+        panel: (id: number, value: number): void =>
+          void (table.vd_set as (a: Record<string, unknown>) => void)({ paramId: id, x: 0, y: CH3_Y, value }),
+      };
+      table.vd_get = (a: Record<string, unknown>) => {
+        const held = baseGet(a); // first, so a read while disconnected is still refused
+        if (!hold.armed || a.paramId !== paramId || a.y !== CH3_Y) return held;
+        hold.asked += 1;
+        return new Promise((r) => waiting.push(() => r(held)));
+      };
+      // A case that fails before its own release still lets the read finish, so the
+      // teardown's wait for the link is not a wait on this hold.
+      onTestFinished(hold.release);
+      return { table, hold };
+    };
+    const planLink = async (ch3: Record<string, unknown>): Promise<string> => {
+      const { serialize } = await import("./core/plan");
+      const doc = defaultPlan("URX44V");
+      doc.nodeParams.ch3 = { ...doc.nodeParams.ch3, ...ch3 };
+      return `/?plan=${encodeURIComponent(Buffer.from(serialize(doc), "utf8").toString("base64url"))}`;
+    };
+    const readHeld = (hold: { asked: number }): Promise<void> =>
+      vi.waitFor(() => expect(hold.asked).toBeGreaterThan(0), { timeout: 10_000 });
+
+    it("refuses a +48V ON pressed while a Live-sync start reads a unit holding Hi-Z on", SLOW, async () => {
+      const { table, hold } = holdingUnit({ [at(PARAMS.HI_Z.id)]: 1, [RATE]: 48_000 }, PARAMS.PHANTOM.id);
+      const shell = (await bootApp({ tauri: table }))!;
+      selectNode("ch3");
+      expect(switches(), "the premise: the plan starts with both off").toEqual({ phantom: "OFF", hiZ: "OFF" });
+
+      live().click();
+      await readHeld(hold);
+      // The plan has not heard of the unit's Hi-Z, so the Inspector takes +48V ON — and an
+      // unrelated edit beside it, which the rule has no business with.
+      pressFace(t().inspector.phantom, t().inspector.on);
+      pressFace(t().inspector.clipSafe, t().inspector.on);
+      expect(switches(), "the premise: the press landed").toEqual({ phantom: "ON", hiZ: "OFF" });
+      hold.release();
+      await liveUp();
+
+      selectNode("ch3");
+      expect(switches(), "+48V is back off, and the unit's Hi-Z is shown").toEqual({ phantom: "OFF", hiZ: "ON" });
+      expect(litFace(t().inspector.clipSafe), "the unrelated edit stands").toBe("ON");
+      expect(statusText().startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+      // The edit the read made the session send is the positive control: it went out, and
+      // no +48V ON went with it or after it.
+      await vi.waitFor(() => expect(writesAt(shell, PARAMS.CLIP_SAFE.id)).toEqual([1]), { timeout: 10_000 });
+      expect({ phantom: writesAt(shell, PARAMS.PHANTOM.id), hiZ: writesAt(shell, PARAMS.HI_Z.id) }).toEqual({
+        phantom: [],
+        hiZ: [],
+      });
+    });
+
+    it(
+      "refuses a Hi-Z ON pressed while a Live-sync start reads a unit holding +48V on, with the gain it carried",
+      SLOW,
+      async () => {
+        // The unit holds +48V on and A.Gain at +55; the plan holds A.Gain at +60, above the cap
+        // turning Hi-Z on lowers it to.
+        const { table, hold } = holdingUnit(
+          { [at(PARAMS.PHANTOM.id)]: 1, [at(PARAMS.HA_GAIN.id)]: gainToVd(55), [RATE]: 48_000 },
+          PARAMS.HI_Z.id,
+        );
+        const shell = (await bootApp({ url: await planLink({ gain: 60, hiZ: false, phantom: false }), tauri: table }))!;
+        selectNode("ch3");
+        expect(gainShown(), "the premise: the plan's own gain").toBe("+60 dB");
+
+        live().click();
+        await readHeld(hold);
+        // Pressed the way a pointer presses, so the history closes the press's entry at the
+        // pointer's release — committed before the read lands, as a real press is.
+        const on = [...paramRow(t().inspector.hiZ).querySelectorAll<HTMLButtonElement>("button")].find(
+          (b) => b.textContent === t().inspector.on,
+        )!;
+        on.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+        on.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+        on.click();
+        await new Promise((r) => setTimeout(r, 0)); // the release's deferred commit runs first
+        expect({ switches: switches(), gain: gainShown() }, "the premise: the press landed, gain and all").toEqual({
+          switches: { phantom: "OFF", hiZ: "ON" },
+          gain: "+40 dB",
+        });
+        hold.release();
+        await liveUp();
+
+        selectNode("ch3");
+        // The press is refused whole: Hi-Z back off, and the gain it carried down back at what
+        // the unit holds rather than at the cap or at the plan's old value.
+        expect({ switches: switches(), gain: gainShown() }).toEqual({
+          switches: { phantom: "ON", hiZ: "OFF" },
+          gain: "+55 dB",
+        });
+        expect(statusText().startsWith(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+
+        // Nothing is left in the history to put the refused edit back: the press was the
+        // plan's only edit. Nothing keeps focus, since a focused text field owns the command.
+        (document.activeElement as HTMLElement | null)?.blur();
+        expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+        expect(statusText()).toBe(t().status.nothingToUndo);
+        expect(shell.emit(EDIT_MENU_EVENT, EDIT_REDO_ID)).toBe(1);
+        expect(statusText()).toBe(t().status.nothingToRedo);
+        expect({ switches: switches(), gain: gainShown() }).toEqual({
+          switches: { phantom: "ON", hiZ: "OFF" },
+          gain: "+55 dB",
+        });
+
+        pressFace(t().inspector.clipSafe, t().inspector.on);
+        await vi.waitFor(() => expect(writesAt(shell, PARAMS.CLIP_SAFE.id)).toEqual([1]), { timeout: 10_000 });
+        expect({ hiZ: writesAt(shell, PARAMS.HI_Z.id), gain: writesAt(shell, PARAMS.HA_GAIN.id) }).toEqual({
+          hiZ: [],
+          gain: [],
+        });
+      },
+    );
+
+    it(
+      "refuses a +48V ON pressed while a follow read brings in the unit's own Hi-Z ON, and sends none",
+      SLOW,
+      async () => {
+        const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.PHANTOM.id, false);
+        const shell = (await bootApp({ tauri: table }))!;
+        live().click();
+        await liveUp();
+        selectNode("ch3");
+        expect(switches(), "the premise: the unit starts with both off").toEqual({ phantom: "OFF", hiZ: "OFF" });
+
+        // Hi-Z goes on at the unit's own panel. Its notify makes the follow re-read CH 3, and
+        // that read is held before it has asked the unit about Hi-Z.
+        hold.panel(PARAMS.HI_Z.id, 1);
+        hold.arm();
+        notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+        await readHeld(hold);
+
+        selectNode("ch3");
+        expect(litFace(t().inspector.hiZ), "the premise: the plan has not heard yet").toBe("OFF");
+        pressFace(t().inspector.phantom, t().inspector.on);
+        pressFace(t().inspector.clipSafe, t().inspector.on);
+        // Clip Safe goes out behind +48V in one flush, so its write says the flush is past it.
+        await vi.waitFor(() => expect(writesAt(shell, PARAMS.CLIP_SAFE.id)).toEqual([1]), { timeout: 10_000 });
+        expect(writesAt(shell, PARAMS.PHANTOM.id), "no +48V ON while the unit holds Hi-Z on").toEqual([]);
+
+        hold.release();
+        await vi.waitFor(
+          () => {
+            selectNode("ch3");
+            expect(switches()).toEqual({ phantom: "OFF", hiZ: "ON" });
+          },
+          { timeout: 25_000, interval: 50 },
+        );
+        expect(statusText().startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+        expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([]);
+        expect(writesAt(shell, PARAMS.HI_Z.id), "the unit's own Hi-Z is never written").toEqual([]);
+      },
+    );
+
+    // A MIDI controller is told the plan's value, so the LED a refused press lit goes back off.
+    it(
+      "puts a MIDI controller mapped to the switch back to OFF once the follow read refuses the press",
+      SLOW,
+      async () => {
+        const CC = 20;
+        const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.PHANTOM.id, false);
+        Object.assign(table, { midi_list_outputs: ["Controller Out"], midi_open_output: null, midi_send: null });
+        const shell = (await bootApp({
+          seed: {
+            "urx-midi": JSON.stringify({
+              output: "Controller Out",
+              models: {
+                URX44V: [
+                  {
+                    control: "ch3/phantom",
+                    addr: { type: "cc", channel: 0, controller: CC },
+                    mode: "absolute",
+                    button: "state",
+                  },
+                ],
+              },
+            }),
+          },
+          tauri: table,
+        }))!;
+        /** Every value the controller was sent on the switch's CC, in order. */
+        const told = (): number[] =>
+          shell.invokes.flatMap((cmd, i) => {
+            const bytes = (shell.args[i] as { bytes?: number[] } | undefined)?.bytes;
+            return cmd === "midi_send" && bytes?.[1] === CC ? [bytes[2]] : [];
+          });
+        await invoked(shell, "midi_open_output");
+        live().click();
+        await liveUp();
+        await vi.waitFor(() => expect(told().at(-1), "the premise: the settled read told it OFF").toBe(0), {
+          timeout: 10_000,
+        });
+
+        hold.panel(PARAMS.HI_Z.id, 1);
+        hold.arm();
+        notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+        await readHeld(hold);
+        selectNode("ch3");
+        pressFace(t().inspector.phantom, t().inspector.on);
+        await vi.waitFor(() => expect(told().at(-1), "the premise: the press lit it").toBe(127), { timeout: 10_000 });
+
+        hold.release();
+        await vi.waitFor(
+          () => {
+            selectNode("ch3");
+            expect(switches()).toEqual({ phantom: "OFF", hiZ: "ON" });
+          },
+          { timeout: 25_000, interval: 50 },
+        );
+        await vi.waitFor(() => expect(told().at(-1)).toBe(0), { timeout: 10_000 });
+      },
+    );
+
+    // A read that resets no history — the refetch a `sideEffect: "refetch"` write takes — is
+    // where the refused edit could outlive its refusal as an undo entry. Hi-Z has gone on at
+    // the unit's panel with no notify reaching the app, so the plan learns it from this read.
+    it("takes a +48V ON a refetch refused out of the undo history", SLOW, async () => {
+      const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.PHANTOM.id, false);
+      const shell = (await bootApp({ tauri: table }))!;
+      live().click();
+      await liveUp();
+      hold.panel(PARAMS.HI_Z.id, 1);
+
+      // The EQ 1-knob on CH 3: its flush reads CH 3 back, and that read is held.
+      selectNode("ch3");
+      $("inspector").querySelector<HTMLButtonElement>("#btn-eq-screen")!.click();
+      hold.arm();
+      $("dyn-screen-box")
+        .querySelector<HTMLElement>("#dyn-oneknob-level")!
+        .closest(".prefs-section")!
+        .querySelectorAll<HTMLButtonElement>(".prefs-toggle button")[0]
+        .click(); // ON
+      await readHeld(hold);
+      $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions .consent-btn-secondary")!.click();
+
+      selectNode("ch3");
+      expect(litFace(t().inspector.hiZ), "the premise: the plan has not heard").toBe("OFF");
+      const on = [...paramRow(t().inspector.phantom).querySelectorAll<HTMLButtonElement>("button")].find(
+        (b) => b.textContent === t().inspector.on,
+      )!;
+      on.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+      on.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+      on.click();
+      await new Promise((r) => setTimeout(r, 0)); // the release's deferred commit runs first
+      hold.release();
+      await quiet(shell);
+
+      selectNode("ch3");
+      expect(switches()).toEqual({ phantom: "OFF", hiZ: "ON" });
+      expect(statusText().startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+      expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([]);
+      expect(writesAt(shell, PARAMS.EQ_ONE_KNOB_ON.id), "the premise: the 1-knob went out").toEqual([1]);
+
+      // One undo takes the 1-knob back: the refused press left no entry in front of it.
+      (document.activeElement as HTMLElement | null)?.blur();
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      await vi.waitFor(() => expect(writesAt(shell, PARAMS.EQ_ONE_KNOB_ON.id)).toEqual([1, 0]), { timeout: 10_000 });
+      await quiet(shell);
+      selectNode("ch3");
+      expect(switches()).toEqual({ phantom: "OFF", hiZ: "ON" });
+      expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([]);
+    });
+
+    it("refuses a +48V ON pressed while a Fetch reads a unit holding Hi-Z on", SLOW, async () => {
+      const { table, hold } = holdingUnit({ [at(PARAMS.HI_Z.id)]: 1, [RATE]: 48_000 }, PARAMS.PHANTOM.id);
+      const shell = (await bootApp({ tauri: table }))!;
+      $("btn-fetch").click();
+      await readHeld(hold);
+      selectNode("ch3");
+      pressFace(t().inspector.phantom, t().inspector.on);
+      hold.release();
+      await invoked(shell, "vd_disconnect");
+      await fetchEnded();
+
+      selectNode("ch3");
+      expect(switches()).toEqual({ phantom: "OFF", hiZ: "ON" });
+      expect(statusText().startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+      expect(shell.count("vd_set")).toBe(0);
+    });
+
+    // What the rule leaves alone.
+    it("keeps both on when the read finds the unit holding both, whatever was pressed meanwhile", SLOW, async () => {
+      const { table, hold } = holdingUnit(bothOn, PARAMS.PHANTOM.id);
+      const shell = (await bootApp({ tauri: table }))!;
+      live().click();
+      await readHeld(hold);
+      selectNode("ch3");
+      pressFace(t().inspector.phantom, t().inspector.on);
+      hold.release();
+      await liveUp();
+
+      selectNode("ch3");
+      expect(switches()).toEqual({ phantom: "ON", hiZ: "ON" });
+      expect(statusText().startsWith(`${t().status.phantomHiZBothOn("CH 3")} — `), statusText()).toBe(true);
+      await quiet(shell);
+      expect({ phantom: writesAt(shell, PARAMS.PHANTOM.id), hiZ: writesAt(shell, PARAMS.HI_Z.id) }).toEqual({
+        phantom: [],
+        hiZ: [],
+      });
+    });
+
+    it("keeps an OFF pressed while the read runs, and sends it", SLOW, async () => {
+      const { table, hold } = holdingUnit(bothOn, PARAMS.HI_Z.id);
+      const shell = (await bootApp({ url: await planLink({ phantom: true, hiZ: false }), tauri: table }))!;
+      live().click();
+      await readHeld(hold);
+      selectNode("ch3");
+      pressFace(t().inspector.phantom, t().inspector.off);
+      hold.release();
+      await liveUp();
+
+      selectNode("ch3");
+      expect(switches()).toEqual({ phantom: "OFF", hiZ: "ON" });
+      expect(statusText().includes(t().status.phantomRefusedByRead("CH 3")), statusText()).toBe(false);
+      await vi.waitFor(() => expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([0]), { timeout: 10_000 });
+      expect(writesAt(shell, PARAMS.HI_Z.id)).toEqual([]);
+    });
+
+    // The mirror of the case above, and the A.Gain the press lowers goes with it: a refused
+    // press moves nothing on the unit.
+    it(
+      "refuses a Hi-Z ON pressed while a follow read brings in the unit's own +48V ON, and sends none of it",
+      SLOW,
+      async () => {
+        const CH4_Y = channelControl(model, "ch4")!.y;
+        const { table, hold } = holdingUnit(
+          { [at(PARAMS.HA_GAIN.id)]: gainToVd(60), [RATE]: 48_000 },
+          PARAMS.HI_Z.id,
+          false,
+        );
+        const shell = (await bootApp({ tauri: table }))!;
+        live().click();
+        await liveUp();
+        selectNode("ch3");
+        expect({ switches: switches(), gain: gainShown() }, "the premise: the unit's own state").toEqual({
+          switches: { phantom: "OFF", hiZ: "OFF" },
+          gain: "+60 dB",
+        });
+
+        // +48V goes on at the unit's own panel, and the follow read of CH 3 that starts is held
+        // before it has asked the unit about Hi-Z.
+        hold.panel(PARAMS.PHANTOM.id, 1);
+        hold.arm();
+        notifyChannel(shell).onmessage([{ param_id: PARAMS.PHANTOM.id, x: 0, y: CH3_Y, value: 1 }]);
+        await readHeld(hold);
+
+        selectNode("ch3");
+        pressFace(t().inspector.hiZ, t().inspector.on);
+        expect({ switches: switches(), gain: gainShown() }, "the premise: the press landed, gain and all").toEqual({
+          switches: { phantom: "OFF", hiZ: "ON" },
+          gain: "+40 dB",
+        });
+        // CH 4 comes after CH 3 in a flush, so its write says the flush is past CH 3's A.Gain.
+        selectNode("ch4");
+        pressFace(t().inspector.clipSafe, t().inspector.on);
+        await vi.waitFor(
+          () =>
+            expect(
+              shell.invokes.flatMap((cmd, i) => {
+                const a = shell.args[i];
+                return cmd === "vd_set" && a?.paramId === PARAMS.CLIP_SAFE.id && a?.y === CH4_Y ? [a.value] : [];
+              }),
+            ).toEqual([1]),
+          { timeout: 10_000 },
+        );
+        expect({ hiZ: writesAt(shell, PARAMS.HI_Z.id), gain: writesAt(shell, PARAMS.HA_GAIN.id) }).toEqual({
+          hiZ: [],
+          gain: [],
+        });
+
+        hold.release();
+        await vi.waitFor(
+          () => {
+            selectNode("ch3");
+            expect(switches()).toEqual({ phantom: "ON", hiZ: "OFF" });
+          },
+          { timeout: 25_000, interval: 50 },
+        );
+        expect(gainShown(), "the gain the press lowered is the unit's again").toBe("+60 dB");
+        expect(statusText().startsWith(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+        await quiet(shell);
+        expect({
+          phantom: writesAt(shell, PARAMS.PHANTOM.id),
+          hiZ: writesAt(shell, PARAMS.HI_Z.id),
+          gain: writesAt(shell, PARAMS.HA_GAIN.id),
+        }).toEqual({ phantom: [], hiZ: [], gain: [] });
+      },
+    );
+
+    // The unit has turned +48V on and its announcement has not reached the session: the flush
+    // asks the unit before the Hi-Z ON goes, so neither it nor the A.Gain it lowered is sent,
+    // and the read the announcement starts refuses the press. The full read device follow runs
+    // once the burst goes quiet changes nothing, and the status line goes on saying why.
+    it("sends no Hi-Z ON ahead of the unit's +48V announcement, and the line keeps saying why", SLOW, async () => {
+      const CH1_Y = channelControl(model, "ch1")!.y;
+      const CH4_Y = channelControl(model, "ch4")!.y;
+      const { table, hold } = holdingUnit(
+        { [at(PARAMS.HA_GAIN.id)]: gainToVd(60), [RATE]: 48_000 },
+        PARAMS.HI_Z.id,
+        false,
+      );
+      const shell = (await bootApp({ tauri: table }))!;
+      live().click();
+      await liveUp();
+      selectNode("ch3");
+      expect({ switches: switches(), gain: gainShown() }, "the premise: the unit's own state").toEqual({
+        switches: { phantom: "OFF", hiZ: "OFF" },
+        gain: "+60 dB",
+      });
+
+      const pressed = shell.invokes.length;
+      hold.panel(PARAMS.PHANTOM.id, 1);
+      pressFace(t().inspector.hiZ, t().inspector.on);
+      // CH 4 comes after CH 3 in a flush, so its write says the flush is past CH 3's A.Gain.
+      selectNode("ch4");
+      pressFace(t().inspector.clipSafe, t().inspector.on);
+      await vi.waitFor(
+        () =>
+          expect(
+            shell.invokes.flatMap((cmd, i) => {
+              const a = shell.args[i];
+              return cmd === "vd_set" && a?.paramId === PARAMS.CLIP_SAFE.id && a?.y === CH4_Y ? [a.value] : [];
+            }),
+          ).toEqual([1]),
+        { timeout: 10_000 },
+      );
+      expect({ hiZ: writesAt(shell, PARAMS.HI_Z.id), gain: writesAt(shell, PARAMS.HA_GAIN.id) }).toEqual({
+        hiZ: [],
+        gain: [],
+      });
+      expect(
+        shell.invokes.some(
+          (cmd, i) =>
+            i >= pressed &&
+            cmd === "vd_get" &&
+            shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
+            shell.args[i]?.y === CH3_Y,
+        ),
+        "the flush asked the unit",
+      ).toBe(true);
+
+      // Selected once rather than inside the waits below: two presses inside the double-click
+      // window trace the node's signal path, and the line that reports it replaces the one this
+      // case reads.
+      selectNode("ch3");
+      const announced = shell.invokes.length;
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.PHANTOM.id, x: 0, y: CH3_Y, value: 1 }]);
+      await vi.waitFor(() => expect(switches()).toEqual({ phantom: "ON", hiZ: "OFF" }), {
+        timeout: 25_000,
+        interval: 50,
+      });
+      await quiet(shell);
+      expect(
+        shell.invokes.some(
+          (cmd, i) =>
+            i >= announced &&
+            cmd === "vd_get" &&
+            shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
+            shell.args[i]?.y === CH1_Y,
+        ),
+        "the premise: the full read ran behind the scoped one",
+      ).toBe(true);
+      expect(gainShown(), "the gain the press lowered is the unit's again").toBe("+60 dB");
+      expect(statusText().startsWith(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+      expect({
+        phantom: writesAt(shell, PARAMS.PHANTOM.id),
+        hiZ: writesAt(shell, PARAMS.HI_Z.id),
+        gain: writesAt(shell, PARAMS.HA_GAIN.id),
+      }).toEqual({ phantom: [], hiZ: [], gain: [] });
+
+      // A later change at the unit's panel is a burst of its own, and its line says only what it did.
+      hold.panel(PARAMS.CLIP_SAFE.id, 1);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE.id, x: 0, y: CH3_Y, value: 1 }]);
+      await vi.waitFor(() => expect(litFace(t().inspector.clipSafe)).toBe("ON"), { timeout: 25_000, interval: 50 });
+      await quiet(shell);
+      expect(statusText().includes(t().status.hiZRefusedByRead("CH 3")), statusText()).toBe(false);
+    });
+
+    // The same full read does not bring a refusal back onto a line the operator's own action
+    // has replaced since.
+    it("does not carry a refusal onto a line the operator's own action replaced", SLOW, async () => {
+      const CH1_Y = channelControl(model, "ch1")!.y;
+      const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.HI_Z.id, false);
+      const shell = (await bootApp({ tauri: table }))!;
+      live().click();
+      await liveUp();
+
+      hold.panel(PARAMS.HI_Z.id, 1);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+      selectNode("ch3");
+      pressFace(t().inspector.phantom, t().inspector.on);
+      await vi.waitFor(
+        () => expect(statusText().startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true),
+        { timeout: 25_000, interval: 20 },
+      );
+      const refused = shell.invokes.length;
+      (document.activeElement as HTMLElement | null)?.blur();
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+      await quiet(shell);
+      expect(
+        shell.invokes.some(
+          (cmd, i) =>
+            i >= refused &&
+            cmd === "vd_get" &&
+            shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
+            shell.args[i]?.y === CH1_Y,
+        ),
+        "the premise: the full read ran after the undo",
+      ).toBe(true);
+      expect(statusText().includes(t().status.phantomRefusedByRead("CH 3")), statusText()).toBe(false);
+    });
+
+    // An ON the flush sent while the unit still held the other switch off is on the unit, even
+    // where the read sampled the address before the write: when the unit's panel then turns the
+    // other one on, the unit holds both, and a read takes that state as it is.
+    it("keeps a +48V ON the flush sent during a follow read once the unit's panel turns Hi-Z on", SLOW, async () => {
+      const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.CLIP_SAFE.id, false);
+      const shell = (await bootApp({ tauri: table }))!;
+      live().click();
+      await liveUp();
+
+      // A change at the unit's panel on CH 3 starts a follow read, held at Clip Safe.
+      const from = shell.invokes.length;
+      hold.panel(PARAMS.CLIP_SAFE.id, 1);
+      hold.arm();
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE.id, x: 0, y: CH3_Y, value: 1 }]);
+      await readHeld(hold);
+      expect(
+        shell.invokes.some(
+          (cmd, i) =>
+            i >= from && cmd === "vd_get" && shell.args[i]?.paramId === PARAMS.PHANTOM.id && shell.args[i]?.y === CH3_Y,
+        ),
+        "the premise: the read has sampled +48V already",
+      ).toBe(true);
+
+      selectNode("ch3");
+      pressFace(t().inspector.phantom, t().inspector.on);
+      await vi.waitFor(() => expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([1]), { timeout: 10_000 });
+      // Behind the write, Hi-Z goes on at the unit's panel, and the unit takes both.
+      hold.panel(PARAMS.HI_Z.id, 1);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+      // The read that announcement starts is held too, so what shows next is the first read's.
+      hold.release();
+      hold.arm();
+      await vi.waitFor(
+        () => {
+          selectNode("ch3");
+          expect(litFace(t().inspector.hiZ)).toBe("ON");
+        },
+        { timeout: 25_000, interval: 50 },
+      );
+      expect(switches(), "the plan holds what the unit holds").toEqual({ phantom: "ON", hiZ: "ON" });
+      expect(statusText().startsWith(`${t().status.phantomHiZBothOn("CH 3")} — `), statusText()).toBe(true);
+      expect({ phantom: writesAt(shell, PARAMS.PHANTOM.id), hiZ: writesAt(shell, PARAMS.HI_Z.id) }).toEqual({
+        phantom: [1],
+        hiZ: [],
+      });
+    });
+
+    // A converge re-sends what differs across the write scope. A Hi-Z the unit turned on at its
+    // own panel differs from a plan the follow read has not reached yet, and is not written off.
+    it(
+      "does not write off a Hi-Z the unit's panel turned on when a converge runs ahead of the follow read",
+      SLOW,
+      async () => {
+        const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.HI_Z.id, false);
+        const shell = (await bootApp({ tauri: table }))!;
+        live().click();
+        await liveUp();
+
+        hold.panel(PARAMS.HI_Z.id, 1);
+        notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+        selectNode("ch3");
+        const type = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+        type.value = String(COMP_EQ_SSMCS);
+        type.dispatchEvent(new Event("change", { bubbles: true }));
+        await vi.waitFor(() => expect(writesAt(shell, PARAMS.COMP_EQ_TYPE.id)).toEqual([COMP_EQ_SSMCS]), {
+          timeout: 10_000,
+        });
+        const typeAt = shell.invokes.reduce(
+          (last, cmd, i) => (cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.COMP_EQ_TYPE.id ? i : last),
+          -1,
+        );
+        await quiet(shell);
+        expect(
+          shell.invokes.some((cmd, i) => i > typeAt && cmd === "vd_get"),
+          "the premise: the converge read the unit",
+        ).toBe(true);
+        expect(writesAt(shell, PARAMS.HI_Z.id), "the unit's own Hi-Z is never written").toEqual([]);
+        selectNode("ch3");
+        expect(litFace(t().inspector.hiZ), "the follow read brought it in").toBe("ON");
+      },
+    );
+
+    // An ON pressed after the unit announced the other one on and before the follow read that
+    // announcement schedules is issued: the flush holds it, and the read, which did not see it
+    // made, writes the unit's OFF over it. That is the refusal, and the status line says so.
+    it("says why a +48V ON pressed ahead of the follow read of the unit's own Hi-Z ON is off", SLOW, async () => {
+      const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.HI_Z.id, false);
+      const shell = (await bootApp({ tauri: table }))!;
+      live().click();
+      await liveUp();
+      const seen: string[] = [];
+      new MutationObserver(() => seen.push(statusText())).observe($("statusbar"), {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+
+      const from = shell.invokes.length;
+      hold.panel(PARAMS.HI_Z.id, 1);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+      selectNode("ch3");
+      pressFace(t().inspector.phantom, t().inspector.on);
+      expect(shell.invokes.slice(from).includes("vd_get"), "the premise: no read had been issued").toBe(false);
+      await vi.waitFor(
+        () => {
+          selectNode("ch3");
+          expect(switches()).toEqual({ phantom: "OFF", hiZ: "ON" });
+        },
+        { timeout: 25_000, interval: 50 },
+      );
+      await quiet(shell);
+      expect(
+        seen.some((line) => line.startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `)),
+        JSON.stringify(seen),
+      ).toBe(true);
+      expect({ phantom: writesAt(shell, PARAMS.PHANTOM.id), hiZ: writesAt(shell, PARAMS.HI_Z.id) }).toEqual({
+        phantom: [],
+        hiZ: [],
+      });
+      (document.activeElement as HTMLElement | null)?.blur();
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+    });
+
+    // A session that ends lets its follow read finish, and what it sent still stands for that
+    // read: the ON reached the unit before the session ended.
+    it("keeps a +48V ON the flush sent when Live sync ends before the follow read lands", SLOW, async () => {
+      const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.CLIP_SAFE.id, false);
+      const shell = (await bootApp({ tauri: table }))!;
+      live().click();
+      await liveUp();
+      const seen: string[] = [];
+      new MutationObserver(() => seen.push(statusText())).observe($("statusbar"), {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+
+      hold.panel(PARAMS.CLIP_SAFE.id, 1);
+      hold.arm();
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE.id, x: 0, y: CH3_Y, value: 1 }]);
+      await readHeld(hold);
+      selectNode("ch3");
+      pressFace(t().inspector.phantom, t().inspector.on);
+      await vi.waitFor(() => expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([1]), { timeout: 10_000 });
+      hold.panel(PARAMS.HI_Z.id, 1);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+
+      live().click();
+      await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 10_000 });
+      hold.release();
+      await invoked(shell, "vd_disconnect");
+      selectNode("ch3");
+      expect(switches(), "the plan holds what the unit holds").toEqual({ phantom: "ON", hiZ: "ON" });
+      expect(
+        seen.some((line) => line.includes(t().status.phantomRefusedByRead("CH 3"))),
+        JSON.stringify(seen),
+      ).toBe(false);
+    });
   });
 });

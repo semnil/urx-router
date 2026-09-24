@@ -12,6 +12,7 @@ import { cmdAddr, planToCommands, planToNameWrites } from "./translate";
 import type { EmitOptions, NameWrite, VdCommand, WriteScope } from "./translate";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
+import { onExcludedBy } from "../input-lock";
 
 /** The device's clock state: whether it slaves to the USB host, and the rate it
  *  is running at right now. Read together as the pre-check a write needs. */
@@ -426,7 +427,7 @@ function roundCommands(
 ): VdCommand[] {
   const groups = new Set<string>();
   for (const d of diffs) if (d.command.group) groups.add(d.command.group);
-  if (!groups.size) return diffs.map((d) => d.command);
+  if (!groups.size) return diffs.map((d) => d.command).filter((c) => !exclude?.has(cmdAddr(c)));
   const addrs = new Set(diffs.map((d) => cmdAddr(d.command)));
   // The exclusion has to be applied here too, not only to the read: group expansion pulls
   // in every member of a group any differing command belongs to, and a member the caller
@@ -434,6 +435,33 @@ function roundCommands(
   return planToCommands(model, plan, scope, emit).filter(
     (c) => !exclude?.has(cmdAddr(c)) && (addrs.has(cmdAddr(c)) || (c.group !== undefined && groups.has(c.group))),
   );
+}
+
+/**
+ * `sending` without a +48V / HI-Z ON the unit would receive while holding the other switch on
+ * (input-lock.ts `onExcludedBy`), judged in send order. What the unit holds is what this
+ * round's read found — the diff where the unit differed from the plan, the plan's own value
+ * where it did not — moved by every command this round sends ahead of the one asked about, so
+ * a round that turns the other switch off first still sends the ON behind it. A command left
+ * out is still a difference, so the round's re-read reports it in the residual.
+ */
+function withoutExcludedOns(
+  model: DeviceModel,
+  plan: Plan,
+  scope: WriteScope,
+  emit: EmitOptions,
+  sending: VdCommand[],
+  diffs: CommandDiff[],
+): VdCommand[] {
+  if (!sending.some((c) => onExcludedBy(c, c.vdValue) !== null)) return sending;
+  const unit = new Map(planToCommands(model, plan, scope, emit).map((c) => [cmdAddr(c), c.vdValue] as const));
+  for (const d of diffs) if (d.current !== null) unit.set(cmdAddr(d.command), d.current);
+  return sending.filter((c) => {
+    const other = onExcludedBy(c, c.vdValue);
+    if (other !== null && unit.get(other)) return false;
+    unit.set(cmdAddr(c), c.vdValue);
+    return true;
+  });
 }
 
 export interface ConvergeOptions {
@@ -467,7 +495,8 @@ export interface ConvergeOptions {
   emit?: EmitOptions;
   /** Addresses this convergence must leave to the device (see DiffOptions.exclude). Applies
    *  to the seed read, every re-read and every round send, so an excluded address is never
-   *  read, never counted as residual, and never pulled in by a group it belongs to. */
+   *  read, never counted as residual, and never pulled in by a group it belongs to. A caller
+   *  may add to it while the loop runs, and each read and each round's send asks it again. */
   exclude?: ReadonlySet<number>;
   /** Keep a per-round record (see ConvergeRound). Diagnostics only. */
   trace?: boolean;
@@ -557,7 +586,14 @@ export async function sendConverging(
   while (residual.length > 0 && rounds < maxRounds && !readErrors.length) {
     signal?.throwIfAborted();
     const startedAt = Date.now();
-    const sending = roundCommands(model, plan, scope, emit, residual, exclude);
+    const sending = withoutExcludedOns(
+      model,
+      plan,
+      scope,
+      emit,
+      roundCommands(model, plan, scope, emit, residual, exclude),
+      residual,
+    );
     const sent = await sendCommands(sending, signal, (o) => {
       const addr = cmdAddr(o.command);
       if (o.result === "accepted") ledger.acked.add(addr);

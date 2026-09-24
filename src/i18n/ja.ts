@@ -284,6 +284,8 @@ export const ja: Messages = {
     insFxRateLockedAt: (effect: string, maxRate: string): string =>
       `${maxRate} 超では ${effect} は使用不可 — 強制的に OFF。`,
     fx2RateLocked: "FX2 バスは 96 kHz を超えると使用できません。",
+    phantomLockedByHiZ: "先に Hi-Z を切ってください。+48V と Hi-Z は同時にオンにしません",
+    hiZLockedByPhantom: "先に +48V を切ってください。+48V と Hi-Z は同時にオンにしません",
     insFxLinkLocked: "Signal Type が STEREO の間は Compander のみ使用可。",
     insFxSlotLocked: "Insert FX はすべて使用中 — 各エフェクトは本体全体で 1 スロットを占有。",
     channelOn: "チャンネル",
@@ -621,6 +623,11 @@ export const ja: Messages = {
     streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
     streamingSourceUnlisted: "本体の STREAMING が一覧に無い状態だったため、計画では STEREO にしました",
     planLoaded: "計画を読み込みました",
+    phantomHiZBothOn: (channels: string): string => `${channels} で +48V と Hi-Z が両方オンになっています`,
+    phantomRefusedByRead: (channels: string): string =>
+      `${channels} の +48V はオンにしませんでした — 本体で Hi-Z がオンになっています。+48V と Hi-Z は同時にオンにしません`,
+    hiZRefusedByRead: (channels: string): string =>
+      `${channels} の Hi-Z はオンにしませんでした — 本体で +48V がオンになっています。+48V と Hi-Z は同時にオンにしません`,
     recentRemoved: (name: string): string => `${name} を最近使った計画から削除しました`,
     planSaved: "計画を保存しました",
     savedTo: (name: string): string => `${name} に保存しました`,
@@ -660,6 +667,8 @@ export const ja: Messages = {
     comparePartial: (differ: number, compared: number, failed: number, ms: number): string =>
       `${compared} 件中 ${differ} 件が相違、${failed} 件は読み取れず (${ms} ms)`,
     compareError: (message: string): string => `デバイスとの照合に失敗しました: ${message}`,
+    writePhantomHiZ: (channels: string): string =>
+      `${channels} で +48V と Hi-Z が両方オンになっています — どちらかを切ってから書き込んでください。何も送信していません`,
     writeConnecting: "デバイスに接続しています…",
     writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
     written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
@@ -727,6 +736,8 @@ export const ja: Messages = {
     undoRateLive: "ライブ同期中のサンプルレートは本体に追従します — ここでは元に戻せません",
     undoRateLiveMixed:
       "この操作はサンプルレートの変更を含みます — ライブ同期中は本体に追従するため、操作全体を保留しました。破棄はしていません。ライブ同期をオフにすれば同じ操作が通ります",
+    undoPhantomHiZ: (channels: string): string =>
+      `この操作は ${channels} で +48V と Hi-Z を両方オンにします — どちらかを切ってからやり直してください。操作は保留しました。破棄はしていません`,
     midiBusy: "本体との通信中またはファイル操作中です — 完了するまで MIDI 入力は無視されます",
     themeDark: "ダークモードに切り替えました",
     themeLight: "ライトモードに切り替えました",

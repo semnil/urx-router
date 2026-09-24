@@ -508,6 +508,12 @@ function applySlots(rec: Record<string, unknown>, slots: KeySlots): void {
   }
 }
 
+/** Whether two slots describe the same value, presence included. */
+function sameSlot(a: Slot<unknown>, b: Slot<unknown>): boolean {
+  if (a.present !== b.present) return false;
+  return !a.present || !b.present || deepEqual(a.value, b.value);
+}
+
 /** Whether `rec[key]` is what the slot describes, presence included — one key's worth
  *  of the context a patch was computed against. */
 function slotHolds(rec: AnyRecord, path: string, slot: Slot<unknown>): boolean {
@@ -678,6 +684,12 @@ function outOfContextKeys(e: PlanPatchEntry, part: PlanPatchEntry | null): strin
     .map((k) => `${label}.${k}`);
 }
 
+/** The labels `applyPatchInContext` and `dropAuthored` give the keys of `patch`, every key of
+ *  it — so a caller can take a key it has since placed out of a list of ones left alone. */
+export function patchLabels(patch: PlanPatch): string[] {
+  return patch.flatMap((e) => outOfContextKeys(e, null));
+}
+
 /** Write only the keys of `patch` whose `before` side the target still holds, and
  *  return what was not written: applyPatch's own report (a target that has since gone)
  *  plus every key left alone because the plan no longer holds the `before` side the
@@ -842,6 +854,11 @@ export function dropAuthored(patch: PlanPatch, authored: ReadonlySet<string>): {
  *  is what disarms the witness, so it belongs in a `finally`. */
 export interface PlanWriteWatch {
   authored: () => ReadonlySet<string>;
+  /** Each name `authored()` answered, with the sample it was last written at: names that
+   *  share one were written by one edit. Takes no sample of its own, so it answers as of the
+   *  last `authored()` and a caller that has written into the plan since is not read as an
+   *  edit. */
+  edits: () => ReadonlyMap<string, number>;
   close: () => void;
 }
 
@@ -905,6 +922,11 @@ export class PlanWriteWitness {
         const names = new Set<string>();
         for (const [name, sample] of this.written) if (sample > at) names.add(name);
         return names;
+      },
+      edits: () => {
+        const out = new Map<string, number>();
+        for (const [name, sample] of this.written) if (sample > at) out.set(name, sample);
+        return out;
       },
       close: () => {
         if (closed) return;
@@ -979,6 +1001,41 @@ export class PlanHistoryStack {
     }
   }
 
+  /**
+   * A device read refused an edit the operator made while it was in flight, and took its keys
+   * back to the unit's values (`MergedRead.refused`): take the edit out of the history, so no
+   * entry is left that puts it back.
+   *
+   * Per key of the patch, the newest entry that carries the key is the edit's when its
+   * `after` side still holds the value the refusal took back (the patch's `before`): the key
+   * leaves that entry, and an entry left with nothing leaves the stack. An older entry is an
+   * edit the plan had already moved past, so it is not one the refusal names. The baseline
+   * takes the patch in context, so a gesture already committed does not measure the refusal
+   * as an edit of its own, and one still open measures from where it began.
+   */
+  retract(patch: PlanPatch): void {
+    if (!patch.length) return;
+    applyPatchInContext(this.baseline, patch);
+    for (const p of patch) {
+      if (p.field !== "nodeParams") continue;
+      for (const [key, taken] of Object.entries(p.before)) this.retractKey(p.key, key, taken);
+    }
+  }
+
+  private retractKey(nodeId: string, key: string, taken: Slot<unknown>): void {
+    for (let at = this.undoStack.length - 1; at >= 0; at--) {
+      const entry = this.undoStack[at];
+      const e = entry.find((x) => x.field === "nodeParams" && x.key === nodeId && key in x.after);
+      if (!e || e.field !== "nodeParams") continue;
+      if (!sameSlot(e.after[key], taken)) return;
+      delete e.before[key];
+      delete e.after[key];
+      if (!Object.keys(e.after).length) entry.splice(entry.indexOf(e), 1);
+      if (!entry.length) this.undoStack.splice(at, 1);
+      return;
+    }
+  }
+
   /** Re-take the baseline and drop both stacks: a different document, or every
    *  value re-authored by the device. */
   reset(plan: Plan): void {
@@ -1018,22 +1075,27 @@ export class PlanHistoryStack {
     return { undo: this.undoStack.length, redo: this.redoStack.length };
   }
 
-  /** The next entry to undo, without consuming it — so a refusal that inspects
-   *  what the patch touches does not spend the entry. */
+  /** The patch the next undo would APPLY, without consuming it — so a refusal that
+   *  inspects what the patch touches, or what the plan would become, does not spend the
+   *  entry. It is the entry's INVERSE rather than the entry: `takeUndo` returns this same
+   *  patch, so a caller that reads one and applies the other cannot be looking at a
+   *  different set of values than the one that lands. */
   peekUndo(): PlanPatch | null {
-    return this.undoStack.at(-1) ?? null;
+    const entry = this.undoStack.at(-1);
+    return entry ? invertPatch(entry) : null;
   }
 
+  /** …and the next redo's, which is the entry as recorded. */
   peekRedo(): PlanPatch | null {
     return this.redoStack.at(-1) ?? null;
   }
 
   /** Consume the next undo entry and return the patch to apply (its inverse). */
   takeUndo(): PlanPatch | null {
-    const patch = this.undoStack.pop();
+    const patch = this.peekUndo();
     if (!patch) return null;
-    this.redoStack.push(patch);
-    return invertPatch(patch);
+    this.redoStack.push(this.undoStack.pop()!);
+    return patch;
   }
 
   /** Consume the next redo entry and return the patch to apply (as recorded). */

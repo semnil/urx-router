@@ -27,6 +27,8 @@ export const VD_PAN_MAX = 63;
 // -24 … +24 dB. Encoded as centi-dB like level but with no -∞ sentinel.
 export const A_GAIN_MIN_DB = -8;
 export const A_GAIN_MAX_DB = 70;
+/** A.Gain's upper bound while HI-Z is on for the channel. */
+export const HI_Z_A_GAIN_MAX_DB = 40;
 export const D_GAIN_MIN_DB = -24;
 export const D_GAIN_MAX_DB = 24;
 

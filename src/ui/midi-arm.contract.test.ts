@@ -158,6 +158,61 @@ describe("arming surfaces against the control catalog", () => {
     expect(bindControl(ch.model, ch.plan, "ch1/insertFxOn"), "and the catalog has no such id").toBeNull();
   });
 
+  // A +48V chip that HI-Z locks is read-only for a press and still a learn target: the bound
+  // controller's ON is refused while the lock holds, so the binding is worth making. A chip the
+  // RATE locks offers nothing. The whole-surface pass runs with both on screen, so the
+  // marked-versus-armed equality is asked of a strip carrying the locked chip.
+  it("keeps a +48V chip HI-Z locks armable, and leaves a rate-locked chip unmarked", () => {
+    const armed: string[] = [];
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, phantom: false, hiZ: true };
+    plan.sampleRate = 192000;
+    ch = consoleHost({ modelId: "URX44V", plan, midi: learnHooks(armed) });
+    const chipOf = (node: string, label: string): HTMLElement => {
+      const chip = [...ch!.strip(node).root.querySelectorAll<HTMLElement>(".con-chip")].find(
+        (c) => c.textContent === label,
+      );
+      if (!chip) throw new Error(`${node} draws no "${label}" chip`);
+      return chip;
+    };
+
+    const phantom = chipOf("ch3", "+48");
+    expect(phantom.getAttribute("aria-disabled"), "the +48V chip is locked").toBe("true");
+    expect(phantom.classList.contains("midi-target"), "and still offers itself").toBe(true);
+    expect(phantom.tabIndex, "reachable by the keyboard while learning").toBe(0);
+    phantom.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(armed, "a press arms its id").toEqual(["ch3/phantom"]);
+    phantom.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(armed, "and so does Enter").toEqual(["ch3/phantom", "ch3/phantom"]);
+    expect(plan.nodeParams.ch3?.phantom, "and edits nothing").toBe(false);
+    expect(bindControl(ch.model, ch.plan, armed[0]), "which the catalog binds").toBeTruthy();
+
+    const eq = chipOf("ch_5_6", t().console.eq);
+    expect(eq.getAttribute("aria-disabled"), "the stereo EQ chip is rate-locked").toBe("true");
+    expect(eq.classList.contains("midi-target"), "and offers nothing").toBe(false);
+    armed.length = 0;
+    eq.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(armed, "and arms nothing").toEqual([]);
+
+    armed.length = 0;
+    const { marked, ids } = armEverything(ch.host, armed);
+    expect(ids).toContain("ch3/phantom");
+    expect(ids.length).toBe(marked);
+    expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
+
+    // Outside learn mode the locked chip is inert: a press turns nothing on.
+    ch.restore();
+    const idle = defaultPlan("URX44V");
+    idle.nodeParams.ch3 = { ...idle.nodeParams.ch3, phantom: false, hiZ: true };
+    ch = consoleHost({ modelId: "URX44V", plan: idle, midi: { ...learnHooks(armed), learnActive: () => false } });
+    armed.length = 0;
+    const idleChip = chipOf("ch3", "+48");
+    expect(idleChip.tabIndex, "out of the tab order").toBe(-1);
+    idleChip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(idle.nodeParams.ch3?.phantom, "a press outside learn mode leaves +48V off").toBe(false);
+    expect(armed).toEqual([]);
+  });
+
   // The FX strip's EFFECT face is drawn lit and is not a control, so it offers no id. The id
   // a build that drew it as a switch armed has no binding either — a ring here would be a
   // control that reaches nothing.

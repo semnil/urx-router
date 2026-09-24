@@ -995,6 +995,53 @@ describe("editing a node through the inspector", () => {
   });
 });
 
+// Turning Hi-Z on carries A.Gain down to +40 dB in the same edit, and a gain slide does
+// NOT rebuild the panel — the slider has to keep the pointer. So the value the cap is
+// taken from is the plan's at the moment the switch is pressed, not the one the row was
+// built with; the two differ by every slide made since.
+describe("the inspector's Hi-Z switch and the gain it caps", () => {
+  /** Open a plan whose CH 3 starts at `gain`, with both input switches off, and select it
+   *  — so the panel is drawn from that value. */
+  const openAt = async (gain: number): Promise<void> => {
+    const { serialize, emptyPlan } = await import("./core/plan");
+    const doc = emptyPlan("URX44V");
+    doc.nodeParams.ch3 = { ...doc.nodeParams.ch3, gain, hiZ: false, phantom: false };
+    const link = encodeURIComponent(Buffer.from(serialize(doc), "utf8").toString("base64url"));
+    await bootApp({ url: `/?plan=${link}`, tauri: false });
+    selectNode("ch3");
+  };
+
+  const gainRow = (): HTMLElement => row(t().inspector.gainAnalog);
+  /** What the row PRINTS, which is the plan's own value. The slider clamps its displayed
+   *  position to its own max, so above the cap it reads as the cap either way. */
+  const gainShown = (): string => gainRow().querySelector(".param-val")?.textContent ?? "";
+  const slideGain = (db: number): void => {
+    const slider = gainRow().querySelector<HTMLInputElement>('input[type="range"]')!;
+    slider.value = String(db);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const pressHiZ = (): void =>
+    [...row(t().inspector.hiZ).querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === t().inspector.on)!
+      .click();
+
+  it("caps a gain raised since the panel was drawn", async () => {
+    await openAt(20);
+    slideGain(60);
+    expect(gainShown(), "the premise: the slide moved it past the cap").toBe("+60 dB");
+    pressHiZ();
+    await vi.waitFor(() => expect(gainShown()).toBe("+40 dB"), APP_SETTLE);
+  });
+
+  it("leaves a gain lowered since the panel was drawn where it is", async () => {
+    await openAt(60);
+    slideGain(20);
+    expect(gainShown(), "the premise: the slide moved it under the cap").toBe("+20 dB");
+    pressHiZ();
+    await vi.waitFor(() => expect(gainShown()).toBe("+20 dB"), APP_SETTLE);
+  });
+});
+
 describe("menu keyboard navigation", () => {
   // The same selector the entry's own key handler applies, so this addresses the list the
   // app navigates rather than a wider one of its own. The File menu already carries a

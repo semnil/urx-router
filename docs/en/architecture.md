@@ -151,7 +151,28 @@ carries a one-line map of the same directories and points here.
   backing store: one validated localStorage record `urx-settings`, loaded lazily so the `?reset` clear runs
   first) / `scene-scope.ts` the URX scene boundary in plan terms (capture/apply/strip for scene-scoped
   fetch/save; the write-side mirror is the `sceneExternal` flags in `control/params.ts`, and
-  `scene-scope.test.ts` pins the two encodings together)
+  `scene-scope.test.ts` pins the two encodings together) / `input-lock.ts` the +48V / HI-Z rule every surface reads (turning
+  one on while the other is on is refused, and A.Gain stops at +40 dB while HI-Z is on — known-issues.md
+  "The unit lets +48V and HI-Z be on together; the app does not"). The two paths that reach the plan
+  without being an edit ask it about the STATE they would create rather than the key they move —
+  `phantomHiZNewlyBothOn`, which subtracts what the plan already holds so a device read's both-on channel
+  stays as it is: applying a history entry (`ui/history.ts`'s `patchBlocked` hook) and writing the whole
+  plan, which stops before the link is opened. An ON taken while a device read is in flight was taken from a
+  plan that had not heard what the unit holds, so the rule is asked twice more against the unit itself:
+  where the read lands (`readRefusedSwitches`, applied by `readIntoPlan` to every read — the ON and the keys
+  the same edit carried go back to the unit's values, and `PlanHistory.retract` takes the edit out of the
+  undo stack), and per command where a live flush or a converge round sends (`onExcludedBy`, against the
+  snapshot and the unit's announcements in `live.ts` — and, just before an ON goes out, against a read of the
+  other switch, which the broker answers with a change from the moment the unit announces it, ahead of the
+  announcement reaching the app — and against the round's own read in `client.ts`). A
+  live session's read also asks what the session knows (`SwitchSession`): an ON its flush already sent is
+  on the unit and is not refused, and an ON the flush held back that the read's own value replaced is
+  refused all the same (`unsentRefusedSwitches`). The flush holds the +40 dB A.Gain a held HI-Z ON lowered
+  with it (`carrierOf`), and its converge leaves a switch the unit announced it turned on at its panel, with
+  the other one on that channel, to the follow read that announcement scheduled. A read's status line leads
+  with the ONs it refused, and a later read's line keeps leading with them while the line it replaces still
+  does (`withSwitchNotes` in `main.ts`) — the full read device follow runs once a burst goes quiet lands
+  there
   - `src/core/midi/` — external MIDI control (desktop only). `message.ts` decode/encode of CC/note/pitch
     bend / `mapping.ts` free-mapping model (address, takeover mode absolute/pickup) + persistence validation
     / `controls.ts` catalog of fixed control ids (`node/param[@scope]`) for every CONSOLE control **and
@@ -163,7 +184,8 @@ carries a one-line map of the same directories and points here.
     processor / band (`@gate`, `@comp`, `@eq.low`) — a node has one fader but three thresholds, and a band
     is a scope rather than a cursor because a mapping has to work with the screen closed. Device locks
     reject writes (FIXED bus sends, Pan Link send pan, rate-restricted stereo CH EQ, COMP's device-driven
-    values under 1-knob, EQ band values under 1-knob, the Q/gain a filter type does not read); the enum
+    values under 1-knob, EQ band values under 1-knob, the Q/gain a filter type does not read); +48V and HI-Z
+    each refuse turning on while the other is on (`refuses`, reported rather than dropped); the enum
     selectors (knee / filter type / 1-knob type) carry no control / `engine.ts` incoming-message application
     (14-bit CC pairs; toggles have a per-mapping button behavior named after the sender's button type =
     "Momentary" (edge) / "Toggle" (state), state meaning the value is the state directly, for Stream
@@ -419,7 +441,9 @@ carries a one-line map of the same directories and points here.
   wording is chosen by `touch.fields.size === 1`: an entry that moved something else too says the whole step
   is held back, since naming only the rate leaves the collateral edits refused in silence. It is a deferral,
   not a discard: the refusal runs on a peeked entry before `take()`, and `deactivateLive` does not reset the
-  history). A text field / textarea / `contenteditable` keeps the chord (no `preventDefault`) — measured on
+  history), and for a patch whose RESULT the host refuses (`patchBlocked` — today the +48V / HI-Z exclusion,
+  asked of the state the patch would leave rather than of the keys it carries; `peekUndo` answers with the
+  patch that would land, which is the entry's inverse). A text field / textarea / `contenteditable` keeps the chord (no `preventDefault`) — measured on
   macOS: the page receives `Cmd+Z` even with a native Edit menu installed, and `preventDefault` is what
   suppresses WebKit's own field undo. `menu(kind)` is the macOS Edit menu's entry point and delegates to
   that field's own undo (`document.execCommand`, measured working in WKWebView) so the menu cannot mean
@@ -581,7 +605,11 @@ carries a one-line map of the same directories and points here.
   takes the app with it / `node-param-effects.ts` which repaint a node-parameter edit earns. It is a pure
   function of the patch and the previous values, and the distinction it holds is **relayout versus in
   place**: a toggle changes which controls the inspector shows and must re-render, a value slider must not,
-  since a re-render replaces the element under the pointer and the drag ends there / `flow-latch.ts` the two
+  since a re-render replaces the element under the pointer and the drag ends there. The panel is therefore a
+  SNAPSHOT of the plan between re-renders, and a control whose write depends on another value — the Hi-Z
+  switch, which carries A.Gain down to its cap in the same edit — reads that value out of the plan when it is
+  pressed rather than out of the snapshot, which holds the gain as it was before every slide since
+  / `flow-latch.ts` the two
   re-entry guards and the difference between them — `singleFlight` is a silent rapid-repeat guard on one
   handler, while `FileFlowLatch` is shared across every plan / settings entry point and **reports** a
   refusal caused by a device read (the operator's click went unanswered) while staying silent for a second
@@ -1162,7 +1190,7 @@ MIX 675), which is the scribble power LED. STEREO and the MONITOR buses have no 
 no MUTE chip; their master ON is the power LED alone. A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
 `MONITOR_MONO`, ships OFF) chips. Then +48 / φ /
-HPF on mono MIC channels (Hi-Z on CH3/4) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
+HPF on mono MIC channels (Hi-Z on CH3/4, CH2 on URX22) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
 node hung under them). A mono channel in SSMCS mode carries **SSMCS** between GATE and COMP — the morphing
 strip's own master, and the one head chip whose value is a level down in the plan (`ssmcs.on`), so the strip
@@ -1494,14 +1522,18 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   signal goes, `CH 1 · EQ LOW · Gain` is a stage of this node.
 
   Values cross the boundary normalized (0..1) and are snapped on set to the same grids the surfaces use
-  (the level_gain grid in `levels.ts`, the channel's GAIN dB range, PAN ±63, PHONES 0.1 steps). A tuning
+  (the level_gain grid in `levels.ts`, the channel's GAIN dB range — A.Gain's is -8..+40 while HI-Z is on —
+  PAN ±63, PHONES 0.1 steps). A tuning
   screen's parameter takes its grid from the same `DynField` table its slider is built from; which route
   each side takes to that grid, and what it does and does not put a MIDI value and a dragged slider on, is
   channel-tuning.md "MIDI assignment". Device locks refuse the write: a FIXED bus's send level, a
   Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain and Auto
   Makeup while 1-knob is on (the device computes them), COMP's 1-knob level while it is off, every EQ band
   value while EQ 1-knob is on, and the Q / gain a filter type does not read. The enum selectors (COMP knee,
-  the EQ filter type and 1-knob type) carry no control at all.
+  the EQ filter type and 1-knob type) carry no control at all. +48V and HI-Z refuse differently: turning one
+  on while the other is on for the channel is refused by the control itself (`refuses`) and reported on the
+  status line rather than dropped, and the CONSOLE chip that rule locks stays a learn target
+  (known-issues.md "The unit lets +48V and HI-Z be on together; the app does not").
 - **Engine (`engine.ts`)** — routes incoming events onto bound controls. Take-in modes are per-mapping:
   absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
   pair (n / n+32). Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
@@ -2260,6 +2292,10 @@ describes a state it can return to.
 | An edit made while a Fetch's or Live-sync start's read carries a model switch | on the board, before it writes anything (`planTakesEdits`); everywhere else `markChanged`, which puts the plan back to the state the read began from; both say so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
 | A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for), a tuning screen (`refresh`) and the CONSOLE (`render`, which hands keyboard focus on only across a rebuild of the same plan) | the plan the gesture began on is gone, so a pointer or a key still held writes nothing into the one that replaced it |
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
+| An undo / redo whose result would leave +48V and HI-Z both on for a channel | `patchBlocked` on the peeked entry, over the state the patch would create | the app never turns one of the two on while the other is on, and an undo turns one on as much as the gesture it reverses did |
+| An ON of +48V / HI-Z made while a device read was in flight, on a channel where that read finds the other one on | `readIntoPlan`, after the merge (`readRefusedSwitches`): the switch and the keys the witness saw the same edit write go back to the read's values, and the edit leaves the undo stack (`PlanHistory.retract`). In a live session, an ON its flush already sent is on the unit and is not refused (`SwitchSession.holdsOn`), and an ON the flush held back that the merge replaced with the read's value is reported and retracted the same way (`unsentRefusedSwitches`) | the surface asked the rule of a plan that had not heard what the unit holds; the unit's own switch is what the read found, and it stays |
+| A +48V / HI-Z ON the unit would receive while holding the other one on, and the +40 dB A.Gain a held HI-Z ON lowered | the live flush's send loop (`onExcludedBy` against the snapshot, what the unit announced since, which a follow read has not yet brought into the plan, and a read of the other switch taken just before the ON goes; `carrierOf` for the A.Gain) and each converge round (against the round's own read) | left in the plan, not dropped: a read that finds the other one on takes it back, and a later announcement or capture asks the flush again |
+| A live converge's write to a +48V / HI-Z the unit announced it turned on at its panel, and to the other switch on that channel | the live flush, before its converge (`exclude`, joined by an announcement that arrives while it runs, which each later read and round send of the converge asks again); the capture behind it keeps what the snapshot and the announcements held there | the switch is the unit's until the follow read the announcement scheduled brings it in, and the plan's older OFF would write it off |
 | A MIDI message arriving under those same latches, or during a self-test / `--prepare-modified` run | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
 | A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
 | A read's value for a key the app wrote while that read was in flight | `readIntoPlan`'s authorship filter, before the patch is applied | the operator authored it after the read sampled the address; comparing values instead would take an edit that returned to where it started for one that never happened |
@@ -2596,6 +2632,18 @@ The sample rate is the one plan value the device can accept and then undo by its
 on, the URX slaves its clock to the USB host: a write to 766 is accepted, re-clocks the hardware, and roughly
 0.4 s later the host's rate is reasserted (measured on a URX44V). Writing straight through would report success
 for a change that did not last.
+
+Ahead of any of it, a plan holding +48V and HI-Z both on for a channel stops the write where it stands: whichever
+of the two went out second would turn one on while the other is on, so no emit order makes it legal, and the
+refusal is taken before the link is opened rather than inside the send (known-issues.md "The unit lets +48V and
+HI-Z be on together; the app does not"). Every converge round then asks the same rule per command against what its
+own read found, in send order (`withoutExcludedOns` in `client.ts`), so a round that turns the other switch off
+first still sends the ON behind it. That is what the live flush's converge needs: it re-sends a plan the unit's
+panel may have moved since, and a plan holding both on from a read would otherwise put a switch the panel turned
+off back on beside the other one. The live flush also leaves out of its converge a switch the unit has announced it
+turned on at its panel and no read has brought in yet, with the other switch on that channel, since the plan's
+older OFF would otherwise go out over it. An announcement that arrives while the converge runs joins that set, and
+each later read and round send asks it again (`exclude`); a round whose sends were already chosen goes out as chosen.
 
 `Write to device` therefore reads the device's clock state — Follow USB (848) and the running rate (766) — before
 the diff, and settles the rate before anything is sent (`settleSampleRate` in `main.ts`, `readClockState` in
@@ -3440,7 +3488,15 @@ An undo is refused, with the reason on the status line and **without spending th
   the entry carries more than the rate, the status line says so (`undoRateLiveMixed`, chosen by
   whether the entry's field set is nothing but `sampleRate`). Either way the entry is held back, not
   lost — the refusal runs on a peeked entry and nothing consumes it, and leaving the session makes
-  the same press work.
+  the same press work;
+- the host refuses the state the patch would leave behind (`patchBlocked`) — today the +48V / HI-Z
+  exclusion, which an entry can otherwise walk around, since its patch is applied whole and nothing
+  between the edit that recorded it and this asks what the two switches end up at. Asked of the state
+  rather than of the keys, because an undo turns a switch on as much as the gesture it reverses did,
+  and which of the two the entry moved does not decide the answer. Held back the same way, and the
+  same press works once the channel holds one of the two. What the hook is handed is the patch that
+  would **land**: `peekUndo` answers with the entry's INVERSE, which is what `takeUndo` applies, so a
+  caller reading one and applying the other cannot be looking at opposite values for the same keys.
 
 ### History clear points
 
@@ -3449,7 +3505,13 @@ can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent
 / the model switch a Fetch or Live-sync start offers, applied once its read has landed complete / the `?plan=`
 deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch, Live-sync start
 and the `.urxf` import; plus device-follow's full reconcile). A one-node follow readback only re-takes
-the baseline, keeping the entries already recorded. A Fetch or Live-sync start whose read did not land —
+the baseline, keeping the entries already recorded. A read that refuses a +48V / HI-Z ON — made while it was in
+flight, or held back by a live flush and never sent — takes that one edit out instead (`PlanHistory.retract`):
+the newest entry carrying each key it took back loses the key when that entry still holds the refused value, an
+entry left empty leaves the stack, and the baseline takes the refusal so it is not recorded as an edit of its own.
+The reads that drop the stacks anyway
+leave nothing for it to find; it is the read that keeps them — the refetch a `sideEffect: "refetch"` write
+takes — where the entry would otherwise outlive the refusal. A Fetch or Live-sync start whose read did not land —
 cancelled, failed, stopped before its read, or incomplete where only a complete read is taken (a Live-sync
 start, and a fetch carrying a model switch) — touches neither the stacks nor the baseline, an entry still
 open included. One whose read landed drops and re-takes both even when it changed no value, an entry
@@ -3789,6 +3851,8 @@ reachable sibling is insert FX, whose engine slots are bounded at the emit while
 unit's raw verbatim. That case is untouched here: it diverges the same way and `comparePlan` sees it no
 better. The mechanism is bounded to `paramRangeProblems`' own walk for the same reason that walk is
 (`plan-validate.ts`'s SCOPE note): the FX catalogue is the family whose windows have actually moved.
+The walk's two node keys — a HI-Z channel's +48V and A.Gain — are not taken back: `paramRangeAddrs`
+answers only for an FX `params` entry, and the emit sends both keys as the plan holds them.
 
 One value is **rewritten** rather than dropped in the DESERIALIZER, and it is the only one there — the
 loader rewrites a second class one layer later, after validation, where an FX value outside what the app can
@@ -3798,7 +3862,8 @@ selected type's own default applies rather than one type's guessed in), a `type`
 sanitiser above keeps a boolean and a non-empty object under any key, so an unreadable effect object loads
 and every reader below reads it as absent, and a truthy one is worse still, since the write path then sends
 that channel's factory defaults over whatever the unit holds. Both actions are reported (`plan-validate.ts`), in
-two sentences rather than one count. Here: a **node name** is cut to
+two sentences rather than one count. The same step bounds two keys of a channel whose HI-Z is on — +48V to
+off and A.Gain to +40 dB (`input-lock.ts`) — and counts them with the bounded FX values. In the deserializer: a **node name** is cut to
 **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on
 the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured

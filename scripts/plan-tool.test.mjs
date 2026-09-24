@@ -1564,4 +1564,47 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     expect(toolWarnings(dir, doc(true))).not.toContain("carry no usable ssmcs");
     expect(toolWarnings(dir, doc(1)), "the control: the real value is warned about").toContain("carry no usable ssmcs");
   });
+
+  // A channel carrying HI-Z with HI-Z on opens with +48V off and A.Gain no higher than +40 dB.
+  // The leaves the app's repair CHANGES are compared with the paths the tool says it bounds,
+  // with the documents the repair must leave alone beside them.
+  it("agrees with the app about +48V and A.Gain under HI-Z", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { paramRangeProblems: prp, applyParamRange } = await import("../src/core/plan-validate.ts");
+    const DOCS = [
+      '{"ch3":{"hiZ":true,"phantom":true,"gain":60}}',
+      '{"ch4":{"hiZ":1,"phantom":1,"gain":41}}',
+      '{"ch3":{"hiZ":true,"phantom":false,"gain":70},"ch4":{"hiZ":true,"phantom":true}}',
+      // …and the documents nothing may be said about.
+      '{"ch3":{"hiZ":true,"gain":40}}',
+      '{"ch3":{"hiZ":false,"phantom":true,"gain":70}}',
+      '{"ch1":{"hiZ":true,"phantom":true,"gain":70}}',
+    ];
+    let changed = 0;
+    for (const np of DOCS) {
+      const text =
+        `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
+        `"positions":{},"connections":[],"nodeParams":${np}}`;
+      const loaded = deserializeDocument(text).plan;
+      applyParamRange(loaded, prp(loaded));
+      const after = leavesOf(loaded.nodeParams);
+      const app = [...leavesOf(JSON.parse(text).nodeParams)]
+        .filter(([k, v]) => after.get(k) !== v)
+        .map(([k]) => k)
+        .sort();
+      changed += app.length;
+      const file = join(dir, "plan.json");
+      writeFileSync(file, text);
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, r.stdout).toBe(0);
+      const tool = r.stderr
+        .split("\n")
+        .map(warningPath)
+        .filter((p) => p !== null)
+        .sort();
+      expect(tool, `the bounds of ${np}`).toEqual(app);
+    }
+    // The positive control: a corpus the repair changed nothing in matches two empty lists.
+    expect(changed, "the corpus reaches documents the app repairs").toBeGreaterThan(0);
+  });
 });

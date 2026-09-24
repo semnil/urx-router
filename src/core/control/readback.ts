@@ -26,6 +26,7 @@ import {
   setPlanSampleRate,
 } from "../plan";
 import {
+  applyPatch,
   applyPatchInContext,
   clonePlanState,
   connectionContestKey,
@@ -33,9 +34,13 @@ import {
   diffPlans,
   dropAuthored,
   nodeParamContestKey,
+  patchContestNames,
+  patchLabels,
   readableContestKey,
 } from "../plan-history";
 import type { PlanPatch, PlanWriteWitness } from "../plan-history";
+import { carriedByOn, readRefusedSwitches, unsentRefusedSwitches } from "../input-lock";
+import type { InputSwitch, SwitchSession } from "../input-lock";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
 import { silentKey } from "./params";
 import type { SilentFamily } from "./params";
@@ -1458,6 +1463,18 @@ export interface MergedRead extends ReadbackResult {
    *  `console.warn`, which is a development aid and reaches nobody in a packaged build
    *  (no `devtools` feature) — so for those paths this really is silent, on purpose. */
   unplaced: string[];
+  /** The +48V / HI-Z ONs this read refused (`readRefusedSwitches`): an ON of one switch made
+   *  while the read was in flight, on a channel where the read found the other one on and the
+   *  plan had not yet heard it — and, for a read in a live session, an ON made before it that
+   *  the unit never received (`unsentRefusedSwitches`). The plan holds the unit's OFF for each.
+   *  Empty for a read that refused nothing. */
+  refusedOn: Array<{ nodeId: string; key: InputSwitch }>;
+  /** The patch that took them back, from the operator's values to the unit's: each refused
+   *  switch, and the keys the same edit carried with it (`carriedByOn`). Kept apart from
+   *  `devicePatch` because the history treats the two oppositely — the read's own keys go
+   *  into the baseline, while these take the refused edit out of the entries
+   *  (`PlanHistory.retract`). */
+  refused: PlanPatch;
   /** How many keys an edit funnel authored while the read was in flight — `witness`'s own
    *  answer, asked before the merge wrote anything so that the merge's writes are not
    *  counted as the app's. Zero for a read that carries no witness.
@@ -1670,6 +1687,17 @@ const INSERT_FX_KEYS = ["insertFx", "insertFxOn", "insertFxParams"] as const;
  * refuses writes nothing into the plan, the same as a read that threw, and still returns
  * what it read — its errors and its private copy — with an empty patch: nothing unplaced
  * and nothing held.
+ *
+ * Every merge then asks the +48V / HI-Z rule of what it left (`readRefusedSwitches`), with
+ * no caller to opt in: an ON of one switch made while the read was in flight, on a channel
+ * where the read found the other one on, is taken back to the unit's OFF together with the
+ * keys the same edit carried, and reported as `refusedOn` / `refused`. What the unit holds is
+ * not touched — `deviceView` keeps it, and the plan now agrees with it on those keys, so the
+ * next outgoing diff has nothing to send for them. `session` is what a live session knows
+ * beyond what the read found: a switch it holds on is not refused — an ON its flush sent after
+ * the read had sampled the address is on the unit — and an ON the plan held when the read was
+ * issued and the unit never received, which the merge itself took back, is reported with the
+ * rest.
  */
 export async function readIntoPlan(
   current: () => Plan,
@@ -1677,6 +1705,7 @@ export async function readIntoPlan(
   witness?: PlanWriteWitness,
   hold?: (ctx: HoldContext) => ReadonlySet<string>,
   accept?: (result: ReadbackResult) => boolean,
+  session?: SwitchSession,
 ): Promise<MergedRead | null> {
   const plan = current();
   const before = clonePlanState(plan);
@@ -1695,6 +1724,8 @@ export async function readIntoPlan(
         devicePatch: [],
         unplaced: [],
         held: [],
+        refusedOn: [],
+        refused: [],
         authored: authored?.size ?? 0,
       };
     // The patch is filtered rather than the apply, so what this read is allowed to
@@ -1714,10 +1745,76 @@ export async function readIntoPlan(
       }) ?? new Set<string>();
     const { patch: devicePatch, dropped: held } = dropAuthored(contested, holdKeys);
     const unplaced = [...applyPatchInContext(plan, devicePatch), ...dropped];
-    return { ...result, deviceView: target, devicePatch, unplaced, held, authored: authored?.size ?? 0 };
+    // The +48V / HI-Z rule, asked where the read lands: an ON the operator made while it was
+    // in flight stood in the merge above like any other edit, and on a channel where the unit
+    // holds the other switch on it is refused as a plan that knew would have refused it. In a
+    // live session, an ON made before the read that the unit never received, which the merge
+    // above has already replaced with the read's OFF, is refused with it.
+    const kept = readRefusedSwitches(target, plan, session && ((nodeId, key) => session.holdsOn(nodeId, key)));
+    const taken = session ? unsentRefusedSwitches(before, target, plan, session, authored ?? new Set()) : [];
+    const refusedOn = [...kept, ...taken];
+    const refused = [
+      ...(kept.length ? takeBackRefused(plan, target, kept, watch?.edits()) : []),
+      ...(taken.length ? takenByMerge(devicePatch, taken) : []),
+    ];
+    // A key taken back holds the unit's value now, so it is no longer one the merge left alone.
+    const placed = new Set(patchLabels(refused));
+    return {
+      ...result,
+      deviceView: target,
+      devicePatch,
+      unplaced: unplaced.filter((label) => !placed.has(label)),
+      held,
+      refusedOn,
+      refused,
+      authored: authored?.size ?? 0,
+    };
   } finally {
     watch?.close();
   }
+}
+
+/**
+ * Write the unit's value over each refused switch in `plan`, and over the keys the same edit
+ * carried with it, and return the patch that did it (from the plan's values to the unit's).
+ *
+ * The edit is the one the witness saw write the switch last: a carried key (`carriedByOn`)
+ * goes back with it only when that same sample wrote it too, so a key the operator moved
+ * again in a later edit is theirs and stays. With no witness nothing is carried.
+ */
+function takeBackRefused(
+  plan: Plan,
+  unit: Plan,
+  refusedOn: ReadonlyArray<{ nodeId: string; key: InputSwitch }>,
+  edits: ReadonlyMap<string, number> | undefined,
+): PlanPatch {
+  const names = new Set<string>();
+  for (const { nodeId, key } of refusedOn) {
+    const name = nodeParamContestKey(nodeId, key);
+    names.add(name);
+    const at = edits?.get(name);
+    if (at === undefined) continue;
+    for (const carried of carriedByOn(key)) {
+      const other = nodeParamContestKey(nodeId, carried);
+      if (edits?.get(other) === at) names.add(other);
+    }
+  }
+  const back = diffPlans(plan, unit);
+  const { patch } = dropAuthored(back, new Set(patchContestNames(back).filter((n) => !names.has(n))));
+  applyPatch(plan, patch);
+  return patch;
+}
+
+/** The part of a read's own patch that took each switch in `taken` back, and the keys an ON of
+ *  it carries (`carriedByOn`) where the patch moved them too — the refused ON's edit, as the
+ *  history has to take it out. */
+function takenByMerge(devicePatch: PlanPatch, taken: ReadonlyArray<{ nodeId: string; key: InputSwitch }>): PlanPatch {
+  const names = new Set<string>();
+  for (const { nodeId, key } of taken) {
+    names.add(nodeParamContestKey(nodeId, key));
+    for (const carried of carriedByOn(key)) names.add(nodeParamContestKey(nodeId, carried));
+  }
+  return dropAuthored(devicePatch, new Set(patchContestNames(devicePatch).filter((n) => !names.has(n)))).patch;
 }
 
 /**

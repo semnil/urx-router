@@ -6,7 +6,7 @@
 
 import { decodeMessage, encodeCc, encodeNote, encodePitchBend, type CcEvent, type MidiEvent } from "./message";
 import { addrKey, wireRaw, wireSteps, type MidiAddr, type MidiMapping } from "./mapping";
-import type { BoundControl } from "./controls";
+import type { BoundControl, ControlRefusal } from "./controls";
 
 export interface EngineHooks {
   /** Resolve a mapping's control id against the current model + plan. */
@@ -22,6 +22,8 @@ export interface EngineHooks {
    *  something. Called once per window, never per message: a controller sweep is
    *  dozens of messages a second and the status line is one line. */
   refused?(reason: string): void;
+  /** A write the control itself refused (`BoundControl.refuses`): nothing was edited. */
+  declined?(control: BoundControl, why: ControlRefusal): void;
   /** Send feedback bytes out (caller no-ops when no output port is open). */
   send(bytes: number[]): void;
   /** MIDI-learn resolved an address. */
@@ -448,6 +450,12 @@ export class MidiEngine {
    *  reports has to be the difference this write actually made. */
   private commit({ mapping, control, key, isHead, target }: Decision): boolean {
     const before = control.get();
+    const why = control.refuses?.(target) ?? null;
+    if (why !== null) {
+      this.hooks.trace?.(`refuse ${mapping.control} (${why})`);
+      this.hooks.declined?.(control, why);
+      return false;
+    }
     if (!control.set(target)) {
       this.hooks.trace?.(`drop locked ${mapping.control}`);
       return false; // device-locked — swallowed, or retried by a gang

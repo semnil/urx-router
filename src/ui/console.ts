@@ -24,6 +24,7 @@ import {
   type SsmcsParams,
 } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
+import { channelGainRange, hiZPatch, inputOnRefused } from "../core/input-lock";
 import {
   defaultTapKey,
   hasMeter,
@@ -1938,6 +1939,12 @@ export class Console {
       // focus, so it can be the place a closing popover leaves the operator. Without this
       // a chip the rate turned read-only is unfocusable, and the focus falls to <body>.
       chip.tabIndex = -1;
+      // A read-only chip given a `midiId` stays a MIDI-learn target: learn mode marks it,
+      // puts it in the tab order and arms it on a press; outside learn mode a press does nothing.
+      if (midiId) {
+        this.wireActivate(chip, midiId, () => {});
+        chip.tabIndex = this.hooks.midi?.learnActive() ? 0 : -1;
+      }
       return chip;
     }
     this.wireActivate(chip, midiId, () => {
@@ -2470,8 +2477,38 @@ export class Console {
         { midiId: controlId(m.id, "mute") },
       );
     }
+    // +48V and HI-Z are never turned on together: while one is on, the other's chip is
+    // read-only and says why; turning the lit one off stays available. Either toggle
+    // rebuilds the strip, so the other chip and the A.GAIN range follow it. The read-only
+    // chip keeps its control id, so it can still be MIDI-learned; the bound controller's
+    // ON is refused while the lock holds.
+    const inputChip = (label: string, key: "phantom" | "hiZ"): void => {
+      if (inputOnRefused(model.id, m.id, planOf(), key)) {
+        this.makeChip(m.id, top, label, false, false, () => false, {
+          readonlyTitle: key === "phantom" ? t().inspector.phantomLockedByHiZ : t().inspector.hiZLockedByPhantom,
+          midiId: controlId(m.id, key),
+        });
+        return;
+      }
+      const written: string[] = [key];
+      this.makeChip(
+        m.id,
+        top,
+        label,
+        false,
+        Boolean(planOf()[key]),
+        () => {
+          const next = !planOf()[key];
+          const patch = key === "hiZ" ? hiZPatch(planOf(), next) : { phantom: next };
+          Object.assign(this.nodeParamsOf(m.id), patch);
+          written.splice(0, written.length, ...Object.keys(patch));
+          return next;
+        },
+        { midiId: controlId(m.id, key), keys: written, rerender: true },
+      );
+    };
     // HA input toggles (+48 / polarity / HPF / Hi-Z).
-    if (cc?.hasMicStrip) boolChip(top, "+48", "phantom", false);
+    if (cc?.hasMicStrip) inputChip("+48", "phantom");
     // Polarity: one φ on a mono channel, independent φL / φR on a stereo one. Keep
     // the stereo pair on a single row by padding to an even count before them.
     if ((cc?.phases.length ?? 0) === 2 && top.childElementCount % 2 === 1) {
@@ -2481,7 +2518,7 @@ export class Console {
       boolChip(top, ph.key === "phase" ? "φ" : ph.key === "phaseL" ? "φL" : "φR", ph.key, false);
     }
     if (cc?.hasHpf) boolChip(top, "HPF", "hpf", false);
-    if (cc?.hasHiZ) boolChip(top, "Hi-Z", "hiZ", false);
+    if (cc?.hasHiZ) inputChip("Hi-Z", "hiZ");
     // MONITOR strips carry the device [CUE] (cue interrupt) and [MONO] buttons.
     // Both are confirmed device params (MONITOR_CUE_INTERRUPT / MONITOR_MONO), so
     // they sync live like the channel toggles. CUE Interrupt ships ON, MONO OFF.
@@ -2716,8 +2753,9 @@ export class Console {
 
     // A.GAIN / D.GAIN is the channel head-amp / digital gain.
     if (m.isChannel) {
-      const min = cc?.gain?.minDb ?? (m.isMono ? -8 : -24);
-      const max = cc?.gain?.maxDb ?? (m.isMono ? 70 : 24);
+      const range = channelGainRange(model, m.id, planOf());
+      const min = range?.minDb ?? (m.isMono ? -8 : -24);
+      const max = range?.maxDb ?? (m.isMono ? 70 : 24);
       const factory = this.factoryPlan().nodeParams[m.id]?.gain ?? (m.isMono ? -8 : 0);
       // Horizontal-marking values: A.Gain +8/+55, D.Gain -14/+15.
       const [hl, hr] = m.isMono ? [8, 55] : [-14, 15];

@@ -111,6 +111,74 @@ protocol, so newer versions are not guaranteed to behave identically.
 | Firmware | V1.3.1.0 |
 | Device Center | 2.2.1 (2.2.1.1) |
 
+## The unit lets +48V and HI-Z be on together; the app does not
+
+The user guide ("INPUT screen", the [+48V] button) says phantom power and HI-Z
+cannot be turned on at the same time. The URX44V (System 1.3.1.0) panel does let
+both be on for one jack: pressing [HI-Z] with [+48V] on, or [+48V] with [HI-Z] on,
+leaves both on, and neither switches the other off.
+
+The app never turns one on while the other is on:
+
+- **Inspector and CONSOLE.** While one of +48V / HI-Z is on for a channel, the
+  other's ON cannot be pressed — the Inspector toggle and the CONSOLE chip are
+  read-only and their tooltip says which one to turn off first. Turning the lit
+  one off is always available.
+- **MIDI.** A write that would turn the other one on is refused and the status
+  line says why; nothing is edited. A write turning either one off goes through.
+- **Undo / redo.** A step whose result would leave both on for a channel is held
+  back rather than taken: the status line names the channel and says the step is
+  not lost, and the same press works once one of the two is off. A step that
+  leaves a channel exactly as the unit reported it is not held back, and neither
+  is one that moves anything else.
+- **Opening a plan** (a file, a `?plan=` link or a drop). A document holding both
+  on for one channel opens with +48V off and HI-Z kept, and the status line
+  reports it with the other values the load normalized.
+- **A device read** (Fetch, starting Live sync, the device follow, a `.urxf`
+  import). A unit holding both on is taken as it is and the status line names the
+  channels; the app writes nothing to the unit for it, and either one can then be
+  turned off.
+- **An ON pressed while a device read is in flight.** Until the read lands, the
+  app does not know what the unit holds, so it takes the press. Where the read
+  finds the other one on for that channel, the press is refused as it would have
+  been had the app known: the switch goes back off, the status line says so and
+  names the channel, and nothing is sent for it. The unit's own switch is left as
+  it is. A Hi-Z press that lowered A.Gain to +40 is refused whole — A.Gain goes
+  back to what the unit holds, and the +40 is never sent — and no undo step is
+  left that would put the press back. An edit made in the same window that has
+  nothing to do with the two lands as usual, and turning either one off is never
+  refused. A press the app had already sent before the unit announced turning the
+  other one on is on the unit, which then holds both, and is taken as it is.
+- **During Live sync, a switch turned on at the unit's panel.** From the moment
+  the unit announces it, the app sends no ON of the other one for that channel —
+  including one already pressed and waiting to be sent, and the +40 A.Gain a
+  Hi-Z press lowered with it. The app asks the unit for the other switch just
+  before it sends an ON, so this holds before the announcement has reached the
+  app. No write it decides on after the announcement
+  turns the unit's switch back off before a read has brought it in. The read the
+  announcement starts refuses
+  a press made meanwhile as above, whether it was made before that read began or
+  while it ran.
+- **Writing to the device.** A plan holding both on for a channel is not sent:
+  the write stops before the link is opened and the status line names the
+  channel, so nothing reaches the unit. Turning either one off makes the write go
+  through. A plan holds both on only where the unit it was read from held both
+  on, and a read or a `.urxf` import is the only way that state reaches a plan;
+  it stays on screen until you turn one off. Once a plan is on the unit,
+  re-sending it (Live sync's own repair after a change that makes the unit reset
+  other settings) does not turn one back on while the unit holds the other on
+  either, nor turn off a switch turned on at the unit's panel that the app has
+  not read yet.
+
+**A.Gain follows HI-Z.** While HI-Z is on, the unit's A.Gain runs -8 … +40 dB, and
+the unit does not apply a value written above +40. The Inspector slider, the
+CONSOLE knob and a MIDI control's full throw take the same range while HI-Z is on.
+Turning HI-Z on in the app with A.Gain above +40 lowers it to +40 in the same edit
+(one undo step restores both), and a plan holding HI-Z on with A.Gain above +40
+opens with A.Gain at +40, reported like the +48V repair. HI-Z is written ahead of
+A.Gain, and whichever of +48V / HI-Z the plan holds off is written ahead of the
+other, so a write never has both on in between.
+
 ## The AUTO (auto gain) trigger is not modeled
 
 The device's input screens offer an **AUTO** button that runs a one-shot

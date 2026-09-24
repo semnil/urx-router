@@ -213,6 +213,8 @@ export class MidiControl {
       gate: () => hooks.blocked(),
       // Once per gated window — the engine decides that, so this is a plain status write.
       refused: (reason) => hooks.onStatus(reason),
+      declined: (_control, why) =>
+        hooks.onStatus(why === "phantomUnderHiZ" ? t().inspector.phantomLockedByHiZ : t().inspector.hiZLockedByPhantom),
       applied: (control) => {
         // Same funnel as a console edit, and BOTH of its mirrors. A linked pair holds one
         // insert effect — one effect, one device slot — so a write that skipped that mirror
@@ -236,6 +238,8 @@ export class MidiControl {
             : []),
         ];
         if (insFxMirrored && partner) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
+        // A HI-Z write that lowered A.Gain to the HI-Z ceiling asserted the gain as well.
+        for (const path of control.alsoWrote?.() ?? []) keys.push(nodeParamContestPath(control.node, path));
         hooks.onApplied(control, pairMirrored || insFxMirrored, keys);
         this.scheduleFeedback();
       },

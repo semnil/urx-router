@@ -7,6 +7,7 @@ import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
 import { clipNodeName, processorOn, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
+import { channelGainRange, hiZPatch, inputOnRefused } from "../core/input-lock";
 import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 
 import {
@@ -545,27 +546,42 @@ export function renderInspector(
 
       // INPUT screen order (device top-left → bottom-right): +48V, A.Gain, HI-Z,
       // Clip Safe, Ø, HPF, HPF Freq. The analog mic-strip controls (+48V / Clip
-      // Safe / HPF) exist only on the mono mic channels; Hi-Z only on CH3/CH4.
+      // Safe / HPF) exist only on the mono mic channels; Hi-Z only on CH3/CH4 (CH2 on URX22).
+      // +48V and HI-Z are never turned on together: while one is on, the other's toggle is
+      // read-only and says why (turning the lit one off stays available).
       if (cc?.hasMicStrip) {
         input.append(
-          boolToggle(m.inspector.phantom, np.phantom ?? false, (v) =>
-            actions.onUpdateNodeParams(node.id, { phantom: v }),
+          boolToggle(
+            m.inspector.phantom,
+            np.phantom ?? false,
+            (v) => actions.onUpdateNodeParams(node.id, { phantom: v }),
+            inputOnRefused(model.id, node.id, np, "phantom") ? m.inspector.phantomLockedByHiZ : undefined,
           ),
         );
       }
       // Gain label / range come from the channel descriptor: mono = A.Gain
-      // (-8..+70), stereo = D.Gain (-24..+24), matching the device's own labels.
-      if (cc?.gain) {
+      // (-8..+70, -8..+40 while HI-Z is on), stereo = D.Gain (-24..+24), matching the
+      // device's own labels.
+      const gainRange = channelGainRange(model, node.id, np);
+      if (cc?.gain && gainRange) {
         const gainLabel = cc.gain.analog ? m.inspector.gainAnalog : m.inspector.gainDigital;
         input.append(
-          gainControl(gainLabel, cc.gain.minDb, cc.gain.maxDb, np.gain ?? HA_GAIN_DEFAULT_DB, (v) =>
+          gainControl(gainLabel, gainRange.minDb, gainRange.maxDb, np.gain ?? HA_GAIN_DEFAULT_DB, (v) =>
             actions.onUpdateNodeParams(node.id, { gain: v }),
           ),
         );
       }
       if (cc?.hasHiZ) {
         input.append(
-          boolToggle(m.inspector.hiZ, np.hiZ ?? false, (v) => actions.onUpdateNodeParams(node.id, { hiZ: v })),
+          boolToggle(
+            m.inspector.hiZ,
+            np.hiZ ?? false,
+            // The cap reads the plan, not the `np` this row was built from: a gain slide
+            // does not rebuild the panel (the slider has to keep the pointer), so the
+            // snapshot holds the gain as it was when the node was selected.
+            (v) => actions.onUpdateNodeParams(node.id, hiZPatch(plan.nodeParams[node.id], v)),
+            inputOnRefused(model.id, node.id, np, "hiZ") ? m.inspector.hiZLockedByPhantom : undefined,
+          ),
         );
       }
       if (cc?.hasMicStrip) {

@@ -138,8 +138,12 @@ the device default. The full set:
 **Stable, human-readable (author these freely):**
 - `on` — channel / STEREO master / FX channel / MONITOR on. `false` = muted.
 - `hpf` (bool), `hpfFreq` (Hz, 40–120, default 80).
-- `gain` — head-amp input gain in dB (-8 … +70), analog mic channels.
-- `phantom`, `phase`, `phaseL`, `phaseR`, `clipSafe`, `hiZ` (bool).
+- `gain` — head-amp input gain in dB (-8 … +70), analog mic channels; -8 … +40
+  while `hiZ` is on.
+- `phantom`, `phase`, `phaseL`, `phaseR`, `clipSafe`, `hiZ` (bool). `phantom` and
+  `hiZ` are never on together: on a channel carrying HI-Z (CH 3/4 on URX44/44V,
+  CH 2 on URX22) with `hiZ` on, the app opens the plan with `phantom` off and
+  `gain` bounded to +40, and `plan_tool.py` warns about both.
 - `level` — a node-level fader in dB (e.g. monitor level).
 - `pan` — output-bus master balance (STEREO / MIX), `-63` … `0` … `+63`. Absent =
   center. Distinct from a send's `pan`, which is a connection param.
@@ -291,6 +295,10 @@ values removed:
 The last two matter because the sanitiser keeps a boolean and a non-empty object
 under any key, so an unreadable effect object survives the load and every reader
 below treats it as absent.
+
+The same step also repairs two keys outside `fxEffect`: on a channel carrying HI-Z
+with `hiZ` on, `phantom` is turned off and a `gain` above +40 is bounded to +40 (the `gain` /
+`phantom` entries above), counted with the values moved.
 
 An **empty** `fxEffect` (`{}`) is removed by the sanitiser before any of that, and
 warned about for the same reason the rows above are: the document does not survive

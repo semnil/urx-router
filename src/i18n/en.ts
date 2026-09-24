@@ -388,6 +388,9 @@ export const en = {
     // it: its own strip and every send aimed at it. The graph dims the node; this is what
     // the CONSOLE says in its place.
     fx2RateLocked: tr("The FX2 bus is unavailable above 96 kHz."),
+    // Why +48V / HI-Z cannot be turned on: the other one is on for the same channel.
+    phantomLockedByHiZ: tr("Turn Hi-Z off first — +48V and Hi-Z are never on together"),
+    hiZLockedByPhantom: tr("Turn +48V off first — +48V and Hi-Z are never on together"),
     channelOn: tr("Channel"),
     sendOn: tr("Send"),
     toSt: dev("TO ST"),
@@ -817,6 +820,14 @@ export const en = {
     streamingSourceUnlisted: tr(
       "The unit's STREAMING was on a state its source list does not offer, so the plan takes STEREO",
     ),
+    // A device read found both on for these channels and took them as they are.
+    phantomHiZBothOn: (channels: string): string => `+48V and Hi-Z are both on for ${channels}`,
+    // A device read found the other switch on for these channels, so the ON pressed while it
+    // was in flight was taken back to the unit's OFF.
+    phantomRefusedByRead: (channels: string): string =>
+      `+48V was not turned on for ${channels} — the unit holds Hi-Z on there, and +48V and Hi-Z are never on together`,
+    hiZRefusedByRead: (channels: string): string =>
+      `Hi-Z was not turned on for ${channels} — the unit holds +48V on there, and +48V and Hi-Z are never on together`,
     recentRemoved: (name: string): string => `Removed ${name} from the recent plans`,
     planSaved: tr("Plan saved"),
     savedTo: (name: string): string => `Saved to ${name}`,
@@ -858,6 +869,9 @@ export const en = {
     comparePartial: (differ: number, compared: number, failed: number, ms: number): string =>
       `${differ} of ${compared} differ, ${failed} could not be read (${ms} ms)`,
     compareError: (message: string): string => `Device compare failed: ${message}`,
+    // The plan holds a state the app never writes, so the write stops before the link opens.
+    writePhantomHiZ: (channels: string): string =>
+      `+48V and Hi-Z are both on for ${channels} — turn one of them off before writing to the device; nothing was sent`,
     writeConnecting: tr("Connecting to the device…"),
     writeNoChanges: tr("Device already matches the plan — nothing to write"),
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
@@ -933,6 +947,10 @@ export const en = {
     undoRateLiveMixed: tr(
       "This step also changes the sample rate, which follows the device while Live sync is on — the whole step is held back, not lost; it works again with Live sync off",
     ),
+    // The step is held back rather than taken: the same press works once the channel holds
+    // one of the two.
+    undoPhantomHiZ: (channels: string): string =>
+      `This step would leave +48V and Hi-Z both on for ${channels} — turn one of them off there first; the step is held back, not lost`,
     midiBusy: tr("Busy with the device or a file — incoming MIDI is ignored until it finishes"),
     themeDark: tr("Switched to dark mode"),
     themeLight: tr("Switched to light mode"),
