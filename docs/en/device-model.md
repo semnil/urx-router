@@ -403,7 +403,8 @@ refused at load.
   type is a shared preset of **three types — Intensity / Vocal / Loudness — on mono, stereo, MIX and
   STEREO EQs alike**. The unit's own MONO IN EQ screen (read on a URX44V) and STEREO EQ screen list the
   three, a write of each type is accepted on mono CH1, stereo CH5/6, MIX1 and the STEREO master, and
-  writing a type forces the 1-knob level to that type's neutral point. When 1-knob is on
+  writing a type forces the 1-knob level to that type's neutral point — and, on the STEREO master, sets
+  each band's ON (Loudness all four on, Vocal LOW off and the other three on). When 1-knob is on
   the device recomputes the 4-band PEQ from the knob, so the tool does **not** author the band values
   (they are device-driven); the EQ tuning screen keeps the band rows reserved out of sight and the write skips the band
   commands.

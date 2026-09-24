@@ -386,7 +386,7 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   全体を駆動する: **on/off**・プリセット **type**・**level** (エフェクト深度 0–100 %)。type は共有
   プリセットで、**mono・stereo・MIX・STEREO の EQ に共通の 3 種** — Intensity / Vocal / Loudness。
   実機の MONO IN 用 EQ 画面 (URX44V で読んだ) と STEREO 用 EQ 画面がこの 3 つを出し、mono CH1・stereo CH5/6・
-  MIX1・STEREO マスターでどの型の書き込みも受理され、TYPE 書き込みはその型の中立点へ level を初期化する。1-knob ON 時は実機がノブから 4-band PEQ を
+  MIX1・STEREO マスターでどの型の書き込みも受理され、TYPE 書き込みはその型の中立点へ level を初期化し、STEREO マスターでは各バンドの ON も書き換える (Loudness は 4 バンドとも ON、Vocal は LOW を OFF・残り 3 つを ON)。1-knob ON 時は実機がノブから 4-band PEQ を
   再計算するため、ツールはバンド値を**書き込まない** (実機駆動)。EQ 調整画面はバンドの行を見えないまま
   予約し、書込みもバンドコマンドをスキップする。
 - モノ CH とステレオ CH の構成は固定 (機種で本数のみ変化)。MONO IN ペア (CH1/2, CH3/4) は
