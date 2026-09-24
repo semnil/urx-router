@@ -936,6 +936,13 @@ the inspector, and the open modal itself.
 > initial-capital, not shouted, which is what the guitar panel's card labels follow — and what the
 > guide's shouted spellings above do not.
 >
+> **The FX EFFECT faces were read the same way on 2026-09-23** — Rev.R3, REV-X and the two delays,
+> one face at a time, each page's captions in the order they sit. The guide is not the arbiter there
+> either: it writes `ER/Reverb Delay` where the face prints `E/R Delay`. A spelling is the other
+> thing the marks cannot catch — `dev()` fixes a string's *identity*, so a row that reproduces the
+> right control under the wrong wording compiles and renders exactly like one that does not, which
+> is why a face is read caption by caption rather than row by row as a question comes up.
+>
 > **A face bar segment the app named itself is `fixed()`, not `dev()`** — the multi-band compressor's
 > `Main` and the SSMCS bank's `Main` / `Comp` / `EQ`. The rest of what those two bars print is not the
 > app's: `Low` / `Mid` / `High` are the unit's band names, which the same catalogue entry also spells
