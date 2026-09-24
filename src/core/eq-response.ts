@@ -259,8 +259,7 @@ function sumDb(parts: ((hz: number) => number)[]): (hz: number) => number {
 // rather than four bands with two of them switched off.
 //
 // What it shares with the 4-band model above is the shelf convention — the nominal
-// frequency is the point 3 dB below the plateau from 6 dB of gain up, and the nominal
-// frequency itself below that — and nothing else.
+// frequency is the point 3 dB below the plateau — and nothing else.
 
 /** One SSMCS band. `kind` decides the filter outright; the device has no type slot. */
 export interface SsmcsBandState {

@@ -820,7 +820,7 @@ is the same assumption the shipped COMP curve carries.
   case over the whole ratio range is 2.18 against a bound of 3, and a Hard knee is zero wide so the
   branch does not run at all. It stays because the reaches are measured values that can move again.
 - **The EQ.** Three fixed bands: LOW shelving, MID peaking, HIGH shelving. The shelf convention is the
-  4-band model's — the nominal frequency is the point 3 dB below the plateau from 6 dB of gain up — and the peaking Q is
+  4-band model's — the nominal frequency is the point 3 dB below the plateau — and the peaking Q is
   **not**: the 4-band's "the unit's Q is twice the biquad Q" does not hold here. MID takes the same
   gain-dependent law as the side-chain filter below, because the two are the same filter; the 4-band's
   constant sits adjacent to it in `eq-response.ts` so neither block's can be carried to the other by
