@@ -154,8 +154,7 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 
 Each channel output is sent to the following buses. **All are fixed (`fixed`) — always wired,
 non-removable**: the device has no "remove this routing", only a per-send ON switch (SEND_ON) and
-level, so the model matches that (the old "wire presence = SEND_ON" is gone; on/off is held in the
-connection param `params.on`, default ON). LEVEL is the shared **level_gain** scale **-∞ … +10.00 dB**
+level, so the model matches that (on/off is held in the connection param `params.on`, default ON). LEVEL is the shared **level_gain** scale **-∞ … +10.00 dB**
 (UG p155; slider bottom = -∞ off, one step up is -96.0 dB) — every fader, send and the monitor use it.
 The scale is a **discrete, non-uniform grid** (wide steps in the tail, finer toward 0 dB), not a continuous
 dB value: these are the values the unit's own screens offer, so e.g. -15.0 dB cannot be dialled in (adjacent
@@ -179,8 +178,8 @@ main-fader level** (the CH → STEREO level). The STEREO send itself — being t
 - MIX 1 / MIX 2 — LEVEL/PAN/**PRE/POST** + **ON/OFF (SEND_ON)**. Seeded **ON at -∞ (off)**.
 - FX 1 / FX 2 — LEVEL/**PRE/POST** + **ON/OFF (SEND_ON)** (FX-bus sends are mono and carry **no PAN**). Seeded **ON at -∞ (off)**.
 
-Because every send is now always wired (≈ 48 on URX44V: 8 CH × 4 + 2 FX × 3 + 8 CH→STEREO + 2 MIX→STEREO),
-deletion can no longer thin the board. Instead **off (`params.on=false`) / -∞ sends are dimmed with a fine
+Because every send is always wired (≈ 48 on URX44V: 8 CH × 4 + 2 FX × 3 + 8 CH→STEREO + 2 MIX→STEREO),
+deletion cannot thin the board. Instead **off (`params.on=false`) / -∞ sends are dimmed with a fine
 dotted line** so the live routing stands out, and a toolbar **"Hide off sends"** toggle can drop them entirely
 (shown by default). The MIX → STEREO TO ST switch (§3) is dimmed the same way when off.
 
@@ -401,12 +400,13 @@ refused at load.
   SSMCS initial values are read from a real MONO IN SSMCS bank with the default "01 Basic" preset loaded.
 - Every EQ (input channels and output STEREO / MIX buses) has a **1-knob** mode where one knob drives
   the whole 4-band PEQ: an **on/off**, a preset **type**, and a **level** (effect depth 0–100 %). The
-  type is a shared preset and **every EQ instance offers all three** — Intensity / Vocal / Loudness.
-  (This was recorded as a per-screen subset until it was measured: the unit's own MONO IN EQ screen
-  lists all three, and writing any type forces the 1-knob level to that type's neutral point, which an
-  earlier probe misread as the device refusing the preset.) When 1-knob is on
+  type is a shared preset of **three types — Intensity / Vocal / Loudness — on mono, stereo, MIX and
+  STEREO EQs alike**. The unit's own MONO IN EQ screen (read on a URX44V) and STEREO EQ screen list the
+  three, a write of each type is accepted on mono CH1, stereo CH5/6, MIX1 and the STEREO master, and
+  writing a type forces the 1-knob level to that type's neutral point. When 1-knob is on
   the device recomputes the 4-band PEQ from the knob, so the tool does **not** author the band values
-  (they are device-driven); the inspector hides the band tabs and the write skips the band commands.
+  (they are device-driven); the EQ tuning screen keeps the band rows reserved out of sight and the write skips the band
+  commands.
 - The mono CH and stereo CH structure is fixed (only the count varies per model). A MONO IN pair
   (CH1/2, CH3/4) carries a **Signal Type** (CH SETTING): STEREO links the two adjacent channels,
   MONO × 2 keeps them independent (the default). The tool keeps both nodes and stores the flag on the

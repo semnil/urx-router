@@ -149,8 +149,7 @@ MIC/LINE 1 入力に内部結線され、独立したソース選択肢として
 
 各チャンネル出力は以下の Bus へ Send する。**いずれも固定 (`fixed`) = 常時結線・削除不可**:
 実機は Send ルーティングの削除を持たず、各先に **ON スイッチ (SEND_ON) とレベル**があるだけなので、
-これに合わせる (旧モデルの「ワイヤ有無 = SEND_ON」は廃止し、ON/OFF は接続パラメーター `params.on`
-(既定 ON) で保持する)。LEVEL は共通の **level_gain** スケール **-∞ … +10.00 dB** (UG p155・スライダー
+これに合わせる (ON/OFF は接続パラメーター `params.on` (既定 ON) で保持する)。LEVEL は共通の **level_gain** スケール **-∞ … +10.00 dB** (UG p155・スライダー
 最下=-∞ off、1 ステップ上が -96.0 dB)。全フェーダー/Send/モニターが共有する。このスケールは連続値ではなく
 **離散かつ非均一なグリッド** (低域は粗く・0 dB 付近ほど細かい) で、これは実機の画面が提示する値の集合である。
 このため例えば -15.0 dB は本体で入力できない (隣接する刻みは -16 / -14 と飛ぶ)。スライダーはこのグリッドを
@@ -174,7 +173,7 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 - MIX 1 / MIX 2 — LEVEL/PAN/**PRE/POST** + **ON/OFF (SEND_ON)**。初期は **-∞ (オフ) ・ON**。
 - FX 1 / FX 2 — LEVEL/**PRE/POST** + **ON/OFF (SEND_ON)** (FX Bus への Send はモノで **PAN を持たない**)。初期は **-∞ (オフ) ・ON**。
 
-全 Send が常時結線になるため (URX44V で約 48 本 = 8 CH × 4 + 2 FX × 3 + 8 CH→STEREO + 2 MIX→STEREO)、
+全 Send が常時結線であるため (URX44V で約 48 本 = 8 CH × 4 + 2 FX × 3 + 8 CH→STEREO + 2 MIX→STEREO)、
 削除での整理はできない。代わりに **off (`params.on=false`) / レベル -∞ の Send は盤面で減光＋細い破線**で
 後退させ、有効な経路だけが浮かび上がるようにする。ツールバーの **「OFF send を隠す」** トグルでこれらを
 完全に隠せる (既定は表示)。MIX → STEREO の TO ST スイッチ (§3) も同じ off 減光の対象。
@@ -193,7 +192,7 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 
 - FX 1 / FX 2 チャンネル → STEREO / MIX 1 / MIX 2 (`send`。**いずれも固定** = 常時結線・削除不可。実機は Send
   ルーティングの削除を持たず、各先に **ON スイッチ (SEND_ON) とレベル**があるだけのため、これに合わせる
-  (§2 の入力チャンネル → Bus Send と同じ固定＋`params.on` モデル。全 Send で統一済み)。
+  (§2 の入力チャンネル → Bus Send と同じ固定＋`params.on` モデル。全 Send で統一)。
   - **チャンネル → STEREO** は FX の主経路で **PRE/POST なし**・**STEREO アサイン ON/OFF あり** (LEVEL/BAL +
     V1.3 のフェーダー後段 ON `params.on`・主経路は PRE/POST の基準点)。
   - **MIX 1/2 への Send** は LEVEL/BAL/**PRE/POST** + **ON/OFF (SEND_ON)** を持つ。ON/OFF は接続パラメーター
@@ -385,12 +384,11 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   読み取った値。
 - 各 EQ (入力チャンネル + 出力 STEREO / MIX Bus) は **1-knob** モードを持ち、1 つのノブで 4-band PEQ
   全体を駆動する: **on/off**・プリセット **type**・**level** (エフェクト深度 0–100 %)。type は共有
-  プリセットで、**どの EQ インスタンスも 3 種すべて**を持つ — Intensity / Vocal / Loudness。
-  (画面別サブセットとして記録していたが実測で否定。実機の MONO IN 用 EQ 画面も 3 択を出し、TYPE
-  書き込みは常にその型の中立点へ level を初期化する — これを以前のプローブが「実機がプリセットを拒否した」と
-  誤読していた。) 1-knob ON 時は実機がノブから 4-band PEQ を
-  再計算するため、ツールはバンド値を**書き込まない** (実機駆動)。インスペクタはバンドタブを隠し、
-  書込みもバンドコマンドをスキップする。
+  プリセットで、**mono・stereo・MIX・STEREO の EQ に共通の 3 種** — Intensity / Vocal / Loudness。
+  実機の MONO IN 用 EQ 画面 (URX44V で読んだ) と STEREO 用 EQ 画面がこの 3 つを出し、mono CH1・stereo CH5/6・
+  MIX1・STEREO マスターでどの型の書き込みも受理され、TYPE 書き込みはその型の中立点へ level を初期化する。1-knob ON 時は実機がノブから 4-band PEQ を
+  再計算するため、ツールはバンド値を**書き込まない** (実機駆動)。EQ 調整画面はバンドの行を見えないまま
+  予約し、書込みもバンドコマンドをスキップする。
 - モノ CH とステレオ CH の構成は固定 (機種で本数のみ変化)。MONO IN ペア (CH1/2, CH3/4) は
   **Signal Type** (CH SETTING) を持つ: STEREO は隣接 2 ch をリンク、MONO × 2 は独立 (既定)。
   ツールは 2 ノードを維持しフラグをペアの primary (奇数 ch) に保持する (1 ノードに統合しない)。

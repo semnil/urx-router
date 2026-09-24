@@ -14,7 +14,7 @@ binding the two channel-strip processors share), `src/ui/dyn-plot.ts` (the dB×d
 decode), `src/style.css` (`.gt-*`), with coverage in `e2e/dyntuning.spec.ts`, `e2e/ssmcs.spec.ts` and
 `e2e/eqoneknob.spec.ts`.
 
-One host serves all three and the processor is chosen per open, so opening any of them replaces
+One host serves them all and the processor is chosen per open, so opening any of them replaces
 whatever was on it. Two instances would fight over the same DOM, and this session's one meter subscription
 means two open at once could not both stream anyway.
 
@@ -26,8 +26,8 @@ band is selected by pressing a marker on its own plot, needed no special case in
 
 ## Background
 
-Until now the five GATE parameters were sliders in the inspector, with no way to see their effect.
-The gain-reduction meters were identified on a URX44V but deliberately left out of the meter model:
+A slider in the inspector would give the five GATE parameters no way to see their effect. The
+gain-reduction meters, identified on a URX44V, are deliberately left out of the meter model:
 `tapsFor` is also the CONSOLE meter-point selector's contract, and a reduction listed there would be
 selectable as a strip meter and drawn on the dBFS ladder with its signal color zones.
 
@@ -133,8 +133,8 @@ rest, in both languages. The cap is scoped to `#dyn-screen-box`, so Preferences 
 keep their halves. What it returns to the display column is 149 px: the 4-band EQ's plot goes
 369 → 518 px and the SSMCS MAIN face's canvas 547 → 696 px.
 
-Every screen now spends that width on a plot and a rack side by side, so there is no longer one whose
-extra width only widens black. Where the width is still tight is the 960 px minimum window inside the
+Every screen with a plot spends that width on the plot and a rack side by side, and a panel-first screen
+(below) gives it to its controls, so there is none whose extra width only widens black. Where the width is still tight is the 960 px minimum window inside the
 SSMCS bank, and that is [The lane ruler](#the-lane-ruler-and-what-it-does-not-carry).
 
 **A panel-first screen swaps the two.** A descriptor whose display is a level rack and nothing else —
@@ -147,24 +147,24 @@ rule above, it restates the narrow-window rule for the same reason that rule doe
 
 **The last column has 4 px of padding, for a focus ring.** `.prefs-grid` carries `overflow-y: auto`, so
 its horizontal axis computes to `auto` and the box clips sideways whether or not it ever scrolls that
-way — and every control in that column ends flush with its content edge, which drew their rings outside
-it and showed none of them. 4 px is the widest ring any of them draws: a select's outline reaches it
+way — and every control in that column ends flush with its content edge, so without the padding their
+rings would be drawn outside it and none of them would show. 4 px is the widest ring any of them draws: a select's outline reaches it
 (2 px at offset 2) and the white-ringed controls' halo reaches the same, against 3 px for a plain
 button. On the COLUMN rather than on the grid, which is the box that clips: padding on the grid comes
 off the plot column too, and 4 px there is enough to make the 960 px window wrap a row that fits.
 
 ### The display
 
-**The plot and the lane rack are both on screen, always.** They were alternatives once, chosen between
-by a LADDER / CURVE bar, and that bar is gone from every single-processor screen. What ended it is the
-reduction moving onto the output column: a rack that was three columns wide became two, and two fit
-beside a plot. Nothing chooses between them now — the arrangement the EQ and the DUCKER always had.
+**The plot and the lane rack are both on screen, always.** The reduction is drawn on the output
+column, so the rack is two columns wide rather than three, and two fit beside a plot. Nothing chooses
+between them, and no single-processor screen carries a bar for it — the EQ and the DUCKER are arranged
+the same way.
 
 The **plot** is the static in/out transfer curve, where the threshold is the knee and the range is the
 drop below it. Its **output axis is not the input axis**: it runs to the GR floor (-128 dB) while the
 input spans -72..0. The closed shelf sits at threshold + range, which for most of the range domain
-falls below -72 dB — at the factory settings -50 + -56 = -106 dB — so a shared floor pinned every range
-past -22 dB to the same line and range was invisible. Only a -∞ range reaches the axis floor, and the
+falls below -72 dB — at the factory settings -50 + -56 = -106 dB — so a shared floor would pin every range
+past -22 dB to the same line and range would be invisible. Only a -∞ range reaches the axis floor, and the
 drop is labelled with the range it represents.
 
 The **rack** is the taps on one tick column, spanning the processor's own domain (-72..0 dB for the
@@ -173,7 +173,7 @@ proportional. This is why it does not reuse the CONSOLE's ruler, which is spaced
 
 **Every display starts at one height**, whether its processor carries a bar or not: a screen without
 one reserves the row instead, through the same builder, so the space is whatever the bars that do get
-drawn occupy. Without it the black display sat a bar's height higher on those screens.
+drawn occupy. Without it the black display would sit a bar's height higher on those screens.
 
 **The reserve carries no words.** A bar's height is its font and its padding, so a blank one reserves
 what a drawn one occupies; a labelled one reserves its label as well — a width nobody can see, which a
@@ -182,7 +182,7 @@ too, so what the panel gets for that box is a horizontal scrollbar. Its line cou
 the same label wrapping to two lines in a narrow column and one in a wide one puts the reserve, and
 with it the whole modal, at a different height on each screen.
 
-The note under the display is always printed now, since the plot always is. Its box is a fixed height
+The note under the display is always printed, since the plot always is. Its box is a fixed height
 whatever it holds — three lines, everywhere — so a longer string is CUT rather than wrapped, and
 every string is measured against the 960 px window before it ships.
 
@@ -201,22 +201,21 @@ in Japanese for the compressor's and the side chain's both. **The unit ships GAT
 ducker OFF**, so a new plan opens those three on the bypass line — which is what the state is.
 
 **The lane rack is framed to its lanes on every screen.** Beside a plot the frame is `flex: 0 0 auto`
-and hugs them; on a screen whose display is the rack alone it used to stretch to the column, so the
-same two lanes were framed at 226 px there and 156 px on the EQ screen. It hugs in both now and the
-column centres it, so only the number of lanes decides how wide the frame is.
+and hugs them; on a screen whose display is the rack alone it hugs them too and the column centres it,
+so only the number of lanes decides how wide the frame is.
 
 **One tick step across every rack.** The FLOOR is each processor's own — a gate threshold reaches
 -72 dB where a compressor's stops at -54 — but the grid is 6 dB everywhere, so moving between screens
-does not change what a tick is worth. The gate was 5 dB, which put 15 labels on its ruler against 9
-or 10 on the rest; nothing decided that, and "the factory threshold lands on a tick" is not a rule the
-other screens keep (the ducker's -40 dB does not).
+does not change what a tick is worth. "The factory threshold lands on a tick" is not a rule the
+screens keep (the ducker's -40 dB does not).
 
-**A bar survives in one place**: the SSMCS bank, where it selects a face rather than a display mode.
+**A bar survives where a screen has faces**: the SSMCS bank and the multi-band compressor, where it selects a face rather
+than a display mode.
 
 ### Lane captions
 
 **The caption under a bar names the POSITION — `Input` / `Output` — and the readout tile below names
-the tap.** Both used to name the tap, and neither said which end of the processor it was. The unit's
+the tap.** A tap name does not say which end of the processor it is. The unit's
 own dynamics screens meter the same pair: the user guide calls the item "Input/output meter" /
 「入出力メーター」, and "Input meter" / 「インプットメーター」 and "Output meter" /
 「アウトプットメーター」 where it names the halves (D0). Latin in every language, because the caption
@@ -229,13 +228,13 @@ input on another, and on the side-chain face it is neither: that face's own outp
 feed, which is not metered at all.
 
 The lane's own name still reaches the operator — the readout tile prints it — so nothing is lost, only
-moved to the surface with room for it. The meter-id numbers that used to sit under every bar (`108`,
-`111`, …) are gone from the screen: they address the protocol, not the signal.
+moved to the surface with room for it. The meter-id numbers (`108`, `111`, …) are not printed on the
+screen: they address the protocol, not the signal.
 
 ### The GR lane
 
-Rose with a hatch, never the green/yellow/red signal zones, because a reduction is not a level. It no
-longer stands in a column of its own on any screen; the rule and its arithmetic are in
+Rose with a hatch, never the green/yellow/red signal zones, because a reduction is not a level. It does
+not stand in a column of its own on any screen; the rule and its arithmetic are in
 [How a reduction is drawn](#how-a-reduction-is-drawn--one-rule-for-every-screen). Two rejected
 alternatives are recorded below.
 
@@ -280,14 +279,13 @@ depends only on how many are beside it: 187 px for two, 122 px for three, 89.5 p
 sliders come from the parameter table, which is that order already; the rows that are not sliders are
 placed against them by `DynRows.before`, naming the slider they go in front of.
 
-There was a second rule alongside it — `lead` above the sliders for the switches, `tail` below for the
-selectors — and the two disagreed about the same class of control on different screens. The EQ's
-filter type led its band's values because the unit reads `Band / Type / Freq / Q / Gain`; both
-compressors' Knee closed their lists because it is a selector, while the unit puts it ahead of Attack
-and Release (p.105, p.110). One of the two orders had to go, and the one that survives is the one that
-can be checked against something: the unit's screen.
+A rule by kind of control — `lead` above the sliders for the switches, `tail` below for the
+selectors — would disagree with that order about the same class of control on different screens. The
+EQ's filter type leads its band's values because the unit reads `Band / Type / Freq / Q / Gain`; both
+compressors' Knee is a selector, and the unit puts it ahead of Attack and Release (p.105, p.110). The
+order kept is the one that can be checked against something: the unit's screen.
 
-`lead` and `tail` are still there for a row the unit's screen really does put at either end — the
+`lead` and `tail` are there for a row the unit's screen really does put at either end — the
 1-knob sections are built with `sections` instead, being a stage rather than a row.
 
 ## COMP
@@ -296,19 +294,18 @@ The same three-tap shape one stage downstream — PRE COMP (108) in, COMP GR (11
 and the same display. What the compressor changes:
 
 **The curve is read, not dragged.** The unit's own COMP screen (user guide p.104) puts T
-(threshold), R (ratio) and G (gain) on the transfer curve and lets you drag them. That was built and
-removed: three grips on one plot means a press has to guess which value was meant, and a press that
-missed one fell through to the threshold drag underneath — so pressing the gain grip moved the
+(threshold), R (ratio) and G (gain) on the transfer curve and lets you drag them. This screen does
+not: three grips on one plot means a press has to guess which value was meant, and a press that
+missed one would fall through to the threshold drag underneath — so pressing the gain grip would move the
 threshold. The sliders beside the plot are the editing path; the curve answers what the settings are
 doing to the signal. The gate's curve keeps its press-to-set-threshold, because it carries one
 editable value and the gesture cannot be misread.
 
-**The reduction reads off the SHARED tick column**, on every screen. It used to get a scale of its
-own — a compressor's occupies a few dB of a 54 dB ruler, so at -8 dB it is 15% of the lane, visible
-but not readable — printed beside the lane and set apart from the level pair. Merging it into the
-level column it was taken off answered the same problem better, and a merged lane is on that
-column's ruler by construction: two rulers side by side would read as one, which is the alternative
-rejected for the gate below.
+**The reduction reads off the SHARED tick column**, on every screen. A compressor's reduction
+occupies a few dB of a 54 dB ruler, so at -8 dB it is 15% of the lane, visible but not readable; a
+scale of its own printed beside the lane would answer that, but two rulers side by side read as one,
+which is the alternative rejected for the gate below. Merging it into the level column it was taken off
+answers the same problem better, and a merged lane is on that column's ruler by construction.
 
 **Some values belong to the device while it drives them.** With 1-knob on, the unit owns
 threshold / ratio / gain / knee — it computes the first three from a single level, and takes the
@@ -319,22 +316,21 @@ tagged, dimmed and read-only — rather than being hidden or recomputed here.
 **The 1-knob is a section above the parameters, not three rows inside them.** It decides whose the
 rows below it are, which is a different kind of thing from a value they set — and it is how the unit
 prints it, where `[1-knob]` and `[Auto Makeup]` are buttons of the COMP screen rather than entries in
-its parameter list (p.104-105). The EQ screen and the multi-band compressor already had theirs that
-way; this is the third and last. Auto Makeup rides with it rather than staying behind in Parameters,
+its parameter list (p.104-105). The EQ screen and the multi-band compressor carry theirs the same
+way. Auto Makeup rides with it rather than staying behind in Parameters,
 because the two lock each other and a lock whose other half is in another section cannot be read.
 
 **Its two rows are locked, not swapped.** Auto Makeup cannot be operated while 1-knob is
 on (user guide), and the level does nothing while it is off — so exactly one of the two applies
 at a time. Both stay on screen either way, locked when they do not apply, the way the EQ screen
 holds its 1-knob rows; the lock is declared in `rowStates` with every other one, not decided in the
-row builder. Swapping them in and out moved the panel — a toggle row and a slider row are not the
-same height — and dropping Auto Makeup lifted the 1-knob row itself a full row up, out from under
+row builder. Swapping them in and out would move the panel — a toggle row and a slider row are not the
+same height — and dropping Auto Makeup would lift the 1-knob row itself a full row up, out from under
 the pointer that had just clicked it. `e2e/dyntuning.spec.ts` pins both figures.
 
 **Knee sits in front of Attack**, which is the unit's own order on both compressor screens (p.105 and
 p.110). The rule it follows is [the panel reads in the unit's
-order](#the-panel-reads-in-the-units-order); it used to close the list instead, on the strength of a
-convention that a selector belongs at the end.
+order](#the-panel-reads-in-the-units-order).
 
 **The threshold is marked on the input axis.** It is a kink in the line and nothing else, so reading
 it off the plot otherwise means finding where the slope changes and estimating it — the same argument
@@ -342,19 +338,19 @@ the compander's `W` and `T` marks were built on, and it applies to every transfe
 live reduction is printed in the frame's top corner beside it, which is the reading that belongs to
 the response rather than to the rack.
 
-**The knee is drawn, and its width was measured — twice, in opposite directions.** Soft / Medium /
+**The knee is drawn, and its width is measured in two directions.** Soft / Medium /
 Hard publish no widths, so the curve would either invent a curvature or leave the selector changing
-nothing on screen. The first pass walked the threshold up until the reduction stopped, which finds
-the knee's LOWER edge, and doubled the reach under a symmetric-knee model: 0 / 16 / 40 dB.
+nothing on screen. Walking the threshold up until the reduction stops finds the knee's LOWER edge,
+and doubling that reach under a symmetric-knee model gives 0 / 16 / 40 dB.
 
-The second pass held the threshold and walked the SIGNAL past it in 1 dB steps — the direction the
-curve is read in — and fitted each candidate width to the result, all three settings sharing one
-detector-versus-meter offset because that offset belongs to the rig rather than to the selector.
-**Medium and Hard came back unchanged; Soft did not.** Its residual minimum is 51 dB against the 40
-that doubling gave, which fits 62% worse, so the constant now carries the measurement (50 / 52 /
-54 dB are indistinguishable in the residual, and it takes the round middle).
+Holding the threshold and walking the SIGNAL past it in 1 dB steps — the direction the curve is read
+in — and fitting each candidate width to the result, all three settings sharing one
+detector-versus-meter offset because that offset belongs to the rig rather than to the selector,
+**agrees with doubling for Medium and Hard, and not for Soft.** Soft's residual minimum is 51 dB
+against the 40 that doubling gives, which fits 62% worse, so the constant carries the signal walk's
+figure (50 / 52 / 54 dB are indistinguishable in the residual, and it takes the round middle).
 
-Doubling worked for Medium and failed for Soft because **the knee is not symmetric**: a 20 dB lower
+Doubling works for Medium and fails for Soft because **the knee is not symmetric**: a 20 dB lower
 reach against a 51 dB total leaves about 31 dB above the threshold. A symmetric model can only be
 fitted to the best symmetric approximation, which is what the constant holds — so the asymmetry
 itself, and the curvature between the edges, remain the standard quadratic and remain assumptions,
@@ -378,12 +374,8 @@ in a module of its own because `vd.ts` and `translate.ts` both read it at module
 sit inside an import cycle.
 
 The field carries the ladder as a `steps` table, so the slider's position is an index and every
-position it can take is a stop the unit has. It was a linear min 1 / max 20 / step 0.1 before, which
-offered values the unit stops on nowhere (5.1:1, 7.3:1) and reached neither the ladder's top nor the
-0.05 spacing at its bottom. The SSMCS side was an interpolation between six calibration anchors: exact
-below 4.00:1, where the spacing really is uniform and the straight line through it is the ladder;
-wrong at every stop between the anchors above that; and flat at the sixth anchor's 38:1 from there to
-the top, where the ladder runs 40:1 to 500:1.
+position it can take is a stop the unit has — a linear range would offer values the unit stops on
+nowhere (5.1:1, 7.3:1).
 
 **Both banks reach the top stop.** `36` keeps ratio×100 at every stop — 500.0:1 is 50000 — and puts
 `INF:1` on 65535, the widest raw the field holds. The unit announced one raw per stop while its own
@@ -411,12 +403,11 @@ has and the two dynamics processors do not.
 
 **The response and the levels are both on screen** — the plot taking the width, the lane rack beside it
 in its own frame. The curve says what the EQ is doing to the spectrum and the meters say whether the
-stage is clipping; neither answers the other. This screen was the first arranged that way and is now
-the only arrangement there is.
+stage is clipping; neither answers the other.
 
 **A band is selected by pressing its marker on the plot**, and there is no band bar. One marker is one
-band, so a press is unambiguous — which is what a row of four buttons was doing from a distance, while
-the band about to be edited is where the operator is already looking. The selection resets to LOW on
+band, so a press is unambiguous, and the band about to be edited is where the operator is already
+looking. The selection resets to LOW on
 every open, because it is a cursor into the parameters rather than a way of reading the processor.
 
 The hit test and the drawing go through one function, so a press cannot land somewhere other than
@@ -425,15 +416,14 @@ and a hit test written from the same numbers separately would drift the moment e
 box is the pill grown by 7 px on every side — the pill is 13–15 px tall, well under what a pointer
 target wants, and the plot carries nothing else a press means.
 
-**The plot is a focus stop and the arrow keys move the band.** The markers replaced a segmented bar,
-and a segmented bar is operable from the keyboard; a canvas is a single stop, so Left/Right step and
-Home/End go to the ends. Selecting rebuilds the column, so focus is restored onto the new canvas the
+**The plot is a focus stop and the arrow keys move the band**, the keyboard reach a segmented bar
+would have. A canvas is a single stop, so Left/Right step and Home/End go to the ends. Selecting rebuilds the column, so focus is restored onto the new canvas the
 same way the bars restore theirs. With 1-knob on nothing is selectable and the canvas leaves the tab
 order rather than standing in it as a stop that does nothing.
 
 **The plot's axes are frequency against gain**, so it carries no live dot. Each band gets a **marker** —
 a pill with its initials — a marker and not a grip: a grip would have to say which of the band's values
-a drag moved, and four of them on one plot cannot (the COMP screen established that with three). The
+a drag moved, and four of them on one plot cannot (the reason the COMP screen carries none of its three). The
 sliders stay the editing path; the marker only selects. Off the
 scale is off the frame — see [Off the scale is off the frame](#off-the-scale-is-off-the-frame), which is
 the rule for every plot here; a high-pass passes the -18 dB floor within an octave of its corner, and
@@ -466,14 +456,14 @@ Measured on a URX44V by driving the oscillator into MIX 1 and reading the differ
 meters bracketing the EQ, then repeated on the STEREO master block and — with the host's USB output
 as the source — on a stereo channel. 19 datasets, 108 points, worst case **1.3 dB**, which is the
 resolution of a difference between two 1 dB-quantized peak meters. The filters are RBJ cookbook
-biquads with three corrections that only came out of measuring, each of which was drawing a visibly
-wrong curve before it did:
+biquads with three corrections that only come out of measuring, each of which draws a visibly
+wrong curve without it:
 
 | Shape | Correction |
 | --- | --- |
-| Peaking | **The unit's Q is twice the biquad Q.** A "Q 1.00" +12 dB bell measured +12/+10/+7/+3 dB at 1k/700/500/300 Hz — a biquad Q of 0.5. Taking the number at face value drew every bell half as wide as the device's. |
-| HPF / LPF | Fixed 2nd-order Butterworth: -3.0 dB exactly at the nominal frequency, 12 dB/octave beyond. **The band's Q slot is ignored** — Q 0.71 and Q 4.00 measured identical, with no corner resonance. Honouring it drew a +12 dB peak that is not there. |
-| Shelving | The S = 1 shape, but **the nominal frequency is the point 3 dB below the plateau**, not the midpoint: a +18 dB shelf at 1 kHz measured +15 dB there and reached +18 dB by 4 kHz. So the design frequency is solved for, and the search direction flips with the gain's sign — reusing the boost direction for a cut was 4.2 dB out. |
+| Peaking | **The unit's Q is twice the biquad Q.** A "Q 1.00" +12 dB bell measured +12/+10/+7/+3 dB at 1k/700/500/300 Hz — a biquad Q of 0.5. Taking the number at face value draws every bell half as wide as the device's. |
+| HPF / LPF | Fixed 2nd-order Butterworth: -3.0 dB exactly at the nominal frequency, 12 dB/octave beyond. **The band's Q slot is ignored** — Q 0.71 and Q 4.00 measured identical, with no corner resonance. Honouring it draws a +12 dB peak that is not there. |
+| Shelving | The S = 1 shape, but **the nominal frequency is the point 3 dB below the plateau**, not the midpoint: a +18 dB shelf at 1 kHz measured +15 dB there and reached +18 dB by 4 kHz. So the design frequency is solved for, and the search direction flips with the gain's sign — reusing the boost direction for a cut is 4.2 dB out. |
 
 Two further measurements bound what the model is worth: **bands sum in dB** (a LOW shelf +12 and a
 HIGH-MID peaking -9 measured together matched the sum of the two measured separately, within the
@@ -527,9 +517,10 @@ and there is no band selected to show them for. The response curve stays, which 
 computation can still be read: with a live session the refetch below keeps it true to the unit, and
 without one it is the curve the plan last held.
 
-Every EQ instance offers all three preset types (Intensity / Vocal / Loudness), measured. The catalog
-used to carry two subsets and both halves were wrong; see the parameter notes for how a level reset
-was misread as a refusal.
+The 1-knob Type offers three presets — Intensity / Vocal / Loudness — on mono CH1 and the STEREO master
+(the unit's own screen, and a write of each) and on stereo CH5/6 and MIX1 (a write of each): one instance
+of each of the four EQ kinds. [device-model.md](device-model.md), "Fixed (non-wireable) elements", states
+the same.
 
 ### Above 96 kHz
 
@@ -572,9 +563,9 @@ its inputs. So a channel key is read at **that channel's current Rec Point** —
 PRE EQ / PRE INS FX / PRE FADER on a mono strip, PRE EQ or PRE FADER on a stereo one, where PRE EQ is
 the INPUT meter because the stereo strip's EQ is the first thing in its chain. Every one of those sits
 ahead of the source's own fader and ducker, which is why moving the source's fader does not move the
-trigger. A bus key is the bus's own OUT, after its output insert FX. The lane read PRE FADER for every
-channel source until 2026-08-13; a source set to any other Rec Point then showed a signal the detector
-was not listening to, off by whatever the stages in between were doing.
+trigger. A bus key is the bus's own OUT, after its output insert FX. Read at PRE FADER for every
+channel source instead, the lane would show, for a source set to any other Rec Point, a signal the
+detector is not listening to, off by whatever the stages in between are doing.
 
 **Why the key lane is one bar.** Measured on a URX44V: the unit sums a stereo key's two sides before
 its detector — a correlated pair reads 6.02 dB above either side alone, not 3 dB (a power sum) and
@@ -615,10 +606,9 @@ over `attack`, held, back to unity over `decay`.
 
 **Straight, and with no live overlay.** The release is an exponential approach whose tail is
 dominated by the GR meter's 1 dB quantum, so no single time constant is fitted — the claim is the
-arrival time, which is what a ramp between two known points states. A dashed rule at the live
-reduction was drawn here while the reduction had a column of its own; once it became a block on the
-POST bar a few pixels to the right, the rule was a second display of one quantity and the weaker of
-the two, since a time axis gives a live reading no position. COMP keeps its dot because its plot maps
+arrival time, which is what a ramp between two known points states. The live reduction is a block
+on the POST bar a few pixels to the right, so a dashed rule at it here would be a second display of
+one quantity and the weaker of the two, since a time axis gives a live reading no position. COMP keeps its dot because its plot maps
 input to output, where a live level does have one.
 
 ## SSMCS
@@ -636,9 +626,9 @@ show, so it takes **three faces of one screen** rather than three screens:
 
 **One bar selects all four, and it is the display column's own.** It carries four segments over three
 faces, because the COMP face's two plots answer different questions and are worth naming separately.
-It replaced a face bar in the title row plus a display bar under it: two segmented rows meant the
-operator had to know which of them held the thing they were looking for, and the title-row one was the
-harder of the two to find. A bar item names the face it reaches and the segment to arrive on, so two
+It is one bar rather than a face bar in the title row plus a display bar under it: two segmented rows
+would mean the operator has to know which of them holds the thing they are looking for, and a title-row
+one is the harder of the two to find. A bar item names the face it reaches and the segment to arrive on, so two
 items can reach one face; which item reads as pressed is the host's own question, because it is the
 only place that knows both the face and the selection within it — and a face whose selection is
 something else entirely, as the EQ face's is a band, matches on the face alone.
@@ -662,7 +652,7 @@ each step would rebuild the modal and hand the meter slot back and take it again
 **The faces are one height, with their display panels at one top edge.** The bar that moves between
 them is above the display, so a modal that resized would move the very control that was just pressed,
 and a panel starting at a different y makes the plot jump under the eye reading it. Neither is free:
-the faces carry 4 / 4 / 4 / 4 rows now but differ in their readout tiles and in what their displays
+the faces carry 4 / 4 / 4 / 4 rows but differ in their readout tiles and in what their displays
 are. The grid takes a `min-height` measured from the tallest face, with the headroom a wider font
 stack takes.
 
@@ -681,20 +671,18 @@ the 48 px the box keeps clear of the viewport, and the grid scrolls below it rat
 that then have nowhere to go. The equal height survives the yield: at 640 px every face is the clamped
 592 px, because the scroll absorbs what differs.
 
-Two more consequences follow. The hint line is three lines on every screen — it was two, and the bank
-took three on its own because the MAIN line has to name Comp Drive, Sweet Spot Data and Morphing, which
-took a third line in Japanese at the 960 px minimum and was silently cut. Three became the base when the
-COMP note did the same thing on the CI image: **the font decides the wrap, and the runner's font is not
+Two more consequences follow. The hint line is three lines on every screen. The bank's MAIN line has to
+name Comp Drive, Sweet Spot Data and Morphing, which takes a third line in Japanese at the 960 px
+minimum, and the COMP note takes one on the CI image: **the font decides the wrap, and the runner's font is not
 this machine's** — two lines measured clean at 960 px on macOS for every note in both languages, and the
 Japanese COMP note was cut by 13 px in CI. Three costs almost nothing, measured: at 960x640 the panel
 does not move on any of the six language x screen pairs, and at 1280x800 only GATE grows, 610 to 634 px.
 And every face keeps its plot beside its lanes all the way
 down to 960 px, where the shipped 4-band screen wraps instead. Inside a bank that wrap is a 291 px
 change on one face, so a bank does not wrap at all: the row is `flex-wrap: nowrap`, the rack keeps its
-own width (a fixed number of fixed-width slots) and the plot takes what is left. A measured floor was
-tried first and is what the arrangement replaced — it has to be re-derived against the WIDEST rack any
-face carries every time a lane is added, and the side-chain face wrapped against a floor measured while
-the EQ face's two columns were the widest. Measured under the current rule at 960 px: the side-chain
+own width (a fixed number of fixed-width slots) and the plot takes what is left. A measured floor
+would have to be re-derived against the WIDEST rack any face carries every time a lane is added.
+Measured under this rule at 960 px: the side-chain
 face's plot is 199 px beside its 223 px rack, COMP 264 / 158, EQ 252 / 170, no face wrapping and none
 overflowing sideways, at 960 / 1000 / 1280 / 1600 px. A narrow plot at the minimum window is the trade
 taken — a transfer curve carries little enough that width costs it least. Earlier measurements: **683 px with a panel top of 141 px** at viewport
@@ -703,9 +691,9 @@ heights of 731 px and up, **592 px with the same 141 px** at the 640 px minimum,
 holds it at the default viewport and again at 960x640; jsdom lays nothing out, so there is nowhere
 else it could be held.
 
-**The address set is a subset relation, not an identity.** MAIN's four taps are the union of the other
-two faces', so a face change either narrows the registration or widens it back, and the same comparison
-the DUCKER's moving key tap needs (below, "Scope") carries it.
+**The address set changes with the face.** MAIN's four taps are the union of the CURVE and EQ faces', and
+SIDE CHAIN adds `109`, which MAIN does not carry, so a face change narrows, widens or swaps the registration;
+the same comparison the DUCKER's moving key tap needs (below, "Scope") carries it.
 
 **The internal stages are the taps that already exist.** Measured on a URX44V: 108 into the compressor,
 110 its reduction, 111 between the compressor and the EQ, 112 after the EQ. 111 is a live tap in this
@@ -720,7 +708,7 @@ level. GATE and COMP use -72 / -54 because those are their thresholds' domains; 
 value in dBFS at all**, so there is nothing for a fader cap to ride and the rack has no gesture. The
 corner is driven by an internal value the unit never shows.
 
-The reduction lane is the COMP screen's: address 110, its own 0…-24 dB scale, on the COMP face only. On
+The reduction lane is the COMP screen's: address 110, merged into the PRE EQ column, on the COMP face only. On
 MAIN the same reduction is the gap between the transfer curve and unity under the live dot, plus its
 readout tile.
 
@@ -739,7 +727,8 @@ not two — and `109` is a key signal rather than audio.
 `109` is therefore **not** one of the meter points the console offers. It reads its floor unless the
 channel is SSMCS with both the strip's compressor and its side chain on, so as a console tap it would be
 a black column nearly everywhere; `meters.ts` keeps it out of `monoTaps` and hands it out through
-`sidechainTap` instead. CURVE and SIDE CHAIN keep three lanes — they share the display with a plot.
+`sidechainTap` instead. SIDE CHAIN carries three lanes and CURVE two, fewer than MAIN's four — both share the display
+with a plot.
 
 ### How a reduction is drawn — one rule for every screen
 
@@ -753,22 +742,21 @@ one ruler, and where they overlap **neither** is readable. The overlap is `in + 
 depend on the reduction at all, so taking the gain off leaves `in` — at or below zero for any real signal.
 They then never meet, and the gap between them is the input's own headroom.
 
-**Every screen merges**, which is what the DUCKER has always done: GATE's reduction hangs on PRE COMP,
+**Every screen merges**, as the DUCKER does: GATE's reduction hangs on PRE COMP,
 COMP's and the SSMCS strip's on PRE EQ. The gain subtracted is the processor's own — the shipped
 compressor's makeup, the strip's `min(24, |corner| × makeup/200)` — and the gate subtracts nothing,
-because a gate has no makeup and so cannot overlap. The column-of-its-own arrangement is **gone from
-`bindChannelStrip`**, along with the per-lane scale it was the only carrier of: it was reached by no
-screen, and a rendering path no screen reaches is a second arrangement that has to be kept correct
-by reading rather than by running.
+because a gate has no makeup and so cannot overlap. `bindChannelStrip` carries **no column-of-its-own
+arrangement** and no per-lane scale: a rendering path no screen reaches is a second arrangement that has
+to be kept correct by reading rather than by running.
 
-The alternative to subtracting was to anchor the block to the level it was taken off, which is exact. It
-was built and dropped: it makes the block touch the bar, so the two read as one column, and it gives the
+The alternative to subtracting is to anchor the block to the level it was taken off, which is exact. The
+app does not: it makes the block touch the bar, so the two read as one column, and it gives the
 eye two moving edges to read a length from instead of one.
 
-**The offset is a parameter, not a second measurement.** It was first computed as `108` - `111`, which is
-the same quantity — and is wrong to read frame by frame. Those are separate meter addresses whose frames
+**The offset is a parameter, not a second measurement.** Computing it as `108` - `111` gives the same
+quantity — and is wrong to read frame by frame. Those are separate meter addresses whose frames
 arrive at separate instants, so the difference is of two different moments, and since each carries its own
-release, a reduction coming off made the bar *lengthen* before it shortened. Out Gain is excluded from it:
+release, a reduction coming off would make the bar *lengthen* before it shortened. Out Gain is excluded from it:
 that gain lands after the EQ (measured) and so reaches neither tap.
 
 ### The two curves
@@ -801,8 +789,8 @@ is the same assumption the shipped COMP curve carries.
   model is one function for both banks** (`kneeResponse` in `dyn-plot.ts`), taking the two reaches as a
   pair; what stays per-bank is the DATA. `dyn-comp.ts`'s `KNEE_WIDTH_DB` is a measurement fitted as one
   symmetric width, so that bank passes `up = down = width/2` — and on a symmetric pair the cubic is the
-  same polynomial as the quadratic it replaced, satisfying the same four constraints (both edges, both
-  slopes), so sharing moved neither curve. The full-scale reduction annotation is read off the drawn curve with the gain terms taken
+  same polynomial as the standard quadratic, satisfying the same four constraints (both edges, both
+  slopes). The full-scale reduction annotation is read off the drawn curve with the gain terms taken
   back out, not off the asymptote, so a knee still open at 0 dBFS is labelled with what it does there.
 - **The makeup is one gain over the whole curve**, as the shipped COMP screen applies its own. What was
   measured is what the unit does WHILE COMPRESSING — five raw points, linear, ±6 dB, with the GR meter
@@ -810,7 +798,7 @@ is the same assumption the shipped COMP curve carries.
   does not separate "the makeup is off here" from "the block was not engaged here". Both cannot shape
   one curve: a gain present on one leg and absent on the other is a step at the corner whatever is
   drawn between the edges, and a Hard knee is 0 dB wide, so there is nothing to draw it across. Carried
-  on the compressed leg alone it put a **step** on Hard and a **peak above the plateau** on Medium —
+  on the compressed leg alone it puts a **step** on Hard and a **peak above the plateau** on Medium —
   22.97 px and 1.30 px between adjacent samples on a 320 px canvas at 4.44 px/dB, over a sweep where
   515 of 2100 settings folded and every one of them needed a makeup away from 0 dB. A compressor's
   transfer curve does neither. Which leg the unit puts it on is the open question; what settles it is
@@ -827,7 +815,7 @@ is the same assumption the shipped COMP curve carries.
   branch does not run at all. It stays because the reaches are measured values that can move again.
 - **The EQ.** Three fixed bands: LOW shelving, MID peaking, HIGH shelving. The shelf convention is the
   4-band model's — the nominal frequency is the point 3 dB below the plateau — and the peaking Q is
-  **not**: the 4-band's "the unit's Q is twice the biquad Q" was refuted here. MID takes the same
+  **not**: the 4-band's "the unit's Q is twice the biquad Q" does not hold here. MID takes the same
   gain-dependent law as the side-chain filter below, because the two are the same filter; the 4-band's
   constant sits adjacent to it in `eq-response.ts` so neither block's can be carried to the other by
   accident. A band switched off leaves the response and keeps its marker, which sits on the composite
@@ -839,14 +827,14 @@ is the same assumption the shipped COMP curve carries.
   reason is the axis: this one's gain scale IS the band gain range, so an offset of up to 18 dB pushes
   the response off the frame and takes the shape the operator opened the screen for with it. The
   transfer plot's output axis already runs to +18 because the drive and the makeup add, and a strip
-  output gain reads there as a lifted baseline. It reached NEITHER curve before this, so a slider worth
-  ±18 dB moved nothing on screen at all.
+  output gain reads there as a lifted baseline. Drawn on NEITHER curve, a slider worth ±18 dB would move
+  nothing on screen at all.
   **The live dot is lifted to match.** The transfer plot's dot is the pair (`108`, `111`), and `111` is
-  upstream of Out Gain — so drawn raw it sat exactly Out Gain below the curve at every input level, which
-  an operator reported. The plot's `outOffsetDb` adds the plan's Out Gain to the output reading before
+  upstream of Out Gain — so drawn raw it would sit exactly Out Gain below the curve at every input level.
+  The plot's `outOffsetDb` adds the plan's Out Gain to the output reading before
   plotting it; the MAIN face's left half draws the same curve and takes the same lift, through the same
-  one function so the two dots cannot sit at different heights. The alternative was to take Out Gain off
-  the curve instead, which would leave it drawn nowhere — the EQ's plot cannot carry it for the reason
+  one function so the two dots cannot sit at different heights. The alternative, taking Out Gain off
+  the curve instead, would leave it drawn nowhere — the EQ's plot cannot carry it for the reason
   just above.
 
 ### The second curve: the side chain
@@ -870,9 +858,9 @@ the gain grows: `Q(biquad) = 0.238 × Q(displayed) × A^0.39`, with `A = 10^(|ga
 the Q set across a 16:1 range and of the centre frequency. A single ratio costs 0.160 dB RMS against
 0.064 dB for the law, which is what fitting each gain separately leaves.
 
-The MID band was drawn from a CONSTANT ratio of 0.82 until this law reached it. That number came from a
-sweep that read the width between the points 3 dB below the PEAK, where a biquad's Q is the width at
-half the gain — for an 18 dB bell the two differ by a factor of 2.78, so every MID bell was drawn about
+The MID band is drawn from this law and not from a CONSTANT ratio. A sweep that reads the width between
+the points 3 dB below the PEAK gives a constant of 0.82, but a biquad's Q is the width at half the gain
+— for an 18 dB bell the two differ by a factor of 2.78, so a MID bell drawn from that constant is about
 2.3x too narrow. Against the 61-point sweep the constant lands at 2.2 dB RMS over three states (worst
 5.6 dB, always on the narrow side) and this law at 0.47 dB (worst 1.0). `pnpm test eq-response` pins the
 law against those readings a point at a time, and the constant fails all three states.
@@ -880,8 +868,8 @@ law against those readings a point at a time, and the constant fails all three s
 **The axis is inverted against the filter's own sign, and that is the point.** What the segment draws is
 the REDUCTION the filter buys, not the gain it applies: lifting a band in the detector makes the
 compressor hear more of it and clamp down harder, so a boost draws DOWNWARD. Drawn the other way the
-curve rose while the thing it produces fell, and it pointed the opposite way to the reduction lane a few
-pixels to its right. The model keeps the filter's true sign; only the drawing flips it.
+curve would rise while the thing it produces falls, and it would point the opposite way to the reduction
+lane a few pixels to its right. The model keeps the filter's true sign; only the drawing flips it.
 
 **This is the one plot in the app whose area is shaded.** Everywhere else the curve is audio, where the
 line already says what the operator will hear. Here the line is not audio at all, and the area is the
@@ -893,15 +881,15 @@ transfer curve is the compressor's own pair, so the side-chain tap goes and the 
 Side Chain keeps all three: what the filter does is the DIFFERENCE between the input and what the detector hears, so
 dropping the input leaves that face unable to answer its own question — and the filter's own output is
 not metered at all, so there is no pair to reduce it to. COMP GR merges into the PRE EQ column it was
-taken off in both. The taps are the same in every segment, so moving between them re-arranges the rack
-without changing what is subscribed.
+taken off in both. The taps differ by segment, so moving between them re-arranges the rack and changes the
+subscription too — Side Chain adds `109`.
 
 **The marker carries what the curve cannot.** Flat arrives two ways — the filter switched out, and the
 filter engaged at 0 dB — and neither has a curve to be told apart by. `on` dims the marker for the
 first, the same treatment a switched-off EQ band gets. The pill is kept whole inside the frame: the
 host clips the plot to the axes and the top of that area IS the gain range's maximum, so a filter at
-full boost used to lose the upper half of its marker — rare enough to go unseen on a three-band EQ,
-ordinary on a one-band side chain.
+full boost would otherwise lose the upper half of its marker — rare on a three-band EQ, ordinary on a
+one-band side chain.
 
 ### What the rows never do
 
@@ -977,8 +965,8 @@ a slot rather than what is in it.
 
 **The note under the display says when nothing reaches the signal**, in either of the two ways
 that happens. Above the held effect's own ceiling it names the effect and the ceiling, in the same
-words the Inspector and the CONSOLE chip use — the alternative was one panel saying the effect is
-off while another handed over a live editor for it. Switched out by its own bypass, it says that
+words the Inspector and the CONSOLE chip use — the alternative would be one panel saying the effect is
+off while another hands over a live editor for it. Switched out by its own bypass, it says that
 instead. Either way the values are still kept and edited here, and the two level lanes beside the
 note read the same thing. The launcher stays available: an effect held and not running is still an
 effect to tune.
@@ -987,7 +975,8 @@ effect to tune.
 
 The CONSOLE carries the same face-and-disclosure pair GATE / COMP / EQ carry, and the disclosure is
 the one in that row that does **not** open a screen. Which effect a strip holds is a second axis the
-other four processors do not have, and until it is settled a screen has nothing to show — so the
+other four processors on a channel strip do not have (an FX channel's effect has one too, on its own strip), and
+until it is settled a screen has nothing to show — so the
 disclosure opens a popover holding the type list and the launcher, and **choosing a type opens that
 effect's screen**.
 
@@ -1003,8 +992,8 @@ on colour. **A vacant face is not a switch and is not announced as one**: it car
 rather than `aria-pressed`, because "not pressed" would describe an insert that is switched out, and
 this strip has none.
 
-**Nothing on a strip selects an effect by itself.** Pressing a vacant face used to take the first
-free effect and engage it; a selector write makes the unit refill the bound engine array with that
+**Nothing on a strip selects an effect by itself.** A press on a vacant face does not take the first
+free effect and engage it: a selector write makes the unit refill the bound engine array with that
 type's defaults and cannot be undone, which is more than a press should decide. The list is where a
 type is named, and **No Effect leads it and is never disabled** — a strip has to be able to hand a
 slot back from the two states where nothing else can be picked, the rate ceiling and a slot another
@@ -1016,12 +1005,12 @@ by the rate, an effect is still an effect to tune, which is the same position th
 screen's display takes.
 
 **Choosing a type opens its screen.** Picking one is not the end of anything — what the operator came
-for is the effect's own values, and every one of them is on the screen — so the press that used to be
-needed after it had exactly one destination. Releasing is the opposite and opens nothing: No Effect
+for is the effect's own values, and every one of them is on the screen — so a second press after it
+would have exactly one destination. Releasing is the opposite and opens nothing: No Effect
 is the way out, and a screen over a strip that now holds nothing has nothing to show.
 
-**The bypass is on the strip's own face and nowhere else.** It sat beside the launcher in the popover
-too, and it was the same switch shown twice — kept in step by hand, because a render would tear the
+**The bypass is on the strip's own face and nowhere else.** A second one beside the launcher in the
+popover would be the same switch shown twice — kept in step by hand, because a render would tear the
 popover down. Two faces for one value is a question the operator has to answer before they can use
 either.
 
@@ -1034,11 +1023,9 @@ this one, so neither the head height nor the line every fader starts at moves.
 
 ### The guitar amp is one face
 
-It was two — an AMP face and a CAB face behind a bar — and the cabinet is now on the same panel as
-the amp. The two are one signal path, the unit's own parameter tables list them as one set, and a
-bar in front of eleven cards is a switch the operator has to find before four of their controls
-exist. Pitch Fix keeps its bar: what the correction does to a note and what decides which notes
-there are are two different questions.
+The cabinet is on the same panel as the amp, not on a CAB face behind a bar. The two are one signal
+path, the unit's own parameter tables list them as one set, and a bar in front of eleven cards is a
+switch the operator has to find before four of their controls exist.
 
 | Rows, in order |
 | --- |
@@ -1072,28 +1059,28 @@ only there: "Sets vibrato speed/depth when 'Vib' is On. Not available when 'Cho'
 **The tag is not a lock.** The unit stores both whatever the modulation reads and takes a write to
 either, so refusing the gesture would be the app forbidding what the unit allows; the row says when
 its value applies instead. `insertFxInactiveSlots` answers that, and it is deliberately a different
-question from `insertFxLockedSlots` below — a value nobody may write and a value that is simply not
-in the signal looked the same while one function answered both, and the second was drawn as the
-first.
+question from `insertFxLockedSlots` below — with one function answering both, a value nobody may
+write and a value that is simply not in the signal would look the same, and the second would be
+drawn as the first.
 
 **Every control on the face is a card in the one panel**, a selector and a switch as much as a
 knob. Not a stylistic preference: the panel is a seven-column grid, and a control laid out as an
 ordinary settings row spans every one of them and puts its control at the far edge, an amp's width from the
-label naming it — which cuts the panel into blocks and is what the faces did. A face's trailing
+label naming it — which cuts the panel into blocks. A face's trailing
 controls go into that grid too, not after it; appended to the column instead, the cabinet's SP Type
-and Mic Position rendered outside the panel altogether. **The card is 116px** — Clean is fifteen
+and Mic Position would render outside the panel altogether. **The card is 116px** — Clean is fifteen
 cards, which the break lays out as three rows. **The grid is seven columns**, and the seventh is
-what the break paid for: the modulation group and the cabinet come to seven cards, so on six they
-took two rows and made the modal 778px tall — taller than the window it opens in, which put the
-level rack below the fold and made the face scroll to read. On seven they are one row and the
+what the break pays for: the modulation group and the cabinet come to seven cards, so on six they
+take two rows and make the modal 778px tall — taller than the window it opens in, which puts the
+level rack below the fold and makes the face scroll to read. On seven they are one row and the
 modal is 661px (measured at 1101–1600px wide; the tightest track is then 99px, above the 88px
 floor, so nothing overflows sideways). **Seven is the stylesheet's number** — `--gt-knob-cols` on
 `.gt-knobs` — and a grid declares `knobCols` only where seven is not what its cards mean: the
 multi-band compressor says three, for the reason below, and each FX EFFECT family says four. That
 number decides the card width and, on a face that has a row break, where it falls. The amps and Pitch Fix want the
 seven above and so name nothing — restating it in a descriptor is a second copy of a value the
-stylesheet already owns. What shrank is 154px to 116px, which is the gap between the label and the
-knob (the .gt-knob min-height); the knob face stays clamp(48px, 5vw, 56px).
+stylesheet already owns. The 116px is the .gt-knob min-height, and what it bounds is the gap between
+the label and the knob; the knob face is clamp(48px, 5vw, 56px).
 **No reserved height either** — a reserve exists so a bank's two faces start their controls at the
 same height, and a family with one face has nothing to hold still against. The cabinet's Gate is therefore a **single
 button carrying its own state** (`onOffButton`) rather than the settings ON/OFF pair: a pair costs
@@ -1143,23 +1130,19 @@ one. The companders keep the ordinary order — their display is the point of th
 binding declares which, since it is a property of what the node holds rather than of the
 descriptor.
 
-**A follow that replaces the effect returns to the AMP face.** The faces belong to the effect, so
-a compander arriving under an open CAB face is neither of the two things the host does on its own:
+**A follow that replaces the effect returns to the first face.** The faces belong to the effect, so
+another effect arriving under an open face is neither of the two things the host does on its own:
 a face whose `bind` answers null closes the screen, which is right for a bank taken away and wrong
-for one replaced, and a `sel` nothing resets would carry a cabinet segment onto an effect with no
-cabinet. `DynProcessor.bankIdentity` is what the host compares to tell those apart.
+for one replaced, and a `sel` nothing resets would carry a segment onto an effect that has no such
+face. `DynProcessor.bankIdentity` is what the host compares to tell those apart.
 
 ### Pitch Fix is one face
 
-It was two — PITCH for what the correction does to a note, SCALE for what it is aimed at — and it is
-one now, with the guitar amp's arrangement: the panel takes the flexible column and the level rack
-the narrow one.
+What the correction does to a note and what it is aimed at share one panel, with the guitar amp's
+arrangement: the panel takes the flexible column and the level rack the narrow one.
 
-**Its display column carried a read-only copy of its own controls.** The SCALE face showed KEY,
-SCALE and MIDI CONTROL as three tiles and the twelve notes as a twelve-cell mask, with the same Key
-select, the same Scale select, the same MIDI Control row and the same twelve buttons on the panel
-beside it — two grids of twelve on one face, one lit and one not — and no lane rack at all. What that
-column is for on every other screen is a live reading, and this one had none to give.
+**Its display column is a live reading, as on every other screen** — the level rack — and carries no
+read-only copy of the Key, Scale, MIDI Control and twelve notes the panel beside it already holds.
 
 | Rows, in order |
 | --- |
@@ -1181,49 +1164,45 @@ the correction aims at come from, and from Setting on the Key's own Scale is the
 the plan's.
 
 **The twelve notes go last, spanning the panel.** They are one control twelve buttons wide, so a card
-is not a shape they fit; placed mid-panel they ended the row they landed in and left the rest of it
+is not a shape they fit; placed mid-panel they would end the row they land in and leave the rest of it
 empty.
 
 **The twelve note slots are ABSOLUTE semitones.** Slot 22 is C whatever the Key is, measured by
 setting Key = G with Scale = Major and reading them back as C D E F# G A B. So the buttons are named
 from C and are not laid out as a keyboard: black and white keys would draw a root that is not there.
 
-**Six per row, in two rows.** Measured while the row sat in a 400px control column that did not grow
-with the window — the same at 1280x900 and at the 960x640 minimum the app admits — where twelve
-targets could not reach the 36px desktop minimum across it and six reached it with room over. They
-were 16.03-23.05px wide and 25px tall on one line. The row spans the panel now and the panel takes
-the flexible column, so it has more width than that reading was taken at; six per row is what it
-keeps until someone measures twelve there. The row is a grid rather than a wrapped flex row for two measured reasons: it
-inherits `gap: 8px` from `.prefs-row .ctl`, and under `flex-shrink: 0` it sized itself for all twelve
-on one line (522px, wider than the column), wrapped five per row, and had the rest clipped off the
-modal at the minimum window. That same rule is declared later in the stylesheet and out-specifies a
-bare `.gt-notes`, so the layout half is written as `.prefs-row .ctl.gt-notes` — written as
-`.gt-notes` the grid never applied at all, the eight-pixel gap stayed and all twelve sat on one line
-at 16.63px. `--led-ink` IS `--led-face`, so the separator was drawn in the face colour and a full
-mask read as one solid block once the gap was gone; lit, it now takes the ink the label takes,
-softened.
+**Six per row, in two rows.** Measured in a 400px control column that does not grow with the
+window — the same at 1280x900 and at the 960x640 minimum the app admits — twelve targets cannot
+reach the 36px desktop minimum across it and six reach it with room over; on one line they measured
+16.03-23.05px wide and 25px tall. The row spans the panel and the panel takes the flexible column,
+so it has more width than that reading was taken at; six per row is what it keeps until someone
+measures twelve there. The row is a grid rather than a wrapped flex row for two measured reasons: it
+inherits `gap: 8px` from `.prefs-row .ctl`, and under `flex-shrink: 0` a flex row sizes itself for
+all twelve on one line (522px, wider than the column), wraps five per row, and has the rest clipped
+off the modal at the minimum window. That same rule is declared later in the stylesheet and
+out-specifies a bare `.gt-notes`, so the layout half is written as `.prefs-row .ctl.gt-notes` —
+written as `.gt-notes` the grid does not apply at all, the eight-pixel gap stays and all twelve sit
+on one line at 16.63px. `--led-ink` IS `--led-face`, so a separator drawn in it vanishes into the
+face and a full mask reads as one solid block once the gap is gone; lit, the separator takes the ink
+the label takes, softened.
 
-**No family declares a reserved height any more.** A reserve exists so a bank's faces start their
-controls at the same place, and keeping one was a running cost: a taller note row put the SCALE face
-41px (EN) / 49px (JA) over it and the modal jumped on the segment between the faces, and the knob
-grid then moved the tallest column from the display to the controls, where the reserve is not, and
-the modal moved again. Both banks that needed one are gone — the guitar amp and Pitch Fix are one
-face each, and the multi-band compressor's four are two rows of cards by construction (MAIN six, a
-band four, three columns) — so the shared 520px is what every family takes.
+**No family declares a reserved height.** A reserve exists so a bank's faces start their
+controls at the same place. The guitar amp and Pitch Fix are one face each, and the multi-band
+compressor's four are two rows of cards by construction (MAIN six, a band six, three columns), so no
+family needs one and the shared 520px is what every family takes.
 
 **A gesture reads the Key the plan holds, not the one the row was drawn with.** A row's handlers
 close over the context they were built with, and the rebuild that would replace them is deferred for
 as long as a pointer is down — a press anywhere in the box sets that, a `<select>` included — while a
-device follow goes on writing the plan underneath. Choosing a Scale then rooted its mask at the old
-Key and the next flush sent it; a note button read its own drawn state and wrote a value straight
-back over the follow that had just moved it. Both now read through `DynRowCtx.live()`. What a button
-SHOWS is still what it was drawn from — the panel catches up at the deferred rebuild — and what it
+device follow goes on writing the plan underneath. Read from the drawn context, choosing a Scale would
+root its mask at the old Key and the next flush would send it, and a note button reading its own drawn
+state would write a value straight back over the follow that had just moved it. Both read through
+`DynRowCtx.live()`. What a button SHOWS is still what it was drawn from — the panel catches up at the deferred rebuild — and what it
 WRITES is the negation of what the plan holds when it is pressed.
 
 **Every preset is selectable.** The unit derives the twelve notes itself from the Scale and the Key,
 for all eight presets — read at Key = C and Key = G, the offsets came back identical while the
-absolute bits moved — so the app authors the same offsets rather than only the two patterns it could
-once spell. Editing a note takes the Scale to Custom, which the unit also does on its own; the app
+absolute bits moved — so the app authors the same offsets. Editing a note takes the Scale to Custom, which the unit also does on its own; the app
 writes it too, because the plan is what the next flush emits and a plan still spelling a preset would
 re-derive the mask over the edit.
 
@@ -1257,8 +1236,8 @@ which bus holds it does not enter the address. A single-band effect reads band 0
 URX44V (2026-07-28): the multi-band compressor at full reduction read `133:0/1/2` as LOW / MID /
 HIGH with `133:3` unused, and a single-band output compander read `133:0` alone.
 
-`132` takes no node either, though its catalogue entry (`x_type: "mono"`, `x0..x3`) says it does and
-this table used to. Measured on a URX44V (2026-08-27, CH 3 and CH 4, preamp noise at +70 / +65 dB
+`132` takes no node either, though its catalogue entry (`x_type: "mono"`, `x0..x3`) says it does.
+Measured on a URX44V (2026-08-27, CH 3 and CH 4, preamp noise at +70 / +65 dB
 head-amp gain into a Compander-S at -54 dB / 20:1): a compander engaged on CH 4 alone reported at
 `132:0`, one on CH 3 alone reported at `132:0`, and both engaged at once still produced one value
 there. `132:1`, `132:2` and `132:3` held `0` — the not-engaged value — in every configuration,
@@ -1323,8 +1302,8 @@ separately. **Main, Low, Mid, High.**
 The split is what the effect IS: three compressors, and the two frequencies that decide what each of
 them hears. MAIN carries the levels the three bands are mixed back at and the crossovers that decide
 what each hears; a band face carries that band's own Bypass and its own dynamics. **Nineteen values on
-one panel fits, and is still nineteen values with nothing saying which five belong together** — that
-was the first arrangement and it is why this one replaced it.
+one panel fits, and is still nineteen values with nothing saying which five belong together** — which
+is why the effect is split into faces.
 
 **A band's Bypass leads its face** because it decides whether anything under it reaches the signal at
 all. It is one control per band — engine slots 12 / 17 / 22, the fifth of each band's block of five —
@@ -1376,11 +1355,11 @@ would say every band is trimmed on its own. A band whose make-up is at the botto
 nothing at all (`-∞` on the unit) and is drawn off the frame rather than along its floor, where a
 merely quiet band would also be.
 
-**MAIN's figure is on the CANVAS, and that is what makes it follow a knob.** It was a strip of elements
-in the display column first, and the display column is built once per panel: moving L-M Xover from
-125 Hz to 1.50 kHz moved the card and left the strip reading 125 Hz, at the width it had been given.
-The only thing that refreshed it was a device readback, which rebuilds the panel — so the one figure
-that showed the operator's own setting updated from the unit and not from the operator. The canvas
+**MAIN's figure is on the CANVAS, and that is what makes it follow a knob.** The display column is
+built once per panel, so a strip of elements there would not: moving L-M Xover from 125 Hz to
+1.50 kHz would move the card and leave the strip reading 125 Hz, at the width it had been given. Only
+a device readback, which rebuilds the panel, would refresh it — so the one figure showing the
+operator's own setting would update from the unit and not from the operator. The canvas
 layer is redrawn whenever a value moves, so a figure drawn there cannot fall behind the value it is
 drawn from.
 
@@ -1400,15 +1379,15 @@ the three band Thresholds as the positive control:
 | Out Gain | 68 | unchanged |
 
 Every armed value moved at the transition, and switching 1-knob off again left them where the preset
-had put them rather than restoring what they had been. The Bypass row is a later reading, taken on
-2026-08-30 once the three slots were writable at all: the same rig, LOW's Threshold as the positive
+had put them rather than restoring what they had been. The Bypass row is a separate reading, taken on
+2026-08-30: the same rig, LOW's Threshold as the positive
 control (121 → 81 across the Level change), and a write between the two samples to separate "cleared
 again" from "never moved".
 
 **The knob is written, like the COMP and EQ knobs it is the third of.** Both of those have the same
 property — the COMP knob's ON resets its level to 0 and its detail to uncompressed — and both are
-ordinary switches on their screens. Refusing this one was the app second-guessing a gesture, and it
-made this the odd one out among three controls of one kind.
+ordinary switches on their screens. Refusing this one would be the app second-guessing a gesture, and
+would make this the odd one out among three controls of one kind.
 
 **What the app does not write is the eighteen slots a LEVEL CHANGE reasserts**: Threshold, Ratio and
 Gain in each of the three bands, which the Level recomputes, and the three Attacks, the three
@@ -1420,10 +1399,11 @@ on it.
 **Out Gain is the one writable slot the knob leaves alone**, so it is the one the app keeps writing
 and the one row on MAIN that stays live while the knob is on.
 
-**The narrower reading was itself a silence**, and of exactly the shape the COMP knee had already
-sprung. `probe-mbc-fixed-scope` armed every value away from its neighbours BEFORE switching the knob
-on, so the ON transition put the preset there and the Level change that followed wrote the same
-preset value again — which is indistinguishable from not touching it. `probe-mbc-write-under-oneknob`
+**Arming before the knob goes on reads as a silence**, the trap the COMP knee sets too: a parameter
+driven to the value it already holds looks exactly like one nothing touched. `probe-mbc-fixed-scope`
+arms every value away from its neighbours BEFORE switching the knob on, so the ON transition puts the
+preset there and the Level change that follows writes the same preset value again — which is
+indistinguishable from not touching it. `probe-mbc-write-under-oneknob`
 separates them by writing the six away from the preset AFTER the transition: all six take the value,
 hold it through 3.2 s of polling, and go back to 17/19/9, 7 and 37/94 the moment the Level moves,
 while Out Gain keeps what was written. The control that makes the clean half mean anything is in the
@@ -1434,10 +1414,10 @@ nothing there, and the row stays rather than being dropped so the section does n
 switch.
 
 **The write comes back as a read.** Every slot of an engine array goes out under one parameter name,
-and a NAME is what carries `ParamSpec.sideEffect` — so under the ordinary one this write announced
-nothing, the plan kept its own copy of the eighteen values the unit had just recomputed, and the
-screen, the curve, the saved document and MIDI feedback all read that stale copy. Worse, the copy is
-what the next flush sends the moment the knob is switched off and the driven set is released. The two
+and a NAME is what carries `ParamSpec.sideEffect` — so under the ordinary one this write would announce
+nothing, the plan would keep its own copy of the eighteen values the unit had just recomputed, and the
+screen, the curve, the saved document and MIDI feedback would all read that stale copy. Worse, the copy
+would be what the next flush sends the moment the knob is switched off and the driven set is released. The two
 slots that DRIVE the array — the 1-knob's switch and its Level, and Pitch Fix's MIDI Control bits —
 therefore go out as `INSERT_FX_DRIVER`, whose `sideEffect` is `refetch`: the owner node is read back
 instead of being pushed, which is what `COMP_ONE_KNOB` already does for the same shape of control.
@@ -1450,9 +1430,9 @@ edited in place, so a resolve that answered once must not keep answering after t
 stopped holding that effect. The write would land on a slot nothing sends and reappear the
 moment the operator selected it again, and feedback would keep reporting the same stale value.
 The MIDI surface therefore memoizes nothing: what exists is the catalogue's answer, and an id
-that has stopped existing resolves to null, which every caller already handles. The memo it
-replaces keyed on the plan OBJECT, which is the one thing an in-place edit never changes — so
-it guarded a replacement that no longer happens while missing every case that does. The same
+that has stopped existing resolves to null, which every caller already handles. A memo keyed on
+the plan OBJECT would miss every case, since the object is the one thing an in-place edit never
+changes. The same
 staleness reaches COMP versus SSMCS and any processor a node stops carrying, and one resolve
 covers all of them rather than a check per kind.
 
@@ -1463,10 +1443,10 @@ selecting an old one finds what the operator left. A read answers for one family
 read family's own stored copies — a qualified key beats a bare one when a value is read, so
 leaving them would hide the unit's answer underneath the plan's older one — and keeps every
 other family's untouched. Under No Effect the qualified values stay and the bare ones go,
-since nothing can address a bare slot with no family to give it a layout. Replacing the map
-was survivable while a read was a whole-plan Fetch; with the refetch above it happens on a
-1-knob write, and the loss shows only when the operator selects the old effect and finds it
-at the factory.
+since nothing can address a bare slot with no family to give it a layout. With the refetch
+above, a read happens on a 1-knob write, so a read that replaced the map would lose the other
+families' values there, and the loss would show only when the operator selects the old effect
+and finds it at the factory.
 
 **One predicate decides every lock on this screen, and the MIDI surface asks it too.**
 `insertFxLockedSlots` answers, for a family holding a set of values, which slots no surface may
@@ -1478,11 +1458,6 @@ plan while the writer is suppressing the slot, which parts the plan from the uni
 the plan's copy the moment the lock lifts. Pitch Fix is the one family with no MIDI half to lock: its
 scale is an enum row, which offers no control at all, and its twelve notes are a keyboard the screen
 builds by hand rather than descriptors the catalogue walks.
-
-An earlier run read Attack as unmoved and recorded the other four as untouched. Both were the trap the
-COMP knee had already sprung: those values were sitting at the numbers the preset writes, because a
-previous 1-knob ON had put them there, and a parameter driven to the value it already holds looks
-exactly like one nothing touched.
 
 **`mbcDeviceDriven` is one list for two consumers** — `translate` stops emitting those eighteen slots,
 and the screen locks exactly the rows the writer stopped sending — so the writer and the panel cannot
@@ -1500,10 +1475,9 @@ under the pointer that "no row is ever removed" exists to stop.
 ### Where the catalogue's defaults come from
 
 **A `def` is what the screen prints before a device read has filled the plan**, so it is the
-unit's own number or it is a guess. It was both. Pitch Fix and the compander agreed with the
-unit exactly; the four guitar amps sat at mid-scale round numbers — every tone control 50,
-Output 64, SP Type 1 — which is a shape no measurement produces, and the multi-band compressor
-gave all three bands the same 17 ms Attack where the unit gives 17 / 19 / 9.
+unit's own number or it is a guess — and a guess has a shape no measurement produces: mid-scale
+round numbers, or one value repeated where the unit gives each band its own. The defaults here are
+the unit's.
 
 **Measured on a factory-initialised URX44V** (2026-08-29, 48 kHz, Standard mode): every engine
 slot armed to a sentinel, the selector released to None, then the type selected and the array
@@ -1516,10 +1490,10 @@ rather than guessed. Ten types, no undecided slot, residual 0.
 The private `reference/work/device-tests/probe-insfx-factory-defaults.mjs` is the run and
 `reference/work/device-tests/insfx-factory-results.json` the readings.
 
-**The first attempt of that run measured nothing on its second pass**, and said so rather than
-reporting the sentinel as a default: the selector was already at the target type, and a
-same-value write does not repopulate — the unit does that on the transition INTO a type. The
-pass now releases the selector to None first.
+**Each pass releases the selector to None first**: a same-value write does not repopulate — the
+unit does that on the transition INTO a type — so a pass that starts with the selector already at
+the target type measures nothing, and the run says so rather than reporting the sentinel as a
+default.
 
 **Two of the defaults are not one number.** The multi-band compressor's Attack belongs to the
 band, not to the parameter, and the two companders are one family whose types come up at
@@ -1529,10 +1503,10 @@ would have duplicated the engine map, the menu and the screen to vary one field.
 
 ### Which families the screen shows
 
-All of them. The multi-band compressor was the exception until its bands and globals reached the
-catalogue as descriptors of their own; the Inspector's flat editor for it is gone with it, so the two
-surfaces cannot disagree about where a family is edited — and, more to the point, the same value
-cannot be edited on two surfaces at once.
+All of them, the multi-band compressor included: its bands and globals are catalogue descriptors of
+their own, and the Inspector carries no flat editor for any family, so the two surfaces cannot
+disagree about where a family is edited — and, more to the point, the same value cannot be edited
+on two surfaces at once.
 
 **An edit names the paths it asserted.** The funnel drops a named nested group — naming it
 would claim every sibling the rebuild merely copied — and falls back to the plan's own diff, which
@@ -1546,9 +1520,9 @@ Inspector's own funnel names.
 **Every surface asks the same question, not only this one.** The Inspector's selector, its bypass
 switch and its editor, and the CONSOLE's INS FX pair all read `effectiveInsertFx` — so a value the
 node's own control does not carry reads as No Effect everywhere, which is what the unit is given.
-The strip is where it bit hardest: driven from the raw value it reported the strip as bypassing an
-effect that never reaches the unit, and pressing it wrote a bypass nothing would ever send. A strip
-reading No Effect now shows the vacant face described below, whose press opens the type list — which
+The strip is where it matters most: driven from the raw value it would report itself as bypassing an
+effect that never reaches the unit, and pressing it would write a bypass nothing would ever send. A strip
+reading No Effect shows the vacant face described above, whose press opens the type list — which
 is where the stale value gets replaced by one the unit will act on. The Inspector's selector shows
 No Effect for a second reason on top of that: a
 `<select>` handed a value none of its options carry lands at selectedIndex -1 and draws an empty
@@ -1557,9 +1531,9 @@ field. Nothing rewrites the plan to say so — the raw value stands until the op
 **And nothing the device path will not act on.** A plan can hold an insert-FX value the node's own
 control does not carry — a bus holding a channel effect, which a file, a `?plan=` link or a device
 read all land, since the loader gates none of them. `translate` coerces such a value to No Effect and
-emits no engine parameter for it at all, so an editor over it collects edits nothing ever sends: at
-48 kHz, where the ceiling is not in question, the screen bound four editable fields against zero
-`INSERT_FX_EFFECT` commands. Both sides now ask one function, `effectiveInsertFx`, so what the screen
+emits no engine parameter for it at all, so an editor over it would collect edits nothing ever sends:
+at 48 kHz, where the ceiling is not in question, it would bind four editable fields against zero
+`INSERT_FX_EFFECT` commands. Both sides ask one function, `effectiveInsertFx`, so what the screen
 offers to edit and what the unit receives cannot come apart.
 
 ## FX EFFECT
@@ -1574,7 +1548,7 @@ FX arrangement, for the INS FX reason.
 
 It owns the selected effect's parameters and the meter subscription for its FX channel.
 It does not own EFFECT TYPE, the channel fader, the FX send amounts or the sample rate. The first is
-on the strip beside it and in the inspector; the rest are where they already were. Slots 1 and 2 of the
+on the strip beside it and in the inspector; the rest are on the surfaces that carry them. Slots 1 and 2 of the
 effect array belong to nothing here: no control of the unit's own reaches either, so the app neither
 writes nor reads them, and the unit keeps whatever it holds there.
 
@@ -1590,8 +1564,8 @@ channel keeps every family's values side by side under keys that carry the famil
 that family back finds them. Within one family the three Rev-X types share those keys, so a swap
 between them shares the values too rather than parking one set and restoring it. A device read of that
 channel MERGES into the map rather than replacing it — a read answers for the family the type names, and
-replacing took the dormant families out with it, so selecting one of them back sent the incoming type's
-factory values rather than what the operator had set (`readback.readFxEffectInto`, both the park and the
+replacing would take the dormant families out with it, so selecting one of them back would send the incoming
+type's factory values rather than what the operator had set (`readback.readFxEffectInto`, both the park and the
 full read). On the UNIT the array is refilled, and the writer then puts the plan back over it, so
 the two agree again. What would otherwise be lost is **a value the unit holds that the plan has never
 seen** — and that is reachable, because the effect arrays announce nothing when the front panel moves
@@ -1603,16 +1577,16 @@ screen would know.
 which resets one of the silent families reads that family off the unit first, holding the link, and
 derives its commands again from what the read merged (`live.ts`, `readback.applySilentState` with
 `only`). Every writer therefore passes one read: both EFFECT TYPE selectors, an UNDO of either, the
-insert-FX selector, a MIDI mapping, a plan load. On the two selectors alone — where this began — an undo
-re-typed the array with nothing in front of it, and an insert-FX selection re-keyed the app's own copy
-and wrote it back without ever looking at the outgoing engine.
+insert-FX selector, a MIDI mapping, a plan load. Placed on the two selectors alone, the read would leave
+an undo re-typing the array with nothing in front of it, and an insert-FX selection re-keying the app's
+own copy and writing it back without ever looking at the outgoing engine.
 
 It is the same guarded read the converge takes, narrowed by `only` to the families the head resets, so
 it carries the settle for this session's own recent writes, the merge that leaves an edit made meanwhile
 standing, and the `holdsSent` guard that leaves an edit the flush has NOT carried yet standing too. Read
-as a whole node instead, it also brought back every announced value of that channel — device follow's,
+as a whole node instead, it would also bring back every announced value of that channel — device follow's,
 not this park's — each as the unit's rather than as the operator's, so a value the operator had set a
-moment earlier and still inside its flush window was read back as the unit's and went out that way. The plan's own heads
+moment earlier and still inside its flush window would be read back as the unit's and go out that way. The plan's own heads
 are left standing (`keepHeads`): the operator has already chosen the incoming type, so the values are
 filed under the keys the head the UNIT is on owns, and the selection the flush is about to carry is not
 undone by the read taken for it. What the park leaves in the plan is a DIFF against the snapshot, which
@@ -1654,7 +1628,7 @@ before-image carried the pre-park value; what stops an undo sending that is `abs
 own leaves into the entries recorded before it — a nested leaf whose `before` AND `after` both hold what
 the read measured from, which is what says the gesture never touched it, and both sides then take the
 unit's value (architecture.md, "Undo / redo"). A leaf the gesture moved differs on one of those sides,
-so it is left alone and the undo takes it back as it always did. `e2e/race/t2d-shape-change.spec.ts` pins the read in front of the
+so it is left alone and the undo takes it back. `e2e/race/t2d-shape-change.spec.ts` pins the read in front of the
 selector, the read in front of the undo, and the panel value the undo hands back.
 
 **The same read generalises to every converge**, which is where the rest of the silent addresses are covered: a
@@ -1686,7 +1660,7 @@ holds there, and a document naming it names nothing.
 **Four columns**, which is what the unit puts on a row — and, the orders above being the unit's, what
 keeps each face's groups on rows of their own: the delays' tempo group (Sync, BPM, Note) shares the
 second row, the filters end each reverb face together, and Hi Ratio sits with Lo Ratio and Lo Freq on
-REV-X. On six, Sync ended the first row and BPM and Note opened the second. The reverbs are three rows
+REV-X. On six, Sync would end the first row and BPM and Note would open the second. The reverbs are three rows
 and the delays two.
 
 ### The rack is the effect's own input and output
@@ -1772,11 +1746,11 @@ Every plot draws its curve at the **true** value, and the host **clips it to the
 a value onto the axis instead draws a horizontal bar along the edge, which reads as a response the
 processor does not have:
 
-| Plot | What clamping did |
+| Plot | What clamping does |
 | --- | --- |
-| EQ | A high-pass passes the -18 dB floor within an octave of its corner, so the curve lay along the bottom of the frame |
-| GATE | A closed shelf sits at threshold + range, which reaches -144 dB while the range is still finite (threshold -72 … -56 with the deepest ranges). Clamped to the -128 axis, it drew the same picture as a -∞ range: a gate that is not closed, looking closed |
-| Markers | Pinned to the floor, a marker named a frequency at a level the response never reaches there |
+| EQ | A high-pass passes the -18 dB floor within an octave of its corner, so the curve would lie along the bottom of the frame |
+| GATE | A closed shelf sits at threshold + range, which reaches -144 dB while the range is still finite (threshold -72 … -56 with the deepest ranges). Clamped to the -128 axis, it draws the same picture as a -∞ range: a gate that is not closed, looking closed |
+| Markers | Pinned to the floor, a marker names a frequency at a level the response never reaches there |
 | COMP | Nothing — the -54 … +18 axes contain the whole response (makeup gain only adds, the knee interpolation only subtracts), which `src/ui/dyn-plot.test.ts` checks at the extremes rather than assuming |
 
 The split is structural, not a convention each descriptor has to remember: `drawAxes` is called
@@ -1790,7 +1764,7 @@ Two deliberate exceptions, both stated where they are made:
   it. A leader line drawn *to* the annotation is part of the curve and is not clamped.
 - **The gate's -∞ range is pinned to the axis floor**, since the floor is what stands for -∞ there (it
   is the GR meters' own floor, and the label prints "-∞"). That is a representation, not a clamp, and
-  it is what makes the finite case distinguishable now that the finite case leaves the frame.
+  it is what makes the finite case distinguishable, since the finite case leaves the frame.
 
 ## Scope
 
@@ -1801,8 +1775,8 @@ there is a 4-band PEQ: every mono channel outside SSMCS mode, every stereo chann
 the STEREO master. The node is fixed by where the screen was opened from — there is no in-screen node
 switch.
 
-Neither is the PROCESSOR fixed, for one bank. The SSMCS faces move between each other from the title
-row (above), which is a processor switch inside one open screen — but never a node switch, because a
+Neither is the PROCESSOR fixed, for one bank. The SSMCS faces move between each other from the bank's
+bar (above), which is a processor switch inside one open screen — but never a node switch, because a
 screen is opened from a per-channel control in the first place.
 
 The address set is **not** fixed with it. The DUCKER's key lane reads at the source's own Rec Point
@@ -1820,28 +1794,29 @@ anything the app can name — so each one added has to bring its own measured ax
 ### The screen is not the frontmost thing on screen
 
 A plan can be loaded — dropped, opened, recalled from the recents — with a tuning screen open over it,
-so `loadPlan` refreshes the screen: it reads the plan through a closure and already held the new values,
-but nothing had told it to redraw. The refresh re-resolves the binding too, so a screen whose node or
+so `loadPlan` refreshes the screen: it reads the plan through a closure and so holds the new values,
+but nothing else tells it to redraw. The refresh re-resolves the binding too, so a screen whose node or
 processor the new plan does not have closes itself instead of writing into something that is gone.
 
-The scrims all share one z-index, which made document order the tiebreak — and put the **load report**
-behind the tuning screen, where a report about the very drop that raised it could not be read. The
-**drag advert** was behind it too, for a second reason worth knowing: its `z-index: 120` sat in a rule
-*above* `.consent-scrim`'s `100`, and at equal specificity the later rule wins, so the advert had never
-actually been at 120 — the comment claiming it "sits above the modals" had been wrong since it was
-written. Both are now in one explicit ladder in `style.css`, placed after `.consent-scrim` so the
+The scrims all share `.consent-scrim`'s one z-index, which makes document order the tiebreak — and on
+its own would put the **load report** behind the tuning screen, where a report about the very drop that
+raised it could not be read.
+The **drag advert** has a second hazard worth knowing: a `z-index: 120` written in a rule *above*
+`.consent-scrim`'s `100` never applies, since at equal specificity the later rule wins. Both are in one
+explicit ladder in `style.css`, placed after `.consent-scrim` so the
 cascade cannot quietly undo it (menus 40, control popovers 60, tool modals 100, the drag advert 120, the
-decision gates 130): consent, the load report and the rate choice each ask a question that has to be
-answerable whatever else is open.
+decision gates 130, the error box 140): consent, the load report and the rate choice each ask a question that has
+to be answerable whatever else is open, and the error box carries a failure that arrived while something else was
+open, so it sits above the gates rather than behind the thing it interrupts.
 
 ### A gesture the window is taken away from
 
 The three drags this screen runs itself — the threshold cap, the plot, and the value rows — end when the
 window loses focus, because no engine ends them for you: taking the OS foreground away with the button
 down fires `blur`, fires **no** `pointercancel`, and keeps the pointer capture (measured 2026-08-14 on
-Chromium and on the shipping WKWebView). Until this existed, a press held through an app switch went on
-writing into the plan and out to the unit while another application was frontmost, and — since
-`history.ts` also ends its press at a `blur` — the remainder landed in a *new* undo entry.
+Chromium and on the shipping WKWebView). Without it, a press held through an app switch would go on
+writing into the plan and out to the unit while another application is frontmost, and — since
+`history.ts` also ends its press at a `blur` — the remainder would land in a *new* undo entry.
 
 The cap and the plot are the view's own gestures, so ending them is dropping what the view holds. **A
 value row is a native `<input type="range">`, and the engine owns its drag**, which makes it a different
@@ -1856,9 +1831,8 @@ problem in three ways, each measured:
 
 So a row that loses the window is disabled, and stays disabled **until the press is over or the window
 comes back** — a `pointerup`, a `pointercancel`, a `pointermove` reporting no buttons (the release the
-window never heard), or the app regaining focus. Ending it at the blur alone was not enough: with the
-DETACH treatment the row resumed under the still-held button when focus returned, which is what sent that
-treatment back. Disabling does not resume — measured in both engines and confirmed by hand on the unit —
+window never heard), or the app regaining focus. Ending it at the blur alone is not enough: with the
+DETACH treatment the row resumes under the still-held button when focus returns. Disabling does not resume — measured in both engines and confirmed by hand on the unit —
 which is what makes the return a safe release, and it is the one signal that always arrives: a release
 lost outside the window is never counted, and a touch pointer id is never reused, so without it a row
 could stay inert with nothing left to clear it. Focus is restored
@@ -1966,19 +1940,19 @@ twice and write twice, and double-click is already the factory-value reset for t
 and knobs. Each pair fills one row of the two-per-row chip grid — head height is uniform by design
 so the SENDS racks, faders and meters stay aligned.
 
-The EQ's opener takes a fourth chip row on a mono channel, which the head has to carry: measured, its
-inner height is 254 px, a chip row costs 24 px, and the CH3/CH4 strips — the ones with a Hi-Z chip —
-had 0.9 px of slack at the old 252 px. `--head-h` is 276 px, which takes 24 px from the fader zone on
+The EQ's opener takes a fourth chip row on a mono channel, which the head has to carry: measured at a
+252 px head, its inner height is 254 px, a chip row costs 24 px, and the CH3/CH4 strips — the ones with
+a Hi-Z chip — have 0.9 px of slack there. **The height is not measured by hand**: an E2E case asserts that no
+strip's head overflows its own contents (`e2e/console.spec.ts`). `--head-h` is 276 px, which takes 24 px from the fader zone on
 every strip, including those with no chips at all. The opener is not offered where the rate has the
 EQ forced off, since the toggle beside it is read-only there.
 
 **A strip in SSMCS mode is the same height.** The morphing strip's own master and its one opener stand
 exactly where COMP's and EQ's two openers stand, so the chip count does not move with the bank. The
-COMP/EQ type is still a term in the head-height cache key, for the reason the sample rate is: it
+COMP/EQ type is a term in the head-height cache key, for the reason the sample rate is: it
 changes what a head CARRIES, and what balances it here is a coincidence of counts rather than a rule.
-It has moved the head in both directions before — an SSMCS channel carried no opener at all until this
-bank had a screen, then three of them for one modal — and the key is what kept a clipped head off the
-screen through both.
+A change to what an SSMCS strip carries moves the head, and the key keeps a clipped head off the
+screen when it does.
 
 ## MIDI assignment
 
@@ -2050,8 +2024,8 @@ be *edited* — only to be *observed*.
 `DynScreen` owns everything that does not depend on which processor is open — the modal, the lane
 rack, the meter feed and its peaks, the slot borrow, the canvas lifecycle, the persisted bar
 selection. A `DynProcessor` supplies the rest: what the node has (`bind`), its corner of the plan
-(`read` / `patch`), its bar, its rows and their states, its plot. Adding DUCKER or an insert-FX
-screen means writing one of those, not another screen.
+(`read` / `patch`), its bar, its rows and their states, its plot. DUCKER and the insert-FX screen
+are each one of those, not another screen.
 
 Where each piece lives follows from that:
 
@@ -2071,7 +2045,7 @@ the press meant for the Close button behind it is worse than no label.
 
 The screen is built out of the shared recipes rather than its own: `settingsRow` / `settingsSection`
 for the rows and headings, `.udk-banks` for the mode tabs, `setLevelText` for the -∞ readout,
-`wheelStep` for the sliders, `fineTag` / `optInFine` for the one value with a device fine grid, and
+`wheelStep` for the sliders, `fineTag` / `optInFine` for the two values with a device fine grid (COMP Gain and the EQ band Gain), and
 the console's registered `--lvl` / `--pk` rules for the meter shade and peak. The GR lane adds only
 its inversion (it hangs from the top and is the bar rather than the cover over one) and its hatch.
 `formatDyn`, the range -∞ notch (`dynValueText`) and which field carries a fine grid all live in
@@ -2079,10 +2053,9 @@ its inversion (it hangs from the top and is the bar rather than the cover over o
 disagree about how a value prints or steps.
 
 The bar's selection is stored per processor (`urx-dyn-display2`, a record keyed by processor), which is
-now the SSMCS bank alone. It is a way of reading a processor rather than a per-device mapping — so
+the SSMCS bank alone. It is a way of reading a processor rather than a per-device mapping — so
 unlike the meter point it is not model-scoped. **The stored value is a segment INDEX**, so renumbering
-a bar's segments takes a new key — an old index and a new one are indistinguishable, and the previous
-key held a three-segment numbering in which 1 meant the transfer curve rather than the side chain.
+a bar's segments takes a new key — an old index and a new one are indistinguishable.
 
 The curve is drawn as a cached static layer plus a live dot: everything but the dot depends only on
 the parameters, size and theme. Canvas size is measured on open and refresh, and the theme tokens
@@ -2093,9 +2066,10 @@ capture.
 
 **That split is per row, and a row written out longhand can lose half of it.** `oneKnobLevelRow`
 carries the `setValue` in its own body, so the COMP and EQ knobs get it by calling the helper. The
-multi-band compressor's level is a bare 0–48 rather than the helper's 0–100 %, so it was written as a
-`sliderRow` directly — and reached for the rebuilding `set`. The screen then re-rendered on the first
-input event, replaced the element under the pointer, and the slider moved one detent per press. A row
+multi-band compressor's level is a bare 0–48 rather than the helper's 0–100 %, so it is written as a
+`sliderRow` directly and carries the `setValue` itself: reaching for the rebuilding `set`, the screen
+would re-render on the first input event, replace the element under the pointer, and move the slider
+one detent per press. A row
 that is a **continuous value** writes with `setValue`; only a row that changes what the rest of the
 panel IS takes `set`.
 
@@ -2113,30 +2087,30 @@ panel IS takes `set`.
 | Reusing `readingTap` / `decodeMeterDb` for GR | `readingTap` raises its `over` flag on the OVER sentinel, which for GR means "on and open" — a clip indicator for a gate passing signal |
 | Deriving OUT as IN + GR | The three taps are metered independently. Within one frame the loudest input and the deepest reduction did not occur at the same instant; summing them printed an output tens of dB low |
 | Keeping the five sliders in the inspector as well | `dynFieldSlider` reads the params snapshot captured at render time and never re-renders on a value change, so after the screen moved the threshold those sliders would sit at the old position and write it back on the next drag |
-| A scrolling history / level-distribution view | Prototyped and dropped: the gate's nature makes both hard to read. Recorded so the ground they covered — whether the gate drops between phrases, how far the noise floor sits from the source — is known to be out of scope |
+| A scrolling history / level-distribution view | The gate's nature makes both hard to read. Recorded so the ground they covered — whether the gate drops between phrases, how far the noise floor sits from the source — is known to be out of scope |
 | DUCKER's reduction in a column of its own | Costs a column and a scale, and the width goes to the plot instead: 333 → 235 px of lanes, 312 → 410 px of envelope at a 1440 px window |
 | DUCKER's reduction merged into KEY or PRE DUCKER | Measured: a reduction grows down from 0 and a level grows up from the floor, so they collide when `level + |reduction| > 0 dBFS`. On an input lane that is the normal case — at the factory range the block covers 93% of the ruler and the bar's top is unreadable |
-| A live overlay on the envelope | Once the reduction became a block on the POST bar a few pixels away, an overlay was a second display of one quantity. A time axis gives a live reading no position, so it could only slide up and down |
+| A live overlay on the envelope | With the reduction a block on the POST bar a few pixels away, an overlay is a second display of one quantity. A time axis gives a live reading no position, so it could only slide up and down |
 | A Ladder / Envelope toggle on DUCKER | Both are on screen at once, as the EQ's are, so nothing chooses between them and the heading would name a choice that does not exist |
 | Widening DUCKER's ruler to -70 dB so the merged reduction keeps its depth | Buys the deep end of the range control at the cost of every other lane's resolution, and the bottom 10 dB is dead for the KEY lane — the threshold cannot go there |
-| Shortening the note's copy to stop it clipping | The container was the defect, not the copy: at one reserved line the shipped COMP and EQ notes already wrapped below ~1150 px of window (~1300 px in Japanese). Shortening only moves the width at which the next one is cut |
+| Shortening the note's copy to stop it clipping | The container decides it, not the copy: at one reserved line the shipped COMP and EQ notes wrap below ~1150 px of window (~1300 px in Japanese). Shortening only moves the width at which the next one is cut |
 | An in-screen channel selector | Every switch would re-register the address set, and the screen is opened per channel from a per-channel control anyway |
 | A gesture on the CONSOLE GATE chip (double-click / right-click) | Double-click is the factory reset elsewhere in the view and `wireActivate` has no `detail` guard; right-click is unused app-wide but collides with the macOS native menu on Ctrl+click |
 | Adding an app-side release to the level lanes | The device's meters already release at ~30 dB/s; a second one would double it |
-| Reading COMP GR as the net applied gain (reduction + makeup) | The idle OVER sentinel on a channel with +18 dB of makeup suggested it, and it would have made the lane useless above modest makeup values. Measured and refuted: the makeup moves the downstream tap and not the GR meter |
+| Reading COMP GR as the net applied gain (reduction + makeup) | It would make the lane useless above modest makeup values, and the meter does not carry it: measured, the makeup moves the downstream tap and not the GR meter |
 | Sharing the level lanes' dB per pixel for the COMP GR lane | A gate's reduction runs the whole ruler; a compressor's is a few dB of it, and reads as a lane that never moves |
-| Leaving the COMP knee out of the curve | The selector would change nothing on screen — the same failure the gate's output axis already cost us. Measuring the widths was cheaper than shipping a control with no feedback |
+| Leaving the COMP knee out of the curve | The selector would change nothing on screen — the failure the first row describes for the gate's output axis. The widths are measured instead |
 | A second instance of the screen for COMP | Both would bind the same modal host and the same single meter subscription; the processor is chosen per open instead |
-| T / R / G grips dragged on the COMP curve, as the unit does it | Built, then removed. A press that missed a grip fell through to the threshold drag beneath it, so pressing the gain grip moved the threshold; and the grips were drawn clamped inside the plot while hit-tested at their true position, which put the two ~13 px apart at the axis ends. Underneath both defects, three grips on one plot cannot tell which value a press meant |
+| T / R / G grips dragged on the COMP curve, as the unit does it | A press that misses a grip falls through to the threshold drag beneath it, so pressing the gain grip moves the threshold; and grips drawn clamped inside the plot while hit-tested at their true position put the two ~13 px apart at the axis ends. Underneath both defects, three grips on one plot cannot tell which value a press meant |
 | All eighteen SSMCS rows on one screen | The rows alone are ~18 × 42 px ≈ 756 px against `.consent-box`'s `max-height: calc(100vh - 48px)`, which is 752 px at the 800 px default window and 592 px at the 640 px floor `tauri.conf.json` allows — over before the four headings, the title and the action row are added, and into the internal scroll every shipped screen avoids |
-| Folding the side chain into the COMP face's rows | It was one panel of eight rows once, with the Side Chain toggle as the divider. Splitting the bar gave the filter its own segment, and the rows follow the plot: a slider whose curve is not the one drawn moves nothing the operator can see. Four rows each, which is also what holds the face at its siblings' height |
-| The face switch in the TITLE row | Two segmented rows meant the operator had to know which of them held what they were after, and the title-row one was the harder of the two to find. It is now one bar in the display column with a segment per face — with the COMP face split in two, since its two plots answer different questions — and the EQ face's band selector is gone from a bar entirely (its markers are the control) |
+| Folding the side chain into the COMP face's rows | The filter has its own segment on the bar, and the rows follow the plot: a slider whose curve is not the one drawn moves nothing the operator can see. Four rows each, which is also what holds the face at its siblings' height |
+| The face switch in the TITLE row | Two segmented rows mean the operator has to know which of them holds what they are after, and a title-row one is the harder of the two to find. The bank has one bar in the display column with a segment per face — with the COMP face split in two, since its two plots answer different questions — and the EQ face's band selector is on no bar (its markers are the control) |
 | A lane rack on the SSMCS MAIN face | Two plots and a rack in one column leave each plot ~152 px of drawing area at a fixed 320 px height, so the same +6 dB bell reads at three times the slope it has on the EQ face. The lanes are still subscribed and still printed as readouts without one — the host builds lane elements only when a descriptor asks for them |
-| Widening the display column by giving the readout tiles fewer columns | Measured: the MAIN face's control column is 350 px with the tiles in two columns and 350 px with them in three. A grid of `1fr` tracks fills its parent; what asks for width is the parameter row's fixed-width slider. The observation that the column had slack was right and the lever was wrong — the split between the columns is the lever |
+| Widening the display column by giving the readout tiles fewer columns | Measured: the MAIN face's control column is 350 px with the tiles in two columns and 350 px with them in three. A grid of `1fr` tracks fills its parent; what asks for width is the parameter row's fixed-width slider. The column does have slack; the split between the columns is the lever |
 | A Type row on the SSMCS EQ face, locked, as the 4-band screen keeps its own | The 4-band keeps it because two of its four bands are typed and dropping it would change the panel's height per band. All three bands here are fixed, so the row would be the same locked one-value row every time and contributes nothing to the height being constant |
 | Out Gain on all three SSMCS faces, as the unit's status bar shows it | The unit repeats it because it is what the encoder is assigned to. Repeating it here only adds occasions for the same value to look different on two faces |
 | Locking the SSMCS COMP / EQ rows while Morphing is engaged | Morphing is a recomputation, not a continuing drive: ownership returns to the operator the moment it is written, and the unit's own screen accepts an edit immediately. Locking would forbid what the hardware allows |
-| Drawing the SSMCS plots from the 4-band EQ's measured model | Extrapolation to a different DSP block. The 4-band model needed three corrections that only came out of measuring, which is the whole argument against drawing one unmeasured |
+| Drawing the SSMCS plots from the 4-band EQ's measured model | Extrapolation to a different DSP block. The 4-band model needs three corrections that only come out of measuring, which is the whole argument against drawing one unmeasured |
 
 ## Accepted trade-offs / watch items
 
@@ -2147,8 +2121,9 @@ panel IS takes `set`.
 - **Gate actions shorter than 100 ms are invisible on GR** and no UI can recover them. The screen
   does not claim otherwise; it is for reading steady-state level relationships and setting the
   threshold against them, not for tuning attack / hold / decay.
-- **No fine-tuning mode.** The device's push-and-turn fine adjustment is confirmed *inactive* for
-  every GATE parameter, so no FINE hint is shown.
+- **Fine-tuning on the gains only.** The device's push-and-turn fine adjustment is confirmed *inactive*
+  for every GATE parameter and *active* (0.1 dB) for COMP Gain (make-up) and each EQ band's Gain. The FINE
+  legend therefore shows on those rows alone — a per-parameter measurement, not a class rule.
 
 ## Edit → device data path
 
@@ -2174,10 +2149,10 @@ would write the operator's stale manual curve straight over the device's own com
 nothing announces the recomputation: the notify registration is an address list, and the band
 addresses leave it while 1-knob is on (the plan stops emitting them). So `live.ts` calls the same device→plan inverse the
 device-follow scoped path uses, then re-captures the snapshot — without which every value the read
-brought in would read as a pending edit on the next diff. A device-side turn of the same knob already
-took this path; this is the same repair for our own write. A refetch is also one read of one node
-rather than a converge round, so the flush window is not held open for a whole convergence — which is
-what made a drag on the 1-knob level wait for the pointer to stop.
+brought in would read as a pending edit on the next diff. A device-side turn of the same knob takes
+this path too; this is the same repair for the app's own write. A refetch is also one read of one node
+rather than a converge round, so the flush window is not held open for a whole convergence — which,
+held open, would make a drag on the 1-knob level wait for the pointer to stop.
 
 **A refetch does not survive a converge, so one of them has to give way.** Both repairs can land in
 one flush — PAN/BAL and the morphing knob inside one 120 ms window is enough — and the converge runs
@@ -2195,9 +2170,9 @@ Which way it gives depends on **who authors the values**:
 
 **One of those heads is a string.** Selecting a Sweet Spot Data preset recomputes the same
 seventeen values a morph does, and the preset is a 4-digit string, so it rides the name-write
-path rather than the numeric one. That path used to walk past both sets, which is why the
-catalog could not simply declare it: a `NameWrite` now carries its catalog name and its owner
-node, and the flush's name loop reads the flag off it. What the preset does **not** do is move
+path rather than the numeric one. A `NameWrite` carries its catalog name and its owner node, and
+the flush's name loop reads the flag off it — without them that path would walk past both sets, and
+the catalog could not simply declare it. What the preset does **not** do is move
 the morph position — it is announced with the burst whatever it holds, and parking Morphing at
 62 before the write showed it announced and read back as 62 — so `drives` names the seventeen
 and not `93`, or a converge would be stopped from restoring a morph the operator set.
@@ -2215,9 +2190,9 @@ It is **not free**, and the cost is measurable. The unit does not answer for a w
 acks it (`docs/en/architecture.md`, "A write is not readable when it is acked"), and the refetch is
 issued in that same millisecond — so the read waits the write out from inside the flush, and one
 cycle of a 1-knob level drag is write + wait + read where a plain parameter's is write alone. In the
-race harness, on the same gesture: **423/428/432 ms per flush window against 322/334 ms** before the
-wait existed (`t2c-shape-change`, which is why that case's drag was lengthened from 10 steps to 16 —
-a shorter one no longer contains several windows). The control arm in the same case, a LOW band gain
+race harness, on the same gesture: **423/428/432 ms per flush window against 322/334 ms** without the
+wait (`t2c-shape-change`, whose drag is 16 steps because a shorter one does not contain several
+windows). The control arm in the same case, a LOW band gain
 drag with no `sideEffect`, is unchanged at 205/200 ms: only a drag that makes the unit recompute
 pays.
 
@@ -2228,4 +2203,4 @@ write to read-complete 58-298 ms, and the 300 ms bound never reached. So the cos
 announcement window and nothing else, and it cannot be tuned away: lowering the bound does not touch
 a drag, and the alternative — deferring the read to pointer-up — leaves the band gains stale for the
 whole gesture, so the plot draws a curve the unit is not producing. Several flushes still reach the
-unit inside one gesture, which is the property that mattered.
+unit inside one gesture, which is the property that matters.

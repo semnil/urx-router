@@ -208,8 +208,9 @@ mechanically.
 Because those three clauses share a number but not a kind of question, every `Finding` carries a
 **`class`** — `product` (the app misbehaved), `case` (the case may have measured nothing) or
 `harness` (the harness contradicted itself) — and `report()` groups by it before grouping by
-invariant number. It defaults to `product`, which every invariant but 6 is; within invariant 6,
-clause A is `case`, B is `product` and C is `harness`. The reader answers a different question for
+invariant number. It defaults to `product`. Two invariants report another class: within invariant
+6, clause A is `case`, B is `product` and C is `harness`, and invariant 16 reports a quiesce mark
+missing from the trace as `harness`. The reader answers a different question for
 each group: fix the app, fix the case, fix the harness.
 
 ## Tiers and cases
@@ -1078,10 +1079,13 @@ agreement, zero findings.
   back rather than lost
 
 **Against WebKit (`race-webkit`)**: the strip rebuild under a live pointer capture is
-**engine-independent**. Both engines agree on every load-bearing observable (after the rebuild the
-grabbed element is `connected=false` — detached — the screen shows the MIDI value `+5.0`, the detached
-element holds `-1.2`, and the device ends at `-120`). The only difference is the number of flushes one
-drag produces (Chromium 11–12, WebKit 9), which is the cost of a pointermove rather than a behaviour.
+**engine-independent**. Measured 2026-09-24 at `a94d0b28`, two runs per engine of
+`t4-midi.spec.ts` "a CC burst 50 ms into a CH 1 fader drag rebuilds the strip under the pointer": in
+every run the grabbed element is `connected=false` — detached — the screen shows the MIDI value
+`+5.0`, the detached element holds `-22.4`, the device ends at `+5.0` (500) and the drag produces one
+CH 1 fader flush. The same drag instrumented in each engine (three runs each) delivers 46 pointermove
+events with no coalescing and spends 0-0.5 ms in their dispatch in total; the drag's wall time differs
+(≈1.57 s in Chromium, ≈1.30 s in WebKit) and nothing the case asserts depends on it.
 
 **T7 — meters**: the handover baseline is clean and the generation stamp does suppress the late unsub.
 
@@ -1594,14 +1598,16 @@ not repeat them.
   sets a 4 s `page.setDefaultTimeout` in its `boot()` so an unreachable control lands in the sweep's
   error column by name — and Playwright applies a page default to every later action, including
   `goLive`'s own clicks, in the file's ONE case that is not a sweep. That case failed on
-  `page.click("#btn-device")` at exactly 4000 ms in every WebKit run since the tier existed (1.6.0,
-  1.6.1 and the run after it: first attempt 9.0-9.4 s, retry always green). It read as a flake and was
-  not one — the FIRST attempt fails, deterministically, and the retry always passes. The mechanism is
-  the actionability gate itself: it is a `requestAnimationFrame` loop wanting two consecutive frames
-  with the same box, and a headless engine delivers a document's first frames sparsely (measured on
-  macOS WebKit: 2 frames in the first 187 ms, against a ~16 ms cadence once the page is warm). Nothing
-  to do with the app — the button's box is byte-identical across 92 consecutive frames, and the same
-  `goLive` passes unbounded in the four other `@webkit` cases. `goLive` now carries its own bound on
+  `page.click("#btn-device")` at exactly 4000 ms in the first three WebKit runs of the tier (1.6.0,
+  1.6.1 and the run after it: first attempt 9.0-9.4 s, retry always green). What the click waits on is
+  the actionability gate, a `requestAnimationFrame` loop wanting two consecutive frames with the same
+  box. Measured on the CI WebKit runner on 2026-09-24, with the 4 s bound put back on that one click in
+  an instrumented build of the harness: as the first test of a fresh
+  worker the click took 3767 ms, the first animation frame came 2531 ms after the wait began, and the
+  button's box was the same in every frame. In the same run, in a worker that had already run a case, a
+  static page's button clicked in 130 ms, the app's Device button right after boot in 570 ms with a
+  494 ms gap between frames, and 2 s after boot in 69 ms. The wait is for frames rather than for a
+  moving box, and it falls in the first moments after the app boots. `goLive` now carries its own bound on
   every step, as its `waitForSelector` already did for the readback; the sweeps keep theirs, which is
   what it was written for. The case prints how long the session took to come up (437 ms on an idle
   Mac) so the margin is a figure in the log rather than something to rediscover
@@ -1650,9 +1656,10 @@ not repeat them.
   that is the whole rule — `addInitScript` here, and equally `evaluate` / `evaluateHandle` /
   `waitForFunction` / `locator.evaluate`, of which `e2e/race` alone has **186** (counted
   2026-08-13: 142 `evaluate`, 39 `waitForFunction`, 3 `evaluateAll`, 2 `addInitScript`; 36 of them
-  inside `fake-device.ts`, 149 in the specs, 1 in `ui.ts`). The tuple is
-  also the only crossing the type checker covers: the callback's annotation and the `as` cast name
-  one tuple type, so an arity mismatch is a compile error, while a closure reference is not. It
+  inside `fake-device.ts`, 149 in the specs, 1 in `ui.ts`). Of the two ways a driver-side value
+  reaches such a callback — the argument tuple and a closure reference — the tuple is the one the type
+  checker covers: the callback's annotation and the `as` cast name one tuple type, so an arity mismatch
+  is a compile error, while a closure reference is not. It
   entered `main` with the pull request that wrote it and survived three further merges before a
   version bump ran the harness again
 
