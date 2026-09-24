@@ -8,9 +8,9 @@
 // stamps can, and it is the same clock the engine runs on (`EngineHooks.now`), so the
 // two can never disagree about when something happened.
 //
-// It records the silences too. A send the port state swallowed and a feedback pass
-// that returned before emitting anything both look exactly like "nothing happened"
-// from outside, and telling those apart from "sent, no reply" is most of the work.
+// It records the silences too. A feedback pass that returned before emitting anything
+// looks exactly like "nothing happened" from outside, and telling that apart from
+// "sent, no reply" is most of the work.
 //
 // Recording is unconditional in a dev build rather than behind the trace flag: an
 // entry costs 0.08 µs (measured), which is four orders of magnitude below the gap it
@@ -32,7 +32,7 @@ import { addrLabel } from "../core/midi/mapping";
 import { decodeMessage } from "../core/midi/message";
 import { appendMidiLog, isTauri } from "../core/platform";
 
-export type MidiProbeKind = "tx" | "tx-dropped" | "rx" | "note" | "mark";
+export type MidiProbeKind = "tx" | "rx" | "note" | "mark";
 
 export interface MidiProbeEntry {
   /** performance.now() at the moment the app saw it. */
@@ -48,8 +48,6 @@ export interface MidiProbeEntry {
 export interface MidiProbe {
   mark(label: string): void;
   tx(bytes: number[]): void;
-  /** A send the port state swallowed — the silence that reads as "nothing was sent". */
-  txDropped(bytes: number[], reason: string): void;
   rx(bytes: number[]): void;
   /** One engine decision (apply / ignore / drop echo / refuse), or a pass outcome. */
   note(message: string): void;
@@ -189,7 +187,6 @@ function describe(bytes: number[]): string {
 const recorder: MidiProbe = {
   mark: (label) => push("mark", label),
   tx: (bytes) => push("tx", describe(bytes), bytes),
-  txDropped: (bytes, reason) => push("tx-dropped", `${describe(bytes)} (${reason})`, bytes),
   rx: (bytes) => push("rx", describe(bytes), bytes),
   note: (message) => push("note", message),
 };
@@ -220,7 +217,7 @@ function report(): string {
   const fmt = (ms: number): string => ms.toFixed(dp).padStart(9);
   const t0 = log[0].t;
   const counts: Record<string, number> = {};
-  const marks: Array<{ at: number; text: string; tx: number; dropped: number; rx?: MidiProbeEntry }> = [];
+  const marks: Array<{ at: number; text: string; tx: number; rx?: MidiProbeEntry }> = [];
   const rows: string[] = [];
   // One pass: the rows, the kind tally, and every mark's window. `open` is the mark
   // still counting sends; a reply is filled in for every mark that has not seen one.
@@ -228,9 +225,8 @@ function report(): string {
   for (const [i, e] of log.entries()) {
     rows.push(`${fmt(e.t - t0)} ${fmt(i === 0 ? 0 : e.t - log[i - 1].t)}  ${e.kind.padEnd(10)} ${e.text}`);
     counts[e.kind] = (counts[e.kind] ?? 0) + 1;
-    if (e.kind === "mark") marks.push((open = { at: e.t, text: e.text, tx: 0, dropped: 0 }));
+    if (e.kind === "mark") marks.push((open = { at: e.t, text: e.text, tx: 0 }));
     else if (e.kind === "tx" && open) open.tx++;
-    else if (e.kind === "tx-dropped" && open) open.dropped++;
     else if (e.kind === "rx") for (const m of marks) m.rx ??= e;
   }
   const summary = Object.entries(counts)
@@ -238,7 +234,7 @@ function report(): string {
     .join("  ");
   const trailer = marks.map(
     (m) =>
-      `  ${m.text}: tx=${m.tx} dropped=${m.dropped}, ` +
+      `  ${m.text}: tx=${m.tx}, ` +
       (m.rx ? `first rx +${(m.rx.t - m.at).toFixed(dp)} ms (${m.rx.text})` : "no rx after it"),
   );
   // Said once, above the numbers it qualifies. Stated as the EVIDENCE rather than as a

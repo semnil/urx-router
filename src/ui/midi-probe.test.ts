@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 // The probe is a measuring instrument, so what is pinned here is that it measures:
-// entries keep their arrival order on one clock, a send the port swallowed stays
-// distinguishable from one that went out, and `report()` states the two numbers a
+// entries keep their arrival order on one clock, and `report()` states the two numbers a
 // gate length is chosen from — how many messages a mark's window emitted, and how
 // long after the mark the first reply arrived. A probe that silently records nothing
 // is worse than no probe, which is the same reason meter-bench.contract.test.ts exists.
@@ -68,16 +67,6 @@ describe("midi probe", () => {
     ).toEqual(["CH 16 CC 80 = 95", "CH 1 NOTE 60 on", "CH 1 PITCH BEND = 8192", "raw [248]"]);
   });
 
-  it("records a swallowed send as its own kind, not as silence", () => {
-    probe.txDropped([0xbf, 80, 95], "no output port");
-    const [entry] = handle().entries();
-    expect(entry.kind).toBe("tx-dropped");
-    expect(entry.text).toContain("no output port");
-    expect(entry.bytes).toEqual([0xbf, 80, 95]);
-    // And it is not counted as a send by the per-mark measurement.
-    expect(handle().report()).toContain("tx-dropped=1");
-  });
-
   it("keeps a copy of the bytes, so a caller reusing its array cannot rewrite history", () => {
     const bytes = [0xbf, 80, 95];
     probe.tx(bytes);
@@ -91,7 +80,7 @@ describe("midi probe", () => {
     probe.tx([0xbf, 81, 30]);
     probe.rx([0xbf, 80, 12]);
     const text = handle().report();
-    expect(text).toContain("midi:resync: tx=2 dropped=0");
+    expect(text).toContain("midi:resync: tx=2,");
     // The decimals depend on what the clock offers (the two cases below pin both), so
     // this asserts the measurement rather than the environment it was taken in.
     expect(text).toMatch(/first rx \+\d+(\.\d\d)? ms \(CH 16 CC 80 = 12\)/);

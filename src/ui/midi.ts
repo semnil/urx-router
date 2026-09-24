@@ -240,14 +240,9 @@ export class MidiControl {
         hooks.onApplied(control, pairMirrored || insFxMirrored, keys);
         this.scheduleFeedback();
       },
+      // Reached only from `runFeedback`'s synchronous pass, which returns before the
+      // engine runs when no output port is open.
       send: (bytes) => {
-        if (!this.outputPort) {
-          // Recorded rather than returned silently: this branch is indistinguishable
-          // from "the engine emitted nothing" in every log the app keeps, and telling
-          // the two apart is the whole point of the probe.
-          midiProbe?.txDropped(bytes, "no output port");
-          return;
-        }
         this.traceLog?.(`tx [${bytes.join(" ")}]`);
         midiProbe?.tx(bytes);
         void midiSend(bytes).then(
@@ -678,8 +673,7 @@ export class MidiControl {
     //
     // Through `note` rather than `midiProbe`: `midiProbe` is a dev build's, and a release
     // build's own diagnostic (`urx-midi-log`) would otherwise show incoming messages
-    // with no outgoing ones and no line saying why — the same shape `send()`'s
-    // txDropped exists to avoid.
+    // with no outgoing ones and no line saying why.
     if (!this.deviceStateKnown) this.note?.(`feedback held — device state not established (resync=${resync})`);
     // Nothing goes out while a learn is armed. On a reflecting transport (the shared
     // IAC bus, or a controller that re-sends its state when feedback moves it — both
