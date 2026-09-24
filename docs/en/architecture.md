@@ -3054,13 +3054,19 @@ works by mouse wheel (desktop) and two-finger pinch (touch); both share one "zoo
 routine (`zoomAt` in `graph.ts`). `viewport-fit=cover` plus `env(safe-area-inset-bottom)` clears the
 notch / home indicator.
 
-**One control stays outside the comfortable target.** The same breakpoint gives the rack's and the
-inspector's controls a 40px minimum height, and a `<select>` does not take it: WebKit ignores
-`min-height` on a menulist, so a parameter row's dropdown keeps the platform's own height — measured
-19px there against 40 in Chromium, which does take it. The only way to make it take one is
-`appearance: none` plus a caret drawn as a background image (a select cannot host a pseudo-element),
-which would change every select in the app, on desktop too, for a phone target. The platform control
-is kept instead, and the same reason is why a parameter select is 19px tall beside a text input's 26.
+**A select takes the comfortable target as a height.** The same breakpoint gives the rack's and the
+inspector's controls a 40px minimum height, and a `<select>` does not take it that way: WebKit keeps these
+selects at the platform's own height whatever `min-height` says. It does take a `height`, and keeps the
+platform control while doing so — the computed `appearance` stays `auto` — so the breakpoint gives the
+rack's two pickers and every inspector select `height: 40px` instead. Measured 2026-09-24 at phone width,
+Playwright's WebKit 26.6 / Chromium 153 / iOS Safari 26.5 (an iPhone 17 simulator): the model picker read
+19 / 40 / 27 px with `min-height` alone and 40 / 40 / 40 with the height, and an inspector select
+19 / 28 / 27 px with neither and 40 / 40 / 40 with the height. macOS 27's own WKWebView, the engine the
+desktop build renders in (an off-screen view 390px wide), read 19 px for both pickers and the inspector
+selects before the change and 40 after. `e2e/chrome.spec.ts` holds the target in both Playwright
+engines (the case is tagged for `app-webkit`). Above the breakpoint nothing sets it, so on desktop a
+parameter select stays at the platform's height beside a text input's 26px — 19px in WebKit, 28 in
+Chromium.
 
 ## Node graph rendering constraints
 
