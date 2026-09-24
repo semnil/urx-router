@@ -1151,7 +1151,13 @@ const follow =
           (p.valueStr !== undefined
             ? live?.isEchoName(p.paramId, p.y, p.valueStr)
             : live?.isEcho(p.paramId, p.x, p.y, p.value)) ?? false,
-        isSuperseded: (p) => live?.hasUnannouncedWrite(p.paramId, p.x, p.y) ?? false,
+        // Dispatched on the value's type for the reason `isEcho` is: names are queued apart
+        // from the numeric writes.
+        isSuperseded: (p) =>
+          (p.valueStr !== undefined
+            ? live?.hasUnannouncedName(p.paramId, p.y)
+            : live?.hasUnannouncedWrite(p.paramId, p.x, p.y)) ?? false,
+        nameOwner: (paramId, x, y) => live?.lookupName(paramId, x, y),
         lookup: (paramId, x, y) => live?.lookup(paramId, x, y),
         // Read for one thing only: which routes the unit announced an insert-FX change
         // on while a read was running (see `announcedInsertFx`). A Signal Type notify

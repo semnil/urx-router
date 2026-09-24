@@ -55,11 +55,15 @@ export interface DeviceFollowHooks {
    *  rather than two: an echo policy that lived in two places would have to be found
    *  and changed twice, and the second site is what goes stale. */
   isEcho: (p: ParamUpdate) => boolean;
-  /** Whether a numeric notify that is not an echo reports a value one of our own writes
-   *  to the same address replaces: that write is issued and its announcement has not
-   *  arrived yet. Such a notify is not applied to the plan; the idle full reconcile reads
-   *  what the unit ends on. Absent = every non-echo notify is applied. */
+  /** Whether a notify that is not an echo reports a value one of our own writes to the
+   *  same address replaces: that write is issued and its announcement has not arrived yet.
+   *  Such a notify is not applied to the plan. Its node is re-read once no notify in the
+   *  window is still answered true here, so the read takes what the unit ends on rather
+   *  than the value the write replaces. Absent = every non-echo notify is applied. */
   isSuperseded?: (p: ParamUpdate) => boolean;
+  /** The node a name address belongs to, or undefined for any other address. Asked for a
+   *  rename `isSuperseded` holds back, which is re-read with its node like a scoped value. */
+  nameOwner?: (paramId: number, x: number, y: number) => string | undefined;
   /** A device-side change, past the intercept and echo filters — the notify stream
    *  itself, before it becomes a reconcile window. The window cannot answer for it: a
    *  burst is coalesced to the set of nodes it touched, so which addresses were
@@ -130,6 +134,9 @@ export class DeviceFollow {
   private scopedNodes = new Set<string>();
   private touched = new Set<string>();
   private forceFull = false;
+  // The notifies in the window that `isSuperseded` held back. The window is not read while
+  // any of them is still answered true.
+  private superseded: ParamUpdate[] = [];
   // Identity of the currently registered address set, so a reconcile that did not
   // change the plan's structure skips re-registering all ~hundreds of addresses.
   private registeredKey = "";
@@ -321,6 +328,7 @@ export class DeviceFollow {
     this.scopedNodes.clear();
     this.touched.clear();
     this.forceFull = false;
+    this.superseded = [];
   }
 
   private onNotify(p: ParamUpdate): void {
@@ -341,6 +349,8 @@ export class DeviceFollow {
     // this hook on `valueStr` because the two snapshots are separate maps.
     if (this.hooks.isEcho(p)) return;
     this.hooks.onDeviceParam?.(p);
+    const superseded = this.hooks.isSuperseded?.(p) === true;
+    if (superseded) this.superseded.push(p);
     // A device-side rename, which the numeric filters below cannot judge: it has no
     // catalog entry and no numeric value. Handled here and answered with the node, so
     // it stays a direct follow: one repaint, no readback.
@@ -350,7 +360,7 @@ export class DeviceFollow {
     // `lookup` resolves it to its owner node, so it takes that node's scoped read like any
     // other non-direct value. Anything the catalog does not know still reaches the
     // unknown-address path below, which is where an unrecognised shape belongs.
-    if (p.valueStr !== undefined) {
+    if (p.valueStr !== undefined && !superseded) {
       const node = this.hooks.applyName?.(p.paramId, p.x, p.y, p.valueStr);
       if (node !== undefined) {
         // The same tail the numeric direct path takes, and it is not optional: the
@@ -366,10 +376,15 @@ export class DeviceFollow {
     // Signal "following" once at the start of a burst, not on every notify in it.
     if (this.settleTimer === null) this.hooks.onFollow();
 
-    const addr = this.hooks.lookup(p.paramId, p.x, p.y);
-    // An address in no index, or one whose owner is the whole device rather than a
-    // node: a change worth a full read once the burst settles.
-    if (addr === undefined || addr.node === undefined) {
+    // A rename held back above has no catalog entry, so it is re-read through its owner.
+    const nameNode = p.valueStr !== undefined && superseded ? this.hooks.nameOwner?.(p.paramId, p.x, p.y) : undefined;
+    const addr = nameNode === undefined ? this.hooks.lookup(p.paramId, p.x, p.y) : undefined;
+    if (nameNode !== undefined) {
+      this.touched.add(`${nameNode}:name`);
+      this.scopedNodes.add(nameNode);
+    } else if (addr === undefined || addr.node === undefined) {
+      // An address in no index, or one whose owner is the whole device rather than a
+      // node: a change worth a full read once the burst settles.
       this.forceFull = true;
     } else {
       this.touched.add(`${addr.node}:${addr.name}`);
@@ -377,17 +392,16 @@ export class DeviceFollow {
       // A param flagged direct but not actually placeable falls back to a scoped read, and
       // so does a value one of our own unannounced writes replaces: the plan keeps the
       // value that write carries, and the read takes what the unit holds once it lands.
-      const superseded = this.hooks.isSuperseded?.(p) === true;
       if (addr.direct && !superseded && this.hooks.applyDirect(addr.node, addr.name, p.value)) {
         this.hooks.noteDirect(p.paramId, p.x, p.y, p.value);
         this.hooks.flushDirect();
       } else {
         this.scopedNodes.add(addr.node);
       }
-      // More distinct controls at once than two hands can move is a scene / preset
-      // recall, not hand operation, so escalate the settle to a full read.
-      if (this.touched.size > MAX_CONCENTRATION) this.forceFull = true;
     }
+    // More distinct controls at once than two hands can move is a scene / preset
+    // recall, not hand operation, so escalate the settle to a full read.
+    if (this.touched.size > MAX_CONCENTRATION) this.forceFull = true;
     this.armSettle();
     this.armIdle();
   }
@@ -416,10 +430,11 @@ export class DeviceFollow {
       if (idle) this.pendingFull = true;
       return;
     }
-    // A flush is writing the unit right now. Deferred rather than run: the window is kept,
-    // so every node this burst named is still re-read, on the settle timer's own re-arm —
-    // which is also what ends the wait, since nothing here hears one finish.
-    if (this.hooks.deferReconcile?.()) {
+    // A flush is writing the unit right now, or a write a notify in this window stands
+    // behind has not been announced. Deferred rather than run: the window is kept, so every
+    // node this burst named is still re-read, on the settle timer's own re-arm — which is
+    // also what ends the wait, since nothing here hears either finish.
+    if (this.hooks.deferReconcile?.() || this.superseded.some((p) => this.hooks.isSuperseded?.(p) === true)) {
       if (idle) this.deferredFull = true;
       this.armSettle();
       return;

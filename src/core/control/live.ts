@@ -282,6 +282,8 @@ export class LiveSync {
   // once. Together with `pendingValues` it answers `hasUnannouncedWrite`: from the moment
   // a write is issued until its announcement is taken as an echo.
   private readonly inFlight = new Set<number>();
+  // The same for the string writes, keyed as `pendingNames` is.
+  private readonly inFlightNames = new Set<string>();
   /**
    * Every address this session wrote recently, with the settle mark taken before its
    * own `vdSet` — the same record the flush builds for its own refetch, kept at session
@@ -385,6 +387,7 @@ export class LiveSync {
     this.pendingValues.clear();
     this.pendingNames.clear();
     this.inFlight.clear();
+    this.inFlightNames.clear();
     // Same session boundary: a mark taken on a previous link means nothing on this one.
     this.recentWrites.clear();
     this.capture(deviceView);
@@ -562,12 +565,21 @@ export class LiveSync {
    * makes them; the write replaces it once it lands.
    */
   hasUnannouncedWrite(paramId: number, x: number, y: number): boolean {
-    const k = addrKey(paramId, x, y);
-    if (this.inFlight.has(k)) return true;
-    const q = this.pendingValues.get(k);
+    return this.unannounced(this.inFlight, this.pendingValues, addrKey(paramId, x, y));
+  }
+
+  /** The string half of `hasUnannouncedWrite`: a name or a catalogued string write to
+   *  this address that the unit has not yet announced. */
+  hasUnannouncedName(paramId: number, y: number): boolean {
+    return this.unannounced(this.inFlightNames, this.pendingNames, `${paramId}:${y}`);
+  }
+
+  private unannounced<K, V>(inFlight: ReadonlySet<K>, queues: Map<K, PendingQueue<V>>, key: K): boolean {
+    if (inFlight.has(key)) return true;
+    const q = queues.get(key);
     if (!q) return false;
     dropExpired(q, Date.now() - SETTLE_TIMEOUT_MS);
-    if (!q.length) this.pendingValues.delete(k);
+    if (!q.length) queues.delete(key);
     return q.length > 0;
   }
 
@@ -623,6 +635,7 @@ export class LiveSync {
     this.pendingValues.clear();
     this.pendingNames.clear();
     this.inFlight.clear();
+    this.inFlightNames.clear();
     this.recentWrites.clear();
     this.pending = false;
     this.lastFlushConverged = false;
@@ -1088,7 +1101,12 @@ export class LiveSync {
         // catalogued string writes — the SSMCS preset — are read by their own refetch, and
         // watching them here as well would report one silence twice.
         const nameAddr = addrKey(w.param, 0, w.y);
-        await vdSetStr(w.param, 0, w.y, value);
+        this.inFlightNames.add(k);
+        try {
+          await vdSetStr(w.param, 0, w.y, value);
+        } finally {
+          this.inFlightNames.delete(k);
+        }
         if (this.sessionGen !== gen) return;
         this.nameSnapshot.set(k, value);
         this.notePending(this.pendingNames, k, value);

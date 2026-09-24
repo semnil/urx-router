@@ -211,13 +211,14 @@ describe("DeviceFollow", () => {
     expect(reconcileAll).not.toHaveBeenCalled();
   });
 
-  it("routes a value one of our unannounced writes replaces to a scoped read instead of the plan", async () => {
+  it("routes a value one of our unannounced writes replaces to a scoped read, held until the write is announced", async () => {
     const applyDirect = vi.fn(() => true);
     const noteDirect = vi.fn();
     const reconcileNodes = vi.fn(async () => {});
+    let unannounced = true;
     const follow = followFor({
       lookup: () => ({ name: "CH_FADER", node: "ch1", direct: true }),
-      isSuperseded: () => true,
+      isSuperseded: () => unannounced,
       applyDirect,
       noteDirect,
       reconcileNodes,
@@ -226,8 +227,38 @@ describe("DeviceFollow", () => {
     notify(-600);
     expect(applyDirect).not.toHaveBeenCalled();
     expect(noteDirect).not.toHaveBeenCalled();
+    // The settle passes while the write still has no announcement: the node is not read yet.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(reconcileNodes).not.toHaveBeenCalled();
+    unannounced = false;
     await vi.advanceTimersByTimeAsync(300);
     expect(reconcileNodes).toHaveBeenCalledWith(new Set(["ch1"]));
+  });
+
+  it("holds a rename one of our unannounced renames replaces out of the plan, and re-reads its node", async () => {
+    const applyName = vi.fn(() => "ch1");
+    const reconcileNodes = vi.fn(async () => {});
+    const reconcileAll = vi.fn(async () => {});
+    let unannounced = true;
+    const follow = followFor({
+      isSuperseded: (p) => p.valueStr !== undefined && unannounced,
+      nameOwner: (paramId) => (paramId === 18 ? "ch1" : undefined),
+      applyName,
+      reconcileNodes,
+      reconcileAll,
+    });
+    await follow.begin();
+    notifyName(18, "Panel");
+    expect(applyName).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(reconcileNodes).not.toHaveBeenCalled();
+    unannounced = false;
+    await vi.advanceTimersByTimeAsync(300);
+    expect(reconcileNodes).toHaveBeenCalledWith(new Set(["ch1"]));
+    expect(reconcileAll).not.toHaveBeenCalled();
+    // A rename nothing of ours replaces is still placed at once.
+    notifyName(18, "Later");
+    expect(applyName).toHaveBeenCalledWith(18, 0, 0, "Later");
   });
 
   it("still applies a direct change the host does not report as replaced", async () => {

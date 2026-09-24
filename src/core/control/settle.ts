@@ -24,9 +24,11 @@
 // notify for the fader can easily land before the fader was reached. A device notify
 // that lands after the mark and before the write's own announcement is counted here as
 // that announcement; the follow layer does not put its value into the plan and re-reads
-// the node instead (follow.ts, `isSuperseded`), and a notify that predates the write
-// leaves the address to be read off the unit. So the mark removes a spurious reconcile
-// rather than carrying the correctness of the merge.
+// the node once the write's own announcement has arrived (follow.ts, `isSuperseded`), so a
+// settle is not asked about the address while the replaced value is the last thing the
+// unit said about it. A notify that predates the write leaves the address to be read off
+// the unit. So the mark removes a spurious reconcile rather than carrying the correctness
+// of the merge.
 //
 // Two ways the wait ends, both measured:
 //   - the address's own notify (exact). What every write the snapshot held a DIFFERENT

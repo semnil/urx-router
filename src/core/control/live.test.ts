@@ -927,6 +927,31 @@ describe("LiveSync unannounced write", () => {
     const cmd = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
     expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x + 1, cmd.y)).toBe(false);
   });
+
+  it("answers the same for a rename, from the moment it is issued until its announcement is taken", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    let ack!: () => void;
+    vi.mocked(vdSetStr).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          ack = resolve;
+        }),
+    );
+    plan.nodeNames = { ...plan.nodeNames, ch1: "AppName" };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
+    expect(live.hasUnannouncedName(param, y)).toBe(true);
+    // A numeric write to the same address is a different question.
+    expect(live.hasUnannouncedWrite(param, 0, y)).toBe(false);
+    ack();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live.hasUnannouncedName(param, y)).toBe(true);
+    expect(live.isEchoName(param, y, "AppName")).toBe(true);
+    expect(live.hasUnannouncedName(param, y)).toBe(false);
+  });
 });
 
 // The unit announces a numeric write 58-151 ms after acking it, against a 120 ms flush
