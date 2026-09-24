@@ -220,8 +220,7 @@ const ROW_ORDER: Partial<Record<InsertFxFamily, readonly string[]>> = {
 };
 
 /** The unit's three MIDI Control modes, in its own order and its own words (the effect
- *  guide prints "Off, Setting, Real Time"). ONE list: the SCALE face's summary and the
- *  read-only row under it both print it, and two copies would drift. */
+ *  guide prints "Off, Setting, Real Time"). */
 const PITCH_MIDI_MODES = ["Off", "Setting", "Real Time"] as const;
 
 /** Clean's modulation selector (slot 19) and the value that puts it on vibrato. The unit
@@ -627,8 +626,8 @@ function insFxFace(): DynProcessor {
       return fam && name ? `${m.dynTuning.insfx.title} — ${name}` : m.dynTuning.insfx.title;
     },
     // What this bank is a bank of. The faces belong to the effect the node HOLDS, so a
-    // follow that replaces it takes the screen back to the amp face rather than leaving a
-    // CAB segment selected on a compander that has no cabinet.
+    // follow that replaces it takes the screen back to its first face rather than leaving a
+    // band face selected on an effect that has no bands.
     bankIdentity: (ctx) => familyOf(ctx) ?? "",
 
     // The rate-lock hint and the GR lane are built from insertFxMenu / insertFxCensus,

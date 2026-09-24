@@ -113,11 +113,6 @@ const SURFACES: Record<SurfaceName, Surface> = {
     // is not also a chip label anywhere: the strip's face reads EFFECT, since the scribble
     // above it already says which FX channel this is.
     composed: ["dynTuning.peakPrefix", "dynTuning.insfx.title", "dynTuning.fx.title"],
-    // What the panel says on screen is the pill beside the switch ("Device"); this is the
-    // sentence behind it, and it is three lines — printed on the panel it would be the
-    // largest thing on a section whose whole content is one dead row. The same arrangement
-    // Pitch Fix's read-only MIDI Control row has.
-    viaAttribute: ["dynTuning.insfx.mbcOneKnobDeviceOnly"],
   },
   prefs: {
     roots: ["prefs"],
@@ -271,6 +266,12 @@ test("every message in the catalog is claimed by a surface or excused by name", 
   // `wronglyShown`, which is the only place the answer can be observed.
   const live = new Set(allItems().map((i) => i.key));
   expect([...excused].filter((k) => !live.has(k))).toEqual([]);
+  // The same for the other two escapes: a key a surface reads from an attribute, or
+  // composes into a larger run, has to be one the catalog still carries — a message, or
+  // a namespace of them (a composed vocabulary is named by its namespace).
+  const escapes = names.flatMap((n) => [...(SURFACES[n].viaAttribute ?? []), ...(SURFACES[n].composed ?? [])]);
+  const carried = (k: string): boolean => live.has(k) || [...live].some((l) => l.startsWith(`${k}.`));
+  expect(escapes.filter((k) => !carried(k))).toEqual([]);
   expect(Object.keys(OUT_OF_SCOPE).filter((ns) => !(ns in en))).toEqual([]);
 });
 

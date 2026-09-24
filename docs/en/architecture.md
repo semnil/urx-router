@@ -1232,12 +1232,12 @@ double-click interval hit the factory reset above. Measured with its control (tw
 taps reset it".
 
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
-step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the inspector's
+step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the tuning screens'
 EQ band Gain and COMP Gain sliders step 0.1 dB (coarse 0.5 dB), and the STREAMING TIME knob steps 0.02 ms
 (coarse 1 ms; the fine step is fixed — it does not follow the sample rate, matching the device). Every
 fine-eligible control carries a printed `FINE` legend at all times — silkscreen-dim, so eligibility reads
 before any interaction, and placed so it can never shift the control's layout by appearing (pinned
-beside the static label in the inspector's row — anchored to the value readout it would jitter with the
+beside the static label in the tuning screen's row — anchored to the value readout it would jitter with the
 value's digit count — and floated in the whitespace above the console knob); while armed it lights
 amber on the hovered / focused control. **At all times includes while the row is locked**: a value the
 device has taken over (`Device-driven`) keeps its legend, ahead of the tag that says so — the legend

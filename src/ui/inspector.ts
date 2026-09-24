@@ -92,7 +92,6 @@ import type { Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
 import { holdInertOnBlur, isHoldingInert, onInertHoldsEnd, wheelStep } from "./dom";
-import { fineTag, optInFine } from "./fine";
 import { dynOpenLabel } from "./dyn-registry";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import type { DynKind } from "./dyn-registry";
@@ -1212,9 +1211,6 @@ function paramControl(
 // A labeled range slider that updates its value readout and reports the numeric
 // value on every input. Mutates in place (no re-render) so it keeps focus while
 // dragging. Shared by the connection (panSlider) and node-level controls.
-// `fine` opts the slider into the Shift-held fine-tuning mode (only params with a
-// device-verified fine grid pass it): the fine tracker swaps the step attribute
-// via the data attributes, and the row grows the FINE tag CSS lights while armed.
 function rangeSlider(
   label: string,
   min: number,
@@ -1223,7 +1219,6 @@ function rangeSlider(
   cur: number,
   fmt: (v: number) => string,
   onInput: (v: number) => void,
-  fine?: number,
 ): HTMLElement {
   const { row, value } = paramBlock(label, fmt(cur));
   const slider = document.createElement("input");
@@ -1232,11 +1227,6 @@ function rangeSlider(
   slider.max = String(max);
   slider.step = String(step);
   slider.value = String(cur);
-  if (fine !== undefined) {
-    optInFine(slider, step, fine);
-    row.classList.add("has-fine");
-    value.before(fineTag());
-  }
   slider.addEventListener("input", () => {
     const v = Number(slider.value);
     setLevelText(value, fmt(v));

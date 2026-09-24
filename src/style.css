@@ -1079,13 +1079,6 @@ input[type="range"]:focus-visible,
   border-radius: 3px;
   padding: 1px 3px;
 }
-/* Pin the legend beside the static label, not the readout — the readout's width
-   changes with the value's digits and sign while dragging, and a legend anchored
-   to it would jitter left and right. */
-.param-label .fine-tag {
-  margin-left: 8px;
-  margin-right: auto;
-}
 /* The knob legend is printed in the head whitespace just above the knob — the
    narrow info column cannot host the tag without wrapping or overlap, and the
    only fine knob (STREAMING TIME) has that whitespace by construction. Absolute,
@@ -1107,12 +1100,6 @@ input[type="range"]:focus-visible,
   color: var(--led-ink);
   opacity: 1;
   box-shadow: 0 0 5px var(--led);
-}
-
-/* A read-only param row (a value the device drives and only reports back, e.g. the
-   COMP ratio/gain while 1-knob is on): the label + value with no control, dimmed. */
-.param.readonly {
-  opacity: 0.6;
 }
 
 /* The mono font draws ∞ at x-height; scale it up (with line-height: 0 so it never
