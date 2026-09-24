@@ -158,7 +158,9 @@ flowchart TD
   セッションが知っていること (`SwitchSession`) も問う: flush が送信済みの ON は実機に届いているので拒否せず、flush が
   保留したまま読み出し自身の値に置き換えられた ON も同じく拒否として扱う (`unsentRefusedSwitches`)。flush は保留中の
   HI-Z の ON が一緒に下げた +40 dB の A.Gain も保留し (`carrierOf`)、その収束は、実機がパネルでオンにしたと通知した
-  スイッチとそのチャンネルのもう片方を、その通知が予約した follow の読み出しに委ねる
+  スイッチとそのチャンネルのもう片方を、その通知が予約した follow の読み出しに委ねる。読み出しのステータス行は
+  拒否した ON を先頭に置き、置き換える行がまだそれを先頭に置いている間は、後の読み出しの行も同じく先頭に置く
+  (`main.ts` の `withSwitchNotes`) — 一連の通知が静まった後に follow が行う全体の読み出しがそこに着地する
   - `src/core/midi/` — 外部 MIDI コントロール (デスクトップのみ)。`message.ts` CC / ノート / ピッチベンドの
     デコード・エンコード / `mapping.ts` 自由割当のモデル (アドレス、テイクオーバーモード absolute/pickup) +
     永続化の検証 / `controls.ts` 固定コントロール id (`node/param[@scope]`) のカタログ。CONSOLE の全コントロールと

@@ -8109,8 +8109,10 @@ describe("+48V and Hi-Z on one channel", () => {
 
     // The unit has turned +48V on and its announcement has not reached the session: the flush
     // asks the unit before the Hi-Z ON goes, so neither it nor the A.Gain it lowered is sent,
-    // and the read the announcement starts refuses the press.
-    it("sends no Hi-Z ON ahead of the unit's +48V announcement", SLOW, async () => {
+    // and the read the announcement starts refuses the press. The full read device follow runs
+    // once the burst goes quiet changes nothing, and the status line goes on saying why.
+    it("sends no Hi-Z ON ahead of the unit's +48V announcement, and the line keeps saying why", SLOW, async () => {
+      const CH1_Y = channelControl(model, "ch1")!.y;
       const CH4_Y = channelControl(model, "ch4")!.y;
       const { table, hold } = holdingUnit(
         { [at(PARAMS.HA_GAIN.id)]: gainToVd(60), [RATE]: 48_000 },
@@ -8157,21 +8159,76 @@ describe("+48V and Hi-Z on one channel", () => {
         "the flush asked the unit",
       ).toBe(true);
 
+      // Selected once rather than inside the waits below: two presses inside the double-click
+      // window trace the node's signal path, and the line that reports it replaces the one this
+      // case reads.
+      selectNode("ch3");
+      const announced = shell.invokes.length;
       notifyChannel(shell).onmessage([{ param_id: PARAMS.PHANTOM.id, x: 0, y: CH3_Y, value: 1 }]);
-      await vi.waitFor(
-        () => {
-          selectNode("ch3");
-          expect(switches()).toEqual({ phantom: "ON", hiZ: "OFF" });
-        },
-        { timeout: 25_000, interval: 50 },
-      );
+      await vi.waitFor(() => expect(switches()).toEqual({ phantom: "ON", hiZ: "OFF" }), {
+        timeout: 25_000,
+        interval: 50,
+      });
       await quiet(shell);
+      expect(
+        shell.invokes.some(
+          (cmd, i) =>
+            i >= announced &&
+            cmd === "vd_get" &&
+            shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
+            shell.args[i]?.y === CH1_Y,
+        ),
+        "the premise: the full read ran behind the scoped one",
+      ).toBe(true);
       expect(gainShown(), "the gain the press lowered is the unit's again").toBe("+60 dB");
+      expect(statusText().startsWith(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
       expect({
         phantom: writesAt(shell, PARAMS.PHANTOM.id),
         hiZ: writesAt(shell, PARAMS.HI_Z.id),
         gain: writesAt(shell, PARAMS.HA_GAIN.id),
       }).toEqual({ phantom: [], hiZ: [], gain: [] });
+
+      // A later change at the unit's panel is a burst of its own, and its line says only what it did.
+      hold.panel(PARAMS.CLIP_SAFE.id, 1);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE.id, x: 0, y: CH3_Y, value: 1 }]);
+      await vi.waitFor(() => expect(litFace(t().inspector.clipSafe)).toBe("ON"), { timeout: 25_000, interval: 50 });
+      await quiet(shell);
+      expect(statusText().includes(t().status.hiZRefusedByRead("CH 3")), statusText()).toBe(false);
+    });
+
+    // The same full read does not bring a refusal back onto a line the operator's own action
+    // has replaced since.
+    it("does not carry a refusal onto a line the operator's own action replaced", SLOW, async () => {
+      const CH1_Y = channelControl(model, "ch1")!.y;
+      const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.HI_Z.id, false);
+      const shell = (await bootApp({ tauri: table }))!;
+      live().click();
+      await liveUp();
+
+      hold.panel(PARAMS.HI_Z.id, 1);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+      selectNode("ch3");
+      pressFace(t().inspector.phantom, t().inspector.on);
+      await vi.waitFor(
+        () => expect(statusText().startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true),
+        { timeout: 25_000, interval: 20 },
+      );
+      const refused = shell.invokes.length;
+      (document.activeElement as HTMLElement | null)?.blur();
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToUndo);
+      await quiet(shell);
+      expect(
+        shell.invokes.some(
+          (cmd, i) =>
+            i >= refused &&
+            cmd === "vd_get" &&
+            shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
+            shell.args[i]?.y === CH1_Y,
+        ),
+        "the premise: the full read ran after the undo",
+      ).toBe(true);
+      expect(statusText().includes(t().status.phantomRefusedByRead("CH 3")), statusText()).toBe(false);
     });
 
     // An ON the flush sent while the unit still held the other switch off is on the unit, even

@@ -169,7 +169,10 @@ carries a one-line map of the same directories and points here.
   on the unit and is not refused, and an ON the flush held back that the read's own value replaced is
   refused all the same (`unsentRefusedSwitches`). The flush holds the +40 dB A.Gain a held HI-Z ON lowered
   with it (`carrierOf`), and its converge leaves a switch the unit announced it turned on at its panel, with
-  the other one on that channel, to the follow read that announcement scheduled
+  the other one on that channel, to the follow read that announcement scheduled. A read's status line leads
+  with the ONs it refused, and a later read's line keeps leading with them while the line it replaces still
+  does (`withSwitchNotes` in `main.ts`) — the full read device follow runs once a burst goes quiet lands
+  there
   - `src/core/midi/` — external MIDI control (desktop only). `message.ts` decode/encode of CC/note/pitch
     bend / `mapping.ts` free-mapping model (address, takeover mode absolute/pickup) + persistence validation
     / `controls.ts` catalog of fixed control ids (`node/param[@scope]`) for every CONSOLE control **and

@@ -816,12 +816,22 @@ function bothOnLabels(): string {
 }
 /** A device read's status line, led by what it did about +48V / HI-Z: the ONs it refused
  *  (`merged`, when the read is one that can refuse), then the channels it left with both on.
- *  The plan keeps what the unit holds; the app writes nothing for either. */
+ *  The plan keeps what the unit holds; the app writes nothing for either.
+ *
+ *  A line that replaces one still leading with a read's refusals goes on leading with them:
+ *  the full read device follow runs once a burst goes quiet lands on that line, and a line
+ *  anything else has replaced since carries nothing forward. */
 function withSwitchNotes(msg: string, merged?: MergedRead): string {
   bothOnNoted = bothOnLabels();
   const both = bothOnNoted ? [t().status.phantomHiZBothOn(bothOnNoted)] : [];
-  return [...refusalNotes(merged), ...both, msg].join(" — ");
+  let notes = refusalNotes(merged);
+  if (!notes.length && refusalLine && statusbar.textContent === refusalLine.line) notes = refusalLine.notes;
+  const line = [...notes, ...both, msg].join(" — ");
+  refusalLine = notes.length ? { line, notes } : null;
+  return line;
 }
+/** The last status line that led with a read's refusals, and those refusals. */
+let refusalLine: { line: string; notes: string[] } | null = null;
 /** One sentence per switch a read refused (`MergedRead.refusedOn`), channels in model order. */
 function refusalNotes(merged: MergedRead | undefined): string[] {
   if (!merged?.refusedOn.length) return [];
