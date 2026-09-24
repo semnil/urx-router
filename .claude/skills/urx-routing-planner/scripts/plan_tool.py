@@ -674,9 +674,9 @@ def fx_effect_warnings(node_id, fx, out):
     if not isinstance(fx, dict):
         out.append((f"{node_id}.fxEffect", f"{fx!r} is not an object, which drops the whole effect"))
         return True
-    # An empty group sanitizes to nothing and the key is removed, which is not a harmless
-    # difference: the document as written authors the whole channel at the factory defaults,
-    # while the loaded plan leaves the channel alone.
+    # An empty group sanitizes to nothing and the app removes the key, so the loaded plan
+    # differs from the document as written. The load then fills the channel's factory
+    # effect, which a write sends and the write confirm names as values nobody chose.
     if not fx:
         out.append(
             (
