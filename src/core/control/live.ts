@@ -128,8 +128,8 @@ export interface LiveSyncHooks {
    *  then failed isEcho and was reconciled as a device-side change. */
   refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites, edits?: PlanWriteWatch) => Promise<Plan | null>;
   /** Start watching the plan's edits (plan-history.PlanWriteWitness). A flush whose writes
-   *  will provoke a refetch opens one where it takes the values it sends, and hands it to
-   *  that read: an edit made after that instant is carried by none of the writes, and the
+   *  will provoke a refetch opens one at the first take of values that holds such a write,
+   *  and hands it to that read: an edit made after that instant is carried by none of the writes, and the
    *  read, opened only once the writes have returned, keeps it as one made while it runs.
    *  Absent = the read watches from its own start. */
   watchEdits?: () => PlanWriteWatch;
@@ -954,22 +954,23 @@ export class LiveSync {
         // Derived again: the park merged the unit's own values into the plan.
         commands = planToCommands(model, plan, scope);
       }
-      // Where the values below are taken. A write among them that provokes a refetch has that
-      // read issued only once the writes have returned, so an edit made from here on — carried
-      // by none of them — is watched from here and handed to the read, which keeps it as it
-      // keeps an edit made while it runs.
-      const refetchAhead =
-        commands.some(
-          (c) => c.node !== undefined && REFETCH.has(c.name) && this.snapshot.get(cmdAddr(c)) !== c.vdValue,
-        ) ||
-        planToNameWrites(model, plan).some(
-          (w) =>
-            w.node !== undefined &&
-            w.name !== undefined &&
-            REFETCH.has(w.name) &&
-            this.nameSnapshot.get(nameKey(w)) !== w.value,
-        );
-      if (refetchAhead) edits = this.hooks.watchEdits?.();
+      // A write that provokes a refetch has that read issued only once the flush's writes have
+      // returned, so an edit made after the value it carries was taken is carried by none of
+      // them. The watch opens at the first take that holds such a write — here, at a re-take
+      // inside the numeric loop, or where the name loop takes its own list — and goes to the
+      // read, which keeps that edit as it keeps one made while it runs.
+      const numericHead = (c: VdCommand, value: number | undefined): boolean =>
+        c.node !== undefined && REFETCH.has(c.name) && value !== undefined && this.snapshot.get(cmdAddr(c)) !== value;
+      const nameHead = (w: NameWrite, value: string | undefined): boolean =>
+        w.node !== undefined &&
+        w.name !== undefined &&
+        REFETCH.has(w.name) &&
+        value !== undefined &&
+        this.nameSnapshot.get(nameKey(w)) !== value;
+      const watchIf = (refetchAhead: boolean): void => {
+        if (refetchAhead && !edits) edits = this.hooks.watchEdits?.();
+      };
+      watchIf(commands.some((c) => numericHead(c, c.vdValue)));
       // Both lists below are frozen at flush start; the snapshots they are diffed against
       // are not. Any await can let a device-side change land (noteDirect's one entry, or a
       // reconcile's whole capture), and what a frozen list carries is then older than what
@@ -992,7 +993,9 @@ export class LiveSync {
         const k = cmdAddr(c);
         if (this.snapshotEpoch !== valuesAt) {
           valuesAt = this.snapshotEpoch;
-          fresh = this.commandValues(model, plan, scope);
+          const retaken = this.commandValues(model, plan, scope);
+          fresh = retaken;
+          watchIf(commands.some((x) => numericHead(x, retaken.get(cmdAddr(x)))));
         }
         // Absent from the re-take = the address left the plan while this flush ran, so
         // there is nothing left to send to it.
@@ -1074,11 +1077,15 @@ export class LiveSync {
       // it is one structure, so it gets one rule.
       let namesAt = this.snapshotEpoch;
       let freshNames: Map<string, string> | null = null;
-      for (const w of planToNameWrites(model, plan)) {
+      const names = planToNameWrites(model, plan);
+      watchIf(names.some((w) => nameHead(w, w.value)));
+      for (const w of names) {
         const k = nameKey(w);
         if (this.snapshotEpoch !== namesAt) {
           namesAt = this.snapshotEpoch;
-          freshNames = new Map(planToNameWrites(model, plan).map((n) => [nameKey(n), n.value]));
+          const retaken = new Map(planToNameWrites(model, plan).map((n) => [nameKey(n), n.value]));
+          freshNames = retaken;
+          watchIf(names.some((n) => nameHead(n, retaken.get(nameKey(n)))));
         }
         const value = freshNames ? freshNames.get(k) : w.value;
         if (value === undefined) continue;
