@@ -277,10 +277,11 @@ export class LiveSync {
   // no notifies, no advance — and that is exactly when an unannounced write should be
   // forgotten. SETTLE_TIMEOUT_MS is borrowed for the LENGTH, not the axis.
   private readonly pendingValues = new Map<number, PendingQueue<number>>();
-  // Addresses whose numeric write is on the wire and not yet acked, as a count per
-  // address. Together with `pendingValues` it answers `hasUnannouncedWrite`: from the
-  // moment a write is issued until its announcement is taken as an echo.
-  private readonly inFlight = new Map<number, number>();
+  // Addresses whose numeric write is on the wire and not yet acked. A flush sends one
+  // command at a time and never overlaps another flush, so an address is in here at most
+  // once. Together with `pendingValues` it answers `hasUnannouncedWrite`: from the moment
+  // a write is issued until its announcement is taken as an echo.
+  private readonly inFlight = new Set<number>();
   /**
    * Every address this session wrote recently, with the settle mark taken before its
    * own `vdSet` — the same record the flush builds for its own refetch, kept at session
@@ -1038,13 +1039,11 @@ export class LiveSync {
         // `hasUnannouncedWrite` answers for, so the follow layer re-reads its node
         // rather than putting its value into the plan (settle.ts).
         const mark = writeSettle.mark();
-        this.inFlight.set(k, (this.inFlight.get(k) ?? 0) + 1);
+        this.inFlight.add(k);
         try {
           await vdSet(c.paramId, c.x, c.y, value);
         } finally {
-          const n = (this.inFlight.get(k) ?? 1) - 1;
-          if (n > 0) this.inFlight.set(k, n);
-          else this.inFlight.delete(k);
+          this.inFlight.delete(k);
         }
         // Nothing below this line belongs to a session that has gone: the remaining
         // commands would go out over a disconnected link, and the snapshot they would be
