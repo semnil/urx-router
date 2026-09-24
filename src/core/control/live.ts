@@ -327,10 +327,6 @@ export class LiveSync {
   private snapshotEpoch = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
-  // Inside a flush's reading phases: the park in front of its head writes, the park ahead
-  // of its converge, and the converge loop. What device follow holds a reconcile off (see
-  // `isConverging`).
-  private converging = false;
   private pending = false;
   // The last flush had to converge (a sideEffect param went out), which re-reads
   // the whole write scope and settles between rounds — seconds, not milliseconds.
@@ -354,18 +350,19 @@ export class LiveSync {
   }
 
   /**
-   * Whether a flush is READING the unit — the park in front of its head writes, the park
-   * ahead of its converge, and the converge's own rounds. What device follow holds a
-   * reconcile off (`DeviceFollowHooks` `deferReconcile`).
+   * Whether a flush is armed, running, or queued behind the running one: the plan may hold
+   * an edit the unit has not been sent, or a write is on the wire. What device follow holds
+   * a reconcile off (`DeviceFollowHooks` `deferReconcile`).
    *
-   * Those phases and not the whole flush. A converge round re-reads the WHOLE write scope
-   * and sends behind it, over and over: a read taken there reads a unit this app is
-   * part-way through rewriting, and the reads of the two interleave for as long as it runs.
-   * An ordinary flush is a handful of writes and no read at all, so a reconcile beside one
-   * is the app's ordinary two-chain contention rather than a reader of a moving device.
+   * A read taken then answers such an address with the value the edit replaces — the flush
+   * has not sent it, or the unit answers the pre-write value until it announces the write —
+   * and the merge takes a read's value wherever the plan still holds what it held when the
+   * read was issued, which an edit made before that does. Once this answers false every
+   * edit has been sent and acked, and the read's settle waits out their announcements
+   * (`recentPending`). A converge round is inside a flush, so a read never lands in one.
    */
-  isConverging(): boolean {
-    return this.converging;
+  isWriting(): boolean {
+    return this.timer !== null || this.flushing;
   }
 
   private scope(): WriteScope {
@@ -961,10 +958,6 @@ export class LiveSync {
         outgoing.add(silentKey(family, c.node));
       }
       if (outgoing.size) {
-        // A read on the link, so device follow holds its reconcile off from here rather than
-        // from the converge: two readers on one link is what invariant 4 catches, and this
-        // one is in front of the writes instead of behind them.
-        this.converging = true;
         await this.hooks.parkSilent?.({ only: outgoing, keepHeads: true });
         if (this.sessionGen !== gen) return;
         // Derived again: the park merged the unit's own values into the plan.
@@ -1137,7 +1130,6 @@ export class LiveSync {
       }
       this.lastFlushConverged = sideEffect;
       if (sideEffect) {
-        this.converging = true;
         // The device reset dependents; converge against its post-reset state and
         // rebuild the snapshot so the next diff measures from the device truth.
         // Converge against a frozen copy, not the live plan: an edit that arrives
@@ -1340,7 +1332,6 @@ export class LiveSync {
       return;
     } finally {
       this.flushing = false;
-      this.converging = false;
     }
     if (this.pending) {
       this.pending = false;

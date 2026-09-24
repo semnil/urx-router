@@ -100,12 +100,12 @@ export interface DeviceFollowHooks {
   /** A reconcile failed; follow is already stopped — the caller drops the link. */
   onError: (message: string) => void;
   /**
-   * Whether a reconcile must wait. True while Live sync is inside a converge: the app is
-   * rewriting the unit round after round, so a read taken there reads a device it is
-   * changing — and the two readers interleave on the one link for as long as it runs.
+   * Whether a reconcile must wait. True while Live sync has a flush armed, running or
+   * queued: a read taken then answers an address the flush has not written, or has not
+   * had announced, with the value the edit replaces, and the merge takes it.
    *
    * Deferring keeps the window rather than spending it, so every node the burst named is
-   * still re-read once the converge ends. Absent = never defer (the browser build, and
+   * still re-read once the flush is done. Absent = never defer (the browser build, and
    * the tests that do not exercise it).
    */
   deferReconcile?: () => boolean;
@@ -416,9 +416,9 @@ export class DeviceFollow {
       if (idle) this.pendingFull = true;
       return;
     }
-    // A converge is rewriting the unit right now. Deferred rather than run: the window is
-    // kept, so every node this burst named is still re-read, on the settle timer's own
-    // re-arm — which is also what ends the wait, since nothing here hears one finish.
+    // A flush is writing the unit right now. Deferred rather than run: the window is kept,
+    // so every node this burst named is still re-read, on the settle timer's own re-arm —
+    // which is also what ends the wait, since nothing here hears one finish.
     if (this.hooks.deferReconcile?.()) {
       if (idle) this.deferredFull = true;
       this.armSettle();

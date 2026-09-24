@@ -1134,9 +1134,10 @@ const follow =
         // The plan's follow set plus Follow USB, which the plan deliberately does
         // not carry (params.ts) but the badge has to keep in step with the device.
         addrs: () => [...(live?.followAddrs() ?? []), FOLLOW_USB_ADDR],
-        // Held off while a converge runs: it is rewriting the unit round after round,
-        // and its reads and this one otherwise interleave on the one link.
-        deferReconcile: () => live?.isConverging() ?? false,
+        // Held off while a flush is armed, running or queued: a read taken then answers an
+        // edit the flush has not sent, or a write the unit has not announced, with the value
+        // it replaces, and the merge takes that value over the operator's edit.
+        deferReconcile: () => live?.isWriting() ?? false,
         intercept: (p) => {
           const [id, x, y] = FOLLOW_USB_ADDR;
           if (p.paramId !== id || p.x !== x || p.y !== y) return false;

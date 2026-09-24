@@ -251,7 +251,9 @@ test.describe("Tzb tail", () => {
   // command boundary — it is the phase of a continuous gesture, and the gesture is
   // seconds long, so driver jitter is two orders of magnitude below the window.
   for (const D of [100, 600, 1500]) {
-    test(`a BULK_CHANGE sentinel ${D} ms into a fader drag replaces the plan under the pointer`, async ({ page }) => {
+    test(`a BULK_CHANGE sentinel ${D} ms into a fader drag replaces the plan, in a gap of the drag or after it`, async ({
+      page,
+    }) => {
       test.setTimeout(180_000);
       await installFake(page);
       await page.goto("/");
@@ -334,42 +336,59 @@ test.describe("Tzb tail", () => {
       expect(dragWrites.length).toBeGreaterThan(1);
       expect(dragged).not.toBe(before);
 
-      // The readback lands while the pointer is still down, and the element the operator
-      // is holding is taken out of the document by the reflect's full console render.
-      // That is the trigger and it is unchanged.
-      expect(duringDrag.connected).toBe(false);
-      expect(duringDrag.detachAt).toBeGreaterThan(dragAt);
-      expect(duringDrag.detachAt).toBeLessThan(releaseAt);
-      // Invariant 10. The drag's handler is bound to `window` and closes over the
-      // detached StripRef, so it is still called after the replacement — it now ends the
-      // gesture there instead of going on writing into the plan and out to the device
-      // from a control that is no longer on screen.
-      //
-      // Bounded one flush window past the detach rather than at it: a plan edit made
-      // BEFORE the element went is written up to 120 ms later, so the trailing set is the
-      // last pre-detach edit leaving, not the gesture continuing. What the window has to
-      // exclude is the remaining ~1.7-3 s of pointer movement, which is where every write
-      // used to be. FLUSH_TAIL_MS is that window plus slack for a loaded runner.
-      expect(setsOn(all, CH1_FADER, duringDrag.detachAt + FLUSH_TAIL_MS)).toHaveLength(0);
-      // The visible half of that: the strip on screen stops answering the pointer the
-      // instant it is replaced, and now nothing else is answering it either — the
-      // readout the operator ends on is the recalled value, and it is what was written.
-      expect(held).toBe(after);
-
+      // Where the readback lands is decided by the flushes the drag keeps making. A reconcile
+      // does not start while a flush is armed or running (follow.ts `deferReconcile`), and a
+      // continuous drag keeps one armed except in the few milliseconds between a flush's ack
+      // and the next move. So the recall's read starts in such a gap when one of its retries
+      // lands there, and after the release when none does — which of the two a run takes is
+      // timing, so each is asserted for what it has to hold.
+      const sweepStart = reads.length ? reads[0].start : Number.POSITIVE_INFINITY;
+      const beganInDrag = sweepStart < releaseAt;
+      if (beganInDrag) {
+        // The readback lands while the pointer is still down, and the element the operator
+        // is holding is taken out of the document by the reflect's full console render.
+        expect(duringDrag.connected).toBe(false);
+        expect(duringDrag.detachAt).toBeGreaterThan(dragAt);
+        expect(duringDrag.detachAt).toBeLessThan(releaseAt);
+        // Invariant 10. The drag's handler is bound to `window` and closes over the
+        // detached StripRef, so it is still called after the replacement — it ends the
+        // gesture there instead of going on writing into the plan and out to the device
+        // from a control that is no longer on screen.
+        //
+        // Bounded one flush window past the detach rather than at it: a plan edit made
+        // BEFORE the element went is written up to 120 ms later, so the trailing set is the
+        // last pre-detach edit leaving, not the gesture continuing. What the window has to
+        // exclude is the remaining pointer movement. FLUSH_TAIL_MS is that window plus slack
+        // for a loaded runner.
+        expect(setsOn(all, CH1_FADER, duringDrag.detachAt + FLUSH_TAIL_MS)).toHaveLength(0);
+        // The visible half of that: the strip on screen stops answering the pointer the
+        // instant it is replaced, and nothing else is answering it either — the readout the
+        // operator ends on is the one the readback left.
+        expect(held).toBe(after);
+        // The history reset that goes with a readback ran while the pointer was down.
+        expect(resets[0]).toBeLessThan(releaseAt);
+      } else {
+        // The drag was not interrupted: the element the operator held stayed in the
+        // document, and the readback and its history reset came after the release. With
+        // no edit made while it read, the key the pointer held takes the recalled value.
+        expect(duringDrag.connected).toBe(true);
+        expect(resets[0]).toBeGreaterThan(releaseAt);
+        expect(after).toBe(deviceLevelText(-700));
+      }
       // The plan the operator was editing is gone — for every key they were NOT holding.
       // That half is unconditional: nothing else authored CH 2, so the recalled scene
       // lands there whatever the pointer was doing.
       expect(afterCh2).toBe(deviceLevelText(-800));
       expect(afterCh2).not.toBe(beforeCh2);
 
-      // The key UNDER THE POINTER is NOT asserted, and the reason is a limit of this
-      // trace rather than a softening. readIntoPlan applies the device's values first
-      // and the edits made during the read over them, so the outcome turns on whether a
-      // plan EDIT landed between the sweep being issued and it resolving — and an edit
-      // is not in the IPC log at all. Only its write is, lagged by up to the 120 ms
-      // flush window and continuing after the read has resolved, so no predicate over
-      // the trace decides it. Measured both ways: `-7.0` (the scene) running alone,
-      // `-14.0` (a value the drag passed through) under `--workers=4`.
+      // When the read begins inside the drag, the key UNDER THE POINTER is NOT asserted, and
+      // the reason is a limit of this trace rather than a softening. readIntoPlan applies
+      // the device's values first and the edits made during the read over them, so the
+      // outcome turns on whether a plan EDIT landed between the sweep being issued and it
+      // resolving — and an edit is not in the IPC log at all. Only its write is, lagged by
+      // up to the 120 ms flush window and continuing after the read has resolved, so no
+      // predicate over the trace decides it. Measured both ways: `-7.0` (the scene) running
+      // alone, `-14.0` (a value the drag passed through) under `--workers=4`.
       //
       // Placing the edit exactly, the way T1 does with `blockAt`, would decide it — but
       // this case's variable is already D, where the recall falls inside the gesture,
@@ -382,22 +401,19 @@ test.describe("Tzb tail", () => {
       // the merge happens to settle on the value that write carried. It was asserted
       // here until CI produced the second case (both `-7.2`, D=1500) — a red run stating
       // nothing the comment above does not already say is unresolvable.
-      const sweepStart = reads.length ? reads[0].start : Number.POSITIVE_INFINITY;
       const unitHolds = deviceLevelText((await memOf(page))[CH1_FADER]);
       console.log(
-        `sweep began at ${sweepStart.toFixed(0)} ms; the pointer's key settled at ${after}` +
+        `sweep began at ${sweepStart.toFixed(0)} ms, ${beganInDrag ? "inside" : "after"} the drag; the pointer's key settled at ${after}` +
           ` (the scene holds ${deviceLevelText(-700)}; the unit and the plan ` +
-          `${unitHolds === after ? "agree" : "have come apart"}) — interleaving-dependent, not asserted`,
+          `${unitHolds === after ? "agree" : "have come apart"}) — interleaving-dependent inside the drag, not asserted there`,
       );
 
-      // …and the three entries that existed before the gesture are gone, dropped by a
-      // reset that ran while the pointer was still down: a readback re-authors every
-      // value, so nothing earlier describes a state the plan can return to. The
-      // operator cannot step back to what they were holding either.
+      // …and the three entries that existed before the gesture are gone, dropped by the
+      // reset a readback makes: it re-authors every value, so nothing earlier describes a
+      // state the plan can return to.
       expect(depthBefore.undo).toBe(3);
       expect(depthAfter.undo).toBeLessThan(3);
       expect(resets.length).toBeGreaterThan(0);
-      expect(resets[0]).toBeLessThan(releaseAt);
     });
   }
 
