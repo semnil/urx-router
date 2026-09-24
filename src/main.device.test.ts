@@ -4024,8 +4024,9 @@ describe("Write to device", () => {
     expect(statusText()).toContain(t().status.writeNoChanges);
   });
 
-  // The plan format's silence, held at the only place it can actually be measured: what
-  // reaches a unit, and what the operator is told before it does. A document that says
+  // The plan format's silence, held where it meets the unit: what reaches it, and what the
+  // operator is told before it does. The record of where each value came from is pinned on
+  // its own, without the wiring, in src/app/param-source.test.ts. A document that says
   // nothing about the FX channels is completed from the model's factory values, so the write
   // DOES send the selector — and that write is not recoverable, since it refills the engine
   // array with the type's defaults. What stands in front of it is the confirm: it names the

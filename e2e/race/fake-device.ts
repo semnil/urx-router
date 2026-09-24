@@ -575,11 +575,12 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       //
       // Armed from the ACK rather than from the queue point (see Served.announce), which
       // is also the interval the measurement brackets most tightly: 58-151 ms after the
-      // ack, always after it, 30/30. `announceMs` has to stay BELOW live.ts's flush
-      // window or the fake stops modelling the unit in a way that matters: an
-      // announcement overtaken by the next write of a drag arrives against a snapshot
-      // that has moved on, fails isEcho, and is applied as a device-side change — a
-      // hazard of the announcement being late, not of anything the app does.
+      // ack, always after it, 30/30. `announceMs` defaults below live.ts's flush window,
+      // so an ordinary case's announcement lands before the next write of a drag. Set
+      // above it, an announcement arrives after the next write has moved the snapshot on,
+      // which the unit also presents (the header above); the app then matches it against
+      // the queue of acked-but-unannounced writes rather than the snapshot, and
+      // `late echo of an overtaken write` in t3-undo.spec.ts is the case that raises it.
       //
       // Three silences, and the same rule produces all of them. A same-value write:
       // measured, 18 of them acked in 0-1 ms and produced none. A write the fake never

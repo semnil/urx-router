@@ -1,7 +1,10 @@
-// The board's text measurement. Every case here is reachable through the app only
-// by typing into a note textarea, which makes the interesting ones — a fullwidth
-// token wider than the whole budget, a codepoint above the BMP, a clip whose last
-// line is all wide glyphs — impractical to reach and trivial to state here.
+// The board's text measurement, for the two strings the board fits into a fixed box: a
+// note (wrapNote, notePanelHeight, clipNote) and a node's label (fitScale), both measured
+// in cells (cellW, noteWidth). The app reaches the first through a note textarea and the
+// second through a node's name — the name field, or a name read off the unit (graph.ts)
+// — which makes the interesting cases — a fullwidth token wider than the whole budget,
+// a codepoint above the BMP, a clip whose last line is all wide glyphs — impractical to
+// reach and trivial to state here.
 
 import { describe, expect, it } from "vitest";
 import {

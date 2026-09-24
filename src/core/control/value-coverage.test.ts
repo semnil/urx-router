@@ -213,9 +213,10 @@ describe("enum options round-trip", () => {
     }
   });
 
-  // Every EQ instance offers all three presets — the per-screen subset this test
-  // once pinned (mono Intensity/Vocal, output Intensity/Loudness) was measured to be
-  // wrong, so both node kinds now sweep all three.
+  // Each of the four EQ kinds offers all three presets (docs/en/device-model.md names
+  // the instance of each the unit was asked) — the per-screen subset this test once
+  // pinned (mono Intensity/Vocal, output Intensity/Loudness) was wrong, so both node
+  // kinds now sweep all three.
   it("EQ 1-knob type — all three presets round-trip on a channel and on an output bus", async () => {
     for (const [id, type] of [
       ["ch1", 0],

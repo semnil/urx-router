@@ -969,8 +969,10 @@ test.describe("eq", () => {
 
 // DUCKER. The one screen that does not open on the node it tunes: it opens on the
 // ducker, reads its key from wherever the key wire starts, and brackets the reduction
-// with the HOST channel's meters. Every case below pins something a measurement
-// decided, because each is a plausible thing to "tidy" back the other way.
+// with the HOST channel's meters. Three cases below pin what the unit does — the key
+// lane's source and its one bar, and the reduction drawn in the POST lane — and two pin
+// the screen's own conventions: the host channel's name in the title, and the opener on
+// that channel's CONSOLE strip. Each is a plausible thing to "tidy" back the other way.
 test.describe("ducker", () => {
   const openDucker = (page: Page, id = "out.ducker1") => openFromInspector(page, id, "ducker");
 
