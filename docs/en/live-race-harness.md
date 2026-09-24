@@ -1454,8 +1454,10 @@ Measured 2026-09-24: with the deferral removed, the ordinary case and `late` fai
 A scene recall made on the unit during an app-side drag is read either in a gap between two of the
 drag's flushes — the few milliseconds between one flush's ack and the next move — or after the release;
 `tzb-tail`'s BULK_CHANGE cases assert what each has to hold. In the first the fader leaves the document
-and the gesture ends there; in the second the drag writes to the end and the recalled value lands on the
-key it held once it is released.
+and the gesture ends there; in the second the drag writes to the end, over the recalled value on the unit,
+and the read after the release takes what the unit then holds. In both, the screen ends on the unit's
+value, which the cases assert with the recall taken into the fake's state at the instant it is
+announced, so a later write lands on it as it does on the unit.
 
 ## What the harness itself got wrong
 
@@ -1687,12 +1689,12 @@ fixed or withdrawn.
   inside the drag: `-7.0`, the recalled scene, running alone; `-14.0`, a value the drag passed through,
   under `--workers=4`). Deciding it needs the edit placed on a barrier, but that case's variable is
   already where the recall falls inside the gesture, so a barrier would replace the variable rather
-  than add to it. The pointer's key is logged there — including **whether the plan and the unit end up
-  apart on it**, which is the same interleaving read from the other side and was asserted until CI
-  produced the case where they agree (both `-7.2` at D=1500). Two CI retries had been hiding it. The
-  read begins inside the drag only in the gap between one flush's ack and the next move, since a
-  reconcile does not start while a flush is armed or running; when it begins after the release no edit
-  is made while it reads, and the pointer's key taking the recalled value is asserted
+  than add to it. WHICH value the pointer's key ends on is therefore logged rather than asserted; that the
+  screen ends on the value the unit holds is asserted in every run. That needs the recall written into
+  the fake's state (`setMemAt`) rather than pinned on its reads (`divergeAt`): pinned, the unit answered
+  `-7.0` whatever the drag wrote afterwards, and the screen and the fake's stored value disagreed in
+  every run for a reason the fake invented. The read begins inside the drag only in the gap between one
+  flush's ack and the next move, since a reconcile does not start while a flush is armed or running
 - The string path (`vd_set_str`: channel names, Sweet Spot Data) is outside every address-set
   invariant — neither has a snapshot entry — so clause B is silent on it by construction. **Measured
   on hardware (2026-07-31)**: renaming a channel broadcasts exactly one notify,
