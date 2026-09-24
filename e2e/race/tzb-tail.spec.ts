@@ -17,7 +17,7 @@ import {
   countersOf,
   setDialogAnswer,
   refuseAt,
-  divergeAt,
+  setMemAt,
   depthOf,
   hasProbe,
   type InstallOptions,
@@ -263,15 +263,6 @@ test.describe("Tzb tail", () => {
       await goLive(page);
       await page.click("#btn-view-console");
       await expect(faderReadout(page, "CH 1")).toBeVisible();
-      // The recalled scene: whatever the drag writes, the device answers a read of
-      // these with values the plan cannot have produced. CH 2 is untouched by the
-      // operator throughout, so its readout moving is the whole-plan replacement
-      // stated without reference to the contested address. -7.0 dB sits deliberately
-      // above the whole travel the drag sweeps (it starts at three quarters of the
-      // groove and only goes lower), so the recalled value cannot collide with one
-      // the gesture itself produced.
-      await divergeAt(page, CH1_FADER, -700);
-      await divergeAt(page, CH2_FADER, -800);
       // Writes are given the catalog's latency; reads are left at zero. A whole-device
       // sweep is ~800 sequential reads, so at 8 ms it is 6.4 s and at 1 ms it is still
       // 3.5 s (setTimeout's own floor) — longer than any drag a person makes, and the
@@ -295,6 +286,14 @@ test.describe("Tzb tail", () => {
       const { held, probe: duringDrag } = await dragFader(page, "CH 1", 3500, async (elapsed) => {
         while (elapsed() < D) await page.waitForTimeout(20);
         dragged = (await faderReadout(page, "CH 1").textContent())!;
+        // The recalled scene, taken by the unit at the instant it announces the recall: values
+        // the plan cannot have produced, which a later write lands on like any other. CH 2 is
+        // untouched by the operator throughout, so its readout moving is the whole-plan
+        // replacement stated without reference to the contested address. -7.0 dB sits
+        // deliberately above the whole travel the drag sweeps (it starts at three quarters of
+        // the groove and only goes lower), so the recalled value cannot collide with one the
+        // gesture itself produced.
+        await setMemAt(page, { [CH1_FADER]: -700, [CH2_FADER]: -800 });
         await mark(page, "sentinel");
         await pushNotify(page, [BULK_CHANGE]);
       });
@@ -368,20 +367,23 @@ test.describe("Tzb tail", () => {
         expect(resets[0]).toBeLessThan(releaseAt);
       } else {
         // The drag was not interrupted: the element the operator held stayed in the
-        // document, and the readback and its history reset came after the release. With
-        // no edit made while it read, the key the pointer held takes the recalled value.
+        // document, and the readback and its history reset came after the release.
         expect(duringDrag.connected).toBe(true);
         expect(resets[0]).toBeGreaterThan(releaseAt);
-        expect(after).toBe(deviceLevelText(-700));
       }
+      // Either way the screen ends on what the unit holds. Which value that is depends on
+      // where the read fell against the drag's writes (see below); that the two agree once
+      // the gesture and the reads are over does not.
+      const unitHolds = deviceLevelText((await memOf(page))[CH1_FADER]);
+      expect(after).toBe(unitHolds);
       // The plan the operator was editing is gone — for every key they were NOT holding.
       // That half is unconditional: nothing else authored CH 2, so the recalled scene
       // lands there whatever the pointer was doing.
       expect(afterCh2).toBe(deviceLevelText(-800));
       expect(afterCh2).not.toBe(beforeCh2);
 
-      // When the read begins inside the drag, the key UNDER THE POINTER is NOT asserted, and
-      // the reason is a limit of this trace rather than a softening. readIntoPlan applies
+      // WHICH value the key under the pointer ends on is NOT asserted, and the reason is a
+      // limit of this trace rather than a softening. readIntoPlan applies
       // the device's values first and the edits made during the read over them, so the
       // outcome turns on whether a plan EDIT landed between the sweep being issued and it
       // resolving — and an edit is not in the IPC log at all. Only its write is, lagged by
@@ -394,17 +396,9 @@ test.describe("Tzb tail", () => {
       // and holding the sweep would replace that variable rather than add to it. Logged
       // here and recorded under the harness's known gaps.
       //
-      // Whether the plan and the unit end up APART on that key is the SAME interleaving
-      // read from the other side, so it is logged with it rather than pinned beside it:
-      // they diverge when the drag's last write outlives the merge, and they agree when
-      // the merge happens to settle on the value that write carried. It was asserted
-      // here until CI produced the second case (both `-7.2`, D=1500) — a red run stating
-      // nothing the comment above does not already say is unresolvable.
-      const unitHolds = deviceLevelText((await memOf(page))[CH1_FADER]);
       console.log(
-        `sweep began at ${sweepStart.toFixed(0)} ms, ${beganInDrag ? "inside" : "after"} the drag; the pointer's key settled at ${after}` +
-          ` (the scene holds ${deviceLevelText(-700)}; the unit and the plan ` +
-          `${unitHolds === after ? "agree" : "have come apart"}) — interleaving-dependent inside the drag, not asserted there`,
+        `sweep began at ${sweepStart.toFixed(0)} ms, ${beganInDrag ? "inside" : "after"} the drag; ` +
+          `the pointer's key settled at ${after}, the unit holds ${unitHolds}`,
       );
 
       // …and the three entries that existed before the gesture are gone, dropped by the
