@@ -128,10 +128,10 @@ export interface LiveSyncHooks {
    *  then failed isEcho and was reconciled as a device-side change. */
   refetchNodes?: (nodes: ReadonlySet<string>, pending: PendingWrites, edits?: PlanWriteWatch) => Promise<Plan | null>;
   /** Start watching the plan's edits (plan-history.PlanWriteWitness). A flush whose writes
-   *  will provoke a refetch opens one at the first take of values that holds such a write,
-   *  and hands it to that read: an edit made after that instant is carried by none of the writes, and the
-   *  read, opened only once the writes have returned, keeps it as one made while it runs.
-   *  Absent = the read watches from its own start. */
+   *  will provoke a refetch opens one before its first write, and hands it to that read: an
+   *  edit made after that instant is carried by none of the writes, and the read, opened only
+   *  once the writes have returned, keeps it as one made while it runs. Absent = the read
+   *  watches from its own start, and a refetch head is never held back for the next flush. */
   watchEdits?: () => PlanWriteWatch;
   /**
    * Read the addresses the unit announces nothing for into the plan, in front of a write
@@ -955,22 +955,22 @@ export class LiveSync {
         commands = planToCommands(model, plan, scope);
       }
       // A write that provokes a refetch has that read issued only once the flush's writes have
-      // returned, so an edit made after the value it carries was taken is carried by none of
-      // them. The watch opens at the first take that holds such a write — here, at a re-take
-      // inside the numeric loop, or where the name loop takes its own list — and goes to the
-      // read, which keeps that edit as it keeps one made while it runs.
-      const numericHead = (c: VdCommand, value: number | undefined): boolean =>
-        c.node !== undefined && REFETCH.has(c.name) && value !== undefined && this.snapshot.get(cmdAddr(c)) !== value;
-      const nameHead = (w: NameWrite, value: string | undefined): boolean =>
-        w.node !== undefined &&
-        w.name !== undefined &&
-        REFETCH.has(w.name) &&
-        value !== undefined &&
-        this.nameSnapshot.get(nameKey(w)) !== value;
-      const watchIf = (refetchAhead: boolean): void => {
-        if (refetchAhead && !edits) edits = this.hooks.watchEdits?.();
-      };
-      watchIf(commands.some((c) => numericHead(c, c.vdValue)));
+      // returned, and the read covers the whole node — so an edit made after this flush took its
+      // values, to the head or to anything else that node holds, is carried by none of the
+      // writes. When the values taken here hold such a write, among the numbers or the names, the
+      // watch opens here, before anything is sent, and goes to the read, which keeps that edit as
+      // it keeps one made while it runs. A head that turns up only later — in a re-take, or in the
+      // list the name loop takes for itself — while no watch is open is left for the next flush,
+      // which opens one from its own start: no read follows a send nothing watched.
+      const numericHead = (c: VdCommand): boolean => c.node !== undefined && REFETCH.has(c.name);
+      const nameHead = (w: NameWrite): boolean => w.node !== undefined && w.name !== undefined && REFETCH.has(w.name);
+      if (
+        commands.some((c) => numericHead(c) && this.snapshot.get(cmdAddr(c)) !== c.vdValue) ||
+        planToNameWrites(model, plan).some((w) => nameHead(w) && this.nameSnapshot.get(nameKey(w)) !== w.value)
+      )
+        edits = this.hooks.watchEdits?.();
+      // A head nothing is watching for goes out with the next flush instead of this one.
+      const unwatched = (): boolean => this.hooks.watchEdits !== undefined && edits === undefined;
       // Both lists below are frozen at flush start; the snapshots they are diffed against
       // are not. Any await can let a device-side change land (noteDirect's one entry, or a
       // reconcile's whole capture), and what a frozen list carries is then older than what
@@ -993,9 +993,7 @@ export class LiveSync {
         const k = cmdAddr(c);
         if (this.snapshotEpoch !== valuesAt) {
           valuesAt = this.snapshotEpoch;
-          const retaken = this.commandValues(model, plan, scope);
-          fresh = retaken;
-          watchIf(commands.some((x) => numericHead(x, retaken.get(cmdAddr(x)))));
+          fresh = this.commandValues(model, plan, scope);
         }
         // Absent from the re-take = the address left the plan while this flush ran, so
         // there is nothing left to send to it.
@@ -1003,6 +1001,10 @@ export class LiveSync {
         if (value === undefined) continue;
         const had = this.snapshot.get(k);
         if (had === value) continue;
+        if (numericHead(c) && unwatched()) {
+          this.pending = true;
+          continue;
+        }
         // +48V or HI-Z ON while the unit holds the other one on: not sent, and left in the
         // plan rather than dropped (see `onHeld`). The command order sends a switch the plan
         // turns off ahead of the other one's ON, so a flush moving from one to the other
@@ -1077,19 +1079,19 @@ export class LiveSync {
       // it is one structure, so it gets one rule.
       let namesAt = this.snapshotEpoch;
       let freshNames: Map<string, string> | null = null;
-      const names = planToNameWrites(model, plan);
-      watchIf(names.some((w) => nameHead(w, w.value)));
-      for (const w of names) {
+      for (const w of planToNameWrites(model, plan)) {
         const k = nameKey(w);
         if (this.snapshotEpoch !== namesAt) {
           namesAt = this.snapshotEpoch;
-          const retaken = new Map(planToNameWrites(model, plan).map((n) => [nameKey(n), n.value]));
-          freshNames = retaken;
-          watchIf(names.some((n) => nameHead(n, retaken.get(nameKey(n)))));
+          freshNames = new Map(planToNameWrites(model, plan).map((n) => [nameKey(n), n.value]));
         }
         const value = freshNames ? freshNames.get(k) : w.value;
         if (value === undefined) continue;
         if (this.nameSnapshot.get(k) === value) continue;
+        if (nameHead(w) && unwatched()) {
+          this.pending = true;
+          continue;
+        }
         // Before the write, for the reason the numeric loop takes one: only a notify after
         // it can be this write's announcement.
         const nameMark = writeSettle.mark();

@@ -1338,15 +1338,22 @@ describe("LiveSync sideEffect refetch", () => {
     const heldUnit = (plan: Plan) => {
       const numbers = new Map(planToCommands(model, plan).map((c) => [cmdAddr(c), c.vdValue] as const));
       const names = new Map<string, string>();
-      const hold = { set: 0, str: 0 };
+      type Match = (id: number, x: number, y: number) => boolean;
+      const hold: { set: Match | null; str: Match | null } = { set: null, str: null };
       const waiting: Array<() => void> = [];
+      const gate = async (kind: "set" | "str", id: number, x: number, y: number): Promise<void> => {
+        const match = hold[kind];
+        if (!match?.(id, x, y)) return;
+        hold[kind] = null;
+        await new Promise<void>((r) => waiting.push(r));
+      };
       vi.mocked(vdSet).mockImplementation(async (id: number, x: number, y: number, v: number) => {
         numbers.set(addrKey(id, x, y), v);
-        if (hold.set > 0 && --hold.set === 0) await new Promise<void>((r) => waiting.push(r));
+        await gate("set", id, x, y);
       });
       vi.mocked(vdSetStr).mockImplementation(async (id: number, x: number, y: number, v: string) => {
         names.set(`${id}:${x}:${y}`, v);
-        if (hold.str > 0 && --hold.str === 0) await new Promise<void>((r) => waiting.push(r));
+        await gate("str", id, x, y);
       });
       vi.mocked(vdGet).mockImplementation(
         async (id: number, x: number, y: number) => numbers.get(addrKey(id, x, y)) ?? 0,
@@ -1379,48 +1386,135 @@ describe("LiveSync sideEffect refetch", () => {
           witness.note();
           live.schedule();
         },
-        /** Hold the next write of this kind until `release`. */
-        holdNext: (kind: "set" | "str"): void => void (hold[kind] = 1),
+        /** Hold the next write of this kind — to this address, when one is named — until `release`. */
+        holdNext: (kind: "set" | "str", at?: { paramId: number; x: number; y: number }): void =>
+          void (hold[kind] = at ? (id, x, y) => id === at.paramId && x === at.x && y === at.y : () => true),
         held: (): number => waiting.length,
         release: (): void => waiting.shift()?.(),
       };
     };
 
-    it("keeps an SSMCS preset chosen while the preset the name loop took is being written", async () => {
-      const plan = basePlan();
+    const withPreset = (plan: Plan, n: number): void => {
       plan.nodeParams.ch1 = {
         ...plan.nodeParams.ch1,
         compEqType: COMP_EQ_SSMCS,
-        ssmcs: { ...structuredClone(SSMCS_INITIAL), sweetSpotData: 1 },
+        ssmcs: { ...structuredClone(SSMCS_INITIAL), ...plan.nodeParams.ch1?.ssmcs, sweetSpotData: n },
       };
+    };
+    const setFader = (plan: Plan, node: string, db: number): void => {
+      const conn = plan.connections.find((c) => c.from === `${node}:out`)!;
+      conn.params = { ...conn.params, level: db };
+    };
+    /** The values written to one command's address, in order. */
+    const writesTo = (plan: Plan, name: string, node: string): number[] => {
+      const c = planToCommands(model, plan).find((x) => x.name === name && x.node === node)!;
+      return vi
+        .mocked(vdSet)
+        .mock.calls.filter(([id, x, y]) => id === c.paramId && x === c.x && y === c.y)
+        .map((w) => w[3]);
+    };
+    const valueOf = (plan: Plan, name: string, node: string): number =>
+      planToCommands(model, plan).find((x) => x.name === name && x.node === node)!.vdValue;
+    const presetWrites = (): string[] => vi.mocked(vdSetStr).mock.calls.map((c) => c[3]);
+
+    // The head is in the flush from its start — a preset and a fader together — so the watch
+    // opens before the first write, and an edit to either while its own write is on the wire
+    // stays: the fader moved during the fader write, the preset during the preset write.
+    it("keeps edits made during a flush that carried a preset from its start", async () => {
+      const plan = basePlan();
+      withPreset(plan, 1);
       const unit = heldUnit(plan);
-      const setPreset = (n: number): void =>
-        unit.edit(() => {
-          plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, ssmcs: { ...plan.nodeParams.ch1?.ssmcs, sweetSpotData: n } };
-        });
       unit.live.begin();
 
-      // A fader move, which provokes no read, is on the wire when preset 2 is chosen…
       unit.holdNext("set");
-      unit.edit(() => setCh1Fader(plan, -6));
-      unit.live.schedule();
+      unit.edit(() => {
+        setFader(plan, "ch1", -6);
+        withPreset(plan, 2);
+      });
       await vi.advanceTimersByTimeAsync(120);
       expect(unit.held(), "the premise: the fader write is held").toBe(1);
-      setPreset(2);
-      // …and preset 3 is chosen while the name loop's write of 2 is on the wire.
+      const faderFirst = valueOf(plan, "CH_FADER", "ch1");
+      unit.edit(() => setFader(plan, "ch1", -12));
+      const faderLast = valueOf(plan, "CH_FADER", "ch1");
       unit.holdNext("str");
       unit.release();
       await vi.advanceTimersByTimeAsync(1);
-      expect(
-        vi.mocked(vdSetStr).mock.calls.map((c) => c[3]),
-        "the premise: preset 2 went out",
-      ).toEqual(["0002"]);
-      setPreset(3);
+      expect(presetWrites(), "the premise: preset 2 went out in the same flush").toEqual(["0002"]);
+      unit.edit(() => withPreset(plan, 3));
+      unit.release();
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+
+      expect({ fader: valueOf(plan, "CH_FADER", "ch1"), preset: plan.nodeParams.ch1?.ssmcs?.sweetSpotData }).toEqual({
+        fader: faderLast,
+        preset: 3,
+      });
+      expect(writesTo(plan, "CH_FADER", "ch1")).toEqual([faderFirst, faderLast]);
+      expect(presetWrites()).toEqual(["0002", "0003"]);
+    });
+
+    // The numeric twin: a 1-knob level and a fader together, each moved again during its own write.
+    it("keeps edits made during a flush that carried a 1-knob level from its start", async () => {
+      const plan = basePlan();
+      setCh1OneKnob(plan, { on: true, level: 0 });
+      const unit = heldUnit(plan);
+      unit.live.begin();
+
+      unit.holdNext("set");
+      unit.edit(() => {
+        setCh1OneKnob(plan, { level: 40 });
+        setFader(plan, "ch1", -6);
+      });
+      await vi.advanceTimersByTimeAsync(120);
+      expect(writesTo(plan, "EQ_ONE_KNOB_LEVEL", "ch1"), "the premise: the level write is held").toHaveLength(1);
+      const levelFirst = valueOf(plan, "EQ_ONE_KNOB_LEVEL", "ch1");
+      unit.edit(() => setCh1OneKnob(plan, { level: 80 }));
+      const levelLast = valueOf(plan, "EQ_ONE_KNOB_LEVEL", "ch1");
+      unit.holdNext("set");
+      unit.release();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(writesTo(plan, "CH_FADER", "ch1"), "the premise: the fader write is held").toHaveLength(1);
+      const faderFirst = valueOf(plan, "CH_FADER", "ch1");
+      unit.edit(() => setFader(plan, "ch1", -12));
+      const faderLast = valueOf(plan, "CH_FADER", "ch1");
+      unit.release();
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+
+      expect(plan.nodeParams.ch1?.eqOneKnob?.level).toBe(80);
+      expect(valueOf(plan, "CH_FADER", "ch1")).toBe(faderLast);
+      expect(writesTo(plan, "EQ_ONE_KNOB_LEVEL", "ch1")).toEqual([levelFirst, levelLast]);
+      expect(writesTo(plan, "CH_FADER", "ch1")).toEqual([faderFirst, faderLast]);
+    });
+
+    // The head turns up only after sending began — a preset chosen during a fader write, with
+    // the fader moved again too. It waits for the next flush, which watches from its start.
+    it("keeps edits made around a preset the name loop found after sending began", async () => {
+      const plan = basePlan();
+      withPreset(plan, 1);
+      const unit = heldUnit(plan);
+      unit.live.begin();
+
+      unit.holdNext("set");
+      unit.edit(() => setFader(plan, "ch1", -6));
+      await vi.advanceTimersByTimeAsync(120);
+      expect(unit.held(), "the premise: the fader write is held").toBe(1);
+      const faderFirst = valueOf(plan, "CH_FADER", "ch1");
+      unit.edit(() => {
+        withPreset(plan, 2);
+        setFader(plan, "ch1", -12);
+      });
+      const faderLast = valueOf(plan, "CH_FADER", "ch1");
+      unit.holdNext("str");
+      unit.release();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(presetWrites(), "the premise: preset 2 went out").toEqual(["0002"]);
+      unit.edit(() => withPreset(plan, 3));
       unit.release();
       await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
 
       expect(plan.nodeParams.ch1?.ssmcs?.sweetSpotData).toBe(3);
-      expect(vi.mocked(vdSetStr).mock.calls.map((c) => c[3])).toEqual(["0002", "0003"]);
+      expect(valueOf(plan, "CH_FADER", "ch1")).toBe(faderLast);
+      expect(presetWrites()).toEqual(["0002", "0003"]);
+      expect(writesTo(plan, "CH_FADER", "ch1")).toEqual([faderFirst, faderLast]);
     });
 
     it("keeps an SSMCS preset chosen while the preset a name re-take picked up is being written", async () => {
@@ -1499,11 +1593,17 @@ describe("LiveSync sideEffect refetch", () => {
       unit.live.schedule();
       await vi.advanceTimersByTimeAsync(120);
       expect(unit.held(), "the premise: the A.Gain write is held").toBe(1);
-      unit.edit(() => setMorph(40));
+      const ch2FaderFirst = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch2")!.vdValue;
+      unit.edit(() => {
+        setMorph(40);
+        const conn = plan.connections.find((c) => c.from === "ch2:out")!;
+        conn.params = { ...conn.params, level: -12 };
+      });
       const taken = morphCmd().vdValue;
+      const ch2FaderLast = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch2")!.vdValue;
       unit.live.noteDirect(ch3Fader.paramId, ch3Fader.x, ch3Fader.y, ch3Fader.vdValue);
       // …and the morph moves again while that write is on the wire.
-      unit.holdNext("set");
+      unit.holdNext("set", morphCmd());
       unit.release();
       await vi.advanceTimersByTimeAsync(1);
       expect(morphWrites(), "the premise: the re-taken morph went out").toEqual([taken]);
@@ -1514,6 +1614,14 @@ describe("LiveSync sideEffect refetch", () => {
 
       expect(plan.nodeParams.ch2?.ssmcs?.morphing).toBe(80);
       expect(morphWrites()).toEqual([taken, last]);
+      const ch2Fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch2")!;
+      expect(ch2Fader.vdValue, "CH 2's fader moved with the morph stays").toBe(ch2FaderLast);
+      expect(
+        vi
+          .mocked(vdSet)
+          .mock.calls.filter(([id, x, y]) => id === ch2Fader.paramId && x === ch2Fader.x && y === ch2Fader.y)
+          .map((w) => w[3]),
+      ).toEqual(ch2FaderFirst === ch2FaderLast ? [] : [ch2FaderLast]);
     });
   });
 

@@ -2217,10 +2217,11 @@ deliberately not in it; they are not an input to any answer the settle gives. Bo
 the wait and answering an announced address from the announcement — happen **inside** the read, after
 `readIntoPlan` has cloned the plan and opened the write witness. Taken outside, the wait would be a window in which
 an operator edit lands in neither, and the merge would revert it. The witness itself opens earlier still: the flush
-opens it at the first take of values that holds a refetch head — its first list, a re-take inside the numeric loop
-after a device-side change, or the list the name loop takes for itself (`watchEdits`) — and hands it to the read,
-because an edit made while those writes are on the wire is carried by none of them and would otherwise be reverted
-the same way. A flush with no refetch head opens none. That does widen the window undo is refused in,
+opens it before its first write whenever the values it takes then hold a refetch head, among the numbers or the
+names (`watchEdits`), and hands it to the read, because the read covers the whole node and an edit made to any of it
+while the flush's writes are on the wire is carried by none of them. A head that turns up only after sending began —
+in a re-take after a device-side change, or in the list the name loop takes for itself — while no watch is open goes
+out with the next flush instead, which watches from its own start. A flush with no refetch head opens none. That does widen the window undo is refused in,
 since the wait sits inside the same in-flight set as the read it belongs to; kept that way deliberately, because
 committing an entry against an open clone and witness would freeze this read's own writes into it, and the refusal
 is a deferral bounded by the settle's own window.
