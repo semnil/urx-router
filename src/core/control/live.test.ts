@@ -2323,6 +2323,40 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
     expect(switchSends()).toEqual([[PARAMS.PHANTOM.id, 1]]);
   });
 
+  // The unit is asked for the other switch just before the ON goes, which catches a switch it
+  // turned on whose announcement has not reached the session yet.
+  it("holds a +48V ON when the unit answers HI-Z on to the read in front of it", async () => {
+    const plan = planWith({ phantom: false, hiZ: false });
+    const live = liveFor(plan);
+    live.begin();
+    vi.mocked(vdGet).mockImplementation(async (id, x, y) => (id === PARAMS.HI_Z.id && x === 0 && y === Y ? 1 : 0));
+    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    await flush(live);
+    expect(vi.mocked(vdGet).mock.calls, "the premise: the unit was asked").toContainEqual([PARAMS.HI_Z.id, 0, Y]);
+    expect(switchSends()).toEqual([]);
+  });
+
+  // A read that fails is a failed operation on the device link: the session ends, and the ON
+  // it was asked for is not sent on a guess.
+  it("ends the session and sends nothing when the read in front of an ON fails", async () => {
+    const plan = planWith({ phantom: false, hiZ: false });
+    const errors: string[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: (m) => void errors.push(m),
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    vi.mocked(vdGet).mockRejectedValue(new Error("read refused"));
+    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    await flush(live);
+    expect(errors).toEqual(["read refused"]);
+    expect(live.isActive()).toBe(false);
+    expect(switchSends()).toEqual([]);
+  });
+
   it("holds a +48V ON while the unit has announced HI-Z on, and sends it once the unit says it is off", async () => {
     const plan = planWith({ phantom: false, hiZ: false });
     const live = liveFor(plan);

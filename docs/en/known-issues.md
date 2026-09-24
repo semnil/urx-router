@@ -147,12 +147,14 @@ The app never turns one on while the other is on:
   back to what the unit holds, and the +40 is never sent — and no undo step is
   left that would put the press back. An edit made in the same window that has
   nothing to do with the two lands as usual, and turning either one off is never
-  refused. A press the app had already sent before the unit turned the other one
-  on is on the unit, which then holds both, and is taken as it is.
+  refused. A press the app had already sent before the unit announced turning the
+  other one on is on the unit, which then holds both, and is taken as it is.
 - **During Live sync, a switch turned on at the unit's panel.** From the moment
   the unit announces it, the app sends no ON of the other one for that channel —
   including one already pressed and waiting to be sent, and the +40 A.Gain a
-  Hi-Z press lowered with it — and no write it decides on after the announcement
+  Hi-Z press lowered with it. The app asks the unit for the other switch just
+  before it sends an ON, so this holds before the announcement has reached the
+  app. No write it decides on after the announcement
   turns the unit's switch back off before a read has brought it in. The read the
   announcement starts refuses
   a press made meanwhile as above, whether it was made before that read began or

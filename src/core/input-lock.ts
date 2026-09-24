@@ -192,8 +192,15 @@ export function unsentRefusedSwitches(
  */
 export function onExcludedBy(c: Pick<VdCommand, "name" | "x" | "y">, value: number): number | null {
   if (!value) return null;
-  if (c.name === "PHANTOM") return addrKey(PARAMS.HI_Z.id, c.x, c.y);
-  if (c.name === "HI_Z") return addrKey(PARAMS.PHANTOM.id, c.x, c.y);
+  const other = otherSwitchId(c);
+  return other === null ? null : addrKey(other, c.x, c.y);
+}
+
+/** For a +48V or HI-Z command, the param id of the other switch, which sits at the same x / y;
+ *  null for every other command. */
+export function otherSwitchId(c: Pick<VdCommand, "name">): number | null {
+  if (c.name === "PHANTOM") return PARAMS.HI_Z.id;
+  if (c.name === "HI_Z") return PARAMS.PHANTOM.id;
   return null;
 }
 

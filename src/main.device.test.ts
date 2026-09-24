@@ -8107,6 +8107,73 @@ describe("+48V and Hi-Z on one channel", () => {
       },
     );
 
+    // The unit has turned +48V on and its announcement has not reached the session: the flush
+    // asks the unit before the Hi-Z ON goes, so neither it nor the A.Gain it lowered is sent,
+    // and the read the announcement starts refuses the press.
+    it("sends no Hi-Z ON ahead of the unit's +48V announcement", SLOW, async () => {
+      const CH4_Y = channelControl(model, "ch4")!.y;
+      const { table, hold } = holdingUnit(
+        { [at(PARAMS.HA_GAIN.id)]: gainToVd(60), [RATE]: 48_000 },
+        PARAMS.HI_Z.id,
+        false,
+      );
+      const shell = (await bootApp({ tauri: table }))!;
+      live().click();
+      await liveUp();
+      selectNode("ch3");
+      expect({ switches: switches(), gain: gainShown() }, "the premise: the unit's own state").toEqual({
+        switches: { phantom: "OFF", hiZ: "OFF" },
+        gain: "+60 dB",
+      });
+
+      const pressed = shell.invokes.length;
+      hold.panel(PARAMS.PHANTOM.id, 1);
+      pressFace(t().inspector.hiZ, t().inspector.on);
+      // CH 4 comes after CH 3 in a flush, so its write says the flush is past CH 3's A.Gain.
+      selectNode("ch4");
+      pressFace(t().inspector.clipSafe, t().inspector.on);
+      await vi.waitFor(
+        () =>
+          expect(
+            shell.invokes.flatMap((cmd, i) => {
+              const a = shell.args[i];
+              return cmd === "vd_set" && a?.paramId === PARAMS.CLIP_SAFE.id && a?.y === CH4_Y ? [a.value] : [];
+            }),
+          ).toEqual([1]),
+        { timeout: 10_000 },
+      );
+      expect({ hiZ: writesAt(shell, PARAMS.HI_Z.id), gain: writesAt(shell, PARAMS.HA_GAIN.id) }).toEqual({
+        hiZ: [],
+        gain: [],
+      });
+      expect(
+        shell.invokes.some(
+          (cmd, i) =>
+            i >= pressed &&
+            cmd === "vd_get" &&
+            shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
+            shell.args[i]?.y === CH3_Y,
+        ),
+        "the flush asked the unit",
+      ).toBe(true);
+
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.PHANTOM.id, x: 0, y: CH3_Y, value: 1 }]);
+      await vi.waitFor(
+        () => {
+          selectNode("ch3");
+          expect(switches()).toEqual({ phantom: "ON", hiZ: "OFF" });
+        },
+        { timeout: 25_000, interval: 50 },
+      );
+      await quiet(shell);
+      expect(gainShown(), "the gain the press lowered is the unit's again").toBe("+60 dB");
+      expect({
+        phantom: writesAt(shell, PARAMS.PHANTOM.id),
+        hiZ: writesAt(shell, PARAMS.HI_Z.id),
+        gain: writesAt(shell, PARAMS.HA_GAIN.id),
+      }).toEqual({ phantom: [], hiZ: [], gain: [] });
+    });
+
     // An ON the flush sent while the unit still held the other switch off is on the unit, even
     // where the read sampled the address before the write: when the unit's panel then turns the
     // other one on, the unit holds both, and a read takes that state as it is.

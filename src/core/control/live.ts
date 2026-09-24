@@ -9,7 +9,7 @@
 
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
-import { vdSet, vdSetStr } from "../platform";
+import { vdGet, vdSet, vdSetStr } from "../platform";
 import { silentKey, PARAMS } from "./params";
 import type { ParamName, ParamSpec, SilentFamily } from "./params";
 import {
@@ -27,7 +27,7 @@ import type { SharedOwners, NameWrite, VdCommand, WriteScope } from "./translate
 import { confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
-import { carrierOf, onExcludedBy } from "../input-lock";
+import { carrierOf, onExcludedBy, otherSwitchId } from "../input-lock";
 
 // Coalesce rapid edits (a slider drag fires per pixel) into one flush so the
 // single-threaded device worker is not flooded; the snapshot diff means only the
@@ -984,6 +984,19 @@ export class LiveSync {
         if (excludedBy !== null && this.unitHolds(excludedBy)) {
           this.onHeld = true;
           continue;
+        }
+        // The unit is asked for the other switch just before the ON goes: the broker answers
+        // with a change the unit has made from the moment it announces it, which is ahead of
+        // that announcement reaching this session. An ON it answers is kept as the unit's last
+        // word (`announced`), so the A.Gain the same press lowered waits with the switch.
+        if (excludedBy !== null) {
+          const other = await vdGet(otherSwitchId(c)!, c.x, c.y);
+          if (this.sessionGen !== gen) return;
+          if (other) {
+            this.announced.set(excludedBy, { value: other, at: ++this.directSeq });
+            this.onHeld = true;
+            continue;
+          }
         }
         // A.Gain waits with a HI-Z ON held on its channel (`carrierOf`), in this flush or the
         // one before it: the press that lowered it has not reached the unit, and the read that
