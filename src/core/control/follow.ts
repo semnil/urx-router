@@ -55,6 +55,11 @@ export interface DeviceFollowHooks {
    *  rather than two: an echo policy that lived in two places would have to be found
    *  and changed twice, and the second site is what goes stale. */
   isEcho: (p: ParamUpdate) => boolean;
+  /** Whether a numeric notify that is not an echo reports a value one of our own writes
+   *  to the same address replaces: that write is issued and its announcement has not
+   *  arrived yet. Such a notify is not applied to the plan; the idle full reconcile reads
+   *  what the unit ends on. Absent = every non-echo notify is applied. */
+  isSuperseded?: (p: ParamUpdate) => boolean;
   /** A device-side change, past the intercept and echo filters — the notify stream
    *  itself, before it becomes a reconcile window. The window cannot answer for it: a
    *  burst is coalesced to the set of nodes it touched, so which addresses were
@@ -369,8 +374,11 @@ export class DeviceFollow {
     } else {
       this.touched.add(`${addr.node}:${addr.name}`);
       // Direct: decode the value straight into the plan (host coalesces the render).
-      // A param flagged direct but not actually placeable falls back to a scoped read.
-      if (addr.direct && this.hooks.applyDirect(addr.node, addr.name, p.value)) {
+      // A param flagged direct but not actually placeable falls back to a scoped read, and
+      // so does a value one of our own unannounced writes replaces: the plan keeps the
+      // value that write carries, and the read takes what the unit holds once it lands.
+      const superseded = this.hooks.isSuperseded?.(p) === true;
+      if (addr.direct && !superseded && this.hooks.applyDirect(addr.node, addr.name, p.value)) {
         this.hooks.noteDirect(p.paramId, p.x, p.y, p.value);
         this.hooks.flushDirect();
       } else {

@@ -857,6 +857,59 @@ describe("LiveSync direct-follow journal across a read", () => {
 // the write it has moved past, so that announcement used to read as a device-side
 // change: the plan was written back to a value the operator had already replaced, and
 // the idle reconcile that followed wiped every undo entry.
+describe("LiveSync unannounced write", () => {
+  it("answers true from the moment a write is issued until its announcement is taken", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    let ack!: () => void;
+    vi.mocked(vdSet).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          ack = resolve;
+        }),
+    );
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const cmd = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    // Issued, not acked.
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(true);
+    // Acked, announcement still to come.
+    ack();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(true);
+    // The announcement is taken as an echo, which consumes the queued write.
+    expect(live.isEcho(cmd.paramId, cmd.x, cmd.y, cmd.vdValue)).toBe(true);
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(false);
+  });
+
+  it("answers false once the retention window passes with no announcement", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const cmd = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(true);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 1);
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(false);
+  });
+
+  it("answers false for an address this session did not write", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const cmd = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x + 1, cmd.y)).toBe(false);
+  });
+});
+
 describe("LiveSync late echo of a write the snapshot has moved past", () => {
   /** The ch1 STEREO send fader command at a given dB — its address and raw value. */
   function ch1FaderCmd(db: number) {

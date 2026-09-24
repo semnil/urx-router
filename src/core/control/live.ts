@@ -277,6 +277,10 @@ export class LiveSync {
   // no notifies, no advance — and that is exactly when an unannounced write should be
   // forgotten. SETTLE_TIMEOUT_MS is borrowed for the LENGTH, not the axis.
   private readonly pendingValues = new Map<number, PendingQueue<number>>();
+  // Addresses whose numeric write is on the wire and not yet acked, as a count per
+  // address. Together with `pendingValues` it answers `hasUnannouncedWrite`: from the
+  // moment a write is issued until its announcement is taken as an echo.
+  private readonly inFlight = new Map<number, number>();
   /**
    * Every address this session wrote recently, with the settle mark taken before its
    * own `vdSet` — the same record the flush builds for its own refetch, kept at session
@@ -382,6 +386,7 @@ export class LiveSync {
     // reopen the hole this queue exists to close. The retention bounds that judgement.
     this.pendingValues.clear();
     this.pendingNames.clear();
+    this.inFlight.clear();
     // Same session boundary: a mark taken on a previous link means nothing on this one.
     this.recentWrites.clear();
     this.capture(deviceView);
@@ -551,6 +556,23 @@ export class LiveSync {
     return other === null ? [] : [k, other];
   }
 
+  /**
+   * Whether this session has a numeric write to this address that the unit has not yet
+   * announced: issued and not acked, or acked with its announcement still queued inside
+   * the retention window. A device-side value that arrives in that span is one the unit
+   * held before our write took effect, since the unit announces changes in the order it
+   * makes them; the write replaces it once it lands.
+   */
+  hasUnannouncedWrite(paramId: number, x: number, y: number): boolean {
+    const k = addrKey(paramId, x, y);
+    if (this.inFlight.has(k)) return true;
+    const q = this.pendingValues.get(k);
+    if (!q) return false;
+    dropExpired(q, Date.now() - SETTLE_TIMEOUT_MS);
+    if (!q.length) this.pendingValues.delete(k);
+    return q.length > 0;
+  }
+
   /** Append a write we have just been acked for, so its late announcement is still
    *  recognisable after the snapshot has moved past it. */
   private notePending<K, V>(queues: Map<K, PendingQueue<V>>, key: K, value: V): void {
@@ -602,6 +624,7 @@ export class LiveSync {
     this.onHeld = false;
     this.pendingValues.clear();
     this.pendingNames.clear();
+    this.inFlight.clear();
     this.recentWrites.clear();
     this.pending = false;
     this.lastFlushConverged = false;
@@ -1011,12 +1034,18 @@ export class LiveSync {
         }
         // Taken before the send, not after it: a notify that lands while this very
         // vdSet is in flight cannot be placed on either side of it, and the safe
-        // reading is that it is the answer to this write. A misattribution either way
-        // is self-correcting — the real answer arrives later and overwrites it — so
-        // what the mark buys is one fewer spurious reconcile, not the merge's
-        // correctness (settle.ts).
+        // reading is that it is the answer to this write. Such a notify is also one
+        // `hasUnannouncedWrite` answers for, so the follow layer re-reads its node
+        // rather than putting its value into the plan (settle.ts).
         const mark = writeSettle.mark();
-        await vdSet(c.paramId, c.x, c.y, value);
+        this.inFlight.set(k, (this.inFlight.get(k) ?? 0) + 1);
+        try {
+          await vdSet(c.paramId, c.x, c.y, value);
+        } finally {
+          const n = (this.inFlight.get(k) ?? 1) - 1;
+          if (n > 0) this.inFlight.set(k, n);
+          else this.inFlight.delete(k);
+        }
         // Nothing below this line belongs to a session that has gone: the remaining
         // commands would go out over a disconnected link, and the snapshot they would be
         // recorded in has already been rebuilt by whatever ended (or replaced) it.

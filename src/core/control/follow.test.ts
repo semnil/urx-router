@@ -211,6 +211,37 @@ describe("DeviceFollow", () => {
     expect(reconcileAll).not.toHaveBeenCalled();
   });
 
+  it("routes a value one of our unannounced writes replaces to a scoped read instead of the plan", async () => {
+    const applyDirect = vi.fn(() => true);
+    const noteDirect = vi.fn();
+    const reconcileNodes = vi.fn(async () => {});
+    const follow = followFor({
+      lookup: () => ({ name: "CH_FADER", node: "ch1", direct: true }),
+      isSuperseded: () => true,
+      applyDirect,
+      noteDirect,
+      reconcileNodes,
+    });
+    await follow.begin();
+    notify(-600);
+    expect(applyDirect).not.toHaveBeenCalled();
+    expect(noteDirect).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(reconcileNodes).toHaveBeenCalledWith(new Set(["ch1"]));
+  });
+
+  it("still applies a direct change the host does not report as replaced", async () => {
+    const applyDirect = vi.fn(() => true);
+    const follow = followFor({
+      lookup: () => ({ name: "CH_FADER", node: "ch1", direct: true }),
+      isSuperseded: () => false,
+      applyDirect,
+    });
+    await follow.begin();
+    notify(-600);
+    expect(applyDirect).toHaveBeenCalledWith("ch1", "CH_FADER", -600);
+  });
+
   it("does not patch the snapshot when a direct apply reports unplaceable", async () => {
     const noteDirect = vi.fn();
     const follow = followFor({
