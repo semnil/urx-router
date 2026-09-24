@@ -180,11 +180,11 @@ fn build_midi_window(app: &AppHandle, title: String) -> Result<(), String> {
             .map_err(|e| format!("midi-window: {e}"))?;
     }
     let win = builder.build().map_err(|e| format!("midi-window: {e}"))?;
-    // AFTER `build()` on purpose, and it is the only place this can go. A hook of our
-    // own registered behind the window-state plugin's was tried and measured not to
-    // work: inside a `window_created` hook the window still reports the position it
-    // was born at, because a move issued from one is queued exactly like one issued at
-    // startup. By the time `build()` returns, it has landed.
+    // AFTER `build()` on purpose: by the time `build()` returns, a move has landed. A
+    // hook of our own registered behind the window-state plugin's does not do this:
+    // inside a `window_created` hook the window still reports the position it was born
+    // at, because a move issued from one is queued exactly like one issued at startup
+    // (architecture.md, "Window geometry", lists the places tried).
     //
     // This is the window's whole restore, not a correction of the plugin's — the
     // plugin skips both windows now (`window_state_plugin` in lib.rs says why), so
