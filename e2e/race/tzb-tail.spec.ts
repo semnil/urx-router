@@ -361,10 +361,9 @@ test.describe("Tzb tail", () => {
         // exclude is the remaining pointer movement. FLUSH_TAIL_MS is that window plus slack
         // for a loaded runner.
         expect(setsOn(all, CH1_FADER, duringDrag.detachAt + FLUSH_TAIL_MS)).toHaveLength(0);
-        // The visible half of that: the strip on screen stops answering the pointer the
-        // instant it is replaced, and nothing else is answering it either — the readout the
-        // operator ends on is the one the readback left.
-        expect(held).toBe(after);
+        // What the readout ends on is NOT asserted here: it is the key under the pointer (see
+        // below), and a read that begins late in the drag leaves the idle sweep after the
+        // release to move it again.
         // The history reset that goes with a readback ran while the pointer was down.
         expect(resets[0]).toBeLessThan(releaseAt);
       } else {
