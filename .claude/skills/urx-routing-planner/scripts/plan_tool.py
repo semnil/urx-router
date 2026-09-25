@@ -1164,6 +1164,12 @@ def encode_plan_param(plan):
 
 
 def main(argv=None):
+    # Written as UTF-8 whatever the locale. A pipe otherwise takes the locale's encoding —
+    # cp932 on a Japanese Windows — where a report naming a character it lacks raises
+    # UnicodeEncodeError and a warning's dashes come out as —.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description="Validate / encode a URX Router plan.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     pv = sub.add_parser("validate", help="check a plan against the routing rules")

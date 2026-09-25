@@ -160,6 +160,21 @@ describe("the version the two halves read", () => {
   });
 });
 
+// Read as UTF-8 by every caller, and written that way whatever the locale: on a Japanese
+// Windows a pipe otherwise takes cp932, where a report naming a character cp932 lacks raises
+// instead of printing.
+describe.skipIf(!python)("plan_tool.py's output", () => {
+  it("names a character outside the locale's code page rather than raising on it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "urx-plan-tool-enc-"));
+    const file = join(dir, "plan.json");
+    writeFileSync(file, JSON.stringify({ ...doc({}), modelId: "URX44Vé—" }));
+    const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    expect(r.stderr).not.toContain("Traceback");
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("model: URX44Vé—");
+  });
+});
+
 describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", () => {
   const dir = mkdtempSync(join(tmpdir(), "urx-plan-tool-"));
 
