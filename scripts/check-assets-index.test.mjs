@@ -189,7 +189,8 @@ describe("which paths git can be asked to classify", () => {
 describe("running the checker through a link", () => {
   it("runs the check, rather than exiting 0 having printed nothing", () => {
     const tmp = mkdtempSync(join(tmpdir(), "assets-link-"));
-    symlinkSync(repo, join(tmp, "link"), "dir");
+    // A junction on Windows, where a directory symlink needs Developer Mode; the type is ignored elsewhere.
+    symlinkSync(repo, join(tmp, "link"), "junction");
     const direct = execFileSync(process.execPath, [join(repo, "scripts", "check-assets-index.mjs")], {
       cwd: repo,
       encoding: "utf8",

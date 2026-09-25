@@ -601,7 +601,8 @@ describe("importing the module", () => {
   it("runs it through a symlinked path, rather than exiting 0 having scanned nothing", () => {
     const tmp = mkdtempSync(join(tmpdir(), "prov-link-"));
     const link = join(tmp, "linked");
-    symlinkSync(join(HERE, ".."), link, "dir");
+    // A junction on Windows, where a directory symlink needs Developer Mode; the type is ignored elsewhere.
+    symlinkSync(join(HERE, ".."), link, "junction");
     const out = execFileSync(process.execPath, [join(link, "scripts", "check-comment-provenance.mjs"), "src-tauri"], {
       cwd: join(HERE, ".."),
       encoding: "utf8",
@@ -2640,7 +2641,8 @@ describe("what the default scan reaches", () => {
 
   it("reads a file named through a link and by its own path once", () => {
     const tmp = mkdtempSync(join(tmpdir(), "prov-link-dedupe-"));
-    symlinkSync(ROOT, join(tmp, "link"), "dir");
+    // A junction on Windows, where a directory symlink needs Developer Mode; the type is ignored elsewhere.
+    symlinkSync(ROOT, join(tmp, "link"), "junction");
     const direct = execFileSync(
       process.execPath,
       [join(HERE, "check-comment-provenance.mjs"), "src/core/control/client.ts"],
