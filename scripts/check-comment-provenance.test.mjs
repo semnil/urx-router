@@ -11,7 +11,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync
 import { execFileSync, spawnSync } from "node:child_process";
 import { delimiter, dirname, extname, join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   byFile,
@@ -587,7 +587,7 @@ describe("importing the module", () => {
   const checker = join(HERE, "check-comment-provenance.mjs");
 
   it("does not run the command line", () => {
-    const out = execFileSync(process.execPath, ["-e", `import(${JSON.stringify(checker)})`], {
+    const out = execFileSync(process.execPath, ["-e", `import(${JSON.stringify(pathToFileURL(checker).href)})`], {
       cwd: join(HERE, ".."),
       encoding: "utf8",
     });
