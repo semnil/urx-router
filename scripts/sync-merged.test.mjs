@@ -17,6 +17,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -498,6 +499,31 @@ describe("sync-merged, on a branch it must not delete", () => {
     expect(result.text).toContain("synced main");
     expect(branches(down)).toContain("feat");
     expect(trees(down)).toMatch(/^worktree .*\/wt$/m);
+  });
+
+  // The third reading of the tree's status is the one taken just before the build output is
+  // deleted — the plan's and the apply's removal rule are the first two — so failing it alone
+  // leaves the rule satisfied and a linked install still in place when the removal is reached.
+  it.skipIf(!gitCanBeShimmed)("keeps one whose status cannot be read just before its build output is deleted", () => {
+    const { root, down } = fixture({ ignore: "node_modules\n" });
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const shared = join(root, "shared");
+    mkdirSync(join(shared, "pkg"), { recursive: true });
+    writeFileSync(join(shared, "pkg", "index.js"), "// installed\n");
+    symlinkSync(shared, join(tree, "node_modules"), "junction");
+    const r = raced(
+      down,
+      { at: "status --porcelain=v1 -z --untracked-files=all --ignored=matching", nth: 3, action: "exit 128" },
+      "--apply",
+    );
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/^keep {3}feat — its worktree could not be read before its build output was deleted/m);
+    expect(branches(down)).toContain("feat");
+    expect(trees(down)).toMatch(/^worktree .*\/wt$/m);
+    expect(lstatSync(join(tree, "node_modules")).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(shared, "pkg", "index.js"), "utf8")).toBe("// installed\n");
   });
 
   it("keeps one whose worktree holds ignored files that are not build output", () => {
