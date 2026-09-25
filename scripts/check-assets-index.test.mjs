@@ -14,7 +14,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   ENV_CORPUS,
@@ -189,7 +189,8 @@ describe("which paths git can be asked to classify", () => {
 describe("running the checker through a link", () => {
   it("runs the check, rather than exiting 0 having printed nothing", () => {
     const tmp = mkdtempSync(join(tmpdir(), "assets-link-"));
-    symlinkSync(repo, join(tmp, "link"), "dir");
+    // A junction on Windows, where a directory symlink needs Developer Mode; the type is ignored elsewhere.
+    symlinkSync(repo, join(tmp, "link"), "junction");
     const direct = execFileSync(process.execPath, [join(repo, "scripts", "check-assets-index.mjs")], {
       cwd: repo,
       encoding: "utf8",
@@ -206,7 +207,7 @@ describe("running the checker through a link", () => {
   it("still does not run it on an import", () => {
     const out = execFileSync(
       process.execPath,
-      ["-e", `import(${JSON.stringify(join(repo, "scripts", "check-assets-index.mjs"))})`],
+      ["-e", `import(${JSON.stringify(pathToFileURL(join(repo, "scripts", "check-assets-index.mjs")).href)})`],
       { cwd: repo, encoding: "utf8" },
     );
     expect(out).toBe("");

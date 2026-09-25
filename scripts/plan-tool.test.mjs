@@ -28,15 +28,15 @@ import { insertFxPairProblems, paramRangeProblems } from "../src/core/plan-valid
 import { getModel, MODEL_IDS } from "../src/models";
 import { INSERT_FX_OPTIONS } from "../src/core/control/params";
 import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
+import { atLeast, newestPython } from "./python.test-util.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TOOL = join(ROOT, ".claude/skills/urx-routing-planner/scripts/plan_tool.py");
 const NODE = "bus.fx1";
 
-const python = (() => {
-  const r = spawnSync("python3", ["--version"], { encoding: "utf8" });
-  return r.status === 0 ? "python3" : null;
-})();
+// 3.7 is where a text stream gained the reconfigure the tool writes its output through.
+const found = newestPython();
+const python = atLeast(found, 3, 7) ? found.exe : null;
 
 const doc = (fx) => ({
   format: "urx-router-plan",
@@ -80,7 +80,7 @@ const toolPaths = (dir, plan) => {
   // different answer than a clean one, so the exit code is asserted rather than assumed.
   expect(r.status, r.stdout).toBe(0);
   return r.stderr
-    .split("\n")
+    .split(/\r?\n/)
     .map(warningPath)
     .filter((p) => p !== null);
 };
@@ -145,12 +145,12 @@ const CASES = [
   ["a type no channel offers", { type: 12345 }, true, true],
 ];
 
-// Skipped BY NAME where python3 is absent, rather than passing over a tool it never ran.
+// Skipped BY NAME where no CPython 3.7+ runs, rather than passing over a tool it never ran.
 // The two carry the format version separately — one in TypeScript, one in Python — and the
 // tool REFUSES a document tagged higher than its own. Left behind by a bump, it would report
 // `planVersionUnsupported` for every document the app now writes, which is the opposite of a
 // missed drop and just as wrong. Read out of the file rather than run, so it holds whether or
-// not python3 is here.
+// not a CPython is here.
 describe("the version the two halves read", () => {
   it("is one number", () => {
     const src = readFileSync(TOOL, "utf8");
@@ -160,7 +160,37 @@ describe("the version the two halves read", () => {
   });
 });
 
-describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", () => {
+// Read as UTF-8 by every caller, and written that way whatever the locale: on a Japanese
+// Windows a pipe otherwise takes cp932, where a report naming a character cp932 lacks raises
+// instead of printing and a warning's dashes come out escaped. The tool is run under an
+// ASCII stream encoding, which no such character survives, so the pins ask the same question
+// on a runner whose locale is UTF-8 — where a tool with no reconfiguring would pass them.
+describe.skipIf(!python)("plan_tool.py's output", () => {
+  const validate = (plan) => {
+    const dir = mkdtempSync(join(tmpdir(), "urx-plan-tool-enc-"));
+    const file = join(dir, "plan.json");
+    writeFileSync(file, JSON.stringify(plan));
+    return spawnSync(python, [TOOL, "validate", file], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONIOENCODING: "ascii" },
+    });
+  };
+
+  it("names a character outside the locale's code page rather than raising on it", () => {
+    const r = validate({ ...doc({}), modelId: "URX44Vé—" });
+    expect(r.stderr).not.toContain("Traceback");
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("model: URX44Vé—");
+  });
+
+  it("writes a warning's dash as the character, not as its escape", () => {
+    const r = validate({ ...doc({}), connections: "x" });
+    expect(r.status, r.stdout).toBe(0);
+    expect(r.stderr).toContain("connections is not an array — the app loads the plan with no wires at all");
+  });
+});
+
+describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", () => {
   const dir = mkdtempSync(join(tmpdir(), "urx-plan-tool-"));
 
   for (const [name, fx, changes, warns] of CASES) {
@@ -230,7 +260,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     const out = toolWarnings(dir, both);
     expect(out).toContain("SSMCS channel strip (raw curve values) — verify on the device");
     // …and the FX node is not the one carrying it.
-    for (const line of out.split("\n").filter((l) => l.includes("verify on the device,"))) {
+    for (const line of out.split(/\r?\n/).filter((l) => l.includes("verify on the device,"))) {
       expect(line, "the raw-map advice reaches no FX node").not.toContain("bus.fx");
     }
   });
@@ -253,7 +283,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     const ch = (np) => ({ ...doc({}), nodeParams: { ch1: np } });
     const line = (out, note) =>
       out
-        .split("\n")
+        .split(/\r?\n/)
         .filter((l) => l.includes(note))
         .join("|");
     const SSMCS = "SSMCS channel strip (raw curve values)";
@@ -861,6 +891,10 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
   // The admitted set is the CONTROL's, so the rows walk all three kinds — a slider's window,
   // a select's option list and a toggle's two states — because bounding everything against a
   // range is the mistake the app's own note records.
+  //
+  // One tool process per value, so the run is as long as process starts are slow — and on
+  // Windows each costs more than it does on Linux, which takes this past the suite's default
+  // budget.
   it("agrees with the app about the FX repairs that need the channel's catalogue", () => {
     const FX = JSON.parse(readFileSync(join(ROOT, ".claude/skills/urx-routing-planner/scripts/models.json"), "utf8"))
       .URX44V.fxChannels["bus.fx1"];
@@ -963,7 +997,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       for (const raw of values) {
         const got = ask({ type: FX.types[0], params: { [key]: raw } });
         const app = got.app.find((p) => p.key === key && p.action === "bound");
-        const line = got.tool.split("\n").find((l) => l.includes(`params.${key}:`)) ?? "";
+        const line = got.tool.split(/\r?\n/).find((l) => l.includes(`params.${key}:`)) ?? "";
         // Either both leave it alone, or both name the same number.
         expect(Boolean(app), `both answer for ${key}=${raw}`).toBe(line !== "");
         if (app) {
@@ -979,7 +1013,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
     // The positive control: the loop above is satisfied by a run in which nothing was ever
     // bounded, and every `toContain` in it would then have been asked of nothing.
     expect(bounded, "the probes reach values both sides repair").toBeGreaterThan(0);
-  });
+  }, 120_000);
 
   // A group the app empties is REMOVED, not kept as a husk, and the key's disappearance is a
   // repair like any other. The walk over leaves cannot see it — an empty object has no leaf to
@@ -1079,7 +1113,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       writeFileSync(file, doc);
       const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
       expect(r.status, r.stdout).toBe(0);
-      const said = r.stderr.split("\n").some((l) => l.startsWith("WARNING: node param "));
+      const said = r.stderr.split(/\r?\n/).some((l) => l.startsWith("WARNING: node param "));
       expect(said, `the tool says so: ${name}`).toBe(removes);
     }
 
@@ -1192,7 +1226,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
       expect(r.status, r.stdout).toBe(0);
       const tool = r.stderr
-        .split("\n")
+        .split(/\r?\n/)
         .map(warningPath)
         .filter((p) => p !== null)
         .sort();
@@ -1289,7 +1323,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
         const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
         expect(r.status, r.stdout).toBe(0);
         const tool = r.stderr
-          .split("\n")
+          .split(/\r?\n/)
           .map(warningPath)
           .filter((p) => p !== null)
           .sort();
@@ -1460,7 +1494,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
         writeFileSync(file, JSON.stringify(plan));
         const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
         const tool = r.stdout
-          .split("\n")
+          .split(/\r?\n/)
           .filter((l) => /^\[(noRule|singleInput|monoPairOnly|duplicate)\] /.test(l))
           .sort();
         expect(tool, `${modelId} ${JSON.stringify(batch)}\n${r.stdout}`).toEqual(app);
@@ -1528,7 +1562,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
         const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         const tool = r.stderr
-          .split("\n")
+          .split(/\r?\n/)
           .map((l) => /^WARNING: connection (\S+ -> \S+): the app adds this wire on load/.exec(l)?.[1])
           .filter((l) => l !== undefined)
           .sort();
@@ -1537,7 +1571,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
         if (modelId === MODEL_IDS[0]) {
           lineOf.set(
             name,
-            r.stderr.split("\n").find((l) => l.includes("the app adds this wire on load")),
+            r.stderr.split(/\r?\n/).find((l) => l.includes("the app adds this wire on load")),
           );
         }
       }
@@ -1598,7 +1632,7 @@ describe.skipIf(!python)("plan_tool.py (python3) agrees with the app's loader", 
       const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
       expect(r.status, r.stdout).toBe(0);
       const tool = r.stderr
-        .split("\n")
+        .split(/\r?\n/)
         .map(warningPath)
         .filter((p) => p !== null)
         .sort();

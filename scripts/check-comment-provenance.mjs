@@ -951,6 +951,16 @@ function decidedByExpansion(form) {
  * comments are unknown is not a value with none, and answering "none" is how a comment this
  * check exists to refuse walks past a green run.
  */
+/**
+ * `value` as JSON written in printable ASCII alone, every other character as its `\u` escape —
+ * JSON.stringify leaves no raw control character, so that is every character past `~`.
+ * PowerShell decodes its standard input with the console's code page, which on a Japanese
+ * Windows is not UTF-8, and plain JSON read back that way is unparseable; escaped, it is the
+ * same text under any code page.
+ */
+export const asciiJson = (value) =>
+  JSON.stringify(value).replace(/[^ -~]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
 export function pwshSpans(scripts, exe = "pwsh") {
   if (!scripts.length) return [];
   const walk = `
@@ -977,7 +987,7 @@ export function pwshSpans(scripts, exe = "pwsh") {
     ConvertTo-Json -InputObject @($rows) -Depth 6 -Compress
   `;
   const run = spawnSync(exe, ["-NoProfile", "-Command", walk], {
-    input: JSON.stringify(scripts),
+    input: asciiJson(scripts),
     encoding: "utf8",
     maxBuffer: 1 << 26,
   });

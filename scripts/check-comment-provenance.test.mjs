@@ -11,7 +11,8 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync
 import { execFileSync, spawnSync } from "node:child_process";
 import { delimiter, dirname, extname, join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { atLeast, newestPython } from "./python.test-util.mjs";
 
 import {
   byFile,
@@ -38,6 +39,7 @@ import {
   plainScalar,
   pwshComments,
   pwshSpans,
+  asciiJson,
   expand,
   expansion,
   expressions,
@@ -587,7 +589,7 @@ describe("importing the module", () => {
   const checker = join(HERE, "check-comment-provenance.mjs");
 
   it("does not run the command line", () => {
-    const out = execFileSync(process.execPath, ["-e", `import(${JSON.stringify(checker)})`], {
+    const out = execFileSync(process.execPath, ["-e", `import(${JSON.stringify(pathToFileURL(checker).href)})`], {
       cwd: join(HERE, ".."),
       encoding: "utf8",
     });
@@ -601,7 +603,8 @@ describe("importing the module", () => {
   it("runs it through a symlinked path, rather than exiting 0 having scanned nothing", () => {
     const tmp = mkdtempSync(join(tmpdir(), "prov-link-"));
     const link = join(tmp, "linked");
-    symlinkSync(join(HERE, ".."), link, "dir");
+    // A junction on Windows, where a directory symlink needs Developer Mode; the type is ignored elsewhere.
+    symlinkSync(join(HERE, ".."), link, "junction");
     const out = execFileSync(process.execPath, [join(link, "scripts", "check-comment-provenance.mjs"), "src-tauri"], {
       cwd: join(HERE, ".."),
       encoding: "utf8",
@@ -1394,6 +1397,21 @@ describe("what counts as a comment in the # languages and in HTML", () => {
         for (const other of marks) if (other !== mark) expect(stderr, `${what}: ${other}`).not.toContain(other);
       }
     });
+  });
+
+  // What pwsh is handed has to be one text under any code page, and a pwsh reading UTF-8 cannot
+  // tell a plain JSON from an escaped one — so the encoding is asked here, on every machine,
+  // rather than through a parser whose own code page decides whether it notices.
+  it("hands PowerShell its input in printable ASCII that reads back as the same values", () => {
+    const values = [
+      "Write-Output “a”# x",
+      "café — " + String.fromCodePoint(0x1f600),
+      String.fromCharCode(0x7f, 0x80, 0xffff),
+      "tab\there\nline",
+    ];
+    const sent = asciiJson(values);
+    expect(sent).toMatch(/^[ -~]*$/);
+    expect(JSON.parse(sent)).toEqual(values);
   });
 
   describe.skipIf(noPwsh)("what PowerShell calls a comment, asked of PowerShell", () => {
@@ -2419,12 +2437,12 @@ describe("what counts as a comment inside an f-string", () => {
 });
 
 // The table above is a copy of CPython's answers, and a copy can drift from what it copied.
-// Where python3 exists — this machine, and the ubuntu runner ci.yml uses — ask it directly.
+// Where a CPython that parses PEP 701's f-strings exists — the ubuntu runner ci.yml uses — ask
+// it directly. An older one cannot compile the f-string cases at all, so it is not asked.
 // Skipped elsewhere, and the skip is named rather than silent.
-const python = spawnSync("python3", ["-c", "print(1)"], { encoding: "utf8" });
-const pythonAvailable = !python.error && python.status === 0;
+const python = newestPython();
 
-describe.skipIf(!pythonAvailable)("f-strings, differentially against CPython's tokenizer", () => {
+describe.skipIf(!atLeast(python, 3, 12))("f-strings, differentially against CPython 3.12+'s tokenizer", () => {
   it("agrees with tokenize on every case this interpreter can compile", () => {
     // A case the running CPython cannot compile is reported as `null` rather than dropped:
     // a template string needs 3.14, and a differential that quietly skipped what it could
@@ -2445,7 +2463,7 @@ describe.skipIf(!pythonAvailable)("f-strings, differentially against CPython's t
       "    out.append(lines)",
       "print(json.dumps(out))",
     ].join("\n");
-    const run = spawnSync("python3", ["-c", script, JSON.stringify(PY_CASES.map(([src]) => src))], {
+    const run = spawnSync(python.exe, ["-c", script, JSON.stringify(PY_CASES.map(([src]) => src))], {
       encoding: "utf8",
     });
     expect(run.status, run.stderr).toBe(0);
@@ -2454,7 +2472,7 @@ describe.skipIf(!pythonAvailable)("f-strings, differentially against CPython's t
     // which is a POSITION in the list, not a shape to be matched.
     const uncompiled = answers.flatMap((a, n) => (a === null ? [n] : []));
     expect(uncompiled.filter((n) => n < F_STRINGS.length)).toEqual([]);
-    if (uncompiled.length) console.warn(`template strings not compiled by this python3: ${uncompiled.length}`);
+    if (uncompiled.length) console.warn(`template strings not compiled by this ${python.exe}: ${uncompiled.length}`);
     const compiled = PY_CASES.filter((_, n) => answers[n] !== null);
     expect(compiled.length).toBeGreaterThanOrEqual(F_STRINGS.length);
     expect(answers.filter((a) => a !== null)).toEqual(compiled.map(([, lines]) => lines));
@@ -2640,7 +2658,8 @@ describe("what the default scan reaches", () => {
 
   it("reads a file named through a link and by its own path once", () => {
     const tmp = mkdtempSync(join(tmpdir(), "prov-link-dedupe-"));
-    symlinkSync(ROOT, join(tmp, "link"), "dir");
+    // A junction on Windows, where a directory symlink needs Developer Mode; the type is ignored elsewhere.
+    symlinkSync(ROOT, join(tmp, "link"), "junction");
     const direct = execFileSync(
       process.execPath,
       [join(HERE, "check-comment-provenance.mjs"), "src/core/control/client.ts"],
