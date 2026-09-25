@@ -1614,7 +1614,8 @@ input[type="range"]:focus-visible,
 /* The row reaches down through the shelf's bottom padding and its horizontal
    scrollbar sits there: the chips are 2px shorter than the Show all button that
    sets the line (the line-heights below pin that), so a scrollbar up to the padding
-   plus those 2px — 13px — fits without the shelf's height depending on it. WebKit
+   plus those 2px — 13px — fits without the shelf's height depending on it. The
+   thin scrollbar is 13px in WKWebView and 10px in WebView2, so both fit. WebKit
    can size the shelf before the row's scrollbar exists and count it only at a later
    relayout, so a shelf sized around its scrollbar changes height the first time
    anything relays it out — a hover over a chip is enough. */
