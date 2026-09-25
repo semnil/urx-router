@@ -976,8 +976,11 @@ export function pwshSpans(scripts, exe = "pwsh") {
     }
     ConvertTo-Json -InputObject @($rows) -Depth 6 -Compress
   `;
+  // Sent as ASCII, every other character escaped: PowerShell decodes its standard input with
+  // the console's code page, which on a Japanese Windows is not UTF-8, and the JSON reads back
+  // unparseable. Escaped, it is the same text under any code page.
   const run = spawnSync(exe, ["-NoProfile", "-Command", walk], {
-    input: JSON.stringify(scripts),
+    input: JSON.stringify(scripts).replace(/[\u0080-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`),
     encoding: "utf8",
     maxBuffer: 1 << 26,
   });
