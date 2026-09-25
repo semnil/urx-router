@@ -244,7 +244,8 @@ describe("sync-merged, when a branch has landed", () => {
 
     expect(report(down).text).toMatch(/^would remove feat \+ /m);
     expect(branches(down)).toContain("feat");
-    const removed = realpathSync(tree);
+    // Spelled the way git prints a worktree path, which separates with `/` on Windows too.
+    const removed = realpathSync(tree).replace(/\\/g, "/");
 
     const { code, text } = report(down, true);
     expect(code).toBe(0);
