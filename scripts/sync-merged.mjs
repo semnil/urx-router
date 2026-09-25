@@ -245,15 +245,22 @@ const STATUS_WITH_IGNORED = ["status", "--porcelain=v1", "-z", "--untracked-file
  * what it points at.
  *
  * Called on a reading taken immediately after the removal rule's own, so a worktree git then
- * refuses to remove loses only what a command here writes again.
+ * refuses to remove loses only what a command here writes again. Throws, with the reason the
+ * worktree is kept, when that reading cannot be taken or a delete fails: a tree whose linked
+ * install was not taken out first is one the removal must not reach.
  */
 function clearRebuildable(path) {
   const r = git(STATUS_WITH_IGNORED, path, true);
-  if (r.status !== 0) return;
+  if (r.status !== 0) throw new Error(`its worktree could not be read before its build output was deleted: ${r.err}`);
   for (const rec of r.out.split("\0")) {
     if (rec.slice(0, 2) !== "!!") continue;
     const entry = rec.slice(3);
-    if (rebuildable(entry)) rmSync(join(path, entry), { recursive: true, force: true });
+    if (!rebuildable(entry)) continue;
+    try {
+      rmSync(join(path, entry), { recursive: true, force: true });
+    } catch (e) {
+      throw new Error(`its build output could not be deleted: ${e.message}`);
+    }
   }
 }
 
@@ -626,7 +633,7 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
     try {
       clearRebuildable(tree.path);
     } catch (e) {
-      log(`keep   ${branch} — its build output could not be deleted: ${e.message}`);
+      log(`keep   ${branch} — ${e.message}`);
       failed = true;
       continue;
     }
