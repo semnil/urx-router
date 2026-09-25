@@ -28,13 +28,15 @@ import { insertFxPairProblems, paramRangeProblems } from "../src/core/plan-valid
 import { getModel, MODEL_IDS } from "../src/models";
 import { INSERT_FX_OPTIONS } from "../src/core/control/params";
 import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
-import { newestPython } from "./python.test-util.mjs";
+import { atLeast, newestPython } from "./python.test-util.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TOOL = join(ROOT, ".claude/skills/urx-routing-planner/scripts/plan_tool.py");
 const NODE = "bus.fx1";
 
-const python = newestPython()?.exe ?? null;
+// 3.7 is where a text stream gained the reconfigure the tool writes its output through.
+const found = newestPython();
+const python = atLeast(found, 3, 7) ? found.exe : null;
 
 const doc = (fx) => ({
   format: "urx-router-plan",
@@ -143,7 +145,7 @@ const CASES = [
   ["a type no channel offers", { type: 12345 }, true, true],
 ];
 
-// Skipped BY NAME where no CPython runs, rather than passing over a tool it never ran.
+// Skipped BY NAME where no CPython 3.7+ runs, rather than passing over a tool it never ran.
 // The two carry the format version separately — one in TypeScript, one in Python — and the
 // tool REFUSES a document tagged higher than its own. Left behind by a bump, it would report
 // `planVersionUnsupported` for every document the app now writes, which is the opposite of a
@@ -160,16 +162,31 @@ describe("the version the two halves read", () => {
 
 // Read as UTF-8 by every caller, and written that way whatever the locale: on a Japanese
 // Windows a pipe otherwise takes cp932, where a report naming a character cp932 lacks raises
-// instead of printing.
+// instead of printing and a warning's dashes come out escaped. The tool is run under an
+// ASCII stream encoding, which no such character survives, so the pins ask the same question
+// on a runner whose locale is UTF-8 — where a tool with no reconfiguring would pass them.
 describe.skipIf(!python)("plan_tool.py's output", () => {
-  it("names a character outside the locale's code page rather than raising on it", () => {
+  const validate = (plan) => {
     const dir = mkdtempSync(join(tmpdir(), "urx-plan-tool-enc-"));
     const file = join(dir, "plan.json");
-    writeFileSync(file, JSON.stringify({ ...doc({}), modelId: "URX44Vé—" }));
-    const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    writeFileSync(file, JSON.stringify(plan));
+    return spawnSync(python, [TOOL, "validate", file], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONIOENCODING: "ascii" },
+    });
+  };
+
+  it("names a character outside the locale's code page rather than raising on it", () => {
+    const r = validate({ ...doc({}), modelId: "URX44Vé—" });
     expect(r.stderr).not.toContain("Traceback");
     expect(r.status).toBe(1);
     expect(r.stdout).toContain("model: URX44Vé—");
+  });
+
+  it("writes a warning's dash as the character, not as its escape", () => {
+    const r = validate({ ...doc({}), connections: "x" });
+    expect(r.status, r.stdout).toBe(0);
+    expect(r.stderr).toContain("connections is not an array — the app loads the plan with no wires at all");
   });
 });
 
