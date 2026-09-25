@@ -68,8 +68,9 @@
 // the remote, and reporting them off a stale one would be reporting about a different repository.
 // No branch, worktree, working tree or HEAD is touched.
 import { spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
 import { platform } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 function git(args, cwd, allowFail = false) {
@@ -231,6 +232,38 @@ function rebuildable(entry) {
   );
 }
 
+const STATUS_WITH_IGNORED = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"];
+
+/**
+ * Delete a worktree's rebuildable ignored content ahead of `git worktree remove`, which is then
+ * left only what git itself holds.
+ *
+ * Git for Windows descends into a JUNCTION as though it were the tree's own directory, so a
+ * worktree whose node_modules is a junction to another checkout's install — what
+ * `scripts/e2e-worktree.mjs` makes on Windows — has that other checkout's install deleted by the
+ * removal, whether or not the removal then succeeds. Node's rm removes a link itself and never
+ * what it points at.
+ *
+ * Called on a reading taken immediately after the removal rule's own, so a worktree git then
+ * refuses to remove loses only what a command here writes again. Throws, with the reason the
+ * worktree is kept, when that reading cannot be taken or a delete fails: a tree whose linked
+ * install was not taken out first is one the removal must not reach.
+ */
+function clearRebuildable(path) {
+  const r = git(STATUS_WITH_IGNORED, path, true);
+  if (r.status !== 0) throw new Error(`its worktree could not be read before its build output was deleted: ${r.err}`);
+  for (const rec of r.out.split("\0")) {
+    if (rec.slice(0, 2) !== "!!") continue;
+    const entry = rec.slice(3);
+    if (!rebuildable(entry)) continue;
+    try {
+      rmSync(join(path, entry), { recursive: true, force: true });
+    } catch (e) {
+      throw new Error(`its build output could not be deleted: ${e.message}`);
+    }
+  }
+}
+
 /** Why a worktree may not be removed, or null when it may. Uncommitted content of any kind counts,
  *  and so does ignored content this cannot name; so does a worktree that cannot be asked, since a
  *  directory nobody can look inside is not the same as one that is empty.
@@ -239,7 +272,7 @@ function rebuildable(entry) {
  *  is what keeps this from enumerating node_modules; the traditional mode expands it under the
  *  `--untracked-files=all` the tracked half needs. */
 function unclean(path) {
-  const r = git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"], path, true);
+  const r = git(STATUS_WITH_IGNORED, path, true);
   if (r.status !== 0) return "its worktree could not be read — the directory may be gone";
   const work = [];
   for (const rec of r.out.split("\0")) {
@@ -597,9 +630,24 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
       failed = true;
       continue;
     }
+    try {
+      clearRebuildable(tree.path);
+    } catch (e) {
+      log(`keep   ${branch} — ${e.message}`);
+      failed = true;
+      continue;
+    }
     const r = git(["worktree", "remove", tree.path], cwd, true);
     if (r.status !== 0) {
-      log(`keep   ${branch} — its worktree could not be removed: ${r.err}`);
+      // Git unregisters the worktree even where deleting its directory failed part-way, and the
+      // branch below is then deleted like any other — so what is left is a directory git no
+      // longer knows, not a branch kept with its worktree.
+      const listed = worktrees(cwd).some((w) => w.path === tree.path);
+      log(
+        listed
+          ? `keep   ${branch} — its worktree could not be removed: ${r.err}`
+          : `left   ${tree.path} — no longer a worktree, but the directory could not be deleted and is left to remove by hand: ${r.err}`,
+      );
       failed = true;
     } else log(`removed ${tree.path}`);
   }

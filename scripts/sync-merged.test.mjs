@@ -14,7 +14,18 @@
 // The positive controls are what make the refusals mean something — a run that removed nothing
 // would satisfy every assertion about what is kept.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -244,7 +255,8 @@ describe("sync-merged, when a branch has landed", () => {
 
     expect(report(down).text).toMatch(/^would remove feat \+ /m);
     expect(branches(down)).toContain("feat");
-    const removed = realpathSync(tree);
+    // Spelled the way git prints a worktree path, which separates with `/` on Windows too.
+    const removed = realpathSync(tree).replace(/\\/g, "/");
 
     const { code, text } = report(down, true);
     expect(code).toBe(0);
@@ -412,6 +424,106 @@ describe("sync-merged, on a branch it must not delete", () => {
     expect(report(down, true).code).toBe(0);
     expect(branches(down)).not.toContain("feat");
     expect(existsSync(tree)).toBe(false);
+  });
+
+  it("removes one whose node_modules links to another install, and leaves that install alone", () => {
+    // The shape `pnpm e2e:worktree` leaves behind on Windows, where the link is a junction and
+    // Git for Windows deletes through one. Elsewhere the type is ignored and this is a symlink.
+    const { root, down } = fixture({ ignore: "node_modules\n" });
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const shared = join(root, "shared");
+    mkdirSync(join(shared, "pkg"), { recursive: true });
+    writeFileSync(join(shared, "pkg", "index.js"), "// installed\n");
+    symlinkSync(shared, join(tree, "node_modules"), "junction");
+    expect(report(down, true).code).toBe(0);
+    expect(branches(down)).not.toContain("feat");
+    expect(existsSync(tree)).toBe(false);
+    expect(readFileSync(join(shared, "pkg", "index.js"), "utf8")).toBe("// installed\n");
+  });
+
+  // A directory the removal cannot delete: on Windows one a process is running in, elsewhere one
+  // this user may not write to — which root may, so there is nothing to block with.
+  it.skipIf(process.getuid?.() === 0)("says a directory git let go of is left, rather than kept", async () => {
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    let child = null;
+    if (process.platform === "win32") {
+      child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: tree, stdio: "ignore" });
+      await new Promise((ok, fail) => child.once("spawn", ok).once("error", fail));
+    } else chmodSync(tree, 0o555);
+    let result;
+    try {
+      result = report(down, true);
+    } finally {
+      if (child) {
+        const gone = new Promise((ok) => child.once("exit", ok));
+        child.kill();
+        await gone;
+      } else chmodSync(tree, 0o755);
+    }
+    expect(result.code).toBe(1);
+    expect(result.text).toMatch(/^left {3}.*no longer a worktree, but the directory could not be deleted/m);
+    expect(result.text).not.toMatch(/^keep {3}feat/m);
+    expect(result.text).toContain("removed feat");
+    expect(trees(down)).toMatch(/^worktree .*\/down$/m);
+    expect(trees(down)).not.toMatch(/^worktree .*\/wt$/m);
+    expect(existsSync(tree)).toBe(true);
+  });
+
+  it.skipIf(process.getuid?.() === 0)("keeps one whose build output cannot be deleted, and goes on", async () => {
+    const { down } = fixture({ ignore: "dist/\n" });
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const dist = join(tree, "dist");
+    mkdirSync(dist);
+    writeFileSync(join(dist, "bundle.js"), "// build output\n");
+    let child = null;
+    if (process.platform === "win32") {
+      child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: dist, stdio: "ignore" });
+      await new Promise((ok, fail) => child.once("spawn", ok).once("error", fail));
+    } else chmodSync(dist, 0o555);
+    let result;
+    try {
+      result = report(down, true);
+    } finally {
+      if (child) {
+        const gone = new Promise((ok) => child.once("exit", ok));
+        child.kill();
+        await gone;
+      } else chmodSync(dist, 0o755);
+    }
+    expect(result.code).toBe(1);
+    expect(result.text).toMatch(/^keep {3}feat — its build output could not be deleted: /m);
+    expect(result.text).toContain("synced main");
+    expect(branches(down)).toContain("feat");
+    expect(trees(down)).toMatch(/^worktree .*\/wt$/m);
+  });
+
+  // The third reading of the tree's status is the one taken just before the build output is
+  // deleted — the plan's and the apply's removal rule are the first two — so failing it alone
+  // leaves the rule satisfied and a linked install still in place when the removal is reached.
+  it.skipIf(!gitCanBeShimmed)("keeps one whose status cannot be read just before its build output is deleted", () => {
+    const { root, down } = fixture({ ignore: "node_modules\n" });
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const shared = join(root, "shared");
+    mkdirSync(join(shared, "pkg"), { recursive: true });
+    writeFileSync(join(shared, "pkg", "index.js"), "// installed\n");
+    symlinkSync(shared, join(tree, "node_modules"), "junction");
+    const r = raced(
+      down,
+      { at: "status --porcelain=v1 -z --untracked-files=all --ignored=matching", nth: 3, action: "exit 128" },
+      "--apply",
+    );
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/^keep {3}feat — its worktree could not be read before its build output was deleted/m);
+    expect(branches(down)).toContain("feat");
+    expect(trees(down)).toMatch(/^worktree .*\/wt$/m);
+    expect(lstatSync(join(tree, "node_modules")).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(shared, "pkg", "index.js"), "utf8")).toBe("// installed\n");
   });
 
   it("keeps one whose worktree holds ignored files that are not build output", () => {
