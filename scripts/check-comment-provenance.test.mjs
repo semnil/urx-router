@@ -39,6 +39,7 @@ import {
   plainScalar,
   pwshComments,
   pwshSpans,
+  asciiJson,
   expand,
   expansion,
   expressions,
@@ -1396,6 +1397,21 @@ describe("what counts as a comment in the # languages and in HTML", () => {
         for (const other of marks) if (other !== mark) expect(stderr, `${what}: ${other}`).not.toContain(other);
       }
     });
+  });
+
+  // What pwsh is handed has to be one text under any code page, and a pwsh reading UTF-8 cannot
+  // tell a plain JSON from an escaped one — so the encoding is asked here, on every machine,
+  // rather than through a parser whose own code page decides whether it notices.
+  it("hands PowerShell its input in printable ASCII that reads back as the same values", () => {
+    const values = [
+      "Write-Output “a”# x",
+      "café — " + String.fromCodePoint(0x1f600),
+      String.fromCharCode(0x7f, 0x80, 0xffff),
+      "tab\there\nline",
+    ];
+    const sent = asciiJson(values);
+    expect(sent).toMatch(/^[ -~]*$/);
+    expect(JSON.parse(sent)).toEqual(values);
   });
 
   describe.skipIf(noPwsh)("what PowerShell calls a comment, asked of PowerShell", () => {
