@@ -14,7 +14,17 @@
 // The positive controls are what make the refusals mean something — a run that removed nothing
 // would satisfy every assertion about what is kept.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -413,6 +423,51 @@ describe("sync-merged, on a branch it must not delete", () => {
     expect(report(down, true).code).toBe(0);
     expect(branches(down)).not.toContain("feat");
     expect(existsSync(tree)).toBe(false);
+  });
+
+  it("removes one whose node_modules links to another install, and leaves that install alone", () => {
+    // The shape `pnpm e2e:worktree` leaves behind on Windows, where the link is a junction and
+    // Git for Windows deletes through one. Elsewhere the type is ignored and this is a symlink.
+    const { root, down } = fixture({ ignore: "node_modules\n" });
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const shared = join(root, "shared");
+    mkdirSync(join(shared, "pkg"), { recursive: true });
+    writeFileSync(join(shared, "pkg", "index.js"), "// installed\n");
+    symlinkSync(shared, join(tree, "node_modules"), "junction");
+    expect(report(down, true).code).toBe(0);
+    expect(branches(down)).not.toContain("feat");
+    expect(existsSync(tree)).toBe(false);
+    expect(readFileSync(join(shared, "pkg", "index.js"), "utf8")).toBe("// installed\n");
+  });
+
+  it.skipIf(process.getuid?.() === 0)("keeps one whose build output cannot be deleted, and goes on", async () => {
+    const { down } = fixture({ ignore: "dist/\n" });
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const dist = join(tree, "dist");
+    mkdirSync(dist);
+    writeFileSync(join(dist, "bundle.js"), "// build output\n");
+    let child = null;
+    if (process.platform === "win32") {
+      child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: dist, stdio: "ignore" });
+      await new Promise((ok, fail) => child.once("spawn", ok).once("error", fail));
+    } else chmodSync(dist, 0o555);
+    let result;
+    try {
+      result = report(down, true);
+    } finally {
+      if (child) {
+        const gone = new Promise((ok) => child.once("exit", ok));
+        child.kill();
+        await gone;
+      } else chmodSync(dist, 0o755);
+    }
+    expect(result.code).toBe(1);
+    expect(result.text).toMatch(/^keep {3}feat — its build output could not be deleted: /m);
+    expect(result.text).toContain("synced main");
+    expect(branches(down)).toContain("feat");
+    expect(trees(down)).toMatch(/^worktree .*\/wt$/m);
   });
 
   it("keeps one whose worktree holds ignored files that are not build output", () => {
