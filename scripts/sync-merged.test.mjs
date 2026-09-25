@@ -441,6 +441,36 @@ describe("sync-merged, on a branch it must not delete", () => {
     expect(readFileSync(join(shared, "pkg", "index.js"), "utf8")).toBe("// installed\n");
   });
 
+  // A directory the removal cannot delete: on Windows one a process is running in, elsewhere one
+  // this user may not write to — which root may, so there is nothing to block with.
+  it.skipIf(process.getuid?.() === 0)("says a directory git let go of is left, rather than kept", async () => {
+    const { down } = fixture();
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    let child = null;
+    if (process.platform === "win32") {
+      child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: tree, stdio: "ignore" });
+      await new Promise((ok, fail) => child.once("spawn", ok).once("error", fail));
+    } else chmodSync(tree, 0o555);
+    let result;
+    try {
+      result = report(down, true);
+    } finally {
+      if (child) {
+        const gone = new Promise((ok) => child.once("exit", ok));
+        child.kill();
+        await gone;
+      } else chmodSync(tree, 0o755);
+    }
+    expect(result.code).toBe(1);
+    expect(result.text).toMatch(/^left {3}.*no longer a worktree, but the directory could not be deleted/m);
+    expect(result.text).not.toMatch(/^keep {3}feat/m);
+    expect(result.text).toContain("removed feat");
+    expect(trees(down)).toMatch(/^worktree .*\/down$/m);
+    expect(trees(down)).not.toMatch(/^worktree .*\/wt$/m);
+    expect(existsSync(tree)).toBe(true);
+  });
+
   it.skipIf(process.getuid?.() === 0)("keeps one whose build output cannot be deleted, and goes on", async () => {
     const { down } = fixture({ ignore: "dist/\n" });
     const tree = join(down, "..", "wt");

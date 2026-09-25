@@ -632,7 +632,15 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
     }
     const r = git(["worktree", "remove", tree.path], cwd, true);
     if (r.status !== 0) {
-      log(`keep   ${branch} — its worktree could not be removed: ${r.err}`);
+      // Git unregisters the worktree even where deleting its directory failed part-way, and the
+      // branch below is then deleted like any other — so what is left is a directory git no
+      // longer knows, not a branch kept with its worktree.
+      const listed = worktrees(cwd).some((w) => w.path === tree.path);
+      log(
+        listed
+          ? `keep   ${branch} — its worktree could not be removed: ${r.err}`
+          : `left   ${tree.path} — no longer a worktree, but the directory could not be deleted and is left to remove by hand: ${r.err}`,
+      );
       failed = true;
     } else log(`removed ${tree.path}`);
   }
