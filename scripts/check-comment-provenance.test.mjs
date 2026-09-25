@@ -12,6 +12,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { delimiter, dirname, extname, join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { atLeast, newestPython } from "./python.test-util.mjs";
 
 import {
   byFile,
@@ -2420,12 +2421,12 @@ describe("what counts as a comment inside an f-string", () => {
 });
 
 // The table above is a copy of CPython's answers, and a copy can drift from what it copied.
-// Where python3 exists — this machine, and the ubuntu runner ci.yml uses — ask it directly.
+// Where a CPython that parses PEP 701's f-strings exists — the ubuntu runner ci.yml uses — ask
+// it directly. An older one cannot compile the f-string cases at all, so it is not asked.
 // Skipped elsewhere, and the skip is named rather than silent.
-const python = spawnSync("python3", ["-c", "print(1)"], { encoding: "utf8" });
-const pythonAvailable = !python.error && python.status === 0;
+const python = newestPython();
 
-describe.skipIf(!pythonAvailable)("f-strings, differentially against CPython's tokenizer", () => {
+describe.skipIf(!atLeast(python, 3, 12))("f-strings, differentially against CPython 3.12+'s tokenizer", () => {
   it("agrees with tokenize on every case this interpreter can compile", () => {
     // A case the running CPython cannot compile is reported as `null` rather than dropped:
     // a template string needs 3.14, and a differential that quietly skipped what it could
@@ -2446,7 +2447,7 @@ describe.skipIf(!pythonAvailable)("f-strings, differentially against CPython's t
       "    out.append(lines)",
       "print(json.dumps(out))",
     ].join("\n");
-    const run = spawnSync("python3", ["-c", script, JSON.stringify(PY_CASES.map(([src]) => src))], {
+    const run = spawnSync(python.exe, ["-c", script, JSON.stringify(PY_CASES.map(([src]) => src))], {
       encoding: "utf8",
     });
     expect(run.status, run.stderr).toBe(0);
@@ -2455,7 +2456,7 @@ describe.skipIf(!pythonAvailable)("f-strings, differentially against CPython's t
     // which is a POSITION in the list, not a shape to be matched.
     const uncompiled = answers.flatMap((a, n) => (a === null ? [n] : []));
     expect(uncompiled.filter((n) => n < F_STRINGS.length)).toEqual([]);
-    if (uncompiled.length) console.warn(`template strings not compiled by this python3: ${uncompiled.length}`);
+    if (uncompiled.length) console.warn(`template strings not compiled by this ${python.exe}: ${uncompiled.length}`);
     const compiled = PY_CASES.filter((_, n) => answers[n] !== null);
     expect(compiled.length).toBeGreaterThanOrEqual(F_STRINGS.length);
     expect(answers.filter((a) => a !== null)).toEqual(compiled.map(([, lines]) => lines));
