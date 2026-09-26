@@ -370,14 +370,17 @@ export async function sendNames(writes: NameWrite[]): Promise<NameOutcome[]> {
  * preset drives after the write returns, so a strip value written before the preset is
  * replaced by the preset's, and a read taken before that rewrite lands reports the strip as
  * already matching. `rest` is the node names, which drive nothing and go after the converge.
+ * Stops at the first preset the unit refuses, as a numeric write does; `notSent` is the presets
+ * after it.
  */
 export async function sendPresetsFirst(
   writes: readonly NameWrite[],
-): Promise<{ outcomes: NameOutcome[]; rest: NameWrite[]; pending: PendingWrites }> {
+): Promise<{ outcomes: NameOutcome[]; notSent: NameWrite[]; rest: NameWrite[]; pending: PendingWrites }> {
   const boundaryMarks = new Map<number, number>();
   const outcomes: NameOutcome[] = [];
-  for (const write of writes) {
-    if (write.name === undefined) continue;
+  const heads = writes.filter((w) => w.name !== undefined);
+  for (const write of heads) {
+    if (outcomes.some((o) => !o.ok)) break;
     // Before the write: only a notify after it can be this write's announcement.
     const mark = writeSettle.mark();
     try {
@@ -390,6 +393,7 @@ export async function sendPresetsFirst(
   }
   return {
     outcomes,
+    notSent: heads.slice(outcomes.length),
     rest: writes.filter((w) => w.name === undefined),
     pending: { written: new Map(), mustSettle: new Set(boundaryMarks.keys()), boundaryMarks, mustAnnounce: new Set() },
   };
@@ -400,22 +404,33 @@ export async function sendPresetsFirst(
  * converge rather than ahead of it: a Signal Type change inside that converge puts each member's
  * own values back when it lands, the preset among them, so a preset written ahead of it is lost.
  * The second converge is what puts back the strip the preset rebuilt; it reads the unit only once
- * that rebuild has landed. `result` is null when no preset differed, and when one was refused
- * (the write stops there, as on any refused write).
+ * that rebuild has landed. `result` is null when no preset differed, and when one was refused:
+ * the write stops there, as on any refused write, leaving `notSent` unsent and naming in
+ * `unconfirmed` the nodes whose preset was accepted and whose rebuilt strip was not read back.
  */
 export async function sendPresetsAndReconverge(
   model: DeviceModel,
   plan: Plan,
   opts: ConvergeOptions = {},
-): Promise<{ presets: NameOutcome[]; readErrors: string[]; result: ConvergeResult | null }> {
+): Promise<{
+  presets: NameOutcome[];
+  notSent: NameWrite[];
+  unconfirmed: string[];
+  readErrors: string[];
+  result: ConvergeResult | null;
+}> {
   const names = await diffNames(model, plan);
-  if (names.errors.length) return { presets: [], readErrors: names.errors, result: null };
+  if (names.errors.length) return { presets: [], notSent: [], unconfirmed: [], readErrors: names.errors, result: null };
   opts.signal?.throwIfAborted();
   const sent = await sendPresetsFirst(names.writes);
-  if (!sent.pending.mustSettle.size || sent.outcomes.some((o) => !o.ok))
-    return { presets: sent.outcomes, readErrors: [], result: null };
+  if (sent.outcomes.some((o) => !o.ok)) {
+    const unconfirmed = sent.outcomes.filter((o) => o.ok).map((o) => o.write.node ?? `${o.write.param}:0:${o.write.y}`);
+    return { presets: sent.outcomes, notSent: sent.notSent, unconfirmed, readErrors: [], result: null };
+  }
+  if (!sent.pending.mustSettle.size)
+    return { presets: sent.outcomes, notSent: [], unconfirmed: [], readErrors: [], result: null };
   const result = await sendConverging(model, plan, { ...opts, initialDiffs: undefined, pending: sent.pending });
-  return { presets: sent.outcomes, readErrors: [], result };
+  return { presets: sent.outcomes, notSent: [], unconfirmed: [], readErrors: [], result };
 }
 
 /**
@@ -721,7 +736,11 @@ export function formatWriteReport(
   failed: Array<{ name: string; error?: string }>,
   residual: CommandDiff[],
   reads: string[] = [],
+  /** `unconfirmed`: nodes whose Sweet Spot preset was accepted and whose rebuilt strip was not
+   *  read back. */
+  after: { unconfirmed?: string[] } = {},
 ): string {
+  const unconfirmed = after.unconfirmed ?? [];
   const lines: string[] = [];
   lines.push(`# URX write report — ${model}`);
   lines.push("");
@@ -730,7 +749,8 @@ export function formatWriteReport(
   } else {
     lines.push(
       `- Write failures: ${failed.length}; parameters that did not converge: ${residual.length}` +
-        (reads.length ? `; read failures: ${reads.length}` : ""),
+        (reads.length ? `; read failures: ${reads.length}` : "") +
+        (unconfirmed.length ? `; strips not confirmed: ${unconfirmed.length}` : ""),
     );
   }
   if (reads.length) {
@@ -754,6 +774,11 @@ export function formatWriteReport(
         `- ${c.name} @ ${c.paramId}:${c.x}:${c.y} — wrote ${c.vdValue}, device has ${d.current ?? "unreadable"}`,
       );
     }
+  }
+  if (unconfirmed.length) {
+    lines.push("");
+    lines.push("## Not confirmed (a Sweet Spot preset rebuilt the strip, and the write stopped before reading it)");
+    for (const node of unconfirmed) lines.push(`- ${node}`);
   }
   lines.push("");
   return lines.join("\n");

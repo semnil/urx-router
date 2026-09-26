@@ -4185,6 +4185,55 @@ describe("Write to device", () => {
     expect(shell.count("vd_set")).toBe(1); // stopped AT the failure, not after it
     expect(shell.count("vd_set_str")).toBe(0); // names are held back while it is stopped
   });
+
+  // A plan whose CH1-3 sit on Sweet Spot presets, as a ?plan= link.
+  const presetLink = async (): Promise<string> => {
+    const { emptyPlan, serialize } = await import("./core/plan");
+    const plan = emptyPlan("URX44V");
+    for (const [id, preset] of [
+      ["ch1", 5],
+      ["ch2", 24],
+      ["ch3", 7],
+    ] as const)
+      plan.nodeParams[id] = { compEqType: 1, ssmcs: { sweetSpotData: preset, compDrive: 120 } };
+    return `/?plan=${encodeURIComponent(Buffer.from(serialize(plan), "utf8").toString("base64url"))}`;
+  };
+  const savedReport = async (shell: TauriShell): Promise<string> => {
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
+    return String((shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string }).contents);
+  };
+
+  // A refused preset stops the write there, as any refused write does: the presets after it do
+  // not go out, and the node whose preset was accepted is named, since its strip was rebuilt
+  // and nothing read it back.
+  it("stops at a refused preset and names the strip an accepted one left unconfirmed", SLOW, async () => {
+    const shell = (await bootApp({
+      url: await presetLink(),
+      tauri: deviceCommands({
+        ...SAVES,
+        "plugin:dialog|message": byMessage((m) => !m.includes(RETRY_ASK)),
+        vd_set_str: (a: Record<string, unknown>) => {
+          if (a.paramId === 91 && a.y === 1) throw new Error("nak");
+          return null;
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const presets = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set_str" ? (shell.args[i] as Record<string, unknown>) : undefined))
+      .filter((a): a is Record<string, unknown> => a?.paramId === 91)
+      .map((a) => a.y);
+    expect(presets).toEqual([0, 1]);
+    const [sent, notSent] = (/: (\d+) sent, (\d+) not sent/.exec(statusText()) ?? []).slice(1).map(Number);
+    expect(statusText()).toBe(t().status.writeStopped(sent, notSent));
+    expect(notSent).toBeGreaterThanOrEqual(1);
+    expect(confirms(shell)).toContain(t().confirm.writeRetry(sent, notSent));
+    const md = await savedReport(shell);
+    expect(md).toContain("## Not confirmed");
+    expect(md).toContain("- ch1");
+  });
 });
 
 // Offered after the disconnect rather than during it (why, in `offerErrorReport`'s own

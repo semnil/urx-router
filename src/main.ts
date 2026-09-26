@@ -3474,10 +3474,11 @@ if (!DEMO) {
             failed: Array<{ name: string; error?: string }>,
             residual: CommandDiff[],
             reads: string[],
+            after: { unconfirmed?: string[] } = {},
           ): void => {
             report = {
               filename: `${modelId}-write-errors.md`,
-              markdown: formatWriteReport(device.model, failed, residual, reads),
+              markdown: formatWriteReport(device.model, failed, residual, reads, after),
             };
           };
           // What the whole write operation has taken back, across attempts. Per ATTEMPT it would go
@@ -3541,6 +3542,10 @@ if (!DEMO) {
             // produces a diff that would offer it again.
             const ledger = newConfirmLedger();
             const presetFailures: Array<{ name: string; error?: string }> = [];
+            // A refused preset stops the write, as any refused write does. What it leaves is the
+            // presets after it unsent and the nodes whose preset was accepted with a rebuilt strip
+            // nothing read back.
+            let presetStop: { sent: number; notSent: number; unconfirmed: string[] } | null = null;
             let convergeResult: ConvergeResult;
             try {
               const converge = {
@@ -3570,6 +3575,12 @@ if (!DEMO) {
                     .filter((o) => !o.ok)
                     .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
                 );
+                if (presetFailures.length)
+                  presetStop = {
+                    sent: second.presets.filter((o) => o.ok).length,
+                    notSent: second.notSent.length,
+                    unconfirmed: second.unconfirmed,
+                  };
                 const first = convergeResult;
                 if (second.result)
                   convergeResult = {
@@ -3631,8 +3642,15 @@ if (!DEMO) {
             if (residual.length) console.warn("device write did not converge:", residual);
             // Failures/non-convergence are otherwise console-only: capture a report to
             // offer after disconnect (below), so the reasons are visible without the console.
-            if (failed.length || residual.length || convergeErrors.length) {
-              saveReport(failed, residual, convergeErrors);
+            const sent = outcomes.filter((o) => o.ok).length;
+            if (failed.length || residual.length || convergeErrors.length || presetStop) {
+              saveReport(failed, residual, convergeErrors, { unconfirmed: presetStop?.unconfirmed });
+            }
+            if (presetStop) {
+              const renames = nameWrites.filter((w) => w.name === undefined).length;
+              const notSent = presetStop.notSent + renames;
+              setStatus(t().status.writeStopped(sent + presetStop.sent, notSent) + note);
+              return { sent: sent + presetStop.sent, notSent };
             }
             if (!skipped) {
               setStatus(
@@ -3648,7 +3666,6 @@ if (!DEMO) {
             // re-sends what the device reset, so `total` (the round-1 count) is not the
             // denominator. A stopped numeric phase never sent the names, so they are
             // all not-sent too.
-            const sent = outcomes.filter((o) => o.ok).length;
             const notSent = skipped + nameWrites.length;
             setStatus(t().status.writeStopped(sent, notSent) + note);
             return { sent, notSent };

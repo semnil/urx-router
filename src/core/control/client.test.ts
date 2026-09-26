@@ -568,6 +568,13 @@ describe("formatWriteReport", () => {
     expect(md).not.toContain("Write failures: 1");
   });
 
+  it("names the strips an accepted preset rebuilt before the write stopped", () => {
+    const md = formatWriteReport("URX44V", [{ name: "name 91:1", error: "nak" }], [], [], { unconfirmed: ["ch1"] });
+    expect(md).toContain("strips not confirmed: 1");
+    expect(md).toContain("## Not confirmed");
+    expect(md).toContain("- ch1");
+  });
+
   // The report reads only name/paramId/x/y/vdValue, so stub a minimal command
   // (the full VdCommand carries planValue/request, irrelevant to formatting).
   const cmd = (name: string, paramId: number, vdValue: number) =>
@@ -917,6 +924,48 @@ describe("sendPresetsFirst", () => {
     const r = await sendPresetsFirst(planToNameWrites(model, presetPlan()));
     expect(r.outcomes).toEqual([expect.objectContaining({ ok: false, error: "nak" })]);
     expect(r.pending.mustSettle.size).toBe(0);
+  });
+
+  // Three channels on presets: the second is refused. The first rebuilt its strip; the third
+  // never goes out, as nothing after a refused write does.
+  function threePresetPlan(): Plan {
+    const plan = basePlan();
+    for (const [id, preset] of [
+      ["ch1", 5],
+      ["ch2", 24],
+      ["ch3", 7],
+    ] as const)
+      plan.nodeParams[id] = { on: true, compEqType: 1, ssmcs: { sweetSpotData: preset } };
+    return plan;
+  }
+  const refuseSecond = (): void => {
+    vi.mocked(vdSetStr).mockImplementation((param, _x, y) =>
+      param === PARAMS.SWEET_SPOT_DATA.id && y === 1 ? Promise.reject(new Error("nak")) : Promise.resolve(),
+    );
+  };
+
+  it("stops at the first refused preset and hands back the rest as not sent", async () => {
+    refuseSecond();
+    const r = await sendPresetsFirst(planToNameWrites(model, threePresetPlan()));
+    expect(r.outcomes.map((o) => [o.write.node, o.ok])).toEqual([
+      ["ch1", true],
+      ["ch2", false],
+    ]);
+    expect(r.notSent.map((w) => w.node)).toEqual(["ch3"]);
+    expect(vi.mocked(vdSetStr).mock.calls.map(([, , y]) => y)).toEqual([0, 1]);
+  });
+
+  it("names an accepted preset's node as unconfirmed when a later one is refused, and converges nothing", async () => {
+    refuseSecond();
+    vi.mocked(vdGetStr).mockResolvedValue("0001");
+    vi.mocked(vdGet).mockResolvedValue(0);
+
+    const r = await sendPresetsAndReconverge(model, threePresetPlan(), { settleMs: 0 });
+
+    expect(r.result).toBeNull();
+    expect(r.unconfirmed).toEqual(["ch1"]);
+    expect(r.notSent.map((w) => w.node)).toEqual(["ch3"]);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
   });
 });
 

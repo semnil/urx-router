@@ -730,6 +730,44 @@ describe("runSelfTest", () => {
     expect(report.restored).toBe(true);
   });
 
+  // A refused preset stops the restore's string write-back there, and the strip of a node whose
+  // preset WAS accepted was rebuilt with nothing reading it back. That is not a restored unit.
+  it("reports a refused preset, and the node an accepted one left unconfirmed, as not restored", async () => {
+    const seed = populatedPlan();
+    for (const [id, preset] of [
+      ["ch1", 5],
+      ["ch2", 24],
+    ] as const)
+      seed.nodeParams[id] = { ...seed.nodeParams[id], compEqType: 1, ssmcs: { sweetSpotData: preset } };
+    installMockDevice(seed);
+    const strings = new Map<string, string>([
+      ["91:0", "0005"],
+      ["91:1", "0024"],
+    ]);
+    vi.mocked(vdGetStr).mockImplementation((id, _x, y) => Promise.resolve(strings.get(`${id}:${y}`) ?? ""));
+    vi.mocked(vdSetStr).mockImplementation((id, _x, y, v) => {
+      if (y === 1) return Promise.reject(new Error("nak"));
+      strings.set(`${id}:${y}`, v);
+      return Promise.resolve();
+    });
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      await inner(id, x, y, v);
+      if (id === PARAMS.SIGNAL_TYPE.id && v === 1) {
+        strings.set("91:0", "0001");
+        strings.set("91:1", "0001");
+      }
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.restored).toBe(false);
+    // The refused preset (still differing) and the node the accepted one left unconfirmed.
+    expect(report.restoreResidual).toBe(2);
+    expect(report.errors).toContain("restore 91:0:1: nak");
+    expect(report.errors.some((e) => e.startsWith("restore ch1: its Sweet Spot preset rebuilt the strip"))).toBe(true);
+  });
+
   it("reports residual mismatches when the device ignores a write", async () => {
     const table = installMockDevice(populatedPlan());
     // CH_ON (param 140) is accepted but never stored — a stuck parameter.

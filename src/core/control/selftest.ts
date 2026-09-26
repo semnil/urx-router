@@ -905,9 +905,16 @@ export async function runSelfTest(
       const presets =
         numeric && !numeric.outcomes.some(reachedAndFailed) && !numeric.readErrors.length
           ? await phaseStep(sendPresetsAndReconverge(model, original, restore))
-          : { presets: [], readErrors: [], result: null };
+          : { presets: [], notSent: [], unconfirmed: [], readErrors: [], result: null };
       if (!presets) return report;
       report.errors.push(...nameFailureLines(presets.presets));
+      // A refused preset stops the string write-back there. The nodes whose preset was accepted
+      // had their strip rebuilt with nothing reading it back, so their state is unknown.
+      for (const node of presets.unconfirmed)
+        report.errors.push(
+          `restore ${node}: its Sweet Spot preset rebuilt the strip, and the restore stopped before reading it back`,
+        );
+      const presetRefused = presets.presets.some((o) => !o.ok);
       report.errors.push(...presets.readErrors.map((e) => `restore name read: ${e}`));
       const back =
         numeric && presets.result
@@ -988,7 +995,9 @@ export async function runSelfTest(
         // own. A name the first read could not see is counted too, since nothing put it back.
         const names = await phaseStep(diffNames(model, original));
         if (!names) return report;
-        const renamed = await phaseStep(sendNames(names.writes.filter((w) => w.name === undefined)));
+        const renamed = presetRefused
+          ? []
+          : await phaseStep(sendNames(names.writes.filter((w) => w.name === undefined)));
         if (!renamed) return report;
         report.errors.push(...nameFailureLines(renamed));
         const namesAfter = await phaseStep(diffNames(model, original));
@@ -996,7 +1005,8 @@ export async function runSelfTest(
         report.errors.push(...namesAfter.errors.map((e) => `restore name verify: ${e}`));
         for (const w of namesAfter.writes)
           report.errors.push(`restore ${w.param}:0:${w.y}: still differs from ${JSON.stringify(w.value)}`);
-        report.restoreResidual += presets.readErrors.length + namesAfter.errors.length + namesAfter.writes.length;
+        report.restoreResidual +=
+          presets.readErrors.length + presets.unconfirmed.length + namesAfter.errors.length + namesAfter.writes.length;
         report.restored = report.restoreResidual === 0;
         report.phase = "done";
       }
