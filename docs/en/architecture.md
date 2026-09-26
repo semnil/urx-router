@@ -2540,7 +2540,7 @@ device intact. The SSMCS Sweet Spot preset goes out between the two, followed by
 (`sendPresetsAndReconverge`): the unit rebuilds the strip a preset drives once the preset lands (123-155 ms after the
 write on a URX44V), replacing the plan's strip values with the preset's, so the strip is converged again, reading
 the unit only once that rebuild has landed. It cannot go ahead of the numeric phase: a Signal Type change in that
-phase puts each member's own preset back when it lands. A refused preset stops the write there, with the presets after it unsent and the nodes whose preset was accepted named in the report as not confirmed — their strip was rebuilt and nothing read it back — and the write is offered again as any stopped write is. The self-test
+phase puts each member's own preset back when it lands. A refused preset stops the write there, with the presets after it unsent and the nodes whose preset was accepted named in the report as not confirmed — their strip was rebuilt and nothing read it back — and the write is offered again as any stopped write is. A read that fails inside either converge comes after something was sent, so it is reported as a write the app could not confirm rather than as written or as nothing written, with the same offer. The self-test
 restore puts the captured presets back the same way, and counts in its residual a name or preset still differing afterwards
 and a node an accepted preset left unconfirmed. A write that stops part-way leaves the device holding some of what was confirmed, so the handler
 offers to **run it again** rather than print a breakdown nobody can act on — the retry re-diffs, so whatever landed

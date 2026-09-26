@@ -736,16 +736,19 @@ export function formatWriteReport(
   failed: Array<{ name: string; error?: string }>,
   residual: CommandDiff[],
   reads: string[] = [],
-  /** `unconfirmed`: nodes whose Sweet Spot preset was accepted and whose rebuilt strip was not
-   *  read back. */
-  after: { unconfirmed?: string[] } = {},
+  /** `wrote`: something reached the device before the reads failed, so they are a read-back
+   *  that could not confirm it rather than the read the write stopped on. `unconfirmed`: nodes
+   *  whose Sweet Spot preset was accepted and whose rebuilt strip was not read back. */
+  after: { wrote?: boolean; unconfirmed?: string[] } = {},
 ): string {
   const unconfirmed = after.unconfirmed ?? [];
   const lines: string[] = [];
   lines.push(`# URX write report — ${model}`);
   lines.push("");
-  if (reads.length && !failed.length && !residual.length) {
+  if (reads.length && !failed.length && !residual.length && !after.wrote) {
     lines.push(`- Read failures: ${reads.length}. The write was canceled — nothing was written.`);
+  } else if (reads.length && !failed.length && !residual.length) {
+    lines.push(`- Written, then read failures: ${reads.length}. The device's final state could not be confirmed.`);
   } else {
     lines.push(
       `- Write failures: ${failed.length}; parameters that did not converge: ${residual.length}` +

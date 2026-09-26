@@ -3474,7 +3474,7 @@ if (!DEMO) {
             failed: Array<{ name: string; error?: string }>,
             residual: CommandDiff[],
             reads: string[],
-            after: { unconfirmed?: string[] } = {},
+            after: { wrote?: boolean; unconfirmed?: string[] } = {},
           ): void => {
             report = {
               filename: `${modelId}-write-errors.md`,
@@ -3487,7 +3487,9 @@ if (!DEMO) {
           // the value the count is about.
           let adopted = 0;
           const adoptedNote = (): string => (adopted ? ` — ${t().status.paramsBounded(adopted)}` : "");
-          const attemptWrite = async (confirmFirst: boolean): Promise<{ sent: number; notSent: number } | null> => {
+          const attemptWrite = async (
+            confirmFirst: boolean,
+          ): Promise<{ sent: number; notSent: number; unread?: number } | null> => {
             // A read failure leaves those parameters' device values unknown, so the
             // write stops on the first one — the rest of the sweep would only be
             // establishing values for a write that is already canceled.
@@ -3642,15 +3644,24 @@ if (!DEMO) {
             if (residual.length) console.warn("device write did not converge:", residual);
             // Failures/non-convergence are otherwise console-only: capture a report to
             // offer after disconnect (below), so the reasons are visible without the console.
+            // Every read the converge makes comes after a send (the first round is the confirmed
+            // diff), so a read failure here is a read-back of a write, not the read a write stops on.
             const sent = outcomes.filter((o) => o.ok).length;
             if (failed.length || residual.length || convergeErrors.length || presetStop) {
-              saveReport(failed, residual, convergeErrors, { unconfirmed: presetStop?.unconfirmed });
+              saveReport(failed, residual, convergeErrors, {
+                wrote: sent > 0 || (presetStop?.sent ?? 0) > 0,
+                unconfirmed: presetStop?.unconfirmed,
+              });
             }
             if (presetStop) {
               const renames = nameWrites.filter((w) => w.name === undefined).length;
               const notSent = presetStop.notSent + renames;
               setStatus(t().status.writeStopped(sent + presetStop.sent, notSent) + note);
               return { sent: sent + presetStop.sent, notSent };
+            }
+            if (!skipped && !failed.length && convergeErrors.length) {
+              setStatus(t().status.writeUnconfirmed(sent, convergeErrors.length) + note);
+              return { sent, notSent: 0, unread: convergeErrors.length };
             }
             if (!skipped) {
               setStatus(
@@ -3682,7 +3693,14 @@ if (!DEMO) {
           try {
             let stop = await attemptWrite(true);
             wroteOutcome = true;
-            while (stop && (await confirmDialog(t().confirm.writeRetry(stop.sent, stop.notSent)))) {
+            while (
+              stop &&
+              (await confirmDialog(
+                stop.unread
+                  ? t().confirm.writeRetryUnread(stop.sent, stop.unread)
+                  : t().confirm.writeRetry(stop.sent, stop.notSent),
+              ))
+            ) {
               stop = await attemptWrite(false);
             }
           } catch (err) {

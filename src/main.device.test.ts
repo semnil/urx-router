@@ -4203,6 +4203,39 @@ describe("Write to device", () => {
     return String((shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string }).contents);
   };
 
+  // Everything the converge reads comes after something it sent, so a read that fails there is
+  // a read-back that could not confirm the write. Reported as written, which it was, would hide
+  // that; reported as "nothing was written" would be false.
+  it("reports a write whose read-back failed as unconfirmed, and offers to run it again", SLOW, async () => {
+    const UNREAD_ASK = invariantOf(t().confirm.writeRetryUnread(1, 1));
+    let shell: TauriShell | undefined;
+    let armed = false;
+    shell = (await bootApp({
+      url: await presetLink(),
+      tauri: deviceCommands({
+        ...SAVES,
+        "plugin:dialog|message": byMessage((m) => !m.includes(UNREAD_ASK)),
+        // The first read after the first preset fails, once.
+        vd_set_str: () => {
+          if (!armed) {
+            armed = true;
+            shell!.failOnce("vd_get", new Error("read timeout"));
+          }
+          return null;
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const sent = countFor(statusText(), (n) => t().status.writeUnconfirmed(n, 1));
+    expect(statusText()).toBe(t().status.writeUnconfirmed(sent, 1));
+    expect(confirms(shell)).toContain(t().confirm.writeRetryUnread(sent, 1));
+    const md = await savedReport(shell);
+    expect(md).toContain("Written, then read failures: 1");
+    expect(md).not.toContain("nothing was written");
+  });
+
   // A refused preset stops the write there, as any refused write does: the presets after it do
   // not go out, and the node whose preset was accepted is named, since its strip was rebuilt
   // and nothing read it back.

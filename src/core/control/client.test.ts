@@ -568,8 +568,20 @@ describe("formatWriteReport", () => {
     expect(md).not.toContain("Write failures: 1");
   });
 
+  // A read that fails after something went out is a read-back that could not confirm the
+  // write, not the read a write stops on — saying "nothing was written" there is false.
+  it("says a write whose read-back failed was written and is unconfirmed", () => {
+    const md = formatWriteReport("URX44V", [], [], ["CH_FADER: timeout"], { wrote: true });
+    expect(md).toContain("Written, then read failures: 1");
+    expect(md).toContain("could not be confirmed");
+    expect(md).not.toContain("nothing was written");
+  });
+
   it("names the strips an accepted preset rebuilt before the write stopped", () => {
-    const md = formatWriteReport("URX44V", [{ name: "name 91:1", error: "nak" }], [], [], { unconfirmed: ["ch1"] });
+    const md = formatWriteReport("URX44V", [{ name: "name 91:1", error: "nak" }], [], [], {
+      wrote: true,
+      unconfirmed: ["ch1"],
+    });
     expect(md).toContain("strips not confirmed: 1");
     expect(md).toContain("## Not confirmed");
     expect(md).toContain("- ch1");

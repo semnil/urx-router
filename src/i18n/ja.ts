@@ -675,6 +675,8 @@ export const ja: Messages = {
     writePartial: (n: number, failed: number): string => `${n} 件書き込み、${failed} 件失敗`,
     writeStopped: (n: number, notSent: number): string => `失敗のため書き込みを停止: ${n} 件送信、${notSent} 件未送信`,
     writeResidual: (n: number): string => `書き込みましたが ${n} 件が反映されませんでした (コンソール参照)`,
+    writeUnconfirmed: (n: number, unread: number): string =>
+      `${n} 件の設定を書き込みましたが、${unread} 件を読み戻せず、デバイスの状態を確認できていません`,
     writeReadFailed: (n: number): string => `書き込みを中止しました: ${n} 件の設定をデバイスから読み取れません`,
     writeError: (message: string): string => `デバイスへの書き込みに失敗しました: ${message}`,
     deviceSetupReading: "本体の設定を読み込んでいます…",
@@ -780,6 +782,8 @@ export const ja: Messages = {
       "48 kHz より上ではデバイスが microSD レコーダーの Track Count もそのレートで使える本数まで下げます。このアプリから書ける値では元に戻せません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。",
     writeRetry: (sent: number, notSent: number): string =>
       `失敗により書き込みが停止しました: ${sent} 件がデバイスに届き、${notSent} 件が未送信です。もう一度実施しますか? 差分のある設定のみを送信します。`,
+    writeRetryUnread: (sent: number, unread: number): string =>
+      `${sent} 件がデバイスに届きましたが、${unread} 件を読み戻せず結果を確認できていません。もう一度実施しますか? 差分のある設定のみを送信します。`,
   },
   consent: {
     title: "ご利用の前に",
