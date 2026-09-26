@@ -3487,6 +3487,22 @@ if (!DEMO) {
           // the value the count is about.
           let adopted = 0;
           const adoptedNote = (): string => (adopted ? ` — ${t().status.paramsBounded(adopted)}` : "");
+          // What the whole operation has sent, numeric values and presets both, and which nodes an
+          // accepted preset left unconfirmed — across attempts, for the same reason: a retry that
+          // stops before sending anything still stands on what an earlier attempt sent.
+          let sentSoFar = 0;
+          const unconfirmedSoFar: string[] = [];
+          // A read that fails once something has gone out is a read-back the write could not
+          // confirm; before anything has, it is the read the write stops on.
+          const readFailed = (reads: string[]): void => {
+            if (sentSoFar) {
+              setStatus(t().status.writeUnconfirmed(sentSoFar, reads.length) + adoptedNote());
+              saveReport([], [], reads, { wrote: true, unconfirmed: unconfirmedSoFar });
+            } else {
+              setStatus(t().status.writeReadFailed(reads.length) + adoptedNote());
+              saveReport([], [], reads);
+            }
+          };
           const attemptWrite = async (
             confirmFirst: boolean,
           ): Promise<{ sent: number; notSent: number; unread?: number } | null> => {
@@ -3495,8 +3511,7 @@ if (!DEMO) {
             // establishing values for a write that is already canceled.
             const { diffs, errors } = await diffPlan(getModel(modelId), plan, { signal, stopOnError: true, scope });
             if (errors.length) {
-              setStatus(t().status.writeReadFailed(errors.length) + adoptedNote());
-              saveReport([], [], errors);
+              readFailed(errors);
               return null;
             }
             // CH SETTING names are string params outside the numeric diff; diff them
@@ -3504,8 +3519,7 @@ if (!DEMO) {
             signal.throwIfAborted();
             const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
             if (nameErrors.length) {
-              setStatus(t().status.writeReadFailed(nameErrors.length) + adoptedNote());
-              saveReport([], [], nameErrors);
+              readFailed(nameErrors);
               return null;
             }
             const total = diffs.length + nameWrites.length;
@@ -3547,7 +3561,8 @@ if (!DEMO) {
             // A refused preset stops the write, as any refused write does. What it leaves is the
             // presets after it unsent and the nodes whose preset was accepted with a rebuilt strip
             // nothing read back.
-            let presetStop: { sent: number; notSent: number; unconfirmed: string[] } | null = null;
+            let presetStop: { notSent: number; unconfirmed: string[] } | null = null;
+            let presetsSent = 0;
             let convergeResult: ConvergeResult;
             try {
               const converge = {
@@ -3577,12 +3592,9 @@ if (!DEMO) {
                     .filter((o) => !o.ok)
                     .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
                 );
+                presetsSent = second.presets.filter((o) => o.ok).length;
                 if (presetFailures.length)
-                  presetStop = {
-                    sent: second.presets.filter((o) => o.ok).length,
-                    notSent: second.notSent.length,
-                    unconfirmed: second.unconfirmed,
-                  };
+                  presetStop = { notSent: second.notSent.length, unconfirmed: second.unconfirmed };
                 const first = convergeResult;
                 if (second.result)
                   convergeResult = {
@@ -3646,22 +3658,21 @@ if (!DEMO) {
             // offer after disconnect (below), so the reasons are visible without the console.
             // Every read the converge makes comes after a send (the first round is the confirmed
             // diff), so a read failure here is a read-back of a write, not the read a write stops on.
-            const sent = outcomes.filter((o) => o.ok).length;
+            const sent = outcomes.filter((o) => o.ok).length + presetsSent;
+            sentSoFar += sent;
+            if (presetStop) unconfirmedSoFar.push(...presetStop.unconfirmed);
             if (failed.length || residual.length || convergeErrors.length || presetStop) {
-              saveReport(failed, residual, convergeErrors, {
-                wrote: sent > 0 || (presetStop?.sent ?? 0) > 0,
-                unconfirmed: presetStop?.unconfirmed,
-              });
+              saveReport(failed, residual, convergeErrors, { wrote: sentSoFar > 0, unconfirmed: unconfirmedSoFar });
             }
             if (presetStop) {
               const renames = nameWrites.filter((w) => w.name === undefined).length;
               const notSent = presetStop.notSent + renames;
-              setStatus(t().status.writeStopped(sent + presetStop.sent, notSent) + note);
-              return { sent: sent + presetStop.sent, notSent };
+              setStatus(t().status.writeStopped(sent, notSent) + note);
+              return { sent, notSent };
             }
             if (!skipped && !failed.length && convergeErrors.length) {
-              setStatus(t().status.writeUnconfirmed(sent, convergeErrors.length) + note);
-              return { sent, notSent: 0, unread: convergeErrors.length };
+              setStatus(t().status.writeUnconfirmed(sentSoFar, convergeErrors.length) + note);
+              return { sent: sentSoFar, notSent: 0, unread: convergeErrors.length };
             }
             if (!skipped) {
               setStatus(

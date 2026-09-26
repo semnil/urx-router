@@ -4236,6 +4236,79 @@ describe("Write to device", () => {
     expect(md).not.toContain("nothing was written");
   });
 
+  // The second write finds the numeric values already on the unit and only the presets differing
+  // (this stub keeps no string), so the presets are all it sends — and they count as sent when the
+  // read after them fails.
+  it("counts presets it sent when the read after them fails, with nothing numeric to write", SLOW, async () => {
+    let shell: TauriShell | undefined;
+    let arm = false;
+    shell = (await bootApp({
+      url: await presetLink(),
+      tauri: deviceCommands({
+        ...SAVES,
+        "plugin:dialog|message": byMessage((m) => !m.includes(invariantOf(t().confirm.writeRetryUnread(1, 1)))),
+        vd_set_str: () => {
+          if (arm) {
+            arm = false;
+            shell!.failOnce("vd_get", new Error("read timeout"));
+          }
+          return null;
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const setsAfterFirst = shell.count("vd_set");
+    arm = true;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+
+    expect(shell.count("vd_set"), "the premise: nothing numeric was left to send").toBe(setsAfterFirst);
+    const sent = countFor(statusText(), (n) => t().status.writeUnconfirmed(n, 1));
+    expect(sent).toBeGreaterThan(0);
+    const md = await savedReport(shell);
+    expect(md).toContain("Written, then read failures: 1");
+    expect(md).not.toContain("nothing was written");
+  });
+
+  // A retry that cannot even read the unit before writing still stands on what the earlier
+  // attempt sent: the line and the report say so rather than "nothing was written".
+  it("keeps what an earlier attempt sent when the retry's first read fails", SLOW, async () => {
+    const UNREAD_ASK = invariantOf(t().confirm.writeRetryUnread(1, 1));
+    let shell: TauriShell | undefined;
+    let armed = false;
+    shell = (await bootApp({
+      url: await presetLink(),
+      tauri: deviceCommands({
+        ...SAVES,
+        // Agreeing to the retry arms a failure for the retry's own first read.
+        "plugin:dialog|message": (a: Record<string, unknown>) => {
+          if (String(a.message ?? "").includes(UNREAD_ASK)) shell!.failOnce("vd_get", new Error("read timeout"));
+          return "Ok";
+        },
+        vd_set_str: () => {
+          if (!armed) {
+            armed = true;
+            shell!.failOnce("vd_get", new Error("read timeout"));
+          }
+          return null;
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    expect(
+      confirms(shell).filter((m) => m.includes(UNREAD_ASK)),
+      "the premise: the retry was offered",
+    ).toHaveLength(1);
+    const sent = countFor(statusText(), (n) => t().status.writeUnconfirmed(n, 1));
+    expect(sent).toBeGreaterThan(0);
+    const md = await savedReport(shell);
+    expect(md).not.toContain("nothing was written");
+    expect(md).toContain("Written, then read failures: 1");
+  });
+
   // A refused preset stops the write there, as any refused write does: the presets after it do
   // not go out, and the node whose preset was accepted is named, since its strip was rebuilt
   // and nothing read it back.
