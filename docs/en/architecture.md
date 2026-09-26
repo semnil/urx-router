@@ -2498,10 +2498,16 @@ differing command belongs to**, in emit order. One round then lands all three. T
 group is actually involved, so a write with no 1-knob difference pays nothing.
 
 The other `sideEffect` heads (`COMP_EQ_TYPE`, `INSERT_FX` and the two output selectors, `FX_EFFECT_TYPE`,
-`SIGNAL_TYPE`, `PAN_BAL`) are two links deep, which one extra round settles, so they carry no group today. That is a
-budget coincidence rather than a property, so `translate.test.ts` pins the split: a new `sideEffect` param fails the
-test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset addresses owned by *other* nodes,
-which a group cannot express — their ordering is pinned separately.
+`SIGNAL_TYPE`, `PAN_BAL`) carry no group. What settles them is the loop's budget, which is not fixed: **a round
+that sent a `sideEffect` head is followed by another round**, past `maxRounds` and up to twice it. A head's rewrite
+lands after the writes that follow it in the same round — on a URX44V a Signal Type change applied 85-125 ms after
+its write, and inside a self-test restore values written more than a second after the unlink were still replaced —
+so what it moved is put back only by a round of its own, and one head can move another: unlinking a pair drops the
+secondary's COMP/EQ type, and re-sending that type rebuilds its SSMCS bank. With a budget of three rounds that
+chain left a residual; a round that sends no head and still leaves one ends the loop at `maxRounds` as before, and
+a head that never settles stops at the cap. `translate.test.ts` pins which heads carry a group, so a new
+`sideEffect` param fails the test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset
+addresses owned by *other* nodes, which a group cannot express — their ordering is pinned separately.
 
 A round's budget only works if the residual it measures is real, so **the seed read waits out the writes that
 preceded it**. The caller that leaves the diff to be seeded — Live sync's converging flush — has just written the

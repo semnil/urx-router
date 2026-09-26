@@ -1681,9 +1681,8 @@ describe("reset chains (sideEffect heads vs converge groups)", () => {
   // Measured on a URX44V: ON discards the type, a type write discards the level. Three
   // links, so one link per round exhausts sendConverging's 3-round budget.
   const GROUPED = new Set(["EQ_ONE_KNOB_ON", "EQ_ONE_KNOB_TYPE", "EQ_ONE_KNOB_LEVEL"]);
-  // Two links each: the head plus what it repopulates, which one extra round settles.
-  // A third link, or a shorter budget, would put them in the same failure as the EQ
-  // 1-knob — that is what to check first if a converge leaves one of these behind.
+  // The head plus what it repopulates. A converge round that sends one is followed by another
+  // past the base budget (client.ts sendConverging), which is what puts back what it moved.
   const UNGROUPED = new Set([
     "COMP_EQ_TYPE", // -> the channel-strip section toggles (bank swap)
     "INSERT_FX", // -> INSERT_FX_ON + the engine array it binds

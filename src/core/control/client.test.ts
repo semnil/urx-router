@@ -269,6 +269,59 @@ describe("sendConverging", () => {
     expect(r.residual.some((d) => d.command.paramId === 140)).toBe(true);
   });
 
+  // A chain of sideEffect heads, each of which moves a value the round before it had already
+  // settled: unlinking the pair drops CH2's COMP/EQ type, the type rebuilds CH2's SSMCS, and
+  // the SSMCS morphing moves CH2's gain. Every link is a round of its own, four in all.
+  function installHeadChainDevice(plan: Plan): Map<string, number> {
+    const table = installDevice();
+    for (const c of planToCommands(model, plan)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
+    const signalType = PARAMS.SIGNAL_TYPE.id;
+    table.set(`${signalType}:0:0`, 1);
+    table.set(`${signalType}:0:1`, 1);
+    const ssmcs = planToCommands(model, plan).filter((c) => c.name.startsWith("SSMCS_") && c.y === 1);
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      await inner(id, x, y, v);
+      if (id === signalType) table.set(`${PARAMS.COMP_EQ_TYPE.id}:0:1`, 0);
+      if (id === PARAMS.COMP_EQ_TYPE.id && y === 1) for (const c of ssmcs) table.set(`${c.paramId}:0:1`, 0);
+      if (id === PARAMS.SSMCS_MORPHING.id && y === 1) table.set(`${PARAMS.HA_GAIN.id}:0:1`, 0);
+    });
+    return table;
+  }
+  function headChainPlan(): Plan {
+    const plan = dirtyPlan();
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: false };
+    plan.nodeParams["ch2"] = { on: true, gain: 6, compEqType: 1, ssmcs: { compDrive: 120, morphing: 40 } };
+    return plan;
+  }
+
+  it("follows a round that sent a sideEffect head with another, past the base budget", async () => {
+    const plan = headChainPlan();
+    const table = installHeadChainDevice(plan);
+
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+
+    expect(r.residual).toEqual([]);
+    expect(r.rounds).toBe(4);
+    const gain = planToCommands(model, plan).find((c) => c.name === "HA_GAIN" && c.y === 1)!;
+    expect(table.get(`${gain.paramId}:0:1`)).toBe(gain.vdValue);
+  });
+
+  it("stops a head that never settles at twice the base budget", async () => {
+    const plan = headChainPlan();
+    installHeadChainDevice(plan);
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    // The COMP/EQ type is accepted and never kept.
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) =>
+      id === PARAMS.COMP_EQ_TYPE.id && y === 1 ? Promise.resolve() : inner(id, x, y, v),
+    );
+
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+
+    expect(r.rounds).toBe(6);
+    expect(r.residual.some((d) => d.command.name === "COMP_EQ_TYPE" && d.command.y === 1)).toBe(true);
+  });
+
   // Re-sending the whole plan over a link that just failed would re-trigger the
   // side-effect resets this loop exists to settle, so one round is all it does.
   it("stops after a round that failed to send instead of retrying", async () => {

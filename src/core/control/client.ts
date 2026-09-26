@@ -484,6 +484,10 @@ export interface ConvergeOptions {
    *  costs a converging flush the window it was already inside, not a flat 300 ms.
    *  Callers that hand over `initialDiffs` never seed and never need it. */
   pending?: PendingWrites;
+  /** Rounds the loop takes while nothing it sends rewrites other values. A round that sent a
+   *  sideEffect head is followed by another round past this budget, up to twice it: the head's
+   *  rewrite lands after the writes that followed it in the same round, and whatever it moved
+   *  is only put back by a round of its own. */
   maxRounds?: number;
   settleMs?: number;
   signal?: AbortSignal;
@@ -522,7 +526,9 @@ export interface ConvergeOptions {
 
 /**
  * Write the plan to the device until it converges: send the diff, re-read, and
- * re-send whatever still differs, up to maxRounds. A single write is not always
+ * re-send whatever still differs, up to maxRounds — more after a round that sent a
+ * sideEffect head, since that head's rewrite is what the next round exists to settle and a
+ * chain of them can outrun a fixed budget. A single write is not always
  * enough — setting some params makes the device reset dependents as a side
  * effect (e.g., changing COMP/EQ type resets the channel-strip section toggles),
  * so a value written in the same batch is clobbered and only sticks once the
@@ -583,7 +589,8 @@ export async function sendConverging(
     residual = seed.diffs;
   }
   let rounds = 0;
-  while (residual.length > 0 && rounds < maxRounds && !readErrors.length) {
+  let sentHead = false;
+  while (residual.length > 0 && (rounds < maxRounds || (sentHead && rounds < maxRounds * 2)) && !readErrors.length) {
     signal?.throwIfAborted();
     const startedAt = Date.now();
     const sending = withoutExcludedOns(
@@ -611,6 +618,7 @@ export async function sendConverging(
     });
     outcomes.push(...sent);
     rounds++;
+    sentHead = sending.some((c) => SIDE_EFFECT_PARAMS.has(c.name));
     const record = (reread: CommandDiff[] | null): void => {
       if (wantTrace) trace.push({ sent: sending, elapsedMs: Date.now() - startedAt, reread });
     };
