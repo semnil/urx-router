@@ -176,9 +176,11 @@ import {
   newConfirmLedger,
   sendConverging,
   sendNames,
+  sendPresetsAndReconverge,
   setFollowUsb,
   type CommandDiff,
   type ConvergeResult,
+  type SendOutcome,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
 import { cmdAddr, collisionOwners } from "./core/control/translate";
@@ -3472,10 +3474,11 @@ if (!DEMO) {
             failed: Array<{ name: string; error?: string }>,
             residual: CommandDiff[],
             reads: string[],
+            after: { wrote?: boolean; unconfirmed?: string[] } = {},
           ): void => {
             report = {
               filename: `${modelId}-write-errors.md`,
-              markdown: formatWriteReport(device.model, failed, residual, reads),
+              markdown: formatWriteReport(device.model, failed, residual, reads, after),
             };
           };
           // What the whole write operation has taken back, across attempts. Per ATTEMPT it would go
@@ -3484,14 +3487,31 @@ if (!DEMO) {
           // the value the count is about.
           let adopted = 0;
           const adoptedNote = (): string => (adopted ? ` — ${t().status.paramsBounded(adopted)}` : "");
-          const attemptWrite = async (confirmFirst: boolean): Promise<{ sent: number; notSent: number } | null> => {
+          // What the whole operation has sent, numeric values and presets both, and which nodes an
+          // accepted preset left unconfirmed — across attempts, for the same reason: a retry that
+          // stops before sending anything still stands on what an earlier attempt sent.
+          let sentSoFar = 0;
+          const unconfirmedSoFar: string[] = [];
+          // A read that fails once something has gone out is a read-back the write could not
+          // confirm; before anything has, it is the read the write stops on.
+          const readFailed = (reads: string[]): void => {
+            if (sentSoFar) {
+              setStatus(t().status.writeUnconfirmed(sentSoFar, reads.length) + adoptedNote());
+              saveReport([], [], reads, { wrote: true, unconfirmed: unconfirmedSoFar });
+            } else {
+              setStatus(t().status.writeReadFailed(reads.length) + adoptedNote());
+              saveReport([], [], reads);
+            }
+          };
+          const attemptWrite = async (
+            confirmFirst: boolean,
+          ): Promise<{ sent: number; notSent: number; unread?: number } | null> => {
             // A read failure leaves those parameters' device values unknown, so the
             // write stops on the first one — the rest of the sweep would only be
             // establishing values for a write that is already canceled.
             const { diffs, errors } = await diffPlan(getModel(modelId), plan, { signal, stopOnError: true, scope });
             if (errors.length) {
-              setStatus(t().status.writeReadFailed(errors.length) + adoptedNote());
-              saveReport([], [], errors);
+              readFailed(errors);
               return null;
             }
             // CH SETTING names are string params outside the numeric diff; diff them
@@ -3499,8 +3519,7 @@ if (!DEMO) {
             signal.throwIfAborted();
             const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
             if (nameErrors.length) {
-              setStatus(t().status.writeReadFailed(nameErrors.length) + adoptedNote());
-              saveReport([], [], nameErrors);
+              readFailed(nameErrors);
               return null;
             }
             const total = diffs.length + nameWrites.length;
@@ -3538,10 +3557,16 @@ if (!DEMO) {
             // the address stops differing the moment the write lands, so no later write
             // produces a diff that would offer it again.
             const ledger = newConfirmLedger();
+            const presetFailures: Array<{ name: string; error?: string }> = [];
+            // A refused preset stops the write, as any refused write does. What it leaves is the
+            // presets after it unsent and the nodes whose preset was accepted with a rebuilt strip
+            // nothing read back.
+            let presetStop: { notSent: number; unconfirmed: string[] } | null = null;
+            let presetsSent = 0;
+            let presetsCanceled = false;
             let convergeResult: ConvergeResult;
             try {
-              convergeResult = await sendConverging(getModel(modelId), plan, {
-                initialDiffs: diffs,
+              const converge = {
                 signal,
                 scope,
                 ledger,
@@ -3552,12 +3577,37 @@ if (!DEMO) {
                 // arms it: the shell sends before it waits, so a write whose answer never
                 // came may have landed and taken the Track Count down with it, and the
                 // recorder would then be left showing a count the unit no longer has.
-                onSent: (o) => {
+                onSent: (o: SendOutcome) => {
                   if (pendingTrackCost !== null && o.result !== "refused" && o.command.name === "SAMPLE_RATE") {
                     trackCountMayHaveDropped = true;
                   }
                 },
-              });
+              };
+              convergeResult = await sendConverging(getModel(modelId), plan, { ...converge, initialDiffs: diffs });
+              // The Sweet Spot presets go out once the numeric phase has landed intact, and the strip
+              // they rebuild is converged again behind them (client.ts sendPresetsAndReconverge).
+              if (!convergeResult.outcomes.some((o) => !o.ok) && !convergeResult.readErrors.length) {
+                const second = await sendPresetsAndReconverge(getModel(modelId), plan, converge);
+                presetFailures.push(
+                  ...second.presets
+                    .filter((o) => !o.ok)
+                    .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
+                );
+                presetsSent = second.presets.filter((o) => o.ok).length;
+                presetsCanceled = second.canceled;
+                if (second.canceled) unconfirmedSoFar.push(...second.unconfirmed);
+                if (presetFailures.length)
+                  presetStop = { notSent: second.notSent.length, unconfirmed: second.unconfirmed };
+                const first = convergeResult;
+                if (second.result)
+                  convergeResult = {
+                    ...second.result,
+                    outcomes: [...first.outcomes, ...second.result.outcomes],
+                    readErrors: [...first.readErrors, ...second.result.readErrors],
+                  };
+                else if (second.readErrors.length)
+                  convergeResult = { ...first, readErrors: [...first.readErrors, ...second.readErrors] };
+              }
             } catch (err) {
               if (!isAbortError(err)) throw err;
               // Reported here rather than left to withDevice's neutral line, because the plan
@@ -3581,13 +3631,14 @@ if (!DEMO) {
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
               .map((o) => ({ name: o.command.name, error: o.error }));
+            failed.push(...presetFailures);
             // On every outcome, not only the clean one: a write that stopped can still have
             // landed and read back the address the plan takes its value from, and a line that
             // reported only the stop would leave a changed plan unmentioned.
             const note = adoptedNote();
             // Names only go out once the numeric phase reached the device intact —
             // a stopped or unreadable numeric phase means the link already failed.
-            if (!failed.length && !skipped && !convergeErrors.length) {
+            if (!failed.length && !skipped && !convergeErrors.length && !presetsCanceled) {
               // Reported here rather than thrown, for the reason the converge's own cancel is:
               // the adoption above has already changed the plan, and a bare "Canceled" from
               // withDevice would leave that unsaid.
@@ -3595,7 +3646,7 @@ if (!DEMO) {
                 setStatus(t().status.canceled + note);
                 return null;
               }
-              const nameOutcomes = await sendNames(nameWrites);
+              const nameOutcomes = await sendNames(nameWrites.filter((w) => w.name === undefined));
               // Normalize the two outcome shapes (numeric command vs string name write)
               // to {name, error} so the count and the saved report share one list.
               failed.push(
@@ -3608,8 +3659,29 @@ if (!DEMO) {
             if (residual.length) console.warn("device write did not converge:", residual);
             // Failures/non-convergence are otherwise console-only: capture a report to
             // offer after disconnect (below), so the reasons are visible without the console.
-            if (failed.length || residual.length || convergeErrors.length) {
-              saveReport(failed, residual, convergeErrors);
+            // Every read the converge makes comes after a send (the first round is the confirmed
+            // diff), so a read failure here is a read-back of a write, not the read a write stops on.
+            const sent = outcomes.filter((o) => o.ok).length + presetsSent;
+            sentSoFar += sent;
+            if (presetStop) unconfirmedSoFar.push(...presetStop.unconfirmed);
+            if (failed.length || residual.length || convergeErrors.length || presetStop || presetsCanceled) {
+              saveReport(failed, residual, convergeErrors, { wrote: sentSoFar > 0, unconfirmed: unconfirmedSoFar });
+            }
+            // A cancel taken once a preset has gone out: what went out is in the report, and nothing
+            // more is sent or offered.
+            if (presetsCanceled) {
+              setStatus(t().status.canceled + note);
+              return null;
+            }
+            if (presetStop) {
+              const renames = nameWrites.filter((w) => w.name === undefined).length;
+              const notSent = presetStop.notSent + renames;
+              setStatus(t().status.writeStopped(sent, notSent) + note);
+              return { sent, notSent };
+            }
+            if (!skipped && !failed.length && convergeErrors.length) {
+              setStatus(t().status.writeUnconfirmed(sentSoFar, convergeErrors.length) + note);
+              return { sent: sentSoFar, notSent: 0, unread: convergeErrors.length };
             }
             if (!skipped) {
               setStatus(
@@ -3625,7 +3697,6 @@ if (!DEMO) {
             // re-sends what the device reset, so `total` (the round-1 count) is not the
             // denominator. A stopped numeric phase never sent the names, so they are
             // all not-sent too.
-            const sent = outcomes.filter((o) => o.ok).length;
             const notSent = skipped + nameWrites.length;
             setStatus(t().status.writeStopped(sent, notSent) + note);
             return { sent, notSent };
@@ -3642,7 +3713,14 @@ if (!DEMO) {
           try {
             let stop = await attemptWrite(true);
             wroteOutcome = true;
-            while (stop && (await confirmDialog(t().confirm.writeRetry(stop.sent, stop.notSent)))) {
+            while (
+              stop &&
+              (await confirmDialog(
+                stop.unread
+                  ? t().confirm.writeRetryUnread(stop.sent, stop.unread)
+                  : t().confirm.writeRetry(stop.sent, stop.notSent),
+              ))
+            ) {
               stop = await attemptWrite(false);
             }
           } catch (err) {

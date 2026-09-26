@@ -8,7 +8,7 @@ import type { Plan } from "../plan";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import type { ParamSpec } from "./params";
-import { cmdAddr, planToCommands, planToNameWrites } from "./translate";
+import { addrKey, cmdAddr, planToCommands, planToNameWrites } from "./translate";
 import type { EmitOptions, NameWrite, VdCommand, WriteScope } from "./translate";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -365,6 +365,113 @@ export async function sendNames(writes: NameWrite[]): Promise<NameOutcome[]> {
 }
 
 /**
+ * Send the catalogued string writes — the SSMCS Sweet Spot preset — ahead of a converge, and
+ * hand back what the converge's first read has to wait for. The unit rewrites the strip a
+ * preset drives after the write returns, so a strip value written before the preset is
+ * replaced by the preset's, and a read taken before that rewrite lands reports the strip as
+ * already matching. `rest` is the node names, which drive nothing and go after the converge.
+ * Stops at the first preset the unit refuses, as a numeric write does, and ahead of the next
+ * preset once `signal` is aborted (`canceled`); `notSent` is the presets not sent.
+ */
+export async function sendPresetsFirst(
+  writes: readonly NameWrite[],
+  signal?: AbortSignal,
+): Promise<{
+  outcomes: NameOutcome[];
+  notSent: NameWrite[];
+  canceled: boolean;
+  rest: NameWrite[];
+  pending: PendingWrites;
+}> {
+  const boundaryMarks = new Map<number, number>();
+  const outcomes: NameOutcome[] = [];
+  const heads = writes.filter((w) => w.name !== undefined);
+  let canceled = false;
+  for (const write of heads) {
+    if (outcomes.some((o) => !o.ok)) break;
+    if (signal?.aborted) {
+      canceled = true;
+      break;
+    }
+    // Before the write: only a notify after it can be this write's announcement.
+    const mark = writeSettle.mark();
+    try {
+      await vdSetStr(write.param, 0, write.y, write.value);
+      outcomes.push({ write, ok: true });
+      boundaryMarks.set(addrKey(write.param, 0, write.y), mark);
+    } catch (e) {
+      outcomes.push({ write, ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return {
+    outcomes,
+    notSent: heads.slice(outcomes.length),
+    canceled,
+    rest: writes.filter((w) => w.name === undefined),
+    pending: { written: new Map(), mustSettle: new Set(boundaryMarks.keys()), boundaryMarks, mustAnnounce: new Set() },
+  };
+}
+
+/**
+ * Write the Sweet Spot presets that still differ, then converge again behind them. Run after a
+ * converge rather than ahead of it: a Signal Type change inside that converge puts each member's
+ * own values back when it lands, the preset among them, so a preset written ahead of it is lost.
+ * The second converge is what puts back the strip the preset rebuilt; it reads the unit only once
+ * that rebuild has landed. `result` is null when no preset differed, and when one was refused:
+ * the write stops there, as on any refused write, leaving `notSent` unsent and naming in
+ * `unconfirmed` the nodes whose preset was accepted and whose rebuilt strip was not read back. A
+ * cancel once a preset has gone out — between two presets, or inside the converge behind them —
+ * stops the same way (`canceled`) rather than throwing, so the caller still learns what went out.
+ */
+export async function sendPresetsAndReconverge(
+  model: DeviceModel,
+  plan: Plan,
+  opts: ConvergeOptions = {},
+): Promise<{
+  presets: NameOutcome[];
+  notSent: NameWrite[];
+  unconfirmed: string[];
+  canceled: boolean;
+  readErrors: string[];
+  result: ConvergeResult | null;
+}> {
+  const names = await diffNames(model, plan);
+  if (names.errors.length)
+    return { presets: [], notSent: [], unconfirmed: [], canceled: false, readErrors: names.errors, result: null };
+  opts.signal?.throwIfAborted();
+  const sent = await sendPresetsFirst(names.writes, opts.signal);
+  const accepted = (): string[] => sent.outcomes.filter((o) => o.ok).map((o) => o.write.node);
+  if (sent.canceled || sent.outcomes.some((o) => !o.ok)) {
+    return {
+      presets: sent.outcomes,
+      notSent: sent.notSent,
+      unconfirmed: accepted(),
+      canceled: sent.canceled,
+      readErrors: [],
+      result: null,
+    };
+  }
+  if (!sent.pending.mustSettle.size)
+    return { presets: sent.outcomes, notSent: [], unconfirmed: [], canceled: false, readErrors: [], result: null };
+  try {
+    const result = await sendConverging(model, plan, { ...opts, initialDiffs: undefined, pending: sent.pending });
+    return { presets: sent.outcomes, notSent: [], unconfirmed: [], canceled: false, readErrors: [], result };
+  } catch (e) {
+    // A cancel inside the converge behind the presets: every accepted preset rebuilt a strip
+    // that the converge did not finish reading back.
+    if (!opts.signal?.aborted) throw e;
+    return {
+      presets: sent.outcomes,
+      notSent: [],
+      unconfirmed: accepted(),
+      canceled: true,
+      readErrors: [],
+      result: null,
+    };
+  }
+}
+
+/**
  * One converge round, for a caller that has to explain a residual afterwards.
  * The residual alone cannot: it says a parameter differs at the end, not whether
  * it was ever in the diff, whether the later rounds re-sent it, or what the device
@@ -484,6 +591,10 @@ export interface ConvergeOptions {
    *  costs a converging flush the window it was already inside, not a flat 300 ms.
    *  Callers that hand over `initialDiffs` never seed and never need it. */
   pending?: PendingWrites;
+  /** Rounds the loop takes while nothing it sends rewrites other values. A round that sent a
+   *  sideEffect head is followed by another round past this budget, up to twice it: the head's
+   *  rewrite lands after the writes that followed it in the same round, and whatever it moved
+   *  is only put back by a round of its own. */
   maxRounds?: number;
   settleMs?: number;
   signal?: AbortSignal;
@@ -522,7 +633,9 @@ export interface ConvergeOptions {
 
 /**
  * Write the plan to the device until it converges: send the diff, re-read, and
- * re-send whatever still differs, up to maxRounds. A single write is not always
+ * re-send whatever still differs, up to maxRounds — more after a round that sent a
+ * sideEffect head, since that head's rewrite is what the next round exists to settle and a
+ * chain of them can outrun a fixed budget. A single write is not always
  * enough — setting some params makes the device reset dependents as a side
  * effect (e.g., changing COMP/EQ type resets the channel-strip section toggles),
  * so a value written in the same batch is clobbered and only sticks once the
@@ -573,7 +686,8 @@ export async function sendConverging(
     // with it. In production it is the notify that ends it, not the bound.
     if (pending)
       await writeSettle.settle(pending.written, {
-        mustSettle: new Set(pending.written.keys()),
+        mustSettle: new Set([...pending.written.keys(), ...(pending.boundaryMarks?.keys() ?? [])]),
+        boundaryMarks: pending.boundaryMarks,
         timeoutMs: settleMs,
         signal,
       });
@@ -583,7 +697,8 @@ export async function sendConverging(
     residual = seed.diffs;
   }
   let rounds = 0;
-  while (residual.length > 0 && rounds < maxRounds && !readErrors.length) {
+  let sentHead = false;
+  while (residual.length > 0 && (rounds < maxRounds || (sentHead && rounds < maxRounds * 2)) && !readErrors.length) {
     signal?.throwIfAborted();
     const startedAt = Date.now();
     const sending = withoutExcludedOns(
@@ -611,6 +726,7 @@ export async function sendConverging(
     });
     outcomes.push(...sent);
     rounds++;
+    sentHead = sending.some((c) => SIDE_EFFECT_PARAMS.has(c.name));
     const record = (reread: CommandDiff[] | null): void => {
       if (wantTrace) trace.push({ sent: sending, elapsedMs: Date.now() - startedAt, reread });
     };
@@ -658,16 +774,24 @@ export function formatWriteReport(
   failed: Array<{ name: string; error?: string }>,
   residual: CommandDiff[],
   reads: string[] = [],
+  /** `wrote`: something reached the device before the reads failed, so they are a read-back
+   *  that could not confirm it rather than the read the write stopped on. `unconfirmed`: nodes
+   *  whose Sweet Spot preset was accepted and whose rebuilt strip was not read back. */
+  after: { wrote?: boolean; unconfirmed?: string[] } = {},
 ): string {
+  const unconfirmed = after.unconfirmed ?? [];
   const lines: string[] = [];
   lines.push(`# URX write report — ${model}`);
   lines.push("");
-  if (reads.length && !failed.length && !residual.length) {
+  if (reads.length && !failed.length && !residual.length && !after.wrote) {
     lines.push(`- Read failures: ${reads.length}. The write was canceled — nothing was written.`);
+  } else if (reads.length && !failed.length && !residual.length) {
+    lines.push(`- Written, then read failures: ${reads.length}. The device's final state could not be confirmed.`);
   } else {
     lines.push(
       `- Write failures: ${failed.length}; parameters that did not converge: ${residual.length}` +
-        (reads.length ? `; read failures: ${reads.length}` : ""),
+        (reads.length ? `; read failures: ${reads.length}` : "") +
+        (unconfirmed.length ? `; strips not confirmed: ${unconfirmed.length}` : ""),
     );
   }
   if (reads.length) {
@@ -691,6 +815,11 @@ export function formatWriteReport(
         `- ${c.name} @ ${c.paramId}:${c.x}:${c.y} — wrote ${c.vdValue}, device has ${d.current ?? "unreadable"}`,
       );
     }
+  }
+  if (unconfirmed.length) {
+    lines.push("");
+    lines.push("## Not confirmed (a Sweet Spot preset rebuilt the strip, and the write stopped before reading it)");
+    for (const node of unconfirmed) lines.push(`- ${node}`);
   }
   lines.push("");
   return lines.join("\n");

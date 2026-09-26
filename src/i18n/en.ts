@@ -879,6 +879,8 @@ export const en = {
     writeStopped: (n: number, notSent: number): string =>
       `Write stopped after a failure: ${n} sent, ${notSent} not sent`,
     writeResidual: (n: number): string => `Wrote, but ${n} param${n === 1 ? "" : "s"} did not take (see console)`,
+    writeUnconfirmed: (n: number, unread: number): string =>
+      `Wrote ${n} setting${n === 1 ? "" : "s"}, but ${unread} could not be read back — the device's state is not confirmed`,
     writeReadFailed: (n: number): string =>
       `Write canceled: ${n} setting${n === 1 ? "" : "s"} could not be read from the device`,
     writeError: (message: string): string => `Device write failed: ${message}`,
@@ -1003,6 +1005,8 @@ export const en = {
     ),
     writeRetry: (sent: number, notSent: number): string =>
       `The write stopped after a failure: ${sent} setting${sent === 1 ? "" : "s"} reached the device and ${notSent} did not. Try again? Only what still differs will be sent.`,
+    writeRetryUnread: (sent: number, unread: number): string =>
+      `${sent} setting${sent === 1 ? "" : "s"} reached the device, but ${unread} could not be read back to confirm the result. Try again? Only what still differs will be sent.`,
   },
   consent: {
     title: tr("Before you start"),

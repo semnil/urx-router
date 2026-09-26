@@ -371,7 +371,8 @@ carries a one-line map of the same directories and points here.
       elapsed time, so an instant "matches" is verifiable, not trusted) / `selftest.ts` round-trip
       diagnostics (a failing pass keeps its **converge trace** — what each round sent, in order, how long it
       took, and what the re-read found — because a residual names the end state and cannot say whether the
-      parameter was ever re-sent; the report is offered for saving whenever the run found anything, and the
+      parameter was ever re-sent; a restore that leaves anything different is itemized address by address,
+      under the label `restore`, with a converge trace of its own; the report is offered for saving whenever the run found anything, and the
       headless `--self-test` launch logs it in chunks instead) / `prepare.ts` audit-prep writer
       (`--prepare-modified` launch flag, no UI exposure): captures the device, spreads every writable plan
       scalar to a distinctive in-range value, and writes it (tolerant send, no restore) so a scene
@@ -2488,19 +2489,24 @@ re-sends only what still differs**, and that is where order alone stops being en
 The measured case is the EQ 1-knob, on a URX44V. Writing ON (`46`) discards the type back to Intensity; writing the
 type (`47`) discards the level (`48`) to that type's neutral point (Intensity 50, the presets 0). Three links. When a
 COMP/EQ bank switch resets all three at once, a loop that re-sends only what differs walks the chain one link per
-round: round 2 re-sends ON and un-sets the type, round 3 re-sends the type and un-sets the level, and the 3-round
-budget runs out with the level wrong —
-reported as a residual the device had in fact accepted every time it was written.
+round: round 2 re-sends ON and un-sets the type, round 3 re-sends the type and un-sets the level, and the level
+lands only in a round of its own — each link spends a round of the budget, and a budget spent before the last link
+reports the level as a residual the device had in fact accepted every time it was written.
 
 `VdCommand.group` names the chain, and `roundCommands` (client.ts) expands a round to **every member of a group any
 differing command belongs to**, in emit order. One round then lands all three. The plan is re-translated only when a
 group is actually involved, so a write with no 1-knob difference pays nothing.
 
 The other `sideEffect` heads (`COMP_EQ_TYPE`, `INSERT_FX` and the two output selectors, `FX_EFFECT_TYPE`,
-`SIGNAL_TYPE`, `PAN_BAL`) are two links deep, which one extra round settles, so they carry no group today. That is a
-budget coincidence rather than a property, so `translate.test.ts` pins the split: a new `sideEffect` param fails the
-test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset addresses owned by *other* nodes,
-which a group cannot express — their ordering is pinned separately.
+`SIGNAL_TYPE`, `PAN_BAL`) carry no group. What settles them is the loop's budget, which is not fixed: **a round
+that sent a `sideEffect` head is followed by another round**, past `maxRounds` and up to twice it. A head's rewrite
+lands after the writes that follow it in the same round — on a URX44V a Signal Type change applied 85-125 ms after
+its write, and inside a self-test restore values written more than a second after the unlink were still replaced —
+so what it moved is put back only by a round of its own, and one head can move another: unlinking a pair drops the
+secondary's COMP/EQ type, and re-sending that type rebuilds its SSMCS bank. A round that sends no head and still leaves a residual ends the loop at `maxRounds`, and
+a head that never settles stops at the cap. `translate.test.ts` pins which heads carry a group, so a new
+`sideEffect` param fails the test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset
+addresses owned by *other* nodes, which a group cannot express — their ordering is pinned separately.
 
 A round's budget only works if the residual it measures is real, so **the seed read waits out the writes that
 preceded it**. The caller that leaves the diff to be seeded — Live sync's converging flush — has just written the
@@ -2530,7 +2536,13 @@ stops at the **first** failure and marks the rest `skipped`, because order binds
 the array it types (FX type, insert-FX engine), so continuing past a failed selector writes slot values the device
 reads under the wrong type. `sendConverging` ends its loop on a failed round or an unreadable re-diff instead of
 re-sending the whole plan over a broken link. Name writes are held back until the numeric phase has reached the
-device intact. A write that stops part-way leaves the device holding some of what was confirmed, so the handler
+device intact. The SSMCS Sweet Spot preset goes out between the two, followed by a second converge
+(`sendPresetsAndReconverge`): the unit rebuilds the strip a preset drives once the preset lands (123-155 ms after the
+write on a URX44V), replacing the plan's strip values with the preset's, so the strip is converged again, reading
+the unit only once that rebuild has landed. It cannot go ahead of the numeric phase: a Signal Type change in that
+phase puts each member's own preset back when it lands. A refused preset stops the write there, with the presets after it unsent and the nodes whose preset was accepted named in the report as not confirmed — their strip was rebuilt and nothing read it back — and the write is offered again as any stopped write is. A cancel once a preset has gone out — between two presets, or inside the converge behind them — stops the write there as well, and the report still names those nodes as not confirmed. A read that fails inside either converge comes after something was sent, so it is reported as a write the app could not confirm rather than as written or as nothing written, with the same offer. The self-test
+restore puts the captured presets back the same way, stops at a refused one (exception 1 below), and counts in its residual a name or preset still differing afterwards
+and a node an accepted preset left unconfirmed. A write that stops part-way leaves the device holding some of what was confirmed, so the handler
 offers to **run it again** rather than print a breakdown nobody can act on — the retry re-diffs, so whatever landed
 drops out by itself.
 
@@ -2595,7 +2607,12 @@ listed here so they are not proposed as gaps:
 
 1. **The self-test aggregates instead of stopping.** It is the diagnostic, not a user action: its job is to
    report every parameter that failed a round trip in one pass, so a partial capture still runs the sweep and
-   the restore rather than leaving the unit perturbed. **Its restore reaches past what the plan implies, and
+   the restore rather than leaving the unit perturbed. **A refused Sweet Spot preset is the one refusal that
+   stops the restore**, as it stops any write on the link: the strip that preset's predecessors rebuilt was
+   not read back, so the restore writes nothing more — the addresses it would have written back from the
+   pre-sweep read are only read, the names are not sent, and whatever still differs counts in
+   `restoreResidual` beside the nodes the accepted presets left unconfirmed. A cancel once a preset has
+   gone out ends the run as a cancel anywhere in the restore does, with those nodes still named. **Its restore reaches past what the plan implies, and
    its verdict says where it stops.** A plan emits an address only under the mode that owns it, and the sweep
    runs in every mode, so a pass writes addresses the captured plan has no command for — and whose absence the
    residual cannot see either, being a diff over those same commands. Three families do it: the 4-band PEQ,

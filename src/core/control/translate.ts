@@ -2653,10 +2653,10 @@ export interface NameWrite {
    *  Present so a string write can be a `sideEffect` head at all: the flush reads the
    *  flag off this rather than reverse-mapping a param id back to a catalog row. */
   name?: ParamName;
-  /** The node that owns the write, for the reason `VdCommand.node` exists: a `"refetch"`
-   *  head is repaired by re-reading its owner, and a read scoped to some nodes carries
-   *  the names of those nodes and no others. */
-  node?: string;
+  /** The node that owns the write — a name and a preset alike — for the reason
+   *  `VdCommand.node` exists: a `"refetch"` head is repaired by re-reading its owner, and a
+   *  read scoped to some nodes carries the names of those nodes and no others. */
+  node: string;
 }
 
 /**

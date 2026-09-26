@@ -11,9 +11,10 @@ vi.mock("../platform", () => ({
   vdGet: vi.fn(),
   vdSet: vi.fn(),
   vdGetStr: vi.fn(),
+  vdSetStr: vi.fn(),
 }));
 
-import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
+import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { auditUnverified, channelControl, eqOneKnob, inputEq, planToCommands, unverifiedAddresses } from "./translate";
 import { planProblems } from "../plan-validate";
 import {
@@ -668,6 +669,212 @@ describe("runSelfTest", () => {
     const report = await runSelfTest(model, 0);
 
     expect(report.diag.bandsAfterRestore.map((b) => b.addr)).toContain(`${gain}:0:0`);
+  });
+
+  // A run whose every pass converged and whose restore did not: the verdict line says
+  // "N param(s) differ", and without the entries themselves the report names nothing the
+  // operator could put back by hand.
+  it("itemizes what the converging restore left different, with its trace", async () => {
+    const table = installMockDevice(defaultPlan("URX44V"));
+    const id = PARAMS.HPF_FREQ.id;
+    const addr = `${id}:0:0`;
+    const home = table.get(addr);
+    // Takes every write except the one that would put ch1's HPF frequency back.
+    vi.mocked(vdSet).mockImplementation((pid, x, y, v) => {
+      if (`${pid}:${x}:${y}` === addr && v === home) return Promise.resolve();
+      table.set(`${pid}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    // Premise: the sweep converged, so the restore is the only thing that failed.
+    expect(report.ok).toBe(true);
+    expect(report.restored).toBe(false);
+    const restoreEntries = report.residual.filter((m) => m.pass === -1);
+    expect(restoreEntries).toHaveLength(report.restoreResidual);
+    expect(restoreEntries).toContainEqual(
+      expect.objectContaining({ paramId: id, x: 0, y: 0, expected: home, actual: table.get(addr) }),
+    );
+    expect(report.traces.some((t) => t.pass === -1 && t.rounds.length > 0)).toBe(true);
+    const md = formatSelfTestReport(report);
+    expect(md).toContain(`- restore HPF_FREQ @ ${addr} — wrote ${home}, read ${table.get(addr)}`);
+    expect(md).toContain("## Converge trace — restore");
+  });
+
+  // A stopped restore can leave an entry whose last read answered nothing (`actual: null`). It
+  // is listed as unreadable, under the restore's own label, rather than as a value.
+  it("lists an unsettled restore entry the last read could not answer as unreadable", async () => {
+    installMockDevice(populatedPlan());
+    const report = await runSelfTest(model, 0);
+    const md = formatSelfTestReport({
+      ...report,
+      residual: [
+        {
+          name: "HPF_FREQ",
+          paramId: PARAMS.HPF_FREQ.id,
+          x: 0,
+          y: 0,
+          expected: 40,
+          actual: null,
+          pass: -1,
+          stoppedOn: "read",
+        },
+      ],
+    });
+    expect(md).toContain(
+      `- restore HPF_FREQ @ ${PARAMS.HPF_FREQ.id}:0:0 — plan wanted 40, device answered unreadable at the last read (the pass stopped on a failed read)`,
+    );
+  });
+
+  // A STEREO link copies the primary's Sweet Spot preset onto the secondary, and the preset is a
+  // string the converging restore never writes — so a run that linked the pairs left CH2 on
+  // CH1's preset under a verdict that said it was restored.
+  it("puts back the Sweet Spot preset a sweep moved, and verifies it", async () => {
+    const seed = populatedPlan();
+    seed.nodeParams["ch2"] = { ...seed.nodeParams["ch2"], compEqType: 1, ssmcs: { sweetSpotData: 24 } };
+    const table = installMockDevice(seed);
+    const strings = new Map<string, string>([["91:1", "0024"]]);
+    vi.mocked(vdGetStr).mockImplementation((id, _x, y) => Promise.resolve(strings.get(`${id}:${y}`) ?? ""));
+    vi.mocked(vdSetStr).mockImplementation((id, _x, y, v) => {
+      strings.set(`${id}:${y}`, v);
+      return Promise.resolve();
+    });
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      await inner(id, x, y, v);
+      if (id === PARAMS.SIGNAL_TYPE.id && v === 1) strings.set("91:1", "0001");
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    // Premise: the sweep did move it.
+    expect(vi.mocked(vdSet).mock.calls.some(([id, , , v]) => id === PARAMS.SIGNAL_TYPE.id && v === 1)).toBe(true);
+    expect(table.size).toBeGreaterThan(0);
+    expect(strings.get("91:1")).toBe("0024");
+    expect(report.restored).toBe(true);
+  });
+
+  // Two presets the sweep moved (CH1's and CH2's), with the restore's writes recorded in order.
+  // `refuse` answers each preset write; the restore's numeric writes land in the table.
+  function presetRestoreFixture(refuse: (y: number) => Error | null, onPreset?: (y: number) => void) {
+    const seed = populatedPlan();
+    for (const [id, preset] of [
+      ["ch1", 5],
+      ["ch2", 24],
+    ] as const)
+      seed.nodeParams[id] = { ...seed.nodeParams[id], compEqType: 1, ssmcs: { sweetSpotData: preset } };
+    installMockDevice(seed);
+    const strings = new Map<string, string>([
+      ["91:0", "0005"],
+      ["91:1", "0024"],
+    ]);
+    const writes: string[] = [];
+    vi.mocked(vdGetStr).mockImplementation((id, _x, y) => Promise.resolve(strings.get(`${id}:${y}`) ?? ""));
+    vi.mocked(vdSetStr).mockImplementation((id, _x, y, v) => {
+      writes.push(`str ${id}:${y}`);
+      const err = id === 91 ? refuse(y) : null;
+      if (err) return Promise.reject(err);
+      strings.set(`${id}:${y}`, v);
+      if (id === 91) onPreset?.(y);
+      return Promise.resolve();
+    });
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      writes.push(`num ${id}:${x}:${y}`);
+      await inner(id, x, y, v);
+      if (id === PARAMS.SIGNAL_TYPE.id && v === 1) {
+        strings.set("91:0", "0001");
+        strings.set("91:1", "0001");
+      }
+    });
+    return { writes };
+  }
+
+  // A refused preset stops the restore's writes there, as a refused write stops any operation on
+  // the link: the strip of a node whose preset WAS accepted was rebuilt with nothing reading it
+  // back, and what the restore had not yet put back stays as the sweep left it. Only reads follow.
+  it("stops the restore at a refused preset and counts what it did not put back", async () => {
+    const { writes } = presetRestoreFixture((y) => (y === 1 ? new Error("nak") : null));
+
+    const report = await runSelfTest(model, 0);
+
+    // Premise: there were addresses the restore writes back after the presets.
+    expect(report.diag.unrestorable.length).toBeGreaterThan(0);
+    const refusal = writes.lastIndexOf("str 91:1");
+    expect(refusal).toBeGreaterThan(0);
+    expect(writes.slice(refusal + 1)).toEqual([]);
+    expect(report.restored).toBe(false);
+    expect(report.errors).toContain("restore 91:0:1: nak");
+    expect(report.errors.some((e) => e.startsWith("restore ch1: its Sweet Spot preset rebuilt the strip"))).toBe(true);
+    // The refused preset, the node the accepted one left unconfirmed, and each address the
+    // restore did not write back that the sweep had left different.
+    const leftBehind = report.residual.filter(
+      (m) => m.pass === -1 && report.diag.unrestorable.some((u) => u.endsWith(` ${m.paramId}:${m.x}:${m.y}`)),
+    );
+    expect(leftBehind.length).toBeGreaterThan(0);
+    expect(report.restoreResidual).toBe(2 + leftBehind.length);
+  });
+
+  // A cancel taken between two presets is a cancel: the second preset is not sent, nothing after
+  // it is written, and the node whose preset went out is named as unconfirmed.
+  it("stops the restore on a cancel between two presets and reports it as cancelled", async () => {
+    const controller = new AbortController();
+    const { writes } = presetRestoreFixture(
+      () => null,
+      (y) => {
+        if (y === 0) controller.abort();
+      },
+    );
+
+    const report = await runSelfTest(model, 0, controller.signal);
+
+    // Premise: the cancel landed in the restore, which is the only phase that writes a preset.
+    expect(report.phase).toBe("restore");
+    expect(writes.filter((w) => w.startsWith("str 91:"))).toEqual(["str 91:0"]);
+    const accepted = writes.lastIndexOf("str 91:0");
+    expect(writes.slice(accepted + 1)).toEqual([]);
+    expect(report.aborted).toBe(true);
+    expect(report.restored).toBe(false);
+    expect(report.errors.some((e) => e.startsWith("restore ch1: its Sweet Spot preset rebuilt the strip"))).toBe(true);
+  });
+
+  // Once the last preset has gone out, a cancel lands in the converge behind the presets: both
+  // strips were rebuilt and that converge did not finish reading them back.
+  it.each([
+    ["while the last preset is sent", "last-preset"],
+    ["on the converge's first read behind the presets", "reconverge"],
+  ] as const)("names every strip a restored preset rebuilt when cancelled %s", async (_label, at) => {
+    const controller = new AbortController();
+    let presetsDone = false;
+    const { writes } = presetRestoreFixture(
+      () => null,
+      (y) => {
+        if (y !== 1) return;
+        presetsDone = true;
+        if (at === "last-preset") controller.abort();
+      },
+    );
+    const read = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation(async (id, x, y) => {
+      const got = await read(id, x, y);
+      if (at === "reconverge" && presetsDone) controller.abort();
+      return got;
+    });
+
+    const report = await runSelfTest(model, 0, controller.signal);
+
+    // Premise: the cancel landed in the restore, after both presets, and nothing followed it.
+    expect(report.phase).toBe("restore");
+    expect(controller.signal.aborted).toBe(true);
+    expect(writes.filter((w) => w.startsWith("str "))).toEqual(["str 91:0", "str 91:1"]);
+    expect(writes.slice(writes.lastIndexOf("str 91:1") + 1)).toEqual([]);
+    expect(report.aborted).toBe(true);
+    expect(report.restored).toBe(false);
+    for (const node of ["ch1", "ch2"])
+      expect(report.errors.some((e) => e.startsWith(`restore ${node}: its Sweet Spot preset rebuilt the strip`))).toBe(
+        true,
+      );
   });
 
   it("reports residual mismatches when the device ignores a write", async () => {

@@ -3928,8 +3928,8 @@ describe("Write to device", () => {
     expect(shell.count("vd_set")).toBeGreaterThan(10);
 
     // The count comes out of the message so the assertion can pin the whole frame
-    // rather than a substring. Measured on the non-converging path (reads answering a
-    // flat 0): 1527 writes go out over three rounds, the flow lands on
+    // rather than a substring. On the non-converging path (reads answering a flat 0) the
+    // writes go out over every round the converge allows, the flow lands on
     // `writeResidual`, and its error report's save — which this stub has no dialog
     // command for — fails, so `showError` clears the line and the status reads "".
     const n = Number(/\d+/.exec(statusText())?.[0]);
@@ -3940,6 +3940,31 @@ describe("Write to device", () => {
     $("btn-write").click();
     await invoked(shell, "vd_disconnect", 2);
     expect(statusText()).toContain(t().status.writeNoChanges);
+  });
+
+  // The unit rebuilds the SSMCS strip from a Sweet Spot preset once the preset lands, and a Signal
+  // Type change in the numeric phase puts a member's own preset back when it lands. So the preset
+  // goes out after the numeric phase, and the node names after the preset.
+  it("sends the Sweet Spot preset between the numeric phase and the node names", SLOW, async () => {
+    const { emptyPlan, serialize } = await import("./core/plan");
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["ch2"] = { compEqType: 1, ssmcs: { sweetSpotData: 24, compDrive: 120 } };
+    plan.nodeNames["ch1"] = "Vox";
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(plan), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok" }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const at = (pred: (cmd: string, a: Record<string, unknown>) => boolean): number =>
+      shell.invokes.findIndex((cmd, i) => pred(cmd, (shell.args[i] ?? {}) as Record<string, unknown>));
+    const strip = at((cmd, a) => cmd === "vd_set" && a.paramId === 95 && a.y === 1);
+    const preset = at((cmd, a) => cmd === "vd_set_str" && a.paramId === 91 && a.y === 1);
+    const name = at((cmd, a) => cmd === "vd_set_str" && a.value === "Vox");
+    expect(strip, "the strip value went out").toBeGreaterThanOrEqual(0);
+    expect(preset, "the preset went out").toBeGreaterThan(strip);
+    expect(name, "the name went out").toBeGreaterThan(preset);
   });
 
   // The plan format's silence, held where it meets the unit: what reaches it, and what the
@@ -4159,6 +4184,278 @@ describe("Write to device", () => {
     expect(confirms(shell).filter((m) => m.includes(RETRY_ASK))).toHaveLength(1);
     expect(shell.count("vd_set")).toBe(1); // stopped AT the failure, not after it
     expect(shell.count("vd_set_str")).toBe(0); // names are held back while it is stopped
+  });
+
+  // A plan whose CH1-3 sit on Sweet Spot presets, as a ?plan= link.
+  const presetLink = async (): Promise<string> => {
+    const { emptyPlan, serialize } = await import("./core/plan");
+    const plan = emptyPlan("URX44V");
+    for (const [id, preset] of [
+      ["ch1", 5],
+      ["ch2", 24],
+      ["ch3", 7],
+    ] as const)
+      plan.nodeParams[id] = { compEqType: 1, ssmcs: { sweetSpotData: preset, compDrive: 120 } };
+    return `/?plan=${encodeURIComponent(Buffer.from(serialize(plan), "utf8").toString("base64url"))}`;
+  };
+  const savedReport = async (shell: TauriShell): Promise<string> => {
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
+    return String((shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string }).contents);
+  };
+
+  // Everything the converge reads comes after something it sent, so a read that fails there is
+  // a read-back that could not confirm the write. Reported as written, which it was, would hide
+  // that; reported as "nothing was written" would be false.
+  it("reports a write whose read-back failed as unconfirmed, and offers to run it again", SLOW, async () => {
+    const UNREAD_ASK = invariantOf(t().confirm.writeRetryUnread(1, 1));
+    let shell: TauriShell | undefined;
+    let armed = false;
+    shell = (await bootApp({
+      url: await presetLink(),
+      tauri: deviceCommands({
+        ...SAVES,
+        "plugin:dialog|message": byMessage((m) => !m.includes(UNREAD_ASK)),
+        // The first read after the first preset fails, once.
+        vd_set_str: () => {
+          if (!armed) {
+            armed = true;
+            shell!.failOnce("vd_get", new Error("read timeout"));
+          }
+          return null;
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const sent = countFor(statusText(), (n) => t().status.writeUnconfirmed(n, 1));
+    expect(statusText()).toBe(t().status.writeUnconfirmed(sent, 1));
+    expect(confirms(shell)).toContain(t().confirm.writeRetryUnread(sent, 1));
+    const md = await savedReport(shell);
+    expect(md).toContain("Written, then read failures: 1");
+    expect(md).not.toContain("nothing was written");
+  });
+
+  // The presets are read again once the numeric values have gone out. A read that fails there
+  // sends no preset, and it is a read-back of a write that went out, not the read a write stops on.
+  it("reports the write as unconfirmed when the presets cannot be read after the numeric values", SLOW, async () => {
+    const UNREAD_ASK = invariantOf(t().confirm.writeRetryUnread(1, 1));
+    let armed = false;
+    const tauri = deviceCommands({
+      ...SAVES,
+      "plugin:dialog|message": byMessage((m) => !m.includes(UNREAD_ASK)),
+    });
+    const set = tauri.vd_set as (a: Record<string, unknown>) => unknown;
+    tauri.vd_set = (a: Record<string, unknown>) => {
+      armed = true;
+      return set(a);
+    };
+    const getStr = tauri.vd_get_str as (a: Record<string, unknown>) => unknown;
+    tauri.vd_get_str = (a: Record<string, unknown>) => {
+      if (armed) {
+        armed = false;
+        throw new Error("read timeout");
+      }
+      return getStr(a);
+    };
+    const shell = (await bootApp({ url: await presetLink(), tauri }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    // Premise: numeric values went out, and no preset did.
+    expect(shell.count("vd_set")).toBeGreaterThan(0);
+    expect(shell.count("vd_set_str")).toBe(0);
+    const sent = countFor(statusText(), (n) => t().status.writeUnconfirmed(n, 1));
+    expect(statusText()).toBe(t().status.writeUnconfirmed(sent, 1));
+    expect(confirms(shell)).toContain(t().confirm.writeRetryUnread(sent, 1));
+    const md = await savedReport(shell);
+    expect(md).toContain("Written, then read failures: 1");
+  });
+
+  // The second write finds the numeric values already on the unit and only the presets differing
+  // (this stub keeps no string), so the presets are all it sends — and they count as sent when the
+  // read after them fails.
+  it("counts presets it sent when the read after them fails, with nothing numeric to write", SLOW, async () => {
+    let shell: TauriShell | undefined;
+    let arm = false;
+    shell = (await bootApp({
+      url: await presetLink(),
+      tauri: deviceCommands({
+        ...SAVES,
+        "plugin:dialog|message": byMessage((m) => !m.includes(invariantOf(t().confirm.writeRetryUnread(1, 1)))),
+        vd_set_str: () => {
+          if (arm) {
+            arm = false;
+            shell!.failOnce("vd_get", new Error("read timeout"));
+          }
+          return null;
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const setsAfterFirst = shell.count("vd_set");
+    arm = true;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+
+    expect(shell.count("vd_set"), "the premise: nothing numeric was left to send").toBe(setsAfterFirst);
+    const sent = countFor(statusText(), (n) => t().status.writeUnconfirmed(n, 1));
+    expect(sent).toBeGreaterThan(0);
+    const md = await savedReport(shell);
+    expect(md).toContain("Written, then read failures: 1");
+    expect(md).not.toContain("nothing was written");
+  });
+
+  // A retry that cannot even read the unit before writing still stands on what the earlier
+  // attempt sent: the line and the report say so rather than "nothing was written".
+  it("keeps what an earlier attempt sent when the retry's first read fails", SLOW, async () => {
+    const UNREAD_ASK = invariantOf(t().confirm.writeRetryUnread(1, 1));
+    let shell: TauriShell | undefined;
+    let armed = false;
+    shell = (await bootApp({
+      url: await presetLink(),
+      tauri: deviceCommands({
+        ...SAVES,
+        // Agreeing to the retry arms a failure for the retry's own first read.
+        "plugin:dialog|message": (a: Record<string, unknown>) => {
+          if (String(a.message ?? "").includes(UNREAD_ASK)) shell!.failOnce("vd_get", new Error("read timeout"));
+          return "Ok";
+        },
+        vd_set_str: () => {
+          if (!armed) {
+            armed = true;
+            shell!.failOnce("vd_get", new Error("read timeout"));
+          }
+          return null;
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    expect(
+      confirms(shell).filter((m) => m.includes(UNREAD_ASK)),
+      "the premise: the retry was offered",
+    ).toHaveLength(1);
+    const sent = countFor(statusText(), (n) => t().status.writeUnconfirmed(n, 1));
+    expect(sent).toBeGreaterThan(0);
+    const md = await savedReport(shell);
+    expect(md).not.toContain("nothing was written");
+    expect(md).toContain("Written, then read failures: 1");
+  });
+
+  // A refused preset stops the write there, as any refused write does: the presets after it do
+  // not go out, and the node whose preset was accepted is named, since its strip was rebuilt
+  // and nothing read it back.
+  it("stops at a refused preset and names the strip an accepted one left unconfirmed", SLOW, async () => {
+    const shell = (await bootApp({
+      url: await presetLink(),
+      tauri: deviceCommands({
+        ...SAVES,
+        "plugin:dialog|message": byMessage((m) => !m.includes(RETRY_ASK)),
+        vd_set_str: (a: Record<string, unknown>) => {
+          if (a.paramId === 91 && a.y === 1) throw new Error("nak");
+          return null;
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const presets = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set_str" ? (shell.args[i] as Record<string, unknown>) : undefined))
+      .filter((a): a is Record<string, unknown> => a?.paramId === 91)
+      .map((a) => a.y);
+    expect(presets).toEqual([0, 1]);
+    const [sent, notSent] = (/: (\d+) sent, (\d+) not sent/.exec(statusText()) ?? []).slice(1).map(Number);
+    expect(statusText()).toBe(t().status.writeStopped(sent, notSent));
+    expect(notSent).toBeGreaterThanOrEqual(1);
+    expect(confirms(shell)).toContain(t().confirm.writeRetry(sent, notSent));
+    const md = await savedReport(shell);
+    expect(md).toContain("## Not confirmed");
+    expect(md).toContain("- ch1");
+  });
+
+  // A cancel taken between two presets stops there: the next preset and the names do not go
+  // out, and the report still names the node whose preset did.
+  it("stops at a cancel between two presets and names the strip left unconfirmed", SLOW, async () => {
+    const shell = (await bootApp({
+      url: await presetLink(),
+      tauri: deviceCommands({
+        ...SAVES,
+        "plugin:dialog|message": byMessage(() => true),
+        vd_set_str: (a: Record<string, unknown>) => {
+          // Clicking the write button again cancels the write in flight.
+          if (a.paramId === 91 && a.y === 0) queueMicrotask(() => $("btn-write").click());
+          return null;
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const strings = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set_str" ? (shell.args[i] as Record<string, unknown>) : undefined))
+      .filter((a): a is Record<string, unknown> => a !== undefined)
+      .map((a) => `${a.paramId}:${a.y}`);
+    expect(strings).toEqual(["91:0"]);
+    expect(statusText()).toBe(t().status.canceled);
+    const md = await savedReport(shell);
+    expect(md).toContain("## Not confirmed");
+    expect(md).toContain("- ch1");
+  });
+
+  // Once the last preset has gone out, a cancel lands in the converge behind the presets. Every
+  // accepted preset rebuilt a strip that converge did not finish reading back, so the report still
+  // names them, and nothing more is sent.
+  it.each([
+    ["while the last preset is sent", "last-preset"],
+    ["on the converge's first read behind the presets", "reconverge"],
+  ] as const)("names every strip a preset rebuilt when cancelled %s", SLOW, async (_label, at) => {
+    let presetsDone = false;
+    let cancelled = false;
+    // Clicking the write button again cancels the write in flight.
+    const cancel = (): void => {
+      if (cancelled) return;
+      cancelled = true;
+      queueMicrotask(() => $("btn-write").click());
+    };
+    const tauri = deviceCommands({
+      ...SAVES,
+      "plugin:dialog|message": byMessage(() => true),
+    });
+    const setStr = tauri.vd_set_str as (a: Record<string, unknown>) => unknown;
+    tauri.vd_set_str = (a: Record<string, unknown>) => {
+      const answer = setStr(a);
+      if (a.paramId === 91 && a.y === 2) {
+        presetsDone = true;
+        if (at === "last-preset") cancel();
+      }
+      return answer;
+    };
+    const get = tauri.vd_get as (a: Record<string, unknown>) => unknown;
+    tauri.vd_get = (a: Record<string, unknown>) => {
+      const answer = get(a);
+      if (at === "reconverge" && presetsDone) cancel();
+      return answer;
+    };
+    const shell = (await bootApp({ url: await presetLink(), tauri }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const strings = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set_str" ? (shell.args[i] as Record<string, unknown>) : undefined))
+      .filter((a): a is Record<string, unknown> => a !== undefined)
+      .map((a) => `${a.paramId}:${a.y}`);
+    // Premise: the cancel came after the last preset, and nothing followed it — no name either.
+    expect(cancelled).toBe(true);
+    expect(strings).toEqual(["91:0", "91:1", "91:2"]);
+    expect(shell.invokes.lastIndexOf("vd_set")).toBeLessThan(shell.invokes.lastIndexOf("vd_set_str"));
+    expect(statusText()).toBe(t().status.canceled);
+    const md = await savedReport(shell);
+    expect(md).toContain("## Not confirmed");
+    for (const node of ["ch1", "ch2", "ch3"]) expect(md).toContain(`- ${node}`);
   });
 });
 

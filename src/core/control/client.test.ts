@@ -26,6 +26,8 @@ import {
   reachedAndFailed,
   sendConverging,
   sendNames,
+  sendPresetsAndReconverge,
+  sendPresetsFirst,
   setFollowUsb,
   type SendOutcome,
 } from "./client";
@@ -269,6 +271,103 @@ describe("sendConverging", () => {
     expect(r.residual.some((d) => d.command.paramId === 140)).toBe(true);
   });
 
+  // A chain of sideEffect heads, each of which moves a value the round before it had already
+  // settled: unlinking the pair drops CH2's COMP/EQ type, the type rebuilds CH2's SSMCS, and
+  // the SSMCS morphing moves CH2's gain. Every link is a round of its own, four in all.
+  function installHeadChainDevice(plan: Plan): Map<string, number> {
+    const table = installDevice();
+    for (const c of planToCommands(model, plan)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
+    const signalType = PARAMS.SIGNAL_TYPE.id;
+    table.set(`${signalType}:0:0`, 1);
+    table.set(`${signalType}:0:1`, 1);
+    const ssmcs = planToCommands(model, plan).filter((c) => c.name.startsWith("SSMCS_") && c.y === 1);
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      await inner(id, x, y, v);
+      if (id === signalType) table.set(`${PARAMS.COMP_EQ_TYPE.id}:0:1`, 0);
+      if (id === PARAMS.COMP_EQ_TYPE.id && y === 1) for (const c of ssmcs) table.set(`${c.paramId}:0:1`, 0);
+      if (id === PARAMS.SSMCS_MORPHING.id && y === 1) table.set(`${PARAMS.HA_GAIN.id}:0:1`, 0);
+    });
+    return table;
+  }
+  function headChainPlan(): Plan {
+    const plan = dirtyPlan();
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: false };
+    plan.nodeParams["ch2"] = { on: true, gain: 6, compEqType: 1, ssmcs: { compDrive: 120, morphing: 40 } };
+    return plan;
+  }
+
+  it("follows a round that sent a sideEffect head with another, past the base budget", async () => {
+    const plan = headChainPlan();
+    const table = installHeadChainDevice(plan);
+
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+
+    expect(r.residual).toEqual([]);
+    expect(r.rounds).toBe(4);
+    const gain = planToCommands(model, plan).find((c) => c.name === "HA_GAIN" && c.y === 1)!;
+    expect(table.get(`${gain.paramId}:0:1`)).toBe(gain.vdValue);
+  });
+
+  // The unit rebuilds the strip a preset drives a beat after the preset's write returns. A read
+  // taken before that finds the strip still matching, the converge ends, and the rebuild then
+  // replaces the plan's strip values with the preset's. The strip here already holds the plan's
+  // values and only the preset differs, which is the state that read gets wrong.
+  function installPresetRebuildingDevice(plan: Plan): { table: Map<string, number>; at: string; want: number } {
+    const table = installDevice();
+    for (const c of planToCommands(model, plan)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
+    const drive = planToCommands(model, plan).find((c) => c.name === "SSMCS_COMP_DRIVE" && c.y === 1)!;
+    const at = `${drive.paramId}:0:1`;
+    const strings = new Map<string, string>([["91:1", "0025"]]);
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) => Promise.resolve(strings.get(`${param}:${y}`) ?? ""));
+    vi.mocked(vdSetStr).mockImplementation((param, _x, y, v) => {
+      strings.set(`${param}:${y}`, v);
+      if (param === PARAMS.SWEET_SPOT_DATA.id) setTimeout(() => table.set(at, 0), 10);
+      return Promise.resolve();
+    });
+    return { table, at, want: drive.vdValue };
+  }
+
+  it("writes a differing preset and converges the strip again once its rebuild has landed", async () => {
+    const plan = presetPlan();
+    const { table, at, want } = installPresetRebuildingDevice(plan);
+
+    const r = await sendPresetsAndReconverge(model, plan, { settleMs: 40 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(r.presets.map((o) => o.ok)).toEqual([true]);
+    expect(r.result?.residual).toEqual([]);
+    expect(table.get(at)).toBe(want);
+  });
+
+  it("writes nothing and converges nothing when no preset differs", async () => {
+    const plan = presetPlan();
+    installPresetRebuildingDevice(plan);
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) =>
+      Promise.resolve(param === PARAMS.SWEET_SPOT_DATA.id && y === 1 ? "0024" : param === 18 && y === 0 ? "Vox" : ""),
+    );
+
+    const r = await sendPresetsAndReconverge(model, plan, { settleMs: 40 });
+
+    expect(r.result).toBeNull();
+    expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
+  });
+
+  it("stops a head that never settles at twice the base budget", async () => {
+    const plan = headChainPlan();
+    installHeadChainDevice(plan);
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    // The COMP/EQ type is accepted and never kept.
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) =>
+      id === PARAMS.COMP_EQ_TYPE.id && y === 1 ? Promise.resolve() : inner(id, x, y, v),
+    );
+
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+
+    expect(r.rounds).toBe(6);
+    expect(r.residual.some((d) => d.command.name === "COMP_EQ_TYPE" && d.command.y === 1)).toBe(true);
+  });
+
   // Re-sending the whole plan over a link that just failed would re-trigger the
   // side-effect resets this loop exists to settle, so one round is all it does.
   it("stops after a round that failed to send instead of retrying", async () => {
@@ -283,7 +382,7 @@ describe("sendConverging", () => {
   // the type back to Intensity, and a type write discards the level to that type's
   // neutral. A round that re-sends only what differs walks the chain one link per
   // round — ON, then the type it just discarded, then the level that discarded —
-  // and a 3-round budget runs out with the level still wrong. The chain travels as
+  // and the level lands only in a round of its own. The chain travels as
   // one group, so a single round lands all three.
   it("re-sends a reset chain whole rather than one link per round", async () => {
     const table = installDevice();
@@ -358,7 +457,7 @@ describe("sendConverging", () => {
   // and creates the difference at 43 that round 2 has to repair).
   //
   // It converges, in two rounds, inside the budget — so no group. The EQ's chain is three
-  // links (46 discards 47, 47 discards 48) and that is what a 3-round budget cannot walk;
+  // links (46 discards 47, 47 discards 48), which walked a link per round costs a round each;
   // this one is two. Nothing further is discarded once 43 lands, because the values the level
   // recomputes are not emitted at all while the knob is on.
   it("walks the COMP 1-knob chain to convergence without a group", async () => {
@@ -469,6 +568,33 @@ describe("formatWriteReport", () => {
     expect(md).not.toContain("Write failures: 1");
   });
 
+  // A read that fails after something went out is a read-back that could not confirm the
+  // write, not the read a write stops on — saying "nothing was written" there is false.
+  it("says a write whose read-back failed was written and is unconfirmed", () => {
+    const md = formatWriteReport("URX44V", [], [], ["CH_FADER: timeout"], { wrote: true });
+    expect(md).toContain("Written, then read failures: 1");
+    expect(md).toContain("could not be confirmed");
+    expect(md).not.toContain("nothing was written");
+  });
+
+  it("names the strips an accepted preset rebuilt before the write stopped", () => {
+    const md = formatWriteReport("URX44V", [{ name: "name 91:1", error: "nak" }], [], [], {
+      wrote: true,
+      unconfirmed: ["ch1"],
+    });
+    expect(md).toContain("strips not confirmed: 1");
+    expect(md).toContain("## Not confirmed");
+    expect(md).toContain("- ch1");
+  });
+
+  // A refusal and a failed read in one write: the headline counts both, since the refusal
+  // alone would leave the read failures listed below it unannounced.
+  it("counts read failures in the headline beside a refused write", () => {
+    const md = formatWriteReport("URX44V", [{ name: "CH1 GATE", error: "nak" }], [], ["CH_FADER: timeout"]);
+    expect(md).toContain("- Write failures: 1; parameters that did not converge: 0; read failures: 1");
+    expect(md).toContain("## Read failures");
+  });
+
   // The report reads only name/paramId/x/y/vdValue, so stub a minimal command
   // (the full VdCommand carries planValue/request, irrelevant to formatting).
   const cmd = (name: string, paramId: number, vdValue: number) =>
@@ -513,7 +639,7 @@ describe("compareCounts", () => {
   it("counts compared and differ from the entries and returns the differing ones", () => {
     const { compared, differ, numDiffs, nameDiffs } = compareCounts(
       [cmpEntry("A", 1, 1, 1), cmpEntry("B", 2, 2, 9)],
-      [{ write: { param: 18, y: 0, value: "x" }, device: "y", match: false }],
+      [{ write: { param: 18, y: 0, value: "x", node: "ch1" }, device: "y", match: false }],
     );
     expect(compared).toBe(3);
     expect(differ).toBe(2);
@@ -545,7 +671,7 @@ describe("formatCompareReport", () => {
     const md = formatCompareReport(
       "URX44V",
       [],
-      [{ write: { param: 18, y: 2, value: "Lead Vox" }, device: "ch 3", match: false }],
+      [{ write: { param: 18, y: 2, value: "Lead Vox", node: "ch3" }, device: "ch 3", match: false }],
     );
     expect(md).toContain('name @ 18:2 — plan "Lead Vox", device "ch 3" — DIFFER');
   });
@@ -789,6 +915,172 @@ describe("sendNames", () => {
   it("writes nothing when there is nothing to write", async () => {
     expect(await sendNames([])).toEqual([]);
     expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
+  });
+});
+
+// CH2 in SSMCS with a Sweet Spot preset and one strip value of its own, plus a node name.
+function presetPlan(): Plan {
+  const plan = basePlan();
+  plan.nodeParams["ch2"] = { on: true, compEqType: 1, ssmcs: { sweetSpotData: 24, compDrive: 120 } };
+  plan.nodeNames["ch1"] = "Vox";
+  return plan;
+}
+
+describe("sendPresetsFirst", () => {
+  it("sends the preset alone and hands back its wait and the names", async () => {
+    vi.mocked(vdSetStr).mockResolvedValue(undefined);
+    const writes = planToNameWrites(model, presetPlan());
+    const r = await sendPresetsFirst(writes);
+    const preset = addrKey(PARAMS.SWEET_SPOT_DATA.id, 0, 1);
+    expect(vi.mocked(vdSetStr).mock.calls).toEqual([[PARAMS.SWEET_SPOT_DATA.id, 0, 1, "0024"]]);
+    expect(r.rest.map((w) => w.value)).toEqual(["Vox"]);
+    expect([...r.pending.mustSettle]).toEqual([preset]);
+    expect([...(r.pending.boundaryMarks?.keys() ?? [])]).toEqual([preset]);
+  });
+
+  // A refused preset rewrote nothing, so nothing is waited for on its account.
+  it("waits for no preset the unit refused", async () => {
+    vi.mocked(vdSetStr).mockRejectedValue(new Error("nak"));
+    const r = await sendPresetsFirst(planToNameWrites(model, presetPlan()));
+    expect(r.outcomes).toEqual([expect.objectContaining({ ok: false, error: "nak" })]);
+    expect(r.pending.mustSettle.size).toBe(0);
+  });
+
+  // Three channels on presets: the second is refused. The first rebuilt its strip; the third
+  // never goes out, as nothing after a refused write does.
+  function threePresetPlan(): Plan {
+    const plan = basePlan();
+    for (const [id, preset] of [
+      ["ch1", 5],
+      ["ch2", 24],
+      ["ch3", 7],
+    ] as const)
+      plan.nodeParams[id] = { on: true, compEqType: 1, ssmcs: { sweetSpotData: preset } };
+    return plan;
+  }
+  const refuseSecond = (): void => {
+    vi.mocked(vdSetStr).mockImplementation((param, _x, y) =>
+      param === PARAMS.SWEET_SPOT_DATA.id && y === 1 ? Promise.reject(new Error("nak")) : Promise.resolve(),
+    );
+  };
+
+  it("stops at the first refused preset and hands back the rest as not sent", async () => {
+    refuseSecond();
+    const r = await sendPresetsFirst(planToNameWrites(model, threePresetPlan()));
+    expect(r.outcomes.map((o) => [o.write.node, o.ok])).toEqual([
+      ["ch1", true],
+      ["ch2", false],
+    ]);
+    expect(r.notSent.map((w) => w.node)).toEqual(["ch3"]);
+    expect(vi.mocked(vdSetStr).mock.calls.map(([, , y]) => y)).toEqual([0, 1]);
+  });
+
+  it("names an accepted preset's node as unconfirmed when a later one is refused, and converges nothing", async () => {
+    refuseSecond();
+    vi.mocked(vdGetStr).mockResolvedValue("0001");
+    vi.mocked(vdGet).mockResolvedValue(0);
+
+    const r = await sendPresetsAndReconverge(model, threePresetPlan(), { settleMs: 0 });
+
+    expect(r.result).toBeNull();
+    expect(r.unconfirmed).toEqual(["ch1"]);
+    expect(r.notSent.map((w) => w.node)).toEqual(["ch3"]);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+
+  // A cancel between two presets stops the next one, as it stops the next numeric write; what
+  // already went out is named, since its strip was rebuilt and nothing read it back.
+  it("stops sending presets at a cancel and names what already went out", async () => {
+    const controller = new AbortController();
+    vi.mocked(vdSetStr).mockImplementation(() => {
+      controller.abort();
+      return Promise.resolve();
+    });
+    vi.mocked(vdGetStr).mockResolvedValue("0001");
+    vi.mocked(vdGet).mockResolvedValue(0);
+
+    const r = await sendPresetsAndReconverge(model, threePresetPlan(), { settleMs: 0, signal: controller.signal });
+
+    expect(vi.mocked(vdSetStr).mock.calls.map(([, , y]) => y)).toEqual([0]);
+    expect(r.canceled).toBe(true);
+    expect(r.unconfirmed).toEqual(["ch1"]);
+    expect(r.notSent.map((w) => w.node)).toEqual(["ch2", "ch3"]);
+    expect(r.result).toBeNull();
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+
+  // Once every preset has gone out, a cancel lands in the converge behind them, which throws. What
+  // the presets did is still handed back: every accepted one rebuilt a strip nothing read back.
+  it.each([
+    ["while the last preset is sent", "last-preset"],
+    ["inside the converge behind the presets", "reconverge"],
+  ] as const)("names every accepted preset's node when cancelled %s", async (_label, at) => {
+    const controller = new AbortController();
+    vi.mocked(vdSetStr).mockImplementation((_param, _x, y) => {
+      if (at === "last-preset" && y === 2) controller.abort();
+      return Promise.resolve();
+    });
+    vi.mocked(vdGetStr).mockResolvedValue("0001");
+    vi.mocked(vdGet).mockImplementation(() => {
+      if (at === "reconverge" && vi.mocked(vdSetStr).mock.calls.length === 3) controller.abort();
+      return Promise.resolve(0);
+    });
+
+    const r = await sendPresetsAndReconverge(model, threePresetPlan(), { settleMs: 0, signal: controller.signal });
+
+    // Premise: the cancel came after the last preset, so none is left unsent.
+    expect(vi.mocked(vdSetStr).mock.calls.map(([, , y]) => y)).toEqual([0, 1, 2]);
+    if (at === "reconverge") expect(vi.mocked(vdGet)).toHaveBeenCalled();
+    expect(r.canceled).toBe(true);
+    expect(r.unconfirmed).toEqual(["ch1", "ch2", "ch3"]);
+    expect(r.notSent).toEqual([]);
+    expect(r.result).toBeNull();
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+
+  // Only a cancel becomes `canceled`. Anything else the converge behind the presets throws is
+  // the caller's to see, or a failure would be reported as the operator's own cancel.
+  it("passes on a failure inside the converge behind the presets that is not a cancel", async () => {
+    const controller = new AbortController();
+    vi.mocked(vdSetStr).mockResolvedValue(undefined);
+    vi.mocked(vdGetStr).mockResolvedValue("0001");
+    vi.mocked(vdGet).mockResolvedValue(0);
+    vi.mocked(vdSet).mockResolvedValue(undefined);
+    const boom = new Error("boom");
+
+    const run = sendPresetsAndReconverge(model, threePresetPlan(), {
+      settleMs: 0,
+      signal: controller.signal,
+      onSent: () => {
+        throw boom;
+      },
+    });
+
+    await expect(run).rejects.toBe(boom);
+    // Premise: every preset went out and the converge behind them sent something.
+    expect(vi.mocked(vdSetStr).mock.calls.map(([, , y]) => y)).toEqual([0, 1, 2]);
+    expect(vi.mocked(vdSet)).toHaveBeenCalled();
+  });
+
+  // The presets are read before any goes out; a read that fails there sends none of them.
+  it("sends no preset when the presets cannot be read first", async () => {
+    vi.mocked(vdGetStr).mockRejectedValue(new Error("read timeout"));
+
+    const r = await sendPresetsAndReconverge(model, threePresetPlan(), { settleMs: 0 });
+
+    expect(r.readErrors.length).toBeGreaterThan(0);
+    expect(r.presets).toEqual([]);
+    expect(r.canceled).toBe(false);
+    expect(r.result).toBeNull();
+    expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+
+  // The shell rejects with a bare string as well as with an Error; either is the refusal's text.
+  it("reports a preset refused with a value that is not an Error by that value", async () => {
+    vi.mocked(vdSetStr).mockRejectedValue("broker-rejected");
+    const r = await sendPresetsFirst(planToNameWrites(model, threePresetPlan()));
+    expect(r.outcomes).toEqual([expect.objectContaining({ ok: false, error: "broker-rejected" })]);
   });
 });
 

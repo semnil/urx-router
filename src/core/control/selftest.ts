@@ -64,10 +64,12 @@ import {
   OUTPUT_INSERT_FX_OPTIONS,
   PAN_BAL_BAL,
   PAN_BAL_PAN,
+  PARAMS,
   REC_POINT_OPTIONS,
 } from "./params";
-import { reachedAndFailed, sendConverging } from "./client";
-import type { SendOutcome } from "./client";
+import type { ParamSpec } from "./params";
+import { diffNames, reachedAndFailed, sendConverging, sendNames, sendPresetsAndReconverge } from "./client";
+import type { NameOutcome, SendOutcome } from "./client";
 import { SETTLE_TIMEOUT_MS } from "./settle";
 import type { ConvergeRound } from "./client";
 import { applyDeviceState } from "./readback";
@@ -213,7 +215,8 @@ export interface SelfTestReport {
   restored: boolean;
   /** Params that still differ from what the unit held before the run: the converging
    *  restore's residual PLUS the addresses that write has no command for, read before
-   *  the sweep and written back after it (restoreUnsent). ⚠️ Still bounded by the app's
+   *  the sweep and written back after it (restoreUnsent), PLUS the node names and Sweet
+   *  Spot presets that still differ, or could not be read, after the string write-back. ⚠️ Still bounded by the app's
    *  parameter catalogue: a run also perturbs the unit's 1-knob base save-off, which
    *  has no entry and so cannot be read, written or counted (measured on a URX44V,
    *  2026-08-10 — 27 addresses; nothing observed restores from it, see diag and the
@@ -242,7 +245,20 @@ export interface SelfTestReport {
     /** Per round of the converging restore: how much went out, how much of it was the
      *  PEQ and the 1-knob chain, and how much still differed on the re-read. A 1-knob
      *  group re-sent in the last round reloads the preset over the bands. */
-    restoreRounds: Array<{ sent: number; bands: number; oneKnob: number; residual: number | null }>;
+    restoreRounds: Array<{
+      sent: number;
+      /** The round from its first send to the end of its re-read. */
+      ms: number;
+      bands: number;
+      oneKnob: number;
+      residual: number | null;
+      /** The addresses the re-read still found different, as `name addr=device (want) #i`,
+       *  where `i` is the address's position in this round's send order (`-` when unsent). */
+      differing: string[];
+      /** Every command in this round's send order whose param has a `sideEffect`, as
+       *  `#i name addr=value` — what could have moved a differing address after it landed. */
+      sideEffects: string[];
+    }>;
     /** Band gains that disagreed with the captured value when read IMMEDIATELY after
      *  the restore. Empty here while an external sweep later finds them changed means
      *  the unit moved them after the write, not that the write never landed. */
@@ -255,6 +271,10 @@ export interface SelfTestReport {
 // a run reports a gap it does not have (the PEQ was listed as unrestorable in a run
 // that restored it, 2026-08-10).
 const RESTORE_EMIT = { includeDeviceDriven: true } as const;
+
+// The `pass` a residual entry or a trace carries when the restore, not a sweep pass, left it.
+const RESTORE_PASS = -1;
+const passLabel = (pass: number): string => (pass === RESTORE_PASS ? "restore" : `p${pass}`);
 
 // Deep-negative dB that emit clamps to each level param's own minimum (-inf for
 // faders / sends, the floor for gain / monitor), so the written state is silent.
@@ -876,22 +896,90 @@ export async function runSelfTest(
       // it was restored. The unit keeps such a write (measured; see EmitOptions), and
       // the residual now covers the same set, so a unit that did re-derive would be
       // reported rather than passed over.
-      const back = await phaseStep(
-        sendConverging(model, original, { settleMs, signal, trace: true, emit: RESTORE_EMIT, stopOnError: false }),
-      );
+      const restore = { settleMs, signal, trace: true, emit: RESTORE_EMIT, stopOnError: false };
+      const numeric = await phaseStep(sendConverging(model, original, restore));
+      // Then the captured Sweet Spot presets, which the converge cannot write, and the strip they
+      // rebuild converged again behind them (client.ts sendPresetsAndReconverge). One round of
+      // the sweep's pair links is undone inside the converge above, and that puts a preset of the
+      // link's choosing back on the secondary when it lands.
+      const presets =
+        numeric && !numeric.outcomes.some(reachedAndFailed) && !numeric.readErrors.length
+          ? await phaseStep(sendPresetsAndReconverge(model, original, restore))
+          : { presets: [], notSent: [], unconfirmed: [], canceled: false, readErrors: [], result: null };
+      if (!presets) return report;
+      report.errors.push(...nameFailureLines(presets.presets));
+      // A refused preset stops the restore's writes there. The nodes whose preset was accepted
+      // had their strip rebuilt with nothing reading it back, so their state is unknown.
+      for (const node of presets.unconfirmed)
+        report.errors.push(
+          `restore ${node}: its Sweet Spot preset rebuilt the strip, and the restore stopped before reading it back`,
+        );
+      // A cancel once a preset has gone out ends the run the way a cancel anywhere else in the
+      // restore does, with what went out already in the report.
+      if (presets.canceled) {
+        report.aborted = true;
+        return report;
+      }
+      const presetRefused = presets.presets.some((o) => !o.ok);
+      report.errors.push(...presets.readErrors.map((e) => `restore name read: ${e}`));
+      const back =
+        numeric && presets.result
+          ? {
+              ...presets.result,
+              outcomes: [...numeric.outcomes, ...presets.result.outcomes],
+              readErrors: [...numeric.readErrors, ...presets.result.readErrors],
+              trace: [...numeric.trace, ...presets.result.trace],
+            }
+          : numeric;
       if (back) {
-        report.diag.restoreRounds = back.trace.map((r) => ({
-          sent: r.sent.length,
-          bands: r.sent.filter((c) => c.name.startsWith("EQ_BAND")).length,
-          oneKnob: r.sent.filter((c) => c.name.startsWith("EQ_ONE_KNOB")).length,
-          residual: r.reread?.length ?? null,
-        }));
+        report.diag.restoreRounds = back.trace.map((r) => {
+          const position = new Map(r.sent.map((c, i) => [cmdAddr(c), i] as const));
+          return {
+            sent: r.sent.length,
+            ms: r.elapsedMs,
+            bands: r.sent.filter((c) => c.name.startsWith("EQ_BAND")).length,
+            oneKnob: r.sent.filter((c) => c.name.startsWith("EQ_ONE_KNOB")).length,
+            residual: r.reread?.length ?? null,
+            differing: (r.reread ?? []).map(
+              (d) =>
+                `${d.command.name} ${formatAddrKey(cmdAddr(d.command))}=${d.current} (${d.command.vdValue}) #${position.get(cmdAddr(d.command)) ?? "-"}`,
+            ),
+            sideEffects: r.sent.flatMap((c, i) =>
+              (PARAMS as Record<string, ParamSpec>)[c.name]?.sideEffect
+                ? [`#${i} ${c.name} ${formatAddrKey(cmdAddr(c))}=${c.vdValue}`]
+                : [],
+            ),
+          };
+        });
         // Read back the band gains the restore just wrote, before anything else can
         // touch the unit. RESTORE_EMIT, not the default: the default omits exactly the
         // bands this exists to watch — the ones under EQ 1-knob — so asking with it
         // inspects nothing in the one configuration that motivated the field.
         if (!(await phaseStep(probeBands(model, original, signal, report)))) return report;
         report.restoreResidual = back.residual.length;
+        // Each address the restore left different, itemized with its trace the way a
+        // sweep pass's residual is: a count alone names nothing to put back by hand.
+        const restoreStoppedOn: "read" | "write" | null = back.readErrors.length
+          ? "read"
+          : back.outcomes.some(reachedAndFailed)
+            ? "write"
+            : null;
+        for (const d of back.residual) {
+          report.residual.push({
+            name: d.command.name,
+            paramId: d.command.paramId,
+            x: d.command.x,
+            y: d.command.y,
+            expected: d.command.vdValue,
+            actual: d.current,
+            pass: RESTORE_PASS,
+            ...(restoreStoppedOn ? { stoppedOn: restoreStoppedOn } : {}),
+          });
+        }
+        if (back.residual.length) {
+          const baseline = back.residual.map((d) => captured.get(cmdAddr(d.command))).filter((v) => v !== undefined);
+          report.traces.push({ pass: RESTORE_PASS, baseline, rounds: back.trace });
+        }
         // Same for the restore, and it matters more here: a read failure also ENDS the
         // converge loop (sendConverging stops on one), so the write may have stopped
         // part-way. Counting them keeps `restored` a statement about what was checked.
@@ -905,10 +993,29 @@ export async function runSelfTest(
 
         // Then the addresses that write has no command for, put back from what the unit
         // held before the sweep. Last, so the converging write's side-effect resets have
-        // already landed.
-        const unsent = await phaseStep(restoreUnsent(unrestorable, preSweep, settleMs, signal, report));
+        // already landed. After a refused preset nothing more is written: they are only
+        // read, and what still differs is counted as not put back.
+        const unsent = await phaseStep(
+          restoreUnsent(unrestorable, preSweep, settleMs, signal, report, { writeBack: !presetRefused }),
+        );
         if (unsent === undefined) return report; // cancelled during the write-back
         report.restoreResidual += unsent;
+        // The string half: what the converge cannot write, verified the way it verifies its
+        // own. A name the first read could not see is counted too, since nothing put it back.
+        if (!presetRefused) {
+          const names = await phaseStep(diffNames(model, original));
+          if (!names) return report;
+          const renamed = await phaseStep(sendNames(names.writes.filter((w) => w.name === undefined)));
+          if (!renamed) return report;
+          report.errors.push(...nameFailureLines(renamed));
+        }
+        const namesAfter = await phaseStep(diffNames(model, original));
+        if (!namesAfter) return report;
+        report.errors.push(...namesAfter.errors.map((e) => `restore name verify: ${e}`));
+        for (const w of namesAfter.writes)
+          report.errors.push(`restore ${w.param}:0:${w.y}: still differs from ${JSON.stringify(w.value)}`);
+        report.restoreResidual +=
+          presets.readErrors.length + presets.unconfirmed.length + namesAfter.errors.length + namesAfter.writes.length;
         report.restored = report.restoreResidual === 0;
         report.phase = "done";
       }
@@ -968,18 +1075,11 @@ async function probeBands(
   return true;
 }
 
-/**
- * Write back the addresses the converging restore has no command for, and report how
- * many did not take. `before` is what the unit answered for each ahead of the sweep; an
- * address missing from it was unreadable then, so there is nothing to put back and its
- * failure is already in `errors`.
- *
- * Verified by re-reading past the settle window rather than by trusting the ack: a write
- * is not readable while it is acked, and a read inside that window answers the old value
- * — which would report a restoration that worked as one that failed. Returns the count
- * that still differs, which the caller adds to the residual, so a unit that insists on
- * its own value lands there instead of being passed over.
- */
+/** Refused string writes, as report lines. */
+function nameFailureLines(outcomes: readonly NameOutcome[]): string[] {
+  return outcomes.filter((o) => !o.ok).map((o) => `restore ${o.write.param}:0:${o.write.y}: ${o.error}`);
+}
+
 /**
  * Send failures from one converging write, as report lines. `sendCommands` stops at the
  * first command the device refused and marks every command after it `skipped`, so the
@@ -994,25 +1094,41 @@ function sendFailureLines(outcomes: readonly SendOutcome[], prefix: string): str
   return lines;
 }
 
+/**
+ * Write back the addresses the converging restore has no command for, and report how
+ * many did not take. `before` is what the unit answered for each ahead of the sweep; an
+ * address missing from it was unreadable then, so there is nothing to put back and its
+ * failure is already in `errors`.
+ *
+ * Verified by re-reading past the settle window rather than by trusting the ack: a write
+ * is not readable while it is acked, and a read inside that window answers the old value
+ * — which would report a restoration that worked as one that failed. Returns the count
+ * that still differs, which the caller adds to the residual, so a unit that insists on
+ * its own value lands there instead of being passed over. With `writeBack` false nothing is
+ * written and the addresses are only read, so each one still off its pre-sweep value counts.
+ */
 async function restoreUnsent(
   unrestorable: Map<number, VdCommand>,
   before: Map<number, number>,
   settleMs: number,
   signal: AbortSignal | undefined,
   report: SelfTestReport,
+  { writeBack }: { writeBack: boolean },
 ): Promise<number> {
   if (!before.size) return 0;
-  for (const [addr, c] of unrestorable) {
-    const want = before.get(addr);
-    if (want === undefined) continue;
-    signal?.throwIfAborted();
-    try {
-      await vdSet(c.paramId, c.x, c.y, want);
-    } catch (e) {
-      report.errors.push(`restore ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+  if (writeBack) {
+    for (const [addr, c] of unrestorable) {
+      const want = before.get(addr);
+      if (want === undefined) continue;
+      signal?.throwIfAborted();
+      try {
+        await vdSet(c.paramId, c.x, c.y, want);
+      } catch (e) {
+        report.errors.push(`restore ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
+    if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
   }
-  if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
   let residual = 0;
   for (const [addr, c] of unrestorable) {
     const want = before.get(addr);
@@ -1022,8 +1138,15 @@ async function restoreUnsent(
       const got = await vdGet(c.paramId, c.x, c.y);
       if (got === want) continue;
       residual++;
-      // pass -1 = the restore, not a sweep pass.
-      report.residual.push({ name: c.name, paramId: c.paramId, x: c.x, y: c.y, expected: want, actual: got, pass: -1 });
+      report.residual.push({
+        name: c.name,
+        paramId: c.paramId,
+        x: c.x,
+        y: c.y,
+        expected: want,
+        actual: got,
+        pass: RESTORE_PASS,
+      });
     } catch (e) {
       residual++;
       report.errors.push(`restore verify ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
@@ -1119,7 +1242,7 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   if (shown.length) {
     lines.push("");
     lines.push("## Other device divergence (confirmed params)");
-    for (const m of shown) lines.push(`- p${m.pass} ${mismatchLine(m)}`);
+    for (const m of shown) lines.push(`- ${passLabel(m.pass)} ${mismatchLine(m)}`);
   }
   if (unsettled.length) {
     lines.push("");
@@ -1135,7 +1258,7 @@ export function formatSelfTestReport(report: SelfTestReport): string {
     for (const m of unsettled) {
       const guess = m.unverifiedKey ? `, guess ${m.unverifiedKey}` : "";
       lines.push(
-        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device answered ${m.actual ?? "unreadable"} at the last read (the pass stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"}${guess})`,
+        `- ${passLabel(m.pass)} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device answered ${m.actual ?? "unreadable"} at the last read (the pass stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"}${guess})`,
       );
     }
   }
@@ -1153,7 +1276,9 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   for (const t of report.traces) {
     lines.push("");
     lines.push(
-      `## Converge trace — pass ${t.pass} (pairs ${t.pass < report.unlinkedPasses ? "unlinked" : "STEREO-linked"})`,
+      t.pass === RESTORE_PASS
+        ? "## Converge trace — restore"
+        : `## Converge trace — pass ${t.pass} (pairs ${t.pass < report.unlinkedPasses ? "unlinked" : "STEREO-linked"})`,
     );
     lines.push("");
     lines.push("Captured value of each address that did not converge (the diff's starting point):");

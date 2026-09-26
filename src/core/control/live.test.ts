@@ -149,6 +149,11 @@ describe("LiveSync flush cadence", () => {
 // Setting a mono channel's COMP/EQ type is a sideEffect param: its flush converges
 // (re-reads + re-sends) against the device. An edit that lands during that awaited
 // converge must not be lost.
+// The stub device answers 0 to every read, so a COMP/EQ type written as 1 never settles and the
+// converge runs to its round cap — six rounds, twice the base budget of three — with room for two
+// settle windows in each.
+const CONVERGE_TO_CAP_MS = 6 * 2 * SETTLE_TIMEOUT_MS;
+
 function setCh1CompEqType(plan: Plan, type: number): void {
   plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: type };
 }
@@ -173,7 +178,7 @@ describe("LiveSync sideEffect converge", () => {
     setCh1CompEqType(plan, 1);
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
 
     expect(seen, "a sideEffect param converges, so the hook fires").toHaveLength(1);
     // Not the live plan — the clone. Handed the live one, every address would be read against
@@ -212,7 +217,7 @@ describe("LiveSync sideEffect converge", () => {
     setCh1CompEqType(plan, 1);
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
 
     expect(excluded, "one park in front of the converge").toHaveLength(1);
     // A COMP/EQ type resets the channel's COMP/EQ bank, which the unit ANNOUNCES and the
@@ -365,7 +370,7 @@ describe("LiveSync sideEffect converge", () => {
     plan.nodeParams["bus.fx1"] = { ...plan.nodeParams["bus.fx1"], fxEffect: { type: 1 } };
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
 
     expect(seen[0], "already closed to a reconcile inside the first park").toBe(true);
     expect(live.isWriting(), "and open again once the flush is done").toBe(false);
@@ -1156,7 +1161,7 @@ describe("LiveSync follow re-registration", () => {
     setCh1CompEqType(plan, COMP_EQ_SSMCS);
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
     expect(calls).toEqual(["reregister"]);
   });
 
@@ -1207,7 +1212,7 @@ describe("LiveSync follow re-registration", () => {
     setCh1Morphing(plan, 60); // refetch, same window
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
     expect(seen).toEqual(["refetch(reregistered=false)", "reregister"]);
   });
 
@@ -1265,7 +1270,7 @@ describe("LiveSync follow re-registration", () => {
     setCh1CompEqType(plan, COMP_EQ_SSMCS);
     live.schedule();
     await vi.advanceTimersByTimeAsync(120);
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
     expect(calls).toEqual(["reregister"]);
 
     const sentBefore = vi.mocked(vdSet).mock.calls.length;
@@ -2954,7 +2959,7 @@ describe("LiveSync recentPending", () => {
       expect(vi.mocked(vdSetStr)).toHaveBeenCalledTimes(1);
       const [param, , y] = vi.mocked(vdSetStr).mock.calls[0];
       const k = addrKey(param, 0, y);
-      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 2000);
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + CONVERGE_TO_CAP_MS);
       expect(reports.some((r) => r.has(k))).toBe(true);
     } finally {
       release();
