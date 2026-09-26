@@ -670,6 +670,37 @@ describe("runSelfTest", () => {
     expect(report.diag.bandsAfterRestore.map((b) => b.addr)).toContain(`${gain}:0:0`);
   });
 
+  // A run whose every pass converged and whose restore did not: the verdict line says
+  // "N param(s) differ", and without the entries themselves the report names nothing the
+  // operator could put back by hand.
+  it("itemizes what the converging restore left different, with its trace", async () => {
+    const table = installMockDevice(defaultPlan("URX44V"));
+    const id = PARAMS.HPF_FREQ.id;
+    const addr = `${id}:0:0`;
+    const home = table.get(addr);
+    // Takes every write except the one that would put ch1's HPF frequency back.
+    vi.mocked(vdSet).mockImplementation((pid, x, y, v) => {
+      if (`${pid}:${x}:${y}` === addr && v === home) return Promise.resolve();
+      table.set(`${pid}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    // Premise: the sweep converged, so the restore is the only thing that failed.
+    expect(report.ok).toBe(true);
+    expect(report.restored).toBe(false);
+    const restoreEntries = report.residual.filter((m) => m.pass === -1);
+    expect(restoreEntries).toHaveLength(report.restoreResidual);
+    expect(restoreEntries).toContainEqual(
+      expect.objectContaining({ paramId: id, x: 0, y: 0, expected: home, actual: table.get(addr) }),
+    );
+    expect(report.traces.some((t) => t.pass === -1 && t.rounds.length > 0)).toBe(true);
+    const md = formatSelfTestReport(report);
+    expect(md).toContain(`- restore HPF_FREQ @ ${addr} — wrote ${home}, read ${table.get(addr)}`);
+    expect(md).toContain("## Converge trace — restore");
+  });
+
   it("reports residual mismatches when the device ignores a write", async () => {
     const table = installMockDevice(populatedPlan());
     // CH_ON (param 140) is accepted but never stored — a stuck parameter.

@@ -64,8 +64,10 @@ import {
   OUTPUT_INSERT_FX_OPTIONS,
   PAN_BAL_BAL,
   PAN_BAL_PAN,
+  PARAMS,
   REC_POINT_OPTIONS,
 } from "./params";
+import type { ParamSpec } from "./params";
 import { reachedAndFailed, sendConverging } from "./client";
 import type { SendOutcome } from "./client";
 import { SETTLE_TIMEOUT_MS } from "./settle";
@@ -242,7 +244,20 @@ export interface SelfTestReport {
     /** Per round of the converging restore: how much went out, how much of it was the
      *  PEQ and the 1-knob chain, and how much still differed on the re-read. A 1-knob
      *  group re-sent in the last round reloads the preset over the bands. */
-    restoreRounds: Array<{ sent: number; bands: number; oneKnob: number; residual: number | null }>;
+    restoreRounds: Array<{
+      sent: number;
+      /** The round from its first send to the end of its re-read. */
+      ms: number;
+      bands: number;
+      oneKnob: number;
+      residual: number | null;
+      /** The addresses the re-read still found different, as `name addr=device (want) #i`,
+       *  where `i` is the address's position in this round's send order (`-` when unsent). */
+      differing: string[];
+      /** Every command in this round's send order whose param has a `sideEffect`, as
+       *  `#i name addr=value` — what could have moved a differing address after it landed. */
+      sideEffects: string[];
+    }>;
     /** Band gains that disagreed with the captured value when read IMMEDIATELY after
      *  the restore. Empty here while an external sweep later finds them changed means
      *  the unit moved them after the write, not that the write never landed. */
@@ -255,6 +270,10 @@ export interface SelfTestReport {
 // a run reports a gap it does not have (the PEQ was listed as unrestorable in a run
 // that restored it, 2026-08-10).
 const RESTORE_EMIT = { includeDeviceDriven: true } as const;
+
+// The `pass` a residual entry or a trace carries when the restore, not a sweep pass, left it.
+const RESTORE_PASS = -1;
+const passLabel = (pass: number): string => (pass === RESTORE_PASS ? "restore" : `p${pass}`);
 
 // Deep-negative dB that emit clamps to each level param's own minimum (-inf for
 // faders / sends, the floor for gain / monitor), so the written state is silent.
@@ -880,18 +899,54 @@ export async function runSelfTest(
         sendConverging(model, original, { settleMs, signal, trace: true, emit: RESTORE_EMIT, stopOnError: false }),
       );
       if (back) {
-        report.diag.restoreRounds = back.trace.map((r) => ({
-          sent: r.sent.length,
-          bands: r.sent.filter((c) => c.name.startsWith("EQ_BAND")).length,
-          oneKnob: r.sent.filter((c) => c.name.startsWith("EQ_ONE_KNOB")).length,
-          residual: r.reread?.length ?? null,
-        }));
+        report.diag.restoreRounds = back.trace.map((r) => {
+          const position = new Map(r.sent.map((c, i) => [cmdAddr(c), i] as const));
+          return {
+            sent: r.sent.length,
+            ms: r.elapsedMs,
+            bands: r.sent.filter((c) => c.name.startsWith("EQ_BAND")).length,
+            oneKnob: r.sent.filter((c) => c.name.startsWith("EQ_ONE_KNOB")).length,
+            residual: r.reread?.length ?? null,
+            differing: (r.reread ?? []).map(
+              (d) =>
+                `${d.command.name} ${formatAddrKey(cmdAddr(d.command))}=${d.current} (${d.command.vdValue}) #${position.get(cmdAddr(d.command)) ?? "-"}`,
+            ),
+            sideEffects: r.sent.flatMap((c, i) =>
+              (PARAMS as Record<string, ParamSpec>)[c.name]?.sideEffect
+                ? [`#${i} ${c.name} ${formatAddrKey(cmdAddr(c))}=${c.vdValue}`]
+                : [],
+            ),
+          };
+        });
         // Read back the band gains the restore just wrote, before anything else can
         // touch the unit. RESTORE_EMIT, not the default: the default omits exactly the
         // bands this exists to watch — the ones under EQ 1-knob — so asking with it
         // inspects nothing in the one configuration that motivated the field.
         if (!(await phaseStep(probeBands(model, original, signal, report)))) return report;
         report.restoreResidual = back.residual.length;
+        // Each address the restore left different, itemized with its trace the way a
+        // sweep pass's residual is: a count alone names nothing to put back by hand.
+        const restoreStoppedOn: "read" | "write" | null = back.readErrors.length
+          ? "read"
+          : back.outcomes.some(reachedAndFailed)
+            ? "write"
+            : null;
+        for (const d of back.residual) {
+          report.residual.push({
+            name: d.command.name,
+            paramId: d.command.paramId,
+            x: d.command.x,
+            y: d.command.y,
+            expected: d.command.vdValue,
+            actual: d.current,
+            pass: RESTORE_PASS,
+            ...(restoreStoppedOn ? { stoppedOn: restoreStoppedOn } : {}),
+          });
+        }
+        if (back.residual.length) {
+          const baseline = back.residual.map((d) => captured.get(cmdAddr(d.command))).filter((v) => v !== undefined);
+          report.traces.push({ pass: RESTORE_PASS, baseline, rounds: back.trace });
+        }
         // Same for the restore, and it matters more here: a read failure also ENDS the
         // converge loop (sendConverging stops on one), so the write may have stopped
         // part-way. Counting them keeps `restored` a statement about what was checked.
@@ -1022,8 +1077,15 @@ async function restoreUnsent(
       const got = await vdGet(c.paramId, c.x, c.y);
       if (got === want) continue;
       residual++;
-      // pass -1 = the restore, not a sweep pass.
-      report.residual.push({ name: c.name, paramId: c.paramId, x: c.x, y: c.y, expected: want, actual: got, pass: -1 });
+      report.residual.push({
+        name: c.name,
+        paramId: c.paramId,
+        x: c.x,
+        y: c.y,
+        expected: want,
+        actual: got,
+        pass: RESTORE_PASS,
+      });
     } catch (e) {
       residual++;
       report.errors.push(`restore verify ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
@@ -1119,7 +1181,7 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   if (shown.length) {
     lines.push("");
     lines.push("## Other device divergence (confirmed params)");
-    for (const m of shown) lines.push(`- p${m.pass} ${mismatchLine(m)}`);
+    for (const m of shown) lines.push(`- ${passLabel(m.pass)} ${mismatchLine(m)}`);
   }
   if (unsettled.length) {
     lines.push("");
@@ -1135,7 +1197,7 @@ export function formatSelfTestReport(report: SelfTestReport): string {
     for (const m of unsettled) {
       const guess = m.unverifiedKey ? `, guess ${m.unverifiedKey}` : "";
       lines.push(
-        `- p${m.pass} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device answered ${m.actual ?? "unreadable"} at the last read (the pass stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"}${guess})`,
+        `- ${passLabel(m.pass)} ${m.name} @ ${m.paramId}:${m.x}:${m.y} — plan wanted ${m.expected}, device answered ${m.actual ?? "unreadable"} at the last read (the pass stopped on a ${m.stoppedOn === "write" ? "refused write" : "failed read"}${guess})`,
       );
     }
   }
@@ -1153,7 +1215,9 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   for (const t of report.traces) {
     lines.push("");
     lines.push(
-      `## Converge trace — pass ${t.pass} (pairs ${t.pass < report.unlinkedPasses ? "unlinked" : "STEREO-linked"})`,
+      t.pass === RESTORE_PASS
+        ? "## Converge trace — restore"
+        : `## Converge trace — pass ${t.pass} (pairs ${t.pass < report.unlinkedPasses ? "unlinked" : "STEREO-linked"})`,
     );
     lines.push("");
     lines.push("Captured value of each address that did not converge (the diff's starting point):");

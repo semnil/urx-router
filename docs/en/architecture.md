@@ -371,7 +371,8 @@ carries a one-line map of the same directories and points here.
       elapsed time, so an instant "matches" is verifiable, not trusted) / `selftest.ts` round-trip
       diagnostics (a failing pass keeps its **converge trace** — what each round sent, in order, how long it
       took, and what the re-read found — because a residual names the end state and cannot say whether the
-      parameter was ever re-sent; the report is offered for saving whenever the run found anything, and the
+      parameter was ever re-sent; a restore that leaves anything different is itemized address by address,
+      under the label `restore`, with a converge trace of its own; the report is offered for saving whenever the run found anything, and the
       headless `--self-test` launch logs it in chunks instead) / `prepare.ts` audit-prep writer
       (`--prepare-modified` launch flag, no UI exposure): captures the device, spreads every writable plan
       scalar to a distinctive in-range value, and writes it (tolerant send, no restore) so a scene
