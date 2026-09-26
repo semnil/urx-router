@@ -730,9 +730,9 @@ describe("runSelfTest", () => {
     expect(report.restored).toBe(true);
   });
 
-  // A refused preset stops the restore's string write-back there, and the strip of a node whose
-  // preset WAS accepted was rebuilt with nothing reading it back. That is not a restored unit.
-  it("reports a refused preset, and the node an accepted one left unconfirmed, as not restored", async () => {
+  // Two presets the sweep moved (CH1's and CH2's), with the restore's writes recorded in order.
+  // `refuse` answers each preset write; the restore's numeric writes land in the table.
+  function presetRestoreFixture(refuse: (y: number) => Error | null, onPreset?: (y: number) => void) {
     const seed = populatedPlan();
     for (const [id, preset] of [
       ["ch1", 5],
@@ -744,27 +744,73 @@ describe("runSelfTest", () => {
       ["91:0", "0005"],
       ["91:1", "0024"],
     ]);
+    const writes: string[] = [];
     vi.mocked(vdGetStr).mockImplementation((id, _x, y) => Promise.resolve(strings.get(`${id}:${y}`) ?? ""));
     vi.mocked(vdSetStr).mockImplementation((id, _x, y, v) => {
-      if (y === 1) return Promise.reject(new Error("nak"));
+      writes.push(`str ${id}:${y}`);
+      const err = id === 91 ? refuse(y) : null;
+      if (err) return Promise.reject(err);
       strings.set(`${id}:${y}`, v);
+      if (id === 91) onPreset?.(y);
       return Promise.resolve();
     });
     const inner = vi.mocked(vdSet).getMockImplementation()!;
     vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      writes.push(`num ${id}:${x}:${y}`);
       await inner(id, x, y, v);
       if (id === PARAMS.SIGNAL_TYPE.id && v === 1) {
         strings.set("91:0", "0001");
         strings.set("91:1", "0001");
       }
     });
+    return { writes };
+  }
+
+  // A refused preset stops the restore's writes there, as a refused write stops any operation on
+  // the link: the strip of a node whose preset WAS accepted was rebuilt with nothing reading it
+  // back, and what the restore had not yet put back stays as the sweep left it. Only reads follow.
+  it("stops the restore at a refused preset and counts what it did not put back", async () => {
+    const { writes } = presetRestoreFixture((y) => (y === 1 ? new Error("nak") : null));
 
     const report = await runSelfTest(model, 0);
 
+    // Premise: there were addresses the restore writes back after the presets.
+    expect(report.diag.unrestorable.length).toBeGreaterThan(0);
+    const refusal = writes.lastIndexOf("str 91:1");
+    expect(refusal).toBeGreaterThan(0);
+    expect(writes.slice(refusal + 1)).toEqual([]);
     expect(report.restored).toBe(false);
-    // The refused preset (still differing) and the node the accepted one left unconfirmed.
-    expect(report.restoreResidual).toBe(2);
     expect(report.errors).toContain("restore 91:0:1: nak");
+    expect(report.errors.some((e) => e.startsWith("restore ch1: its Sweet Spot preset rebuilt the strip"))).toBe(true);
+    // The refused preset, the node the accepted one left unconfirmed, and each address the
+    // restore did not write back that the sweep had left different.
+    const leftBehind = report.residual.filter(
+      (m) => m.pass === -1 && report.diag.unrestorable.some((u) => u.endsWith(` ${m.paramId}:${m.x}:${m.y}`)),
+    );
+    expect(leftBehind.length).toBeGreaterThan(0);
+    expect(report.restoreResidual).toBe(2 + leftBehind.length);
+  });
+
+  // A cancel taken between two presets is a cancel: the second preset is not sent, nothing after
+  // it is written, and the node whose preset went out is named as unconfirmed.
+  it("stops the restore on a cancel between two presets and reports it as cancelled", async () => {
+    const controller = new AbortController();
+    const { writes } = presetRestoreFixture(
+      () => null,
+      (y) => {
+        if (y === 0) controller.abort();
+      },
+    );
+
+    const report = await runSelfTest(model, 0, controller.signal);
+
+    // Premise: the cancel landed in the restore, which is the only phase that writes a preset.
+    expect(report.phase).toBe("restore");
+    expect(writes.filter((w) => w.startsWith("str 91:"))).toEqual(["str 91:0"]);
+    const accepted = writes.lastIndexOf("str 91:0");
+    expect(writes.slice(accepted + 1)).toEqual([]);
+    expect(report.aborted).toBe(true);
+    expect(report.restored).toBe(false);
     expect(report.errors.some((e) => e.startsWith("restore ch1: its Sweet Spot preset rebuilt the strip"))).toBe(true);
   });
 

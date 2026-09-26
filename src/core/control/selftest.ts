@@ -905,15 +905,21 @@ export async function runSelfTest(
       const presets =
         numeric && !numeric.outcomes.some(reachedAndFailed) && !numeric.readErrors.length
           ? await phaseStep(sendPresetsAndReconverge(model, original, restore))
-          : { presets: [], notSent: [], unconfirmed: [], readErrors: [], result: null };
+          : { presets: [], notSent: [], unconfirmed: [], canceled: false, readErrors: [], result: null };
       if (!presets) return report;
       report.errors.push(...nameFailureLines(presets.presets));
-      // A refused preset stops the string write-back there. The nodes whose preset was accepted
+      // A refused preset stops the restore's writes there. The nodes whose preset was accepted
       // had their strip rebuilt with nothing reading it back, so their state is unknown.
       for (const node of presets.unconfirmed)
         report.errors.push(
           `restore ${node}: its Sweet Spot preset rebuilt the strip, and the restore stopped before reading it back`,
         );
+      // A cancel between two presets ends the run the way a cancel anywhere else in the
+      // restore does, with what went out already in the report.
+      if (presets.canceled) {
+        report.aborted = true;
+        return report;
+      }
       const presetRefused = presets.presets.some((o) => !o.ok);
       report.errors.push(...presets.readErrors.map((e) => `restore name read: ${e}`));
       const back =
@@ -987,19 +993,22 @@ export async function runSelfTest(
 
         // Then the addresses that write has no command for, put back from what the unit
         // held before the sweep. Last, so the converging write's side-effect resets have
-        // already landed.
-        const unsent = await phaseStep(restoreUnsent(unrestorable, preSweep, settleMs, signal, report));
+        // already landed. After a refused preset nothing more is written: they are only
+        // read, and what still differs is counted as not put back.
+        const unsent = await phaseStep(
+          restoreUnsent(unrestorable, preSweep, settleMs, signal, report, { writeBack: !presetRefused }),
+        );
         if (unsent === undefined) return report; // cancelled during the write-back
         report.restoreResidual += unsent;
         // The string half: what the converge cannot write, verified the way it verifies its
         // own. A name the first read could not see is counted too, since nothing put it back.
-        const names = await phaseStep(diffNames(model, original));
-        if (!names) return report;
-        const renamed = presetRefused
-          ? []
-          : await phaseStep(sendNames(names.writes.filter((w) => w.name === undefined)));
-        if (!renamed) return report;
-        report.errors.push(...nameFailureLines(renamed));
+        if (!presetRefused) {
+          const names = await phaseStep(diffNames(model, original));
+          if (!names) return report;
+          const renamed = await phaseStep(sendNames(names.writes.filter((w) => w.name === undefined)));
+          if (!renamed) return report;
+          report.errors.push(...nameFailureLines(renamed));
+        }
         const namesAfter = await phaseStep(diffNames(model, original));
         if (!namesAfter) return report;
         report.errors.push(...namesAfter.errors.map((e) => `restore name verify: ${e}`));
@@ -1072,18 +1081,6 @@ function nameFailureLines(outcomes: readonly NameOutcome[]): string[] {
 }
 
 /**
- * Write back the addresses the converging restore has no command for, and report how
- * many did not take. `before` is what the unit answered for each ahead of the sweep; an
- * address missing from it was unreadable then, so there is nothing to put back and its
- * failure is already in `errors`.
- *
- * Verified by re-reading past the settle window rather than by trusting the ack: a write
- * is not readable while it is acked, and a read inside that window answers the old value
- * — which would report a restoration that worked as one that failed. Returns the count
- * that still differs, which the caller adds to the residual, so a unit that insists on
- * its own value lands there instead of being passed over.
- */
-/**
  * Send failures from one converging write, as report lines. `sendCommands` stops at the
  * first command the device refused and marks every command after it `skipped`, so the
  * raw !ok list is one real failure trailed by however many never left the app — each of
@@ -1097,25 +1094,41 @@ function sendFailureLines(outcomes: readonly SendOutcome[], prefix: string): str
   return lines;
 }
 
+/**
+ * Write back the addresses the converging restore has no command for, and report how
+ * many did not take. `before` is what the unit answered for each ahead of the sweep; an
+ * address missing from it was unreadable then, so there is nothing to put back and its
+ * failure is already in `errors`.
+ *
+ * Verified by re-reading past the settle window rather than by trusting the ack: a write
+ * is not readable while it is acked, and a read inside that window answers the old value
+ * — which would report a restoration that worked as one that failed. Returns the count
+ * that still differs, which the caller adds to the residual, so a unit that insists on
+ * its own value lands there instead of being passed over. With `writeBack` false nothing is
+ * written and the addresses are only read, so each one still off its pre-sweep value counts.
+ */
 async function restoreUnsent(
   unrestorable: Map<number, VdCommand>,
   before: Map<number, number>,
   settleMs: number,
   signal: AbortSignal | undefined,
   report: SelfTestReport,
+  { writeBack }: { writeBack: boolean },
 ): Promise<number> {
   if (!before.size) return 0;
-  for (const [addr, c] of unrestorable) {
-    const want = before.get(addr);
-    if (want === undefined) continue;
-    signal?.throwIfAborted();
-    try {
-      await vdSet(c.paramId, c.x, c.y, want);
-    } catch (e) {
-      report.errors.push(`restore ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+  if (writeBack) {
+    for (const [addr, c] of unrestorable) {
+      const want = before.get(addr);
+      if (want === undefined) continue;
+      signal?.throwIfAborted();
+      try {
+        await vdSet(c.paramId, c.x, c.y, want);
+      } catch (e) {
+        report.errors.push(`restore ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
+    if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
   }
-  if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
   let residual = 0;
   for (const [addr, c] of unrestorable) {
     const want = before.get(addr);
