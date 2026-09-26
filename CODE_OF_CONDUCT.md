@@ -38,7 +38,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the maintainer responsible for enforcement by contacting [@semnil](https://github.com/semnil) through GitHub. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately to the maintainer responsible for enforcement through the [feedback form](https://forms.gle/hA7y24BKiePU4nLcA), choosing **Conduct report** as the feedback type. No GitHub account is needed, and a conduct report is never transcribed into an issue or shared with anyone. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 
