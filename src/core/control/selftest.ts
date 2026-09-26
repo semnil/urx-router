@@ -215,7 +215,8 @@ export interface SelfTestReport {
   restored: boolean;
   /** Params that still differ from what the unit held before the run: the converging
    *  restore's residual PLUS the addresses that write has no command for, read before
-   *  the sweep and written back after it (restoreUnsent). ⚠️ Still bounded by the app's
+   *  the sweep and written back after it (restoreUnsent), PLUS the node names and Sweet
+   *  Spot presets that still differ, or could not be read, after the string write-back. ⚠️ Still bounded by the app's
    *  parameter catalogue: a run also perturbs the unit's 1-knob base save-off, which
    *  has no entry and so cannot be read, written or counted (measured on a URX44V,
    *  2026-08-10 — 27 addresses; nothing observed restores from it, see diag and the
