@@ -68,8 +68,8 @@ import {
   REC_POINT_OPTIONS,
 } from "./params";
 import type { ParamSpec } from "./params";
-import { reachedAndFailed, sendConverging } from "./client";
-import type { SendOutcome } from "./client";
+import { diffNames, reachedAndFailed, sendConverging, sendNames, sendPresetsAndReconverge } from "./client";
+import type { NameOutcome, SendOutcome } from "./client";
 import { SETTLE_TIMEOUT_MS } from "./settle";
 import type { ConvergeRound } from "./client";
 import { applyDeviceState } from "./readback";
@@ -895,9 +895,28 @@ export async function runSelfTest(
       // it was restored. The unit keeps such a write (measured; see EmitOptions), and
       // the residual now covers the same set, so a unit that did re-derive would be
       // reported rather than passed over.
-      const back = await phaseStep(
-        sendConverging(model, original, { settleMs, signal, trace: true, emit: RESTORE_EMIT, stopOnError: false }),
-      );
+      const restore = { settleMs, signal, trace: true, emit: RESTORE_EMIT, stopOnError: false };
+      const numeric = await phaseStep(sendConverging(model, original, restore));
+      // Then the captured Sweet Spot presets, which the converge cannot write, and the strip they
+      // rebuild converged again behind them (client.ts sendPresetsAndReconverge). One round of
+      // the sweep's pair links is undone inside the converge above, and that puts a preset of the
+      // link's choosing back on the secondary when it lands.
+      const presets =
+        numeric && !numeric.outcomes.some(reachedAndFailed) && !numeric.readErrors.length
+          ? await phaseStep(sendPresetsAndReconverge(model, original, restore))
+          : { presets: [], readErrors: [], result: null };
+      if (!presets) return report;
+      report.errors.push(...nameFailureLines(presets.presets));
+      report.errors.push(...presets.readErrors.map((e) => `restore name read: ${e}`));
+      const back =
+        numeric && presets.result
+          ? {
+              ...presets.result,
+              outcomes: [...numeric.outcomes, ...presets.result.outcomes],
+              readErrors: [...numeric.readErrors, ...presets.result.readErrors],
+              trace: [...numeric.trace, ...presets.result.trace],
+            }
+          : numeric;
       if (back) {
         report.diag.restoreRounds = back.trace.map((r) => {
           const position = new Map(r.sent.map((c, i) => [cmdAddr(c), i] as const));
@@ -964,6 +983,19 @@ export async function runSelfTest(
         const unsent = await phaseStep(restoreUnsent(unrestorable, preSweep, settleMs, signal, report));
         if (unsent === undefined) return report; // cancelled during the write-back
         report.restoreResidual += unsent;
+        // The string half: what the converge cannot write, verified the way it verifies its
+        // own. A name the first read could not see is counted too, since nothing put it back.
+        const names = await phaseStep(diffNames(model, original));
+        if (!names) return report;
+        const renamed = await phaseStep(sendNames(names.writes.filter((w) => w.name === undefined)));
+        if (!renamed) return report;
+        report.errors.push(...nameFailureLines(renamed));
+        const namesAfter = await phaseStep(diffNames(model, original));
+        if (!namesAfter) return report;
+        report.errors.push(...namesAfter.errors.map((e) => `restore name verify: ${e}`));
+        for (const w of namesAfter.writes)
+          report.errors.push(`restore ${w.param}:0:${w.y}: still differs from ${JSON.stringify(w.value)}`);
+        report.restoreResidual += presets.readErrors.length + namesAfter.errors.length + namesAfter.writes.length;
         report.restored = report.restoreResidual === 0;
         report.phase = "done";
       }
@@ -1021,6 +1053,11 @@ async function probeBands(
     }
   }
   return true;
+}
+
+/** Refused string writes, as report lines. */
+function nameFailureLines(outcomes: readonly NameOutcome[]): string[] {
+  return outcomes.filter((o) => !o.ok).map((o) => `restore ${o.write.param}:0:${o.write.y}: ${o.error}`);
 }
 
 /**

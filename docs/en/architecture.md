@@ -2537,7 +2537,13 @@ stops at the **first** failure and marks the rest `skipped`, because order binds
 the array it types (FX type, insert-FX engine), so continuing past a failed selector writes slot values the device
 reads under the wrong type. `sendConverging` ends its loop on a failed round or an unreadable re-diff instead of
 re-sending the whole plan over a broken link. Name writes are held back until the numeric phase has reached the
-device intact. A write that stops part-way leaves the device holding some of what was confirmed, so the handler
+device intact. The SSMCS Sweet Spot preset goes out between the two, followed by a second converge
+(`sendPresetsAndReconverge`): the unit rebuilds the strip a preset drives once the preset lands (123-155 ms after the
+write on a URX44V), replacing the plan's strip values with the preset's, so the strip is converged again, reading
+the unit only once that rebuild has landed. It cannot go ahead of the numeric phase: a Signal Type change in that
+phase puts each member's own preset back when it lands. A refused preset stops the write there. The self-test
+restore puts the captured presets back the same way, and counts a name or preset still differing afterwards in its
+residual. A write that stops part-way leaves the device holding some of what was confirmed, so the handler
 offers to **run it again** rather than print a breakdown nobody can act on — the retry re-diffs, so whatever landed
 drops out by itself.
 

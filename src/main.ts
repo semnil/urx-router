@@ -176,9 +176,11 @@ import {
   newConfirmLedger,
   sendConverging,
   sendNames,
+  sendPresetsAndReconverge,
   setFollowUsb,
   type CommandDiff,
   type ConvergeResult,
+  type SendOutcome,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
 import { cmdAddr, collisionOwners } from "./core/control/translate";
@@ -3538,10 +3540,10 @@ if (!DEMO) {
             // the address stops differing the moment the write lands, so no later write
             // produces a diff that would offer it again.
             const ledger = newConfirmLedger();
+            const presetFailures: Array<{ name: string; error?: string }> = [];
             let convergeResult: ConvergeResult;
             try {
-              convergeResult = await sendConverging(getModel(modelId), plan, {
-                initialDiffs: diffs,
+              const converge = {
                 signal,
                 scope,
                 ledger,
@@ -3552,12 +3554,32 @@ if (!DEMO) {
                 // arms it: the shell sends before it waits, so a write whose answer never
                 // came may have landed and taken the Track Count down with it, and the
                 // recorder would then be left showing a count the unit no longer has.
-                onSent: (o) => {
+                onSent: (o: SendOutcome) => {
                   if (pendingTrackCost !== null && o.result !== "refused" && o.command.name === "SAMPLE_RATE") {
                     trackCountMayHaveDropped = true;
                   }
                 },
-              });
+              };
+              convergeResult = await sendConverging(getModel(modelId), plan, { ...converge, initialDiffs: diffs });
+              // The Sweet Spot presets go out once the numeric phase has landed intact, and the strip
+              // they rebuild is converged again behind them (client.ts sendPresetsAndReconverge).
+              if (!convergeResult.outcomes.some((o) => !o.ok) && !convergeResult.readErrors.length) {
+                const second = await sendPresetsAndReconverge(getModel(modelId), plan, converge);
+                presetFailures.push(
+                  ...second.presets
+                    .filter((o) => !o.ok)
+                    .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
+                );
+                const first = convergeResult;
+                if (second.result)
+                  convergeResult = {
+                    ...second.result,
+                    outcomes: [...first.outcomes, ...second.result.outcomes],
+                    readErrors: [...first.readErrors, ...second.result.readErrors],
+                  };
+                else if (second.readErrors.length)
+                  convergeResult = { ...first, readErrors: [...first.readErrors, ...second.readErrors] };
+              }
             } catch (err) {
               if (!isAbortError(err)) throw err;
               // Reported here rather than left to withDevice's neutral line, because the plan
@@ -3581,6 +3603,7 @@ if (!DEMO) {
             const failed: Array<{ name: string; error?: string }> = outcomes
               .filter(reachedAndFailed)
               .map((o) => ({ name: o.command.name, error: o.error }));
+            failed.push(...presetFailures);
             // On every outcome, not only the clean one: a write that stopped can still have
             // landed and read back the address the plan takes its value from, and a line that
             // reported only the stop would leave a changed plan unmentioned.
@@ -3595,7 +3618,7 @@ if (!DEMO) {
                 setStatus(t().status.canceled + note);
                 return null;
               }
-              const nameOutcomes = await sendNames(nameWrites);
+              const nameOutcomes = await sendNames(nameWrites.filter((w) => w.name === undefined));
               // Normalize the two outcome shapes (numeric command vs string name write)
               // to {name, error} so the count and the saved report share one list.
               failed.push(

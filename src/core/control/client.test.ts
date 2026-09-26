@@ -26,6 +26,8 @@ import {
   reachedAndFailed,
   sendConverging,
   sendNames,
+  sendPresetsAndReconverge,
+  sendPresetsFirst,
   setFollowUsb,
   type SendOutcome,
 } from "./client";
@@ -305,6 +307,50 @@ describe("sendConverging", () => {
     expect(r.rounds).toBe(4);
     const gain = planToCommands(model, plan).find((c) => c.name === "HA_GAIN" && c.y === 1)!;
     expect(table.get(`${gain.paramId}:0:1`)).toBe(gain.vdValue);
+  });
+
+  // The unit rebuilds the strip a preset drives a beat after the preset's write returns. A read
+  // taken before that finds the strip still matching, the converge ends, and the rebuild then
+  // replaces the plan's strip values with the preset's. The strip here already holds the plan's
+  // values and only the preset differs, which is the state that read gets wrong.
+  function installPresetRebuildingDevice(plan: Plan): { table: Map<string, number>; at: string; want: number } {
+    const table = installDevice();
+    for (const c of planToCommands(model, plan)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
+    const drive = planToCommands(model, plan).find((c) => c.name === "SSMCS_COMP_DRIVE" && c.y === 1)!;
+    const at = `${drive.paramId}:0:1`;
+    const strings = new Map<string, string>([["91:1", "0025"]]);
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) => Promise.resolve(strings.get(`${param}:${y}`) ?? ""));
+    vi.mocked(vdSetStr).mockImplementation((param, _x, y, v) => {
+      strings.set(`${param}:${y}`, v);
+      if (param === PARAMS.SWEET_SPOT_DATA.id) setTimeout(() => table.set(at, 0), 10);
+      return Promise.resolve();
+    });
+    return { table, at, want: drive.vdValue };
+  }
+
+  it("writes a differing preset and converges the strip again once its rebuild has landed", async () => {
+    const plan = presetPlan();
+    const { table, at, want } = installPresetRebuildingDevice(plan);
+
+    const r = await sendPresetsAndReconverge(model, plan, { settleMs: 40 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(r.presets.map((o) => o.ok)).toEqual([true]);
+    expect(r.result?.residual).toEqual([]);
+    expect(table.get(at)).toBe(want);
+  });
+
+  it("writes nothing and converges nothing when no preset differs", async () => {
+    const plan = presetPlan();
+    installPresetRebuildingDevice(plan);
+    vi.mocked(vdGetStr).mockImplementation((param, _x, y) =>
+      Promise.resolve(param === PARAMS.SWEET_SPOT_DATA.id && y === 1 ? "0024" : param === 18 && y === 0 ? "Vox" : ""),
+    );
+
+    const r = await sendPresetsAndReconverge(model, plan, { settleMs: 40 });
+
+    expect(r.result).toBeNull();
+    expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
   });
 
   it("stops a head that never settles at twice the base budget", async () => {
@@ -842,6 +888,35 @@ describe("sendNames", () => {
   it("writes nothing when there is nothing to write", async () => {
     expect(await sendNames([])).toEqual([]);
     expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
+  });
+});
+
+// CH2 in SSMCS with a Sweet Spot preset and one strip value of its own, plus a node name.
+function presetPlan(): Plan {
+  const plan = basePlan();
+  plan.nodeParams["ch2"] = { on: true, compEqType: 1, ssmcs: { sweetSpotData: 24, compDrive: 120 } };
+  plan.nodeNames["ch1"] = "Vox";
+  return plan;
+}
+
+describe("sendPresetsFirst", () => {
+  it("sends the preset alone and hands back its wait and the names", async () => {
+    vi.mocked(vdSetStr).mockResolvedValue(undefined);
+    const writes = planToNameWrites(model, presetPlan());
+    const r = await sendPresetsFirst(writes);
+    const preset = addrKey(PARAMS.SWEET_SPOT_DATA.id, 0, 1);
+    expect(vi.mocked(vdSetStr).mock.calls).toEqual([[PARAMS.SWEET_SPOT_DATA.id, 0, 1, "0024"]]);
+    expect(r.rest.map((w) => w.value)).toEqual(["Vox"]);
+    expect([...r.pending.mustSettle]).toEqual([preset]);
+    expect([...(r.pending.boundaryMarks?.keys() ?? [])]).toEqual([preset]);
+  });
+
+  // A refused preset rewrote nothing, so nothing is waited for on its account.
+  it("waits for no preset the unit refused", async () => {
+    vi.mocked(vdSetStr).mockRejectedValue(new Error("nak"));
+    const r = await sendPresetsFirst(planToNameWrites(model, presetPlan()));
+    expect(r.outcomes).toEqual([expect.objectContaining({ ok: false, error: "nak" })]);
+    expect(r.pending.mustSettle.size).toBe(0);
   });
 });
 

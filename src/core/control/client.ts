@@ -8,7 +8,7 @@ import type { Plan } from "../plan";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import type { ParamSpec } from "./params";
-import { cmdAddr, planToCommands, planToNameWrites } from "./translate";
+import { addrKey, cmdAddr, planToCommands, planToNameWrites } from "./translate";
 import type { EmitOptions, NameWrite, VdCommand, WriteScope } from "./translate";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -365,6 +365,60 @@ export async function sendNames(writes: NameWrite[]): Promise<NameOutcome[]> {
 }
 
 /**
+ * Send the catalogued string writes — the SSMCS Sweet Spot preset — ahead of a converge, and
+ * hand back what the converge's first read has to wait for. The unit rewrites the strip a
+ * preset drives after the write returns, so a strip value written before the preset is
+ * replaced by the preset's, and a read taken before that rewrite lands reports the strip as
+ * already matching. `rest` is the node names, which drive nothing and go after the converge.
+ */
+export async function sendPresetsFirst(
+  writes: readonly NameWrite[],
+): Promise<{ outcomes: NameOutcome[]; rest: NameWrite[]; pending: PendingWrites }> {
+  const boundaryMarks = new Map<number, number>();
+  const outcomes: NameOutcome[] = [];
+  for (const write of writes) {
+    if (write.name === undefined) continue;
+    // Before the write: only a notify after it can be this write's announcement.
+    const mark = writeSettle.mark();
+    try {
+      await vdSetStr(write.param, 0, write.y, write.value);
+      outcomes.push({ write, ok: true });
+      boundaryMarks.set(addrKey(write.param, 0, write.y), mark);
+    } catch (e) {
+      outcomes.push({ write, ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return {
+    outcomes,
+    rest: writes.filter((w) => w.name === undefined),
+    pending: { written: new Map(), mustSettle: new Set(boundaryMarks.keys()), boundaryMarks, mustAnnounce: new Set() },
+  };
+}
+
+/**
+ * Write the Sweet Spot presets that still differ, then converge again behind them. Run after a
+ * converge rather than ahead of it: a Signal Type change inside that converge puts each member's
+ * own values back when it lands, the preset among them, so a preset written ahead of it is lost.
+ * The second converge is what puts back the strip the preset rebuilt; it reads the unit only once
+ * that rebuild has landed. `result` is null when no preset differed, and when one was refused
+ * (the write stops there, as on any refused write).
+ */
+export async function sendPresetsAndReconverge(
+  model: DeviceModel,
+  plan: Plan,
+  opts: ConvergeOptions = {},
+): Promise<{ presets: NameOutcome[]; readErrors: string[]; result: ConvergeResult | null }> {
+  const names = await diffNames(model, plan);
+  if (names.errors.length) return { presets: [], readErrors: names.errors, result: null };
+  opts.signal?.throwIfAborted();
+  const sent = await sendPresetsFirst(names.writes);
+  if (!sent.pending.mustSettle.size || sent.outcomes.some((o) => !o.ok))
+    return { presets: sent.outcomes, readErrors: [], result: null };
+  const result = await sendConverging(model, plan, { ...opts, initialDiffs: undefined, pending: sent.pending });
+  return { presets: sent.outcomes, readErrors: [], result };
+}
+
+/**
  * One converge round, for a caller that has to explain a residual afterwards.
  * The residual alone cannot: it says a parameter differs at the end, not whether
  * it was ever in the diff, whether the later rounds re-sent it, or what the device
@@ -579,7 +633,8 @@ export async function sendConverging(
     // with it. In production it is the notify that ends it, not the bound.
     if (pending)
       await writeSettle.settle(pending.written, {
-        mustSettle: new Set(pending.written.keys()),
+        mustSettle: new Set([...pending.written.keys(), ...(pending.boundaryMarks?.keys() ?? [])]),
+        boundaryMarks: pending.boundaryMarks,
         timeoutMs: settleMs,
         signal,
       });

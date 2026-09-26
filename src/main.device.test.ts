@@ -3942,6 +3942,31 @@ describe("Write to device", () => {
     expect(statusText()).toContain(t().status.writeNoChanges);
   });
 
+  // The unit rebuilds the SSMCS strip from a Sweet Spot preset once the preset lands, and a Signal
+  // Type change in the numeric phase puts a member's own preset back when it lands. So the preset
+  // goes out after the numeric phase, and the node names after the preset.
+  it("sends the Sweet Spot preset between the numeric phase and the node names", SLOW, async () => {
+    const { emptyPlan, serialize } = await import("./core/plan");
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["ch2"] = { compEqType: 1, ssmcs: { sweetSpotData: 24, compDrive: 120 } };
+    plan.nodeNames["ch1"] = "Vox";
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(plan), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok" }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const at = (pred: (cmd: string, a: Record<string, unknown>) => boolean): number =>
+      shell.invokes.findIndex((cmd, i) => pred(cmd, (shell.args[i] ?? {}) as Record<string, unknown>));
+    const strip = at((cmd, a) => cmd === "vd_set" && a.paramId === 95 && a.y === 1);
+    const preset = at((cmd, a) => cmd === "vd_set_str" && a.paramId === 91 && a.y === 1);
+    const name = at((cmd, a) => cmd === "vd_set_str" && a.value === "Vox");
+    expect(strip, "the strip value went out").toBeGreaterThanOrEqual(0);
+    expect(preset, "the preset went out").toBeGreaterThan(strip);
+    expect(name, "the name went out").toBeGreaterThan(preset);
+  });
+
   // The plan format's silence, held where it meets the unit: what reaches it, and what the
   // operator is told before it does. The record of where each value came from is pinned on
   // its own, without the wiring, in src/app/param-source.test.ts. A document that says

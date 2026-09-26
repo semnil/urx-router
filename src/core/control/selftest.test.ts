@@ -11,9 +11,10 @@ vi.mock("../platform", () => ({
   vdGet: vi.fn(),
   vdSet: vi.fn(),
   vdGetStr: vi.fn(),
+  vdSetStr: vi.fn(),
 }));
 
-import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
+import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { auditUnverified, channelControl, eqOneKnob, inputEq, planToCommands, unverifiedAddresses } from "./translate";
 import { planProblems } from "../plan-validate";
 import {
@@ -699,6 +700,34 @@ describe("runSelfTest", () => {
     const md = formatSelfTestReport(report);
     expect(md).toContain(`- restore HPF_FREQ @ ${addr} — wrote ${home}, read ${table.get(addr)}`);
     expect(md).toContain("## Converge trace — restore");
+  });
+
+  // A STEREO link copies the primary's Sweet Spot preset onto the secondary, and the preset is a
+  // string the converging restore never writes — so a run that linked the pairs left CH2 on
+  // CH1's preset under a verdict that said it was restored.
+  it("puts back the Sweet Spot preset a sweep moved, and verifies it", async () => {
+    const seed = populatedPlan();
+    seed.nodeParams["ch2"] = { ...seed.nodeParams["ch2"], compEqType: 1, ssmcs: { sweetSpotData: 24 } };
+    const table = installMockDevice(seed);
+    const strings = new Map<string, string>([["91:1", "0024"]]);
+    vi.mocked(vdGetStr).mockImplementation((id, _x, y) => Promise.resolve(strings.get(`${id}:${y}`) ?? ""));
+    vi.mocked(vdSetStr).mockImplementation((id, _x, y, v) => {
+      strings.set(`${id}:${y}`, v);
+      return Promise.resolve();
+    });
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      await inner(id, x, y, v);
+      if (id === PARAMS.SIGNAL_TYPE.id && v === 1) strings.set("91:1", "0001");
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    // Premise: the sweep did move it.
+    expect(vi.mocked(vdSet).mock.calls.some(([id, , , v]) => id === PARAMS.SIGNAL_TYPE.id && v === 1)).toBe(true);
+    expect(table.size).toBeGreaterThan(0);
+    expect(strings.get("91:1")).toBe("0024");
+    expect(report.restored).toBe(true);
   });
 
   it("reports residual mismatches when the device ignores a write", async () => {
