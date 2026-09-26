@@ -4340,6 +4340,35 @@ describe("Write to device", () => {
     expect(md).toContain("## Not confirmed");
     expect(md).toContain("- ch1");
   });
+
+  // A cancel taken between two presets stops there: the next preset and the names do not go
+  // out, and the report still names the node whose preset did.
+  it("stops at a cancel between two presets and names the strip left unconfirmed", SLOW, async () => {
+    const shell = (await bootApp({
+      url: await presetLink(),
+      tauri: deviceCommands({
+        ...SAVES,
+        "plugin:dialog|message": byMessage(() => true),
+        vd_set_str: (a: Record<string, unknown>) => {
+          // Clicking the write button again cancels the write in flight.
+          if (a.paramId === 91 && a.y === 0) queueMicrotask(() => $("btn-write").click());
+          return null;
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const strings = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set_str" ? (shell.args[i] as Record<string, unknown>) : undefined))
+      .filter((a): a is Record<string, unknown> => a !== undefined)
+      .map((a) => `${a.paramId}:${a.y}`);
+    expect(strings).toEqual(["91:0"]);
+    expect(statusText()).toBe(t().status.canceled);
+    const md = await savedReport(shell);
+    expect(md).toContain("## Not confirmed");
+    expect(md).toContain("- ch1");
+  });
 });
 
 // Offered after the disconnect rather than during it (why, in `offerErrorReport`'s own

@@ -370,17 +370,29 @@ export async function sendNames(writes: NameWrite[]): Promise<NameOutcome[]> {
  * preset drives after the write returns, so a strip value written before the preset is
  * replaced by the preset's, and a read taken before that rewrite lands reports the strip as
  * already matching. `rest` is the node names, which drive nothing and go after the converge.
- * Stops at the first preset the unit refuses, as a numeric write does; `notSent` is the presets
- * after it.
+ * Stops at the first preset the unit refuses, as a numeric write does, and ahead of the next
+ * preset once `signal` is aborted (`canceled`); `notSent` is the presets not sent.
  */
 export async function sendPresetsFirst(
   writes: readonly NameWrite[],
-): Promise<{ outcomes: NameOutcome[]; notSent: NameWrite[]; rest: NameWrite[]; pending: PendingWrites }> {
+  signal?: AbortSignal,
+): Promise<{
+  outcomes: NameOutcome[];
+  notSent: NameWrite[];
+  canceled: boolean;
+  rest: NameWrite[];
+  pending: PendingWrites;
+}> {
   const boundaryMarks = new Map<number, number>();
   const outcomes: NameOutcome[] = [];
   const heads = writes.filter((w) => w.name !== undefined);
+  let canceled = false;
   for (const write of heads) {
     if (outcomes.some((o) => !o.ok)) break;
+    if (signal?.aborted) {
+      canceled = true;
+      break;
+    }
     // Before the write: only a notify after it can be this write's announcement.
     const mark = writeSettle.mark();
     try {
@@ -394,6 +406,7 @@ export async function sendPresetsFirst(
   return {
     outcomes,
     notSent: heads.slice(outcomes.length),
+    canceled,
     rest: writes.filter((w) => w.name === undefined),
     pending: { written: new Map(), mustSettle: new Set(boundaryMarks.keys()), boundaryMarks, mustAnnounce: new Set() },
   };
@@ -406,7 +419,9 @@ export async function sendPresetsFirst(
  * The second converge is what puts back the strip the preset rebuilt; it reads the unit only once
  * that rebuild has landed. `result` is null when no preset differed, and when one was refused:
  * the write stops there, as on any refused write, leaving `notSent` unsent and naming in
- * `unconfirmed` the nodes whose preset was accepted and whose rebuilt strip was not read back.
+ * `unconfirmed` the nodes whose preset was accepted and whose rebuilt strip was not read back. A
+ * cancel between two presets stops the same way (`canceled`) rather than throwing, so the caller
+ * still learns what went out.
  */
 export async function sendPresetsAndReconverge(
   model: DeviceModel,
@@ -416,21 +431,30 @@ export async function sendPresetsAndReconverge(
   presets: NameOutcome[];
   notSent: NameWrite[];
   unconfirmed: string[];
+  canceled: boolean;
   readErrors: string[];
   result: ConvergeResult | null;
 }> {
   const names = await diffNames(model, plan);
-  if (names.errors.length) return { presets: [], notSent: [], unconfirmed: [], readErrors: names.errors, result: null };
+  if (names.errors.length)
+    return { presets: [], notSent: [], unconfirmed: [], canceled: false, readErrors: names.errors, result: null };
   opts.signal?.throwIfAborted();
-  const sent = await sendPresetsFirst(names.writes);
-  if (sent.outcomes.some((o) => !o.ok)) {
+  const sent = await sendPresetsFirst(names.writes, opts.signal);
+  if (sent.canceled || sent.outcomes.some((o) => !o.ok)) {
     const unconfirmed = sent.outcomes.filter((o) => o.ok).map((o) => o.write.node ?? `${o.write.param}:0:${o.write.y}`);
-    return { presets: sent.outcomes, notSent: sent.notSent, unconfirmed, readErrors: [], result: null };
+    return {
+      presets: sent.outcomes,
+      notSent: sent.notSent,
+      unconfirmed,
+      canceled: sent.canceled,
+      readErrors: [],
+      result: null,
+    };
   }
   if (!sent.pending.mustSettle.size)
-    return { presets: sent.outcomes, notSent: [], unconfirmed: [], readErrors: [], result: null };
+    return { presets: sent.outcomes, notSent: [], unconfirmed: [], canceled: false, readErrors: [], result: null };
   const result = await sendConverging(model, plan, { ...opts, initialDiffs: undefined, pending: sent.pending });
-  return { presets: sent.outcomes, notSent: [], unconfirmed: [], readErrors: [], result };
+  return { presets: sent.outcomes, notSent: [], unconfirmed: [], canceled: false, readErrors: [], result };
 }
 
 /**

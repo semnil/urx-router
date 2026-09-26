@@ -979,6 +979,27 @@ describe("sendPresetsFirst", () => {
     expect(r.notSent.map((w) => w.node)).toEqual(["ch3"]);
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
   });
+
+  // A cancel between two presets stops the next one, as it stops the next numeric write; what
+  // already went out is named, since its strip was rebuilt and nothing read it back.
+  it("stops sending presets at a cancel and names what already went out", async () => {
+    const controller = new AbortController();
+    vi.mocked(vdSetStr).mockImplementation(() => {
+      controller.abort();
+      return Promise.resolve();
+    });
+    vi.mocked(vdGetStr).mockResolvedValue("0001");
+    vi.mocked(vdGet).mockResolvedValue(0);
+
+    const r = await sendPresetsAndReconverge(model, threePresetPlan(), { settleMs: 0, signal: controller.signal });
+
+    expect(vi.mocked(vdSetStr).mock.calls.map(([, , y]) => y)).toEqual([0]);
+    expect(r.canceled).toBe(true);
+    expect(r.unconfirmed).toEqual(["ch1"]);
+    expect(r.notSent.map((w) => w.node)).toEqual(["ch2", "ch3"]);
+    expect(r.result).toBeNull();
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
 });
 
 describe("comparePlan", () => {

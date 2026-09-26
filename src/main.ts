@@ -3563,6 +3563,7 @@ if (!DEMO) {
             // nothing read back.
             let presetStop: { notSent: number; unconfirmed: string[] } | null = null;
             let presetsSent = 0;
+            let presetsCanceled = false;
             let convergeResult: ConvergeResult;
             try {
               const converge = {
@@ -3593,6 +3594,8 @@ if (!DEMO) {
                     .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
                 );
                 presetsSent = second.presets.filter((o) => o.ok).length;
+                presetsCanceled = second.canceled;
+                if (second.canceled) unconfirmedSoFar.push(...second.unconfirmed);
                 if (presetFailures.length)
                   presetStop = { notSent: second.notSent.length, unconfirmed: second.unconfirmed };
                 const first = convergeResult;
@@ -3635,7 +3638,7 @@ if (!DEMO) {
             const note = adoptedNote();
             // Names only go out once the numeric phase reached the device intact —
             // a stopped or unreadable numeric phase means the link already failed.
-            if (!failed.length && !skipped && !convergeErrors.length) {
+            if (!failed.length && !skipped && !convergeErrors.length && !presetsCanceled) {
               // Reported here rather than thrown, for the reason the converge's own cancel is:
               // the adoption above has already changed the plan, and a bare "Canceled" from
               // withDevice would leave that unsaid.
@@ -3661,8 +3664,14 @@ if (!DEMO) {
             const sent = outcomes.filter((o) => o.ok).length + presetsSent;
             sentSoFar += sent;
             if (presetStop) unconfirmedSoFar.push(...presetStop.unconfirmed);
-            if (failed.length || residual.length || convergeErrors.length || presetStop) {
+            if (failed.length || residual.length || convergeErrors.length || presetStop || presetsCanceled) {
               saveReport(failed, residual, convergeErrors, { wrote: sentSoFar > 0, unconfirmed: unconfirmedSoFar });
+            }
+            // A cancel taken between two presets: what went out is in the report, and nothing more
+            // is sent or offered.
+            if (presetsCanceled) {
+              setStatus(t().status.canceled + note);
+              return null;
             }
             if (presetStop) {
               const renames = nameWrites.filter((w) => w.name === undefined).length;
