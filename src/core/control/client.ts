@@ -440,8 +440,7 @@ export async function sendPresetsAndReconverge(
     return { presets: [], notSent: [], unconfirmed: [], canceled: false, readErrors: names.errors, result: null };
   opts.signal?.throwIfAborted();
   const sent = await sendPresetsFirst(names.writes, opts.signal);
-  const accepted = (): string[] =>
-    sent.outcomes.filter((o) => o.ok).map((o) => o.write.node ?? `${o.write.param}:0:${o.write.y}`);
+  const accepted = (): string[] => sent.outcomes.filter((o) => o.ok).map((o) => o.write.node);
   if (sent.canceled || sent.outcomes.some((o) => !o.ok)) {
     return {
       presets: sent.outcomes,

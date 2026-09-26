@@ -1014,7 +1014,7 @@ export class LiveSync {
       // list the name loop takes for itself — while no watch is open is left for the next flush,
       // which opens one from its own start: no read follows a send nothing watched.
       const numericHead = (c: VdCommand): boolean => c.node !== undefined && REFETCH.has(c.name);
-      const nameHead = (w: NameWrite): boolean => w.node !== undefined && w.name !== undefined && REFETCH.has(w.name);
+      const nameHead = (w: NameWrite): boolean => w.name !== undefined && REFETCH.has(w.name);
       if (
         commands.some((c) => numericHead(c) && this.snapshot.get(cmdAddr(c)) !== c.vdValue) ||
         planToNameWrites(model, plan).some((w) => nameHead(w) && this.nameSnapshot.get(nameKey(w)) !== w.value)
@@ -1150,8 +1150,8 @@ export class LiveSync {
         // Before the write, for the reason the numeric loop takes one: only a notify after
         // it can be this write's announcement.
         const nameMark = writeSettle.mark();
-        // A node rename carries neither `name` nor `node` (translate.NameWrite): it has no
-        // catalog row, so it can never be a sideEffect head and nothing reads it back. The
+        // A node rename carries no `name` (translate.NameWrite): it has no catalog row, so
+        // it can never be a sideEffect head and nothing reads it back. The
         // catalogued string writes — the SSMCS preset — are read by their own refetch, and
         // watching them here as well would report one silence twice.
         const nameAddr = addrKey(w.param, 0, w.y);

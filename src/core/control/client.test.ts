@@ -631,7 +631,7 @@ describe("compareCounts", () => {
   it("counts compared and differ from the entries and returns the differing ones", () => {
     const { compared, differ, numDiffs, nameDiffs } = compareCounts(
       [cmpEntry("A", 1, 1, 1), cmpEntry("B", 2, 2, 9)],
-      [{ write: { param: 18, y: 0, value: "x" }, device: "y", match: false }],
+      [{ write: { param: 18, y: 0, value: "x", node: "ch1" }, device: "y", match: false }],
     );
     expect(compared).toBe(3);
     expect(differ).toBe(2);
@@ -663,7 +663,7 @@ describe("formatCompareReport", () => {
     const md = formatCompareReport(
       "URX44V",
       [],
-      [{ write: { param: 18, y: 2, value: "Lead Vox" }, device: "ch 3", match: false }],
+      [{ write: { param: 18, y: 2, value: "Lead Vox", node: "ch3" }, device: "ch 3", match: false }],
     );
     expect(md).toContain('name @ 18:2 — plan "Lead Vox", device "ch 3" — DIFFER');
   });
