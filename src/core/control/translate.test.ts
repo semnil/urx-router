@@ -1679,7 +1679,7 @@ describe("addrKey packing", () => {
 // emitter to be forgotten until a device run turns up a residual.
 describe("reset chains (sideEffect heads vs converge groups)", () => {
   // Measured on a URX44V: ON discards the type, a type write discards the level. Three
-  // links, so one link per round exhausts sendConverging's 3-round budget.
+  // links, which a re-send of only what differs walks one round per link; the group lands all three in one.
   const GROUPED = new Set(["EQ_ONE_KNOB_ON", "EQ_ONE_KNOB_TYPE", "EQ_ONE_KNOB_LEVEL"]);
   // The head plus what it repopulates. A converge round that sends one is followed by another
   // past the base budget (client.ts sendConverging), which is what puts back what it moved.

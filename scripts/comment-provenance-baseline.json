@@ -83,7 +83,7 @@
     "src/i18n/en.ts": 1,
     "src/i18n/refs.contract.test.ts": 3,
     "src/main.boot.test.ts": 1,
-    "src/main.device.test.ts": 9,
+    "src/main.device.test.ts": 8,
     "src/main.flows.test.ts": 4,
     "src/main.test-util.ts": 1,
     "src/main.ts": 3,

@@ -382,7 +382,7 @@ describe("sendConverging", () => {
   // the type back to Intensity, and a type write discards the level to that type's
   // neutral. A round that re-sends only what differs walks the chain one link per
   // round — ON, then the type it just discarded, then the level that discarded —
-  // and a 3-round budget runs out with the level still wrong. The chain travels as
+  // and the level lands only in a round of its own. The chain travels as
   // one group, so a single round lands all three.
   it("re-sends a reset chain whole rather than one link per round", async () => {
     const table = installDevice();
@@ -457,7 +457,7 @@ describe("sendConverging", () => {
   // and creates the difference at 43 that round 2 has to repair).
   //
   // It converges, in two rounds, inside the budget — so no group. The EQ's chain is three
-  // links (46 discards 47, 47 discards 48) and that is what a 3-round budget cannot walk;
+  // links (46 discards 47, 47 discards 48), which walked a link per round costs a round each;
   // this one is two. Nothing further is discarded once 43 lands, because the values the level
   // recomputes are not emitted at all while the knob is on.
   it("walks the COMP 1-knob chain to convergence without a group", async () => {

@@ -3928,8 +3928,8 @@ describe("Write to device", () => {
     expect(shell.count("vd_set")).toBeGreaterThan(10);
 
     // The count comes out of the message so the assertion can pin the whole frame
-    // rather than a substring. Measured on the non-converging path (reads answering a
-    // flat 0): 1527 writes go out over three rounds, the flow lands on
+    // rather than a substring. On the non-converging path (reads answering a flat 0) the
+    // writes go out over every round the converge allows, the flow lands on
     // `writeResidual`, and its error report's save — which this stub has no dialog
     // command for — fails, so `showError` clears the line and the status reads "".
     const n = Number(/\d+/.exec(statusText())?.[0]);

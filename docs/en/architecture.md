@@ -2489,9 +2489,9 @@ re-sends only what still differs**, and that is where order alone stops being en
 The measured case is the EQ 1-knob, on a URX44V. Writing ON (`46`) discards the type back to Intensity; writing the
 type (`47`) discards the level (`48`) to that type's neutral point (Intensity 50, the presets 0). Three links. When a
 COMP/EQ bank switch resets all three at once, a loop that re-sends only what differs walks the chain one link per
-round: round 2 re-sends ON and un-sets the type, round 3 re-sends the type and un-sets the level, and the 3-round
-budget runs out with the level wrong —
-reported as a residual the device had in fact accepted every time it was written.
+round: round 2 re-sends ON and un-sets the type, round 3 re-sends the type and un-sets the level, and the level
+lands only in a round of its own — each link spends a round of the budget, and a budget spent before the last link
+reports the level as a residual the device had in fact accepted every time it was written.
 
 `VdCommand.group` names the chain, and `roundCommands` (client.ts) expands a round to **every member of a group any
 differing command belongs to**, in emit order. One round then lands all three. The plan is re-translated only when a
@@ -2503,8 +2503,7 @@ that sent a `sideEffect` head is followed by another round**, past `maxRounds` a
 lands after the writes that follow it in the same round — on a URX44V a Signal Type change applied 85-125 ms after
 its write, and inside a self-test restore values written more than a second after the unlink were still replaced —
 so what it moved is put back only by a round of its own, and one head can move another: unlinking a pair drops the
-secondary's COMP/EQ type, and re-sending that type rebuilds its SSMCS bank. With a budget of three rounds that
-chain left a residual; a round that sends no head and still leaves one ends the loop at `maxRounds` as before, and
+secondary's COMP/EQ type, and re-sending that type rebuilds its SSMCS bank. A round that sends no head and still leaves a residual ends the loop at `maxRounds`, and
 a head that never settles stops at the cap. `translate.test.ts` pins which heads carry a group, so a new
 `sideEffect` param fails the test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset
 addresses owned by *other* nodes, which a group cannot express — their ordering is pinned separately.
