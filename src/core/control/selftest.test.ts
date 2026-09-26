@@ -702,6 +702,31 @@ describe("runSelfTest", () => {
     expect(md).toContain("## Converge trace — restore");
   });
 
+  // A stopped restore can leave an entry whose last read answered nothing (`actual: null`). It
+  // is listed as unreadable, under the restore's own label, rather than as a value.
+  it("lists an unsettled restore entry the last read could not answer as unreadable", async () => {
+    installMockDevice(populatedPlan());
+    const report = await runSelfTest(model, 0);
+    const md = formatSelfTestReport({
+      ...report,
+      residual: [
+        {
+          name: "HPF_FREQ",
+          paramId: PARAMS.HPF_FREQ.id,
+          x: 0,
+          y: 0,
+          expected: 40,
+          actual: null,
+          pass: -1,
+          stoppedOn: "read",
+        },
+      ],
+    });
+    expect(md).toContain(
+      `- restore HPF_FREQ @ ${PARAMS.HPF_FREQ.id}:0:0 — plan wanted 40, device answered unreadable at the last read (the pass stopped on a failed read)`,
+    );
+  });
+
   // A STEREO link copies the primary's Sweet Spot preset onto the secondary, and the preset is a
   // string the converging restore never writes — so a run that linked the pairs left CH2 on
   // CH1's preset under a verdict that said it was restored.

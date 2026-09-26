@@ -587,6 +587,14 @@ describe("formatWriteReport", () => {
     expect(md).toContain("- ch1");
   });
 
+  // A refusal and a failed read in one write: the headline counts both, since the refusal
+  // alone would leave the read failures listed below it unannounced.
+  it("counts read failures in the headline beside a refused write", () => {
+    const md = formatWriteReport("URX44V", [{ name: "CH1 GATE", error: "nak" }], [], ["CH_FADER: timeout"]);
+    expect(md).toContain("- Write failures: 1; parameters that did not converge: 0; read failures: 1");
+    expect(md).toContain("## Read failures");
+  });
+
   // The report reads only name/paramId/x/y/vdValue, so stub a minimal command
   // (the full VdCommand carries planValue/request, irrelevant to formatting).
   const cmd = (name: string, paramId: number, vdValue: number) =>
@@ -1028,6 +1036,51 @@ describe("sendPresetsFirst", () => {
     expect(r.notSent).toEqual([]);
     expect(r.result).toBeNull();
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+
+  // Only a cancel becomes `canceled`. Anything else the converge behind the presets throws is
+  // the caller's to see, or a failure would be reported as the operator's own cancel.
+  it("passes on a failure inside the converge behind the presets that is not a cancel", async () => {
+    const controller = new AbortController();
+    vi.mocked(vdSetStr).mockResolvedValue(undefined);
+    vi.mocked(vdGetStr).mockResolvedValue("0001");
+    vi.mocked(vdGet).mockResolvedValue(0);
+    vi.mocked(vdSet).mockResolvedValue(undefined);
+    const boom = new Error("boom");
+
+    const run = sendPresetsAndReconverge(model, threePresetPlan(), {
+      settleMs: 0,
+      signal: controller.signal,
+      onSent: () => {
+        throw boom;
+      },
+    });
+
+    await expect(run).rejects.toBe(boom);
+    // Premise: every preset went out and the converge behind them sent something.
+    expect(vi.mocked(vdSetStr).mock.calls.map(([, , y]) => y)).toEqual([0, 1, 2]);
+    expect(vi.mocked(vdSet)).toHaveBeenCalled();
+  });
+
+  // The presets are read before any goes out; a read that fails there sends none of them.
+  it("sends no preset when the presets cannot be read first", async () => {
+    vi.mocked(vdGetStr).mockRejectedValue(new Error("read timeout"));
+
+    const r = await sendPresetsAndReconverge(model, threePresetPlan(), { settleMs: 0 });
+
+    expect(r.readErrors.length).toBeGreaterThan(0);
+    expect(r.presets).toEqual([]);
+    expect(r.canceled).toBe(false);
+    expect(r.result).toBeNull();
+    expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+
+  // The shell rejects with a bare string as well as with an Error; either is the refusal's text.
+  it("reports a preset refused with a value that is not an Error by that value", async () => {
+    vi.mocked(vdSetStr).mockRejectedValue("broker-rejected");
+    const r = await sendPresetsFirst(planToNameWrites(model, threePresetPlan()));
+    expect(r.outcomes).toEqual([expect.objectContaining({ ok: false, error: "broker-rejected" })]);
   });
 });
 

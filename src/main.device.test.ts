@@ -4236,6 +4236,42 @@ describe("Write to device", () => {
     expect(md).not.toContain("nothing was written");
   });
 
+  // The presets are read again once the numeric values have gone out. A read that fails there
+  // sends no preset, and it is a read-back of a write that went out, not the read a write stops on.
+  it("reports the write as unconfirmed when the presets cannot be read after the numeric values", SLOW, async () => {
+    const UNREAD_ASK = invariantOf(t().confirm.writeRetryUnread(1, 1));
+    let armed = false;
+    const tauri = deviceCommands({
+      ...SAVES,
+      "plugin:dialog|message": byMessage((m) => !m.includes(UNREAD_ASK)),
+    });
+    const set = tauri.vd_set as (a: Record<string, unknown>) => unknown;
+    tauri.vd_set = (a: Record<string, unknown>) => {
+      armed = true;
+      return set(a);
+    };
+    const getStr = tauri.vd_get_str as (a: Record<string, unknown>) => unknown;
+    tauri.vd_get_str = (a: Record<string, unknown>) => {
+      if (armed) {
+        armed = false;
+        throw new Error("read timeout");
+      }
+      return getStr(a);
+    };
+    const shell = (await bootApp({ url: await presetLink(), tauri }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    // Premise: numeric values went out, and no preset did.
+    expect(shell.count("vd_set")).toBeGreaterThan(0);
+    expect(shell.count("vd_set_str")).toBe(0);
+    const sent = countFor(statusText(), (n) => t().status.writeUnconfirmed(n, 1));
+    expect(statusText()).toBe(t().status.writeUnconfirmed(sent, 1));
+    expect(confirms(shell)).toContain(t().confirm.writeRetryUnread(sent, 1));
+    const md = await savedReport(shell);
+    expect(md).toContain("Written, then read failures: 1");
+  });
+
   // The second write finds the numeric values already on the unit and only the presets differing
   // (this stub keeps no string), so the presets are all it sends — and they count as sent when the
   // read after them fails.
