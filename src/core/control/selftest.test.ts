@@ -814,6 +814,44 @@ describe("runSelfTest", () => {
     expect(report.errors.some((e) => e.startsWith("restore ch1: its Sweet Spot preset rebuilt the strip"))).toBe(true);
   });
 
+  // Once the last preset has gone out, a cancel lands in the converge behind the presets: both
+  // strips were rebuilt and that converge did not finish reading them back.
+  it.each([
+    ["while the last preset is sent", "last-preset"],
+    ["on the converge's first read behind the presets", "reconverge"],
+  ] as const)("names every strip a restored preset rebuilt when cancelled %s", async (_label, at) => {
+    const controller = new AbortController();
+    let presetsDone = false;
+    const { writes } = presetRestoreFixture(
+      () => null,
+      (y) => {
+        if (y !== 1) return;
+        presetsDone = true;
+        if (at === "last-preset") controller.abort();
+      },
+    );
+    const read = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation(async (id, x, y) => {
+      const got = await read(id, x, y);
+      if (at === "reconverge" && presetsDone) controller.abort();
+      return got;
+    });
+
+    const report = await runSelfTest(model, 0, controller.signal);
+
+    // Premise: the cancel landed in the restore, after both presets, and nothing followed it.
+    expect(report.phase).toBe("restore");
+    expect(controller.signal.aborted).toBe(true);
+    expect(writes.filter((w) => w.startsWith("str "))).toEqual(["str 91:0", "str 91:1"]);
+    expect(writes.slice(writes.lastIndexOf("str 91:1") + 1)).toEqual([]);
+    expect(report.aborted).toBe(true);
+    expect(report.restored).toBe(false);
+    for (const node of ["ch1", "ch2"])
+      expect(report.errors.some((e) => e.startsWith(`restore ${node}: its Sweet Spot preset rebuilt the strip`))).toBe(
+        true,
+      );
+  });
+
   it("reports residual mismatches when the device ignores a write", async () => {
     const table = installMockDevice(populatedPlan());
     // CH_ON (param 140) is accepted but never stored — a stuck parameter.

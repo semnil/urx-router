@@ -4369,6 +4369,58 @@ describe("Write to device", () => {
     expect(md).toContain("## Not confirmed");
     expect(md).toContain("- ch1");
   });
+
+  // Once the last preset has gone out, a cancel lands in the converge behind the presets. Every
+  // accepted preset rebuilt a strip that converge did not finish reading back, so the report still
+  // names them, and nothing more is sent.
+  it.each([
+    ["while the last preset is sent", "last-preset"],
+    ["on the converge's first read behind the presets", "reconverge"],
+  ] as const)("names every strip a preset rebuilt when cancelled %s", SLOW, async (_label, at) => {
+    let presetsDone = false;
+    let cancelled = false;
+    // Clicking the write button again cancels the write in flight.
+    const cancel = (): void => {
+      if (cancelled) return;
+      cancelled = true;
+      queueMicrotask(() => $("btn-write").click());
+    };
+    const tauri = deviceCommands({
+      ...SAVES,
+      "plugin:dialog|message": byMessage(() => true),
+    });
+    const setStr = tauri.vd_set_str as (a: Record<string, unknown>) => unknown;
+    tauri.vd_set_str = (a: Record<string, unknown>) => {
+      const answer = setStr(a);
+      if (a.paramId === 91 && a.y === 2) {
+        presetsDone = true;
+        if (at === "last-preset") cancel();
+      }
+      return answer;
+    };
+    const get = tauri.vd_get as (a: Record<string, unknown>) => unknown;
+    tauri.vd_get = (a: Record<string, unknown>) => {
+      const answer = get(a);
+      if (at === "reconverge" && presetsDone) cancel();
+      return answer;
+    };
+    const shell = (await bootApp({ url: await presetLink(), tauri }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+
+    const strings = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set_str" ? (shell.args[i] as Record<string, unknown>) : undefined))
+      .filter((a): a is Record<string, unknown> => a !== undefined)
+      .map((a) => `${a.paramId}:${a.y}`);
+    // Premise: the cancel came after the last preset, and nothing followed it — no name either.
+    expect(cancelled).toBe(true);
+    expect(strings).toEqual(["91:0", "91:1", "91:2"]);
+    expect(shell.invokes.lastIndexOf("vd_set")).toBeLessThan(shell.invokes.lastIndexOf("vd_set_str"));
+    expect(statusText()).toBe(t().status.canceled);
+    const md = await savedReport(shell);
+    expect(md).toContain("## Not confirmed");
+    for (const node of ["ch1", "ch2", "ch3"]) expect(md).toContain(`- ${node}`);
+  });
 });
 
 // Offered after the disconnect rather than during it (why, in `offerErrorReport`'s own

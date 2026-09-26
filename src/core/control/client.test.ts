@@ -1000,6 +1000,35 @@ describe("sendPresetsFirst", () => {
     expect(r.result).toBeNull();
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
   });
+
+  // Once every preset has gone out, a cancel lands in the converge behind them, which throws. What
+  // the presets did is still handed back: every accepted one rebuilt a strip nothing read back.
+  it.each([
+    ["while the last preset is sent", "last-preset"],
+    ["inside the converge behind the presets", "reconverge"],
+  ] as const)("names every accepted preset's node when cancelled %s", async (_label, at) => {
+    const controller = new AbortController();
+    vi.mocked(vdSetStr).mockImplementation((_param, _x, y) => {
+      if (at === "last-preset" && y === 2) controller.abort();
+      return Promise.resolve();
+    });
+    vi.mocked(vdGetStr).mockResolvedValue("0001");
+    vi.mocked(vdGet).mockImplementation(() => {
+      if (at === "reconverge" && vi.mocked(vdSetStr).mock.calls.length === 3) controller.abort();
+      return Promise.resolve(0);
+    });
+
+    const r = await sendPresetsAndReconverge(model, threePresetPlan(), { settleMs: 0, signal: controller.signal });
+
+    // Premise: the cancel came after the last preset, so none is left unsent.
+    expect(vi.mocked(vdSetStr).mock.calls.map(([, , y]) => y)).toEqual([0, 1, 2]);
+    if (at === "reconverge") expect(vi.mocked(vdGet)).toHaveBeenCalled();
+    expect(r.canceled).toBe(true);
+    expect(r.unconfirmed).toEqual(["ch1", "ch2", "ch3"]);
+    expect(r.notSent).toEqual([]);
+    expect(r.result).toBeNull();
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
 });
 
 describe("comparePlan", () => {

@@ -3667,8 +3667,8 @@ if (!DEMO) {
             if (failed.length || residual.length || convergeErrors.length || presetStop || presetsCanceled) {
               saveReport(failed, residual, convergeErrors, { wrote: sentSoFar > 0, unconfirmed: unconfirmedSoFar });
             }
-            // A cancel taken between two presets: what went out is in the report, and nothing more
-            // is sent or offered.
+            // A cancel taken once a preset has gone out: what went out is in the report, and nothing
+            // more is sent or offered.
             if (presetsCanceled) {
               setStatus(t().status.canceled + note);
               return null;

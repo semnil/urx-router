@@ -914,7 +914,7 @@ export async function runSelfTest(
         report.errors.push(
           `restore ${node}: its Sweet Spot preset rebuilt the strip, and the restore stopped before reading it back`,
         );
-      // A cancel between two presets ends the run the way a cancel anywhere else in the
+      // A cancel once a preset has gone out ends the run the way a cancel anywhere else in the
       // restore does, with what went out already in the report.
       if (presets.canceled) {
         report.aborted = true;

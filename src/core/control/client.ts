@@ -420,8 +420,8 @@ export async function sendPresetsFirst(
  * that rebuild has landed. `result` is null when no preset differed, and when one was refused:
  * the write stops there, as on any refused write, leaving `notSent` unsent and naming in
  * `unconfirmed` the nodes whose preset was accepted and whose rebuilt strip was not read back. A
- * cancel between two presets stops the same way (`canceled`) rather than throwing, so the caller
- * still learns what went out.
+ * cancel once a preset has gone out — between two presets, or inside the converge behind them —
+ * stops the same way (`canceled`) rather than throwing, so the caller still learns what went out.
  */
 export async function sendPresetsAndReconverge(
   model: DeviceModel,
@@ -440,12 +440,13 @@ export async function sendPresetsAndReconverge(
     return { presets: [], notSent: [], unconfirmed: [], canceled: false, readErrors: names.errors, result: null };
   opts.signal?.throwIfAborted();
   const sent = await sendPresetsFirst(names.writes, opts.signal);
+  const accepted = (): string[] =>
+    sent.outcomes.filter((o) => o.ok).map((o) => o.write.node ?? `${o.write.param}:0:${o.write.y}`);
   if (sent.canceled || sent.outcomes.some((o) => !o.ok)) {
-    const unconfirmed = sent.outcomes.filter((o) => o.ok).map((o) => o.write.node ?? `${o.write.param}:0:${o.write.y}`);
     return {
       presets: sent.outcomes,
       notSent: sent.notSent,
-      unconfirmed,
+      unconfirmed: accepted(),
       canceled: sent.canceled,
       readErrors: [],
       result: null,
@@ -453,8 +454,22 @@ export async function sendPresetsAndReconverge(
   }
   if (!sent.pending.mustSettle.size)
     return { presets: sent.outcomes, notSent: [], unconfirmed: [], canceled: false, readErrors: [], result: null };
-  const result = await sendConverging(model, plan, { ...opts, initialDiffs: undefined, pending: sent.pending });
-  return { presets: sent.outcomes, notSent: [], unconfirmed: [], canceled: false, readErrors: [], result };
+  try {
+    const result = await sendConverging(model, plan, { ...opts, initialDiffs: undefined, pending: sent.pending });
+    return { presets: sent.outcomes, notSent: [], unconfirmed: [], canceled: false, readErrors: [], result };
+  } catch (e) {
+    // A cancel inside the converge behind the presets: every accepted preset rebuilt a strip
+    // that the converge did not finish reading back.
+    if (!opts.signal?.aborted) throw e;
+    return {
+      presets: sent.outcomes,
+      notSent: [],
+      unconfirmed: accepted(),
+      canceled: true,
+      readErrors: [],
+      result: null,
+    };
+  }
 }
 
 /**

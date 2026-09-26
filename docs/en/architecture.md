@@ -2540,7 +2540,7 @@ device intact. The SSMCS Sweet Spot preset goes out between the two, followed by
 (`sendPresetsAndReconverge`): the unit rebuilds the strip a preset drives once the preset lands (123-155 ms after the
 write on a URX44V), replacing the plan's strip values with the preset's, so the strip is converged again, reading
 the unit only once that rebuild has landed. It cannot go ahead of the numeric phase: a Signal Type change in that
-phase puts each member's own preset back when it lands. A refused preset stops the write there, with the presets after it unsent and the nodes whose preset was accepted named in the report as not confirmed — their strip was rebuilt and nothing read it back — and the write is offered again as any stopped write is. A read that fails inside either converge comes after something was sent, so it is reported as a write the app could not confirm rather than as written or as nothing written, with the same offer. The self-test
+phase puts each member's own preset back when it lands. A refused preset stops the write there, with the presets after it unsent and the nodes whose preset was accepted named in the report as not confirmed — their strip was rebuilt and nothing read it back — and the write is offered again as any stopped write is. A cancel once a preset has gone out — between two presets, or inside the converge behind them — stops the write there as well, and the report still names those nodes as not confirmed. A read that fails inside either converge comes after something was sent, so it is reported as a write the app could not confirm rather than as written or as nothing written, with the same offer. The self-test
 restore puts the captured presets back the same way, stops at a refused one (exception 1 below), and counts in its residual a name or preset still differing afterwards
 and a node an accepted preset left unconfirmed. A write that stops part-way leaves the device holding some of what was confirmed, so the handler
 offers to **run it again** rather than print a breakdown nobody can act on — the retry re-diffs, so whatever landed
@@ -2611,8 +2611,8 @@ listed here so they are not proposed as gaps:
    stops the restore**, as it stops any write on the link: the strip that preset's predecessors rebuilt was
    not read back, so the restore writes nothing more — the addresses it would have written back from the
    pre-sweep read are only read, the names are not sent, and whatever still differs counts in
-   `restoreResidual` beside the nodes the accepted presets left unconfirmed. A cancel between two presets
-   ends the run as a cancel anywhere in the restore does. **Its restore reaches past what the plan implies, and
+   `restoreResidual` beside the nodes the accepted presets left unconfirmed. A cancel once a preset has
+   gone out ends the run as a cancel anywhere in the restore does, with those nodes still named. **Its restore reaches past what the plan implies, and
    its verdict says where it stops.** A plan emits an address only under the mode that owns it, and the sweep
    runs in every mode, so a pass writes addresses the captured plan has no command for — and whose absence the
    residual cannot see either, being a diff over those same commands. Three families do it: the 4-band PEQ,
