@@ -67,7 +67,7 @@ jobs:
   # A cheap gate in front of the harness jobs. A manual dispatch always runs: there is no
   # base to compare against, and asking for it IS the intent.
   detect:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -223,7 +223,7 @@ jobs:
   race:
     needs: detect
     if: needs.detect.outputs.run != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Same image as the WebKit job below, for the same reason and at the same measured
     # cost — see that job's header. The shards' own exposure is the smaller one (36
     # sequential .deb fetches against WebKit's 201, and the three of them were unharmed
@@ -324,7 +324,7 @@ jobs:
   race-webkit:
     needs: detect
     if: needs.detect.outputs.run != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # The one job in this repository that does not build its environment out of the
     # Ubuntu mirror. `--with-deps webkit` fetches an order of magnitude more .debs than
     # chromium, one at a time, and a degraded mirror has stalled it past this job's whole
@@ -387,7 +387,7 @@ jobs:
   race-required:
     needs: [detect, race, race-webkit]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Fail unless every job passed or skipped by design

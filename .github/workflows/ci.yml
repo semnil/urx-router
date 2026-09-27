@@ -40,7 +40,7 @@ jobs:
   # no install, no build, and the file list comes from the API rather than from a diff,
   # so nothing here needs history.
   preflight:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -133,7 +133,7 @@ jobs:
   frontend:
     needs: preflight
     if: needs.preflight.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -264,7 +264,7 @@ jobs:
   e2e:
     needs: preflight
     if: needs.preflight.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       # Codecov's tokenless upload exchanges GitHub's OIDC token. Job permissions do
@@ -352,7 +352,7 @@ jobs:
   e2e-webkit:
     needs: preflight
     if: needs.preflight.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     # The browsers and their system libraries come from the image rather than from the
@@ -397,7 +397,7 @@ jobs:
     # a fourth shard does not have to be remembered here.
     needs: [preflight, frontend, rust, e2e, e2e-webkit]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {}
     timeout-minutes: 5
     steps:
