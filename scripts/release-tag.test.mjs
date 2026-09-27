@@ -44,7 +44,7 @@ const WORKFLOWS = ".github/workflows";
 const INVOCATION = `bash ${SHAPE}`;
 
 // Skipped where the tools are absent, and the skip is named rather than silent. On CI they
-// are present (ubuntu-latest carries both), so there the skip is refused outright: a green
+// are present (ubuntu-26.04 carries both), so there the skip is refused outright: a green
 // run that judged nothing is the failure mode this whole file exists to prevent.
 const has = (cmd) => {
   const probe = spawnSync(cmd, ["--version"], { encoding: "utf8" });
