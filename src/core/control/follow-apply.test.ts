@@ -129,3 +129,47 @@ describe("applyNodeState scoping", () => {
     expect(scopedReads).toBeLessThan(fullReads);
   });
 });
+
+// The unit turns Pan Link off without a notify when BUS Type goes to FIXED on its own
+// screen, and leaves every send pan into the MIX at its source's pan. Device follow sees
+// the BUS Type notify and re-reads the MIX alone, which reads the switch off and no send.
+describe("a read that finds Pan Link off where the plan held it on", () => {
+  const send = (plan: Plan, from: string) =>
+    plan.connections.find((c) => c.from === ref(from, "out") && c.to === ref("bus.mix1", "in"))!;
+  const planWith = (panLink: boolean, sendPan: number): Plan => {
+    const p = base();
+    p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], panLink };
+    mainSend(p, "ch1")!.params = { ...mainSend(p, "ch1")!.params, pan: 30 };
+    send(p, "ch1").params = { ...send(p, "ch1").params, pan: sendPan };
+    return p;
+  };
+
+  it("gives the sends a scoped read of the MIX did not read their sources' pans", async () => {
+    deviceFrom(planWith(false, 30));
+    const plan = planWith(true, -43);
+    await applyNodeState(model, plan, new Set(["bus.mix1"]));
+    expect(plan.nodeParams["bus.mix1"]?.panLink).toBe(false);
+    expect(send(plan, "ch1").params?.pan).toBe(30);
+  });
+
+  // The other edge: a read that finds the link on where the plan held it off. The unit set the
+  // send pans to their sources' pans when it turned on, so the sends this pass did not read
+  // take that value.
+  it("gives the sends a scoped read of the MIX did not read their sources' pans when it finds the link on", async () => {
+    deviceFrom(planWith(true, 30));
+    const plan = planWith(false, -43);
+    await applyNodeState(model, plan, new Set(["bus.mix1"]));
+    expect(plan.nodeParams["bus.mix1"]?.panLink).toBe(true);
+    expect(send(plan, "ch1").params?.pan).toBe(30);
+  });
+
+  // A full read takes every send from the unit, and a send pan the unit holds apart from its
+  // source — a link that went off long before this plan was read — stays what was read.
+  it("keeps the send pans a full read took from the unit", async () => {
+    deviceFrom(planWith(false, 50));
+    const plan = planWith(true, -43);
+    await applyDeviceState(model, plan);
+    expect(plan.nodeParams["bus.mix1"]?.panLink).toBe(false);
+    expect(send(plan, "ch1").params?.pan).toBe(50);
+  });
+});

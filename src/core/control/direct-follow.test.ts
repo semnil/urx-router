@@ -113,3 +113,81 @@ describe("emit ∘ applyDirect fixed point (direct follow reflects a device edit
     }
   });
 });
+
+describe("Pan Link turned off on the unit", () => {
+  // The unit leaves every send pan into the MIX where Pan Link held it — at its source's pan —
+  // and announces none of it, so the notify for the switch is what carries the send pans into
+  // the plan. A send pan the plan held from before the link would otherwise go out on the next
+  // write and move the send away from where the unit left it.
+  const sendPan = (plan: Plan, from: string, to: string): number | undefined =>
+    plan.connections.find((c) => c.from === `${from}:out` && c.to === `${to}:in`)?.params?.pan;
+  const linked = (): Plan => {
+    const plan = base();
+    plan.nodeParams["bus.mix1"] = { panLink: true };
+    for (const [src, pan] of [
+      ["ch1", -20],
+      ["ch_5_6", 30],
+      ["bus.fx1", 10],
+    ] as const) {
+      for (const c of plan.connections) {
+        if (c.from !== `${src}:out`) continue;
+        if (c.to === "bus.stereo:in") c.params = { ...c.params, pan };
+        if (c.to === "bus.mix1:in" || c.to === "bus.mix2:in") c.params = { ...c.params, pan: 40 };
+      }
+    }
+    return plan;
+  };
+
+  it("takes each send pan into that MIX to its source's pan when the link goes off", () => {
+    const plan = linked();
+    expect(applyDirect(plan, "bus.mix1", "PAN_LINK", 0)).toBe(true);
+    expect(plan.nodeParams["bus.mix1"]?.panLink).toBe(false);
+    expect(sendPan(plan, "ch1", "bus.mix1")).toBe(-20);
+    expect(sendPan(plan, "ch_5_6", "bus.mix1")).toBe(30);
+    expect(sendPan(plan, "bus.fx1", "bus.mix1")).toBe(10);
+    // Only the MIX whose link went off.
+    expect(sendPan(plan, "ch1", "bus.mix2")).toBe(40);
+  });
+
+  // Turned on, the unit sets them to the same place, unannounced as well.
+  it("takes each send pan into that MIX to its source's pan when the link goes on", () => {
+    const plan = linked();
+    plan.nodeParams["bus.mix1"] = { panLink: false };
+    expect(applyDirect(plan, "bus.mix1", "PAN_LINK", 1)).toBe(true);
+    expect(plan.nodeParams["bus.mix1"]?.panLink).toBe(true);
+    expect(sendPan(plan, "ch1", "bus.mix1")).toBe(-20);
+    expect(sendPan(plan, "ch_5_6", "bus.mix1")).toBe(30);
+    expect(sendPan(plan, "bus.fx1", "bus.mix1")).toBe(10);
+    expect(sendPan(plan, "ch1", "bus.mix2")).toBe(40);
+  });
+
+  it("leaves the send pans alone when the link stays where it was", () => {
+    for (const [from, raw] of [
+      [true, 1],
+      [false, 0],
+    ] as const) {
+      const plan = linked();
+      plan.nodeParams["bus.mix1"] = { panLink: from };
+      applyDirect(plan, "bus.mix1", "PAN_LINK", raw);
+      expect(sendPan(plan, "ch1", "bus.mix1"), `${from} -> ${raw}`).toBe(40);
+    }
+  });
+
+  // While the link holds, a source moved on the unit carries its send pans into the MIX with
+  // it, and the notify for the source is the only one that arrives: a mono channel's PAN, a
+  // stereo channel's BAL (both CH_PAN) and an FX channel's BAL.
+  it("carries a linked MIX's send pans with a source moved on the unit, and no other", () => {
+    for (const [src, name] of [
+      ["ch1", "CH_PAN"],
+      ["ch_5_6", "CH_PAN"],
+      ["bus.fx1", "FX_CHANNEL_BAL"],
+    ] as const) {
+      const plan = linked();
+      expect(applyDirect(plan, src, name, -13)).toBe(true);
+      expect(sendPan(plan, src, "bus.mix1"), src).toBe(-13);
+      expect(sendPan(plan, src, "bus.mix2"), src).toBe(40);
+      // Another source's send keeps what it held.
+      expect(sendPan(plan, src === "ch1" ? "ch_5_6" : "ch1", "bus.mix1"), src).toBe(40);
+    }
+  });
+});

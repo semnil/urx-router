@@ -2183,6 +2183,34 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     own(primary);
   }
 
+  // The MIX buses' BUS Type (587, both out instances) and Pan Link (589, the L instance: MIX1 =
+  // 0, MIX2 = 2), in that order and ahead of every pan and send below. Writing BUS Type turns
+  // the MIX's Pan Link off, so the switch goes after it. It also resets the MIX's whole send
+  // bank, later than the sends written behind it in the same pass, and the converge a BUS Type
+  // write takes puts the bank back in the round after. While Pan Link is on, the unit sets every
+  // send pan into that MIX to its source's own PAN / BAL, keeps it there as the source moves,
+  // and moves the source when a send pan is written — all without a notify. So the send pans
+  // into a linked MIX are not written at all, a restore's device-driven values included: the
+  // unit derives them from the source pans written below, and a send pan written there would
+  // move its source instead. A switch-off lands after the send pans written behind it in the
+  // same pass, so each of them moves its source; the converge's next round reads that source
+  // back as a residual and puts it back.
+  const panLinked = new Set<string>();
+  for (const node of model.nodes) {
+    const mix = MIX_FADER_INSTANCES[node.id];
+    if (!mix) continue;
+    const np = plan.nodeParams[node.id];
+    if (np?.busType !== undefined)
+      for (const inst of mix)
+        out.push(command("BUS_TYPE", inst, boundEnum(np.busType, BUS_TYPE_OPTIONS, BUS_TYPE_VARI)));
+    const panLink = np?.panLink;
+    if (panLink !== undefined) {
+      if (panLink) panLinked.add(node.id);
+      out.push(command("PAN_LINK", mix[0], panLink ? 1 : 0));
+    }
+    own(node.id);
+  }
+
   for (const conn of plan.connections) {
     // Fixed main path into STEREO: the channel's CH_FADER / CH_PAN, or the FX
     // channel's FX_CHANNEL_FADER / FX_CHANNEL_BAL — the source's main level / pan.
@@ -2230,7 +2258,8 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       }
       const on = (conn.params?.on ?? true) ? 1 : 0;
       for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
-      for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
+      if (!panLinked.has(bus.id))
+        for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
       for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, on));
       // CH -> FX taps are read-only (broker max_value=0 rejects a PRE write); they
       // are read back but never written. Other taps are settable. See sendTapWritable.
@@ -2448,21 +2477,6 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     const np = plan.nodeParams[node.id];
     if (!bm || np?.on === undefined) continue;
     for (const inst of bm.instances) out.push(rawCommand(bm.name, bm.param, "bool", inst, np.on ? 1 : 0));
-    own(node.id);
-  }
-
-  // BUS Type for MIX buses (587, L/R-linked): VARI / FIXED. A MIX-only attribute,
-  // written to both out instances. Pan Link (589, VARI only) rides the same loop —
-  // a single switch at the MIX's L instance (sends' pan follows the source PAN).
-  for (const node of model.nodes) {
-    if (node.kind !== "bus") continue;
-    const mix = MIX_FADER_INSTANCES[node.id];
-    if (!mix) continue;
-    const np = plan.nodeParams[node.id];
-    if (np?.busType !== undefined)
-      for (const inst of mix)
-        out.push(command("BUS_TYPE", inst, boundEnum(np.busType, BUS_TYPE_OPTIONS, BUS_TYPE_VARI)));
-    if (np?.panLink !== undefined) out.push(command("PAN_LINK", mix[0], np.panLink ? 1 : 0));
     own(node.id);
   }
 

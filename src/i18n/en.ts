@@ -582,7 +582,7 @@ export const en = {
     busFixedSend: tr(
       "Only the send ON applies (BUS Type: FIXED): the send is taken after the source's fader at a fixed level and follows the source's own PAN / BAL.",
     ),
-    panLinked: tr("Pan follows the source channel PAN (Pan Link)."),
+    panLinked: tr("Pan follows the source's own PAN / BAL (Pan Link)."),
     sdRecTrackCount: dev("Track Count"),
     sdRecTrackCountLive: tr(
       "Track Count is set on the device only — the broker exposes just one of its eight settings.",
@@ -819,6 +819,8 @@ export const en = {
     paramsDropped: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the effect's own default`,
     streamingSourceSupplied: tr("The plan named no STREAMING source, so STREAMING takes STEREO"),
+    linkedSendPansAligned: (count: number): string =>
+      `${count} ${count === 1 ? "send pan into a MIX bus with Pan Link on now follows its source's" : "send pans into MIX buses with Pan Link on now follow their sources'"} own PAN / BAL`,
     streamingSourceUnlisted: tr(
       "The unit's STREAMING was on a state its source list does not offer, so the plan takes STEREO",
     ),

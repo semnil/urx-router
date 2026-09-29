@@ -74,6 +74,39 @@ test("Pan Link locks the SEND PAN knob read-only", async ({ page }) => {
   await expect(knob).toHaveAttribute("aria-disabled", "true");
 });
 
+// While Pan Link holds, the unit keeps each send pan into the MIX at its source's own
+// position: it moves them there when the link goes on and carries them along when the source
+// moves. The SEND PAN knob is read-only then and shows that value — set here to R40 first,
+// unlinked, so the link has somewhere to move it from.
+test("under Pan Link the SEND PAN knob shows the channel's own PAN, from the switch on and through a PAN move", async ({
+  page,
+}) => {
+  await page.click("#btn-view-console");
+  const sendPan = async () => {
+    await strip(page, "CH 1").locator(".con-panbtn").click();
+    return page.locator(".con-spop .pcol", { hasText: "MIX 1" });
+  };
+  let col = await sendPan();
+  await col.locator(".con-knob").focus();
+  for (let i = 0; i < 40; i++) await page.keyboard.press("ArrowRight");
+  await expect(col.locator(".rv")).toHaveText("R40");
+  await page.keyboard.press("Escape");
+
+  await page.click("#btn-view-graph");
+  await page.locator('g.node[data-id="bus.mix1"]').click();
+  await param(page, "Pan Link").locator("button", { hasText: "ON" }).click();
+  await page.click("#btn-view-console");
+  col = await sendPan();
+  await expect(col.locator(".rv")).toHaveText("C");
+  await page.keyboard.press("Escape");
+
+  const channelPan = strip(page, "CH 1").locator(".con-head .con-knob[aria-label='PAN']");
+  await channelPan.focus();
+  for (let i = 0; i < 13; i++) await page.keyboard.press("ArrowLeft");
+  col = await sendPan();
+  await expect(col.locator(".rv")).toHaveText("L13");
+});
+
 test("a FIXED MIX bus leaves the head (STEREO main path) fader editable", async ({ page }) => {
   await page.locator('g.node[data-id="bus.mix1"]').click();
   await chooseOption(param(page, "BUS Type").locator("select"), "1"); // FIXED

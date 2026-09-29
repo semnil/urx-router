@@ -19,6 +19,9 @@ import {
   partnerChannel,
   possibleSources,
   possibleTargets,
+  alignLinkedSendPans,
+  sendPansToSources,
+  withLinkedPartner,
   ruleKind,
   sendHasTap,
   sendIsPreFader,
@@ -257,6 +260,105 @@ describe("sendIsPreFader", () => {
   it("is false on a route with no tap, whatever its params hold", () => {
     const p = defaultPlan("URX44");
     expect(sendIsPreFader(u44, p, withTap(p, "ch1", "bus.stereo", "pre"))).toBe(false);
+  });
+});
+
+describe("sendPansToSources", () => {
+  // Pan Link on sets, and off leaves, every send pan into the MIX at its source's own pan — a
+  // mono channel's PAN, a stereo channel's and an FX channel's BAL — and names each send it wrote.
+  it("takes every send pan into the MIX to its source's main-path pan, and no other", () => {
+    const p = defaultPlan("URX44");
+    const conn = (from: string, to: string): PlanConnection =>
+      p.connections.find((c) => c.from === ref(from, "out") && c.to === ref(to, "in"))!;
+    for (const [src, pan] of [
+      ["ch1", -20],
+      ["ch_5_6", 30],
+      ["bus.fx1", 10],
+    ] as const) {
+      conn(src, "bus.stereo").params = { ...conn(src, "bus.stereo").params, pan };
+      conn(src, "bus.mix1").params = { ...conn(src, "bus.mix1").params, pan: 40 };
+      conn(src, "bus.mix2").params = { ...conn(src, "bus.mix2").params, pan: 40 };
+    }
+    const keys = sendPansToSources(p, "bus.mix1");
+    const into = [conn("ch1", "bus.mix1"), conn("ch_5_6", "bus.mix1"), conn("bus.fx1", "bus.mix1")];
+    expect(into.map((c) => c.params?.pan)).toEqual([-20, 30, 10]);
+    expect(conn("ch1", "bus.mix2").params?.pan).toBe(40);
+    expect(keys).toContain(connParamContestKey(ref("ch1", "out"), ref("bus.mix1", "in"), "pan"));
+    expect(keys).toContain(connParamContestKey(ref("bus.fx1", "out"), ref("bus.mix1", "in"), "pan"));
+    // Every send into the MIX, and only those.
+    const sends = p.connections.filter((c) => c.to === ref("bus.mix1", "in") && c.kind === "send");
+    expect(keys).toHaveLength(sends.length);
+  });
+});
+
+describe("alignLinkedSendPans", () => {
+  const conn = (p: Plan, from: string, to: string): PlanConnection =>
+    p.connections.find((c) => c.from === ref(from, "out") && c.to === ref(to, "in"))!;
+  const setPan = (p: Plan, from: string, to: string, pan: number): void => {
+    conn(p, from, to).params = { ...conn(p, from, to).params, pan };
+  };
+  const key = (from: string, to: string): string => connParamContestKey(ref(from, "out"), ref(to, "in"), "pan");
+
+  // While a MIX's Pan Link is on the unit carries each send pan into it with its source's own
+  // pan: a mono channel's PAN, a stereo channel's and an FX channel's BAL. The sends into a MIX
+  // that is not linked keep what they hold, and so does a send from a source not named.
+  it("takes a linked MIX's send pans from the named sources to their positions, and nothing else", () => {
+    const p = defaultPlan("URX44");
+    p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], panLink: true };
+    p.nodeParams["bus.mix2"] = { ...p.nodeParams["bus.mix2"], panLink: false };
+    for (const [src, pan] of [
+      ["ch1", -13],
+      ["ch_5_6", 30],
+      ["bus.fx1", 10],
+      ["ch2", 20],
+    ] as const) {
+      setPan(p, src, "bus.stereo", pan);
+      setPan(p, src, "bus.mix1", 40);
+      setPan(p, src, "bus.mix2", 40);
+    }
+    const keys = alignLinkedSendPans(p, new Set(["ch1", "ch_5_6", "bus.fx1"]));
+    expect(["ch1", "ch_5_6", "bus.fx1"].map((s) => conn(p, s, "bus.mix1").params?.pan)).toEqual([-13, 30, 10]);
+    expect(["ch1", "ch_5_6", "bus.fx1"].map((s) => conn(p, s, "bus.mix2").params?.pan)).toEqual([40, 40, 40]);
+    expect(conn(p, "ch2", "bus.mix1").params?.pan).toBe(40);
+    expect(keys.sort()).toEqual([key("ch1", "bus.mix1"), key("ch_5_6", "bus.mix1"), key("bus.fx1", "bus.mix1")].sort());
+    // A second pass has nothing left to move and names nothing.
+    expect(alignLinkedSendPans(p, new Set(["ch1", "ch_5_6", "bus.fx1"]))).toEqual([]);
+  });
+
+  // FIXED keeps the plan's Pan Link, and the unit's send pans go on following the source there.
+  it("aligns a FIXED MIX that holds Pan Link on", () => {
+    const p = defaultPlan("URX44");
+    p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED, panLink: true };
+    setPan(p, "ch1", "bus.stereo", -13);
+    setPan(p, "ch1", "bus.mix1", 40);
+    expect(alignLinkedSendPans(p, new Set(["ch1"]))).toEqual([key("ch1", "bus.mix1")]);
+    expect(conn(p, "ch1", "bus.mix1").params?.pan).toBe(-13);
+  });
+
+  // A STEREO-linked pair: in PAN mode each member's send follows that member's own PAN, in BAL
+  // mode both follow the pair's one balance, which the plan holds on both members' main paths.
+  it("takes a linked pair's sends to each member's position in PAN mode and to the balance in BAL mode", () => {
+    for (const [mode, pans, want] of [
+      [PAN_BAL_PAN, [-20, 30], [-20, 30]],
+      [PAN_BAL_BAL, [-25, -25], [-25, -25]],
+    ] as const) {
+      const p = defaultPlan("URX44");
+      p.nodeParams.ch3 = { ...p.nodeParams.ch3, stereoLink: true, panBal: mode };
+      p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], panLink: true };
+      setPan(p, "ch3", "bus.stereo", pans[0]);
+      setPan(p, "ch4", "bus.stereo", pans[1]);
+      setPan(p, "ch3", "bus.mix1", 40);
+      setPan(p, "ch4", "bus.mix1", 40);
+      expect([...withLinkedPartner(u44, p, "ch3")].sort()).toEqual(["ch3", "ch4"]);
+      alignLinkedSendPans(p, withLinkedPartner(u44, p, "ch3"));
+      expect([conn(p, "ch3", "bus.mix1").params?.pan, conn(p, "ch4", "bus.mix1").params?.pan]).toEqual(want);
+    }
+  });
+
+  it("names a channel alone when its pair is not linked", () => {
+    const p = defaultPlan("URX44");
+    p.nodeParams.ch3 = { ...p.nodeParams.ch3, stereoLink: false };
+    expect([...withLinkedPartner(u44, p, "ch3")]).toEqual(["ch3"]);
   });
 });
 

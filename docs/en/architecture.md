@@ -109,7 +109,7 @@ carries a one-line map of the same directories and points here.
   `planProblems` (split out of `constraints.ts`, which is rate limits and nothing else: a rate limit warns
   about a plan the app authored, these check a plan built ELSEWHERE — a file, a `?plan=` link, a generator).
   `routing.ts` cannot host them (the cycle constraints → translate → routing). It runs from `loadFromText`
-  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its five kinds
+  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its six kinds
   are reported differently: an illegal wire refuses the document; a STEREO-linked pair whose two members
   disagree about their one insert effect refuses it too, since the unit keeps a single selector, bypass and
   engine for the pair and no state of it satisfies such a document (`insertFxPairProblems`, compared over the
@@ -127,7 +127,9 @@ carries a one-line map of the same directories and points here.
   separately, since a value moved to the nearest one the app can send and a value removed are different
   events. A receiver the unit never leaves without a source that the document gives no wire — STREAMING —
   is completed the same way, with its default source, and said on the same line (`requiredSourceProblems`;
-  see "A plan that names no STREAMING source"). `isRefusal` and `needsDecision` are the two predicates that split
+  see "A plan that names no STREAMING source"). A send into a MIX bus whose Pan Link is on that carries a pan
+  other than its source's own is set to the source's value the same way and said on the same line
+  (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). `isRefusal` and `needsDecision` are the two predicates that split
   them, one seat each / `plan.ts` plan state + JSON + the `?plan=` deep-link codec (deflate-compressed
   `"z"` format; legacy uncompressed links must keep decoding) / `levels.ts` the device's discrete level_gain
   grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Every
@@ -2499,7 +2501,7 @@ differing command belongs to**, in emit order. One round then lands all three. T
 group is actually involved, so a write with no 1-knob difference pays nothing.
 
 The other `sideEffect` heads (`COMP_EQ_TYPE`, `INSERT_FX` and the two output selectors, `FX_EFFECT_TYPE`,
-`SIGNAL_TYPE`, `PAN_BAL`) carry no group. What settles them is the loop's budget, which is not fixed: **a round
+`SIGNAL_TYPE`, `PAN_BAL`, `BUS_TYPE`) carry no group. What settles them is the loop's budget, which is not fixed: **a round
 that sent a `sideEffect` head is followed by another round**, past `maxRounds` and up to twice it. A head's rewrite
 lands after the writes that follow it in the same round — on a URX44V a Signal Type change applied 85-125 ms after
 its write, and inside a self-test restore values written more than a second after the unlink were still replaced —
@@ -2508,6 +2510,37 @@ secondary's COMP/EQ type, and re-sending that type rebuilds its SSMCS bank. A ro
 a head that never settles stops at the cap. `translate.test.ts` pins which heads carry a group, so a new
 `sideEffect` param fails the test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset
 addresses owned by *other* nodes, which a group cannot express — their ordering is pinned separately.
+
+A MIX bus's `BUS_TYPE` and `PAN_LINK` are ordered per MIX and ahead of every channel pan and send: BUS Type first,
+since writing it turns the MIX's Pan Link off, then Pan Link. While it is on, the unit sets every send pan into that
+MIX to its source's PAN / BAL, keeps it there as the source moves, and moves the source when a send pan is written —
+none of it announced. **No send pan into a linked MIX is emitted
+at all**, the self-test restore's device-driven values included: the unit derives them from the source pans, and
+one written there would move its source instead, so a converge that sent the plan's copy back swung the channel
+between the two values round after round. The plan keeps those send pans where the unit holds them, so what the
+connection panel, the CONSOLE's read-only SEND PAN knob and a MIDI control show is the unit's value. When Pan Link turns
+on or off — in the panel, on the unit through device follow, or found by a device read — every send pan into that MIX
+is set to its source's pan (`routing.ts` `sendPansToSources`); turned off, the unit leaves them there, so what the next
+write sends is what the unit already holds. While it is on, an edit that moves a source's position — the inspector,
+the CONSOLE, MIDI, the mirror of a STEREO-linked pair, a PAN / BAL change device follow places — sets that source's
+send pans into every linked MIX to it (`alignLinkedSendPans`). The edit funnels name the keys these write, since a value
+that lands on the one already there is one the plan's diff cannot name. A device read takes the sends it reads from the
+unit and sets only the ones it did not: switching BUS Type to FIXED on the unit's own screen turns Pan Link off without
+announcing it, and the follow read that BUS Type's notify starts reads the MIX alone. The idle full reconcile that
+follows reads every send anyway, so what the read's own setting covers is the window between the two: a write in it
+would otherwise send the send pans the plan held before the link. A document loaded from a file, a `?plan=` link or a
+drop — a scene-scoped one opened over a plan included — has each send pan into a linked MIX set to its source's value
+before it opens, and the status line says how many (`plan-validate.ts` `linkedSendPanProblems`, a send the document
+omits added with that pan): a document from elsewhere is under no such discipline, and the knob, the MIDI feedback and
+the next save read what the plan holds. It counts an absent pan, send or main path as 0, the way the emit does, and it
+does not run on a device read or a `.urxf` import, which bring the unit's own values. None of these send pans is written
+while the link is on. Being ahead does not make the switch-off land first: it lands after the send pans written behind it in
+the same round, so a write whose plan turns Pan Link off while holding send pans of its own moves each of their
+sources to that send's value, and the round after reads the source back as a residual and puts it back. Measured on
+a URX44V, the source held the send's value when the round was read back 340-354 ms after it was sent, and a second
+round settled it. Writing BUS Type also resets the MIX's send bank, and that reset lands after the sends written behind
+it in the same round, so being ahead of them does not spare the round after: the converge a BUS Type write takes
+reads the bank back and re-sends it there, which is where a Write that changes BUS Type settles.
 
 A round's budget only works if the residual it measures is real, so **the seed read waits out the writes that
 preceded it**. The caller that leaves the diff to be seeded — Live sync's converging flush — has just written the

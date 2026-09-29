@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 import { deserialize, PLAN_VERSION } from "../src/core/plan";
 import { insertFxPairProblems, paramRangeProblems } from "../src/core/plan-validate";
 import { getModel, MODEL_IDS } from "../src/models";
-import { INSERT_FX_OPTIONS } from "../src/core/control/params";
+import { BUS_TYPE_FIXED, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../src/core/control/params";
 import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
 import { atLeast, newestPython } from "./python.test-util.mjs";
 
@@ -86,19 +86,26 @@ const toolPaths = (dir, plan) => {
 };
 
 /** The app's own load. THREE stages: deserialize, the load-time repairs (a value outside its
- *  range, and a receiver given no source), and the fill that completes a document from the
- *  model's factory values. The last is optional here because the two questions below are
+ *  range, a receiver given no source, and a linked send pan off its source's value), and the
+ *  fill that completes a document from the model's factory values. The last is optional here because the two questions below are
  *  different — `appChanges` asks what the document's own values survive, and the fill answers
  *  about the ones it did not write. */
 const appLoad = async (plan, fill) => {
   const { deserializeDocument } = await import("../src/core/plan.ts");
-  const { paramRangeProblems, applyParamRange, requiredSourceProblems, applyRequiredSources } =
-    await import("../src/core/plan-validate.ts");
+  const {
+    paramRangeProblems,
+    applyParamRange,
+    requiredSourceProblems,
+    applyRequiredSources,
+    linkedSendPanProblems,
+    applyLinkedSendPans,
+  } = await import("../src/core/plan-validate.ts");
   const { fillFactoryParams } = await import("../src/models/initial-state.ts");
   const loaded = deserializeDocument(JSON.stringify(plan)).plan;
   applyParamRange(loaded, paramRangeProblems(loaded));
   const model = getModel(loaded.modelId);
   applyRequiredSources(model, loaded, requiredSourceProblems(model, loaded));
+  applyLinkedSendPans(model, loaded, linkedSendPanProblems(model, loaded));
   if (fill) fillFactoryParams(loaded.modelId, loaded);
   return loaded;
 };
@@ -1583,6 +1590,97 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     // Both answers are real populations: documents the load completes and documents it leaves.
     expect(added.yes).toBeGreaterThan(0);
     expect(added.no).toBeGreaterThan(0);
+  });
+
+  // While a MIX bus's Pan Link is on, the unit holds every send pan into it at its source's own
+  // pan / balance, and the app's load sets the document's there. The sends whose pan the load
+  // CHANGES — or adds, where the document omits the send — are compared with the ones the tool
+  // says it sets, value included, so neither half can be read off the other's problem list: a
+  // mono, a stereo and an FX source, a STEREO-linked pair in PAN and in BAL, a FIXED MIX with the
+  // link on, and a pan, a send or a main path the document omits, beside the documents nothing
+  // may be said about — an unlinked MIX, a link written off, one written as a number, and sends
+  // already at their sources' pans. Every model, since the rule table is a model fact.
+  it("agrees with the app about the send pans a Pan Link sets on load", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const conn = (from, to, pan) => ({ from, to, kind: "send", ...(pan === undefined ? {} : { params: { pan } }) });
+    const main = (src, pan) => conn(`${src}:out`, "bus.stereo:in", pan);
+    const send = (src, bus, pan) => conn(`${src}:out`, `${bus}:in`, pan);
+    const linked = (bus = "bus.mix1", extra = {}) => ({ [bus]: { panLink: true, ...extra } });
+    const pair = (panBal) => ({ ch1: { stereoLink: true, panBal } });
+    const corpus = [
+      ["a mono channel", [main("ch1", -20), send("ch1", "bus.mix1", 40)], linked()],
+      ["a stereo channel", [main("ch_5_6", 25), send("ch_5_6", "bus.mix1", -10)], linked()],
+      ["an FX channel", [main("bus.fx1", -30), send("bus.fx1", "bus.mix2", 0)], linked("bus.mix2")],
+      [
+        "a STEREO-linked pair in PAN",
+        [main("ch1", -63), main("ch2", 63), send("ch1", "bus.mix1", 0), send("ch2", "bus.mix1", 0)],
+        { ...pair(PAN_BAL_PAN), ...linked() },
+      ],
+      [
+        "a STEREO-linked pair in BAL",
+        [main("ch1", -25), main("ch2", -25), send("ch1", "bus.mix1", -40), send("ch2", "bus.mix1", -40)],
+        { ...pair(PAN_BAL_BAL), ...linked() },
+      ],
+      [
+        "a FIXED MIX with Pan Link on",
+        [main("ch1", 15), send("ch1", "bus.mix1", -5)],
+        linked("bus.mix1", { busType: BUS_TYPE_FIXED }),
+      ],
+      ["a send the document omits", [main("ch1", 30)], linked()],
+      ["a send with no pan", [main("ch1", 30), send("ch1", "bus.mix1")], linked()],
+      ["a main path with no pan", [main("ch1"), send("ch1", "bus.mix1", 20)], linked()],
+      ["a main path the document omits", [send("ch1", "bus.mix1", 20)], linked()],
+      // …and the documents nothing may be said about.
+      ["sends already at their sources' pans", [main("ch1", -20), send("ch1", "bus.mix1", -20)], linked()],
+      ["an unlinked MIX", [main("ch1", -20), send("ch1", "bus.mix1", 40)], {}],
+      ["a Pan Link written off", [main("ch1", -20), send("ch1", "bus.mix1", 40)], { "bus.mix1": { panLink: false } }],
+      [
+        "a Pan Link written as a number",
+        [main("ch1", -20), send("ch1", "bus.mix1", 40)],
+        { "bus.mix1": { panLink: 1 } },
+      ],
+      ["a linked MIX 1 beside an unlinked MIX 2", [main("ch1", -20), send("ch1", "bus.mix2", 40)], linked()],
+    ];
+    const MIX_INS = ["bus.mix1:in", "bus.mix2:in"];
+    const set = { yes: 0, no: 0 };
+    for (const modelId of MODEL_IDS) {
+      for (const [name, connections, nodeParams] of corpus) {
+        const plan = {
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections,
+          nodeParams,
+        };
+        const before = deserializeDocument(JSON.stringify(plan)).plan.connections;
+        const loaded = await appLoad(plan, false);
+        const app = loaded.connections
+          .filter((c) => MIX_INS.includes(c.to))
+          .filter((c) => {
+            const was = before.find((b) => b.from === c.from && b.to === c.to);
+            return !was || was.params?.pan !== c.params?.pan;
+          })
+          .map((c) => `${c.from} -> ${c.to} = ${c.params?.pan}`)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) => /^WARNING: connection (\S+ -> \S+): the app sets this send's pan to (\S+) on load/.exec(l))
+          .filter((m) => m !== null)
+          .map((m) => `${m[1]} = ${m[2]}`)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        set[app.length > 0 ? "yes" : "no"]++;
+      }
+    }
+    // Both answers are real populations: documents whose send pans the load sets, and documents
+    // it leaves as written.
+    expect(set.yes).toBeGreaterThan(0);
+    expect(set.no).toBeGreaterThan(0);
   });
 
   // `True == 1` in Python, and the app's own comparison is `===` — so a boolean comp/EQ type

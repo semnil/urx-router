@@ -391,9 +391,17 @@ export const PARAMS = {
    *  live param-notify (device-side MIX1 OFF → ON fired 677:0:0 = 1, MIX2 → 677:0:2).
    *  Held in the MIX → STEREO connection's params.on, not a node param. */
   TO_ST: { id: 677, encoding: "bool", follow: "direct" },
-  /** MIX bus Pan Link (VARI only): each send's pan follows the source channel PAN.
+  /** MIX bus Pan Link: each send's pan follows its source's own PAN / BAL. The unit's own screen
+   *  offers it under VARI only and turns it off when BUS Type goes to FIXED; over the control
+   *  link it is taken under FIXED as well and kept through a return to VARI, and the plan's
+   *  value is written whatever the BUS Type.
    *  Per stereo MIX, at the bus's L instance (MIX1 = 0, MIX2 = 2). Default 0 (off).
-   *  Confirmed by live param-notify (MIX1 OFF → ON fired 589:0:0 = 1, MIX2 → 589:0:2). */
+   *  Confirmed by live param-notify (MIX1 OFF → ON fired 589:0:0 = 1, MIX2 → 589:0:2).
+   *
+   *  Turning it on makes the unit rewrite every send pan into that MIX to its source's PAN /
+   *  BAL, and turning it off leaves them there, neither announced. translate.ts writes no send
+   *  pan into a linked MIX, and the plan keeps its send pans at the sources' pans on either edge
+   *  and while a source moves (routing.ts sendPansToSources / alignLinkedSendPans). */
   PAN_LINK: { id: 589, encoding: "bool", follow: "direct" },
   /** Signal Type stereo link for a MONO IN pair (1 = STEREO, 0 = MONO x2). Written
    *  to BOTH channels of the pair at their input indices. Enabling it resets the

@@ -22,6 +22,7 @@ import {
   planToCommandsUncollapsed,
   planToFollowOnlyAddrs,
   planToNameWrites,
+  sendControl,
 } from "./translate";
 import type { DynField, VdCommand } from "./translate";
 import { COMP_RATIO_CH_STEPS, COMP_RATIO_INF, COMP_RATIO_STEPS } from "./comp-ratio";
@@ -402,6 +403,59 @@ describe("planToCommands", () => {
       "/vd/parameters/589:0:0?operation=value=1",
       "/vd/parameters/589:0:2?operation=value=0",
     ]);
+  });
+
+  // While Pan Link is on the unit drives every send pan into that MIX from its source, and a
+  // send pan written there moves the source instead — so none is written, for a mono channel,
+  // a stereo channel or an FX channel alike, and the unlinked MIX next to it keeps its own.
+  it("writes no send pan into a Pan-Linked MIX, and every send pan into an unlinked one", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams["bus.mix1"] = { panLink: true };
+    plan.nodeParams["bus.mix2"] = { panLink: false };
+    const sendPans = (): string[] =>
+      planToCommands(model, plan)
+        .filter((c) => c.name === "SEND_PAN")
+        .map((c) => `${c.paramId}:${c.y}`);
+    const into = (mix: "bus.mix1" | "bus.mix2"): string[] =>
+      ["ch1", "ch_5_6", "bus.fx1"].flatMap((src) => {
+        const sc = sendControl(model, src, mix)!;
+        return sc.pan.map((p) => `${p}:${sc.y}`);
+      });
+    expect(into("bus.mix1").length).toBe(6);
+    for (const a of into("bus.mix1")) expect(sendPans()).not.toContain(a);
+    for (const a of into("bus.mix2")) expect(sendPans()).toContain(a);
+    // The same plan with the link off writes them: the gate is the switch, not the route.
+    plan.nodeParams["bus.mix1"] = { panLink: false };
+    for (const a of into("bus.mix1")) expect(sendPans()).toContain(a);
+  });
+
+  // The switch has to reach the unit before the pans it governs. Written after them, a write
+  // that turns Pan Link off would land its send pans while the MIX is still linked, and each
+  // one would move its source's pan rather than the send's. BUS Type goes ahead of it: writing
+  // it turns the unit's Pan Link off, so a Pan Link written before it is undone by it.
+  it("writes BUS Type, then Pan Link, ahead of every source pan and send pan", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams["bus.mix1"] = { busType: 1, panLink: false };
+    plan.nodeParams["bus.mix2"] = { busType: 0, panLink: false };
+    const cmds = planToCommands(model, plan);
+    const indices = (names: string[], ys?: number[]): number[] =>
+      cmds.flatMap((c, i) => (names.includes(c.name) && (!ys || ys.includes(c.y)) ? [i] : []));
+    const pans = indices(["CH_PAN", "FX_CHANNEL_BAL", "SEND_PAN"]);
+    expect(pans.length).toBeGreaterThan(0);
+    // Per MIX: its own BUS Type (both instances) ahead of its own Pan Link (the L instance).
+    for (const ys of [
+      [0, 1],
+      [2, 3],
+    ]) {
+      const types = indices(["BUS_TYPE"], ys);
+      const links = indices(["PAN_LINK"], ys);
+      expect(types).toHaveLength(2);
+      expect(links).toHaveLength(1);
+      expect(Math.max(...types)).toBeLessThan(links[0]);
+      expect(links[0]).toBeLessThan(Math.min(...pans));
+    }
   });
 
   it("emits Signal Type to both channels of a pair and PAN/BAL to the primary", () => {

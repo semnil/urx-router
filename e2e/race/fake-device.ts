@@ -78,6 +78,32 @@ export interface FakeConfig {
   /** How long after a write that moved the value the unit REPORTS it announces it
    *  (see ANNOUNCE_MS). */
   announceMs: number;
+  /** The Pan Link groups this session models (see PanLinkGroup). Empty unless a case asks. */
+  panLink: PanLinkGroup[];
+}
+
+/**
+ * One source's sends into one MIX bus, as the unit's Pan Link rewrites them: writing the
+ * switch on sets every send pan into the MIX to its source's pan; while it is on, a source pan
+ * written carries the send pans with it and a send pan written moves the source (and the send
+ * pans) to that value; writing it off leaves them where they are. None of it is announced —
+ * only the written address is, by item o's rule. The unit settles a send-pan write a couple of
+ * seconds later; the fake settles it at the queue point, the stricter of the two for a case
+ * asking whether a send pan was written at all, since the source has already moved when it
+ * looks. Where the group names its MIX's BUS Type address, a write of FIXED there turns the
+ * switch off, unannounced as well; a write of VARI leaves it as it is. A `seedMem` of the
+ * switch is a state, not a write, and rewrites nothing.
+ */
+export interface PanLinkGroup {
+  /** The MIX bus's Pan Link address ("589:0:0" for MIX 1, "589:0:2" for MIX 2). */
+  link: string;
+  /** The MIX bus's BUS Type address ("587:0:0" for MIX 1), when the case models FIXED turning
+   *  the switch off. */
+  busType?: string;
+  /** The source's own pan / balance address. */
+  source: string;
+  /** The send's pan addresses into that MIX (the L and R instances). */
+  sends: string[];
 }
 
 export const DEFAULT_LATENCY: FakeLatency = {
@@ -243,6 +269,8 @@ export interface InstallOptions {
   announceMs?: number;
   /** Extra localStorage seeding, applied after the defaults. */
   storage?: Record<string, string>;
+  /** Pan Link groups the fake rewrites (see PanLinkGroup). */
+  panLink?: PanLinkGroup[];
 }
 
 export async function installFake(page: Page, opts: InstallOptions = {}): Promise<void> {
@@ -253,6 +281,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
     jitter: opts.jitter ?? 0,
     seed: opts.seed ?? 1,
     announceMs: opts.announceMs ?? ANNOUNCE_MS,
+    panLink: opts.panLink ?? [],
   };
   // On the CONTEXT, not the page: MIDI control is a second window, which is a second
   // page here, and it needs the same bridge before its bundle resolves.
@@ -511,6 +540,24 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
 
       const key = (a: Record<string, unknown>): string => `${a.paramId}:${a.x}:${a.y}`;
 
+      // Pan Link's silent rewrites (see PanLinkGroup), applied after a write is stored. A
+      // source moved by a send-pan write carries its sends into every other linked MIX too.
+      const linkedNow = (g: PanLinkGroup): boolean => (fake.mem[g.link] ?? 0) === 1;
+      const rewritePanLink = (k: string, value: number): void => {
+        const moved = new Set<string>();
+        for (const g of config.panLink) {
+          if (g.busType !== undefined && k === g.busType && value === 1) fake.mem[g.link] = 0;
+          if (k === g.link && value === 1) for (const a of g.sends) fake.mem[a] = fake.mem[g.source] ?? 0;
+          else if (linkedNow(g) && k === g.source) moved.add(g.source);
+          else if (linkedNow(g) && g.sends.includes(k)) {
+            fake.mem[g.source] = value;
+            moved.add(g.source);
+          }
+        }
+        for (const g of config.panLink)
+          if (linkedNow(g) && moved.has(g.source)) for (const a of g.sends) fake.mem[a] = fake.mem[g.source] ?? 0;
+      };
+
       // Post-write read staleness (see FakeHandle.staleAfterWrite) and the announcement
       // that ends it. Three pieces: what a read answers AND consumes, what a write arms,
       // and what the unit says about a write afterwards. The first two are queue-point
@@ -746,6 +793,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           // there is no accepted value for a read to be lagging behind.
           const armed = armStale(k);
           fake.mem[k] = value;
+          rewritePanLink(k, value);
           const now = reported(k);
           if (now !== said) pending = () => announce(k, armed, now);
         } else if (cmd === "vd_set_str" && !fake.ignoreWrites.includes(Number(args.paramId))) {

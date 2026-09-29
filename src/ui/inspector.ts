@@ -449,8 +449,10 @@ export function renderInspector(
     }
 
     // BUS Type / Pan Link (CH SETTING): MIX 1 / MIX 2 only. FIXED makes every
-    // send into the bus a fixed level; Pan Link (VARI only) ties each send pan to
-    // the source channel PAN. Both gate the per-send controls (connection panel).
+    // send into the bus a fixed level; Pan Link ties each send pan to its source's
+    // own PAN / BAL. Both gate the per-send controls (connection panel). The Pan Link
+    // switch is offered under VARI only, as on the unit's screen, and a FIXED bus
+    // keeps whatever it holds.
     if (node.id === "bus.mix1" || node.id === "bus.mix2") {
       const bnp = plan.nodeParams[node.id] ?? {};
       const busType = bnp.busType ?? BUS_TYPE_VARI;

@@ -593,6 +593,152 @@ describe("a send control the destination bus locked behind the panel", () => {
   });
 });
 
+describe("Pan Link in the panel", () => {
+  const selectWire = (from: string, to: string): void => {
+    const hit = $("graph-host").querySelector(`.wire-hit[data-from="${from}"][data-to="${to}"]`)!;
+    hit.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    hit.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+  };
+  const panOf = (): HTMLInputElement => row(t().inspector.pan).querySelector<HTMLInputElement>('input[type="range"]')!;
+  const panLink = (on: boolean): void => {
+    selectNode("bus.mix1");
+    const b = [...row(t().inspector.panLink).querySelectorAll("button")].find(
+      (x) => x.textContent === (on ? t().inspector.on : t().inspector.off),
+    )!;
+    b.click();
+  };
+
+  // The unit leaves each send pan where Pan Link held it — at the channel's PAN — so the plan's
+  // send pan takes that value when the link goes off, rather than coming back at the one it
+  // held before the link.
+  it("leaves the send pan at the channel's PAN", async () => {
+    await boot();
+    selectWire("ch1:out", "bus.mix1:in");
+    expect(panOf().value).toBe("0");
+    selectWire("ch1:out", "bus.stereo:in");
+    panOf().value = "30";
+    panOf().dispatchEvent(new Event("input", { bubbles: true }));
+
+    panLink(true);
+    panLink(false);
+    selectWire("ch1:out", "bus.mix1:in");
+    expect(panOf().value).toBe("30");
+  });
+
+  // While the link holds, the unit keeps each send pan into the MIX at its source's own
+  // position: it moves them there when the link goes on and carries them along when the source
+  // moves. The panel hides a linked send's pan, so the plan's value is read where it is still
+  // shown — the CONSOLE's read-only SEND PAN knob, which reads the same connection param as the
+  // MIDI control does.
+  const shownSendPan = (strip = 0, mix = "MIX 1"): string => {
+    $("btn-view-console").click();
+    const face = $("console-host").querySelectorAll<HTMLElement>(".con-strip")[strip];
+    expect(face.querySelector(".con-head")!.textContent).toContain(`CH ${strip + 1}`);
+    face.querySelector<HTMLElement>(".con-panbtn")!.click();
+    const col = [...$("console-host").querySelectorAll<HTMLElement>(".con-spop .pcol")].find(
+      (c) => c.querySelector(".cap")?.textContent === mix,
+    )!;
+    const text = col.querySelector(".rv")!.textContent ?? "";
+    $("btn-view-graph").click();
+    return text;
+  };
+
+  it("keeps a linked MIX's send pan at the channel's PAN, from the switch on and through a PAN move", async () => {
+    await boot();
+    selectWire("ch1:out", "bus.mix1:in");
+    panOf().value = "40";
+    panOf().dispatchEvent(new Event("input", { bubbles: true }));
+    expect(shownSendPan()).toBe("R40");
+
+    panLink(true);
+    expect(shownSendPan()).toBe("C");
+
+    selectWire("ch1:out", "bus.stereo:in");
+    panOf().value = "-13";
+    panOf().dispatchEvent(new Event("input", { bubbles: true }));
+    expect(shownSendPan()).toBe("L13");
+
+    // One gesture moved the channel and its send pan, so undoing it takes both back.
+    chord("z", { ctrlKey: true });
+    await vi.waitFor(() => expect(shownSendPan()).toBe("C"), APP_SETTLE);
+  });
+
+  /** A document holding CH 1 at L13 and CH 2 at R20 with both sends into MIX 1 at R40, and CH 1's
+   *  send into MIX 2 at R40; `linked` turns MIX 1's Pan Link on. */
+  const linkedDoc = async (linked: boolean): Promise<string> => {
+    const { encodePlanParam, sendConnection } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const plan = defaultPlan("URX44V");
+    if (linked) plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], panLink: true };
+    const pan = (from: string, to: string, value: number): void => {
+      const c = sendConnection(plan, from, to)!;
+      c.params = { ...c.params, pan: value };
+    };
+    pan("ch1", "bus.stereo", -13);
+    pan("ch2", "bus.stereo", 20);
+    pan("ch1", "bus.mix1", 40);
+    pan("ch2", "bus.mix1", 40);
+    pan("ch1", "bus.mix2", 40);
+    return `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`;
+  };
+
+  // A document from anywhere else can carry a send pan into a linked MIX that the unit does not
+  // hold there. The write never sends one, so the load sets each to its source's own position,
+  // where the read-only knob and the next save then read it, and says how many on the status line.
+  it("opens a linked MIX's send pans at their sources' positions, and says how many", async () => {
+    history.replaceState(null, "", await linkedDoc(true));
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.planLoaded), APP_SETTLE);
+    expect(status()).toBe([t().status.linkedSendPansAligned(2), t().status.planLoaded].join(" — "));
+    expect($("load-report").hidden).toBe(true);
+    expect(shownSendPan(0)).toBe("L13");
+    expect(shownSendPan(1)).toBe("R20");
+    // The MIX whose link is off keeps what the document wrote.
+    expect(shownSendPan(0, "MIX 2")).toBe("R40");
+    // The singular branch reads differently from the plural one, with the digit masked.
+    expect(t().status.linkedSendPansAligned(1).replace("1", "N")).not.toBe(
+      t().status.linkedSendPansAligned(2).replace("2", "N"),
+    );
+  });
+
+  // A load held for a decision lists every problem in the copyable report, and a linked send pan
+  // is a row of its own naming what the document carried and what the load sets — "(none)" for a
+  // send that carries no pan. The repair holds through the decision.
+  it("names each linked send pan in the report a held load shows, and sets them once it runs", async () => {
+    const { encodePlanParam, sendConnection } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], panLink: true };
+    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], insertFx: 256 };
+    plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], insertFx: 257 };
+    sendConnection(plan, "ch1", "bus.stereo")!.params = { pan: -13 };
+    sendConnection(plan, "ch2", "bus.stereo")!.params = { pan: 20 };
+    sendConnection(plan, "ch1", "bus.mix1")!.params = { pan: 40 };
+    delete sendConnection(plan, "ch2", "bus.mix1")!.params;
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), APP_SETTLE);
+    const body = $("load-report-body").textContent ?? "";
+    expect(body).toContain("[linkedSendPan] ch1:out -> bus.mix1:in: 40 -> -13");
+    expect(body).toContain("[linkedSendPan] ch2:out -> bus.mix1:in: (none) -> 20");
+    $("load-report-proceed").click();
+    await vi.waitFor(() => expect(status()).toContain(t().status.linkedSendPansAligned(2)), APP_SETTLE);
+    expect(shownSendPan(0)).toBe("L13");
+    expect(shownSendPan(1)).toBe("R20");
+  });
+
+  it("keeps an unlinked MIX's send pans as the document wrote them, and says nothing", async () => {
+    history.replaceState(null, "", await linkedDoc(false));
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toBe(t().status.planLoaded), APP_SETTLE);
+    expect(shownSendPan(0)).toBe("R40");
+    expect(shownSendPan(1)).toBe("R40");
+  });
+});
+
 describe("what the browser build does not offer", () => {
   // The device half is desktop-only and the buttons are still in the DOM. Measured off
   // the shell, each one reports — through one of TWO channels, and which one is the

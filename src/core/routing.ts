@@ -69,16 +69,73 @@ export function sendHasOn(model: DeviceModel, from: string, to: string): boolean
 // the destination bus's node params: FIXED BUS Type leaves a send only its ON — the
 // unit takes it after the source's fader at a fixed level, placed by the source's own PAN / BAL,
 // so the LEVEL, the PRE/POST tap and the send's own PAN are all inert — and Pan Link
-// (VARI only) ties each send pan to the source channel PAN (the PAN control is
-// inert). Only MIX 1 / MIX 2 carry these; any other destination returns both false.
+// ties each send pan to its source's own PAN / BAL (the PAN control is inert), under
+// either BUS Type: the plan keeps it through FIXED and the write sends it there too.
+// Only MIX 1 / MIX 2 carry these; any other destination returns both false.
 // Shared by the inspector (which drops the gated controls), the console (which
 // renders them read-only) and the MIDI catalogue (which refuses their writes).
 export function mixSendLocks(plan: Plan, destId: string): { busFixed: boolean; panLinked: boolean } {
   const np = plan.nodeParams[destId];
   const isMix = destId === "bus.mix1" || destId === "bus.mix2";
   const busFixed = isMix && (np?.busType ?? BUS_TYPE_VARI) === BUS_TYPE_FIXED;
-  const panLinked = isMix && !busFixed && np?.panLink === true;
+  const panLinked = isMix && np?.panLink === true;
   return { busFixed, panLinked };
+}
+
+const MIX_BUSES = ["bus.mix1", "bus.mix2"] as const;
+
+/** A node, and its partner when the two are a STEREO-linked pair — the nodes an edit and the
+ *  pair mirror behind it write. */
+export function withLinkedPartner(model: DeviceModel, plan: Plan, id: string): Set<string> {
+  const partner = isStereoLinkedPair(model, plan, id) ? partnerChannel(model, id) : undefined;
+  return new Set(partner ? [id, partner] : [id]);
+}
+
+/** Every send pan into a MIX bus set to its source's own pan / balance — the pan on the source's
+ *  fixed main path into STEREO — which is where the unit holds it while the MIX's Pan Link is on:
+ *  it sets them there when the link turns on and leaves them there when it turns off. Called on
+ *  either edge. A send from a source in `read` is left as it is: a device read that took it holds
+ *  the unit's own value. Returns the contest keys it wrote; each can land on the value already
+ *  there, so the plan's diff cannot name them. */
+export function sendPansToSources(plan: Plan, busId: string, read: ReadonlySet<string> = new Set()): string[] {
+  return setSendPans(plan, busId, (source) => !read.has(source)).written;
+}
+
+/** While a MIX bus's Pan Link is on, the unit carries every send pan into it along with its
+ *  source's own pan / balance. The send pans from `sources` into every linked MIX, set to that
+ *  value after a source's position moved. Returns the contest keys whose value it changed. */
+export function alignLinkedSendPans(plan: Plan, sources: ReadonlySet<string>): string[] {
+  const changed: string[] = [];
+  for (const bus of MIX_BUSES)
+    if (plan.nodeParams[bus]?.panLink === true) changed.push(...setSendPans(plan, bus, (s) => sources.has(s)).changed);
+  return changed;
+}
+
+/** A send source's own pan / balance: the pan on its fixed main path into STEREO, 0 where the
+ *  plan carries none. */
+export function sourcePan(plan: Plan, source: string): number {
+  const main = plan.connections.find((m) => m.from === ref(source, "out") && m.to === ref("bus.stereo", "in"));
+  return main?.params?.pan ?? 0;
+}
+
+function setSendPans(
+  plan: Plan,
+  busId: string,
+  take: (source: string) => boolean,
+): { written: string[]; changed: string[] } {
+  const written: string[] = [];
+  const changed: string[] = [];
+  for (const c of plan.connections) {
+    if (c.to !== ref(busId, "in") || c.kind !== "send") continue;
+    const source = parseRef(c.from).nodeId;
+    if (!take(source)) continue;
+    const pan = sourcePan(plan, source);
+    const key = connParamContestKey(c.from, c.to, "pan");
+    if (c.params?.pan !== pan) changed.push(key);
+    c.params = { ...c.params, pan };
+    written.push(key);
+  }
+  return { written, changed };
 }
 
 /** Whether a send is taken ahead of the source channel's fader: a tapped send whose tap

@@ -7,16 +7,17 @@
 // messages. Nothing here runs on a device readback (see insertFxSlotProblems).
 
 import type { DeviceModel } from "../models/types";
+import { parseRef } from "../models/types";
 import { fillFactoryParams } from "../models/initial-state";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
-import { isPlainRecord, requiredSourceWire } from "./plan";
+import { fixedConnection, isPlainRecord, requiredSourceWire } from "./plan";
 import type { Plan } from "./plan";
 import { insertFxWireState } from "./control/translate";
 import { hiZOn } from "./input-lock";
 import { HI_Z_A_GAIN_MAX_DB } from "./control/vd";
-import { validatePlan } from "./routing";
+import { mixSendLocks, sourcePan, validatePlan } from "./routing";
 import type { PlanProblem } from "./routing";
 
 /** One device-wide 1-of insert-FX slot claimed by more than one node. Not a wire,
@@ -325,11 +326,78 @@ export function applyRequiredSources(model: DeviceModel, plan: Plan, problems: R
   for (const p of problems) plan.connections.push(requiredSourceWire(model, p.to));
 }
 
+/** A send into a MIX bus whose Pan Link is on, carrying a pan other than its source's own pan /
+ *  balance. While Pan Link is on the unit holds every send pan into that MIX there, and the write
+ *  sends none of them, so the pan a document carries is one the unit never takes — while the
+ *  CONSOLE's read-only SEND PAN knob, the MIDI feedback and the next save all read it. The loader
+ *  sets it to the source's value, the one `sendPansToSources` sets when the link turns on, and
+ *  says so.
+ *
+ *  Counted the way every reader counts it: an absent pan — on the send, on the source's main path
+ *  into STEREO, or a send or main path the document omits — is 0. A send the document omits is
+ *  one the load adds (`ensureFixedConnections`), so it is reported and added here with the pan.
+ *  Each member of a STEREO-linked pair takes the pan on its own main path: its own position in
+ *  PAN mode, the pair's one balance in BAL.
+ *  Like every check in this file it does NOT run on a device readback or the `.urxf` import:
+ *  there the unit's own values arrive. */
+export interface LinkedSendPanProblem {
+  reason: "linkedSendPan";
+  /** The send's source, as its out ref. */
+  from: string;
+  /** The linked MIX's input ref. */
+  to: string;
+  /** The pan the document carries on the send; absent where it names none, or no send at all. */
+  stored?: number;
+  /** The source's own pan / balance, which the loader writes. */
+  pan: number;
+}
+
+/** Every send into a linked MIX whose pan is not its source's, in rule order. */
+export function linkedSendPanProblems(model: DeviceModel, plan: Plan): LinkedSendPanProblem[] {
+  const out: LinkedSendPanProblem[] = [];
+  for (const rule of model.rules) {
+    if (!rule.fixed || rule.kind !== "send" || !mixSendLocks(plan, parseRef(rule.to).nodeId).panLinked) continue;
+    const stored = plan.connections.find((c) => c.from === rule.from && c.to === rule.to)?.params?.pan;
+    const pan = sourcePan(plan, parseRef(rule.from).nodeId);
+    if ((stored ?? 0) === pan) continue;
+    out.push({
+      reason: "linkedSendPan",
+      from: rule.from,
+      to: rule.to,
+      ...(stored === undefined ? {} : { stored }),
+      pan,
+    });
+  }
+  return out;
+}
+
+/** Set each reported send's pan, adding the send where the document omits it. Separate from
+ *  finding them for the reason `applyParamRange` is. */
+export function applyLinkedSendPans(model: DeviceModel, plan: Plan, problems: LinkedSendPanProblem[]): void {
+  for (const p of problems) {
+    let send = plan.connections.find((c) => c.from === p.from && c.to === p.to);
+    if (!send) {
+      send = fixedConnection(
+        model,
+        model.rules.find((r) => r.from === p.from && r.to === p.to)!,
+      );
+      plan.connections.push(send);
+    }
+    send.params = { ...send.params, pan: p.pan };
+  }
+}
+
 /** Everything a plan load reports: an illegal wire (refused), a slot claimed twice (the
- *  operator decides), a value outside its range (normalized, then reported), or a receiver
- *  given no source (completed, then reported). */
+ *  operator decides), a value outside its range (normalized, then reported), a receiver
+ *  given no source (completed, then reported), or a linked send pan off its source's value
+ *  (set to it, then reported). */
 export type LoadProblem =
-  PlanProblem | InsertFxSlotProblem | InsertFxPairProblem | ParamRangeProblem | RequiredSourceProblem;
+  | PlanProblem
+  | InsertFxSlotProblem
+  | InsertFxPairProblem
+  | ParamRangeProblem
+  | RequiredSourceProblem
+  | LinkedSendPanProblem;
 
 // Every violation the plan loader reports on a file / ?plan= link / drop, in one
 // list so a load path cannot pick up half of them. The caller splits them by
@@ -342,6 +410,7 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
     ...insertFxSlotProblems(model, plan),
     ...paramRangeProblems(plan),
     ...requiredSourceProblems(model, plan),
+    ...linkedSendPanProblems(model, plan),
   ];
 }
 
@@ -350,11 +419,17 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
  *  — the loader, the report's caller and a test — and moving a reason between the sides
  *  in one of them would leave the others agreeing with the old split. */
 export function isRefusal(problem: LoadProblem): boolean {
-  return problem.reason !== "insertFxSlot" && problem.reason !== "paramRange" && problem.reason !== "requiredSource";
+  return (
+    problem.reason !== "insertFxSlot" &&
+    problem.reason !== "paramRange" &&
+    problem.reason !== "requiredSource" &&
+    problem.reason !== "linkedSendPan"
+  );
 }
 
 /** Whether a problem stops the load until the operator answers. A refusal does not — there
- *  is nothing to answer — and neither a normalized range nor a completed source does: each is
+ *  is nothing to answer — and neither a normalized range, a completed source nor a linked send
+ *  pan set to its source's value does: each is
  *  repaired before the document opens and reported on the status line, which is where
  *  architecture.md puts a partial success. Only the slot collision leaves a document the app
  *  can open and the unit cannot run, which is a decision and nobody else's. */

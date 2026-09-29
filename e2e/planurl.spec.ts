@@ -118,6 +118,56 @@ test("a plan naming its STREAMING source opens with that one, and says nothing a
   await expect(wire(page, "bus.stereo:out", "bus.stream:in")).toHaveCount(0);
 });
 
+// While MIX 1's Pan Link is on, the unit holds each send pan into it at its source's own PAN and
+// the write sends none of them. A document carrying another value opens with the source's on the
+// read-only SEND PAN knob, and the status line says how many ahead of the load; the MIX whose link
+// is off keeps what the document wrote.
+const sendPanPlan = (panLink: boolean) => ({
+  format: "urx-router-plan",
+  version: 1,
+  modelId: "URX44V",
+  connections: [
+    { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" },
+    { from: "ch1:out", to: "bus.stereo:in", kind: "send", params: { pan: -13 } },
+    { from: "ch2:out", to: "bus.stereo:in", kind: "send", params: { pan: 20 } },
+    { from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { pan: 40 } },
+    { from: "ch2:out", to: "bus.mix1:in", kind: "send", params: { pan: 40 } },
+    { from: "ch1:out", to: "bus.mix2:in", kind: "send", params: { pan: 40 } },
+  ],
+  nodeParams: { "bus.mix1": { panLink } },
+});
+
+/** What CH `n`'s SEND PAN popover reads for `mix`, closed again afterwards. */
+async function shownSendPan(page: Page, n: number, mix: string): Promise<string> {
+  await page
+    .locator(".con-strip", { has: page.getByText(`CH ${n}`, { exact: true }) })
+    .locator(".con-panbtn")
+    .click();
+  const text = await page.locator(".con-spop .pcol", { hasText: mix }).locator(".rv").innerText();
+  await page.keyboard.press("Escape");
+  return text;
+}
+
+test("a linked MIX's send pans open at their channels' own PAN, and the status line says so", async ({ page }) => {
+  await page.goto(`/?plan=${planParam(sendPanPlan(true))}`);
+  await expect(page.locator("#statusbar")).toHaveText(
+    "2 send pans into MIX buses with Pan Link on now follow their sources' own PAN / BAL — Plan loaded",
+  );
+  await expect(report(page)).toBeHidden();
+  await page.click("#btn-view-console");
+  expect(await shownSendPan(page, 1, "MIX 1")).toBe("L13");
+  expect(await shownSendPan(page, 2, "MIX 1")).toBe("R20");
+  expect(await shownSendPan(page, 1, "MIX 2")).toBe("R40");
+});
+
+test("an unlinked MIX's send pans open as the document wrote them, and nothing is said", async ({ page }) => {
+  await page.goto(`/?plan=${planParam(sendPanPlan(false))}`);
+  await expect(page.locator("#statusbar")).toHaveText("Plan loaded");
+  await page.click("#btn-view-console");
+  expect(await shownSendPan(page, 1, "MIX 1")).toBe("R40");
+  expect(await shownSendPan(page, 2, "MIX 1")).toBe("R40");
+});
+
 test("a malformed compressed link reports a decode failure", async ({ page }) => {
   await page.goto("/?plan=z!!!not-deflate");
   await expect(report(page)).toBeVisible();

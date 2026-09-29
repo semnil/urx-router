@@ -174,7 +174,14 @@ the device default. The full set:
 - `busType` — MIX 1/2: 0 VARI / 1 FIXED. On a FIXED bus a send into it keeps only
   its `on`: the unit takes it after the source's fader at a fixed level, placed by
   the source's own PAN / BAL, so the send's `level`, `pan` and `tap` have no effect — no
-  pre-fader send into a FIXED bus is possible. `panLink` (bool, VARI only).
+  pre-fader send into a FIXED bus is possible. `panLink` (bool): while it is on, the
+  unit holds each send's `pan` into that MIX at its source's own PAN / BAL and the app
+  writes none, so the load sets each send `pan` into a linked MIX to its source's —
+  the `pan` on that source's wire into `bus.stereo:in`, 0 where there is none, each
+  member of a linked pair its own — and says so; `plan_tool.py` warns about every one
+  it sets. Write them at that value, or leave them out. The app writes `panLink` under
+  either `busType`; the unit's own screen offers it under VARI only and turns it off
+  when the bus goes FIXED.
 - `osc` — `{ on, level (-96…0 dB), mode (0 Sine/1 Pink/2 Burst), freq (Hz),
   width, interval (s) }`.
 - `cueInterrupt`, `mono` (bool, monitor buses); `phonesLevel` (0.0–10.0).

@@ -468,7 +468,7 @@ export const ja: Messages = {
     panLink: "Pan Link",
     busFixedSend:
       "Send は ON のみ有効 (BUS Type: FIXED)。Send 元のフェーダーの後で固定レベルで取り出し、Send 元自身の PAN / BAL に従う。",
-    panLinked: "パンは Send 元チャンネルの PAN に追従 (Pan Link)。",
+    panLinked: "パンは Send 元自身の PAN / BAL に追従 (Pan Link)。",
     sdRecTrackCount: "Track Count",
     sdRecTrackCountLive: "Track Count はデバイス側でのみ設定できます (broker が公開するのは 8 段階のうち 1 つだけ)。",
     sdRecTrackCountRate: (ceiling: number): string =>
@@ -622,6 +622,8 @@ export const ja: Messages = {
     paramsDropped: (count: number): string =>
       `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、エフェクト自身の既定値を使います`,
     streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
+    linkedSendPansAligned: (count: number): string =>
+      `Pan Link がオンの MIX への SEND PAN ${count} 件を、Send 元自身の PAN / BAL にそろえました`,
     streamingSourceUnlisted: "本体の STREAMING が一覧に無い状態だったため、計画では STEREO にしました",
     planLoaded: "計画を読み込みました",
     phantomHiZBothOn: (channels: string): string => `${channels} で +48V と Hi-Z が両方オンになっています`,

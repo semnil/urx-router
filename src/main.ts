@@ -5,6 +5,7 @@ import { defaultPlan, fillFactoryParams } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef, ref } from "./models/types";
 import {
+  alignLinkedSendPans,
   applyPairTransition,
   INSERT_FX_PAIR_KEYS,
   mirrorLinkedPair,
@@ -12,6 +13,8 @@ import {
   mixSendLocks,
   pairSharesNodeKey,
   partnerChannel,
+  sendPansToSources,
+  withLinkedPartner,
 } from "./core/routing";
 import {
   decodePlanParam,
@@ -50,7 +53,14 @@ import {
   type PlanPatch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
-import { applyParamRange, applyRequiredSources, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
+import {
+  applyLinkedSendPans,
+  applyParamRange,
+  applyRequiredSources,
+  isRefusal,
+  needsDecision,
+  planProblems,
+} from "./core/plan-validate";
 import { phantomHiZBothOn, phantomHiZNewlyBothOn, switchAddr } from "./core/input-lock";
 import type { InputSwitch, SwitchSession } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
@@ -1691,8 +1701,10 @@ const inspectorActions = {
     // A STEREO-linked pair moves as one: copy the same send change to the partner
     // channel. The pan goes with it in BAL, where it is the pair's one shared balance,
     // and stays the member's own in PAN (see mirrorLinkedPair).
-    const mirrored = mirrorLinkedPair(getModel(modelId), plan, parseRef(from).nodeId);
-    markChanged();
+    const source = parseRef(from).nodeId;
+    const mirrored = mirrorLinkedPair(getModel(modelId), plan, source);
+    // A linked MIX's send pans from this source (and a mirrored partner) follow its position.
+    markChanged("ui", alignLinkedSendPans(plan, withLinkedPartner(getModel(modelId), plan, source)));
     // A PRE/POST change flips the wire's pre-fader marker; a send ON/OFF or an OSC
     // L/R assign change flips the wire's (and its jacks') off-state dimming. Repaint
     // when any is in play. Level/pan carry no on-canvas marker, so they keep mutating
@@ -1715,10 +1727,15 @@ const inspectorActions = {
     // copies the settled values onto the partner. It names its own writes: every one
     // of them can land on the value already there, so nothing downstream can recover
     // them from the plan's diff.
+    // Pan Link turned on sets each send pan into the MIX to its source's pan, and turned off
+    // leaves it there, as the unit does (sendPansToSources) — the next write then puts back
+    // what the unit already holds.
     const transitionKeys =
       patch.stereoLink !== undefined || patch.panBal !== undefined
         ? applyPairTransition(getModel(modelId), plan, id, patch)
-        : [];
+        : patch.panLink !== undefined && patch.panLink !== (prev?.panLink === true)
+          ? sendPansToSources(plan, id)
+          : [];
     // A STEREO-linked pair moves as one: copy this channel's params to the partner
     // (the pair-level Signal Type / PAN-BAL fields stay on the primary).
     const mirrored = mirrorLinkedPair(getModel(modelId), plan, id);
@@ -2357,6 +2374,8 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
         const was = JSON.stringify(p.stored);
         return `[${p.reason}] ${p.node}.${p.key}: ${was} -> ${p.action === "drop" ? "(dropped)" : p.bound}`;
       }
+      if (p.reason === "linkedSendPan")
+        return `[${p.reason}] ${p.from} -> ${p.to}: ${p.stored ?? "(none)"} -> ${p.pan}`;
       return `[${p.reason}] ${p.from} -> ${p.to}`;
     }),
   ].join("\n");
@@ -2411,6 +2430,11 @@ function loadFromText(text: string, path?: string): boolean | null {
       supplied.map((p) => connectionContestKey(p.from, p.to)),
       "default",
     );
+    // …and a send into a MIX whose Pan Link is on takes its source's own pan / balance, where the
+    // unit holds it: the write sends none of them, while the read-only SEND PAN knob, the MIDI
+    // feedback and the next save read what the plan holds.
+    const linkedPans = problems.filter((p) => p.reason === "linkedSendPan");
+    applyLinkedSendPans(getModel(next.modelId), next, linkedPans);
     // …and then completed from the model's factory values. A document carries only what
     // someone wrote in it, and what it omits is a key the panel draws a default for and the
     // write does not send — one channel on screen, another on the wire. Run here, after the
@@ -2456,6 +2480,7 @@ function loadFromText(text: string, path?: string): boolean | null {
         ...(boundCount > 0 ? [t().status.paramsBounded(boundCount)] : []),
         ...(dropCount > 0 ? [t().status.paramsDropped(dropCount)] : []),
         ...(supplied.length > 0 ? [t().status.streamingSourceSupplied] : []),
+        ...(linkedPans.length > 0 ? [t().status.linkedSendPansAligned(linkedPans.length)] : []),
       ];
       const line = (what: string): string => [...notes, what].join(" — ");
       if (path) {
@@ -3997,7 +4022,10 @@ if (!DEMO) {
     getModel: () => getModel(modelId),
     getPlan: () => plan,
     onApplied: (control, mirrored, keys) => {
-      markChanged("midi", keys);
+      markChanged("midi", [
+        ...keys,
+        ...alignLinkedSendPans(plan, withLinkedPartner(getModel(modelId), plan, control.node)),
+      ]);
       followDirtyNodes.add(control.node);
       const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
       if (partner) followDirtyNodes.add(partner);
