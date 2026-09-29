@@ -2515,14 +2515,19 @@ MIX to its source's PAN / BAL, keeps it there as the source moves, and moves the
 none of it announced. **No send pan into a linked MIX is emitted
 at all**, the self-test restore's device-driven values included: the unit derives them from the source pans, and
 one written there would move its source instead, so a converge that sent the plan's copy back swung the channel
-between the two values round after round. Turned off, Pan Link leaves the send pans where it held them, so an edit
-that turns it off — in the panel or on the unit, through device follow — also sets the plan's send pans into that
-MIX to their sources' pans (`routing.ts` `releasePanLink`), and what the next write sends there is what the unit
-already holds. A device read that finds it off where the plan held it on does the same for the sends it did not read
-itself: switching BUS Type to FIXED on the unit's own screen turns Pan Link off without announcing it, and the follow
-read that BUS Type's notify starts reads the MIX alone. The idle full reconcile that follows reads every send anyway, so
-what the release covers is the window between the two: a write in it would otherwise send the send pans the plan held
-before the link. Being ahead does not make the switch-off land first: it lands after the send pans written behind it in
+between the two values round after round. The plan keeps those send pans where the unit holds them, so what the
+connection panel, the CONSOLE's read-only SEND PAN knob and a MIDI control show is the unit's value. When Pan Link turns
+on or off — in the panel, on the unit through device follow, or found by a device read — every send pan into that MIX
+is set to its source's pan (`routing.ts` `sendPansToSources`); turned off, the unit leaves them there, so what the next
+write sends is what the unit already holds. While it is on, an edit that moves a source's position — the inspector,
+the CONSOLE, MIDI, the mirror of a STEREO-linked pair, a PAN / BAL change device follow places — sets that source's
+send pans into every linked MIX to it (`alignLinkedSendPans`). The edit funnels name the keys these write, since a value
+that lands on the one already there is one the plan's diff cannot name. A device read takes the sends it reads from the
+unit and sets only the ones it did not: switching BUS Type to FIXED on the unit's own screen turns Pan Link off without
+announcing it, and the follow read that BUS Type's notify starts reads the MIX alone. The idle full reconcile that
+follows reads every send anyway, so what the read's own setting covers is the window between the two: a write in it
+would otherwise send the send pans the plan held before the link. A document loaded from a file or a link keeps the
+send pans it was written with until one of these sets them; none of them is written while the link is on. Being ahead does not make the switch-off land first: it lands after the send pans written behind it in
 the same round, so a write whose plan turns Pan Link off while holding send pans of its own moves each of their
 sources to that send's value, and the round after reads the source back as a residual and puts it back. Measured on
 a URX44V, the source held the send's value when the round was read back 340-354 ms after it was sent, and a second

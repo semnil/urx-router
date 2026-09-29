@@ -82,22 +82,54 @@ export function mixSendLocks(plan: Plan, destId: string): { busFixed: boolean; p
   return { busFixed, panLinked };
 }
 
-/** Pan Link turning off on a MIX bus: the unit leaves every send pan into it where Pan Link
- *  held it, at its source's own pan / balance, so the plan's send pans take that value — the pan
- *  on the source's fixed main path into STEREO. A send from a source in `read` is left as it is:
- *  a device read that took it holds the unit's own value. Returns the contest keys it wrote; each
- *  can land on the value already there, so the plan's diff cannot name them. */
-export function releasePanLink(plan: Plan, busId: string, read: ReadonlySet<string> = new Set()): string[] {
+const MIX_BUSES = ["bus.mix1", "bus.mix2"] as const;
+
+/** A node, and its partner when the two are a STEREO-linked pair — the nodes an edit and the
+ *  pair mirror behind it write. */
+export function withLinkedPartner(model: DeviceModel, plan: Plan, id: string): Set<string> {
+  const partner = isStereoLinkedPair(model, plan, id) ? partnerChannel(model, id) : undefined;
+  return new Set(partner ? [id, partner] : [id]);
+}
+
+/** Every send pan into a MIX bus set to its source's own pan / balance — the pan on the source's
+ *  fixed main path into STEREO — which is where the unit holds it while the MIX's Pan Link is on:
+ *  it sets them there when the link turns on and leaves them there when it turns off. Called on
+ *  either edge. A send from a source in `read` is left as it is: a device read that took it holds
+ *  the unit's own value. Returns the contest keys it wrote; each can land on the value already
+ *  there, so the plan's diff cannot name them. */
+export function sendPansToSources(plan: Plan, busId: string, read: ReadonlySet<string> = new Set()): string[] {
+  return setSendPans(plan, busId, (source) => !read.has(source)).written;
+}
+
+/** While a MIX bus's Pan Link is on, the unit carries every send pan into it along with its
+ *  source's own pan / balance. The send pans from `sources` into every linked MIX, set to that
+ *  value after a source's position moved. Returns the contest keys whose value it changed. */
+export function alignLinkedSendPans(plan: Plan, sources: ReadonlySet<string>): string[] {
+  const changed: string[] = [];
+  for (const bus of MIX_BUSES)
+    if (plan.nodeParams[bus]?.panLink === true) changed.push(...setSendPans(plan, bus, (s) => sources.has(s)).changed);
+  return changed;
+}
+
+function setSendPans(
+  plan: Plan,
+  busId: string,
+  take: (source: string) => boolean,
+): { written: string[]; changed: string[] } {
   const written: string[] = [];
+  const changed: string[] = [];
   for (const c of plan.connections) {
     if (c.to !== ref(busId, "in") || c.kind !== "send") continue;
     const source = parseRef(c.from).nodeId;
-    if (read.has(source)) continue;
+    if (!take(source)) continue;
     const main = plan.connections.find((m) => m.from === ref(source, "out") && m.to === ref("bus.stereo", "in"));
-    c.params = { ...c.params, pan: main?.params?.pan ?? 0 };
-    written.push(connParamContestKey(c.from, c.to, "pan"));
+    const pan = main?.params?.pan ?? 0;
+    const key = connParamContestKey(c.from, c.to, "pan");
+    if (c.params?.pan !== pan) changed.push(key);
+    c.params = { ...c.params, pan };
+    written.push(key);
   }
-  return written;
+  return { written, changed };
 }
 
 /** Whether a send is taken ahead of the source channel's fader: a tapped send whose tap

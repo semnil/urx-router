@@ -400,8 +400,8 @@ export const PARAMS = {
    *
    *  Turning it on makes the unit rewrite every send pan into that MIX to its source's PAN /
    *  BAL, and turning it off leaves them there, neither announced. translate.ts writes no send
-   *  pan into a linked MIX, and turning it off sets the plan's send pans to where the unit
-   *  leaves them (routing.ts releasePanLink). */
+   *  pan into a linked MIX, and the plan keeps its send pans at the sources' pans on either edge
+   *  and while a source moves (routing.ts sendPansToSources / alignLinkedSendPans). */
   PAN_LINK: { id: 589, encoding: "bool", follow: "direct" },
   /** Signal Type stereo link for a MONO IN pair (1 = STEREO, 0 = MONO x2). Written
    *  to BOTH channels of the pair at their input indices. Enabling it resets the

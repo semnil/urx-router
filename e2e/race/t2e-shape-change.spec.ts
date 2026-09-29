@@ -7,6 +7,7 @@ import {
   pushNotifyDelivered,
   pushBulkChange,
   pushMidi,
+  midiSentOf,
   traceOf,
   paramAddrsOf,
   setLatency,
@@ -101,8 +102,11 @@ type Mapping = { control: string; addr: CcAddr; mode: "absolute" | "pickup" };
 /** Seed the persisted MIDI store: ports (reopened at boot) + this model's bindings.
  *  Learn would need the panel open and an arming click on the very control the case
  *  then wants to lock, and mapping.ts validates a seeded record identically. */
-const midiStore = (mappings: Mapping[]): InstallOptions["storage"] => ({
-  "urx-midi": JSON.stringify({ input: "Fake In", models: { URX44V: mappings } }),
+const midiStore = (
+  mappings: Mapping[],
+  ports: { input?: string; output?: string } = { input: "Fake In" },
+): InstallOptions["storage"] => ({
+  "urx-midi": JSON.stringify({ ...ports, models: { URX44V: mappings } }),
 });
 
 const cc = (controller: number, value: number): number[] => [0xb0, controller, value];
@@ -495,20 +499,23 @@ test.describe("T2e shape-change", () => {
   //
   // While a MIX bus's Pan Link is on, the unit holds every send pan into it at its
   // source's pan and moves the source when one is written (PanLinkGroup, fake-device.ts).
-  // The plan's copy of a send pan goes stale the moment its source moves, so a converge
-  // that read it back and sent it moved the channel to the old PAN, round after round.
   // Linked, the send pans are out of the write set: a converge has none of them to read
-  // or send, and the channel PAN the operator set is where the unit ends. Turned off on the
-  // unit or in the app's panel, Pan Link leaves them at the channel's PAN, and so does the
-  // plan (releasePanLink). A FIXED written by the app turns the unit's Pan Link off, and the
-  // plan, still holding it, writes it back on after the BUS Type.
+  // or send, and the channel PAN the operator set is where the unit ends. The plan's send
+  // pans follow the channel's PAN there (alignLinkedSendPans), which the MIDI control on the
+  // send pan reports as feedback. Turned off on the unit or in the app's panel, Pan Link
+  // leaves them at the channel's PAN, and so does the plan (sendPansToSources). A FIXED
+  // written by the app turns the unit's Pan Link off, and the plan, still holding it, writes
+  // it back on after the BUS Type.
   // ---------------------------------------------------------------------------
   test("a converge under Pan Link writes no send pan and leaves the channel PAN where it was set", async ({ page }) => {
     await installFake(page, {
-      storage: midiStore([
-        { control: "ch1/pan", addr: CC10, mode: "absolute" },
-        { control: "ch1/pan@bus.mix1", addr: CC11, mode: "absolute" },
-      ]),
+      storage: midiStore(
+        [
+          { control: "ch1/pan", addr: CC10, mode: "absolute" },
+          { control: "ch1/pan@bus.mix1", addr: CC11, mode: "absolute" },
+        ],
+        { input: "Fake In", output: "Fake Out" },
+      ),
       panLink: [{ link: PAN_LINK, source: CH1_PAN, sends: CH1_M1_PAN, busType: BUS_TYPE_L }],
     });
     await page.goto("/");
@@ -521,7 +528,9 @@ test.describe("T2e shape-change", () => {
     const memAt = (addr: string): Promise<number> => page.evaluate((a) => window.__urxFake.mem[a] ?? 0, addr);
 
     // Phase 1 — the operator turns CH 1's PAN. One write, and the unit carries the send
-    // pans with it without a word.
+    // pans with it without a word. So does the plan: the MIDI control on the send pan (CC 11)
+    // reads the channel's value back as feedback.
+    const sentBefore = (await midiSentOf(page)).length;
     await mark(page, "pan-move");
     await pushMidi(page, [cc(10, 100)]);
     await settleAfter(page, "pan-move", 900);
@@ -533,6 +542,9 @@ test.describe("T2e shape-change", () => {
     const pan = moves[0].value!;
     expect(pan).not.toBe(-20);
     expect(await memAt(CH1_M1_PAN[0])).toBe(pan);
+    const sendFeedback = (await midiSentOf(page)).slice(sentBefore).filter((m) => m[0] === 0xb0 && m[1] === 11);
+    console.log(`send pan feedback after the move: ${sendFeedback.map((m) => m[2]).join(", ") || "(none)"}`);
+    expect(sendFeedback.at(-1)?.[2]).toBe(100);
 
     // Phase 2 — a converge. COMP/EQ Type is a converge head: the flush that sends it reads
     // the write scope back and sends the plan's value wherever the unit differs.

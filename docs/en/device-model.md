@@ -189,8 +189,9 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
 > PRE/POST and PAN have no effect (the unit accepts and reads back writes to all three). **Pan Link**
 > ties each send's PAN to its source's own PAN / BAL, so the per-send PAN is no longer
 > independent: the unit holds every send pan into that MIX at its source's PAN / BAL and moves the
-> source when one is written, so the app writes no send pan into a linked MIX, and turning Pan Link off
-> leaves the send pans (on the unit and in the plan) at the sources' pans. The plan keeps Pan Link through a
+> source when one is written, so the app writes no send pan into a linked MIX; the plan's send pans take the
+> sources' pans when Pan Link turns on and follow them while it is on, and turning it off leaves them (on the
+> unit and in the plan) there. The plan keeps Pan Link through a
 > switch to FIXED: the unit turns it off when BUS Type goes to FIXED, and the app writes it back after the
 > BUS Type. Both are stored on the MIX bus node; the connection panel hides the LEVEL, PRE/POST and PAN
 > (FIXED) or the PAN (Pan Link) accordingly and shows a short note for each lock that applies. The console applies the same

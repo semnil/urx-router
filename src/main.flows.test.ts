@@ -593,7 +593,7 @@ describe("a send control the destination bus locked behind the panel", () => {
   });
 });
 
-describe("Pan Link turned off in the panel", () => {
+describe("Pan Link in the panel", () => {
   const selectWire = (from: string, to: string): void => {
     const hit = $("graph-host").querySelector(`.wire-hit[data-from="${from}"][data-to="${to}"]`)!;
     hit.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
@@ -623,6 +623,43 @@ describe("Pan Link turned off in the panel", () => {
     panLink(false);
     selectWire("ch1:out", "bus.mix1:in");
     expect(panOf().value).toBe("30");
+  });
+
+  // While the link holds, the unit keeps each send pan into the MIX at its source's own
+  // position: it moves them there when the link goes on and carries them along when the source
+  // moves. The panel hides a linked send's pan, so the plan's value is read where it is still
+  // shown — the CONSOLE's read-only SEND PAN knob, which reads the same connection param as the
+  // MIDI control does.
+  it("keeps a linked MIX's send pan at the channel's PAN, from the switch on and through a PAN move", async () => {
+    await boot();
+    const shownSendPan = (): string => {
+      $("btn-view-console").click();
+      const strip = $("console-host").querySelectorAll<HTMLElement>(".con-strip")[0];
+      expect(strip.querySelector(".con-head")!.textContent).toContain("CH 1");
+      strip.querySelector<HTMLElement>(".con-panbtn")!.click();
+      const col = [...$("console-host").querySelectorAll<HTMLElement>(".con-spop .pcol")].find(
+        (c) => c.querySelector(".cap")?.textContent === "MIX 1",
+      )!;
+      const text = col.querySelector(".rv")!.textContent ?? "";
+      $("btn-view-graph").click();
+      return text;
+    };
+    selectWire("ch1:out", "bus.mix1:in");
+    panOf().value = "40";
+    panOf().dispatchEvent(new Event("input", { bubbles: true }));
+    expect(shownSendPan()).toBe("R40");
+
+    panLink(true);
+    expect(shownSendPan()).toBe("C");
+
+    selectWire("ch1:out", "bus.stereo:in");
+    panOf().value = "-13";
+    panOf().dispatchEvent(new Event("input", { bubbles: true }));
+    expect(shownSendPan()).toBe("L13");
+
+    // One gesture moved the channel and its send pan, so undoing it takes both back.
+    chord("z", { ctrlKey: true });
+    await vi.waitFor(() => expect(shownSendPan()).toBe("C"), APP_SETTLE);
   });
 });
 

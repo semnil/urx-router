@@ -5,6 +5,7 @@ import { defaultPlan, fillFactoryParams } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef, ref } from "./models/types";
 import {
+  alignLinkedSendPans,
   applyPairTransition,
   INSERT_FX_PAIR_KEYS,
   mirrorLinkedPair,
@@ -12,7 +13,8 @@ import {
   mixSendLocks,
   pairSharesNodeKey,
   partnerChannel,
-  releasePanLink,
+  sendPansToSources,
+  withLinkedPartner,
 } from "./core/routing";
 import {
   decodePlanParam,
@@ -1692,8 +1694,10 @@ const inspectorActions = {
     // A STEREO-linked pair moves as one: copy the same send change to the partner
     // channel. The pan goes with it in BAL, where it is the pair's one shared balance,
     // and stays the member's own in PAN (see mirrorLinkedPair).
-    const mirrored = mirrorLinkedPair(getModel(modelId), plan, parseRef(from).nodeId);
-    markChanged();
+    const source = parseRef(from).nodeId;
+    const mirrored = mirrorLinkedPair(getModel(modelId), plan, source);
+    // A linked MIX's send pans from this source (and a mirrored partner) follow its position.
+    markChanged("ui", alignLinkedSendPans(plan, withLinkedPartner(getModel(modelId), plan, source)));
     // A PRE/POST change flips the wire's pre-fader marker; a send ON/OFF or an OSC
     // L/R assign change flips the wire's (and its jacks') off-state dimming. Repaint
     // when any is in play. Level/pan carry no on-canvas marker, so they keep mutating
@@ -1716,13 +1720,14 @@ const inspectorActions = {
     // copies the settled values onto the partner. It names its own writes: every one
     // of them can land on the value already there, so nothing downstream can recover
     // them from the plan's diff.
-    // Pan Link turned off leaves each send pan into the MIX at its source's pan, as the unit
-    // does (releasePanLink) — the next write then puts back what the unit already holds.
+    // Pan Link turned on sets each send pan into the MIX to its source's pan, and turned off
+    // leaves it there, as the unit does (sendPansToSources) — the next write then puts back
+    // what the unit already holds.
     const transitionKeys =
       patch.stereoLink !== undefined || patch.panBal !== undefined
         ? applyPairTransition(getModel(modelId), plan, id, patch)
-        : patch.panLink === false && prev?.panLink === true
-          ? releasePanLink(plan, id)
+        : patch.panLink !== undefined && patch.panLink !== (prev?.panLink === true)
+          ? sendPansToSources(plan, id)
           : [];
     // A STEREO-linked pair moves as one: copy this channel's params to the partner
     // (the pair-level Signal Type / PAN-BAL fields stay on the primary).
@@ -4002,7 +4007,10 @@ if (!DEMO) {
     getModel: () => getModel(modelId),
     getPlan: () => plan,
     onApplied: (control, mirrored, keys) => {
-      markChanged("midi", keys);
+      markChanged("midi", [
+        ...keys,
+        ...alignLinkedSendPans(plan, withLinkedPartner(getModel(modelId), plan, control.node)),
+      ]);
       followDirtyNodes.add(control.node);
       const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
       if (partner) followDirtyNodes.add(partner);

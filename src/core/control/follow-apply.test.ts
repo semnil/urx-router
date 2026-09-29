@@ -152,6 +152,17 @@ describe("a read that finds Pan Link off where the plan held it on", () => {
     expect(send(plan, "ch1").params?.pan).toBe(30);
   });
 
+  // The other edge: a read that finds the link on where the plan held it off. The unit set the
+  // send pans to their sources' pans when it turned on, so the sends this pass did not read
+  // take that value.
+  it("gives the sends a scoped read of the MIX did not read their sources' pans when it finds the link on", async () => {
+    deviceFrom(planWith(true, 30));
+    const plan = planWith(false, -43);
+    await applyNodeState(model, plan, new Set(["bus.mix1"]));
+    expect(plan.nodeParams["bus.mix1"]?.panLink).toBe(true);
+    expect(send(plan, "ch1").params?.pan).toBe(30);
+  });
+
   // A full read takes every send from the unit, and a send pan the unit holds apart from its
   // source — a link that went off long before this plan was read — stays what was read.
   it("keeps the send pans a full read took from the unit", async () => {

@@ -64,7 +64,7 @@ import {
   mergeReadInsertFxParams,
   qualifyInsertFxParams,
 } from "./insert-fx-effect";
-import { monoPairOf, pairPrimary, releasePanLink, requiresSource, ruleKind } from "../routing";
+import { alignLinkedSendPans, monoPairOf, pairPrimary, requiresSource, ruleKind, sendPansToSources } from "../routing";
 import { isSceneExternalConnection } from "../scene-scope";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
@@ -1105,10 +1105,10 @@ async function readPass(
         ...(busType !== undefined ? { busType } : {}),
         ...(panLink !== undefined ? { panLink } : {}),
       };
-      // Pan Link read off where the plan held it on (the unit turns it off without a notify when
-      // BUS Type goes to FIXED): the send pans this pass did not read take their sources' pans,
-      // where the unit leaves them (releasePanLink).
-      if (wasLinked && panLink === false) releasePanLink(plan, node.id, sendsRead);
+      // Pan Link read on or off where the plan held the other (the unit turns it off without a
+      // notify when BUS Type goes to FIXED): the send pans this pass did not read take their
+      // sources' pans, where the unit sets them on the one edge and leaves them on the other.
+      if (panLink !== undefined && panLink !== wasLinked) sendPansToSources(plan, node.id, sendsRead);
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -1852,7 +1852,9 @@ export function applyDirect(plan: Plan, node: string, name: ParamName, raw: numb
       return true;
     case "CH_PAN":
     case "FX_CHANNEL_BAL":
+      // A linked MIX's send pans from this source move with it on the unit, unannounced.
       setMain({ pan: vdToPan(raw) });
+      alignLinkedSendPans(plan, new Set([node]));
       return true;
     case "CH_ON":
     case "OUT_MASTER_ON":
@@ -1874,11 +1876,12 @@ export function applyDirect(plan: Plan, node: string, name: ParamName, raw: numb
       setNp({ pan: vdToPan(raw) });
       return true;
     case "PAN_LINK": {
-      // Turned off on the unit, it leaves the send pans at the sources' pans (releasePanLink).
+      // Turned on on the unit, it sets the send pans to the sources' pans; turned off, it leaves
+      // them there (sendPansToSources).
       const was = plan.nodeParams[node]?.panLink === true;
       const panLink = vdToBool(raw);
       setNp({ panLink });
-      if (was && !panLink) releasePanLink(plan, node);
+      if (was !== panLink) sendPansToSources(plan, node);
       return true;
     }
     case "TO_ST": // MIX → STEREO "TO ST" switch → the MIX → STEREO connection's on

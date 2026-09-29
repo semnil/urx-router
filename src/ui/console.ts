@@ -67,6 +67,7 @@ import {
 } from "../core/control/translate";
 import { nodeParamContestPath } from "../core/plan-history";
 import {
+  alignLinkedSendPans,
   INSERT_FX_PAIR_KEYS,
   isBalLinkedPair,
   isNodeInactive,
@@ -77,6 +78,7 @@ import {
   pairSharesNodeKey,
   partnerChannel,
   sendTapWritable,
+  withLinkedPartner,
 } from "../core/routing";
 import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected } from "../core/control/params";
 import { parkOutgoingInsertFxParams } from "./insert-fx-model";
@@ -3269,6 +3271,8 @@ export class Console {
       if (mirrored) for (const k of written) if (pairSharesNodeKey(k)) keys.push(nodeParamContestPath(partner, k));
       if (insFxMirrored) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
     }
+    // A linked MIX's send pans from this strip (and a mirrored partner) follow its position.
+    keys.push(...alignLinkedSendPans(plan, withLinkedPartner(model, plan, id)));
     this.hooks.onChange(keys);
     return mirrored || insFxMirrored;
   }
