@@ -69,7 +69,7 @@ export function sendHasOn(model: DeviceModel, from: string, to: string): boolean
 // the destination bus's node params: FIXED BUS Type leaves a send only its ON — the
 // unit takes it after the source's fader at a fixed level, placed by the source's own PAN / BAL,
 // so the LEVEL, the PRE/POST tap and the send's own PAN are all inert — and Pan Link
-// ties each send pan to the source channel PAN (the PAN control is inert), under
+// ties each send pan to its source's own PAN / BAL (the PAN control is inert), under
 // either BUS Type: the plan keeps it through FIXED and the write sends it there too.
 // Only MIX 1 / MIX 2 carry these; any other destination returns both false.
 // Shared by the inspector (which drops the gated controls), the console (which

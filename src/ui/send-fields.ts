@@ -37,7 +37,7 @@ export function isBalanceChannel(model: DeviceModel, plan: Plan, id: string): bo
 /** The send fields a wire shows, with the destination locks that decided them. A
  *  MIX 1 / MIX 2 destination governs them: FIXED bus type drops all three (the send
  *  keeps only its ON — post-fader, fixed level, placed by the source's own PAN / BAL); Pan Link
- *  drops the PAN (it follows the source channel PAN). PRE/POST is taken
+ *  drops the PAN (it follows its source's own PAN / BAL). PRE/POST is taken
  *  against the channel's STEREO main-fader level, so the fixed STEREO / FX-channel
  *  main paths show LEVEL / PAN but no PRE/POST. */
 export function sendFields(

@@ -391,7 +391,7 @@ export const PARAMS = {
    *  live param-notify (device-side MIX1 OFF → ON fired 677:0:0 = 1, MIX2 → 677:0:2).
    *  Held in the MIX → STEREO connection's params.on, not a node param. */
   TO_ST: { id: 677, encoding: "bool", follow: "direct" },
-  /** MIX bus Pan Link: each send's pan follows the source channel PAN. The unit's own screen
+  /** MIX bus Pan Link: each send's pan follows its source's own PAN / BAL. The unit's own screen
    *  offers it under VARI only and turns it off when BUS Type goes to FIXED; over the control
    *  link it is taken under FIXED as well and kept through a return to VARI, and the plan's
    *  value is written whatever the BUS Type.

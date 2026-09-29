@@ -175,7 +175,7 @@ the device default. The full set:
   its `on`: the unit takes it after the source's fader at a fixed level, placed by
   the source's own PAN / BAL, so the send's `level`, `pan` and `tap` have no effect — no
   pre-fader send into a FIXED bus is possible. `panLink` (bool): while it is on, the
-  unit holds each send's `pan` into that MIX at its source's own pan and the app
+  unit holds each send's `pan` into that MIX at its source's own PAN / BAL and the app
   writes none, so a send `pan` in a plan that links its MIX has no effect. The app
   writes it under either `busType`; the unit's own screen offers it under VARI only
   and turns it off when the bus goes FIXED.
