@@ -29,14 +29,37 @@ test("MIX bus shows BUS Type + Pan Link; FIXED hides Pan Link", async ({ page })
 // Every CH → bus send is a fixed (always-wired) connection, so these pick a wire by
 // its endpoints rather than creating one. selectWire is graph-helpers'.
 
-test("FIXED bus drops the send LEVEL and shows a hint", async ({ page }) => {
+// A FIXED bus takes the send after the fader at a fixed level, placed by the source's own PAN / BAL,
+// so the wire keeps its ON and nothing else. VARI first, as the control: the same wire
+// shows all three rows before the switch.
+test("FIXED bus leaves a send only its ON and shows a hint", async ({ page }) => {
+  await selectWire(page, "ch1:out", "bus.mix1:in");
+  for (const label of ["Level", "Pan", "Pre/Post"]) await expect(paramExact(page, label)).toHaveCount(1);
+
   await node(page, "bus.mix1").click();
   await chooseOption(busTypeSelect(page), "1"); // FIXED
 
   await selectWire(page, "ch1:out", "bus.mix1:in");
-  await expect(param(page, "Level")).toHaveCount(0);
-  await expect(param(page, "Pan")).toHaveCount(1);
-  await expect(page.locator("#inspector .hint", { hasText: "Send level is fixed" })).toHaveCount(1);
+  for (const label of ["Level", "Pan", "Pre/Post"]) await expect(paramExact(page, label)).toHaveCount(0);
+  await expect(paramExact(page, "Send")).toHaveCount(1);
+  await expect(page.locator("#inspector .hint", { hasText: "Only the send ON applies" })).toHaveCount(1);
+});
+
+// The board draws a PRE send dashed and tagged; a FIXED bus takes the same tap after the
+// fader, so the tag goes when the bus turns FIXED and comes back when it turns VARI.
+test("a PRE send into a FIXED bus loses its PRE tag on the board", async ({ page }) => {
+  await selectWire(page, "ch1:out", "bus.mix1:in");
+  await paramExact(page, "Pre/Post").getByRole("button", { name: "PRE", exact: true }).click();
+  const tag = page
+    .locator("#graph-host g", { has: page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]') })
+    .locator("text", { hasText: "PRE" });
+  await expect(tag).toHaveCount(1);
+
+  await node(page, "bus.mix1").click();
+  await chooseOption(busTypeSelect(page), "1"); // FIXED
+  await expect(tag).toHaveCount(0);
+  await chooseOption(busTypeSelect(page), "0"); // VARI
+  await expect(tag).toHaveCount(1);
 });
 
 // A .param whose label is EXACTLY `label` (so "Pan" never matches "Pan Link").

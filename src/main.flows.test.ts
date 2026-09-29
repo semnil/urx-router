@@ -551,6 +551,48 @@ describe("undo and redo", () => {
   });
 });
 
+describe("a send control the destination bus locked behind the panel", () => {
+  /** Select a wire the way the board does: pointerdown on its hit path. */
+  const selectWire = (from: string, to: string): void => {
+    const hit = $("graph-host").querySelector(`.wire-hit[data-from="${from}"][data-to="${to}"]`)!;
+    hit.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    hit.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+  };
+  const busType = (value: string): void => {
+    selectNode("bus.mix1");
+    const sel = row(t().inspector.busType).querySelector("select")!;
+    sel.value = value;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  // A panel built before the bus turned FIXED still holds the send's PRE/POST and Pan. A
+  // FIXED bus leaves the send only its ON, so both are refused with the lock named, and
+  // the send is found untouched once the bus is VARI again.
+  it("refuses a stale PRE/POST and Pan edit under FIXED and names the lock", async () => {
+    await boot();
+    selectWire("ch1:out", "bus.mix1:in");
+    const pan = row(t().inspector.pan).querySelector<HTMLInputElement>('input[type="range"]')!;
+    const panBefore = pan.value;
+    const tap = row(t().inspector.prePost);
+    const tapOn = (): string | undefined => tap.querySelector("button.on")?.textContent ?? undefined;
+    expect(tapOn()).toBe("POST");
+    const pre = [...tap.querySelectorAll("button")].find((b) => b.textContent === "PRE")!;
+
+    busType("1"); // FIXED
+    pan.value = String(Number(panBefore) + 5);
+    pan.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(status()).toContain(t().inspector.busFixedSend);
+    $("statusbar").textContent = "";
+    pre.click();
+    expect(status()).toContain(t().inspector.busFixedSend);
+
+    busType("0"); // VARI
+    selectWire("ch1:out", "bus.mix1:in");
+    expect(row(t().inspector.pan).querySelector<HTMLInputElement>('input[type="range"]')!.value).toBe(panBefore);
+    expect(row(t().inspector.prePost).querySelector("button.on")?.textContent).toBe("POST");
+  });
+});
+
 describe("what the browser build does not offer", () => {
   // The device half is desktop-only and the buttons are still in the DOM. Measured off
   // the shell, each one reports — through one of TWO channels, and which one is the

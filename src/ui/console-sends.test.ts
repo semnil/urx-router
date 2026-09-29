@@ -510,6 +510,42 @@ describe("read-only columns", () => {
     expect(level("ch1", "bus.mix1")).toBe(before);
   });
 
+  // A FIXED bus takes every send after the fader and places it by the source's own PAN / BAL, so
+  // the PRE tap and the send pan are as inert there as the level. Like the level fader
+  // beside it, the PRE button keeps showing what the plan holds and goes read-only, and
+  // neither control takes an edit. The same send into a VARI bus is editable first, so
+  // a lock that stopped reading the bus cannot pass on a button that was never live.
+  it("locks a FIXED bus's PRE button, still showing the stored tap, and its SEND PAN knob", () => {
+    h = consoleHost();
+    const conn = () => sendConnection(h.plan, "ch1", "bus.mix1")!;
+    conn().params = { ...conn().params, tap: "pre", pan: -20, level: 0 };
+    h.view.refresh();
+    const preOf = (): HTMLElement => colOf("ch1", "M1").querySelector<HTMLElement>(".con-slp")!;
+    expect(preOf().classList.contains("readonly")).toBe(false);
+    expect(preOf().getAttribute("aria-pressed")).toBe("true");
+    expect(h.sendCol("ch1", "bus.mix1").fader.getAttribute("aria-valuetext")).toMatch(/^PRE, /);
+
+    (h.plan.nodeParams["bus.mix1"] ??= {}).busType = BUS_TYPE_FIXED;
+    h.view.refresh();
+    const pre = preOf();
+    expect(pre.classList.contains("readonly")).toBe(true);
+    expect(pre.title).toBe(t().inspector.busFixedSend);
+    expect(pre.getAttribute("aria-pressed")).toBe("true");
+    expect(h.sendCol("ch1", "bus.mix1").fader.getAttribute("aria-valuetext")).toMatch(/^PRE, /);
+    pre.click();
+    key(pre, "Enter");
+    expect(conn().params?.tap).toBe("pre");
+
+    h.strip("ch1").root.querySelector<HTMLButtonElement>(".con-panbtn")!.click();
+    const pcol = [...h.host.querySelectorAll<HTMLElement>(".con-spop .pcol")].find(
+      (c) => c.querySelector(".cap")?.textContent === "MIX 1",
+    )!;
+    const knob = pcol.querySelector<HTMLElement>("[role='slider']")!;
+    expect(knob.title).toBe(t().inspector.busFixedSend);
+    key(knob, "ArrowRight");
+    expect(conn().params?.pan).toBe(-20);
+  });
+
   // While live, a CH → FX tap is LCD-only on the unit, so the PRE button explains
   // itself instead of writing. A CH → MIX tap is NOT: the broker takes that write
   // (max_value=1), and the graph inspector keeps it editable at the same moment.

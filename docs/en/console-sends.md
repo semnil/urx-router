@@ -94,8 +94,8 @@ still claims is given back — and that is the state an operator most needs to r
   each carrying `inspector.fx2RateLocked`, and the FX2 strip itself is dimmed the way the graph
   dims its node. The predicate is `nodeRateDisabled` in `core/constraints.ts`, which is also what
   builds the graph's `disabledNodes`, so the two cannot disagree about which rates remove it.
-- This is the narrower FIXED-bus lock's wider sibling: FIXED takes the level and leaves the switch
-  and the tap, because the bus is still there.
+- This is the narrower FIXED-bus lock's wider sibling: FIXED takes the level and the tap (and the
+  send pan in the SEND PAN popover) and leaves the switch, because the bus is still there.
 
 ### PRE button
 
@@ -103,6 +103,9 @@ still claims is given back — and that is the state an operator most needs to r
   (no extra marker), and it stays readable while the send itself is off.
 - CH → FX taps cannot be written to the device: while live-connected the button renders read-only
   with the `inspector.prePostLcdOnly` tooltip (`sendTapWritable`).
+- A send into a FIXED MIX bus is taken after the fader whatever its tap holds: the button renders
+  read-only with the `inspector.busFixedSend` tooltip and, like the level fader beside it, goes on
+  showing the tap the plan holds (the fader's `aria-valuetext` keeps its `"PRE, "`).
 - A hover tooltip spells out the pre-fader meaning, mirroring the C.INT tooltip
   mechanism.
 
@@ -147,8 +150,8 @@ still claims is given back — and that is the state an operator most needs to r
   the MIX sends' rotary knobs laid out as horizontal columns (destination label above each knob,
   value below). The column order, the "C" knob, and the label-on-top arrangement reuse the head
   BAL/PAN knob and the SENDS rack column grammar, so the rack and the popover stay symmetric. FX
-  sends are mono on the device and have no pan. Pan Link (BUS type) locks render the knob
-  read-only, as in the inspector.
+  sends are mono on the device and have no pan. FIXED and Pan Link (BUS type) locks render the
+  knob read-only, as in the inspector.
 
   ```text
   ┌── SEND PAN    CH 1 ──┐  header: category (left) + owning strip (right)

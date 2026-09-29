@@ -19,7 +19,8 @@ export interface NodeParamEffects {
   alignStereoPair: boolean;
   /** Something on the canvas changed: a mute dimming, or a pair connector. */
   repaintNodes: boolean;
-  /** A mute changed, so the wires out of the node recede (isOffSend). */
+  /** A mute changed, so the wires out of the node recede (isOffSend); or a MIX bus's
+   *  BUS Type did, which decides whether the PRE sends into it are drawn as PRE. */
   repaintWires: boolean;
   /** The set of nodes changed, so the board is rebuilt (SD Rec Track Count gates
    *  how many track-pair slots exist). */
@@ -70,7 +71,7 @@ export function nodeParamEffects(patch: NodeParams, prev: NodeParams | undefined
   return {
     alignStereoPair: patch.stereoLink === true,
     repaintNodes: muteChanged || patch.stereoLink !== undefined,
-    repaintWires: muteChanged,
+    repaintWires: muteChanged || patch.busType !== undefined,
     rerender: patch.sdRecTrackCount !== undefined,
     resetCompEqBank: patch.compEqType !== undefined && patch.compEqType !== prev?.compEqType,
     refreshInspector:

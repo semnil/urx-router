@@ -60,6 +60,13 @@ describe("canvas repaints", () => {
     });
   });
 
+  // A FIXED bus takes every send after the fader, so the PRE marker on a send into it
+  // comes and goes with the BUS Type — the wires repaint, the nodes do not.
+  it("repaints wires but not nodes for a BUS Type change", () => {
+    expect(fx({ busType: 1 }, { busType: 0 })).toMatchObject({ repaintNodes: false, repaintWires: true });
+    expect(fx({ busType: 0 }, { busType: 1 })).toMatchObject({ repaintNodes: false, repaintWires: true });
+  });
+
   // Linking snaps the partner next to the kept node; unlinking must not move it.
   it("aligns the pair on linking and not on unlinking", () => {
     expect(fx({ stereoLink: true }).alignStereoPair).toBe(true);

@@ -23,7 +23,7 @@ import {
   possibleTargets,
   requiresSource,
   ruleKind,
-  sendHasTap,
+  sendIsPreFader,
   upstreamNodes,
 } from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
@@ -1627,8 +1627,9 @@ export class Graph {
 
     const color = this.palette.wire[WIRE_GROUP[conn.kind]];
     // A pre-fader send is dashed and tagged so it reads at a glance without
-    // opening the inspector; POST (the default) stays solid and unmarked.
-    const isPre = sendHasTap(this.model, conn.from, conn.to) && conn.params?.tap === "pre";
+    // opening the inspector; POST (the default) stays solid and unmarked, and so does
+    // a PRE tap into a FIXED bus, which the unit takes after the fader anyway.
+    const isPre = sendIsPreFader(this.model, this.plan, conn);
 
     // Soft underlay halo marks a lit/selected wire. Done with a wide, low-
     // opacity stroke rather than an SVG blur filter: a perfectly horizontal

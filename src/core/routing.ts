@@ -66,17 +66,28 @@ export function sendHasOn(model: DeviceModel, from: string, to: string): boolean
 }
 
 // The two MIX-bus "hidden mode" locks that gate a send's controls, resolved from
-// the destination bus's node params: FIXED BUS Type makes the send level a fixed
-// value (the LEVEL control is inert) and Pan Link (VARI only) ties each send pan to
-// the source channel PAN (the PAN control is inert). Only MIX 1 / MIX 2 carry these;
-// any other destination returns both false. Shared by the inspector (which drops the
-// gated controls) and the console (which renders them read-only).
+// the destination bus's node params: FIXED BUS Type leaves a send only its ON — the
+// unit takes it after the source's fader at a fixed level, placed by the source's own PAN / BAL,
+// so the LEVEL, the PRE/POST tap and the send's own PAN are all inert — and Pan Link
+// (VARI only) ties each send pan to the source channel PAN (the PAN control is
+// inert). Only MIX 1 / MIX 2 carry these; any other destination returns both false.
+// Shared by the inspector (which drops the gated controls), the console (which
+// renders them read-only) and the MIDI catalogue (which refuses their writes).
 export function mixSendLocks(plan: Plan, destId: string): { busFixed: boolean; panLinked: boolean } {
   const np = plan.nodeParams[destId];
   const isMix = destId === "bus.mix1" || destId === "bus.mix2";
   const busFixed = isMix && (np?.busType ?? BUS_TYPE_VARI) === BUS_TYPE_FIXED;
   const panLinked = isMix && !busFixed && np?.panLink === true;
   return { busFixed, panLinked };
+}
+
+/** Whether a send is taken ahead of the source channel's fader: a tapped send whose tap
+ *  is PRE, into anything but a FIXED MIX bus, which takes every send after the fader
+ *  whatever its tap holds (mixSendLocks). What the board, the console and the ducker
+ *  note all mean by a PRE send. */
+export function sendIsPreFader(model: DeviceModel, plan: Plan, conn: PlanConnection): boolean {
+  if (conn.params?.tap !== "pre" || !sendHasTap(model, conn.from, conn.to)) return false;
+  return !mixSendLocks(plan, parseRef(conn.to).nodeId).busFixed;
 }
 
 // Whether a send's PRE/POST tap can be written to the device from software — the

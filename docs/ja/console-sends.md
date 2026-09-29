@@ -92,8 +92,8 @@ STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップ�
   `inspector.fx2RateLocked` を持つ。FX2 のストリップ自体もグラフがそのノードを減光するのと同じように
   減光する。述語は `core/constraints.ts` の `nodeRateDisabled` で、グラフの `disabledNodes` を作るのも
   同じものなので、どのレートで消えるかについて両者が食い違うことはない。
-- これは FIXED バスの狭いロックの広い兄弟である: FIXED はレベルだけを取り、スイッチとタップは残す。
-  バスそのものはまだ在るからである。
+- これは FIXED バスの狭いロックの広い兄弟である: FIXED はレベルとタップ (と SEND PAN ポップオーバーの
+  送りの pan) を取り、スイッチは残す。バスそのものはまだ在るからである。
 
 ### PRE ボタン
 
@@ -101,6 +101,9 @@ STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップ�
   (追加マーカーは無い)、send が OFF の間も読める。
 - CH → FX の tap はデバイスに書けない: ライブ接続中は `inspector.prePostLcdOnly`
   ツールチップ付きで read-only 表示 (`sendTapWritable`)。
+- FIXED の MIX バスへの send はタップの値によらずフェーダーの後で取り出される: ボタンは
+  `inspector.busFixedSend` ツールチップ付きの read-only 表示になり、隣のレベルのフェーダーと同じく
+  計画が持つタップを表示し続ける (フェーダーの `aria-valuetext` の `"PRE, "` もそのまま)。
 - ホバーツールチップで pre-fader の意味を説明する
   (C.INT ツールチップと同じ機構)。
 
@@ -145,7 +148,7 @@ STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップ�
   離れて浮くため、名前で位置に依らず対応を辿れる) + MIX send の回転ノブを横並び列で配置する
   (送り先ラベルをノブの上、値をノブの下)。列順・「C」ノブ・ラベル上置きはヘッドの BAL/PAN
   ノブと SENDS ラックの列文法をそのまま踏襲し、ラックとポップオーバーで対称になる。
-  FX send はデバイス上モノラルで pan を持たない。Pan Link (BUS type) ロックは
+  FX send はデバイス上モノラルで pan を持たない。FIXED と Pan Link (BUS type) のロックは
   インスペクタ同様ノブを read-only 表示する。
 
   ```text

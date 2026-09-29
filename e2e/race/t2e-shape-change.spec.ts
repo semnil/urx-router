@@ -71,6 +71,7 @@ const PAN_LINK = "589:0:0";
  *  level 146/152, pan 147/153, on 148/154, tap 151 — L and R linked instances. */
 const CH1_M1_LEVEL = ["146:0:0", "152:0:0"];
 const CH1_M1_PAN = ["147:0:0", "153:0:0"];
+const CH1_M1_ON = ["148:0:0", "154:0:0"];
 /** INSERT_FX (135) / INSERT_FX_ON (134) on the four MONO IN channels, y = channel index. */
 const insertFxAddr = (ch: number): string => `135:0:${ch}`;
 const insertFxOnAddr = (ch: number): string => `134:0:${ch}`;
@@ -86,6 +87,7 @@ const PITCH_FIX = 512;
 type CcAddr = { type: "cc"; channel: number; controller: number };
 const CC7: CcAddr = { type: "cc", channel: 0, controller: 7 };
 const CC8: CcAddr = { type: "cc", channel: 0, controller: 8 };
+const CC9: CcAddr = { type: "cc", channel: 0, controller: 9 };
 type Mapping = { control: string; addr: CcAddr; mode: "absolute" | "pickup" };
 
 /** Seed the persisted MIDI store: ports (reopened at boot) + this model's bindings.
@@ -164,8 +166,9 @@ test.describe("T2e shape-change", () => {
   //
   // BUS Type FIXED and Pan Link are parameters of the MIX bus, and neither reaches
   // translate.ts: mixSendLocks (core/routing.ts) is consulted by the inspector (which
-  // DROPS the gated control), by the console (which renders the send fader read-only)
-  // and by core/midi/controls.ts (whose set() returns false and swallows the message).
+  // DROPS the gated controls), by the console (which renders them read-only) and by
+  // core/midi/controls.ts (whose set() returns false and swallows the message). FIXED
+  // leaves a send only its ON; Pan Link takes its pan.
   // So one write on bus.mix1 decides whether an incoming CC on ch1 reaches the device
   // at all, with nothing written to ch1 and no address entering or leaving the set.
   // ---------------------------------------------------------------------------
@@ -176,6 +179,7 @@ test.describe("T2e shape-change", () => {
       storage: midiStore([
         { control: "ch1/level@bus.mix1", addr: CC7, mode: "absolute" },
         { control: "ch1/pan@bus.mix1", addr: CC8, mode: "absolute" },
+        { control: "ch1/mute@bus.mix1", addr: CC9, mode: "absolute" },
       ]),
     });
     await page.goto("/");
@@ -187,21 +191,23 @@ test.describe("T2e shape-change", () => {
     const reg0addrs = await paramAddrsOf(page);
     const reg0 = regKeys(reg0addrs);
     const write0 = await writeSetOf(page);
-    // The premise the whole case rests on: both send controls exist as device
+    // The premise the whole case rests on: the three send controls exist as device
     // addresses right now, under a VARI bus with Pan Link off.
-    for (const a of [...CH1_M1_LEVEL, ...CH1_M1_PAN]) expect(reg0.has(a)).toBe(true);
+    for (const a of [...CH1_M1_LEVEL, ...CH1_M1_PAN, ...CH1_M1_ON]) expect(reg0.has(a)).toBe(true);
 
-    // Phase 0 — the baseline. Both bindings reach the device, so a later silence is a
-    // property of the lock and not of the MIDI path or of the seeded mapping.
+    // Phase 0 — the baseline. All three bindings reach the device, so a later silence is
+    // a property of the lock and not of the MIDI path or of the seeded mapping. The mute
+    // is an edge toggle: each press flips the send's ON, so this one and phase 3's are
+    // each a change the plan does not already hold.
     await mark(page, "midi-baseline");
-    await pushMidi(page, [cc(7, 127), cc(8, 127)]);
+    await pushMidi(page, [cc(7, 127), cc(8, 127), cc(9, 127)]);
     await settleAfter(page, "midi-baseline", 900);
     let trace = await traceOf(page);
     const baseAt = markTime(trace, "midi-baseline")!;
     const baseWrites = setsAfter(trace, baseAt);
     const baseAddrs = new Set(baseWrites.map((s) => s.addr!));
     console.log(`baseline MIDI burst emitted: ${baseWrites.map((s) => `${s.addr}=${s.value}`).join(", ")}`);
-    for (const a of [...CH1_M1_LEVEL, ...CH1_M1_PAN]) expect(baseAddrs.has(a)).toBe(true);
+    for (const a of [...CH1_M1_LEVEL, ...CH1_M1_PAN, ...CH1_M1_ON]) expect(baseAddrs.has(a)).toBe(true);
 
     // Phase 1 — the write on node A. BUS Type VARI → FIXED on bus.mix1.
     await graphNode(page, "bus.mix1").click();
@@ -281,25 +287,21 @@ test.describe("T2e shape-change", () => {
     expect(busTypeReads).toBeGreaterThan(0);
     await expect(param(page, "BUS Type").locator("select")).toHaveValue("1");
 
-    // Phase 3 — the cross-node consequence, as a one-variable differential. Both
-    // messages are the same shape on the same node in the same burst; what differs is
-    // that FIXED locks the send LEVEL and leaves the send PAN alone (mixSendLocks:
-    // panLinked is false whenever busFixed is true). The refused one is an ABSENCE, so
+    // Phase 3 — the cross-node consequence, as a one-variable differential. The three
+    // messages address the same send in the same burst; what differs is that FIXED locks
+    // the send LEVEL and PAN and leaves its ON alone (mixSendLocks: the unit takes a FIXED
+    // send after the fader, placed by the source's own PAN / BAL). The refused ones are ABSENCES, so
     // the burst is settled with settleAfter — the accepted one is what wakes the link.
     await mark(page, "midi-under-fixed");
-    await pushMidi(page, [cc(7, 32), cc(8, 20)]);
+    await pushMidi(page, [cc(7, 32), cc(8, 20), cc(9, 127)]);
     await settleAfter(page, "midi-under-fixed", 1200);
     trace = await traceOf(page);
     const lockedAt = markTime(trace, "midi-under-fixed")!;
     const underFixed = setsAfter(trace, lockedAt);
     const underFixedAddrs = new Set(underFixed.map((s) => s.addr!));
     console.log(`MIDI under FIXED emitted: ${underFixed.map((s) => `${s.addr}=${s.value}`).join(", ") || "(nothing)"}`);
-    for (const a of CH1_M1_LEVEL) expect(underFixedAddrs.has(a)).toBe(false);
-    for (const a of CH1_M1_PAN) expect(underFixedAddrs.has(a)).toBe(true);
-    // The pan this accepted message decodes to, kept for phase 6: the identical CC is
-    // re-sent there under Pan Link, and a refusal is only separable from a write that
-    // had nothing to change if the plan is known to hold something else by then.
-    const fixedPan = underFixed.find((s) => s.addr === CH1_M1_PAN[0])!.value!;
+    for (const a of [...CH1_M1_LEVEL, ...CH1_M1_PAN]) expect(underFixedAddrs.has(a)).toBe(false);
+    for (const a of CH1_M1_ON) expect(underFixedAddrs.has(a)).toBe(true);
 
     // Phase 4 — node C, and node D, and every other send source. The console renders
     // the lock on EVERY strip that sends to MIX 1, none of which was written; the MIX 2
@@ -318,7 +320,7 @@ test.describe("T2e shape-change", () => {
     expect(m1Disabled).toBe(m1);
     expect(m2Locked).toBe(0);
 
-    // Phase 5 — release the lock and re-send the message that was swallowed. Without
+    // Phase 5 — release the lock and re-send the messages that were swallowed. Without
     // this the phase-3 silence would also be explained by "that CC value happened to
     // land on the value the plan already held".
     await page.click("#btn-view-graph");
@@ -328,13 +330,16 @@ test.describe("T2e shape-change", () => {
     await expect(param(page, "Pan Link")).toHaveCount(1);
     await settleAfter(page, "bus-vari", 1200);
     await mark(page, "midi-after-unlock");
-    await pushMidi(page, [cc(7, 32)]);
+    await pushMidi(page, [cc(7, 32), cc(8, 20)]);
     await settleAfter(page, "midi-after-unlock", 1200);
     trace = await traceOf(page);
     const unlockedAt = markTime(trace, "midi-after-unlock")!;
     const afterUnlock = setsAfter(trace, unlockedAt);
     console.log(`the same CC after VARI emitted: ${afterUnlock.map((s) => `${s.addr}=${s.value}`).join(", ")}`);
-    for (const a of CH1_M1_LEVEL) expect(afterUnlock.some((s) => s.addr === a)).toBe(true);
+    for (const a of [...CH1_M1_LEVEL, ...CH1_M1_PAN]) expect(afterUnlock.some((s) => s.addr === a)).toBe(true);
+    // The pan this accepted message decodes to, kept for phase 6: a refusal there is only
+    // separable from a write that had nothing to change if the plan holds something else.
+    const variPan = afterUnlock.find((s) => s.addr === CH1_M1_PAN[0])!.value!;
 
     // Phase 6 — the other half of the case: does the screen actually re-render the
     // controls the lock just took away? PAN_LINK is follow: "direct" (params.ts), so a
@@ -400,14 +405,13 @@ test.describe("T2e shape-change", () => {
     await expect(page.locator("#statusbar")).toContainText("Pan Link");
 
     // The plan HAS the lock, and core/midi/controls.ts is where that is enforced. One
-    // variable, mirrored from phase 3: the SAME burst that landed in full there is sent
-    // again, and now the PAN is swallowed while the LEVEL still goes through — the free
-    // one being what wakes the link for settleAfter. Controller 8 carries the value that
-    // wrote `fixedPan` in phase 3 against a plan the slider just moved to `stalePan`, so
-    // "the write had nothing to change" is excluded by measurement rather than by
-    // assuming the codec is injective.
+    // variable, mirrored from phase 5: the same pair of controls that landed in full there
+    // is sent again, and now the PAN is swallowed while the LEVEL still goes through — the
+    // free one being what wakes the link for settleAfter. The refused slider above left the
+    // plan at `variPan`, and controller 8 now carries the other end of its travel, so
+    // "the write had nothing to change" is excluded by the value it would have written.
     await mark(page, "midi-under-panlink");
-    await pushMidi(page, [cc(7, 96), cc(8, 20)]);
+    await pushMidi(page, [cc(7, 96), cc(8, 120)]);
     await settleAfter(page, "midi-under-panlink", 1200);
     trace = await traceOf(page);
     const panLinkAt = markTime(trace, "midi-under-panlink")!;
@@ -415,7 +419,7 @@ test.describe("T2e shape-change", () => {
     const underLinkAddrs = new Set(underLink.map((s) => s.addr!));
     console.log(
       `MIDI under Pan Link emitted: ${underLink.map((s) => `${s.addr}=${s.value}`).join(", ") || "(nothing)"}` +
-        ` (the identical CC wrote ${fixedPan} in phase 3, against a plan the lock now refuses)`,
+        ` (controller 8 wrote ${variPan} in phase 5, against a plan the lock now refuses)`,
     );
     for (const a of CH1_M1_PAN) expect(underLinkAddrs.has(a)).toBe(false);
     // The LEVEL went through — as far as a held link lets it. The barrier armed in phase

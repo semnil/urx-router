@@ -13,7 +13,13 @@ import { pinSettingsReset } from "../core/settings-reset.test-util";
 import { holdInertOnBlur, resetPointerTracking } from "./dom";
 import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
-import { COMP_EQ_SSMCS, INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
+import {
+  BUS_TYPE_FIXED,
+  COMP_EQ_SSMCS,
+  INSERT_FX_NONE,
+  INSERT_FX_OPTIONS,
+  OUTPUT_INSERT_FX_OPTIONS,
+} from "../core/control/params";
 import { planToCommands } from "../core/control/translate";
 import { fxParams } from "../core/control/fx-effect";
 import type { DeviceModel } from "../models/types";
@@ -162,6 +168,25 @@ describe("inspectorNodes", () => {
     expect(named(HOST + ":out", "bus.stereo:in")).toBe(false);
     for (const c of plan.connections.filter((w) => w.from === HOST + ":out" && w.to.startsWith("out.sdrec")))
       expect(named(c.from, c.to)).toBe(false);
+  });
+
+  // A FIXED bus takes the send after the fader, so a PRE tap into it is not ahead of the
+  // Ducker: the note goes, its ducker leaves the footprint, and the panel names the FIXED
+  // lock instead of offering the tap. The same wire into the VARI bus it starts on draws
+  // the note, which is what makes the absence mean something.
+  it("draws no Ducker PRE note on a send into a FIXED bus", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams[DUCKER] = { ...plan.nodeParams[DUCKER], duckerOn: true };
+    const wire = connSel(HOST + ":out", "bus.mix1:in");
+    const send = plan.connections.find((c) => c.from === HOST + ":out" && c.to === "bus.mix1:in")!;
+    send.params = { ...send.params, tap: "pre" };
+    expect(rendered(plan, wire)).toContain(t().inspector.duckerPreSend);
+    expect(inspectorNodes(u44v, plan, wire)).toContain(DUCKER);
+
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED };
+    expect(rendered(plan, wire)).not.toContain(t().inspector.duckerPreSend);
+    expect(rendered(plan, wire)).toContain(t().inspector.busFixedSend);
+    expect(inspectorNodes(u44v, plan, wire)).not.toContain(DUCKER);
   });
 
   it("names a selected ducker once, not twice", () => {

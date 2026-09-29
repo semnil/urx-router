@@ -1677,8 +1677,8 @@ const inspectorActions = {
     // that refused it, and rebuild the panel so the control goes away now.
     const { busFixed, panLinked } = mixSendLocks(plan, parseRef(to).nodeId);
     const refusal =
-      busFixed && patch.level !== undefined
-        ? t().inspector.busFixedLevel
+      busFixed && (patch.level !== undefined || patch.tap !== undefined || patch.pan !== undefined)
+        ? t().inspector.busFixedSend
         : panLinked && patch.pan !== undefined
           ? t().inspector.panLinked
           : null;

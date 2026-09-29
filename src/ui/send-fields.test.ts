@@ -35,14 +35,23 @@ describe("sendFields", () => {
     expect(panLinked).toBe(false);
   });
 
-  // A FIXED bus type drops the LEVEL: the send level is fixed on the device.
-  it("drops the level on a FIXED bus", () => {
+  // A FIXED bus type leaves the send only its ON: the unit takes it after the source's
+  // fader at a fixed level, placed by the source's own PAN / BAL, so LEVEL, PRE/POST and PAN all go.
+  it("drops the level, the tap and the pan on a FIXED bus", () => {
     const p = plan();
     p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED };
-    const { fields, busFixed } = toMix1(p);
+    const { fields, busFixed, panLinked } = toMix1(p);
     expect(busFixed).toBe(true);
-    expect(fields).not.toContain("level");
-    expect(fields).toContain("pan");
+    expect(panLinked).toBe(false);
+    expect(fields).toEqual([]);
+  });
+
+  // Pan Link is a VARI-only switch; a FIXED bus that still holds it on drops the same
+  // fields as one that holds it off, and names the FIXED lock rather than the link.
+  it("drops everything on a FIXED bus whatever Pan Link holds", () => {
+    const p = plan();
+    p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED, panLink: true };
+    expect(toMix1(p)).toEqual({ fields: [], busFixed: true, panLinked: false });
   });
 
   // Pan Link (VARI only) drops the PAN: it follows the source channel's own PAN.
