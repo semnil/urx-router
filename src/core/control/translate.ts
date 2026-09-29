@@ -2184,9 +2184,10 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   }
 
   // The MIX buses' BUS Type (587, both out instances) and Pan Link (589, the L instance: MIX1 =
-  // 0, MIX2 = 2), in that order and ahead of every pan and send below. Writing BUS Type resets
-  // the MIX's whole send bank on the unit and turns its Pan Link off, so the sends and the
-  // switch after it land on what the reset left. While Pan Link is on, the unit sets every
+  // 0, MIX2 = 2), in that order and ahead of every pan and send below. Writing BUS Type turns
+  // the MIX's Pan Link off, so the switch goes after it. It also resets the MIX's whole send
+  // bank, later than the sends written behind it in the same pass, and the converge a BUS Type
+  // write takes puts the bank back in the round after. While Pan Link is on, the unit sets every
   // send pan into that MIX to its source's own PAN / BAL, keeps it there as the source moves,
   // and moves the source when a send pan is written — all without a notify. So the send pans
   // into a linked MIX are not written at all, a restore's device-driven values included: the
