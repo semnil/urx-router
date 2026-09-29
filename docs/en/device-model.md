@@ -190,9 +190,10 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
 > ties each send's PAN to the source channel PAN, so the per-send PAN is no longer
 > independent: the unit holds every send pan into that MIX at its source's PAN / BAL and moves the
 > source when one is written, so the app writes no send pan into a linked MIX, and turning Pan Link off
-> leaves the send pans (on the unit and in the plan) at the sources' pans. Stored on the MIX bus node;
-> the connection panel hides the LEVEL, PRE/POST and PAN (FIXED) or the PAN (Pan Link) accordingly and
-> shows a short note. The console applies the same
+> leaves the send pans (on the unit and in the plan) at the sources' pans. The plan keeps Pan Link through a
+> switch to FIXED: the unit turns it off when BUS Type goes to FIXED, and the app writes it back after the
+> BUS Type. Both are stored on the MIX bus node; the connection panel hides the LEVEL, PRE/POST and PAN
+> (FIXED) or the PAN (Pan Link) accordingly and shows a short note for each lock that applies. The console applies the same
 > locks in the SENDS rack (FIXED locks that MIX column's PRE button and mini-fader and its SEND PAN
 > knob; Pan Link locks the SEND PAN knob), and so does MIDI (a mapped control on a locked value
 > writes nothing).

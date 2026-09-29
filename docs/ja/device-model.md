@@ -184,8 +184,9 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 > PAN は効かない (3 つとも書込は受理され、読み戻しも書いた値を返す)。**Pan Link** は各 Send の
 > PAN を Send 元チャンネルの PAN に追従させ、個別 PAN を編集不可にする: 実機はその MIX への送りのパンを送り元の
 > PAN / BAL にそろえ、送りのパンが書かれると送り元を動かすので、アプリはリンク中の MIX へ送りのパンを書かず、
-> Pan Link を切ると送りのパンは実機でも計画でも送り元のパンのまま残る。MIX Bus ノードに保持し、接続パネルは
-> FIXED で LEVEL・PRE/POST・PAN、Pan Link で PAN を隠し、短い注記を表示する。CONSOLE も SENDS ラックで
+> Pan Link を切ると送りのパンは実機でも計画でも送り元のパンのまま残る。計画は FIXED にしても Pan Link を保つ: 実機は
+> BUS Type が FIXED になると Pan Link を切り、アプリは BUS Type の後に書き直す。どちらも MIX Bus ノードに保持し、接続パネルは
+> FIXED で LEVEL・PRE/POST・PAN、Pan Link で PAN を隠し、かかっているロックごとに短い注記を表示する。CONSOLE も SENDS ラックで
 > 同じロックを適用し、FIXED ではその MIX 列の PRE ボタン・ミニフェーダーと SEND PAN ノブを、Pan Link では
 > SEND PAN ノブを read-only にする。MIDI も同じで、ロック中の値に割り当てたコントロールは何も書かない。
 
