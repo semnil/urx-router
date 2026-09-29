@@ -84,13 +84,15 @@ export function mixSendLocks(plan: Plan, destId: string): { busFixed: boolean; p
 
 /** Pan Link turning off on a MIX bus: the unit leaves every send pan into it where Pan Link
  *  held it, at its source's own pan / balance, so the plan's send pans take that value — the pan
- *  on the source's fixed main path into STEREO. Returns the contest keys it wrote; each can land
- *  on the value already there, so the plan's diff cannot name them. */
-export function releasePanLink(plan: Plan, busId: string): string[] {
+ *  on the source's fixed main path into STEREO. A send from a source in `read` is left as it is:
+ *  a device read that took it holds the unit's own value. Returns the contest keys it wrote; each
+ *  can land on the value already there, so the plan's diff cannot name them. */
+export function releasePanLink(plan: Plan, busId: string, read: ReadonlySet<string> = new Set()): string[] {
   const written: string[] = [];
   for (const c of plan.connections) {
     if (c.to !== ref(busId, "in") || c.kind !== "send") continue;
     const source = parseRef(c.from).nodeId;
+    if (read.has(source)) continue;
     const main = plan.connections.find((m) => m.from === ref(source, "out") && m.to === ref("bus.stereo", "in"));
     c.params = { ...c.params, pan: main?.params?.pan ?? 0 };
     written.push(connParamContestKey(c.from, c.to, "pan"));

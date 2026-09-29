@@ -800,10 +800,12 @@ async function readPass(
   // is kept and the device's ON/OFF is stored in params.on alongside level / pan /
   // tap; readback never adds or removes a send wire. ensureFixedConnections (above)
   // has already materialized any missing fixed wire, so an entry exists here.
+  const sendsRead = new Set<string>();
   for (const node of model.nodes) {
     signal?.throwIfAborted();
     if (node.kind !== "channel" && fxChannelIndex(node.id) === null) continue;
     if (!want(node.id)) continue;
+    sendsRead.add(node.id);
     for (const bus of model.nodes) {
       if (bus.kind !== "bus") continue;
       const sc = sendControl(model, node.id, bus.id);
@@ -1096,12 +1098,17 @@ async function readPass(
       const busType = mix ? await vdGet(PARAMS.BUS_TYPE.id, 0, mix[0]) : undefined;
       // Pan Link (589, MIX only, L instance) — sends' pan follows the source PAN.
       const panLink = mix ? vdToBool(await vdGet(PARAMS.PAN_LINK.id, 0, mix[0])) : undefined;
+      const wasLinked = plan.nodeParams[node.id]?.panLink === true;
       plan.nodeParams[node.id] = {
         ...plan.nodeParams[node.id],
         on,
         ...(busType !== undefined ? { busType } : {}),
         ...(panLink !== undefined ? { panLink } : {}),
       };
+      // Pan Link read off where the plan held it on (the unit turns it off without a notify when
+      // BUS Type goes to FIXED): the send pans this pass did not read take their sources' pans,
+      // where the unit leaves them (releasePanLink).
+      if (wasLinked && panLink === false) releasePanLink(plan, node.id, sendsRead);
       applied++;
     } catch (e) {
       failed.add(node.id);

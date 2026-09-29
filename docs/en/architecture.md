@@ -2518,7 +2518,9 @@ one written there would move its source instead, so a converge that sent the pla
 between the two values round after round. Turned off, Pan Link leaves the send pans where it held them, so an edit
 that turns it off — in the panel or on the unit, through device follow — also sets the plan's send pans into that
 MIX to their sources' pans (`routing.ts` `releasePanLink`), and what the next write sends there is what the unit
-already holds. Being ahead does not make the switch-off land first: it lands after the send pans written behind it in
+already holds. A device read that finds it off where the plan held it on does the same for the sends it did not read
+itself: switching BUS Type to FIXED on the unit's own screen turns Pan Link off without announcing it, and the follow
+read that BUS Type's notify starts reads the MIX alone. Being ahead does not make the switch-off land first: it lands after the send pans written behind it in
 the same round, so a write whose plan turns Pan Link off while holding send pans of its own moves each of their
 sources to that send's value, and the round after reads the source back as a residual and puts it back. Measured on
 a URX44V, the source held the send's value when the round was read back 340-354 ms after it was sent, and a second
