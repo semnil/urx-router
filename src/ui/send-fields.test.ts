@@ -35,8 +35,8 @@ describe("sendFields", () => {
     expect(panLinked).toBe(false);
   });
 
-  // A FIXED bus type leaves the send only its ON: the unit takes it after the channel
-  // fader at a fixed level, placed by the channel PAN, so LEVEL, PRE/POST and PAN all go.
+  // A FIXED bus type leaves the send only its ON: the unit takes it after the source's
+  // fader at a fixed level, placed by the source's own PAN / BAL, so LEVEL, PRE/POST and PAN all go.
   it("drops the level, the tap and the pan on a FIXED bus", () => {
     const p = plan();
     p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED };

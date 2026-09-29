@@ -30,7 +30,7 @@ test("FIXED BUS Type locks the MIX send column fader read-only", async ({ page }
   await expect(fader).toHaveAttribute("aria-disabled", "true");
 });
 
-// A FIXED bus takes the send after the fader and places it by the channel PAN, so the
+// A FIXED bus takes the send after the fader and places it by the source's own PAN / BAL, so the
 // PRE button and the SEND PAN knob lock with the fader; only the enable chip stays live.
 // The PRE button goes on showing the tap the plan holds, set to PRE here while VARI.
 test("FIXED BUS Type locks the MIX send's PRE button and SEND PAN knob, not its enable chip", async ({ page }) => {

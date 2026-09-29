@@ -510,7 +510,7 @@ describe("read-only columns", () => {
     expect(level("ch1", "bus.mix1")).toBe(before);
   });
 
-  // A FIXED bus takes every send after the fader and places it by the channel PAN, so
+  // A FIXED bus takes every send after the fader and places it by the source's own PAN / BAL, so
   // the PRE tap and the send pan are as inert there as the level. Like the level fader
   // beside it, the PRE button keeps showing what the plan holds and goes read-only, and
   // neither control takes an edit. The same send into a VARI bus is editable first, so

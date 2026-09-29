@@ -290,7 +290,7 @@ test.describe("T2e shape-change", () => {
     // Phase 3 — the cross-node consequence, as a one-variable differential. The three
     // messages address the same send in the same burst; what differs is that FIXED locks
     // the send LEVEL and PAN and leaves its ON alone (mixSendLocks: the unit takes a FIXED
-    // send after the fader, placed by the channel PAN). The refused ones are ABSENCES, so
+    // send after the fader, placed by the source's own PAN / BAL). The refused ones are ABSENCES, so
     // the burst is settled with settleAfter — the accepted one is what wakes the link.
     await mark(page, "midi-under-fixed");
     await pushMidi(page, [cc(7, 32), cc(8, 20), cc(9, 127)]);

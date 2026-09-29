@@ -29,7 +29,7 @@ test("MIX bus shows BUS Type + Pan Link; FIXED hides Pan Link", async ({ page })
 // Every CH → bus send is a fixed (always-wired) connection, so these pick a wire by
 // its endpoints rather than creating one. selectWire is graph-helpers'.
 
-// A FIXED bus takes the send after the fader at a fixed level, placed by the channel PAN,
+// A FIXED bus takes the send after the fader at a fixed level, placed by the source's own PAN / BAL,
 // so the wire keeps its ON and nothing else. VARI first, as the control: the same wire
 // shows all three rows before the switch.
 test("FIXED bus leaves a send only its ON and shows a hint", async ({ page }) => {
