@@ -2192,7 +2192,9 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   // and moves the source when a send pan is written — all without a notify. So the send pans
   // into a linked MIX are not written at all, a restore's device-driven values included: the
   // unit derives them from the source pans written below, and a send pan written there would
-  // move its source instead.
+  // move its source instead. A switch-off lands after the send pans written behind it in the
+  // same pass, so each of them moves its source; the converge's next round reads that source
+  // back as a residual and puts it back.
   const panLinked = new Set<string>();
   for (const node of model.nodes) {
     const mix = MIX_FADER_INSTANCES[node.id];

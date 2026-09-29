@@ -2509,16 +2509,20 @@ a head that never settles stops at the cap. `translate.test.ts` pins which heads
 `sideEffect` param fails the test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset
 addresses owned by *other* nodes, which a group cannot express — their ordering is pinned separately.
 
-A MIX bus's `BUS_TYPE` and `PAN_LINK` are ordered the same way, per MIX and ahead of every channel pan and send:
-BUS Type first, since writing it turns the MIX's Pan Link off, then Pan Link, since while
-it is on the unit sets every send pan into that MIX to its source's PAN / BAL, keeps it there as the source moves,
-and moves the source when a send pan is written — none of it announced. **No send pan into a linked MIX is emitted
+A MIX bus's `BUS_TYPE` and `PAN_LINK` are ordered per MIX and ahead of every channel pan and send: BUS Type first,
+since writing it turns the MIX's Pan Link off, then Pan Link. While it is on, the unit sets every send pan into that
+MIX to its source's PAN / BAL, keeps it there as the source moves, and moves the source when a send pan is written —
+none of it announced. **No send pan into a linked MIX is emitted
 at all**, the self-test restore's device-driven values included: the unit derives them from the source pans, and
 one written there would move its source instead, so a converge that sent the plan's copy back swung the channel
 between the two values round after round. Turned off, Pan Link leaves the send pans where it held them, so an edit
 that turns it off — in the panel or on the unit, through device follow — also sets the plan's send pans into that
 MIX to their sources' pans (`routing.ts` `releasePanLink`), and what the next write sends there is what the unit
-already holds. Writing BUS Type also resets the MIX's send bank, and that reset lands after the sends written behind
+already holds. Being ahead does not make the switch-off land first: it lands after the send pans written behind it in
+the same round, so a write whose plan turns Pan Link off while holding send pans of its own moves each of their
+sources to that send's value, and the round after reads the source back as a residual and puts it back. Measured on
+a URX44V, the source held the send's value when the round was read back 340-354 ms after it was sent, and a second
+round settled it. Writing BUS Type also resets the MIX's send bank, and that reset lands after the sends written behind
 it in the same round, so being ahead of them does not spare the round after: the converge a BUS Type write takes
 reads the bank back and re-sends it there, which is where a Write that changes BUS Type settles.
 
