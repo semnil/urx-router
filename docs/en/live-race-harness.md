@@ -741,9 +741,9 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
-**The current array.** `[36, 59, 70]` is derived from the race run of the 165-case corpus
-(2026-08-23), which timed 158 of them and left the 7 declared skips at zero. Measured against that
-run's durations, under the two-worker model, its three shards run 277 / 269 / 276 s, against 266 s for
+**The current array.** `[44, 48, 87]` is derived from the race run of the 179-case corpus
+(2026-09-29), which timed 172 of them and left the 7 declared skips at zero. Measured against that
+run's durations, under the two-worker model, its three shards run 284 / 305 / 305 s, against 286 s for
 a division with no contiguity constraint at all, and the runner reproduced the plan case for case. The
 point of re-deriving is not that remaining gap but that the cut is a duration reading again rather than
 the residue of an edit, since nothing reports an array whose durations have moved.
