@@ -61,14 +61,7 @@ import {
   EQ_TYPE_SHELVING,
   insertFxEngaged,
 } from "../control/params";
-import {
-  isBalLinkedPair,
-  isStereoLinkedPair,
-  mixSendLocks,
-  pairPrimary,
-  pairSharesNodeKey,
-  sendIsPreFader,
-} from "../routing";
+import { isBalLinkedPair, isStereoLinkedPair, mixSendLocks, pairPrimary, pairSharesNodeKey } from "../routing";
 import {
   insertFxFamilyOf,
   insertFxLockedSlots,
@@ -1126,7 +1119,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
         out.push(connControl("pan", target, panCodec, 0, () => locks().busFixed || locks().panLinked));
         // Send tap (PRE/POST) as a toggle: MIX taps are freely writable (a CH → FX
         // tap is device-locked and gets no control — the rack shows it read-only).
-        // Under FIXED it reads POST, which is where the unit takes the send.
+        // Under FIXED it reads the stored tap and refuses writes, like the level beside it.
         out.push({
           id: controlId(id, "tap", target),
           node: id,
@@ -1134,10 +1127,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           scope: target,
           writes: { kind: "send", to: target, param: "tap" },
           kind: "toggle",
-          get: () => {
-            const c = conn(target);
-            return c && sendIsPreFader(model, plan, c) ? 1 : 0;
-          },
+          get: () => (conn(target)?.params?.tap === "pre" ? 1 : 0),
           set: (v) => {
             const c = conn(target);
             if (!c || locks().busFixed) return false;

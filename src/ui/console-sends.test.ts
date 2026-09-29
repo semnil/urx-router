@@ -511,16 +511,17 @@ describe("read-only columns", () => {
   });
 
   // A FIXED bus takes every send after the fader and places it by the channel PAN, so
-  // the PRE tap and the send pan are as inert there as the level. The PRE button reads
-  // unlit whatever the plan holds — the send is not pre-fader — and neither control
-  // takes an edit. The same send into a VARI bus first shows the tap lit, so a lock
-  // that stopped reading the bus cannot pass on a PRE that was never drawn.
-  it("locks a FIXED bus's PRE button unlit and its SEND PAN knob", () => {
+  // the PRE tap and the send pan are as inert there as the level. Like the level fader
+  // beside it, the PRE button keeps showing what the plan holds and goes read-only, and
+  // neither control takes an edit. The same send into a VARI bus is editable first, so
+  // a lock that stopped reading the bus cannot pass on a button that was never live.
+  it("locks a FIXED bus's PRE button, still showing the stored tap, and its SEND PAN knob", () => {
     h = consoleHost();
     const conn = () => sendConnection(h.plan, "ch1", "bus.mix1")!;
     conn().params = { ...conn().params, tap: "pre", pan: -20, level: 0 };
     h.view.refresh();
     const preOf = (): HTMLElement => colOf("ch1", "M1").querySelector<HTMLElement>(".con-slp")!;
+    expect(preOf().classList.contains("readonly")).toBe(false);
     expect(preOf().getAttribute("aria-pressed")).toBe("true");
     expect(h.sendCol("ch1", "bus.mix1").fader.getAttribute("aria-valuetext")).toMatch(/^PRE, /);
 
@@ -529,8 +530,8 @@ describe("read-only columns", () => {
     const pre = preOf();
     expect(pre.classList.contains("readonly")).toBe(true);
     expect(pre.title).toBe(t().inspector.busFixedSend);
-    expect(pre.getAttribute("aria-pressed")).toBe("false");
-    expect(h.sendCol("ch1", "bus.mix1").fader.getAttribute("aria-valuetext")).not.toMatch(/PRE/);
+    expect(pre.getAttribute("aria-pressed")).toBe("true");
+    expect(h.sendCol("ch1", "bus.mix1").fader.getAttribute("aria-valuetext")).toMatch(/^PRE, /);
     pre.click();
     key(pre, "Enter");
     expect(conn().params?.tap).toBe("pre");

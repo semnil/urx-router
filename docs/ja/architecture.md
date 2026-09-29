@@ -1061,7 +1061,7 @@ EQ バンドゲインと COMP ゲインのスライダーは 0.1 dB 刻み (通�
   ラックは機種の送りスロットごとに固定列を持ち (順序 FX 1 / FX 2 / MIX 1 / MIX 2 = `SEND_TARGETS`・Bus を
   棚上げすると全ストリップからその列が落ちる)、各列は **有効チップ** (`params.on`・琥珀=有効・ON 極性)・
   **PRE ボタン** (`params.tap`・実機が受け付けない CH → FX tap は Live 中 read-only = `sendTapWritable`・
-  [known-issues.md](known-issues.md) 参照・FIXED BUS Type は消灯の read-only ロック)・**縦ミニフェーダー** (`params.level`・相対ドラッグで level_gain
+  [known-issues.md](known-issues.md) 参照・FIXED BUS Type は保存値を表示したままの read-only ロック)・**縦ミニフェーダー** (`params.level`・相対ドラッグで level_gain
   グリッドにスナップ・FIXED BUS Type は read-only ロック) からなる。送りを持たないストリップ (MIX / MONITOR /
   STEREO / OSCILLATOR / STREAMING) は減光した `SENDS` ヘッダのみを描き、メーター専用ストリップにも同じ
   スペーサーを与えてフェーダー上端を揃える。ヘッダは列操作中 `SENDS` ラベルを値読み値

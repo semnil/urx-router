@@ -102,8 +102,8 @@ STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップ�
 - CH → FX の tap はデバイスに書けない: ライブ接続中は `inspector.prePostLcdOnly`
   ツールチップ付きで read-only 表示 (`sendTapWritable`)。
 - FIXED の MIX バスへの send はタップの値によらずフェーダーの後で取り出される: ボタンは
-  `inspector.busFixedSend` ツールチップ付きの消灯した read-only 表示になり、フェーダーの
-  `aria-valuetext` は `"PRE, "` を前置しない (`sendIsPreFader`)。
+  `inspector.busFixedSend` ツールチップ付きの read-only 表示になり、隣のレベルのフェーダーと同じく
+  計画が持つタップを表示し続ける (フェーダーの `aria-valuetext` の `"PRE, "` もそのまま)。
 - ホバーツールチップで pre-fader の意味を説明する
   (C.INT ツールチップと同じ機構)。
 
