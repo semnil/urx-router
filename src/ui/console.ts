@@ -76,7 +76,6 @@ import {
   mixSendLocks,
   pairSharesNodeKey,
   partnerChannel,
-  sendIsPreFader,
   sendTapWritable,
 } from "../core/routing";
 import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected } from "../core/control/params";
@@ -1091,7 +1090,7 @@ export class Console {
     const preBtn = this.buildChip(
       m.id,
       t().console.pre,
-      this.isPreSend(c),
+      c?.params?.tap === "pre",
       () => {
         const next = c?.params?.tap !== "pre";
         if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
@@ -1113,7 +1112,7 @@ export class Console {
 
     // A FIXED-bus send fader is display-only: paint its value but skip the wiring.
     if (!busFixed) this.wireColFader(m.id, target, c, ref, range, swap, readoutText);
-    this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, this.isPreSend(c));
+    this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, c?.params?.tap === "pre");
     col.append(chip, preBtn, fader);
     return { el: col, ref };
   }
@@ -1143,7 +1142,7 @@ export class Console {
     const rackTouched = (): boolean => !!rack?.querySelector(".con-vfad:hover, .con-vfad:focus");
     const set = (db: number): void => {
       if (c) c.params = { ...c.params, level: db };
-      this.updateColLevel(ref, range, db, this.isPreSend(c));
+      this.updateColLevel(ref, range, db, c?.params?.tap === "pre");
       swap(readoutText());
       this.commit(node);
       this.mirrorPartnerSend(node, target);
@@ -1228,12 +1227,6 @@ export class Console {
   }
 
   // Paint a send column's fader cap position + accessible value from a dB level + tap.
-  /** Whether a send column reads as pre-fader: its tap, unless a FIXED bus takes it
-   *  after the fader regardless (sendIsPreFader). */
-  private isPreSend(c: PlanConnection | undefined): boolean {
-    return c !== undefined && sendIsPreFader(this.hooks.getModel(), this.hooks.getPlan(), c);
-  }
-
   private updateColLevel(ref: SendColRef, range: LevelRange, db: number, pre: boolean): void {
     ref.cap.style.setProperty("--pos", (1 - dbToFrac(db, range)) * 100 + "%");
     const f = fmtDb(db, range);
@@ -3313,7 +3306,7 @@ export class Console {
     const col = pr?.sendCols?.find((c) => c.target === target);
     if (!col) return;
     const pc = sendConnection(this.hooks.getPlan(), partner!, target);
-    this.updateColLevel(col, pr!.m.range, pc?.params?.level ?? LEVEL_OFF_DB, this.isPreSend(pc));
+    this.updateColLevel(col, pr!.m.range, pc?.params?.level ?? LEVEL_OFF_DB, pc?.params?.tap === "pre");
   }
 
   // The factory plan (cached): the source for double-click "reset to default".

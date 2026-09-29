@@ -104,8 +104,8 @@ still claims is given back — and that is the state an operator most needs to r
 - CH → FX taps cannot be written to the device: while live-connected the button renders read-only
   with the `inspector.prePostLcdOnly` tooltip (`sendTapWritable`).
 - A send into a FIXED MIX bus is taken after the fader whatever its tap holds: the button renders
-  read-only and unlit with the `inspector.busFixedSend` tooltip, and the fader's `aria-valuetext`
-  carries no `"PRE, "` (`sendIsPreFader`).
+  read-only with the `inspector.busFixedSend` tooltip and, like the level fader beside it, goes on
+  showing the tap the plan holds (the fader's `aria-valuetext` keeps its `"PRE, "`).
 - A hover tooltip spells out the pre-fader meaning, mirroring the C.INT tooltip
   mechanism.
 

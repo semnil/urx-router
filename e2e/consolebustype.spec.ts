@@ -32,15 +32,21 @@ test("FIXED BUS Type locks the MIX send column fader read-only", async ({ page }
 
 // A FIXED bus takes the send after the fader and places it by the channel PAN, so the
 // PRE button and the SEND PAN knob lock with the fader; only the enable chip stays live.
+// The PRE button goes on showing the tap the plan holds, set to PRE here while VARI.
 test("FIXED BUS Type locks the MIX send's PRE button and SEND PAN knob, not its enable chip", async ({ page }) => {
+  await page.click("#btn-view-console");
+  const pre = mix1Col(page).locator(".con-slp");
+  await pre.click();
+  await expect(pre).toHaveAttribute("aria-pressed", "true");
+
+  await page.click("#btn-view-graph");
   await page.locator('g.node[data-id="bus.mix1"]').click();
   await chooseOption(param(page, "BUS Type").locator("select"), "1"); // FIXED
   await page.click("#btn-view-console");
 
-  const pre = mix1Col(page).locator(".con-slp");
   await expect(pre).toHaveClass(/readonly/);
   await expect(pre).toHaveAttribute("aria-disabled", "true");
-  await expect(pre).toHaveAttribute("aria-pressed", "false");
+  await expect(pre).toHaveAttribute("aria-pressed", "true");
   await expect(mix1Col(page).locator(".con-sl")).not.toHaveClass(/readonly/);
 
   await strip(page, "CH 1").locator(".con-panbtn").click();

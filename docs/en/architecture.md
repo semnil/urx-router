@@ -1312,8 +1312,8 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   The rack has one fixed column per model send slot (order FX 1 / FX 2 / MIX 1 / MIX 2 = `SEND_TARGETS`, a
   shelved bus drops its column on every strip), each an **enable chip** (`params.on`, amber = active, ON
   polarity), a **PRE button** (`params.tap`; a CH → FX tap the device cannot accept is shown read-only while
-  live — `sendTapWritable`, see [known-issues.md](known-issues.md); FIXED BUS Type locks it read-only and
-  unlit), and a **vertical mini-fader**
+  live — `sendTapWritable`, see [known-issues.md](known-issues.md); FIXED BUS Type locks it read-only,
+  still showing the stored tap), and a **vertical mini-fader**
   (`params.level`, relative drag snapped to the level_gain grid; FIXED BUS Type locks it read-only). A strip
   with no sends (MIX / MONITOR / STEREO / OSCILLATOR / STREAMING) renders a dimmed `SENDS` header only, and
   meter-only strips get the same spacer, so fader tops stay aligned. The header swaps its `SENDS` label for a

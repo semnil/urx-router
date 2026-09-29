@@ -254,16 +254,17 @@ describe("normalized value access", () => {
   it("leaves a FIXED-bus send only its MUTE: level, pan and PRE/POST tap are locked", () => {
     // FIXED BUS Type takes the send after the fader at a fixed level, placed by the
     // channel PAN, so only the send's ON (MUTE) is editable — matching the console.
-    // The tap reads POST there, which is where the unit takes it, whatever it holds.
+    // The tap keeps reading what the plan holds there, like the level, and takes no write.
     const c = conn("ch1", "bus.mix1");
     c.params = { ...c.params, tap: "pre", pan: -20 };
     const tap = bindControl(model, plan, "ch1/tap@bus.mix1")!;
-    expect(tap.get()).toBe(1); // the same send into a VARI bus reads PRE
+    expect(tap.get()).toBe(1);
+    expect(tap.set(1)).toBe(true); // the same send into a VARI bus takes a write
     plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], busType: 1 };
     expect(bindControl(model, plan, "ch1/level@bus.mix1")!.set(1)).toBe(false);
     expect(bindControl(model, plan, "ch1/pan@bus.mix1")!.set(1)).toBe(false);
     expect(conn("ch1", "bus.mix1").params?.pan).toBe(-20);
-    expect(tap.get()).toBe(0);
+    expect(tap.get()).toBe(1);
     expect(tap.set(0)).toBe(false);
     expect(conn("ch1", "bus.mix1").params?.tap).toBe("pre");
     const mute = bindControl(model, plan, "ch1/mute@bus.mix1")!;
