@@ -185,7 +185,7 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
 
 > **BUS Type (MIX 1 / MIX 2, CH SETTING).** Each MIX bus is VARI (variable per-send level, the
 > default and what the tool models) or FIXED. On a FIXED bus **a send keeps only its ON**: the unit
-> takes it after the channel fader at a fixed level, placed by the channel PAN, so the send's LEVEL,
+> takes it after the source's fader at a fixed level, placed by the source's own PAN / BAL, so the send's LEVEL,
 > PRE/POST and PAN have no effect (the unit accepts and reads back writes to all three). **Pan Link**
 > ties each send's PAN to the source channel PAN, so the per-send PAN is no longer
 > independent: the unit holds every send pan into that MIX at its source's PAN / BAL and moves the

@@ -253,7 +253,7 @@ describe("normalized value access", () => {
 
   it("leaves a FIXED-bus send only its MUTE: level, pan and PRE/POST tap are locked", () => {
     // FIXED BUS Type takes the send after the fader at a fixed level, placed by the
-    // channel PAN, so only the send's ON (MUTE) is editable — matching the console.
+    // source's own PAN / BAL, so only the send's ON (MUTE) is editable — matching the console.
     // The tap keeps reading what the plan holds there, like the level, and takes no write.
     const c = conn("ch1", "bus.mix1");
     c.params = { ...c.params, tap: "pre", pan: -20 };

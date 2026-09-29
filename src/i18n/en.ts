@@ -580,7 +580,7 @@ export const en = {
     busType: dev("BUS Type"),
     panLink: dev("Pan Link"),
     busFixedSend: tr(
-      "Only the send ON applies (BUS Type: FIXED): the send is taken after the channel fader at a fixed level and follows the channel PAN.",
+      "Only the send ON applies (BUS Type: FIXED): the send is taken after the source's fader at a fixed level and follows the source's own PAN / BAL.",
     ),
     panLinked: tr("Pan follows the source channel PAN (Pan Link)."),
     sdRecTrackCount: dev("Track Count"),
