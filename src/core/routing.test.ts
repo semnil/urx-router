@@ -21,6 +21,7 @@ import {
   possibleTargets,
   ruleKind,
   sendHasTap,
+  sendIsPreFader,
   sendTapWritable,
   upstreamNodes,
   validatePlan,
@@ -28,7 +29,7 @@ import {
 import { connParamContestKey, nodeParamContestKey } from "./plan-history";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
 import { defaultPlan } from "../models/initial-state";
-import { INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
+import { BUS_TYPE_FIXED, BUS_TYPE_VARI, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
 
 const u44 = MODELS.URX44;
 // Any effect claiming a 1-of slot: the pair rules never read the value itself.
@@ -223,6 +224,39 @@ describe("sendTapWritable", () => {
   it("is false where there is no tap at all (STEREO main path, non-send)", () => {
     expect(sendTapWritable(u44, ref("ch1", "out"), ref("bus.stereo", "in"))).toBe(false);
     expect(sendTapWritable(u44, ref("in.micline_1_2", "out"), ref("ch1", "in"))).toBe(false);
+  });
+});
+
+describe("sendIsPreFader", () => {
+  const withTap = (p: Plan, from: string, to: string, tap: "pre" | "post"): PlanConnection => {
+    const c = p.connections.find((x) => x.from === ref(from, "out") && x.to === ref(to, "in"))!;
+    c.params = { ...c.params, tap };
+    return c;
+  };
+
+  it("follows the tap into a VARI MIX bus and into an FX bus", () => {
+    const p = defaultPlan("URX44");
+    p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: BUS_TYPE_VARI };
+    expect(sendIsPreFader(u44, p, withTap(p, "ch1", "bus.mix1", "pre"))).toBe(true);
+    expect(sendIsPreFader(u44, p, withTap(p, "ch1", "bus.mix1", "post"))).toBe(false);
+    expect(sendIsPreFader(u44, p, withTap(p, "ch1", "bus.fx1", "pre"))).toBe(true);
+  });
+
+  // A FIXED MIX bus takes every send after the channel fader whatever its tap holds.
+  it("is false into a FIXED MIX bus, for a channel and an FX-channel source alike", () => {
+    const p = defaultPlan("URX44");
+    p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED };
+    expect(sendIsPreFader(u44, p, withTap(p, "ch1", "bus.mix1", "pre"))).toBe(false);
+    expect(sendIsPreFader(u44, p, withTap(p, "bus.fx1", "bus.mix1", "pre"))).toBe(false);
+    // Only the bus that is FIXED: the same channel into MIX 2 is still pre-fader.
+    expect(sendIsPreFader(u44, p, withTap(p, "ch1", "bus.mix2", "pre"))).toBe(true);
+  });
+
+  // The STEREO main path is the fader itself and carries no tap, so a stray `pre` on
+  // it is not a pre-fader send.
+  it("is false on a route with no tap, whatever its params hold", () => {
+    const p = defaultPlan("URX44");
+    expect(sendIsPreFader(u44, p, withTap(p, "ch1", "bus.stereo", "pre"))).toBe(false);
   });
 });
 

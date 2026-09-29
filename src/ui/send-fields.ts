@@ -35,10 +35,11 @@ export function isBalanceChannel(model: DeviceModel, plan: Plan, id: string): bo
 }
 
 /** The send fields a wire shows, with the destination locks that decided them. A
- *  MIX 1 / MIX 2 destination governs them: FIXED bus type drops the LEVEL (fixed
- *  send level); Pan Link (VARI only) drops the PAN (it follows the source channel
- *  PAN). PRE/POST is taken against the channel's STEREO main-fader level, so the
- *  fixed STEREO / FX-channel main paths show LEVEL / PAN but no PRE/POST. */
+ *  MIX 1 / MIX 2 destination governs them: FIXED bus type drops all three (the send
+ *  keeps only its ON — post-fader, fixed level, placed by the channel PAN); Pan Link
+ *  (VARI only) drops the PAN (it follows the source channel PAN). PRE/POST is taken
+ *  against the channel's STEREO main-fader level, so the fixed STEREO / FX-channel
+ *  main paths show LEVEL / PAN but no PRE/POST. */
 export function sendFields(
   model: DeviceModel,
   plan: Plan,
@@ -47,9 +48,9 @@ export function sendFields(
   to: string,
 ): { fields: ParamField[]; busFixed: boolean; panLinked: boolean } {
   const { busFixed, panLinked } = mixSendLocks(plan, parseRef(to).nodeId);
-  const fields = PARAM_FIELDS[kind].filter(
-    (f) => (f !== "tap" || sendHasTap(model, from, to)) && (f !== "level" || !busFixed) && (f !== "pan" || !panLinked),
-  );
+  const fields = busFixed
+    ? []
+    : PARAM_FIELDS[kind].filter((f) => (f !== "tap" || sendHasTap(model, from, to)) && (f !== "pan" || !panLinked));
   return { fields, busFixed, panLinked };
 }
 

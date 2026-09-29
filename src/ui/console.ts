@@ -76,6 +76,7 @@ import {
   mixSendLocks,
   pairSharesNodeKey,
   partnerChannel,
+  sendIsPreFader,
   sendTapWritable,
 } from "../core/routing";
 import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected } from "../core/control/params";
@@ -1028,11 +1029,14 @@ export class Console {
     const isMix = this.isMixBus(target);
     // The bus this column aims at is gone at this rate, so the whole column is: its
     // switch, its tap and its level all set something on a bus the unit is not running.
-    // FIXED is the narrower lock below — that one takes the level and leaves the rest.
+    // FIXED is the narrower lock below — that one takes the level and the tap and leaves
+    // the switch.
     const rateOff = nodeRateDisabled(target, this.hooks.getPlan().sampleRate);
-    // FIXED BUS Type locks the MIX send level read-only (matching the graph inspector);
-    // the PRE tap and enable chip stay editable.
-    const busFixed = rateOff || (isMix && mixSendLocks(this.hooks.getPlan(), target).busFixed);
+    // FIXED BUS Type leaves a MIX send its ON alone: the level and the PRE tap turn
+    // read-only (matching the graph inspector, which drops them) and the enable chip
+    // stays editable.
+    const mixFixed = isMix && mixSendLocks(this.hooks.getPlan(), target).busFixed;
+    const busFixed = rateOff || mixFixed;
 
     const col = el("div", "con-scol" + (c?.params?.on !== false ? "" : " off") + (rateOff ? " rate-off" : ""));
     // vertical mini-fader (built first so the PRE button can refresh its aria-valuetext)
@@ -1041,7 +1045,7 @@ export class Console {
     fader.setAttribute("aria-label", SEND_LABEL[target]);
     if (busFixed) {
       fader.setAttribute("aria-disabled", "true");
-      fader.title = rateOff ? t().inspector.fx2RateLocked : t().inspector.busFixedLevel;
+      fader.title = rateOff ? t().inspector.fx2RateLocked : t().inspector.busFixedSend;
     } else {
       fader.tabIndex = 0;
     }
@@ -1087,7 +1091,7 @@ export class Console {
     const preBtn = this.buildChip(
       m.id,
       t().console.pre,
-      c?.params?.tap === "pre",
+      this.isPreSend(c),
       () => {
         const next = c?.params?.tap !== "pre";
         if (c) c.params = { ...c.params, tap: next ? "pre" : "post" };
@@ -1096,14 +1100,20 @@ export class Console {
       },
       rateOff
         ? { cls: "con-slp", readonlyTitle: t().inspector.fx2RateLocked }
-        : tapReadonly
-          ? { cls: "con-slp", readonlyTitle: t().inspector.prePostLcdOnly }
-          : { cls: "con-slp", midiId: isMix ? controlId(m.id, "tap", target) : undefined, title: t().console.preHint },
+        : mixFixed
+          ? { cls: "con-slp", readonlyTitle: t().inspector.busFixedSend }
+          : tapReadonly
+            ? { cls: "con-slp", readonlyTitle: t().inspector.prePostLcdOnly }
+            : {
+                cls: "con-slp",
+                midiId: isMix ? controlId(m.id, "tap", target) : undefined,
+                title: t().console.preHint,
+              },
     );
 
     // A FIXED-bus send fader is display-only: paint its value but skip the wiring.
     if (!busFixed) this.wireColFader(m.id, target, c, ref, range, swap, readoutText);
-    this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, c?.params?.tap === "pre");
+    this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, this.isPreSend(c));
     col.append(chip, preBtn, fader);
     return { el: col, ref };
   }
@@ -1133,7 +1143,7 @@ export class Console {
     const rackTouched = (): boolean => !!rack?.querySelector(".con-vfad:hover, .con-vfad:focus");
     const set = (db: number): void => {
       if (c) c.params = { ...c.params, level: db };
-      this.updateColLevel(ref, range, db, c?.params?.tap === "pre");
+      this.updateColLevel(ref, range, db, this.isPreSend(c));
       swap(readoutText());
       this.commit(node);
       this.mirrorPartnerSend(node, target);
@@ -1218,6 +1228,12 @@ export class Console {
   }
 
   // Paint a send column's fader cap position + accessible value from a dB level + tap.
+  /** Whether a send column reads as pre-fader: its tap, unless a FIXED bus takes it
+   *  after the fader regardless (sendIsPreFader). */
+  private isPreSend(c: PlanConnection | undefined): boolean {
+    return c !== undefined && sendIsPreFader(this.hooks.getModel(), this.hooks.getPlan(), c);
+  }
+
   private updateColLevel(ref: SendColRef, range: LevelRange, db: number, pre: boolean): void {
     ref.cap.style.setProperty("--pos", (1 - dbToFrac(db, range)) * 100 + "%");
     const f = fmtDb(db, range);
@@ -1278,7 +1294,7 @@ export class Console {
       capEl.textContent = SEND_LABEL[target];
       const conn = (): PlanConnection | undefined => sendConnection(this.hooks.getPlan(), stripId, target);
       const factory = sendConnection(this.factoryPlan(), stripId, target)?.params?.pan ?? 0;
-      const { panLinked } = mixSendLocks(plan, target);
+      const { busFixed, panLinked } = mixSendLocks(plan, target);
       const spec = this.panKnobSpec(
         () => conn()?.params?.pan ?? 0,
         (v) => {
@@ -1286,7 +1302,7 @@ export class Console {
           if (c) c.params = { ...c.params, pan: v };
         },
         factory,
-        panLinked ? t().inspector.panLinked : undefined,
+        busFixed ? t().inspector.busFixedSend : panLinked ? t().inspector.panLinked : undefined,
       );
       // partnerSync off: the mirror is handled by commit; a re-render would tear down
       // this popover, and no partner send-pan control is on screen.
@@ -3297,7 +3313,7 @@ export class Console {
     const col = pr?.sendCols?.find((c) => c.target === target);
     if (!col) return;
     const pc = sendConnection(this.hooks.getPlan(), partner!, target);
-    this.updateColLevel(col, pr!.m.range, pc?.params?.level ?? LEVEL_OFF_DB, pc?.params?.tap === "pre");
+    this.updateColLevel(col, pr!.m.range, pc?.params?.level ?? LEVEL_OFF_DB, this.isPreSend(pc));
   }
 
   // The factory plan (cached): the source for double-click "reset to default".

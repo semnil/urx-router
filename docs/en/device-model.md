@@ -184,14 +184,19 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
 (shown by default). The MIX → STEREO TO ST switch (§3) is dimmed the same way when off.
 
 > **BUS Type (MIX 1 / MIX 2, CH SETTING).** Each MIX bus is VARI (variable per-send level, the
-> default and what the tool models) or FIXED (a fixed send level — sends into the bus carry no
-> adjustable LEVEL). **Pan Link** (VARI only) ties each send's PAN to the source channel PAN, so the
-> per-send PAN is no longer independent. Stored on the MIX bus node; the connection panel hides the
-> LEVEL (FIXED) or PAN (Pan Link) accordingly and shows a short note. The console applies the same
-> locks in the SENDS rack (FIXED locks that MIX column's mini-fader; Pan Link locks its SEND PAN knob).
+> default and what the tool models) or FIXED. On a FIXED bus **a send keeps only its ON**: the unit
+> takes it after the channel fader at a fixed level, placed by the channel PAN, so the send's LEVEL,
+> PRE/POST and PAN have no effect (the unit accepts and reads back writes to all three). **Pan Link**
+> (VARI only) ties each send's PAN to the source channel PAN, so the per-send PAN is no longer
+> independent. Stored on the MIX bus node; the connection panel hides the LEVEL, PRE/POST and PAN
+> (FIXED) or the PAN (Pan Link) accordingly and shows a short note. The console applies the same
+> locks in the SENDS rack (FIXED locks that MIX column's PRE button and mini-fader and its SEND PAN
+> knob; Pan Link locks the SEND PAN knob), and so does MIDI (a mapped control on a locked value
+> writes nothing).
 
 > On the canvas a PRE MIX/FX send is drawn **dashed with an amber "PRE" tap marker just after the
-> source**, so it is visible without selecting the connection. POST (the default) is solid and unmarked.
+> source**, so it is visible without selecting the connection. POST (the default) is solid and unmarked,
+> and so is a send into a FIXED MIX bus whatever its tap holds, since the unit takes it after the fader.
 > The marker is carried into image exports (PNG/PDF).
 
 ### 3. Bus-to-bus (`send` / `sendSwitch`)

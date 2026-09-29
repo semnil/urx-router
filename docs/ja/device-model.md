@@ -179,14 +179,17 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 完全に隠せる (既定は表示)。MIX → STEREO の TO ST スイッチ (§3) も同じ off 減光の対象。
 
 > **BUS Type (MIX 1 / MIX 2、CH SETTING)。** 各 MIX Bus は VARI (Send ごとに可変レベル。既定でツールが
-> モデル化する挙動) か FIXED (固定レベル — その Bus への Send は調整可能な LEVEL を持たない)。**Pan Link**
-> (VARI 時のみ) は各 Send の PAN を Send 元チャンネルの PAN に追従させ、個別 PAN を編集不可にする。MIX Bus
-> ノードに保持し、接続パネルは FIXED で LEVEL、Pan Link で PAN を隠し、短い注記を表示する。CONSOLE も
-> SENDS ラックで同じロックを適用し、その MIX 列のミニフェーダー (FIXED) / SEND PAN ノブ (Pan Link) を
-> read-only にする。
+> モデル化する挙動) か FIXED。FIXED の Bus では **Send が持つのは ON だけ**になる: 実機はチャンネルの
+> フェーダーの後で固定レベルで取り出し、位置はチャンネルの PAN に従うので、Send の LEVEL・PRE/POST・
+> PAN は効かない (3 つとも書込は受理され、読み戻しも書いた値を返す)。**Pan Link** (VARI 時のみ) は各 Send の
+> PAN を Send 元チャンネルの PAN に追従させ、個別 PAN を編集不可にする。MIX Bus ノードに保持し、接続パネルは
+> FIXED で LEVEL・PRE/POST・PAN、Pan Link で PAN を隠し、短い注記を表示する。CONSOLE も SENDS ラックで
+> 同じロックを適用し、FIXED ではその MIX 列の PRE ボタン・ミニフェーダーと SEND PAN ノブを、Pan Link では
+> SEND PAN ノブを read-only にする。MIDI も同じで、ロック中の値に割り当てたコントロールは何も書かない。
 
 > 盤面上では PRE の MIX/FX Send を **破線＋ソース直後の琥珀色「PRE」タップマーカー**で表示し、接続を選択せずに
-> 視認できる。POST (既定) は実線・無印。画像出力 (PNG/PDF) にも反映される。
+> 視認できる。POST (既定) は実線・無印。FIXED の MIX Bus への Send も、タップの値によらず実線・無印
+> (実機がフェーダーの後で取り出すため)。画像出力 (PNG/PDF) にも反映される。
 
 ### 3. Bus 間 (`send` / `sendSwitch`)
 

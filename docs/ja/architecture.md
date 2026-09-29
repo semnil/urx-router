@@ -170,7 +170,7 @@ flowchart TD
     「MIDI 割り当て」が持つ)。id の第 3 要素は**スコープ**である: 送り先 Bus (`@bus.mix1`) か、プロセッサ / バンド
     (`@gate`、`@comp`、`@eq.low`) — 1 つのノードはフェーダーを 1 つ持つがしきい値は 3 つ持ち、バンドがカーソル
     ではなくスコープなのは、割当が画面を閉じたままでも働かなければならないからである。実機のロックは書込を
-    拒否する (FIXED Bus send、Pan Link の送りパン、レート制限されたステレオ CH EQ、1-knob 下で実機が駆動する
+    拒否する (FIXED Bus send のレベル / パン / タップ、Pan Link の送りパン、レート制限されたステレオ CH EQ、1-knob 下で実機が駆動する
     COMP の値、1-knob 下の EQ バンド値、フィルタタイプが読まない Q / ゲイン)。+48V と HI-Z は、もう片方が
     オンの間のオンをそれぞれ拒否する (`refuses`。捨てずに報告する)。enum セレクタ (ニー / フィルタ
     タイプ / 1-knob タイプ) はコントロールを持たない / `engine.ts` 受信メッセージの適用 (14 bit CC ペア。
@@ -1061,13 +1061,13 @@ EQ バンドゲインと COMP ゲインのスライダーは 0.1 dB 刻み (通�
   ラックは機種の送りスロットごとに固定列を持ち (順序 FX 1 / FX 2 / MIX 1 / MIX 2 = `SEND_TARGETS`・Bus を
   棚上げすると全ストリップからその列が落ちる)、各列は **有効チップ** (`params.on`・琥珀=有効・ON 極性)・
   **PRE ボタン** (`params.tap`・実機が受け付けない CH → FX tap は Live 中 read-only = `sendTapWritable`・
-  [known-issues.md](known-issues.md) 参照)・**縦ミニフェーダー** (`params.level`・相対ドラッグで level_gain
+  [known-issues.md](known-issues.md) 参照・FIXED BUS Type は消灯の read-only ロック)・**縦ミニフェーダー** (`params.level`・相対ドラッグで level_gain
   グリッドにスナップ・FIXED BUS Type は read-only ロック) からなる。送りを持たないストリップ (MIX / MONITOR /
   STEREO / OSCILLATOR / STREAMING) は減光した `SENDS` ヘッダのみを描き、メーター専用ストリップにも同じ
   スペーサーを与えてフェーダー上端を揃える。ヘッダは列操作中 `SENDS` ラベルを値読み値
   (`MIX 1 -3.2` — タップは列自身の PRE ボタンで読む) に
   差し替え、最下部の全幅 **PAN ▾** ボタンが直下に **SEND PAN ポップオーバー**を開く (MIX 送りの pan を
-  回転ノブで・FX 送りはモノ・Pan Link はノブを read-only ロック)。どの `SENDS` ヘッダをクリックしても全ラックを
+  回転ノブで・FX 送りはモノ・FIXED BUS Type と Pan Link はノブを read-only ロック)。どの `SENDS` ヘッダをクリックしても全ラックを
   一括開閉し (`sends-collapsed` ホストクラス・`localStorage` `urx-sends-open` に永続化)、格納中は ON 中の
   送りごとに琥珀ドットを 1 個表示する。**ノード master がオフ** (電源 LED 消灯 — CH_ON / MIX 675 / STEREO 582 /
   MONITOR 723、いずれも `np.on`、または OSC の `osc.on`) のときは strip を減光する (グラフと共有の
@@ -1253,7 +1253,7 @@ macOS ではアームしたコントロールをクリックした瞬間に**メ
   HI-Z がオンの間 A.Gain は -8..+40 — / PAN ±63 / PHONES 0.1 刻み) へスナップする。調整画面のパラメータはスライダーと同じ `DynField` 表からグリッドを
   得る。両者がそのグリッドへどの道で到達するか、そしてそれが MIDI 値とドラッグしたスライダーを同じ値に
   載せる範囲と載せない範囲は channel-tuning.md の「MIDI 割り当て」が持つ。
-  デバイスロックは書込みを拒否する: FIXED Bus の送りレベル、Pan Link の送り pan、176.4/192 kHz のステレオ
+  デバイスロックは書込みを拒否する: FIXED Bus の送りレベル・pan・PRE/POST、Pan Link の送り pan、176.4/192 kHz のステレオ
   CH EQ、COMP 1-knob 中の threshold / ratio / gain と Auto Makeup (実機が算出する)、1-knob OFF 中の COMP 1-knob
   レベル、EQ 1-knob 中の全バンド値、フィルタタイプが読まない Q / gain。列挙セレクタ (COMP の knee、EQ の
   フィルタタイプと 1-knob タイプ) はコントロール自体を持たない。+48V と HI-Z の拒否は形が違う: チャンネルで

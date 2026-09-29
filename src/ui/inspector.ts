@@ -16,7 +16,7 @@ import {
   monoPairsInto,
   pairPrimary,
   sendHasOn,
-  sendHasTap,
+  sendIsPreFader,
   sendTapWritable,
 } from "../core/routing";
 import {
@@ -163,16 +163,16 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
     // carrying a tap, and only on PRE, so every other wire out of the same channel would
     // name its ducker for a note it cannot draw.
     //
-    // The answer reads a connection param, and stays current because nothing caches it —
-    // main.ts recomputes this on each reflect — and because each writer of a tap already
-    // repaints: `onUpdateParams` calls refreshInspector for a `tap` patch, the MIDI tap
-    // control is owned by the source channel (midi/controls.ts stamps `node: id`), which
-    // is named below unconditionally, and no tap param carries follow: "direct", so a
-    // device-side change lands on the scoped/full branch that refreshes wholesale.
-    const drawsNote =
-      isFixedConnection(model, from, to) &&
-      sendHasTap(model, from, to) &&
-      plan.connections.find((c) => c.from === from && c.to === to)?.params?.tap === "pre";
+    // The answer reads a connection param and the destination's BUS Type (a FIXED bus
+    // takes the send after the fader), and stays current because nothing caches it —
+    // main.ts recomputes this on each reflect, and the destination is named below — and
+    // because each writer of a tap already repaints: `onUpdateParams` calls
+    // refreshInspector for a `tap` patch, the MIDI tap control is owned by the source
+    // channel (midi/controls.ts stamps `node: id`), which is named below
+    // unconditionally, and no tap param carries follow: "direct", so a device-side
+    // change lands on the scoped/full branch that refreshes wholesale.
+    const conn = plan.connections.find((c) => c.from === from && c.to === to);
+    const drawsNote = isFixedConnection(model, from, to) && conn !== undefined && sendIsPreFader(model, plan, conn);
     const own = drawsNote
       ? model.nodes
           .filter((n) => n.kind === "ducker" && n.attachTo === host && !duckers.includes(n.id))
@@ -1027,7 +1027,7 @@ export function renderInspector(
     } else {
       host.append(hint(m.inspector[sendlessNote(model, from, to)]));
     }
-    if (busFixed) host.append(hint(m.inspector.busFixedLevel));
+    if (busFixed) host.append(hint(m.inspector.busFixedSend));
     if (panLinked) host.append(hint(m.inspector.panLinked));
   }
 
@@ -1038,11 +1038,7 @@ export function renderInspector(
     // A PRE (pre-fader) send from a channel whose Ducker is on taps ahead of the
     // Ducker (which sits post-fader), so the send is not ducked — flag it next to
     // the fixed-connection note rather than on the canvas.
-    if (
-      sendHasTap(model, from, to) &&
-      conn?.params?.tap === "pre" &&
-      channelDuckerOn(model, plan, parseRef(from).nodeId)
-    )
+    if (conn && sendIsPreFader(model, plan, conn) && channelDuckerOn(model, plan, parseRef(from).nodeId))
       host.append(hint(m.inspector.duckerPreSend));
     return;
   }

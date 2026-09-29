@@ -466,7 +466,8 @@ export const ja: Messages = {
       "このチャンネルの Ducker は ON ですが、この PRE (Pre-fader send) はその手前でタップするため Ducker が効きません。Ducker を含めるには POST に切り替えてください。",
     busType: "BUS Type",
     panLink: "Pan Link",
-    busFixedLevel: "Send レベルは固定 (BUS Type: FIXED)。",
+    busFixedSend:
+      "Send は ON のみ有効 (BUS Type: FIXED)。チャンネルのフェーダーの後で固定レベルで取り出し、チャンネルの PAN に従う。",
     panLinked: "パンは Send 元チャンネルの PAN に追従 (Pan Link)。",
     sdRecTrackCount: "Track Count",
     sdRecTrackCountLive: "Track Count はデバイス側でのみ設定できます (broker が公開するのは 8 段階のうち 1 つだけ)。",

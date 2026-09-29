@@ -183,7 +183,7 @@ carries a one-line map of the same directories and points here.
     **scope**: a send-target bus (`@bus.mix1`) or a
     processor / band (`@gate`, `@comp`, `@eq.low`) — a node has one fader but three thresholds, and a band
     is a scope rather than a cursor because a mapping has to work with the screen closed. Device locks
-    reject writes (FIXED bus sends, Pan Link send pan, rate-restricted stereo CH EQ, COMP's device-driven
+    reject writes (FIXED bus send level / pan / tap, Pan Link send pan, rate-restricted stereo CH EQ, COMP's device-driven
     values under 1-knob, EQ band values under 1-knob, the Q/gain a filter type does not read); +48V and HI-Z
     each refuse turning on while the other is on (`refuses`, reported rather than dropped); the enum
     selectors (knee / filter type / 1-knob type) carry no control / `engine.ts` incoming-message application
@@ -1312,14 +1312,15 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   The rack has one fixed column per model send slot (order FX 1 / FX 2 / MIX 1 / MIX 2 = `SEND_TARGETS`, a
   shelved bus drops its column on every strip), each an **enable chip** (`params.on`, amber = active, ON
   polarity), a **PRE button** (`params.tap`; a CH → FX tap the device cannot accept is shown read-only while
-  live — `sendTapWritable`, see [known-issues.md](known-issues.md)), and a **vertical mini-fader**
+  live — `sendTapWritable`, see [known-issues.md](known-issues.md); FIXED BUS Type locks it read-only and
+  unlit), and a **vertical mini-fader**
   (`params.level`, relative drag snapped to the level_gain grid; FIXED BUS Type locks it read-only). A strip
   with no sends (MIX / MONITOR / STEREO / OSCILLATOR / STREAMING) renders a dimmed `SENDS` header only, and
   meter-only strips get the same spacer, so fader tops stay aligned. The header swaps its `SENDS` label for a
   value readout (`MIX 1 -3.2` — the tap is read off the column's own PRE button) while a column is
   touched, and a full-width **PAN ▾** button opens the
-  **SEND PAN popover** below it — the MIX sends' pan as rotary knobs (FX sends are mono; Pan Link locks a knob
-  read-only). Clicking any `SENDS` header collapses/expands every rack together (a `sends-collapsed` host
+  **SEND PAN popover** below it — the MIX sends' pan as rotary knobs (FX sends are mono; FIXED BUS Type and
+  Pan Link lock a knob read-only). Clicking any `SENDS` header collapses/expands every rack together (a `sends-collapsed` host
   class, persisted in `localStorage` `urx-sends-open`), showing one amber dot per active send when collapsed.
   When any node's **master is off** (the power LED off — CH_ON / MIX 675 / STEREO 582 / MONITOR 723, all on
   `np.on`, or the oscillator's `osc.on`), the strip **dims** — the shared `isNodeInactive` predicate the graph
@@ -1532,8 +1533,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   PAN ±63, PHONES 0.1 steps). A tuning
   screen's parameter takes its grid from the same `DynField` table its slider is built from; which route
   each side takes to that grid, and what it does and does not put a MIDI value and a dragged slider on, is
-  channel-tuning.md "MIDI assignment". Device locks refuse the write: a FIXED bus's send level, a
-  Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain and Auto
+  channel-tuning.md "MIDI assignment". Device locks refuse the write: a FIXED bus's send level, pan and
+  PRE/POST, a Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain and Auto
   Makeup while 1-knob is on (the device computes them), COMP's 1-knob level while it is off, every EQ band
   value while EQ 1-knob is on, and the Q / gain a filter type does not read. The enum selectors (COMP knee,
   the EQ filter type and 1-knob type) carry no control at all. +48V and HI-Z refuse differently: turning one

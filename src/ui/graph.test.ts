@@ -39,6 +39,7 @@ import { LEVEL_MIN_DB } from "../core/plan";
 import type { Plan } from "../core/plan";
 import { defaultPlan } from "../models/initial-state";
 import { isFixedConnection } from "../core/routing";
+import { BUS_TYPE_FIXED } from "../core/control/params";
 import { getModel } from "../models";
 import type { ModelId } from "../models/types";
 import { getSettings, resetSettingsCache, updateSettings } from "../core/settings";
@@ -122,6 +123,30 @@ describe("appearance", () => {
   it("assigns every connection kind a wire group", () => {
     for (const conn of graphFixture().plan.connections) expect(WIRE_GROUP[conn.kind]).toBeDefined();
     fx = graphFixture();
+  });
+
+  // A pre-fader send is dashed and tagged PRE. A FIXED bus takes every send after the
+  // fader, so once the destination turns FIXED the same PRE tap is drawn as the solid,
+  // unmarked send it is — on the wire repaint a BUS Type edit asks for.
+  it("marks a PRE send, and drops the mark once its bus is FIXED", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        const c = plan.connections.find((w) => w.from === "ch1:out" && w.to === "bus.mix1:in")!;
+        c.params = { ...c.params, tap: "pre", on: true };
+      },
+    });
+    const marked = (): { dashed: boolean; tagged: boolean } => {
+      const g = wireHit(fx.host, "ch1:out", "bus.mix1:in")!.parentElement!;
+      const painted = [...g.querySelectorAll("path:not(.wire-hit)")];
+      return {
+        dashed: painted.some((p) => p.getAttribute("stroke-dasharray") === "7 5"),
+        tagged: [...g.querySelectorAll("text")].some((t) => t.textContent === "PRE"),
+      };
+    };
+    expect(marked()).toEqual({ dashed: true, tagged: true });
+    fx.plan.nodeParams["bus.mix1"] = { ...fx.plan.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED };
+    fx.graph.repaintWires();
+    expect(marked()).toEqual({ dashed: false, tagged: false });
   });
 
   it("shows the device name in place of the model label when asked", () => {
