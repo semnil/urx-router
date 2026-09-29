@@ -53,7 +53,14 @@ import {
   type PlanPatch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
-import { applyParamRange, applyRequiredSources, isRefusal, needsDecision, planProblems } from "./core/plan-validate";
+import {
+  applyLinkedSendPans,
+  applyParamRange,
+  applyRequiredSources,
+  isRefusal,
+  needsDecision,
+  planProblems,
+} from "./core/plan-validate";
 import { phantomHiZBothOn, phantomHiZNewlyBothOn, switchAddr } from "./core/input-lock";
 import type { InputSwitch, SwitchSession } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
@@ -2367,6 +2374,8 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
         const was = JSON.stringify(p.stored);
         return `[${p.reason}] ${p.node}.${p.key}: ${was} -> ${p.action === "drop" ? "(dropped)" : p.bound}`;
       }
+      if (p.reason === "linkedSendPan")
+        return `[${p.reason}] ${p.from} -> ${p.to}: ${p.stored ?? "(none)"} -> ${p.pan}`;
       return `[${p.reason}] ${p.from} -> ${p.to}`;
     }),
   ].join("\n");
@@ -2421,6 +2430,11 @@ function loadFromText(text: string, path?: string): boolean | null {
       supplied.map((p) => connectionContestKey(p.from, p.to)),
       "default",
     );
+    // …and a send into a MIX whose Pan Link is on takes its source's own pan / balance, where the
+    // unit holds it: the write sends none of them, while the read-only SEND PAN knob, the MIDI
+    // feedback and the next save read what the plan holds.
+    const linkedPans = problems.filter((p) => p.reason === "linkedSendPan");
+    applyLinkedSendPans(getModel(next.modelId), next, linkedPans);
     // …and then completed from the model's factory values. A document carries only what
     // someone wrote in it, and what it omits is a key the panel draws a default for and the
     // write does not send — one channel on screen, another on the wire. Run here, after the
@@ -2466,6 +2480,7 @@ function loadFromText(text: string, path?: string): boolean | null {
         ...(boundCount > 0 ? [t().status.paramsBounded(boundCount)] : []),
         ...(dropCount > 0 ? [t().status.paramsDropped(dropCount)] : []),
         ...(supplied.length > 0 ? [t().status.streamingSourceSupplied] : []),
+        ...(linkedPans.length > 0 ? [t().status.linkedSendPansAligned(linkedPans.length)] : []),
       ];
       const line = (what: string): string => [...notes, what].join(" — ");
       if (path) {

@@ -15,7 +15,11 @@ loads the plan as authored":
 - a receiver the unit never leaves without a source (STREAMING — models.json
   `requiredSources`) that the document gives no wire is completed on load with the
   model's default source (core/plan-validate.ts `requiredSourceProblems`), which is
-  reported as a warning — the plan loads, with a wire it did not name, and
+  reported as a warning — the plan loads, with a wire it did not name,
+- a send into a MIX bus whose Pan Link is on takes its source's own pan / balance on
+  load (core/plan-validate.ts `linkedSendPanProblems`) wherever the document gives it
+  another, which is reported as a warning — the plan loads with the pan the unit
+  holds there rather than the one it wrote, and
 - the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
   of the raw-deflated UTF-8 JSON, padding stripped), read back by `?plan=` on
   startup. Compression keeps full plans inside GitHub Pages' ~8 KB URL limit;
@@ -30,8 +34,8 @@ Usage:
 
 Exit code is non-zero when the plan has hard validation problems, so the skill
 can branch on it. Warnings (a dropped wire or value, a wire the load adds, a
-misplaced Ducker param, raw-encoded params, a destructive effect selector, a
-contended insert-FX slot)
+linked send pan the load sets, a misplaced Ducker param, raw-encoded params, a
+destructive effect selector, a contended insert-FX slot)
 are advisory and never fail the plan — but they all mean something worth telling
 the user.
 """
@@ -195,6 +199,7 @@ def validate(plan, models):
         seen.add(key)
 
     warnings.extend(required_source_warnings(plan, model, kept))
+    warnings.extend(linked_send_pan_warnings(plan, model, kept))
     warnings.extend(collection_warnings(plan))
     warnings.extend(
         node_param_warnings(
@@ -225,6 +230,37 @@ def required_source_warnings(plan, model, kept):
         label = model["nodes"].get(node_of(to), {}).get("label", node_of(to))
         why = f"the unit never leaves {label} without a source, and the document gives it none"
         out.append(f"connection {frm} -> {to}: the app adds this wire on load — {why}")
+    return out
+
+
+MIX_BUSES = ("bus.mix1", "bus.mix2")
+
+
+def linked_send_pan_warnings(plan, model, kept):
+    """The send pans the app's load sets (core/plan-validate.ts `linkedSendPanProblems`): while a
+    MIX bus's Pan Link is on, the unit holds every send pan into it at its source's own pan /
+    balance — the pan on the source's fixed main path into STEREO — and the load sets the
+    document's to that value, adding a send the document omits. An absent pan, send or main
+    path counts as 0, and so does a wire the loader dropped. Each member of a STEREO-linked
+    pair is asked about its own main path."""
+    node_params = plan.get("nodeParams")
+    node_params = node_params if isinstance(node_params, dict) else {}
+    pans = {(c["from"], c["to"]): (c.get("params") or {}).get("pan") for c in kept}
+    out = []
+    for frm, to, kind, fixed in model["rules"]:
+        mix = node_of(to)
+        if not fixed or kind != "send" or mix not in MIX_BUSES:
+            continue
+        if sanitized(node_params, mix, "panLink") is not True:
+            continue
+        stored = pans.get((frm, to))
+        pan = pans.get((f"{node_of(frm)}:out", "bus.stereo:in"))
+        pan = 0 if pan is None else pan
+        if (0 if stored is None else stored) == pan:
+            continue
+        label = model["nodes"].get(mix, {}).get("label", mix)
+        why = f"{label}'s Pan Link holds it at its source's own PAN / BAL"
+        out.append(f"connection {frm} -> {to}: the app sets this send's pan to {pan} on load — {why}")
     return out
 
 

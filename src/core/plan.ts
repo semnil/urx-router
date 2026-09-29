@@ -2,7 +2,7 @@
 // Serializes to a versioned JSON document that future hardware reflection will
 // reuse as the input.
 
-import type { ConnectionKind, DeviceModel, ModelId } from "../models/types";
+import type { ConnectionKind, DeviceModel, ModelId, RoutingRule } from "../models/types";
 import { parseRef, ref } from "../models/types";
 import { getModel } from "../models";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES, trackCountAtRate } from "./constraints";
@@ -922,21 +922,26 @@ export function ensureFixedConnections(model: DeviceModel, plan: Plan): void {
   normalizeConnectionKinds(model, plan);
   for (const rule of model.rules) {
     if (!rule.fixed || hasConnection(plan, rule.from, rule.to)) continue;
-    const conn: PlanConnection = { from: rule.from, to: rule.to, kind: rule.kind };
-    if (rule.kind === "sendSwitch") {
-      // MIX 1/2 → STEREO "TO ST": a fixed ON/OFF switch with no level/pan, off at the
-      // factory (carried in params.on so the fixed wire can still be turned off).
-      conn.params = { on: false };
-    } else {
-      // The channel's main fader path into STEREO seeds at unity; every other fixed
-      // send (CH → MIX/FX sends, FX returns into STEREO/MIX) seeds at -∞ so it is not
-      // summed in until raised. Each ships ON (params.on absent = on, SEND_ON = 1).
-      const fromKind = model.nodes.find((n) => n.id === parseRef(rule.from).nodeId)?.kind;
-      const toStereo = parseRef(rule.to).nodeId === "bus.stereo";
-      if (!(fromKind === "channel" && toStereo)) conn.params = { level: LEVEL_OFF_DB };
-    }
-    plan.connections.push(conn);
+    plan.connections.push(fixedConnection(model, rule));
   }
+}
+
+/** The wire a fixed rule is given where a plan carries none. */
+export function fixedConnection(model: DeviceModel, rule: RoutingRule): PlanConnection {
+  const conn: PlanConnection = { from: rule.from, to: rule.to, kind: rule.kind };
+  if (rule.kind === "sendSwitch") {
+    // MIX 1/2 → STEREO "TO ST": a fixed ON/OFF switch with no level/pan, off at the
+    // factory (carried in params.on so the fixed wire can still be turned off).
+    conn.params = { on: false };
+  } else {
+    // The channel's main fader path into STEREO seeds at unity; every other fixed
+    // send (CH → MIX/FX sends, FX returns into STEREO/MIX) seeds at -∞ so it is not
+    // summed in until raised. Each ships ON (params.on absent = on, SEND_ON = 1).
+    const fromKind = model.nodes.find((n) => n.id === parseRef(rule.from).nodeId)?.kind;
+    const toStereo = parseRef(rule.to).nodeId === "bus.stereo";
+    if (!(fromKind === "channel" && toStereo)) conn.params = { level: LEVEL_OFF_DB };
+  }
+  return conn;
 }
 
 export function removeConnection(plan: Plan, from: string, to: string): void {

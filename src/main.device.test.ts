@@ -33,7 +33,7 @@ import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, STEREO_FADER } from
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
-import { channelControl, insertFxControl, nameControl, planToCommands } from "./core/control/translate";
+import { channelControl, insertFxControl, nameControl, planToCommands, sendControl } from "./core/control/translate";
 import { getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { DeviceModel } from "./models/types";
@@ -7009,6 +7009,64 @@ describe("importing a settings file", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
+  // A file holding MIX 1's Pan Link on with CH 1's send into it at R40 and CH 1 at R20. The import
+  // takes the send pan as the file holds it, where a document's load sets it to CH 1's R20, and
+  // the status line carries the import's own message alone. Built the way the case above builds
+  // its file.
+  it("takes a linked MIX's send pan from the file as it is", SLOW, async () => {
+    const { applySourceState } = await import("./core/control/readback");
+    const sendPans = sendControl(getModel("URX44V"), "ch1", "bus.mix1")!.pan;
+    const held: Record<number, number> = {
+      [PARAMS.PAN_LINK.id]: 1,
+      [channelControl(getModel("URX44V"), "ch1")!.pan]: 20,
+      ...Object.fromEntries(sendPans.map((id) => [id, 40])),
+    };
+    const value = (id: number, y: number): number =>
+      id === PARAMS.SAMPLE_RATE.id
+        ? 48_000
+        : y === 0 && id in held
+          ? held[id]
+          : unwrittenRead({ paramId: id, x: 0, y });
+    const asked = new Map<number, { str: boolean; len: number }>();
+    const ask = (str: boolean, id: number, y: number): void => {
+      asked.set(id, { str, len: Math.max(asked.get(id)?.len ?? 0, y + 1) });
+    };
+    const expected = await applySourceState(getModel("URX44V"), defaultPlan("URX44V"), {
+      get: async (paramId, x, y) => (ask(false, paramId + x, y), value(paramId + x, y)),
+      getStr: async (paramId, x, y) => (ask(true, paramId + x, y), ""),
+    });
+    expect(expected.errors, "the premise: every address the read asks is answered").toEqual([]);
+    const fields = [...asked].map(([id, a]): Field =>
+      a.str
+        ? { id, typecode: 4, elemSize: 16, values: Array<string>(a.len).fill("") }
+        : (() => {
+            const values = Array.from({ length: a.len }, (_, y) => value(id, y));
+            return { id, typecode: values.some((v) => v > 0x7fffffff) ? 1 : 2, elemSize: 4, values };
+          })(),
+    );
+
+    const shell = await bootImport(buildUrxf([{ chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields }]));
+    $("btn-open-settings").click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.settingsImported("backup.urxf", expected.applied)), {
+      timeout: 15_000,
+    });
+
+    shell.answer("plugin:dialog|save", "/tmp/imported.json");
+    shell.answer("write_text_file", null);
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
+    const { nodeParams, connections } = JSON.parse(
+      (shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string }).contents,
+    ) as Plan;
+    const pan = (to: string): number | undefined =>
+      connections.find((c) => c.from === "ch1:out" && c.to === to)?.params?.pan;
+    // The premise: the file put the plan in the state a load would have set.
+    expect(nodeParams["bus.mix1"]?.panLink).toBe(true);
+    expect(pan("bus.stereo:in")).toBe(20);
+    expect(pan("bus.mix1:in")).toBe(40);
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
   // The file names no model — its header reads "URX" for every variant — so the operator
   // vouches for the one on screen. Declining that confirm must leave the plan alone, and
   // the status has to say the import did not happen.
@@ -7328,6 +7386,103 @@ describe("dropping a file onto the window", () => {
 
     expect(shell.count("read_binary_file")).toBe(1);
     expect(confirms(shell)).toEqual([t().confirm.importSettings("backup.urxf", "URX44V")]);
+  });
+});
+
+// While a MIX bus's Pan Link is on, the unit holds each send pan into it at its source's own PAN /
+// BAL and the write sends none of them. A document loaded from a file sets them there, as a link
+// does (main.flows.test.ts), whichever way the file arrives: the Open dialog, a drop, or a
+// scene-scoped document opened over the plan on screen. A device read and the unit's own
+// settings file bring the unit's values in, and those are kept as they arrive.
+describe("a linked MIX's send pans on load", () => {
+  /** CH 1 at R20 and CH 2 at L13 with both sends into MIX 1 at R40, MIX 1's Pan Link on. */
+  const linkedPlan = (): Plan => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], panLink: true };
+    const pan = (from: string, to: string, value: number): void => {
+      const c = plan.connections.find((w) => w.from === `${from}:out` && w.to === `${to}:in`)!;
+      c.params = { ...c.params, pan: value };
+    };
+    pan("ch1", "bus.stereo", 20);
+    pan("ch2", "bus.stereo", -13);
+    pan("ch1", "bus.mix1", 40);
+    pan("ch2", "bus.mix1", 40);
+    return plan;
+  };
+  const document = async (sceneOnly = false): Promise<string> => {
+    const { serialize } = await import("./core/plan");
+    return serialize(linkedPlan(), sceneOnly ? { sceneOnly: true } : {});
+  };
+  /** The plan on screen, read back through a save. */
+  const savedPlan = async (shell: TauriShell): Promise<Plan> => {
+    shell.answer("plugin:dialog|save", "/tmp/linked-saved.json");
+    shell.answer("write_text_file", null);
+    const before = shell.count("write_text_file");
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+    return JSON.parse((shell.args[shell.invokes.lastIndexOf("write_text_file")] as { contents: string }).contents);
+  };
+  /** The pan on each wire from CH 1 and CH 2 into `to`. */
+  const pansInto = (plan: Plan, to = "bus.mix1:in"): Record<string, number | undefined> =>
+    Object.fromEntries(
+      plan.connections
+        .filter((c) => (c.from === "ch1:out" || c.from === "ch2:out") && c.to === to)
+        .map((c) => [c.from, c.params?.pan]),
+    );
+  const savedSendPans = async (shell: TauriShell): Promise<Record<string, number | undefined>> =>
+    pansInto(await savedPlan(shell));
+  const aligned = (file: string): string =>
+    [t().status.linkedSendPansAligned(2), t().status.openedFrom(file)].join(" — ");
+
+  it("sets them on a plan opened from the Open dialog", SLOW, async () => {
+    const text = await document();
+    const shell = await bootDevice({ "plugin:dialog|open": "C:/urx/linked.json", read_text_file: () => text });
+    $("btn-open").click();
+    await vi.waitFor(() => expect(statusText()).toBe(aligned("linked.json")), { timeout: 10_000 });
+    expect(await savedSendPans(shell)).toEqual({ "ch1:out": 20, "ch2:out": -13 });
+  });
+
+  it("sets them on a dropped plan", SLOW, async () => {
+    const text = await document();
+    const shell = await bootDevice({ read_text_file: () => text });
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/linked.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(aligned("linked.json")), { timeout: 10_000 });
+    expect(await savedSendPans(shell)).toEqual({ "ch1:out": 20, "ch2:out": -13 });
+  });
+
+  // MIX 1's Pan Link and every send are inside the scene, so they come from the document and not
+  // from the plan on screen, and the load sets them the same way.
+  it("sets them on a scene-scoped document opened over a plan", SLOW, async () => {
+    const text = await document(true);
+    const shell = await bootDevice({ read_text_file: () => text });
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/scene.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(aligned("scene.json")), { timeout: 10_000 });
+    expect(await savedSendPans(shell)).toEqual({ "ch1:out": 20, "ch2:out": -13 });
+  });
+
+  it("keeps them as a dropped plan wrote them where MIX 1's Pan Link is off", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const plan = linkedPlan();
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], panLink: false };
+    const shell = await bootDevice({ read_text_file: () => serialize(plan) });
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/unlinked.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("unlinked.json")), { timeout: 10_000 });
+    expect(await savedSendPans(shell)).toEqual({ "ch1:out": 40, "ch2:out": 40 });
+  });
+
+  // A unit whose MIX 1 Pan Link is on, reporting a CH 1 send pan other than CH 1's PAN. The read
+  // takes what the unit reports rather than the load's value.
+  it("keeps what a Fetch reads", SLOW, async () => {
+    const shell = await bootDevice({}, true, { "589/0/0": 1, "141/0/0": 20, "147/0/0": 40, "153/0/0": 40 });
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    await fetchEnded();
+    expect(statusText()).not.toContain(t().status.linkedSendPansAligned(1));
+    const plan = await savedPlan(shell);
+    // The premise: the read took the state a load would have set, Pan Link on and CH 1 at R20.
+    expect(plan.nodeParams["bus.mix1"]?.panLink).toBe(true);
+    expect(pansInto(plan, "bus.stereo:in")["ch1:out"]).toBe(20);
+    expect(pansInto(plan)["ch1:out"]).toBe(40);
   });
 });
 

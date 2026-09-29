@@ -239,8 +239,9 @@ never produces that header itself. Treat it as a question about intent — two n
 select into the one device-wide slot and the unit runs one at a time — not as a
 document to repair before it can be opened. The same report also lists what the
 load repairs without asking — `[paramRange]` rows for values it bounds or drops,
-and `[requiredSource] bus.stereo:out -> bus.stream:in` for the STREAMING source
-it adds — and those need no answer.
+`[requiredSource] bus.stereo:out -> bus.stream:in` for the STREAMING source it adds,
+and `[linkedSendPan] <from> -> <to>: <stored> -> <pan>` for a send pan into a MIX
+whose Pan Link is on, set to its source's own — and those need no answer.
 
 **6. Flag the parameters that need care.** Two classes the validator warns about;
 `plan-schema.md` carries the detail, and both are worth surfacing to the user:

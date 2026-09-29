@@ -111,6 +111,13 @@ export function alignLinkedSendPans(plan: Plan, sources: ReadonlySet<string>): s
   return changed;
 }
 
+/** A send source's own pan / balance: the pan on its fixed main path into STEREO, 0 where the
+ *  plan carries none. */
+export function sourcePan(plan: Plan, source: string): number {
+  const main = plan.connections.find((m) => m.from === ref(source, "out") && m.to === ref("bus.stereo", "in"));
+  return main?.params?.pan ?? 0;
+}
+
 function setSendPans(
   plan: Plan,
   busId: string,
@@ -122,8 +129,7 @@ function setSendPans(
     if (c.to !== ref(busId, "in") || c.kind !== "send") continue;
     const source = parseRef(c.from).nodeId;
     if (!take(source)) continue;
-    const main = plan.connections.find((m) => m.from === ref(source, "out") && m.to === ref("bus.stereo", "in"));
-    const pan = main?.params?.pan ?? 0;
+    const pan = sourcePan(plan, source);
     const key = connParamContestKey(c.from, c.to, "pan");
     if (c.params?.pan !== pan) changed.push(key);
     c.params = { ...c.params, pan };

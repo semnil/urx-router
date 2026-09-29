@@ -46,6 +46,32 @@ test("dropping a plan file loads it", async ({ page }) => {
   await expect(page.locator("#inspector input[type='text']")).toHaveValue("DROPPED");
 });
 
+// A dropped document is a load as a link is: a send pan into a MIX whose Pan Link is on opens at
+// its channel's own PAN, and the status line says so ahead of the load.
+test("a dropped plan's linked send pans open at their channels' own PAN", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [
+      { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" },
+      { from: "ch1:out", to: "bus.stereo:in", kind: "send", params: { pan: -13 } },
+      { from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { pan: 40 } },
+    ],
+    nodeParams: { "bus.mix1": { panLink: true } },
+  };
+  await dropFiles(page, [{ name: "linked.json", body: JSON.stringify(plan) }]);
+  await expect(page.locator("#statusbar")).toHaveText(
+    "1 send pan into a MIX bus with Pan Link on now follows its source's own PAN / BAL — Plan loaded",
+  );
+  await page.click("#btn-view-console");
+  await page
+    .locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) })
+    .locator(".con-panbtn")
+    .click();
+  await expect(page.locator(".con-spop .pcol", { hasText: "MIX 1" }).locator(".rv")).toHaveText("L13");
+});
+
 test("the overlay names what can be dropped, and clears once the drop lands", async ({ page }) => {
   const overlay = page.locator("#dropzone");
   await expect(overlay).toBeHidden();

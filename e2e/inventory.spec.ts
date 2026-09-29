@@ -9,6 +9,7 @@ import { getModel } from "../src/models";
 import { defaultPlan } from "../src/models/initial-state";
 import { selectWire } from "./graph-helpers";
 import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS } from "../src/core/control/params";
+import { fxParams } from "../src/core/control/fx-effect";
 import { chooseOption } from "./choose-option";
 import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
 
@@ -55,6 +56,7 @@ const SURFACE_NAMES = [
   "consent",
   "dropzone",
   "loadReport",
+  "loadStatus",
   "rateChoice",
   "licenses",
   "errorBox",
@@ -82,6 +84,19 @@ const SURFACES: Record<SurfaceName, Surface> = {
   },
   loadReport: {
     roots: ["loadReport", "compareReport"],
+  },
+  // What the status line says about a document the load repaired. The namespace as a whole is
+  // OUT_OF_SCOPE; these are the notes a load leads the line with, each said nowhere else, joined
+  // into one run ahead of the load's own message.
+  loadStatus: {
+    keys: [
+      "status.paramsBounded",
+      "status.paramsDropped",
+      "status.streamingSourceSupplied",
+      "status.linkedSendPansAligned",
+      "status.planLoaded",
+    ],
+    composed: ["status.streamingSourceSupplied", "status.planLoaded"],
   },
   rateChoice: {
     roots: ["rateChoice"],
@@ -344,6 +359,36 @@ test("the load report shows all three framings and both Copy faces", async ({ pa
   await inv.take(page, "#load-report");
 
   expectComplete("loadReport", inv);
+});
+
+// One document the load repairs every way it can: two FX values bounded and two dropped, no
+// STREAMING source, and two send pans into a MIX whose Pan Link is on — two of each, since a
+// counted note is read in its plural wording.
+test("the status line after a load names every repair the load made", async ({ page }) => {
+  const revxLpf = fxParams(0).find((d) => d.key === "revxLpf")!;
+  const delayLpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [
+      { from: "ch1:out", to: "bus.stereo:in", kind: "send", params: { pan: -13 } },
+      { from: "ch2:out", to: "bus.stereo:in", kind: "send", params: { pan: 20 } },
+      { from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { pan: 40 } },
+      { from: "ch2:out", to: "bus.mix1:in", kind: "send", params: { pan: 40 } },
+    ],
+    nodeParams: {
+      "bus.fx1": { fxEffect: { type: 0, params: { revxLpf: revxLpf.rawMin! - 1, revxHpf: false } } },
+      "bus.fx2": { fxEffect: { type: 1024, params: { delayLpf: delayLpf.rawMin! - 1, delayHiRatio: false } } },
+      "bus.mix1": { panLink: true },
+    },
+  };
+  await page.goto(`/?plan=${planParam(plan)}`);
+  await expect(page.locator("#statusbar")).toContainText(en.status.planLoaded);
+
+  const inv = inventoryOf("loadStatus");
+  await inv.take(page, "#statusbar");
+  expectComplete("loadStatus", inv);
 });
 
 test("the rate-choice modal shows all three answers and the high-rate note", async ({ page }) => {

@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyLinkedSendPans,
   applyParamRange,
   applyRequiredSources,
   insertFxPairProblems,
   insertFxSlotProblems,
   isRefusal,
+  linkedSendPanProblems,
   needsDecision,
   paramRangeProblems,
   planProblems,
@@ -12,13 +14,14 @@ import {
 } from "./plan-validate";
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
 import { planToCommands } from "./control/translate";
-import { validatePlan } from "./routing";
-import { deserialize, emptyPlan, PLAN_VERSION, serialize } from "./plan";
-import type { Plan } from "./plan";
+import { sendPansToSources, validatePlan } from "./routing";
+import { deserialize, emptyPlan, ensureFixedConnections, fixedConnection, PLAN_VERSION, serialize } from "./plan";
+import type { Plan, PlanConnection } from "./plan";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
 import {
+  BUS_TYPE_FIXED,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
@@ -721,6 +724,154 @@ describe("requiredSourceProblems", () => {
 
   it("neither refuses the document nor asks the operator about it", () => {
     const [problem] = requiredSourceProblems(u44v, doc([]));
+    expect(problem).toBeDefined();
+    expect(isRefusal(problem)).toBe(false);
+    expect(needsDecision(problem)).toBe(false);
+  });
+});
+
+// While a MIX bus's Pan Link is on, the unit holds every send pan into it at its source's own pan /
+// balance and the write sends none of them, so a document carrying another value is set to the
+// source's on load — the value `sendPansToSources` sets when the link turns on — and the load says
+// so. An absent pan, send or main path counts as 0, the way every reader counts it.
+describe("linkedSendPanProblems", () => {
+  const u44v = getModel("URX44V");
+  const conn = (from: string, to: string, pan?: number): PlanConnection => ({
+    from,
+    to,
+    kind: "send",
+    ...(pan === undefined ? {} : { params: { pan } }),
+  });
+  const main = (src: string, pan?: number) => conn(ref(src, "out"), ref("bus.stereo", "in"), pan);
+  const send = (src: string, bus: string, pan?: number) => conn(ref(src, "out"), ref(bus, "in"), pan);
+  const doc = (connections: PlanConnection[], nodeParams: Plan["nodeParams"] = { "bus.mix1": { panLink: true } }) => ({
+    ...emptyPlan("URX44V"),
+    connections,
+    nodeParams,
+  });
+  const found = (plan: Plan) => linkedSendPanProblems(u44v, plan).map((p) => `${p.from} ${p.stored} -> ${p.pan}`);
+
+  it("sets a mono, a stereo and an FX channel's send to its source's own pan, and nothing else", () => {
+    const plan = doc(
+      [
+        main("ch1", -20),
+        send("ch1", "bus.mix1", 40),
+        main("ch_5_6", 25),
+        send("ch_5_6", "bus.mix1", -10),
+        main("bus.fx1", -30),
+        send("bus.fx1", "bus.mix1", 0),
+        // The same source into the MIX that is not linked keeps what it has.
+        send("ch1", "bus.mix2", 40),
+      ],
+      { "bus.mix1": { panLink: true } },
+    );
+    const problems = linkedSendPanProblems(u44v, plan);
+    expect(problems).toEqual([
+      { reason: "linkedSendPan", from: "ch1:out", to: "bus.mix1:in", stored: 40, pan: -20 },
+      { reason: "linkedSendPan", from: "ch_5_6:out", to: "bus.mix1:in", stored: -10, pan: 25 },
+      { reason: "linkedSendPan", from: "bus.fx1:out", to: "bus.mix1:in", stored: 0, pan: -30 },
+    ]);
+    expect(planProblems(u44v, plan).filter((p) => p.reason === "linkedSendPan")).toEqual(problems);
+    applyLinkedSendPans(u44v, plan, problems);
+    const pans = (bus: string) =>
+      Object.fromEntries(plan.connections.filter((c) => c.to === ref(bus, "in")).map((c) => [c.from, c.params?.pan]));
+    expect(pans("bus.mix1")).toEqual({ "ch1:out": -20, "ch_5_6:out": 25, "bus.fx1:out": -30 });
+    expect(pans("bus.mix2")).toEqual({ "ch1:out": 40 });
+    expect(linkedSendPanProblems(u44v, plan)).toEqual([]);
+  });
+
+  // Each member takes the pan on its own main path, which is its own position in PAN mode and
+  // the pair's one balance in BAL.
+  it.each([
+    ["PAN", PAN_BAL_PAN, -63, 63],
+    ["BAL", PAN_BAL_BAL, -25, -25],
+  ])("sets each member of a STEREO-linked pair in %s to its own main path's pan", (_mode, panBal, a, b) => {
+    const plan = doc([main("ch1", a), main("ch2", b), send("ch1", "bus.mix1", 40), send("ch2", "bus.mix1", 40)], {
+      ch1: { stereoLink: true, panBal },
+      "bus.mix1": { panLink: true },
+    });
+    applyLinkedSendPans(u44v, plan, linkedSendPanProblems(u44v, plan));
+    expect(plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in")?.params?.pan).toBe(a);
+    expect(plan.connections.find((c) => c.from === "ch2:out" && c.to === "bus.mix1:in")?.params?.pan).toBe(b);
+  });
+
+  it("counts a FIXED MIX whose Pan Link is on", () => {
+    const plan = doc([main("ch1", 15), send("ch1", "bus.mix2", -5)], {
+      "bus.mix2": { panLink: true, busType: BUS_TYPE_FIXED },
+    });
+    expect(found(plan)).toEqual(["ch1:out -5 -> 15"]);
+  });
+
+  it("reads an absent pan, send or main path as 0", () => {
+    expect(found(doc([main("ch1", 30), send("ch1", "bus.mix1")]))).toEqual(["ch1:out undefined -> 30"]);
+    expect(found(doc([main("ch1"), send("ch1", "bus.mix1", 20)]))).toEqual(["ch1:out 20 -> 0"]);
+    expect(found(doc([send("ch1", "bus.mix1", 20)]))).toEqual(["ch1:out 20 -> 0"]);
+    // …and a pair at 0 on both sides is nothing to set, however either is spelled.
+    expect(found(doc([main("ch1"), send("ch1", "bus.mix1")]))).toEqual([]);
+    expect(found(doc([main("ch1", 0), send("ch1", "bus.mix1")]))).toEqual([]);
+    expect(found(doc([send("ch1", "bus.mix1", 0)]))).toEqual([]);
+  });
+
+  // The load adds every fixed send a document omits; one into a linked MIX is added carrying the
+  // pan, with everything else the fixed seed gives it.
+  it("adds a send the document omits, carrying the source's pan", () => {
+    const plan = doc([main("ch1", 30)]);
+    const problems = linkedSendPanProblems(u44v, plan);
+    expect(problems).toEqual([{ reason: "linkedSendPan", from: "ch1:out", to: "bus.mix1:in", pan: 30 }]);
+    applyLinkedSendPans(u44v, plan, problems);
+    const rule = u44v.rules.find((r) => r.from === "ch1:out" && r.to === "bus.mix1:in")!;
+    const seeded = fixedConnection(u44v, rule);
+    expect(plan.connections.filter((c) => c.to === "bus.mix1:in")).toEqual([
+      { ...seeded, params: { ...seeded.params, pan: 30 } },
+    ]);
+    // …and the load's own completion then adds nothing in its place.
+    const before = plan.connections.length;
+    ensureFixedConnections(u44v, plan);
+    expect(plan.connections.filter((c) => c.from === "ch1:out" && c.to === "bus.mix1:in")).toHaveLength(1);
+    expect(plan.connections.length).toBeGreaterThan(before);
+  });
+
+  it("finds nothing for a MIX whose Pan Link is off, absent or not written as true", () => {
+    const wires = [main("ch1", -20), send("ch1", "bus.mix1", 40)];
+    expect(found(doc(wires, {}))).toEqual([]);
+    expect(found(doc(wires, { "bus.mix1": { panLink: false } }))).toEqual([]);
+    expect(found(doc(wires, { "bus.mix1": { panLink: 1 as unknown as boolean } }))).toEqual([]);
+    // The positive control: the same wires under the link are found.
+    expect(found(doc(wires))).toEqual(["ch1:out 40 -> -20"]);
+  });
+
+  it("finds nothing in a new plan or the factory plan", () => {
+    for (const id of MODEL_IDS) {
+      expect(linkedSendPanProblems(getModel(id), emptyPlan(id)), id).toEqual([]);
+      expect(linkedSendPanProblems(getModel(id), defaultPlan(id)), id).toEqual([]);
+    }
+  });
+
+  // The value is the one the link's own edge sets, on every model: the repaired document and the
+  // same document with `sendPansToSources` run on each linked MIX hold the same send pans.
+  it.each(MODEL_IDS)("%s: sets the value sendPansToSources sets", (id) => {
+    const m = getModel(id);
+    const base = defaultPlan(id);
+    base.nodeParams["bus.mix1"] = { ...base.nodeParams["bus.mix1"], panLink: true };
+    base.nodeParams["bus.mix2"] = { ...base.nodeParams["bus.mix2"], panLink: true, busType: BUS_TYPE_FIXED };
+    let n = 0;
+    for (const c of base.connections) {
+      if (c.kind !== "send") continue;
+      n += 7;
+      c.params = { ...c.params, pan: (n % 127) - 63 };
+    }
+    const repaired = structuredClone(base);
+    const problems = linkedSendPanProblems(m, repaired);
+    expect(problems.length, "the premise: the document disagrees with the unit").toBeGreaterThan(0);
+    applyLinkedSendPans(m, repaired, problems);
+    const edged = structuredClone(base);
+    for (const bus of ["bus.mix1", "bus.mix2"]) sendPansToSources(edged, bus);
+    const pans = (p: Plan) => p.connections.map((c) => `${c.from} ${c.to} ${c.params?.pan ?? 0}`);
+    expect(pans(repaired)).toEqual(pans(edged));
+  });
+
+  it("neither refuses the document nor asks the operator about it", () => {
+    const [problem] = linkedSendPanProblems(u44v, doc([main("ch1", 30)]));
     expect(problem).toBeDefined();
     expect(isRefusal(problem)).toBe(false);
     expect(needsDecision(problem)).toBe(false);

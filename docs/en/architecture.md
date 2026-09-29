@@ -109,7 +109,7 @@ carries a one-line map of the same directories and points here.
   `planProblems` (split out of `constraints.ts`, which is rate limits and nothing else: a rate limit warns
   about a plan the app authored, these check a plan built ELSEWHERE — a file, a `?plan=` link, a generator).
   `routing.ts` cannot host them (the cycle constraints → translate → routing). It runs from `loadFromText`
-  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its five kinds
+  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its six kinds
   are reported differently: an illegal wire refuses the document; a STEREO-linked pair whose two members
   disagree about their one insert effect refuses it too, since the unit keeps a single selector, bypass and
   engine for the pair and no state of it satisfies such a document (`insertFxPairProblems`, compared over the
@@ -127,7 +127,9 @@ carries a one-line map of the same directories and points here.
   separately, since a value moved to the nearest one the app can send and a value removed are different
   events. A receiver the unit never leaves without a source that the document gives no wire — STREAMING —
   is completed the same way, with its default source, and said on the same line (`requiredSourceProblems`;
-  see "A plan that names no STREAMING source"). `isRefusal` and `needsDecision` are the two predicates that split
+  see "A plan that names no STREAMING source"). A send into a MIX bus whose Pan Link is on that carries a pan
+  other than its source's own is set to the source's value the same way and said on the same line
+  (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). `isRefusal` and `needsDecision` are the two predicates that split
   them, one seat each / `plan.ts` plan state + JSON + the `?plan=` deep-link codec (deflate-compressed
   `"z"` format; legacy uncompressed links must keep decoding) / `levels.ts` the device's discrete level_gain
   grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Every
@@ -2526,8 +2528,13 @@ that lands on the one already there is one the plan's diff cannot name. A device
 unit and sets only the ones it did not: switching BUS Type to FIXED on the unit's own screen turns Pan Link off without
 announcing it, and the follow read that BUS Type's notify starts reads the MIX alone. The idle full reconcile that
 follows reads every send anyway, so what the read's own setting covers is the window between the two: a write in it
-would otherwise send the send pans the plan held before the link. A document loaded from a file or a link keeps the
-send pans it was written with until one of these sets them; none of them is written while the link is on. Being ahead does not make the switch-off land first: it lands after the send pans written behind it in
+would otherwise send the send pans the plan held before the link. A document loaded from a file, a `?plan=` link or a
+drop — a scene-scoped one opened over a plan included — has each send pan into a linked MIX set to its source's value
+before it opens, and the status line says how many (`plan-validate.ts` `linkedSendPanProblems`, a send the document
+omits added with that pan): a document from elsewhere is under no such discipline, and the knob, the MIDI feedback and
+the next save read what the plan holds. It counts an absent pan, send or main path as 0, the way the emit does, and it
+does not run on a device read or a `.urxf` import, which bring the unit's own values. None of these send pans is written
+while the link is on. Being ahead does not make the switch-off land first: it lands after the send pans written behind it in
 the same round, so a write whose plan turns Pan Link off while holding send pans of its own moves each of their
 sources to that send's value, and the round after reads the source back as a residual and puts it back. Measured on
 a URX44V, the source held the send's value when the round was read back 340-354 ms after it was sent, and a second
