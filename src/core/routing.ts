@@ -69,15 +69,16 @@ export function sendHasOn(model: DeviceModel, from: string, to: string): boolean
 // the destination bus's node params: FIXED BUS Type leaves a send only its ON — the
 // unit takes it after the channel fader at a fixed level, placed by the channel PAN,
 // so the LEVEL, the PRE/POST tap and the send's own PAN are all inert — and Pan Link
-// (VARI only) ties each send pan to the source channel PAN (the PAN control is
-// inert). Only MIX 1 / MIX 2 carry these; any other destination returns both false.
+// ties each send pan to the source channel PAN (the PAN control is inert), under
+// either BUS Type: the plan keeps it through FIXED and the write sends it there too.
+// Only MIX 1 / MIX 2 carry these; any other destination returns both false.
 // Shared by the inspector (which drops the gated controls), the console (which
 // renders them read-only) and the MIDI catalogue (which refuses their writes).
 export function mixSendLocks(plan: Plan, destId: string): { busFixed: boolean; panLinked: boolean } {
   const np = plan.nodeParams[destId];
   const isMix = destId === "bus.mix1" || destId === "bus.mix2";
   const busFixed = isMix && (np?.busType ?? BUS_TYPE_VARI) === BUS_TYPE_FIXED;
-  const panLinked = isMix && !busFixed && np?.panLink === true;
+  const panLinked = isMix && np?.panLink === true;
   return { busFixed, panLinked };
 }
 

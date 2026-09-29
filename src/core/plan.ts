@@ -272,8 +272,8 @@ export interface NodeParams {
   /** BUS Type for MIX 1 / MIX 2: 0 = VARI (variable send level), 1 = FIXED
    *  (fixed send level). Absent = VARI. */
   busType?: number;
-  /** Pan Link (MIX 1 / MIX 2, VARI only): send pan follows the source channel
-   *  PAN. Absent or false = off. */
+  /** Pan Link (MIX 1 / MIX 2): send pan follows the source channel PAN, and the
+   *  value is kept and written under either BUS Type. Absent or false = off. */
   panLink?: boolean;
   /** EQ ON for an input channel or an output bus (STEREO / MIX). Absent or true = on. */
   eqOn?: boolean;

@@ -46,15 +46,15 @@ describe("sendFields", () => {
     expect(fields).toEqual([]);
   });
 
-  // Pan Link is a VARI-only switch; a FIXED bus that still holds it on drops the same
-  // fields as one that holds it off, and names the FIXED lock rather than the link.
-  it("drops everything on a FIXED bus whatever Pan Link holds", () => {
+  // A FIXED bus that holds Pan Link on drops the same fields as one that holds it off,
+  // and names both locks: the plan keeps the link through FIXED and the write sends it.
+  it("drops everything on a FIXED bus whatever Pan Link holds, naming both locks", () => {
     const p = plan();
     p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED, panLink: true };
-    expect(toMix1(p)).toEqual({ fields: [], busFixed: true, panLinked: false });
+    expect(toMix1(p)).toEqual({ fields: [], busFixed: true, panLinked: true });
   });
 
-  // Pan Link (VARI only) drops the PAN: it follows the source channel's own PAN.
+  // Pan Link drops the PAN: it follows the source channel's own PAN.
   it("drops the pan when the destination links it", () => {
     const p = plan();
     p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: BUS_TYPE_VARI, panLink: true };

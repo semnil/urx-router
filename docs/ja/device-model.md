@@ -181,7 +181,7 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 > **BUS Type (MIX 1 / MIX 2、CH SETTING)。** 各 MIX Bus は VARI (Send ごとに可変レベル。既定でツールが
 > モデル化する挙動) か FIXED。FIXED の Bus では **Send が持つのは ON だけ**になる: 実機はチャンネルの
 > フェーダーの後で固定レベルで取り出し、位置はチャンネルの PAN に従うので、Send の LEVEL・PRE/POST・
-> PAN は効かない (3 つとも書込は受理され、読み戻しも書いた値を返す)。**Pan Link** (VARI 時のみ) は各 Send の
+> PAN は効かない (3 つとも書込は受理され、読み戻しも書いた値を返す)。**Pan Link** は各 Send の
 > PAN を Send 元チャンネルの PAN に追従させ、個別 PAN を編集不可にする: 実機はその MIX への送りのパンを送り元の
 > PAN / BAL にそろえ、送りのパンが書かれると送り元を動かすので、アプリはリンク中の MIX へ送りのパンを書かず、
 > Pan Link を切ると送りのパンは実機でも計画でも送り元のパンのまま残る。MIX Bus ノードに保持し、接続パネルは
