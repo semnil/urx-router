@@ -500,7 +500,8 @@ test.describe("T2e shape-change", () => {
   // Linked, the send pans are out of the write set: a converge has none of them to read
   // or send, and the channel PAN the operator set is where the unit ends. Turned off on the
   // unit or in the app's panel, Pan Link leaves them at the channel's PAN, and so does the
-  // plan (releasePanLink).
+  // plan (releasePanLink). A FIXED written by the app turns the unit's Pan Link off, and the
+  // plan, still holding it, writes it back on after the BUS Type.
   // ---------------------------------------------------------------------------
   test("a converge under Pan Link writes no send pan and leaves the channel PAN where it was set", async ({ page }) => {
     await installFake(page, {
@@ -508,7 +509,7 @@ test.describe("T2e shape-change", () => {
         { control: "ch1/pan", addr: CC10, mode: "absolute" },
         { control: "ch1/pan@bus.mix1", addr: CC11, mode: "absolute" },
       ]),
-      panLink: [{ link: PAN_LINK, source: CH1_PAN, sends: CH1_M1_PAN }],
+      panLink: [{ link: PAN_LINK, source: CH1_PAN, sends: CH1_M1_PAN, busType: BUS_TYPE_L }],
     });
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
@@ -639,6 +640,34 @@ test.describe("T2e shape-change", () => {
     expect(await memAt(PAN_LINK)).toBe(0);
     for (const a of CH1_M1_PAN) expect(await memAt(a)).toBe(pan2);
     expect(await memAt(CH1_PAN)).toBe(pan2);
+
+    // Phase 5 — MIX 1 switched to FIXED in the app with Pan Link on. The unit turns Pan Link off
+    // when BUS Type goes to FIXED, unannounced; the plan keeps it on, so the converge the BUS
+    // Type write takes reads it back off and writes it on again, after the BUS Type.
+    await graphNode(page, "bus.mix1").click();
+    await mark(page, "relink");
+    await linkButton("ON").click();
+    await settleAfter(page, "relink", 1800);
+    expect(await memAt(PAN_LINK)).toBe(1);
+    await mark(page, "app-fixed");
+    await chooseOption(param(page, "BUS Type").locator("select"), "1");
+    await settleAfter(page, "app-fixed", 1800);
+    trace = await traceOf(page);
+    const fixedSets = setsAfter(trace, markTime(trace, "app-fixed")!);
+    const busTypeAt = fixedSets.findIndex((s) => s.addr === BUS_TYPE_L && s.value === 1);
+    const relinkAt = fixedSets.reduce((at, s, i) => (s.addr === PAN_LINK && s.value === 1 ? i : at), -1);
+    console.log(
+      `app-side FIXED: ${
+        fixedSets
+          .filter((s) => s.addr === BUS_TYPE_L || s.addr === PAN_LINK)
+          .map((s) => `${s.addr}=${s.value}`)
+          .join(", ") || "(none)"
+      }`,
+    );
+    expect(busTypeAt).toBeGreaterThanOrEqual(0);
+    expect(relinkAt).toBeGreaterThan(busTypeAt);
+    expect(await memAt(BUS_TYPE_L)).toBe(1);
+    expect(await memAt(PAN_LINK)).toBe(1);
   });
 
   // ---------------------------------------------------------------------------

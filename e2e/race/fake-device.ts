@@ -90,11 +90,16 @@ export interface FakeConfig {
  * only the written address is, by item o's rule. The unit settles a send-pan write a couple of
  * seconds later; the fake settles it at the queue point, the stricter of the two for a case
  * asking whether a send pan was written at all, since the source has already moved when it
- * looks. A `seedMem` of the switch is a state, not a write, and rewrites nothing.
+ * looks. Where the group names its MIX's BUS Type address, a write of FIXED there turns the
+ * switch off, unannounced as well; a write of VARI leaves it as it is. A `seedMem` of the
+ * switch is a state, not a write, and rewrites nothing.
  */
 export interface PanLinkGroup {
   /** The MIX bus's Pan Link address ("589:0:0" for MIX 1, "589:0:2" for MIX 2). */
   link: string;
+  /** The MIX bus's BUS Type address ("587:0:0" for MIX 1), when the case models FIXED turning
+   *  the switch off. */
+  busType?: string;
   /** The source's own pan / balance address. */
   source: string;
   /** The send's pan addresses into that MIX (the L and R instances). */
@@ -541,6 +546,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       const rewritePanLink = (k: string, value: number): void => {
         const moved = new Set<string>();
         for (const g of config.panLink) {
+          if (g.busType !== undefined && k === g.busType && value === 1) fake.mem[g.link] = 0;
           if (k === g.link && value === 1) for (const a of g.sends) fake.mem[a] = fake.mem[g.source] ?? 0;
           else if (linkedNow(g) && k === g.source) moved.add(g.source);
           else if (linkedNow(g) && g.sends.includes(k)) {
