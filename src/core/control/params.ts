@@ -396,11 +396,10 @@ export const PARAMS = {
    *  Confirmed by live param-notify (MIX1 OFF → ON fired 589:0:0 = 1, MIX2 → 589:0:2).
    *
    *  Turning it on makes the unit rewrite every send pan into that MIX to its source's PAN /
-   *  BAL, and turning it off leaves them there, neither announced. translate.ts writes it ahead
-   *  of the pans and writes no send pan into a linked MIX; turning it off sets the plan's send
-   *  pans to where the unit leaves them (routing.ts releasePanLink); and the converge round
-   *  after the write reads the scope back for whatever else the unit moved. */
-  PAN_LINK: { id: 589, encoding: "bool", follow: "direct", sideEffect: "converge" },
+   *  BAL, and turning it off leaves them there, neither announced. translate.ts writes no send
+   *  pan into a linked MIX, and turning it off sets the plan's send pans to where the unit
+   *  leaves them (routing.ts releasePanLink). */
+  PAN_LINK: { id: 589, encoding: "bool", follow: "direct" },
   /** Signal Type stereo link for a MONO IN pair (1 = STEREO, 0 = MONO x2). Written
    *  to BOTH channels of the pair at their input indices. Enabling it resets the
    *  secondary channel's whole state on the device (it is copied from the primary),

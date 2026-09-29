@@ -1751,11 +1751,6 @@ describe("reset chains (sideEffect heads vs converge groups)", () => {
     // unit takes those writes under FIXED as well as VARI, so the round settles in either
     // direction instead of fighting the reset.
     "BUS_TYPE",
-    // -> every SEND_PAN into that MIX, rewritten to its source's pan when it turns on and left
-    // there when it turns off, neither announced. One link: the head is emitted ahead of the
-    // pans, and the send pans into a linked MIX are not emitted at all, so the round after it
-    // has only an unlinked MIX's send pans to put back — nothing a send pan write moves in turn.
-    "PAN_LINK",
     // The COMP 1-knob, ungrouped for the same reason as the rest after all. Its chain LOOKS
     // like the EQ 1-knob's — writing 42 discards 43 (measured), the shape that earned the EQ
     // triple its group — but it is two links where the EQ's is three, and two is what one

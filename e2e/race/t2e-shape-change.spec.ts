@@ -95,6 +95,7 @@ const CC7: CcAddr = { type: "cc", channel: 0, controller: 7 };
 const CC8: CcAddr = { type: "cc", channel: 0, controller: 8 };
 const CC9: CcAddr = { type: "cc", channel: 0, controller: 9 };
 const CC10: CcAddr = { type: "cc", channel: 0, controller: 10 };
+const CC11: CcAddr = { type: "cc", channel: 0, controller: 11 };
 type Mapping = { control: string; addr: CcAddr; mode: "absolute" | "pickup" };
 
 /** Seed the persisted MIDI store: ports (reopened at boot) + this model's bindings.
@@ -498,11 +499,15 @@ test.describe("T2e shape-change", () => {
   // that read it back and sent it moved the channel to the old PAN, round after round.
   // Linked, the send pans are out of the write set: a converge has none of them to read
   // or send, and the channel PAN the operator set is where the unit ends. Turned off on the
-  // unit, Pan Link leaves them at the channel's PAN, and so does the plan (releasePanLink).
+  // unit or in the app's panel, Pan Link leaves them at the channel's PAN, and so does the
+  // plan (releasePanLink).
   // ---------------------------------------------------------------------------
   test("a converge under Pan Link writes no send pan and leaves the channel PAN where it was set", async ({ page }) => {
     await installFake(page, {
-      storage: midiStore([{ control: "ch1/pan", addr: CC10, mode: "absolute" }]),
+      storage: midiStore([
+        { control: "ch1/pan", addr: CC10, mode: "absolute" },
+        { control: "ch1/pan@bus.mix1", addr: CC11, mode: "absolute" },
+      ]),
       panLink: [{ link: PAN_LINK, source: CH1_PAN, sends: CH1_M1_PAN }],
     });
     await page.goto("/");
@@ -574,6 +579,66 @@ test.describe("T2e shape-change", () => {
     for (const s of unlinkSends) expect(s.value).toBe(pan);
     for (const a of CH1_M1_PAN) expect(await memAt(a)).toBe(pan);
     expect(await memAt(CH1_PAN)).toBe(pan);
+
+    // Phase 4 — Pan Link switched on and off in the app's own panel, with the send pan the plan
+    // holds apart from the channel's. The send pan is set on its own first (unlinked, so it is
+    // written); switching the link on hands it to the unit, which moves it to CH 1's PAN, and a
+    // PAN move made while linked carries it along. Switching the link off then has to leave it
+    // where the unit left it, at CH 1's PAN: a converge straight after, as in phase 3, reads the
+    // send pan back and has nothing to send there but that value.
+    await mark(page, "send-pan-own");
+    await pushMidi(page, [cc(11, 20)]);
+    await settleAfter(page, "send-pan-own", 900);
+    trace = await traceOf(page);
+    const ownAt = markTime(trace, "send-pan-own")!;
+    const ownSends = setsAfter(trace, ownAt).filter((s) => s.addr === CH1_M1_PAN[0]);
+    expect(ownSends).toHaveLength(1);
+    const ownPan = ownSends[0].value!;
+    expect(ownPan).not.toBe(pan);
+
+    await graphNode(page, "bus.mix1").click();
+    const linkButton = (label: string) => param(page, "Pan Link").locator("button", { hasText: label });
+    await mark(page, "app-link-on");
+    await linkButton("ON").click();
+    await settleAfter(page, "app-link-on", 1800);
+    await mark(page, "pan-move-linked");
+    await pushMidi(page, [cc(10, 40)]);
+    await settleAfter(page, "pan-move-linked", 900);
+    trace = await traceOf(page);
+    const linkedAt = markTime(trace, "app-link-on")!;
+    const pan2 = setsAfter(trace, markTime(trace, "pan-move-linked")!).find((s) => s.addr === CH1_PAN)!.value!;
+    expect(pan2).not.toBe(pan);
+    expect(await memAt(PAN_LINK)).toBe(1);
+    expect(await memAt(CH1_M1_PAN[0])).toBe(pan2);
+
+    await mark(page, "app-link-off");
+    await linkButton("OFF").click();
+    await settleAfter(page, "app-link-off", 1800);
+    await graphNode(page, "ch1").click();
+    await mark(page, "converge-after-off");
+    await chooseOption(param(page, "COMP/EQ Type").locator("select"), "1");
+    await settleAfter(page, "converge-after-off", 1800);
+    trace = await traceOf(page);
+    const offAt = markTime(trace, "app-link-off")!;
+    const linkedSends = setsAfter(trace, linkedAt).filter((s) => s.start < offAt && CH1_M1_PAN.includes(s.addr!));
+    const offSends = setsAfter(trace, offAt).filter((s) => CH1_M1_PAN.includes(s.addr!));
+    const offReads = getsOf(trace).filter(
+      (g) => g.addr === CH1_M1_PAN[0] && g.start > markTime(trace, "converge-after-off")!,
+    ).length;
+    console.log(
+      `app-side link: own send pan ${ownPan}, CH 1 PAN ${pan} -> ${pan2}; send pan writes while linked ` +
+        `${linkedSends.map((s) => `${s.addr}=${s.value}`).join(", ") || "(none)"}; after the switch off ` +
+        `${offSends.map((s) => `${s.addr}=${s.value}`).join(", ") || "(none)"}; ${offReads} read(s) of ${CH1_M1_PAN[0]}`,
+    );
+    expect(linkedSends).toEqual([]);
+    // The positive control: the converge read the send pan back and the send pan is in the write
+    // set again, so the values below are its verdict rather than a flush that never looked.
+    expect(offReads).toBeGreaterThan(0);
+    expect((await writeSetOf(page)).has(CH1_M1_PAN[0])).toBe(true);
+    for (const s of offSends) expect(s.value).toBe(pan2);
+    expect(await memAt(PAN_LINK)).toBe(0);
+    for (const a of CH1_M1_PAN) expect(await memAt(a)).toBe(pan2);
+    expect(await memAt(CH1_PAN)).toBe(pan2);
   });
 
   // ---------------------------------------------------------------------------

@@ -2499,7 +2499,7 @@ differing command belongs to**, in emit order. One round then lands all three. T
 group is actually involved, so a write with no 1-knob difference pays nothing.
 
 The other `sideEffect` heads (`COMP_EQ_TYPE`, `INSERT_FX` and the two output selectors, `FX_EFFECT_TYPE`,
-`SIGNAL_TYPE`, `PAN_BAL`, `BUS_TYPE`, `PAN_LINK`) carry no group. What settles them is the loop's budget, which is not fixed: **a round
+`SIGNAL_TYPE`, `PAN_BAL`, `BUS_TYPE`) carry no group. What settles them is the loop's budget, which is not fixed: **a round
 that sent a `sideEffect` head is followed by another round**, past `maxRounds` and up to twice it. A head's rewrite
 lands after the writes that follow it in the same round — on a URX44V a Signal Type change applied 85-125 ms after
 its write, and inside a self-test restore values written more than a second after the unlink were still replaced —
