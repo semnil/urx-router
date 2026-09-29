@@ -31,7 +31,15 @@ import {
   setFollowUsb,
   type SendOutcome,
 } from "./client";
-import { addrKey, cmdAddr, planToCommands, planToNameWrites, type VdCommand } from "./translate";
+import {
+  addrKey,
+  channelControl,
+  cmdAddr,
+  planToCommands,
+  planToNameWrites,
+  sendControl,
+  type VdCommand,
+} from "./translate";
 import { defaultPlan } from "../../models/initial-state";
 import { FX_EFFECT_TYPE_DEFAULT, fxParams } from "./fx-effect";
 import { NODE_NAME_MAX_CHARS, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
@@ -307,6 +315,106 @@ describe("sendConverging", () => {
     expect(r.rounds).toBe(4);
     const gain = planToCommands(model, plan).find((c) => c.name === "HA_GAIN" && c.y === 1)!;
     expect(table.get(`${gain.paramId}:0:1`)).toBe(gain.vdValue);
+  });
+
+  // The unit's Pan Link on CH 3 -> MIX 1: turning it on sets the send's pans to the channel's
+  // PAN, a channel PAN written while it is on carries the send pans with it, and a send pan
+  // written while it is on moves the channel PAN instead — none of it announced. Writing MIX 1's
+  // BUS Type turns its Pan Link off. `chPanTrail` records every value the channel PAN takes, so
+  // a write that moved it on the way to the right answer is visible even when the last value is
+  // right.
+  function installPanLinkDevice(plan: Plan): {
+    table: Map<string, number>;
+    chPan: string;
+    sendPans: string[];
+    chPanTrail: number[];
+  } {
+    const table = installDevice();
+    for (const c of planToCommands(model, plan)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
+    const ch = channelControl(model, "ch3")!;
+    const sc = sendControl(model, "ch3", "bus.mix1")!;
+    const chPan = `${ch.pan}:0:${ch.y}`;
+    const sendPans = sc.pan.map((p) => `${p}:0:${sc.y}`);
+    const link = `${PARAMS.PAN_LINK.id}:0:0`;
+    const busType = `${PARAMS.BUS_TYPE.id}:0:0`;
+    const chPanTrail: number[] = [];
+    const inner = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      const k = `${id}:${x}:${y}`;
+      const linked = table.get(link) === 1;
+      await inner(id, x, y, v);
+      if (k === busType) table.set(link, 0);
+      if (k === link && v === 1) for (const s of sendPans) table.set(s, table.get(chPan) ?? 0);
+      if (linked && k === chPan) for (const s of sendPans) table.set(s, v);
+      if (linked && sendPans.includes(k)) {
+        table.set(chPan, v);
+        for (const s of sendPans) table.set(s, v);
+      }
+      if (k === chPan || (linked && sendPans.includes(k))) chPanTrail.push(table.get(chPan)!);
+    });
+    return { table, chPan, sendPans, chPanTrail };
+  }
+  const panConn = (plan: Plan, to: string) =>
+    plan.connections.find((c) => c.from === "ch3:out" && c.to === `${to}:in`)!;
+
+  // The write the unit was seen to fight: a plan read from a linked unit, with the channel PAN
+  // moved. The send pans it read are the channel's old PAN, and writing them back moved the
+  // channel there, round after round. Linked, they are the unit's to drive, so the one write
+  // that goes out is the PAN, and the unit carries the send pans to it.
+  it("writes a channel PAN moved under Pan Link in one round, sending no send pan", async () => {
+    const plan = basePlan();
+    plan.nodeParams["bus.mix1"] = { panLink: true };
+    panConn(plan, "bus.stereo").params = { ...panConn(plan, "bus.stereo").params, pan: -20 };
+    panConn(plan, "bus.mix1").params = { ...panConn(plan, "bus.mix1").params, pan: -20 };
+    const { table, chPan, sendPans, chPanTrail } = installPanLinkDevice(plan);
+    for (const s of sendPans) table.set(s, -20);
+    panConn(plan, "bus.stereo").params = { ...panConn(plan, "bus.stereo").params, pan: 30 };
+
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+
+    expect(r.residual).toEqual([]);
+    expect(r.rounds).toBe(1);
+    expect(r.outcomes.map((o) => o.command.name)).not.toContain("SEND_PAN");
+    expect(chPanTrail).toEqual([30]);
+    expect([table.get(chPan), ...sendPans.map((s) => table.get(s))]).toEqual([30, 30, 30]);
+  });
+
+  // The other direction: the plan's MIX 1 is not linked and holds a send pan of its own, the
+  // unit's is. Pan Link has to be off on the unit before the send pan lands, or the send pan
+  // moves the channel PAN and a second round has to put the channel back.
+  it("turns Pan Link off before writing the send pans it was driving", async () => {
+    const plan = basePlan();
+    plan.nodeParams["bus.mix1"] = { panLink: false };
+    panConn(plan, "bus.stereo").params = { ...panConn(plan, "bus.stereo").params, pan: -20 };
+    panConn(plan, "bus.mix1").params = { ...panConn(plan, "bus.mix1").params, pan: 40 };
+    const { table, chPan, sendPans, chPanTrail } = installPanLinkDevice(plan);
+    table.set(`${PARAMS.PAN_LINK.id}:0:0`, 1);
+    for (const s of sendPans) table.set(s, -20);
+
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+
+    expect(r.residual).toEqual([]);
+    expect(r.rounds).toBe(1);
+    expect(chPanTrail).toEqual([]);
+    expect([table.get(chPan), ...sendPans.map((s) => table.get(s))]).toEqual([-20, 40, 40]);
+  });
+
+  // A plan holding MIX 1 FIXED with Pan Link on, written to a unit on VARI with it off. Writing
+  // the BUS Type turns the unit's Pan Link off, so the switch the plan holds has to go out after
+  // it, or the unit ends unlinked and a second round has to put it back.
+  it("writes Pan Link after the BUS Type that turns it off", async () => {
+    const plan = basePlan();
+    plan.nodeParams["bus.mix1"] = { busType: 1, panLink: true };
+    const { table } = installPanLinkDevice(plan);
+    table.set(`${PARAMS.BUS_TYPE.id}:0:0`, 0);
+    table.set(`${PARAMS.BUS_TYPE.id}:0:1`, 0);
+    table.set(`${PARAMS.PAN_LINK.id}:0:0`, 0);
+
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+
+    expect(r.residual).toEqual([]);
+    expect(r.rounds).toBe(1);
+    expect(table.get(`${PARAMS.PAN_LINK.id}:0:0`)).toBe(1);
   });
 
   // The unit rebuilds the strip a preset drives a beat after the preset's write returns. A read

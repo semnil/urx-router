@@ -64,7 +64,7 @@ import {
   mergeReadInsertFxParams,
   qualifyInsertFxParams,
 } from "./insert-fx-effect";
-import { monoPairOf, pairPrimary, requiresSource, ruleKind } from "../routing";
+import { monoPairOf, pairPrimary, releasePanLink, requiresSource, ruleKind } from "../routing";
 import { isSceneExternalConnection } from "../scene-scope";
 import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
 import {
@@ -1866,9 +1866,14 @@ export function applyDirect(plan: Plan, node: string, name: ParamName, raw: numb
     case "STEREO_MASTER_BAL":
       setNp({ pan: vdToPan(raw) });
       return true;
-    case "PAN_LINK":
-      setNp({ panLink: vdToBool(raw) });
+    case "PAN_LINK": {
+      // Turned off on the unit, it leaves the send pans at the sources' pans (releasePanLink).
+      const was = plan.nodeParams[node]?.panLink === true;
+      const panLink = vdToBool(raw);
+      setNp({ panLink });
+      if (was && !panLink) releasePanLink(plan, node);
       return true;
+    }
     case "TO_ST": // MIX → STEREO "TO ST" switch → the MIX → STEREO connection's on
     case "STEREO_ASSIGN_ON": // CH/FX → STEREO assign ON → that node's main-path connection's on
       setMain({ on: vdToBool(raw) });

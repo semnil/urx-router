@@ -393,8 +393,14 @@ export const PARAMS = {
   TO_ST: { id: 677, encoding: "bool", follow: "direct" },
   /** MIX bus Pan Link (VARI only): each send's pan follows the source channel PAN.
    *  Per stereo MIX, at the bus's L instance (MIX1 = 0, MIX2 = 2). Default 0 (off).
-   *  Confirmed by live param-notify (MIX1 OFF → ON fired 589:0:0 = 1, MIX2 → 589:0:2). */
-  PAN_LINK: { id: 589, encoding: "bool", follow: "direct" },
+   *  Confirmed by live param-notify (MIX1 OFF → ON fired 589:0:0 = 1, MIX2 → 589:0:2).
+   *
+   *  Turning it on makes the unit rewrite every send pan into that MIX to its source's PAN /
+   *  BAL, and turning it off leaves them there, neither announced. translate.ts writes it ahead
+   *  of the pans and writes no send pan into a linked MIX; turning it off sets the plan's send
+   *  pans to where the unit leaves them (routing.ts releasePanLink); and the converge round
+   *  after the write reads the scope back for whatever else the unit moved. */
+  PAN_LINK: { id: 589, encoding: "bool", follow: "direct", sideEffect: "converge" },
   /** Signal Type stereo link for a MONO IN pair (1 = STEREO, 0 = MONO x2). Written
    *  to BOTH channels of the pair at their input indices. Enabling it resets the
    *  secondary channel's whole state on the device (it is copied from the primary),

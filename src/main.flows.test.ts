@@ -593,6 +593,39 @@ describe("a send control the destination bus locked behind the panel", () => {
   });
 });
 
+describe("Pan Link turned off in the panel", () => {
+  const selectWire = (from: string, to: string): void => {
+    const hit = $("graph-host").querySelector(`.wire-hit[data-from="${from}"][data-to="${to}"]`)!;
+    hit.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    hit.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+  };
+  const panOf = (): HTMLInputElement => row(t().inspector.pan).querySelector<HTMLInputElement>('input[type="range"]')!;
+  const panLink = (on: boolean): void => {
+    selectNode("bus.mix1");
+    const b = [...row(t().inspector.panLink).querySelectorAll("button")].find(
+      (x) => x.textContent === (on ? t().inspector.on : t().inspector.off),
+    )!;
+    b.click();
+  };
+
+  // The unit leaves each send pan where Pan Link held it — at the channel's PAN — so the plan's
+  // send pan takes that value when the link goes off, rather than coming back at the one it
+  // held before the link.
+  it("leaves the send pan at the channel's PAN", async () => {
+    await boot();
+    selectWire("ch1:out", "bus.mix1:in");
+    expect(panOf().value).toBe("0");
+    selectWire("ch1:out", "bus.stereo:in");
+    panOf().value = "30";
+    panOf().dispatchEvent(new Event("input", { bubbles: true }));
+
+    panLink(true);
+    panLink(false);
+    selectWire("ch1:out", "bus.mix1:in");
+    expect(panOf().value).toBe("30");
+  });
+});
+
 describe("what the browser build does not offer", () => {
   // The device half is desktop-only and the buttons are still in the DOM. Measured off
   // the shell, each one reports — through one of TWO channels, and which one is the

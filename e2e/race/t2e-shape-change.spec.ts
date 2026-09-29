@@ -4,6 +4,7 @@ import {
   goLive,
   mark,
   pushNotify,
+  pushNotifyDelivered,
   pushBulkChange,
   pushMidi,
   traceOf,
@@ -72,6 +73,11 @@ const PAN_LINK = "589:0:0";
 const CH1_M1_LEVEL = ["146:0:0", "152:0:0"];
 const CH1_M1_PAN = ["147:0:0", "153:0:0"];
 const CH1_M1_ON = ["148:0:0", "154:0:0"];
+/** CH 1's own PAN (translate.ts channelControl: CH_PAN 141, y = channel index). */
+const CH1_PAN = "141:0:0";
+/** Every send pan param into MIX 1 (translate.ts sendControl): mono channels 147 / 153,
+ *  stereo channels 274 / 280, FX channels 344 / 349 — the set Pan Link on MIX 1 drives. */
+const MIX1_SEND_PAN_IDS = new Set([147, 153, 274, 280, 344, 349]);
 /** INSERT_FX (135) / INSERT_FX_ON (134) on the four MONO IN channels, y = channel index. */
 const insertFxAddr = (ch: number): string => `135:0:${ch}`;
 const insertFxOnAddr = (ch: number): string => `134:0:${ch}`;
@@ -88,6 +94,7 @@ type CcAddr = { type: "cc"; channel: number; controller: number };
 const CC7: CcAddr = { type: "cc", channel: 0, controller: 7 };
 const CC8: CcAddr = { type: "cc", channel: 0, controller: 8 };
 const CC9: CcAddr = { type: "cc", channel: 0, controller: 9 };
+const CC10: CcAddr = { type: "cc", channel: 0, controller: 10 };
 type Mapping = { control: string; addr: CcAddr; mode: "absolute" | "pickup" };
 
 /** Seed the persisted MIDI store: ports (reopened at boot) + this model's bindings.
@@ -164,15 +171,16 @@ test.describe("T2e shape-change", () => {
   // shape-bus-type-and-pan-link-locks — a write on node A changes the observable
   // state of controls on B and C without writing them.
   //
-  // BUS Type FIXED and Pan Link are parameters of the MIX bus, and neither reaches
-  // translate.ts: mixSendLocks (core/routing.ts) is consulted by the inspector (which
-  // DROPS the gated controls), by the console (which renders them read-only) and by
-  // core/midi/controls.ts (whose set() returns false and swallows the message). FIXED
-  // leaves a send only its ON; Pan Link takes its pan.
-  // So one write on bus.mix1 decides whether an incoming CC on ch1 reaches the device
-  // at all, with nothing written to ch1 and no address entering or leaving the set.
+  // BUS Type FIXED and Pan Link are parameters of the MIX bus: mixSendLocks
+  // (core/routing.ts) is consulted by the inspector (which DROPS the gated controls), by
+  // the console (which renders them read-only) and by core/midi/controls.ts (whose set()
+  // returns false and swallows the message). FIXED leaves a send only its ON; Pan Link
+  // takes its pan. So one write on bus.mix1 decides whether an incoming CC on ch1 reaches
+  // the device at all, with nothing written to ch1. FIXED reaches nothing in translate.ts,
+  // so no address enters or leaves the set; Pan Link takes the send pans into its MIX out
+  // of it, since the unit drives them (translate.ts), and phase 7 reads exactly that.
   // ---------------------------------------------------------------------------
-  test("a MIX bus's FIXED / Pan Link write locks the source channels' send controls with no write and no shape change", async ({
+  test("a MIX bus's FIXED / Pan Link write locks the source channels' send controls without writing them", async ({
     page,
   }) => {
     await installFake(page, {
@@ -454,8 +462,8 @@ test.describe("T2e shape-change", () => {
         "bus type and pan link locks",
         // Read beside `reg2addrs`, so clause B gets a same-instant pair. This case's own
         // title is the answer it expects: a FIXED bus / Pan Link write locks the source
-        // channels' send controls with no write and no shape change, and the assertions
-        // below prove the registration did not move either.
+        // channels' send controls without writing them, and the assertions below say
+        // what the registration did — only the send pans Pan Link drives left it.
         analyze(trace, {
           registration: reg2addrs,
           registrationWindow: { from: releaseAt },
@@ -469,11 +477,103 @@ test.describe("T2e shape-change", () => {
     // premise phase 2 needs, and the only thing that makes the registration below a
     // recomputed set rather than the one that has simply never been re-posted.
     expect(releaseFull).toBeGreaterThan(0);
-    // Pan Link changed nothing about the address set either: the send pan is still
-    // written and still registered while the app refuses every path that could move it.
-    expect([...reg1].filter((a) => !reg2.has(a))).toEqual([]);
+    // Pan Link took the send pans into MIX 1 out of the address set — every source's, since
+    // the unit drives them all from their sources — and nothing else moved: they are no
+    // longer written, so they are no longer registered either.
+    const unlinked = [...reg1].filter((a) => !reg2.has(a));
+    expect(unlinked.length).toBeGreaterThan(0);
+    expect(unlinked.filter((a) => !MIX1_SEND_PAN_IDS.has(Number(a.split(":")[0])))).toEqual([]);
+    expect([...reg1].filter((a) => MIX1_SEND_PAN_IDS.has(Number(a.split(":")[0])) && reg2.has(a))).toEqual([]);
     expect([...reg2].filter((a) => !reg1.has(a))).toEqual([]);
-    for (const a of CH1_M1_PAN) expect(reg2.has(a)).toBe(true);
+    for (const a of CH1_M1_PAN) expect(reg2.has(a)).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // shape-pan-link-send-pans — a rewrite the unit never announces, and a converge
+  // that must not fight it.
+  //
+  // While a MIX bus's Pan Link is on, the unit holds every send pan into it at its
+  // source's pan and moves the source when one is written (PanLinkGroup, fake-device.ts).
+  // The plan's copy of a send pan goes stale the moment its source moves, so a converge
+  // that read it back and sent it moved the channel to the old PAN, round after round.
+  // Linked, the send pans are out of the write set: a converge has none of them to read
+  // or send, and the channel PAN the operator set is where the unit ends. Turned off on the
+  // unit, Pan Link leaves them at the channel's PAN, and so does the plan (releasePanLink).
+  // ---------------------------------------------------------------------------
+  test("a converge under Pan Link writes no send pan and leaves the channel PAN where it was set", async ({ page }) => {
+    await installFake(page, {
+      storage: midiStore([{ control: "ch1/pan", addr: CC10, mode: "absolute" }]),
+      panLink: [{ link: PAN_LINK, source: CH1_PAN, sends: CH1_M1_PAN }],
+    });
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    expect(await hasProbe(page)).toBe(true);
+    // The unit: MIX 1 linked, CH 1 at L20 and its MIX 1 send pans held there with it.
+    await seedMem(page, { [PAN_LINK]: 1, [CH1_PAN]: -20, [CH1_M1_PAN[0]]: -20, [CH1_M1_PAN[1]]: -20 });
+    await goLive(page);
+    await setLatency(page, { get: 2, set: 8 });
+    const memAt = (addr: string): Promise<number> => page.evaluate((a) => window.__urxFake.mem[a] ?? 0, addr);
+
+    // Phase 1 — the operator turns CH 1's PAN. One write, and the unit carries the send
+    // pans with it without a word.
+    await mark(page, "pan-move");
+    await pushMidi(page, [cc(10, 100)]);
+    await settleAfter(page, "pan-move", 900);
+    let trace = await traceOf(page);
+    const moveAt = markTime(trace, "pan-move")!;
+    const moves = setsAfter(trace, moveAt).filter((s) => s.addr === CH1_PAN);
+    console.log(`pan move emitted: ${moves.map((s) => `${s.addr}=${s.value}`).join(", ")}`);
+    expect(moves).toHaveLength(1);
+    const pan = moves[0].value!;
+    expect(pan).not.toBe(-20);
+    expect(await memAt(CH1_M1_PAN[0])).toBe(pan);
+
+    // Phase 2 — a converge. COMP/EQ Type is a converge head: the flush that sends it reads
+    // the write scope back and sends the plan's value wherever the unit differs.
+    await graphNode(page, "ch3").click();
+    await mark(page, "converge");
+    await chooseOption(param(page, "COMP/EQ Type").locator("select"), "1");
+    await settleAfter(page, "converge", 1800);
+    trace = await traceOf(page);
+    const convergeAt = markTime(trace, "converge")!;
+    const sent = setsAfter(trace, convergeAt);
+    const panReads = getsOf(trace).filter((g) => g.addr === CH1_PAN && g.start > convergeAt).length;
+    const panSends = sent.filter((s) => s.addr === CH1_PAN || CH1_M1_PAN.includes(s.addr!));
+    console.log(
+      `converge: ${panReads} read(s) of ${CH1_PAN}; pan writes ` +
+        (panSends.map((s) => `${s.addr}=${s.value}`).join(", ") || "(none)"),
+    );
+    // The positive control: the converge ran and read the channel PAN back, so the
+    // absence below is its verdict and not a converge that never happened.
+    expect(panReads).toBeGreaterThan(0);
+    expect(panSends).toEqual([]);
+    // The unit ends where the operator put it, the send pans with it.
+    expect(await memAt(CH1_PAN)).toBe(pan);
+    for (const a of CH1_M1_PAN) expect(await memAt(a)).toBe(pan);
+    // …and the write set the session holds says why: the linked send pans are not in it.
+    const writes = await writeSetOf(page);
+    expect(writes.has(CH1_PAN)).toBe(true);
+    for (const a of CH1_M1_PAN) expect(writes.has(a)).toBe(false);
+
+    // Phase 3 — Pan Link turned off on the unit's own panel. The unit leaves the send pans where
+    // the link held them, at CH 1's PAN, and announces only the switch; the plan's send pan
+    // takes that value from the announcement. A converge straight after — before the idle
+    // read could re-take the plan from the unit — then has nothing to send there but that same
+    // value: the send pan the plan held from before the link must not go back out.
+    await seedMem(page, { [PAN_LINK]: 0 });
+    await mark(page, "unlink");
+    await pushNotifyDelivered(page, [[589, 0, 0, 0]]);
+    await chooseOption(param(page, "COMP/EQ Type").locator("select"), "0");
+    await settleAfter(page, "unlink", 1800);
+    trace = await traceOf(page);
+    const unlinkAt = markTime(trace, "unlink")!;
+    const unlinkSends = setsAfter(trace, unlinkAt).filter((s) => CH1_M1_PAN.includes(s.addr!));
+    console.log(
+      `after the unit's unlink: send pan writes ${unlinkSends.map((s) => `${s.addr}=${s.value}`).join(", ") || "(none)"}`,
+    );
+    for (const s of unlinkSends) expect(s.value).toBe(pan);
+    for (const a of CH1_M1_PAN) expect(await memAt(a)).toBe(pan);
+    expect(await memAt(CH1_PAN)).toBe(pan);
   });
 
   // ---------------------------------------------------------------------------

@@ -2499,7 +2499,7 @@ differing command belongs to**, in emit order. One round then lands all three. T
 group is actually involved, so a write with no 1-knob difference pays nothing.
 
 The other `sideEffect` heads (`COMP_EQ_TYPE`, `INSERT_FX` and the two output selectors, `FX_EFFECT_TYPE`,
-`SIGNAL_TYPE`, `PAN_BAL`) carry no group. What settles them is the loop's budget, which is not fixed: **a round
+`SIGNAL_TYPE`, `PAN_BAL`, `BUS_TYPE`, `PAN_LINK`) carry no group. What settles them is the loop's budget, which is not fixed: **a round
 that sent a `sideEffect` head is followed by another round**, past `maxRounds` and up to twice it. A head's rewrite
 lands after the writes that follow it in the same round — on a URX44V a Signal Type change applied 85-125 ms after
 its write, and inside a self-test restore values written more than a second after the unlink were still replaced —
@@ -2508,6 +2508,17 @@ secondary's COMP/EQ type, and re-sending that type rebuilds its SSMCS bank. A ro
 a head that never settles stops at the cap. `translate.test.ts` pins which heads carry a group, so a new
 `sideEffect` param fails the test until someone records which side it is on. `SIGNAL_TYPE` and `PAN_BAL` reset
 addresses owned by *other* nodes, which a group cannot express — their ordering is pinned separately.
+
+A MIX bus's `BUS_TYPE` and `PAN_LINK` are ordered the same way, per MIX and ahead of every channel pan and send:
+BUS Type first, since writing it resets the MIX's send bank and turns its Pan Link off, then Pan Link, since while
+it is on the unit sets every send pan into that MIX to its source's PAN / BAL, keeps it there as the source moves,
+and moves the source when a send pan is written — none of it announced. **No send pan into a linked MIX is emitted
+at all**, the self-test restore's device-driven values included: the unit derives them from the source pans, and
+one written there would move its source instead, so a converge that sent the plan's copy back swung the channel
+between the two values round after round. Turned off, Pan Link leaves the send pans where it held them, so an edit
+that turns it off — in the panel or on the unit, through device follow — also sets the plan's send pans into that
+MIX to their sources' pans (`routing.ts` `releasePanLink`), and what the next write sends there is what the unit
+already holds.
 
 A round's budget only works if the residual it measures is real, so **the seed read waits out the writes that
 preceded it**. The caller that leaves the diff to be seeded — Live sync's converging flush — has just written the

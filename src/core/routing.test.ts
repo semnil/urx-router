@@ -19,6 +19,7 @@ import {
   partnerChannel,
   possibleSources,
   possibleTargets,
+  releasePanLink,
   ruleKind,
   sendHasTap,
   sendIsPreFader,
@@ -257,6 +258,34 @@ describe("sendIsPreFader", () => {
   it("is false on a route with no tap, whatever its params hold", () => {
     const p = defaultPlan("URX44");
     expect(sendIsPreFader(u44, p, withTap(p, "ch1", "bus.stereo", "pre"))).toBe(false);
+  });
+});
+
+describe("releasePanLink", () => {
+  // Pan Link off leaves every send pan into the MIX at its source's own pan — a mono channel's
+  // PAN, a stereo channel's and an FX channel's BAL — and names each send it wrote.
+  it("takes every send pan into the MIX to its source's main-path pan, and no other", () => {
+    const p = defaultPlan("URX44");
+    const conn = (from: string, to: string): PlanConnection =>
+      p.connections.find((c) => c.from === ref(from, "out") && c.to === ref(to, "in"))!;
+    for (const [src, pan] of [
+      ["ch1", -20],
+      ["ch_5_6", 30],
+      ["bus.fx1", 10],
+    ] as const) {
+      conn(src, "bus.stereo").params = { ...conn(src, "bus.stereo").params, pan };
+      conn(src, "bus.mix1").params = { ...conn(src, "bus.mix1").params, pan: 40 };
+      conn(src, "bus.mix2").params = { ...conn(src, "bus.mix2").params, pan: 40 };
+    }
+    const keys = releasePanLink(p, "bus.mix1");
+    const into = [conn("ch1", "bus.mix1"), conn("ch_5_6", "bus.mix1"), conn("bus.fx1", "bus.mix1")];
+    expect(into.map((c) => c.params?.pan)).toEqual([-20, 30, 10]);
+    expect(conn("ch1", "bus.mix2").params?.pan).toBe(40);
+    expect(keys).toContain(connParamContestKey(ref("ch1", "out"), ref("bus.mix1", "in"), "pan"));
+    expect(keys).toContain(connParamContestKey(ref("bus.fx1", "out"), ref("bus.mix1", "in"), "pan"));
+    // Every send into the MIX, and only those.
+    const sends = p.connections.filter((c) => c.to === ref("bus.mix1", "in") && c.kind === "send");
+    expect(keys).toHaveLength(sends.length);
   });
 });
 

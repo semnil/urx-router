@@ -113,3 +113,52 @@ describe("emit ∘ applyDirect fixed point (direct follow reflects a device edit
     }
   });
 });
+
+describe("Pan Link turned off on the unit", () => {
+  // The unit leaves every send pan into the MIX where Pan Link held it — at its source's pan —
+  // and announces none of it, so the notify for the switch is what carries the send pans into
+  // the plan. A send pan the plan held from before the link would otherwise go out on the next
+  // write and move the send away from where the unit left it.
+  const sendPan = (plan: Plan, from: string, to: string): number | undefined =>
+    plan.connections.find((c) => c.from === `${from}:out` && c.to === `${to}:in`)?.params?.pan;
+  const linked = (): Plan => {
+    const plan = base();
+    plan.nodeParams["bus.mix1"] = { panLink: true };
+    for (const [src, pan] of [
+      ["ch1", -20],
+      ["ch_5_6", 30],
+      ["bus.fx1", 10],
+    ] as const) {
+      for (const c of plan.connections) {
+        if (c.from !== `${src}:out`) continue;
+        if (c.to === "bus.stereo:in") c.params = { ...c.params, pan };
+        if (c.to === "bus.mix1:in" || c.to === "bus.mix2:in") c.params = { ...c.params, pan: 40 };
+      }
+    }
+    return plan;
+  };
+
+  it("takes each send pan into that MIX to its source's pan when the link goes off", () => {
+    const plan = linked();
+    expect(applyDirect(plan, "bus.mix1", "PAN_LINK", 0)).toBe(true);
+    expect(plan.nodeParams["bus.mix1"]?.panLink).toBe(false);
+    expect(sendPan(plan, "ch1", "bus.mix1")).toBe(-20);
+    expect(sendPan(plan, "ch_5_6", "bus.mix1")).toBe(30);
+    expect(sendPan(plan, "bus.fx1", "bus.mix1")).toBe(10);
+    // Only the MIX whose link went off.
+    expect(sendPan(plan, "ch1", "bus.mix2")).toBe(40);
+  });
+
+  it("leaves the send pans alone when the link goes on or stays where it was", () => {
+    for (const [from, raw] of [
+      [true, 1],
+      [false, 0],
+      [false, 1],
+    ] as const) {
+      const plan = linked();
+      plan.nodeParams["bus.mix1"] = { panLink: from };
+      applyDirect(plan, "bus.mix1", "PAN_LINK", raw);
+      expect(sendPan(plan, "ch1", "bus.mix1"), `${from} -> ${raw}`).toBe(40);
+    }
+  });
+});

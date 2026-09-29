@@ -12,6 +12,7 @@ import {
   mixSendLocks,
   pairSharesNodeKey,
   partnerChannel,
+  releasePanLink,
 } from "./core/routing";
 import {
   decodePlanParam,
@@ -1715,10 +1716,14 @@ const inspectorActions = {
     // copies the settled values onto the partner. It names its own writes: every one
     // of them can land on the value already there, so nothing downstream can recover
     // them from the plan's diff.
+    // Pan Link turned off leaves each send pan into the MIX at its source's pan, as the unit
+    // does (releasePanLink) — the next write then puts back what the unit already holds.
     const transitionKeys =
       patch.stereoLink !== undefined || patch.panBal !== undefined
         ? applyPairTransition(getModel(modelId), plan, id, patch)
-        : [];
+        : patch.panLink === false && prev?.panLink === true
+          ? releasePanLink(plan, id)
+          : [];
     // A STEREO-linked pair moves as one: copy this channel's params to the partner
     // (the pair-level Signal Type / PAN-BAL fields stay on the primary).
     const mirrored = mirrorLinkedPair(getModel(modelId), plan, id);
