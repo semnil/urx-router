@@ -174,7 +174,9 @@ the device default. The full set:
 - `busType` — MIX 1/2: 0 VARI / 1 FIXED. On a FIXED bus a send into it keeps only
   its `on`: the unit takes it after the source's fader at a fixed level, placed by
   the source's own pan, so the send's `level`, `pan` and `tap` have no effect — no
-  pre-fader send into a FIXED bus is possible. `panLink` (bool, VARI only).
+  pre-fader send into a FIXED bus is possible. `panLink` (bool, VARI only): while it
+  is on, the unit holds each send's `pan` into that MIX at its source's own pan and
+  the app writes none, so a send `pan` in a plan that links its MIX has no effect.
 - `osc` — `{ on, level (-96…0 dB), mode (0 Sine/1 Pink/2 Burst), freq (Hz),
   width, interval (s) }`.
 - `cueInterrupt`, `mono` (bool, monitor buses); `phonesLevel` (0.0–10.0).
