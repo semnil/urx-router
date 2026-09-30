@@ -85,32 +85,17 @@ const toolPaths = (dir, plan) => {
     .filter((p) => p !== null);
 };
 
-/** The app's own load. THREE stages: deserialize, the load-time repairs (an on/off written as a
- *  number, first, since the others read it converted; a value outside its range, a receiver
- *  given no source, and a linked send pan off its source's value), and the fill that completes
- *  a document from the model's factory values. The last is optional here because the two
- *  questions below are different — `appChanges` asks what the document's own values survive,
- *  and the fill answers about the ones it did not write. */
+/** The app's own load, through the functions the loader itself calls: deserialize, then the
+ *  load-time repairs (`applyLoadRepairs`) or the repairs and the completion from the model's
+ *  factory values that follows them (`prepareLoadedPlan`). The completion is optional here
+ *  because the two questions below are different — `appChanges` asks what the document's own
+ *  values survive, and the completion answers about the ones it did not write. */
 const appLoad = async (plan, fill) => {
   const { deserializeDocument } = await import("../src/core/plan.ts");
-  const {
-    booleanParamProblems,
-    applyBooleanParams,
-    paramRangeProblems,
-    applyParamRange,
-    requiredSourceProblems,
-    applyRequiredSources,
-    linkedSendPanProblems,
-    applyLinkedSendPans,
-  } = await import("../src/core/plan-validate.ts");
-  const { fillFactoryParams } = await import("../src/models/initial-state.ts");
+  const { planProblems, applyLoadRepairs, prepareLoadedPlan } = await import("../src/core/plan-validate.ts");
   const loaded = deserializeDocument(JSON.stringify(plan)).plan;
-  applyBooleanParams(loaded, booleanParamProblems(getModel(loaded.modelId), loaded));
-  applyParamRange(loaded, paramRangeProblems(loaded));
   const model = getModel(loaded.modelId);
-  applyRequiredSources(model, loaded, requiredSourceProblems(model, loaded));
-  applyLinkedSendPans(model, loaded, linkedSendPanProblems(model, loaded));
-  if (fill) fillFactoryParams(loaded.modelId, loaded);
+  (fill ? prepareLoadedPlan : applyLoadRepairs)(model, loaded, planProblems(model, loaded));
   return loaded;
 };
 

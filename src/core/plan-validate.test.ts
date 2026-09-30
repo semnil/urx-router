@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   applyBooleanParams,
   applyLinkedSendPans,
+  applyLoadRepairs,
   applyParamRange,
   applyRequiredSources,
   booleanParamProblems,
@@ -12,8 +13,10 @@ import {
   needsDecision,
   paramRangeProblems,
   planProblems,
+  prepareLoadedPlan,
   requiredSourceProblems,
 } from "./plan-validate";
+import { trackCountAtRate } from "./constraints";
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
 import { planToCommands } from "./control/translate";
 import { sendPansToSources, validatePlan } from "./routing";
@@ -1008,6 +1011,72 @@ describe("booleanParamProblems", () => {
     expect(problem).toBeDefined();
     expect(isRefusal(problem)).toBe(false);
     expect(needsDecision(problem)).toBe(false);
+  });
+});
+
+// The loader's order, in the one function it calls: the repairs, on/off conversion first, then
+// the completion from the factory values, then the rate rule.
+describe("prepareLoadedPlan", () => {
+  const u44v = getModel("URX44V");
+  const load = (plan: Plan) => prepareLoadedPlan(u44v, plan, planProblems(u44v, plan));
+
+  it("converts an on/off before the HI-Z rule bounds it", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams.ch3 = { hiZ: 1 as unknown as boolean, phantom: 1 as unknown as boolean };
+    const repairs = load(plan);
+    expect(repairs.booleans.map((p) => p.path).sort()).toEqual(["hiZ", "phantom"]);
+    expect(repairs.ranged.map((p) => [p.key, p.action])).toEqual([["phantom", "bound"]]);
+    expect(plan.nodeParams.ch3!.hiZ).toBe(true);
+    expect(plan.nodeParams.ch3!.phantom).toBe(false);
+  });
+
+  it("completes a value a repair dropped from the factory values, where the repairs alone leave it absent", () => {
+    const factoryType = defaultPlan("URX44V").nodeParams["bus.fx1"]?.fxEffect?.type;
+    expect(factoryType, "the premise: the factory selects an effect").toBeDefined();
+    const doc = (): Plan => {
+      const plan = emptyPlan("URX44V");
+      plan.nodeParams["bus.fx1"] = { fxEffect: { type: 999, on: false } } as never;
+      return plan;
+    };
+    const repaired = doc();
+    applyLoadRepairs(u44v, repaired, planProblems(u44v, repaired));
+    expect(repaired.nodeParams["bus.fx1"]?.fxEffect?.type).toBeUndefined();
+    const loaded = doc();
+    load(loaded);
+    expect(loaded.nodeParams["bus.fx1"]?.fxEffect?.type).toBe(factoryType);
+  });
+
+  it("puts a Track Count the completion supplies back through the rate rule", () => {
+    const factory = defaultPlan("URX44V").nodeParams["out.sdrec"]?.sdRecTrackCount;
+    const atRate = trackCountAtRate(factory, 96000);
+    expect(atRate, "the premise: the factory count does not fit the rate").not.toBe(factory);
+    const plan = { ...emptyPlan("URX44V"), sampleRate: 96000 };
+    delete plan.nodeParams["out.sdrec"];
+    load(plan);
+    expect(plan.nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(atRate);
+  });
+
+  it("applies and returns each kind of repair the funnel reported, and leaves a refusal alone", () => {
+    const plan: Plan = {
+      ...emptyPlan("URX44V"),
+      connections: [
+        { from: "ch1:out", to: "bus.stereo:in", kind: "send", params: { pan: -20 } },
+        { from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { pan: 40 } },
+        { from: "nope:out", to: "ch1:in", kind: "send" },
+      ],
+      nodeParams: { "bus.mix1": { panLink: 1 as unknown as boolean } },
+    };
+    const problems = planProblems(u44v, plan);
+    expect(problems.filter(isRefusal), "the premise: the funnel reports a refusal").toHaveLength(1);
+    const repairs = prepareLoadedPlan(u44v, plan, problems);
+    expect(repairs.booleans.map((p) => `${p.node}.${p.path}`)).toEqual(["bus.mix1.panLink"]);
+    expect(repairs.ranged).toEqual([]);
+    expect(repairs.supplied.map((p) => `${p.from} -> ${p.to}`)).toEqual(["bus.stereo:out -> bus.stream:in"]);
+    expect(repairs.linkedPans.map((p) => `${p.from} ${p.stored} -> ${p.pan}`)).toEqual(["ch1:out 40 -> -20"]);
+    expect(plan.nodeParams["bus.mix1"]!.panLink).toBe(true);
+    expect(plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in")?.params?.pan).toBe(-20);
+    expect(plan.connections.some((c) => c.to === "bus.stream:in")).toBe(true);
+    expect(plan.connections.some((c) => c.from === "nope:out")).toBe(true);
   });
 });
 
