@@ -19,7 +19,11 @@ loads the plan as authored":
 - a send into a MIX bus whose Pan Link is on takes its source's own pan / balance on
   load (core/plan-validate.ts `linkedSendPanProblems`) wherever the document gives it
   another, which is reported as a warning — the plan loads with the pan the unit
-  holds there rather than the one it wrote, and
+  holds there rather than the one it wrote,
+- an on/off written as a number where the model's factory values hold an on/off
+  (models.json `booleanLeaves`) is converted on load to on, or to off for 0
+  (core/plan-validate.ts `booleanParamProblems`), which is reported as a warning —
+  every other check reads the plan as that conversion leaves it, and
 - the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
   of the raw-deflated UTF-8 JSON, padding stripped), read back by `?plan=` on
   startup. Compression keeps full plans inside GitHub Pages' ~8 KB URL limit;
@@ -34,14 +38,16 @@ Usage:
 
 Exit code is non-zero when the plan has hard validation problems, so the skill
 can branch on it. Warnings (a dropped wire or value, a wire the load adds, a
-linked send pan the load sets, a misplaced Ducker param, raw-encoded params, a
-destructive effect selector, a contended insert-FX slot)
+linked send pan the load sets, an on/off the load converts, a misplaced Ducker
+param, raw-encoded params, a destructive effect selector, a contended insert-FX
+slot)
 are advisory and never fail the plan — but they all mean something worth telling
 the user.
 """
 
 import argparse
 import base64
+import copy
 import json
 import math
 import os
@@ -198,12 +204,20 @@ def validate(plan, models):
             problems.append(("duplicate", frm, to))
         seen.add(key)
 
-    warnings.extend(required_source_warnings(plan, model, kept))
-    warnings.extend(linked_send_pan_warnings(plan, model, kept))
-    warnings.extend(collection_warnings(plan))
+    # The on/off conversions come first, and every check below reads the document as they leave
+    # it — the order the app's load applies them in (core/plan-validate.ts `planProblems`).
+    conversions = boolean_param_conversions(plan, model.get("booleanLeaves"))
+    for node_id, path, _steps, stored, value in conversions:
+        why = f"{stored!r} is a number where an on/off belongs, which the write sends as {'on' if value else 'off'}"
+        warnings.append(f"node param {node_id}.{path}: the app converts this value on load — {why}")
+    view = converted(plan, conversions)
+
+    warnings.extend(required_source_warnings(view, model, kept))
+    warnings.extend(linked_send_pan_warnings(view, model, kept))
+    warnings.extend(collection_warnings(view))
     warnings.extend(
         node_param_warnings(
-            plan,
+            view,
             nodes,
             model.get("channelPairs"),
             model.get("fxChannels"),
@@ -211,9 +225,65 @@ def validate(plan, models):
             model.get("hiZ"),
         )
     )
-    problems.extend(insert_fx_pair_problems(plan, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
+    problems.extend(insert_fx_pair_problems(view, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
 
     return problems, warnings
+
+
+def leaf_steps(path):
+    """`eqBands[0].on` as the keys and indices that reach it: ["eqBands", 0, "on"]."""
+    steps = []
+    for part in path.split("."):
+        m = re.fullmatch(r"([^\[\]]+)((?:\[\d+\])*)", part)
+        steps.append(m.group(1))
+        steps.extend(int(i) for i in re.findall(r"\[(\d+)\]", m.group(2)))
+    return steps
+
+
+def boolean_param_conversions(plan, boolean_leaves):
+    """The on/off leaves the app's load converts (core/plan-validate.ts `booleanParamProblems`): a
+    number written where the model's factory values hold an on/off is sent as on unless it is 0,
+    and the load writes that on/off. `boolean_leaves` is the `booleanLeaves` entry models.json
+    carries. A leaf inside an array the sanitiser drops (one element that is not an object) is not
+    reached, since the app no longer holds it. Returns (node, path, steps, stored, value)."""
+    node_params = plan.get("nodeParams")
+    if not isinstance(node_params, dict):
+        return []
+    out = []
+    for node_id, paths in (boolean_leaves or {}).items():
+        params = node_params.get(node_id)
+        if not isinstance(params, dict):
+            continue
+        for path in paths:
+            steps = leaf_steps(path)
+            holder = params
+            for step in steps[:-1]:
+                if isinstance(step, int):
+                    held = holder if isinstance(holder, list) and all(isinstance(e, dict) for e in holder) else None
+                    holder = held[step] if held is not None and step < len(held) else None
+                else:
+                    holder = holder.get(step) if isinstance(holder, dict) else None
+                if holder is None:
+                    break
+            if not isinstance(holder, dict):
+                continue
+            value = holder.get(steps[-1])
+            if is_number(value):
+                out.append((node_id, path, steps, value, value != 0))
+    return out
+
+
+def converted(plan, conversions):
+    """The plan as the load leaves it once the on/off conversions are written."""
+    if not conversions:
+        return plan
+    view = copy.deepcopy(plan)
+    for node_id, _path, steps, _stored, value in conversions:
+        holder = view["nodeParams"][node_id]
+        for step in steps[:-1]:
+            holder = holder[step]
+        holder[steps[-1]] = value
+    return view
 
 
 def required_source_warnings(plan, model, kept):

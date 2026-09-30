@@ -8,7 +8,7 @@
 
 import type { DeviceModel } from "../models/types";
 import { parseRef } from "../models/types";
-import { fillFactoryParams } from "../models/initial-state";
+import { factoryNodeParams, fillFactoryParams } from "../models/initial-state";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
@@ -387,30 +387,89 @@ export function applyLinkedSendPans(model: DeviceModel, plan: Plan, problems: Li
   }
 }
 
+/** An on/off leaf written as a number. The document sanitiser keeps any finite number, and the
+ *  write sends one where an on/off belongs as on unless it is 0. The loader converts it to that
+ *  on/off, so every reader of the plan holds a boolean there and reads what the write sends,
+ *  and says so.
+ *
+ *  Which leaves are on/off is read off the model's factory values rather than listed here: a
+ *  leaf the factory holds as a boolean is one, at the same path on the same node, an array
+ *  element matched by its index. A leaf the factory does not carry is left alone. Like every
+ *  check in this file it does NOT run on a device readback or the `.urxf` import, which write
+ *  booleans. */
+export interface BooleanParamProblem {
+  reason: "booleanParam";
+  node: string;
+  /** The leaf inside the node's params, dotted, an array element by its index (`eqBands.0.on`). */
+  path: string;
+  /** The number the document carries. */
+  stored: number;
+  /** What the loader writes: off for 0, on for any other number. */
+  value: boolean;
+}
+
+/** Every on/off leaf the plan holds as a number, node by node in the plan's order. */
+export function booleanParamProblems(model: DeviceModel, plan: Plan): BooleanParamProblem[] {
+  const out: BooleanParamProblem[] = [];
+  for (const [node, params] of Object.entries(plan.nodeParams)) {
+    const walk = (carried: unknown, factory: unknown, path: string[]): void => {
+      if (typeof factory === "boolean") {
+        if (typeof carried === "number")
+          out.push({ reason: "booleanParam", node, path: path.join("."), stored: carried, value: carried !== 0 });
+      } else if (Array.isArray(factory) && Array.isArray(carried)) {
+        factory.forEach((f, i) => walk(carried[i], f, [...path, String(i)]));
+      } else if (isPlainRecord(factory) && isPlainRecord(carried)) {
+        for (const [key, f] of Object.entries(factory)) walk(carried[key], f, [...path, key]);
+      }
+    };
+    walk(params, factoryNodeParams(model.id, node), []);
+  }
+  return out;
+}
+
+/** Write each reported leaf's on/off. Separate from finding them for the reason
+ *  `applyParamRange` is. */
+export function applyBooleanParams(plan: Plan, problems: BooleanParamProblem[]): void {
+  for (const p of problems) {
+    const keys = p.path.split(".");
+    let holder = plan.nodeParams[p.node] as Record<string, unknown>;
+    for (const key of keys.slice(0, -1)) holder = holder[key] as Record<string, unknown>;
+    holder[keys[keys.length - 1]] = p.value;
+  }
+}
+
 /** Everything a plan load reports: an illegal wire (refused), a slot claimed twice (the
  *  operator decides), a value outside its range (normalized, then reported), a receiver
- *  given no source (completed, then reported), or a linked send pan off its source's value
- *  (set to it, then reported). */
+ *  given no source (completed, then reported), a linked send pan off its source's value
+ *  (set to it, then reported), or an on/off written as a number (converted, then reported). */
 export type LoadProblem =
   | PlanProblem
   | InsertFxSlotProblem
   | InsertFxPairProblem
   | ParamRangeProblem
   | RequiredSourceProblem
-  | LinkedSendPanProblem;
+  | LinkedSendPanProblem
+  | BooleanParamProblem;
 
 // Every violation the plan loader reports on a file / ?plan= link / drop, in one
 // list so a load path cannot pick up half of them. The caller splits them by
 // reason — a wire violation refuses the document, a slot collision only warns.
 // Both halves check a plan built elsewhere; neither runs on a device readback.
+// The on/off conversions come first and the other checks read the document as they leave
+// it, which is the order the loader applies them in: `panLink: 1` is a linked MIX to the
+// send-pan check, and `stereoLink: 1` a linked pair to the insert-FX pair check.
 export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
+  const booleans = booleanParamProblems(model, plan);
+  const read = booleans.length > 0 ? structuredClone(plan) : plan;
+  applyBooleanParams(read, booleans);
   return [
-    ...validatePlan(model, plan),
-    ...insertFxPairProblems(model, plan),
-    ...insertFxSlotProblems(model, plan),
-    ...paramRangeProblems(plan),
-    ...requiredSourceProblems(model, plan),
-    ...linkedSendPanProblems(model, plan),
+    ...booleans,
+    ...validatePlan(model, read),
+    ...insertFxPairProblems(model, read),
+    ...insertFxSlotProblems(model, read),
+    ...paramRangeProblems(read),
+    ...requiredSourceProblems(model, read),
+    ...linkedSendPanProblems(model, read),
   ];
 }
 
@@ -423,13 +482,14 @@ export function isRefusal(problem: LoadProblem): boolean {
     problem.reason !== "insertFxSlot" &&
     problem.reason !== "paramRange" &&
     problem.reason !== "requiredSource" &&
-    problem.reason !== "linkedSendPan"
+    problem.reason !== "linkedSendPan" &&
+    problem.reason !== "booleanParam"
   );
 }
 
 /** Whether a problem stops the load until the operator answers. A refusal does not — there
- *  is nothing to answer — and neither a normalized range, a completed source nor a linked send
- *  pan set to its source's value does: each is
+ *  is nothing to answer — and neither a normalized range, a completed source, a linked send
+ *  pan set to its source's value nor a converted on/off does: each is
  *  repaired before the document opens and reported on the status line, which is where
  *  architecture.md puts a partial success. Only the slot collision leaves a document the app
  *  can open and the unit cannot run, which is a decision and nobody else's. */

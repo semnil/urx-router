@@ -133,7 +133,10 @@ the params you mean.
 ## nodeParams
 
 Per-node settings, keyed by node id. All fields optional; an absent field keeps
-the device default. The full set:
+the device default. An on/off (every field marked bool below, and each `on` inside
+a group) is written `true` / `false`: a number there loads converted — `0` to off,
+any other number to on, which is how the write sends it — and `plan_tool.py` warns
+about each one it converts. The full set:
 
 **Stable, human-readable (author these freely):**
 - `on` — channel / STEREO master / FX channel / MONITOR on. `false` = muted.

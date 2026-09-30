@@ -240,8 +240,10 @@ select into the one device-wide slot and the unit runs one at a time — not as 
 document to repair before it can be opened. The same report also lists what the
 load repairs without asking — `[paramRange]` rows for values it bounds or drops,
 `[requiredSource] bus.stereo:out -> bus.stream:in` for the STREAMING source it adds,
-and `[linkedSendPan] <from> -> <to>: <stored> -> <pan>` for a send pan into a MIX
-whose Pan Link is on, set to its source's own — and those need no answer.
+`[linkedSendPan] <from> -> <to>: <stored> -> <pan>` for a send pan into a MIX
+whose Pan Link is on, set to its source's own, and `[booleanParam] <node>.<path>:
+<number> -> <true|false>` for an on/off written as a number — and those need no
+answer.
 
 **6. Flag the parameters that need care.** Two classes the validator warns about;
 `plan-schema.md` carries the detail, and both are worth surfacing to the user:

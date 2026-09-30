@@ -10,6 +10,8 @@ import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
 import { INSERT_FX_OPTIONS } from "../core/control/params";
+import { isPlainRecord } from "../core/plan";
+import { factoryNodeParams } from "./initial-state";
 import { monoPairsInto } from "../core/routing";
 import { hasHiZInput } from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
@@ -83,6 +85,10 @@ export interface SkillModel {
   /** The channels carrying the HI-Z switch, and A.Gain's upper bound while it is on. With HI-Z
    *  on, the load turns +48V off and bounds A.Gain to that value. */
   hiZ: { channels: string[]; gainMaxDb: number };
+  /** Per node, every on/off leaf the model's factory values carry, in the validator's path
+   *  spelling (`eqBands[0].on`). The load converts a number written at one of them to on, or to
+   *  off for 0 (`booleanParamProblems`). */
+  booleanLeaves: Record<string, string[]>;
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -100,7 +106,25 @@ function skillModel(model: DeviceModel): SkillModel {
       channels: model.nodes.filter((n) => hasHiZInput(model.id, n.id)).map((n) => n.id),
       gainMaxDb: HI_Z_A_GAIN_MAX_DB,
     },
+    booleanLeaves: booleanLeaves(model),
   };
+}
+
+/** The on/off leaves of each node's factory values, the set `booleanParamProblems` reads. */
+function booleanLeaves(model: DeviceModel): SkillModel["booleanLeaves"] {
+  const out: SkillModel["booleanLeaves"] = {};
+  const walk = (value: unknown, path: string, found: string[]): void => {
+    if (typeof value === "boolean") found.push(path);
+    else if (Array.isArray(value)) value.forEach((v, i) => walk(v, `${path}[${i}]`, found));
+    else if (isPlainRecord(value))
+      for (const [key, v] of Object.entries(value)) walk(v, path ? `${path}.${key}` : key, found);
+  };
+  for (const n of model.nodes) {
+    const found: string[] = [];
+    walk(factoryNodeParams(model.id, n.id), "", found);
+    if (found.length > 0) out[n.id] = found;
+  }
+  return out;
 }
 
 /** The FX channels' menus and admitted sets, derived from the app's own catalogue. */

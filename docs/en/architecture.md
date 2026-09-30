@@ -109,7 +109,7 @@ carries a one-line map of the same directories and points here.
   `planProblems` (split out of `constraints.ts`, which is rate limits and nothing else: a rate limit warns
   about a plan the app authored, these check a plan built ELSEWHERE — a file, a `?plan=` link, a generator).
   `routing.ts` cannot host them (the cycle constraints → translate → routing). It runs from `loadFromText`
-  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its six kinds
+  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its seven kinds
   are reported differently: an illegal wire refuses the document; a STEREO-linked pair whose two members
   disagree about their one insert effect refuses it too, since the unit keeps a single selector, bypass and
   engine for the pair and no state of it satisfies such a document (`insertFxPairProblems`, compared over the
@@ -129,7 +129,12 @@ carries a one-line map of the same directories and points here.
   is completed the same way, with its default source, and said on the same line (`requiredSourceProblems`;
   see "A plan that names no STREAMING source"). A send into a MIX bus whose Pan Link is on that carries a pan
   other than its source's own is set to the source's value the same way and said on the same line
-  (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). `isRefusal` and `needsDecision` are the two predicates that split
+  (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
+  number — a leaf the model's factory values hold as a boolean, at the same path on the same node — is
+  converted to the on/off the write sends, off for 0 and on for any other number, and said on the same
+  line (`booleanParamProblems`). It comes first, and every other check reads the document as it leaves it,
+  so `panLink: 1` is a linked MIX to the send-pan check and `stereoLink: 1` a linked pair to the insert-FX
+  pair check, as both are to the write. `isRefusal` and `needsDecision` are the two predicates that split
   them, one seat each / `plan.ts` plan state + JSON + the `?plan=` deep-link codec (deflate-compressed
   `"z"` format; legacy uncompressed links must keep decoding) / `levels.ts` the device's discrete level_gain
   grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Every
