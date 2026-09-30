@@ -292,9 +292,10 @@ collection that is not the right container at all (an array where an object is
 expected, say) falls back to empty and loses every entry. Nothing is reported to
 the user when this happens, so `plan_tool.py validate` warns about each one.
 
-**One entry is rewritten rather than dropped by the deserializer**, and the loader
-rewrites a second class after it. Everything under a node's `fxEffect` that the
-write path cannot send is repaired before the document opens, and the counts are
+**A value can be rewritten rather than dropped** — by the deserializer (a `nodeNames`
+value, below) and by the loader after it, whose repairs are described here for
+`fxEffect` and at each field for the others. Everything under a node's `fxEffect` that
+the write path cannot send is repaired before the document opens, and the counts are
 reported on the status line — one sentence for the values moved, another for the
 values removed:
 
