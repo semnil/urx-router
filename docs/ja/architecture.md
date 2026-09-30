@@ -127,7 +127,9 @@ flowchart TD
   すべて変換後の文書を読む。書き込みにとってと同じく、`panLink: 1` は送りのパンの検査にとってリンク中の
   MIX、`stereoLink: 1` は Insert FX のペアの検査にとってリンクしたペアになる。変換した値は後の修復で
   もう一度動くことがある (HI-Z がオンのチャンネルでは、オンに変換した +48V をオフにする) ので、行が伝えるのは
-  変換した件数で、どちらへ変換したかではない。
+  変換した件数で、どちらへ変換したかではない。修復はこの順で `applyLoadRepairs` が当て、`prepareLoadedPlan` は
+  その後に機種の工場出荷値による補完とレートの規則を続ける。`loadFromText` と `scripts/plan-tool.test.mjs` は
+  どちらもこれを呼ぶので、読み込みの順番を書いている場所は 1 つである。
   これらを分けるのは `isRefusal` と `needsDecision` の 2 述語で、それぞれ座席は 1 つ) / `plan.ts`
   プラン状態 + JSON + `?plan=` ディープリンクのコーデック (deflate 圧縮の `"z"` 形式。旧来の非圧縮リンクも
   デコードでき続けなければならない) / `levels.ts` 実機の離散 level_gain グリッド (`LEVEL_STEPS_DB` = 設定可能な

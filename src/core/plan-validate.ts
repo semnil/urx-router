@@ -12,7 +12,7 @@ import { factoryNodeParams, fillFactoryParams } from "../models/initial-state";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
-import { fixedConnection, isPlainRecord, requiredSourceWire } from "./plan";
+import { fixedConnection, isPlainRecord, requiredSourceWire, setPlanSampleRate } from "./plan";
 import type { Plan } from "./plan";
 import { insertFxWireState } from "./control/translate";
 import { hiZOn } from "./input-lock";
@@ -495,4 +495,39 @@ export function isRefusal(problem: LoadProblem): boolean {
  *  can open and the unit cannot run, which is a decision and nobody else's. */
 export function needsDecision(problem: LoadProblem): boolean {
   return problem.reason === "insertFxSlot";
+}
+
+/** What a load repaired, by kind. The status line says each kind in its own sentence. */
+export interface LoadRepairs {
+  booleans: BooleanParamProblem[];
+  ranged: ParamRangeProblem[];
+  supplied: RequiredSourceProblem[];
+  linkedPans: LinkedSendPanProblem[];
+}
+
+/** Apply every repair `planProblems` reported, in the order `planProblems` reads them: an on/off
+ *  written as a number is converted first, then a value outside what the app can write is
+ *  bounded or dropped, a receiver the unit never leaves without a source gets the one a new plan
+ *  carries, and a send into a MIX whose Pan Link is on takes its source's own pan / balance.
+ *  Refusals and decisions are the caller's; the reasons they carry are not repaired here. */
+export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
+  const booleans = problems.filter((p) => p.reason === "booleanParam");
+  applyBooleanParams(plan, booleans);
+  const ranged = problems.filter((p) => p.reason === "paramRange");
+  applyParamRange(plan, ranged);
+  const supplied = problems.filter((p) => p.reason === "requiredSource");
+  applyRequiredSources(model, plan, supplied);
+  const linkedPans = problems.filter((p) => p.reason === "linkedSendPan");
+  applyLinkedSendPans(model, plan, linkedPans);
+  return { booleans, ranged, supplied, linkedPans };
+}
+
+/** A document as the loader opens it: repaired (`applyLoadRepairs`), then completed from the
+ *  model's factory values — a value a repair dropped is completed like any other absent one —
+ *  then put back through the rate rule, which a Track Count the fill completes can exceed. */
+export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
+  const repairs = applyLoadRepairs(model, plan, problems);
+  fillFactoryParams(model.id, plan);
+  setPlanSampleRate(plan, plan.sampleRate);
+  return repairs;
 }

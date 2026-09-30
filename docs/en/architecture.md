@@ -136,7 +136,10 @@ carries a one-line map of the same directories and points here.
   so `panLink: 1` is a linked MIX to the send-pan check and `stereoLink: 1` a linked pair to the insert-FX
   pair check, as both are to the write. A repair after it can move a converted value again — +48V converted
   to on is turned off on a channel whose HI-Z is on — so the line says how many were converted, not which
-  way. `isRefusal` and `needsDecision` are the two predicates that split
+  way. The repairs are applied in that order by `applyLoadRepairs`, and `prepareLoadedPlan` follows them with
+  the completion from the model's factory values and the rate rule; `loadFromText` and
+  `scripts/plan-tool.test.mjs` both call it, so the load's order is written in one place. `isRefusal` and
+  `needsDecision` are the two predicates that split
   them, one seat each / `plan.ts` plan state + JSON + the `?plan=` deep-link codec (deflate-compressed
   `"z"` format; legacy uncompressed links must keep decoding) / `levels.ts` the device's discrete level_gain
   grid (`LEVEL_STEPS_DB`, the canonical list of settable dB values, plus position/snap/step helpers. Every

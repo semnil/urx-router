@@ -1,7 +1,7 @@
 import "./style.css";
 
 import { MODEL_IDS, getModel } from "./models";
-import { defaultPlan, fillFactoryParams } from "./models/initial-state";
+import { defaultPlan } from "./models/initial-state";
 import type { ModelId } from "./models/types";
 import { parseRef, ref } from "./models/types";
 import {
@@ -53,15 +53,7 @@ import {
   type PlanPatch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
-import {
-  applyBooleanParams,
-  applyLinkedSendPans,
-  applyParamRange,
-  applyRequiredSources,
-  isRefusal,
-  needsDecision,
-  planProblems,
-} from "./core/plan-validate";
+import { applyParamRange, isRefusal, needsDecision, planProblems, prepareLoadedPlan } from "./core/plan-validate";
 import { phantomHiZBothOn, phantomHiZNewlyBothOn, switchAddr } from "./core/input-lock";
 import type { InputSwitch, SwitchSession } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
@@ -2419,39 +2411,19 @@ function loadFromText(text: string, path?: string): boolean | null {
     // are the same number from here on. The count goes on the status line rather than into
     // a modal: nothing failed and nothing is being asked, which is where architecture.md
     // puts a partial success. It is applied even when a decision below holds the load,
-    // because the plan the operator is deciding about is this one. An on/off written as a
-    // number is converted first, since the other repairs were found reading it converted.
-    const booleans = problems.filter((p) => p.reason === "booleanParam");
-    applyBooleanParams(next, booleans);
-    const ranged = problems.filter((p) => p.reason === "paramRange");
-    applyParamRange(next, ranged);
-    // …and a receiver the unit never leaves without a source gets the one a new plan carries,
-    // reported on the same line: the write then sends a selection the document did not name.
-    // Recorded as the fill's, so the write confirm names that receiver when the write moves it.
-    const supplied = problems.filter((p) => p.reason === "requiredSource");
-    applyRequiredSources(getModel(next.modelId), next, supplied);
+    // because the plan the operator is deciding about is this one. Then completed from the
+    // model's factory values: a document carries only what someone wrote in it, and what it
+    // omits is a key the panel draws a default for and the write does not send. The DEVICE
+    // paths do not come through here: a fetch fills from the unit, and a node it could not
+    // read stays absent on purpose.
+    const { booleans, ranged, supplied, linkedPans } = prepareLoadedPlan(getModel(next.modelId), next, problems);
+    // A STREAMING source the load supplied is recorded as the fill's, so the write confirm
+    // names that receiver when the write moves it.
     markSource(
       next,
       supplied.map((p) => connectionContestKey(p.from, p.to)),
       "default",
     );
-    // …and a send into a MIX whose Pan Link is on takes its source's own pan / balance, where the
-    // unit holds it: the write sends none of them, while the read-only SEND PAN knob, the MIDI
-    // feedback and the next save read what the plan holds.
-    const linkedPans = problems.filter((p) => p.reason === "linkedSendPan");
-    applyLinkedSendPans(getModel(next.modelId), next, linkedPans);
-    // …and then completed from the model's factory values. A document carries only what
-    // someone wrote in it, and what it omits is a key the panel draws a default for and the
-    // write does not send — one channel on screen, another on the wire. Run here, after the
-    // repair, so a value the funnel discarded is completed like any other absent one rather
-    // than left for the emit to skip. The DEVICE paths do not come through here: a fetch
-    // fills from the unit, and a node it could not read stays absent on purpose.
-    fillFactoryParams(next.modelId, next);
-    // …and then back through the rate rule, because the fill can put a value BACK that the
-    // repair above just took away: a document omitting Track Count carries nothing for the
-    // repair to clamp, and the factory 16 lands on a recorder that holds eight pairs at 96 kHz
-    // and one at 192. `setPlanSampleRate` is the one seat that rule lives in.
-    setPlanSampleRate(next, next.sampleRate);
     // …and the values a scene-scoped document did not carry are not the document's either:
     // they were copied off the plan on screen a few lines above, so their provenance is that
     // plan's. Left as the fill leaves them they would read as "the document wrote this",
