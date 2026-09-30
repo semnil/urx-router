@@ -180,7 +180,7 @@ test("an on/off written as a number opens as the on/off the write sends, and say
   };
   await page.goto(`/?plan=${planParam(plan)}`);
   await expect(page.locator("#statusbar")).toHaveText(
-    "2 on/off values were numbers and now read as on, or as off where the number was 0 — Plan loaded",
+    "2 on/off values written as numbers were converted to on/off — Plan loaded",
   );
   const tag = (id: string, text: string) =>
     page.locator(`#graph-host g.node[data-id="${id}"] text`, { hasText: new RegExp(`^${text}$`) });

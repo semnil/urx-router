@@ -401,6 +401,33 @@ describe("the deep link", () => {
       expect(body).toContain("[booleanParam] ch3.hpf: 2 -> true");
     });
 
+    // A later repair can move a converted value again: +48V written as 1 beside HI-Z written as 1
+    // is converted to on, and the HI-Z rule then turns it off. The status line reports both
+    // repairs, and the conversion's note says which leaves were converted without saying which
+    // way, so it cannot contradict the value the plan ends up holding.
+    it("does not report a converted +48V as on where the HI-Z rule turns it off", async () => {
+      const { encodePlanParam } = await import("./core/plan");
+      const { defaultPlan } = await import("./models/initial-state");
+      const plan = defaultPlan("URX44V");
+      (plan.nodeParams.ch3 as Record<string, unknown>).hiZ = 1;
+      (plan.nodeParams.ch3 as Record<string, unknown>).phantom = 1;
+      history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+      await boot();
+
+      await vi.waitFor(() => expect(status()).toContain(t().status.planLoaded), APP_SETTLE);
+      expect(status()).toBe(
+        [t().status.booleanParamsConverted(2), t().status.paramsBounded(1), t().status.planLoaded].join(" — "),
+      );
+      selectNode("ch3");
+      expect(row(t().inspector.phantom).querySelector("button.on")?.textContent).toBe(t().inspector.off);
+      expect(row(t().inspector.hiZ).querySelector("button.on")?.textContent).toBe(t().inspector.on);
+      for (const lang of ["en", "ja"] as const) {
+        const { messages } = await import(`./i18n/${lang}.ts`).then((m) => ({ messages: m[lang] }));
+        const note = messages.status.booleanParamsConverted(2) as string;
+        expect(note, lang).not.toMatch(/\b(as|to) (on|off)\b(?!\/)|オンに|オフに|0 は/);
+      }
+    });
+
     it("opens the same document written with booleans the same way, and says nothing", async () => {
       await open(false, true);
       expect(status()).toBe(t().status.planLoaded);

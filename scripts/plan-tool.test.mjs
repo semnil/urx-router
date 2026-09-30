@@ -1745,7 +1745,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
-          .map((l) => /^WARNING: node param (\S+): the app converts this value on load — .* sends as (on|off)$/.exec(l))
+          .map((l) =>
+            /^WARNING: node param (\S+): the app converts this value on load — .* converted to (on|off)$/.exec(l),
+          )
           .filter((m) => m !== null)
           .map((m) => `${m[1].replace(/\[(\d+)\]/g, ".$1")} = ${m[2] === "on"}`)
           .sort();

@@ -208,7 +208,7 @@ def validate(plan, models):
     # it — the order the app's load applies them in (core/plan-validate.ts `planProblems`).
     conversions = boolean_param_conversions(plan, model.get("booleanLeaves"))
     for node_id, path, _steps, stored, value in conversions:
-        why = f"{stored!r} is a number where an on/off belongs, which the write sends as {'on' if value else 'off'}"
+        why = f"{stored!r} is a number where an on/off belongs, and is converted to {'on' if value else 'off'}"
         warnings.append(f"node param {node_id}.{path}: the app converts this value on load — {why}")
     view = converted(plan, conversions)
 
