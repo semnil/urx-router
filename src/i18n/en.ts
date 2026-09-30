@@ -819,6 +819,8 @@ export const en = {
     paramsDropped: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the effect's own default`,
     streamingSourceSupplied: tr("The plan named no STREAMING source, so STREAMING takes STEREO"),
+    booleanParamsConverted: (count: number): string =>
+      `${count} on/off ${count === 1 ? "value written as a number was" : "values written as numbers were"} converted to on/off`,
     linkedSendPansAligned: (count: number): string =>
       `${count} ${count === 1 ? "send pan into a MIX bus with Pan Link on now follows its source's" : "send pans into MIX buses with Pan Link on now follow their sources'"} own PAN / BAL`,
     streamingSourceUnlisted: tr(

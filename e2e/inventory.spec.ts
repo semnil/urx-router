@@ -90,6 +90,7 @@ const SURFACES: Record<SurfaceName, Surface> = {
   // into one run ahead of the load's own message.
   loadStatus: {
     keys: [
+      "status.booleanParamsConverted",
       "status.paramsBounded",
       "status.paramsDropped",
       "status.streamingSourceSupplied",
@@ -361,9 +362,10 @@ test("the load report shows all three framings and both Copy faces", async ({ pa
   expectComplete("loadReport", inv);
 });
 
-// One document the load repairs every way it can: two FX values bounded and two dropped, no
-// STREAMING source, and two send pans into a MIX whose Pan Link is on — two of each, since a
-// counted note is read in its plural wording.
+// One document the load repairs every way it can: two on/off values written as numbers, two FX
+// values bounded and two dropped, no STREAMING source, and two send pans into a MIX whose Pan Link
+// is on — two of each, since a counted note is read in its plural wording. The Pan Link is one of
+// the numbers, so the send pans are set only because the conversion ran first.
 test("the status line after a load names every repair the load made", async ({ page }) => {
   const revxLpf = fxParams(0).find((d) => d.key === "revxLpf")!;
   const delayLpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
@@ -380,7 +382,8 @@ test("the status line after a load names every repair the load made", async ({ p
     nodeParams: {
       "bus.fx1": { fxEffect: { type: 0, params: { revxLpf: revxLpf.rawMin! - 1, revxHpf: false } } },
       "bus.fx2": { fxEffect: { type: 1024, params: { delayLpf: delayLpf.rawMin! - 1, delayHiRatio: false } } },
-      "bus.mix1": { panLink: true },
+      "bus.mix1": { panLink: 1 },
+      ch3: { hpf: 0 },
     },
   };
   await page.goto(`/?plan=${planParam(plan)}`);

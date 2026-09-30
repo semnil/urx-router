@@ -168,6 +168,26 @@ test("an unlinked MIX's send pans open as the document wrote them, and nothing i
   expect(await shownSendPan(page, 2, "MIX 1")).toBe("R40");
 });
 
+// An on/off written as a number opens as the on/off the write sends — 0 as off, anything else as
+// on — on the board as on the wire, and the status line says how many ahead of the load.
+test("an on/off written as a number opens as the on/off the write sends, and says so", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [{ from: "bus.stereo:out", to: "bus.stream:in", kind: "source" }],
+    nodeParams: { ch1: { on: 0 }, "out.ducker1": { duckerOn: 1 } },
+  };
+  await page.goto(`/?plan=${planParam(plan)}`);
+  await expect(page.locator("#statusbar")).toHaveText(
+    "2 on/off values written as numbers were converted to on/off — Plan loaded",
+  );
+  const tag = (id: string, text: string) =>
+    page.locator(`#graph-host g.node[data-id="${id}"] text`, { hasText: new RegExp(`^${text}$`) });
+  await expect(tag("ch1", "MUTE")).toHaveCount(1);
+  await expect(tag("out.ducker1", "OFF")).toHaveCount(0);
+});
+
 test("a malformed compressed link reports a decode failure", async ({ page }) => {
   await page.goto("/?plan=z!!!not-deflate");
   await expect(report(page)).toBeVisible();

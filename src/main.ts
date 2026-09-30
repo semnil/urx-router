@@ -54,6 +54,7 @@ import {
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import {
+  applyBooleanParams,
   applyLinkedSendPans,
   applyParamRange,
   applyRequiredSources,
@@ -2376,6 +2377,7 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
       }
       if (p.reason === "linkedSendPan")
         return `[${p.reason}] ${p.from} -> ${p.to}: ${p.stored ?? "(none)"} -> ${p.pan}`;
+      if (p.reason === "booleanParam") return `[${p.reason}] ${p.node}.${p.path}: ${p.stored} -> ${p.value}`;
       return `[${p.reason}] ${p.from} -> ${p.to}`;
     }),
   ].join("\n");
@@ -2417,7 +2419,10 @@ function loadFromText(text: string, path?: string): boolean | null {
     // are the same number from here on. The count goes on the status line rather than into
     // a modal: nothing failed and nothing is being asked, which is where architecture.md
     // puts a partial success. It is applied even when a decision below holds the load,
-    // because the plan the operator is deciding about is this one.
+    // because the plan the operator is deciding about is this one. An on/off written as a
+    // number is converted first, since the other repairs were found reading it converted.
+    const booleans = problems.filter((p) => p.reason === "booleanParam");
+    applyBooleanParams(next, booleans);
     const ranged = problems.filter((p) => p.reason === "paramRange");
     applyParamRange(next, ranged);
     // …and a receiver the unit never leaves without a source gets the one a new plan carries,
@@ -2477,6 +2482,7 @@ function loadFromText(text: string, path?: string): boolean | null {
       const boundCount = ranged.filter((p) => p.action === "bound").length;
       const dropCount = ranged.length - boundCount;
       const notes = [
+        ...(booleans.length > 0 ? [t().status.booleanParamsConverted(booleans.length)] : []),
         ...(boundCount > 0 ? [t().status.paramsBounded(boundCount)] : []),
         ...(dropCount > 0 ? [t().status.paramsDropped(dropCount)] : []),
         ...(supplied.length > 0 ? [t().status.streamingSourceSupplied] : []),

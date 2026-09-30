@@ -85,14 +85,17 @@ const toolPaths = (dir, plan) => {
     .filter((p) => p !== null);
 };
 
-/** The app's own load. THREE stages: deserialize, the load-time repairs (a value outside its
- *  range, a receiver given no source, and a linked send pan off its source's value), and the
- *  fill that completes a document from the model's factory values. The last is optional here because the two questions below are
- *  different — `appChanges` asks what the document's own values survive, and the fill answers
- *  about the ones it did not write. */
+/** The app's own load. THREE stages: deserialize, the load-time repairs (an on/off written as a
+ *  number, first, since the others read it converted; a value outside its range, a receiver
+ *  given no source, and a linked send pan off its source's value), and the fill that completes
+ *  a document from the model's factory values. The last is optional here because the two
+ *  questions below are different — `appChanges` asks what the document's own values survive,
+ *  and the fill answers about the ones it did not write. */
 const appLoad = async (plan, fill) => {
   const { deserializeDocument } = await import("../src/core/plan.ts");
   const {
+    booleanParamProblems,
+    applyBooleanParams,
     paramRangeProblems,
     applyParamRange,
     requiredSourceProblems,
@@ -102,6 +105,7 @@ const appLoad = async (plan, fill) => {
   } = await import("../src/core/plan-validate.ts");
   const { fillFactoryParams } = await import("../src/models/initial-state.ts");
   const loaded = deserializeDocument(JSON.stringify(plan)).plan;
+  applyBooleanParams(loaded, booleanParamProblems(getModel(loaded.modelId), loaded));
   applyParamRange(loaded, paramRangeProblems(loaded));
   const model = getModel(loaded.modelId);
   applyRequiredSources(model, loaded, requiredSourceProblems(model, loaded));
@@ -1597,9 +1601,10 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
   // CHANGES — or adds, where the document omits the send — are compared with the ones the tool
   // says it sets, value included, so neither half can be read off the other's problem list: a
   // mono, a stereo and an FX source, a STEREO-linked pair in PAN and in BAL, a FIXED MIX with the
-  // link on, and a pan, a send or a main path the document omits, beside the documents nothing
-  // may be said about — an unlinked MIX, a link written off, one written as a number, and sends
-  // already at their sources' pans. Every model, since the rule table is a model fact.
+  // link on, a pan, a send or a main path the document omits, and a link written as a number,
+  // which the load converts to on before it asks, beside the documents nothing may be said
+  // about — an unlinked MIX, a link written off, one written as 0, and sends already at their
+  // sources' pans. Every model, since the rule table is a model fact.
   it("agrees with the app about the send pans a Pan Link sets on load", async () => {
     const { deserializeDocument } = await import("../src/core/plan.ts");
     const conn = (from, to, pan) => ({ from, to, kind: "send", ...(pan === undefined ? {} : { params: { pan } }) });
@@ -1630,15 +1635,16 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       ["a send with no pan", [main("ch1", 30), send("ch1", "bus.mix1")], linked()],
       ["a main path with no pan", [main("ch1"), send("ch1", "bus.mix1", 20)], linked()],
       ["a main path the document omits", [send("ch1", "bus.mix1", 20)], linked()],
-      // …and the documents nothing may be said about.
-      ["sends already at their sources' pans", [main("ch1", -20), send("ch1", "bus.mix1", -20)], linked()],
-      ["an unlinked MIX", [main("ch1", -20), send("ch1", "bus.mix1", 40)], {}],
-      ["a Pan Link written off", [main("ch1", -20), send("ch1", "bus.mix1", 40)], { "bus.mix1": { panLink: false } }],
       [
         "a Pan Link written as a number",
         [main("ch1", -20), send("ch1", "bus.mix1", 40)],
         { "bus.mix1": { panLink: 1 } },
       ],
+      // …and the documents nothing may be said about.
+      ["sends already at their sources' pans", [main("ch1", -20), send("ch1", "bus.mix1", -20)], linked()],
+      ["an unlinked MIX", [main("ch1", -20), send("ch1", "bus.mix1", 40)], {}],
+      ["a Pan Link written off", [main("ch1", -20), send("ch1", "bus.mix1", 40)], { "bus.mix1": { panLink: false } }],
+      ["a Pan Link written as 0", [main("ch1", -20), send("ch1", "bus.mix1", 40)], { "bus.mix1": { panLink: 0 } }],
       ["a linked MIX 1 beside an unlinked MIX 2", [main("ch1", -20), send("ch1", "bus.mix2", 40)], linked()],
     ];
     const MIX_INS = ["bus.mix1:in", "bus.mix2:in"];
@@ -1681,6 +1687,80 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     // it leaves as written.
     expect(set.yes).toBeGreaterThan(0);
     expect(set.no).toBeGreaterThan(0);
+  });
+
+  // An on/off written as a number is converted on load to on, or to off for 0, wherever the
+  // model's factory values hold an on/off. The leaves the conversion CHANGES from a number to a
+  // boolean are compared with the ones the tool says it converts, value included: every on/off
+  // leaf of every node on every model written as a number, beside the documents nothing may be
+  // said about — the factory document itself, a number where the factory holds no on/off, a
+  // number at an on/off the factory does not carry on that node, and one inside an array the
+  // sanitiser drops whole.
+  it("agrees with the app about the on/off values it converts on load", async () => {
+    const { deserializeDocument, serialize } = await import("../src/core/plan.ts");
+    const { booleanParamProblems, applyBooleanParams } = await import("../src/core/plan-validate.ts");
+    const { defaultPlan } = await import("../src/models/initial-state.ts");
+    const NUMBERS = [1, 0, 2, -1, 0.5];
+    /** Every on/off leaf of `value` set to the next of NUMBERS, in place. */
+    const numbered = (value, n = { i: 0 }) => {
+      if (Array.isArray(value))
+        value.forEach((v, i) => (typeof v === "boolean" ? (value[i] = NUMBERS[n.i++ % 5]) : numbered(v, n)));
+      else if (value && typeof value === "object")
+        for (const [k, v] of Object.entries(value))
+          if (typeof v === "boolean") value[k] = NUMBERS[n.i++ % 5];
+          else numbered(v, n);
+      return value;
+    };
+    const converted = { on: 0, off: 0, none: 0 };
+    for (const modelId of MODEL_IDS) {
+      const factory = JSON.parse(serialize(defaultPlan(modelId)));
+      const corpus = [
+        ["every on/off leaf written as a number", numbered(structuredClone(factory.nodeParams))],
+        ["the factory document", structuredClone(factory.nodeParams)],
+        [
+          "a number where the factory holds no on/off",
+          { ...factory.nodeParams, ch1: { ...factory.nodeParams.ch1, gain: 1 } },
+        ],
+        [
+          "an on/off the factory does not carry on that node",
+          { ...factory.nodeParams, ch2: { ...factory.nodeParams.ch2, stereoLink: 1 } },
+        ],
+        [
+          "an on/off inside an array the sanitiser drops",
+          { ...factory.nodeParams, ch1: { ...factory.nodeParams.ch1, eqBands: [{ on: 1 }, 5] } },
+        ],
+      ];
+      for (const [name, nodeParams] of corpus) {
+        const plan = { ...factory, nodeParams };
+        const read = deserializeDocument(JSON.stringify(plan)).plan;
+        const before = leavesOf(read.nodeParams);
+        applyBooleanParams(read, booleanParamProblems(getModel(modelId), read));
+        const app = [...leavesOf(read.nodeParams)]
+          .filter(([k, v]) => typeof v === "boolean" && typeof before.get(k) === "number")
+          .map(([k, v]) => `${k} = ${v}`)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) =>
+            /^WARNING: node param (\S+): the app converts this value on load — .* converted to (on|off)$/.exec(l),
+          )
+          .filter((m) => m !== null)
+          .map((m) => `${m[1].replace(/\[(\d+)\]/g, ".$1")} = ${m[2] === "on"}`)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        if (app.length === 0) converted.none++;
+        for (const line of app) converted[line.endsWith("true") ? "on" : "off"]++;
+      }
+    }
+    // Every answer is a real population: leaves converted to on, leaves converted to off, and
+    // documents the load leaves alone.
+    expect(converted.on).toBeGreaterThan(0);
+    expect(converted.off).toBeGreaterThan(0);
+    expect(converted.none).toBeGreaterThan(0);
   });
 
   // `True == 1` in Python, and the app's own comparison is `===` — so a boolean comp/EQ type

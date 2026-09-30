@@ -351,6 +351,91 @@ describe("the deep link", () => {
     expect([...drawn].map((w) => (w as SVGElement).dataset.from)).toEqual(["bus.mix2:out"]);
   });
 
+  // An on/off written as a number opens as the on/off the write sends — 0 as off, anything else
+  // as on — on every surface, and the status line says how many ahead of the load. The same
+  // document written with booleans is the control: it opens the same way and says nothing.
+  describe("an on/off written as a number", () => {
+    /** The tag the board puts on a node it draws as off, or null. */
+    const offTag = (id: string): string | null =>
+      [...$("graph-host").querySelectorAll(`g.node[data-id="${id}"] text`)]
+        .map((el) => el.textContent ?? "")
+        .find((text) => text === "MUTE" || text === "OFF") ?? null;
+    const open = async (on: unknown, duckerOn: unknown): Promise<void> => {
+      const { encodePlanParam } = await import("./core/plan");
+      const { defaultPlan } = await import("./models/initial-state");
+      const plan = defaultPlan("URX44V");
+      (plan.nodeParams.ch1 as Record<string, unknown>).on = on;
+      (plan.nodeParams["out.ducker1"] as Record<string, unknown>).duckerOn = duckerOn;
+      history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+      await boot();
+      await vi.waitFor(() => expect(status()).toContain(t().status.planLoaded), APP_SETTLE);
+    };
+
+    it("opens as the on/off the write sends, and says how many", async () => {
+      await open(0, 1);
+      expect(status()).toBe([t().status.booleanParamsConverted(2), t().status.planLoaded].join(" — "));
+      expect(offTag("ch1")).toBe("MUTE");
+      expect(offTag("out.ducker1")).toBeNull();
+      // The singular branch reads differently from the plural one, with the digit masked.
+      expect(t().status.booleanParamsConverted(1).replace("1", "N")).not.toBe(
+        t().status.booleanParamsConverted(2).replace("2", "N"),
+      );
+    });
+
+    // A load held for a decision lists every problem in the copyable report, and each conversion
+    // is a row of its own naming the leaf, the number and the on/off it became.
+    it("names each conversion in the report a held load shows", async () => {
+      const { encodePlanParam } = await import("./core/plan");
+      const { defaultPlan } = await import("./models/initial-state");
+      const plan = defaultPlan("URX44V");
+      (plan.nodeParams.ch1 as Record<string, unknown>).on = 0;
+      (plan.nodeParams.ch3 as Record<string, unknown>).hpf = 2;
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 256 };
+      plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: 257 };
+      history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+      await boot();
+
+      await vi.waitFor(() => expect($("load-report").hidden).toBe(false), APP_SETTLE);
+      const body = $("load-report-body").textContent ?? "";
+      expect(body).toContain("[booleanParam] ch1.on: 0 -> false");
+      expect(body).toContain("[booleanParam] ch3.hpf: 2 -> true");
+    });
+
+    // A later repair can move a converted value again: +48V written as 1 beside HI-Z written as 1
+    // is converted to on, and the HI-Z rule then turns it off. The status line reports both
+    // repairs, and the conversion's note says which leaves were converted without saying which
+    // way, so it cannot contradict the value the plan ends up holding.
+    it("does not report a converted +48V as on where the HI-Z rule turns it off", async () => {
+      const { encodePlanParam } = await import("./core/plan");
+      const { defaultPlan } = await import("./models/initial-state");
+      const plan = defaultPlan("URX44V");
+      (plan.nodeParams.ch3 as Record<string, unknown>).hiZ = 1;
+      (plan.nodeParams.ch3 as Record<string, unknown>).phantom = 1;
+      history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+      await boot();
+
+      await vi.waitFor(() => expect(status()).toContain(t().status.planLoaded), APP_SETTLE);
+      expect(status()).toBe(
+        [t().status.booleanParamsConverted(2), t().status.paramsBounded(1), t().status.planLoaded].join(" — "),
+      );
+      selectNode("ch3");
+      expect(row(t().inspector.phantom).querySelector("button.on")?.textContent).toBe(t().inspector.off);
+      expect(row(t().inspector.hiZ).querySelector("button.on")?.textContent).toBe(t().inspector.on);
+      for (const lang of ["en", "ja"] as const) {
+        const { messages } = await import(`./i18n/${lang}.ts`).then((m) => ({ messages: m[lang] }));
+        const note = messages.status.booleanParamsConverted(2) as string;
+        expect(note, lang).not.toMatch(/\b(as|to) (on|off)\b(?!\/)|オンに|オフに|0 は/);
+      }
+    });
+
+    it("opens the same document written with booleans the same way, and says nothing", async () => {
+      await open(false, true);
+      expect(status()).toBe(t().status.planLoaded);
+      expect(offTag("ch1")).toBe("MUTE");
+      expect(offTag("out.ducker1")).toBeNull();
+    });
+  });
+
   // The bar is where a repair, a partial success and a cancellation are all reported, and it
   // is the only place several of them are said at all. Its sibling `#live-tally` is already a
   // live region; this one was not, so a screen reader was told none of it.

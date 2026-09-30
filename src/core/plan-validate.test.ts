@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyBooleanParams,
   applyLinkedSendPans,
   applyParamRange,
   applyRequiredSources,
+  booleanParamProblems,
   insertFxPairProblems,
   insertFxSlotProblems,
   isRefusal,
@@ -872,6 +874,137 @@ describe("linkedSendPanProblems", () => {
 
   it("neither refuses the document nor asks the operator about it", () => {
     const [problem] = linkedSendPanProblems(u44v, doc([main("ch1", 30)]));
+    expect(problem).toBeDefined();
+    expect(isRefusal(problem)).toBe(false);
+    expect(needsDecision(problem)).toBe(false);
+  });
+});
+
+// A number written where the factory values hold an on/off is sent as on unless it is 0, and the
+// load converts it to that on/off so every reader of the plan holds a boolean there.
+describe("booleanParamProblems", () => {
+  /** Every on/off leaf of `value`, dotted, an array element by its index. */
+  const booleanLeaves = (value: unknown, path: string[] = [], out: string[] = []): string[] => {
+    if (typeof value === "boolean") out.push(path.join("."));
+    else if (Array.isArray(value)) value.forEach((v, i) => booleanLeaves(v, [...path, String(i)], out));
+    else if (value && typeof value === "object")
+      for (const [k, v] of Object.entries(value)) booleanLeaves(v, [...path, k], out);
+    return out;
+  };
+  const at = (np: unknown, path: string): unknown =>
+    path.split(".").reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], np);
+  /** Every on/off leaf of the plan written as the next of 1, 0, 2, -1, 0.5, in place. */
+  const numbersEverywhere = (plan: Plan): { node: string; path: string; n: number }[] => {
+    const written: { node: string; path: string; n: number }[] = [];
+    const cycle = [1, 0, 2, -1, 0.5];
+    for (const [node, np] of Object.entries(plan.nodeParams))
+      for (const path of booleanLeaves(np)) {
+        const keys = path.split(".");
+        const holder = (keys.length > 1 ? at(np, keys.slice(0, -1).join(".")) : np) as Record<string, unknown>;
+        const n = cycle[written.length % cycle.length];
+        holder[keys[keys.length - 1]] = n;
+        written.push({ node, path, n });
+      }
+    return written;
+  };
+
+  // The set is read off the factory values, so it follows a new on/off the day the factory
+  // carries one. Spelled out here so the change shows in a diff and is looked at: these are the
+  // NodeParams on/off fields, an array element's written once.
+  it("reads its on/off leaves off the factory values: the NodeParams on/off fields", () => {
+    const patterns = new Set<string>();
+    for (const id of MODEL_IDS)
+      for (const np of Object.values(defaultPlan(id).nodeParams))
+        for (const path of booleanLeaves(np)) patterns.add(path.replace(/\.\d+(?=\.|$)/g, "[]"));
+    expect([...patterns].sort()).toEqual(
+      [
+        "on",
+        "hpf",
+        "insertFxOn",
+        "stereoLink",
+        "panLink",
+        "eqOn",
+        "eqOneKnob.on",
+        "eqBands[].on",
+        "comp.autoMakeup",
+        "comp.oneKnob",
+        "ssmcs.on",
+        "ssmcs.sc.on",
+        "ssmcs.eq.low.on",
+        "ssmcs.eq.mid.on",
+        "ssmcs.eq.high.on",
+        "duckerOn",
+        "gateOn",
+        "compOn",
+        "phantom",
+        "phase",
+        "phaseL",
+        "phaseR",
+        "clipSafe",
+        "hiZ",
+        "osc.on",
+        "cueInterrupt",
+        "mono",
+        "delay.on",
+      ].sort(),
+    );
+  });
+
+  it.each(MODEL_IDS)("%s: converts every on/off leaf written as a number, 0 to off and anything else to on", (id) => {
+    const m = getModel(id);
+    const plan = deserialize(serialize(defaultPlan(id)));
+    const written = numbersEverywhere(plan);
+    expect(written.length, "the premise: the factory carries on/off leaves").toBeGreaterThan(0);
+    const problems = booleanParamProblems(m, plan);
+    expect(problems.map((p) => [p.node, p.path, p.stored, p.value])).toEqual(
+      written.map((w) => [w.node, w.path, w.n, w.n !== 0]),
+    );
+    applyBooleanParams(plan, problems);
+    for (const w of written) expect(at(plan.nodeParams[w.node], w.path), `${w.node}.${w.path}`).toBe(w.n !== 0);
+    expect(booleanParamProblems(m, plan)).toEqual([]);
+  });
+
+  it("leaves a boolean, a number where the factory holds no on/off, and a leaf it does not carry alone", () => {
+    const u44v = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    expect(booleanParamProblems(u44v, plan)).toEqual([]);
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, gain: 1 };
+    // ch2 is the pair's secondary, which carries no Signal Type of its own.
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, stereoLink: 1 as unknown as boolean };
+    // An EQ band past the four the factory carries.
+    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, eqBands: [...plan.nodeParams.ch3!.eqBands!, { on: 1 } as never] };
+    expect(booleanParamProblems(u44v, plan)).toEqual([]);
+    // The positive control: the same number at an on/off the factory carries is found.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hpf: 1 as unknown as boolean };
+    expect(booleanParamProblems(u44v, plan)).toEqual([
+      { reason: "booleanParam", node: "ch1", path: "hpf", stored: 1, value: true },
+    ]);
+  });
+
+  // The other checks read the document the way the load leaves it: a link or a pair written as 1
+  // is linked to them, as it is to the write.
+  it("hands the other checks the document converted", () => {
+    const u44v = getModel("URX44V");
+    const linked = defaultPlan("URX44V");
+    linked.nodeParams["bus.mix1"] = { ...linked.nodeParams["bus.mix1"], panLink: 1 as unknown as boolean };
+    linked.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!.params = { pan: -20 };
+    linked.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in")!.params = { pan: 40 };
+    expect(linkedSendPanProblems(u44v, linked), "the premise: the check reads 1 as unlinked").toEqual([]);
+    expect(planProblems(u44v, linked).filter((p) => p.reason === "linkedSendPan")).toHaveLength(1);
+
+    const [compander] = INPUT_SLOTS.get("compander")!;
+    const pair = defaultPlan("URX44V");
+    pair.nodeParams.ch1 = { ...pair.nodeParams.ch1, stereoLink: 1 as unknown as boolean, insertFx: compander.value };
+    expect(insertFxPairProblems(u44v, pair), "the premise: the check reads 1 as unlinked").toEqual([]);
+    expect(planProblems(u44v, pair).filter((p) => p.reason === "insertFxPair")).toHaveLength(1);
+    // …and the document itself is not converted by being asked about.
+    expect(pair.nodeParams.ch1!.stereoLink).toBe(1);
+  });
+
+  it("neither refuses the document nor asks the operator about it", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, on: 0 as unknown as boolean };
+    const [problem] = booleanParamProblems(getModel("URX44V"), plan);
     expect(problem).toBeDefined();
     expect(isRefusal(problem)).toBe(false);
     expect(needsDecision(problem)).toBe(false);

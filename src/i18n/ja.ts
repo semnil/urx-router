@@ -622,6 +622,8 @@ export const ja: Messages = {
     paramsDropped: (count: number): string =>
       `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、エフェクト自身の既定値を使います`,
     streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
+    booleanParamsConverted: (count: number): string =>
+      `数値で書かれていたオン/オフの値 ${count} 件を、オン/オフの値に変換しました`,
     linkedSendPansAligned: (count: number): string =>
       `Pan Link がオンの MIX への SEND PAN ${count} 件を、Send 元自身の PAN / BAL にそろえました`,
     streamingSourceUnlisted: "本体の STREAMING が一覧に無い状態だったため、計画では STEREO にしました",
