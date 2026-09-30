@@ -109,7 +109,7 @@ carries a one-line map of the same directories and points here.
   `planProblems` (split out of `constraints.ts`, which is rate limits and nothing else: a rate limit warns
   about a plan the app authored, these check a plan built ELSEWHERE — a file, a `?plan=` link, a generator).
   `routing.ts` cannot host them (the cycle constraints → translate → routing). It runs from `loadFromText`
-  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its seven kinds
+  ALONE — a device readback and a `.urxf` import author a plan without it, deliberately — and its kinds
   are reported differently: an illegal wire refuses the document; a STEREO-linked pair whose two members
   disagree about their one insert effect refuses it too, since the unit keeps a single selector, bypass and
   engine for the pair and no state of it satisfies such a document (`insertFxPairProblems`, compared over the
@@ -3953,11 +3953,12 @@ better. The mechanism is bounded to `paramRangeProblems`' own walk for the same 
 The walk's two node keys — a HI-Z channel's +48V and A.Gain — are not taken back: `paramRangeAddrs`
 answers only for an FX `params` entry, and the emit sends both keys as the plan holds them.
 
-One value is **rewritten** rather than dropped in the DESERIALIZER, and it is the only one there — the
-loader rewrites a second class one layer later, after validation, where an FX value outside what the app can
-write is bounded, and one there is nothing to bound is dropped: a leaf that is not a finite number (so the
-selected type's own default applies rather than one type's guessed in), a `type` no menu offers, and an
-`fxEffect` or `params` that is not an object. That last pair is why the class reaches past the leaves — the
+A value is **rewritten** rather than dropped in the DESERIALIZER (the node name, below) and in the loader one
+layer later, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
+them, an FX value outside what the app can write is bounded, and one there is nothing to bound is dropped: a
+leaf that is not a finite number (so the selected type's own default applies rather than one type's guessed
+in), a `type` no menu offers, and an `fxEffect` or `params` that is not an object. That last pair is why this
+repair reaches past the leaves — the
 sanitiser above keeps a boolean and a non-empty object under any key, so an unreadable effect object loads
 and every reader below reads it as absent, and a truthy one is worse still, since the write path then sends
 that channel's factory defaults over whatever the unit holds. Both actions are reported (`plan-validate.ts`), in
