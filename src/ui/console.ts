@@ -1154,14 +1154,23 @@ export class Console {
       e.preventDefault();
       if (this.midiArm(midiId)) return;
       dragging = true;
-      const startY = e.clientY;
-      const startFrac = dbToFrac(level(), range);
+      // Both anchors are rebased whenever the Shift state flips, as the head knob's are,
+      // so entering or leaving fine mode mid-drag continues from the level on screen
+      // instead of applying the new rate to the whole distance already dragged.
+      let startY = e.clientY;
+      let startFrac = dbToFrac(level(), range);
+      let wasShift = e.shiftKey;
       const travel = fader.getBoundingClientRect().height - 12;
       let moved = false;
       trackDrag(
         fader,
         e,
         (ev) => {
+          if (ev.shiftKey !== wasShift) {
+            startY = ev.clientY;
+            startFrac = dbToFrac(level(), range);
+            wasShift = ev.shiftKey;
+          }
           const dy = startY - ev.clientY;
           if (!moved && Math.abs(dy) < 3) return; // threshold guards mis-grabs / dblclick
           moved = true;

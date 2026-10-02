@@ -249,6 +249,27 @@ test("a send column fader edits the send level and drives the header readout", a
   await expect(s.locator(".con-sh")).not.toHaveClass(/readout/); // reverts to SENDS
 });
 
+// Shift is the column fader's fine rate, and pressing it mid-drag continues from the level
+// the coarse drag left: the move that carries it is a quarter-rate pixel, not the coarse
+// distance replayed at a quarter of its length.
+test("a send column fader continues from where it stands when Shift is pressed mid-drag", async ({ page }) => {
+  const fader = col(page, "CH 1", "M1").locator(".con-vfad");
+  const box = (await fader.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height - 4;
+  const now = async (): Promise<number> => Number(await fader.getAttribute("aria-valuenow"));
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y - 30, { steps: 5 });
+  const coarse = await now();
+  expect(coarse).toBeGreaterThan(-96);
+  await page.keyboard.down("Shift");
+  await page.mouse.move(x, y - 31);
+  expect(await now()).toBeGreaterThanOrEqual(coarse);
+  await page.keyboard.up("Shift");
+  await page.mouse.up();
+});
+
 // Every reading the rack can put in its header has to be readable there. The readout gets
 // what the collapse arrow and the flex gap leave of the header, which is itself the strip
 // less its border and the rack's padding; it does not wrap and shows no ellipsis, so an

@@ -117,7 +117,9 @@ still claims is given back — and that is the state an operator most needs to r
   full detent and live sync writes immediately). This is where it parts company with the main fader,
   which grabs its cap where it is but still jumps on a press that lands on the bare track
   ([architecture.md](architecture.md) "Pressing the main fader"). First write only after a 3 px drag threshold
-  (protects against mis-grabs and double-click). Shift-drag = fine mode (per detent).
+  (protects against mis-grabs and double-click). Shift-drag = fine mode (per detent); pressing or
+  releasing Shift mid-drag continues from the level already set, rather than applying the new rate
+  to the distance already dragged.
 - Keyboard: Arrow = 1 detent, PageUp/PageDown = 6, Home = max, End = −∞ (same as the main fader).
   Double-click = factory reset. Scroll wheel = 1 detent per notch (mirrors Arrow; the main fader,
   the head knob, and the inspector sliders share the same `onWheelStep` wiring in `src/ui/dom.ts`).

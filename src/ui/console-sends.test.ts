@@ -190,6 +190,44 @@ describe("a column's fader", () => {
     expect(fine).toBeLessThan(coarse);
   });
 
+  // Flipping Shift mid-drag rebases both anchors, as the head knob's do: the move that
+  // carries the flip lands where the level already is, and the drag then continues at the
+  // other rate from there. Without the rebase the new rate is applied to the whole
+  // distance already dragged, and a downward drag that presses Shift jumps the level UP.
+  it("does not jump when Shift is pressed or released mid-drag", () => {
+    h = consoleHost();
+    seedLevel("ch1", "bus.mix1", -10);
+    const fader = h.sendCol("ch1", "bus.mix1").fader;
+    const move = (clientY: number, shiftKey: boolean): void =>
+      void window.dispatchEvent(new PointerEvent("pointermove", { clientY, shiftKey, pointerId: 1 }));
+
+    fader.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 100, pointerId: 1 }),
+    );
+    move(130, false);
+    const coarse = level("ch1", "bus.mix1")!;
+    expect(coarse).toBeLessThan(-10);
+    move(130, true);
+    expect(level("ch1", "bus.mix1"), "pressing Shift where the pointer stands").toBe(coarse);
+    move(140, true);
+    const fine = level("ch1", "bus.mix1")!;
+    expect(fine, "further down, at the fine rate").toBeLessThan(coarse);
+    move(140, false);
+    expect(level("ch1", "bus.mix1"), "releasing Shift where the pointer stands").toBe(fine);
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+
+    // The fine rate itself: 10 px with Shift moves less than 10 px without.
+    seedLevel("ch1", "bus.mix1", -10);
+    const again = h.sendCol("ch1", "bus.mix1").fader;
+    again.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 100, pointerId: 1 }),
+    );
+    move(130, false);
+    move(140, false);
+    expect(level("ch1", "bus.mix1")).toBeLessThan(fine);
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+  });
+
   it("resets to the factory level on a double-click", () => {
     h = consoleHost();
     const col = h.sendCol("ch1", "bus.mix1");
