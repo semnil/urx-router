@@ -155,7 +155,8 @@ pub struct MeterUpdate {
 
 /// A link-lifecycle event pushed to the frontend. Currently only emitted when the
 /// worker loses the broker connection while idle (no command in flight), so a
-/// held-open live session can be dropped instead of silently freezing.
+/// held-open live session can be dropped instead of silently freezing. `reason` is
+/// the stable code of what failed, the same one later commands then fail with.
 #[derive(Clone, Serialize)]
 pub struct LinkEvent {
     pub reason: String,
@@ -255,9 +256,13 @@ pub enum Cmd {
     /// Drop the current parameter subscription (unregisters each address).
     ParamsUnsubscribe,
     /// Register a channel to receive the link-lost event (see LinkEvent). Replaces
-    /// any prior watch. Fire-and-forget; the worker pushes one event if the broker
-    /// link drops while idle, then exits.
-    WatchLink { channel: Channel<LinkEvent> },
+    /// any prior watch. The worker pushes one event if the broker link fails while
+    /// idle, and latches the session as lost. The reply refuses the watch with the
+    /// latched cause when the session is lost already.
+    WatchLink {
+        channel: Channel<LinkEvent>,
+        reply: Sender<Result<(), String>>,
+    },
     /// Unregister everything this session registered, close the socket, and exit.
     /// `done` is signalled once that has actually happened — only the app-exit path
     /// passes one, because it is the only caller whose process may not outlive the
@@ -527,9 +532,13 @@ pub fn params_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
 }
 
 /// Register a channel to receive the link-lost event. Replaces any prior watch.
+/// Blocks until the worker has taken it, and fails with the session's cause when
+/// the link is lost already.
 pub fn watch_link(tx: Sender<Cmd>, channel: Channel<LinkEvent>) -> Result<(), String> {
-    tx.send(Cmd::WatchLink { channel })
-        .map_err(|_| CONTROL_WORKER_GONE.to_string())
+    let (reply, rx) = mpsc::channel();
+    tx.send(Cmd::WatchLink { channel, reply })
+        .map_err(|_| CONTROL_WORKER_GONE.to_string())?;
+    rx.recv().map_err(|_| CONTROL_WORKER_GONE.to_string())?
 }
 
 /// Close the connection of generation `epoch`. A no-op if the current connection
@@ -735,7 +744,12 @@ mod imp {
         if ready.send(Ok(summary.clone())).is_err() {
             return; // caller gave up
         }
+        serve(link, rx, counters);
+    }
 
+    /// One opened session: answer commands until a Shutdown (or until every sender is
+    /// gone), drain the idle socket between them, and close the link on the way out.
+    fn serve(mut link: Link, rx: Receiver<Cmd>, counters: Arc<LinkCounters>) {
         // Subscribed meter / parameter channels, the addresses registered with the
         // broker, and the pending notify batches (see Subs).
         let mut subs = Subs::new();
@@ -748,6 +762,8 @@ mod imp {
         // without this, every later command keeps talking to a broker that still
         // ACKs writes with no unit attached and answers reads from its cache, and
         // the frontend is told a plan was written when nothing reached hardware.
+        // A failure the idle pump meets is latched here too, so the commands after
+        // it fail with that cause rather than finding the worker gone.
         let mut health = Health::new(Arc::clone(&counters));
         // Set by the app-exit teardown, which waits for it: the socket has to be
         // unregistered and closed before the process goes away, not merely told to be.
@@ -757,7 +773,8 @@ mod imp {
             // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
             // idle, wait longer so the thread doesn't spin. pump's own blocking read
             // (READ_TIMEOUT, 50 ms) supplies the backpressure when the feed is quiet.
-            let wait = if subs.active() {
+            // A session latched as lost runs no pump, so it waits like an idle one.
+            let wait = if subs.active() && health.lost.is_none() {
                 Duration::from_millis(5)
             } else {
                 Duration::from_millis(50)
@@ -868,28 +885,41 @@ mod imp {
                     subs.params.clear();
                     subs.param_ch = None;
                 }
-                Ok(Cmd::WatchLink { channel }) => {
-                    link_ch = Some(channel);
+                Ok(Cmd::WatchLink { channel, reply }) => {
+                    // A session already latched as lost refuses the watch with its
+                    // cause: the event the watch would wait for has already been.
+                    let _ = reply.send(match &health.lost {
+                        Some(reason) => Err(reason.clone()),
+                        None => {
+                            link_ch = Some(channel);
+                            Ok(())
+                        }
+                    });
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     // Drain the idle socket so its buffer never backs up. While a
                     // meter / parameter subscription is active, forward those
-                    // notifications to the frontend instead of discarding them; stop
-                    // if the link dropped, pushing the link-lost event first so a
-                    // held-open live session is dropped instead of freezing silently.
+                    // notifications to the frontend instead of discarding them. A
+                    // failure here latches the session as lost with its own cause,
+                    // after pushing the link-lost event so a held-open live session is
+                    // dropped instead of freezing silently. From then on the pump stops
+                    // and every command is answered with that cause until a Shutdown.
+                    if health.lost.is_some() {
+                        continue;
+                    }
                     if let Err(e) = pump(&mut link, &mut subs) {
-                        eprintln!("vd: {e}; stopping control worker");
+                        eprintln!("vd: {e}; the session is lost until a reconnect");
                         if let Some(ch) = &link_ch {
-                            let _ = ch.send(LinkEvent { reason: e });
+                            let _ = ch.send(LinkEvent { reason: e.clone() });
                         }
-                        break;
+                        health.lost = Some(e);
                     }
                 }
             }
         }
         // EVERY break above lands here, which is what makes this the session's one exit
-        // — including the pump's error break, where the link is already gone and the
-        // unregisters are discarded like the rest of that path's writes.
+        // — including a session latched as lost, where the link may already be gone and
+        // the unregisters are then discarded like the rest of that path's writes.
         unregister_all(&mut link, &mut subs, &counters);
         // `close` only QUEUES the Close frame; the handshake finishes on the reads that
         // follow, and dropping the socket before then hands the broker an abrupt
@@ -1873,8 +1903,9 @@ mod imp {
     /// Drain buffered frames for up to PUMP_BUDGET, absorbing meter and parameter
     /// notifications and forwarding them in one batched channel send each (the
     /// boundary is crossed per pump, not once per ~250/s reading). Frames other than
-    /// the subscribed notifies are discarded. Returns Err if the connection dropped,
-    /// or if a device-lost synchronize push arrived, so the worker can stop.
+    /// the subscribed notifies are discarded. Returns the read's own error if the
+    /// connection failed, or the device-lost error if that push arrived; the worker
+    /// latches either as the session's cause.
     fn pump(link: &mut Link, subs: &mut Subs) -> Result<(), String> {
         let start = Instant::now();
         // 512 is a non-binding hard ceiling; PUMP_BUDGET (or a drained socket)
@@ -1904,7 +1935,7 @@ mod imp {
                 }
                 Ok(None) => break, // drained — fall through to flush the batch
                 Err(e) if e == BINARY_FRAME => {}
-                Err(_) => return Err("broker-closed".into()),
+                Err(e) => return Err(e),
             }
             // Yield the worker once the budget is spent so a pending command (and the
             // accumulated batch below) is serviced without waiting out the stream.
@@ -2556,16 +2587,22 @@ mod imp {
 
     #[cfg(test)]
     mod session_tests {
-        // The readers that consume frames during a session, driven over a loopback
-        // socket whose other end the test writes as the broker. A frame the test sends
-        // is buffered before the reader runs, so no case depends on a peer's timing.
+        // The readers that consume frames during a session, and the worker loop around
+        // them, driven over a loopback socket whose other end the test writes as the
+        // broker. A frame the test sends is buffered before the reader that has to see
+        // it runs, and a case that waits on the worker waits for what the worker sends
+        // back, under a bound, so no case depends on a peer's timing.
+        use super::super::{Cmd, LinkCounters};
         use super::{
-            arm_socket, do_get_value, drain_late_reply, pump, LineReader, Link, Subs, BINARY_FRAME,
-            DEVICE_LOST_PREFIX, READ_TIMEOUT,
+            arm_socket, do_get_value, drain_late_reply, pump, serve, LineReader, Link, Subs,
+            BINARY_FRAME, DEVICE_LOST_PREFIX, READ_TIMEOUT,
         };
         use serde_json::{json, Value};
         use std::io::Write;
         use std::net::{TcpListener, TcpStream};
+        use std::sync::{mpsc, Arc};
+        use std::time::{Duration, Instant};
+        use tauri::ipc::{Channel, InvokeResponseBody};
         use tungstenite::stream::MaybeTlsStream;
         use tungstenite::{Message, WebSocket};
 
@@ -2687,6 +2724,144 @@ mod imp {
                 do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
                 Err(BINARY_FRAME.to_string())
             );
+        }
+
+        // What the idle pump hands the worker is the read's own error, not one code for
+        // every failure: a casket peer gone without a close is an I/O failure, and the
+        // vdp socket's end of stream is the broker closing the connection.
+        #[test]
+        fn the_idle_pump_reports_the_reads_own_failure() {
+            let (mut link, peer) = casket_link();
+            drop(peer);
+            let err = pump(&mut link, &mut Subs::new()).unwrap_err();
+            assert!(err.starts_with("broker-io"), "{err}");
+
+            let (mut link, peer) = vdp_link();
+            drop(peer);
+            assert_eq!(
+                pump(&mut link, &mut Subs::new()),
+                Err("broker-closed".to_string())
+            );
+        }
+
+        /// A watch channel whose events land on a queue the test can wait on.
+        fn watch() -> (Channel<super::super::LinkEvent>, mpsc::Receiver<Value>) {
+            let (tx, rx) = mpsc::channel();
+            let ch = Channel::new(move |body| {
+                if let InvokeResponseBody::Json(s) = body {
+                    let _ = tx.send(serde_json::from_str(&s).unwrap());
+                }
+                Ok(())
+            });
+            (ch, rx)
+        }
+
+        /// Ask the worker to take a watch, and return its answer.
+        fn take_watch(
+            tx: &mpsc::Sender<Cmd>,
+            channel: Channel<super::super::LinkEvent>,
+        ) -> Result<(), String> {
+            let (reply, wait) = mpsc::channel();
+            tx.send(Cmd::WatchLink { channel, reply })
+                .expect("the worker is serving");
+            wait.recv_timeout(Duration::from_secs(10))
+                .expect("the worker answers")
+        }
+
+        // A failure the idle pump meets ends the session the way a command's device-lost
+        // does: latched, with every later command answered by that cause at once. A
+        // worker that exited instead left the commands after it reporting the worker
+        // gone, which names no cause and tells the operator to restart the app.
+        #[test]
+        fn a_failure_the_idle_pump_meets_answers_every_later_command() {
+            let (link, mut peer) = vdp_link();
+            let (tx, rx) = mpsc::channel();
+            let worker =
+                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
+            let (channel, events) = watch();
+            assert_eq!(take_watch(&tx, channel), Ok(()));
+
+            // Idle, so only the pump reads it.
+            send(&mut peer, synchronize("lost"));
+            let event = events
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the pump pushed the link-lost event");
+            let reason = event["reason"].as_str().unwrap().to_string();
+            assert!(reason.starts_with(DEVICE_LOST_PREFIX), "{reason}");
+
+            // The worker is still there, and answers from the latch rather than from the
+            // broker: no request reaches the socket, so no deadline is waited out.
+            let asked = Instant::now();
+            let (reply, wait) = mpsc::channel();
+            tx.send(Cmd::Get {
+                param_id: 1,
+                x: 0,
+                y: 0,
+                reply,
+            })
+            .expect("the worker is serving");
+            assert_eq!(
+                wait.recv_timeout(Duration::from_secs(10)),
+                Ok(Err(reason.clone()))
+            );
+            assert!(asked.elapsed() < Duration::from_secs(1));
+
+            // A watch taken now would wait for an event that has already been.
+            let (channel, _) = watch();
+            assert_eq!(take_watch(&tx, channel), Err(reason));
+
+            let (done, closed) = mpsc::channel();
+            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            closed
+                .recv_timeout(Duration::from_secs(10))
+                .expect("a lost session still closes on Shutdown");
+            worker.join().unwrap();
+        }
+
+        // Device Center quitting is the vdp socket's end of stream. The cause the later
+        // commands get is the broker closing the connection, and the pump stops at the
+        // latch instead of reading the dead socket again on every idle wake.
+        #[test]
+        fn a_closed_link_is_latched_once_and_the_pump_stops_there() {
+            let (link, peer) = vdp_link();
+            let (tx, rx) = mpsc::channel();
+            let worker =
+                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
+            let (channel, events) = watch();
+            assert_eq!(take_watch(&tx, channel), Ok(()));
+
+            drop(peer);
+            let event = events
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the pump pushed the link-lost event");
+            assert_eq!(event["reason"], "broker-closed");
+
+            let (reply, wait) = mpsc::channel();
+            tx.send(Cmd::Set {
+                param_id: 1,
+                x: 0,
+                y: 0,
+                value: 0,
+                reply,
+            })
+            .expect("the worker is serving");
+            assert_eq!(
+                wait.recv_timeout(Duration::from_secs(10)),
+                Ok(Err("broker-closed".to_string()))
+            );
+            // Several idle wakes' worth: a pump still running would meet the closed
+            // socket again on each and push another event.
+            assert!(
+                events.recv_timeout(Duration::from_millis(300)).is_err(),
+                "the pump went on reading a closed link"
+            );
+
+            let (done, closed) = mpsc::channel();
+            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            closed
+                .recv_timeout(Duration::from_secs(10))
+                .expect("a lost session still closes on Shutdown");
+            worker.join().unwrap();
         }
     }
 }

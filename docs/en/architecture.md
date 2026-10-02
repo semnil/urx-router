@@ -2484,14 +2484,17 @@ A link that drops *during* a command surfaces on the next operation as a broker 
 sitting **idle** (live sync with no edits) would go unnoticed. Unplugging *only the URX* is also invisible to a
 socket check: the broker socket stays up and keeps ACKing writes (a success reply with no unit attached), so neither
 a socket drop nor a write error reveals it. To close both gaps the Rust worker watches, in `pump` (the idle socket
-drain) and in the read/write round-trip loops (`do_set` / `do_get_value`), for (a) a socket drop and (b) the
+drain) and in the read/write round-trip loops (`do_set` / `do_get_value`, the late drain after a deadline included), for (a) a socket drop and (b) the
 `/vd/synchronize` frame Device Center spontaneously sends at the moment of disconnect (`sync_status` flipping away
 from `online` — distinct from the handshake / sync_status reads that fetch it on purpose). On either, it pushes a
 single `LinkEvent` to the frontend (`vdWatchLink`), or fails the in-flight command, and the frontend tears the live
-session down. That drop is also **latched** in the worker: the `/vd/synchronize` push arrives exactly once, so
+session down. That drop is also **latched** in the worker, whichever reader met it: the `/vd/synchronize` push arrives exactly once, so
 without latching only the command that consumed it could ever notice, and every command after it would keep talking
 to a broker that ACKs writes with no unit attached and answers reads from its cache. Once latched, every later
-command fails until a reconnect.
+command fails until a reconnect, with the cause the drop was met with (`broker-closed`, `device-lost`, `broker-io`, …).
+The worker stays up to answer them — a drop the idle pump meets stops the pump, not the worker — so an action with a
+dialog open between its connect and its first command reports what happened to the link rather than
+`control-worker-gone`, and a link watch asked for once the session is lost is refused with that cause.
 
 ### Reset chains, and what a converge round sends
 
