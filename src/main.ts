@@ -2863,6 +2863,17 @@ const dynScreen = new DynScreen({
     refreshInspector();
     consoleView.refresh();
   },
+  // The launcher as the surface on screen draws it now: the inspector's button for the
+  // node it shows, or the CONSOLE's opener on that node's strip.
+  focusOpener: (key, nodeId) => {
+    if (!(key in DYN_PROCESSORS)) return;
+    const kind = key as DynKind;
+    if (!inspectorHost.hidden) {
+      if (selection?.type === "node" && selection.id === nodeId) document.getElementById(`btn-${kind}-screen`)?.focus();
+      return;
+    }
+    consoleView.focusOpener(kind, nodeId);
+  },
 });
 
 // The macOS Edit menu, built first so the history's depth hook can push into it. Its

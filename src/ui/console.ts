@@ -1852,6 +1852,9 @@ export class Console {
     const chip = el("div", "con-chip con-chip-open");
     chip.textContent = "▸";
     chip.setAttribute("role", "button");
+    // What it opens, for `focusOpener` to find it by after a rebuild.
+    chip.dataset.dynOpen = kind;
+    chip.dataset.dynNode = id;
     const label = dynOpenLabel(kind, t());
     chip.title = label;
     chip.setAttribute("aria-label", label);
@@ -3404,6 +3407,31 @@ export class Console {
       return;
     }
     this.focusInsFxAnchor(id);
+  }
+
+  /**
+   * Focus the control on the rack that opens `kind`'s tuning screen for `id`, as the rack is
+   * drawn now — the screen asks for it when it closes, since a strip rebuilt while it was open
+   * no longer holds the element that opened it, and the INS FX and FX popovers close (and
+   * take their rows with them) before the screen opens.
+   *
+   * The INS FX and FX screens are reached through their strip's disclosure, which is where a
+   * selection lands too. The SSMCS bank's faces share the one opener beside the SSMCS chip.
+   */
+  focusOpener(kind: DynKind, id: string): void {
+    const root = this.refs.get(id)?.root;
+    let target: HTMLElement | null | undefined;
+    if (kind === "insfx") {
+      target = root?.querySelector<HTMLElement>(".con-ifxopen") ?? root?.querySelector<HTMLElement>(".con-ifxface");
+    } else if (kind === "fx") {
+      target = root?.querySelector<HTMLElement>(".con-fxopen");
+    } else {
+      const opens = kind === "ssmcsComp" || kind === "ssmcsEq" ? "ssmcs" : kind;
+      target = [...this.host.querySelectorAll<HTMLElement>(".con-chip-open[data-dyn-open]")].find(
+        (c) => c.dataset.dynOpen === opens && c.dataset.dynNode === id,
+      );
+    }
+    target?.focus({ preventScroll: true });
   }
 
   /**

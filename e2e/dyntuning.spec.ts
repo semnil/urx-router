@@ -1000,6 +1000,26 @@ test.describe("eq", () => {
     await expect(bandPill(page)).toHaveText("HIGH MID");
   });
 
+  // The band's own ON / OFF changes which inspector rows exist, so the panel — and the
+  // launcher in it — is rebuilt while the screen is open. Closing still hands focus back to
+  // the launcher, as the panel draws it now.
+  test("gives focus back to the launcher the screen's own edit rebuilt", async ({ page }) => {
+    await node(page, "ch1").click();
+    const sec = section(page, SECTION_OF.eq);
+    if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+    await page.locator("#btn-eq-screen").focus();
+    await page.keyboard.press("Enter");
+    await expect(screenBox(page)).toBeVisible();
+    const marked = await page.locator("#btn-eq-screen").evaluate((el) => ((el as HTMLElement).dataset.probe = "1"));
+    expect(marked).toBe("1");
+    await bandRow(page, "Band").locator("button", { hasText: "OFF" }).click();
+    // The premise: the launcher on the panel now is not the element that opened the screen.
+    await expect(page.locator("#btn-eq-screen")).not.toHaveAttribute("data-probe", "1");
+    await page.keyboard.press("Escape");
+    await expect(screenBox(page)).toBeHidden();
+    await expect(page.locator("#btn-eq-screen")).toBeFocused();
+  });
+
   test("reopens on LOW, because the band is a cursor rather than a way of reading", async ({ page }) => {
     await openFromInspector(page, "ch1", "eq");
     await pickBand(page, 3);

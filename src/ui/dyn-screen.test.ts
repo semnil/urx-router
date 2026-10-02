@@ -1254,6 +1254,58 @@ describe("keyboard focus across a rebuild", () => {
   });
 });
 
+// The inert hold gives focus back to the element that opened the screen. The surfaces that
+// open it rebuild their controls while it is open, so that element can be gone at the close —
+// and then the screen asks for its successor by what it opens.
+describe("focus at the close", () => {
+  const launch = (): HTMLButtonElement => {
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    opener.focus();
+    return opener;
+  };
+
+  it("asks for the opener's successor when the opener was rebuilt while the screen was open", () => {
+    host = dynHost();
+    const asked: Array<[string, string]> = [];
+    const screen = new DynScreen({ ...host.hooks, focusOpener: (key, id) => void asked.push([key, id]) });
+    const opener = launch();
+    screen.open(EQ, "ch1");
+    opener.remove();
+    screen.close();
+    expect(asked).toEqual([[EQ.key, "ch1"]]);
+  });
+
+  it("leaves focus on an opener that is still there", () => {
+    host = dynHost();
+    const asked: Array<[string, string]> = [];
+    const screen = new DynScreen({ ...host.hooks, focusOpener: (key, id) => void asked.push([key, id]) });
+    const opener = launch();
+    screen.open(EQ, "ch1");
+    screen.close();
+    expect(document.activeElement).toBe(opener);
+    expect(asked).toEqual([]);
+  });
+
+  // The rule a rebuild carries focus by: an opener belongs to the plan the screen was opened on.
+  it("asks for none once the plan was replaced", () => {
+    host = dynHost();
+    let plan = host.plan;
+    const asked: Array<[string, string]> = [];
+    const screen = new DynScreen({
+      ...host.hooks,
+      getPlan: () => plan,
+      focusOpener: (key, id) => void asked.push([key, id]),
+    });
+    const opener = launch();
+    screen.open(EQ, "ch1");
+    opener.remove();
+    plan = structuredClone(host.plan);
+    screen.close();
+    expect(asked).toEqual([]);
+  });
+});
+
 describe("the compressor's panel", () => {
   /** The parameter rows' visible labels, in the order they were built. */
   const labels = (): string[] =>

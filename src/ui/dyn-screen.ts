@@ -552,6 +552,11 @@ export interface DynScreenHooks {
   midi?: MidiLearnHooks;
   /** The screen closed: the surfaces that print these values re-render. */
   onClosed: () => void;
+  /** Focus the control that opens processor `key`'s screen for `nodeId`, as the surface
+   *  that carries it draws it now. Asked at close when focus did not land back on the
+   *  element that opened the screen — that surface rebuilt it while the screen was open,
+   *  or replaced it before the screen claimed focus. */
+  focusOpener?: (key: string, nodeId: string) => void;
 }
 
 interface BarRefs {
@@ -746,6 +751,9 @@ export class DynScreen {
   private endDrag: (() => void) | null = null;
   /** The plan the screen was drawn from. A different one at a refresh is that plan replaced. */
   private drawnFor: Plan | null = null;
+  /** The plan the screen was opened on. Focus goes back to an opener only while it is still
+   *  the plan on screen, the same rule a rebuild carries focus by. */
+  private openedOn: Plan | null = null;
   /** The press in flight began on a plan since replaced: what it drives writes nothing, and
    *  the rows go back to what the plan holds once it ends. */
   private stalePress = false;
@@ -849,6 +857,7 @@ export class DynScreen {
     this.applyBinding(bound);
     this.peaks.clear();
     this.drawnFor = this.hooks.getPlan();
+    this.openedOn = this.drawnFor;
     this.render();
     this.releaseInert ??= holdAppInert(this.scrim);
     this.scrim.hidden = false;
@@ -879,6 +888,14 @@ export class DynScreen {
     this.stopMeters();
     this.hooks.regainMeters();
     this.hooks.onClosed();
+    // The inert hold's release put focus back on the element that opened the screen if it is
+    // still there. Where it is not, focus is on the body or still inside the hidden box, and
+    // the opener's successor is asked for by what it opens rather than by the element.
+    const at = document.activeElement;
+    const stranded = at === null || at === document.body || this.box.contains(at);
+    if (stranded && this.entryProc && this.hooks.getPlan() === this.openedOn) {
+      this.hooks.focusOpener?.(this.entryProc.key, this.nodeId);
+    }
   }
 
   /** The nodes whose plan values the open face draws. Asked of the descriptor, which

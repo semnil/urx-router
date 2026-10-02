@@ -393,4 +393,30 @@ describe("the SSMCS chip", () => {
     ]);
     expect(insFxOpen(h)).toEqual([t().inspector.insertFx]);
   });
+
+  // A tuning screen asks the rack for the control that opens it once it closes, by what that
+  // control opens. The bank's faces share the one opener beside the SSMCS chip.
+  it("hands focus to the opener a closing screen names, the bank's faces to the bank's one", () => {
+    h = mount();
+    const focusedLabel = (): string | null =>
+      (document.activeElement as HTMLElement | null)?.getAttribute("aria-label") ?? null;
+    for (const kind of ["ssmcs", "ssmcsComp", "ssmcsEq"] as const) {
+      (document.activeElement as HTMLElement | null)?.blur();
+      h.view.focusOpener(kind, "ch1");
+      expect(focusedLabel(), kind).toBe(t().dynTuning.ssmcs.open);
+      expect(h.strip("ch1").root.contains(document.activeElement), kind).toBe(true);
+    }
+    h.view.focusOpener("gate", "ch1");
+    expect(focusedLabel()).toBe(t().dynTuning.gate.open);
+
+    h.restore();
+    h = consoleHost({ modelId: "URX44V" });
+    h.view.focusOpener("insfx", "ch1");
+    expect(document.activeElement).toBe(h.strip("ch1").root.querySelector(".con-ifxopen"));
+    // The ducker's opener sits on the strip of the channel it hangs under, and opens the
+    // ducker node's own screen.
+    h.view.focusOpener("ducker", "out.ducker1");
+    expect(focusedLabel()).toBe(t().dynTuning.ducker.open);
+    expect(h.strip("ch_5_6").root.contains(document.activeElement)).toBe(true);
+  });
 });

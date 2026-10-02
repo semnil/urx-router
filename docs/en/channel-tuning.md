@@ -1917,6 +1917,14 @@ control the box builds, tab stop or not, so a lock that takes the cap or the plo
 not move the controls after it. Focus is dropped where the control is gone or locked, and where the plan was
 **replaced**: the control it was on belongs to a plan that is gone.
 
+**Closing hands focus back to the control that opened the screen**, which the app-wide inert hold does on its
+own while that element is still there. Both surfaces that open a screen can replace it first — the inspector
+rebuilds its panel on the screen's own relayouting edits, and the CONSOLE's INS FX and FX popovers close and
+re-render the rack before the screen opens — so where focus is left on the body or in the hidden screen, the
+screen asks for the launcher by what it opens and for which node (`focusOpener`): the inspector's button while
+the inspector shows that node, or the opener on that node's CONSOLE strip. The same plan rule applies: an
+opener on a plan that has since been replaced is not asked for.
+
 The inspector defers on the same signal, through the gate that already waits out an IME composition and
 an open `<select>` picker. That one is worth naming because a held row is the only one of the three with
 no end event of its own: a composition ends, a picker closes, and a hold ends on a pointer release the

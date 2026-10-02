@@ -572,6 +572,53 @@ describe("the modals", () => {
   });
 });
 
+// A tuning screen hands focus back to the control that opened it. Both surfaces that open one
+// rebuild that control while the screen is up — the inspector on the screen's own relayouting
+// edits, the CONSOLE popovers before the screen even claims focus — so the screen asks for the
+// control as it is drawn at the close.
+describe("focus after a tuning screen closes", () => {
+  it("lands on the inspector's launcher that the screen's own edit rebuilt", async () => {
+    await boot();
+    selectNode("ch1");
+    const launcher = $("btn-eq-screen");
+    launcher.focus();
+    launcher.click();
+    expect($("dyn-screen-modal").hidden).toBe(false);
+    // A band's own ON / OFF changes which inspector rows exist, so the panel is rebuilt.
+    const bandRow = [...$("dyn-screen-box").querySelectorAll<HTMLElement>(".prefs-row")].find(
+      (r) => r.querySelector(".lbl")?.textContent === t().inspector.bandOn,
+    )!;
+    [...bandRow.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.getAttribute("aria-pressed") === "false")!
+      .click();
+    expect(launcher.isConnected).toBe(false);
+
+    chord("Escape");
+    expect($("dyn-screen-modal").hidden).toBe(true);
+    expect(document.activeElement).toBe($("btn-eq-screen"));
+  });
+
+  it("lands on the strip's INS FX disclosure after a screen opened from its popover", async () => {
+    await boot();
+    $("btn-view-console").click();
+    const disclosure = (): HTMLElement =>
+      $("console-host").querySelector<HTMLElement>(".con-strip")!.querySelector<HTMLElement>(".con-ifxopen")!;
+    disclosure().focus();
+    disclosure().click();
+    const row = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
+      (r) => r.querySelector(".nm")?.textContent === "Compander-H",
+    )!;
+    // From the keyboard, which is where focus is when the row is chosen.
+    row.focus();
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect($("dyn-screen-modal").hidden).toBe(false);
+
+    chord("Escape");
+    expect($("dyn-screen-modal").hidden).toBe(true);
+    expect(document.activeElement).toBe(disclosure());
+  });
+});
+
 describe("undo and redo", () => {
   it("undoes and redoes hidden nodes in the board and persisted view state", async () => {
     await boot({ "urx-hidden": JSON.stringify({ URX44V: [] }) });
