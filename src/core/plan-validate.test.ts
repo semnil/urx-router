@@ -678,6 +678,65 @@ describe("paramRangeProblems", () => {
   });
 });
 
+// A value of the wrong kind for its key: the sanitiser keeps an on/off and a non-empty group
+// under any key and the fill keeps what the document wrote at a scalar, so without this the
+// write encodes one (an on/off at A.Gain goes out as +1 dB, a group as the encoder's floor)
+// and the Inspector's number formatters throw on it.
+describe("paramRangeProblems — a value whose kind is not the factory value's", () => {
+  const load = (nodeParams: unknown): Plan =>
+    deserialize(JSON.stringify({ format: "urx-router-plan", version: PLAN_VERSION, modelId: "URX44V", nodeParams }));
+  const kinds = (plan: Plan): string[] =>
+    paramRangeProblems(plan)
+      .filter((p) => p.where === "node")
+      .map((p) => `${p.node}.${p.key} ${p.action}`);
+
+  it("drops a non-number where the factory holds a number, and a group where it holds an on/off", () => {
+    const plan = load({
+      ch1: { gain: true, hpfFreq: { a: 1 }, comp: { oneKnobLevel: true }, hpf: { x: true } },
+      "bus.stereo": { level: { a: 1 } },
+      "bus.mon1": { phonesLevel: true },
+      "bus.osc": { osc: { interval: true } },
+    });
+    expect(kinds(plan).sort()).toEqual(
+      [
+        "ch1.gain drop",
+        "ch1.hpfFreq drop",
+        "ch1.comp.oneKnobLevel drop",
+        "ch1.hpf drop",
+        "bus.stereo.level drop",
+        "bus.mon1.phonesLevel drop",
+        "bus.osc.osc.interval drop",
+      ].sort(),
+    );
+  });
+
+  it("drops a scalar where the factory holds a group, and an object where it holds an array", () => {
+    const plan = load({ ch1: { eqOneKnob: true, eqBands: { a: { b: 1 } } }, "bus.stream": { delay: true } });
+    expect(kinds(plan).sort()).toEqual(["bus.stream.delay drop", "ch1.eqBands drop", "ch1.eqOneKnob drop"]);
+  });
+
+  it("completes each dropped value from the factory values, so the write sends what the panel draws", () => {
+    const plan = load({ ch1: { gain: true, eqOneKnob: true }, "bus.osc": { osc: { interval: true, level: -10 } } });
+    const factory = defaultPlan("URX44V");
+    prepareLoadedPlan(getModel("URX44V"), plan, planProblems(getModel("URX44V"), plan));
+    expect(plan.nodeParams.ch1?.gain).toBe(factory.nodeParams.ch1?.gain);
+    expect(plan.nodeParams.ch1?.eqOneKnob).toEqual(factory.nodeParams.ch1?.eqOneKnob);
+    expect(plan.nodeParams["bus.osc"]?.osc).toEqual({ ...factory.nodeParams["bus.osc"]?.osc, level: -10 });
+    expect(planToCommands(getModel("URX44V"), plan).filter((c) => typeof c.vdValue !== "number")).toEqual([]);
+  });
+
+  it("leaves a matching kind, a number at an on/off, and a key the factory does not carry alone", () => {
+    const plan = load({ ch1: { gain: 12, hpf: 1, extra: { a: true } }, "bus.nope": { gain: true } });
+    expect(kinds(plan)).toEqual([]);
+    for (const id of MODEL_IDS) expect(paramRangeProblems(defaultPlan(id)), id).toEqual([]);
+  });
+
+  it("reads the node the drop leaves: a dropped HI-Z is not on", () => {
+    const plan = load({ ch3: { hiZ: { a: 1 }, phantom: true, gain: 60 } });
+    expect(paramRangeProblems(plan).map((p) => `${p.key} ${p.action}`)).toEqual(["hiZ drop"]);
+  });
+});
+
 // STREAMING's list on the unit has no None, so a document that gives it no wire is completed
 // with the STEREO a new plan carries, and the load says so. Any wire into it counts, whatever
 // kind it was written under — the install restates the kind — and a wire the sanitiser drops

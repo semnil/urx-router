@@ -313,6 +313,12 @@ The last two matter because the sanitiser keeps a boolean and a non-empty object
 under any key, so an unreadable effect object survives the load and every reader
 below treats it as absent.
 
+The same step drops, on every node, a value whose KIND is not the factory value's at that
+path, and the factory value is filled in: an on/off or a group where a number belongs
+(`"gain": true`, `"gain": {"x": 30}`), a group or a list where an on/off belongs, and anything
+but a group where a group belongs (`"eqOneKnob": true`) — counted with the values removed. A
+number where an on/off belongs is converted instead (the nodeParams section above).
+
 The same step also repairs two keys outside `fxEffect`: on a channel carrying HI-Z
 with `hiZ` on, `phantom` is turned off and a `gain` above +40 is bounded to +40 (the `gain` /
 `phantom` entries above), counted with the values moved.

@@ -114,7 +114,10 @@ export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPa
  *  route — it is a FILE, but one the unit wrote, and it reaches the plan through the readback
  *  rather than through this funnel.
  *
- *  SCOPE: the FX channel effect, plus two keys of a channel carrying HI-Z (`where: "node"`):
+ *  SCOPE: the FX channel effect; on every node the model's factory values describe, a leaf or
+ *  group whose kind is not the factory value's at that path (`where: "node"`, dropped, so the
+ *  fill supplies the factory value) — a number where the factory holds an on/off is converted
+ *  instead (`booleanParamProblems`); plus two keys of a channel carrying HI-Z (`where: "node"`):
  *  +48V on while HI-Z is on is bounded to off (HI-Z kept), and A.Gain above +40 dB while HI-Z
  *  is on is bounded to +40 — the app never turns the two on together, and the unit does not
  *  apply an A.Gain above +40 under HI-Z. A device read keeps +48V and HI-Z both on where the
@@ -131,10 +134,11 @@ export interface ParamRangeProblem {
   node: string;
   /** Which container holds it: the node's `fxEffect` value itself, a field of that object
    *  (`type` / `params`), a member of its `params` map, or one of the node's own params
-   *  (`node`: a HI-Z channel's `phantom` / `gain`). A `params` member is bounded by its own
-   *  descriptor. */
+   *  (`node`). A `params` member is bounded by its own descriptor. */
   where: "effect" | "field" | "params" | "node";
-  /** The field or catalogue key, as the plan stores it. `fxEffect` for the object itself. */
+  /** The field or catalogue key, as the plan stores it. `fxEffect` for the object itself. For
+   *  `node`, the dotted path inside the node's params, an array element by its index
+   *  (`eqOneKnob.level`, `eqBands.0.q`). */
   key: string;
   /** What the document carries. NOT always a number: the sanitiser keeps a boolean leaf and a
    *  non-empty object, since node params have toggles and groups, and a document can put
@@ -234,8 +238,22 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
       }
     }
   }
-  // A HI-Z channel with HI-Z on: +48V goes off and A.Gain stops at +40 dB.
-  for (const [node, np] of Object.entries(plan.nodeParams)) {
+  for (const [node, carried] of Object.entries(plan.nodeParams)) {
+    // A leaf or group of a shape the factory value at that path does not have. The checks
+    // after it read the node as the drop leaves it.
+    const factory = factoryNodeParams(plan.modelId, node);
+    const drops = factory ? kindMismatches(carried, factory) : [];
+    const np = drops.length ? structuredClone(carried) : carried;
+    for (const path of drops) {
+      const parent = path.slice(0, -1).reduce<unknown>((v, k) => (v as Record<string, unknown>)[k], np) as Record<
+        string,
+        unknown
+      >;
+      const key = path[path.length - 1];
+      out.push({ reason: "paramRange", node, where: "node", key: path.join("."), stored: parent[key], action: "drop" });
+      delete parent[key];
+    }
+    // A HI-Z channel with HI-Z on: +48V goes off and A.Gain stops at +40 dB.
     if (!hiZOn(plan.modelId, node, np)) continue;
     if (np.phantom) {
       out.push({
@@ -263,13 +281,48 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
   return out;
 }
 
+/** The node-param keys whose shape the FX walk owns rather than the factory comparison. */
+const KIND_WALK_SKIPS: ReadonlySet<string> = new Set(["fxEffect"]);
+
+/**
+ * Every path in `carried` holding a value whose kind is not the factory value's there: a
+ * value that is not a number where the factory holds a number, a group where it holds an
+ * on/off, and anything but a group (or an array) where it holds one. Neither the sanitiser
+ * nor the fill catches these — the sanitiser keeps an on/off and a non-empty group under any
+ * key, and the fill keeps whatever the document wrote at a scalar — so the write would encode
+ * one (an on/off at A.Gain goes out as +1 dB, a group as the encoder's floor) and a reader
+ * that formats a number would throw on it. A path the factory does not carry is left alone.
+ */
+function kindMismatches(carried: unknown, factory: unknown, path: string[] = []): string[][] {
+  if (carried === undefined) return [];
+  if (typeof factory === "number") return typeof carried === "number" ? [] : [path];
+  if (typeof factory === "boolean") return isPlainRecord(carried) || Array.isArray(carried) ? [path] : [];
+  if (Array.isArray(factory)) {
+    if (!Array.isArray(carried)) return [path];
+    return factory.flatMap((f, i) => kindMismatches(carried[i], f, [...path, String(i)]));
+  }
+  if (isPlainRecord(factory)) {
+    if (!isPlainRecord(carried)) return [path];
+    return Object.entries(factory).flatMap(([key, f]) =>
+      path.length === 0 && KIND_WALK_SKIPS.has(key) ? [] : kindMismatches(carried[key], f, [...path, key]),
+    );
+  }
+  return [];
+}
+
 /** Write each reported bound into the plan. Separate from finding them so a caller can
  *  report without repairing, and so a test can assert the two halves apart. */
 export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void {
   for (const p of problems) {
     const np = plan.nodeParams[p.node]!;
     if (p.where === "node") {
-      (np as Record<string, unknown>)[p.key] = p.bound;
+      const keys = p.key.split(".");
+      let holder = np as Record<string, unknown> | undefined;
+      for (const key of keys.slice(0, -1)) holder = holder?.[key] as Record<string, unknown> | undefined;
+      if (!holder) continue;
+      const last = keys[keys.length - 1];
+      if (p.action === "drop") delete holder[last];
+      else holder[last] = p.bound;
       continue;
     }
     if (p.where === "effect") {

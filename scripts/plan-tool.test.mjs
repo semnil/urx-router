@@ -1219,10 +1219,26 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       '{"ch1":{"gate":{"on":{}}}}',
       '{"ch1":{"gate":{"__proto__":1,"on":true}}}',
       '{"ch1":{"ssmcs":{}}}',
+      // A value whose kind is not the factory value's at its path goes whole, named at that
+      // path: an on/off or a group where a number belongs, a group or a list where an on/off
+      // does, a scalar where a group does and a group where a list does. A group that is half
+      // gone to the sanitiser is still named once, at the group.
+      '{"ch1":{"gain":true}}',
+      '{"ch1":{"gain":{"x":30}}}',
+      '{"ch1":{"gain":{"x":1,"y":"s"}}}',
+      '{"ch1":{"gain":[{}]}}',
+      '{"ch1":{"hpf":{"x":true}}}',
+      '{"ch1":{"comp":{"oneKnobLevel":true}}}',
+      '{"ch1":{"eqOneKnob":true}}',
+      '{"ch1":{"eqBands":{"a":{"b":1}}}}',
+      '{"bus.stream":{"delay":true}}',
+      '{"bus.mon1":{"phonesLevel":true}}',
+      '{"ch3":{"hiZ":{"a":1},"phantom":true}}',
       // …and the documents nothing may be said about, so a checker that reported everything
       // would fail here rather than passing every row above.
       '{"ch1":{"gate":{"threshold":-20}}}',
       '{"ch1":{"eqBands":[]}}',
+      '{"ch1":{"gain":12,"hpf":1,"extra":{"a":true}}}',
       '{"bus.fx1":{"fxEffect":{"type":0,"params":{"revxLpf":40}}}}',
     ];
 

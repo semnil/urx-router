@@ -23,7 +23,12 @@ loads the plan as authored":
 - an on/off written as a number where the model's factory values hold an on/off
   (models.json `booleanLeaves`) is converted on load to on, or to off for 0
   (core/plan-validate.ts `booleanParamProblems`), which is reported as a warning —
-  every other check reads the plan as that conversion leaves it, and
+  every other check reads the plan as that conversion leaves it,
+- a value whose kind is not the factory value's at its path (models.json `factory`) —
+  an on/off or a group where a number belongs, a group where an on/off belongs, a
+  scalar where a group belongs — is dropped on load (core/plan-validate.ts
+  `paramRangeProblems`) and the factory value filled in, which is reported as a
+  warning, and
 - the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
   of the raw-deflated UTF-8 JSON, padding stripped), read back by `?plan=` on
   startup. Compression keeps full plans inside GitHub Pages' ~8 KB URL limit;
@@ -226,6 +231,7 @@ def validate(plan, models):
             model.get("fxChannels"),
             model.get("insertFxParamSpace"),
             model.get("hiZ"),
+            (model.get("factory") or {}).get("nodeParams"),
         )
     )
     problems.extend(insert_fx_pair_problems(view, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
@@ -1092,6 +1098,109 @@ def read_as_on(value):
     return survives_sanitizer(value) and (isinstance(value, list) or bool(value))
 
 
+MISSING = object()
+
+
+def sanitize(value):
+    """What the app's document sanitiser keeps of a node-param value, or MISSING: a boolean or a
+    finite number; an array whose every element is an object, each sanitised; a group that keeps
+    at least one entry. `__proto__` is never kept."""
+    if isinstance(value, bool) or is_number(value):
+        return value
+    if isinstance(value, list):
+        items = [sanitize_record(el) if isinstance(el, dict) else MISSING for el in value]
+        return MISSING if any(el is MISSING for el in items) else items
+    if isinstance(value, dict):
+        rec = sanitize_record(value)
+        return rec if rec else MISSING
+    return MISSING
+
+
+def sanitize_record(value):
+    out = {}
+    for k, v in value.items():
+        if k == "__proto__":
+            continue
+        kept = sanitize(v)
+        if kept is not MISSING:
+            out[k] = kept
+    return out
+
+
+# The node-param keys whose shape the FX checks own rather than the factory comparison.
+KIND_WALK_SKIPS = ("fxEffect",)
+
+KIND_WORDS = {"number": "a number", "boolean": "an on/off", "dict": "a group of values", "list": "a list"}
+
+
+def kind_of(value):
+    if isinstance(value, bool):
+        return "boolean"
+    if is_number(value):
+        return "number"
+    if isinstance(value, list):
+        return "list"
+    return "dict"
+
+
+def kind_drops(carried, factory, path=()):
+    """The paths whose value is not the factory value's kind there (core/plan-validate.ts
+    `kindMismatches`): a value that is not a number where the factory holds a number, a group
+    or a list where it holds an on/off, anything but a group where it holds one and anything but
+    a list where it holds one. A number where the factory holds an on/off is the conversion's,
+    not this. `carried` is SANITISED; a path the factory does not carry is left alone. Returns
+    (steps, value, expected kind)."""
+    if carried is MISSING or carried is None:
+        return []
+    fk = kind_of(factory)
+    if fk == "number":
+        return [] if is_number(carried) else [(path, carried, fk)]
+    if fk == "boolean":
+        return [(path, carried, fk)] if isinstance(carried, (dict, list)) else []
+    if fk == "list":
+        if not isinstance(carried, list):
+            return [(path, carried, fk)]
+        out = []
+        for i, f in enumerate(factory):
+            out.extend(kind_drops(carried[i] if i < len(carried) else MISSING, f, path + (i,)))
+        return out
+    if not isinstance(carried, dict):
+        return [(path, carried, fk)]
+    out = []
+    for key, f in factory.items():
+        if not path and key in KIND_WALK_SKIPS:
+            continue
+        out.extend(kind_drops(carried.get(key, MISSING), f, path + (key,)))
+    return out
+
+
+def step_path(node_id, steps):
+    """`node.eqBands[0].on` from the keys and indices that reach it."""
+    out = node_id
+    for step in steps:
+        out += f"[{step}]" if isinstance(step, int) else f".{step}"
+    return out
+
+
+def with_paths(params, paths, stand_in=MISSING):
+    """`params` with the values at `paths` removed, or replaced by `stand_in`. Removed, the node
+    reads as the load leaves it. Replaced by a leaf the sanitiser keeps, the sanitiser's own walk
+    does not report the group around it as emptied: the kind check runs after the sanitiser, so
+    a group it empties is still there."""
+    if not paths:
+        return params
+    view = copy.deepcopy(params)
+    for steps in paths:
+        holder = view
+        for step in steps[:-1]:
+            holder = holder[step]
+        if stand_in is not MISSING:
+            holder[steps[-1]] = stand_in
+        elif isinstance(holder, dict):
+            holder.pop(steps[-1], None)
+    return view
+
+
 def hi_z_bounds(node_id, params, hi_z, bounded):
     """A channel carrying HI-Z with HI-Z on: the load turns +48V off (HI-Z kept) and bounds
     A.Gain above the HI-Z ceiling to that ceiling, the pair of repairs `paramRangeProblems`
@@ -1107,7 +1216,7 @@ def hi_z_bounds(node_id, params, hi_z, bounded):
         bounded.append((f"{node_id}.gain", f"{gain!r} is bounded to {ceiling!r} — A.Gain stops there while HI-Z is on"))
 
 
-def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=None):
+def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=None, factory=None):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
@@ -1130,10 +1239,23 @@ def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=
             out.append(f"node {node_id}: the app drops this node's params on load — nodeParams entries must be objects")
             continue
         dropped = []
+        # A value of the wrong kind for its key goes whole, so it is named at its own path and the
+        # walks after it read the node without it.
+        kinds = kind_drops(sanitize_record(params), (factory or {}).get(node_id), ())
+        for steps, value, expected in kinds:
+            dropped.append(
+                (step_path(node_id, steps), f"{value!r} is not {KIND_WORDS[expected]}, which this key holds")
+            )
+        kind_paths = [steps for steps, _value, _expected in kinds]
         # `insertFxOn` and `insertFxParams` are held out of the general walk and reported by
         # their own rule: it keeps a container, theirs does not.
-        walked = {k: v for k, v in params.items() if k not in ("fxEffect", "insertFxOn", "insertFxParams")}
+        walked = {
+            k: v
+            for k, v in with_paths(params, kind_paths, 0).items()
+            if k not in ("fxEffect", "insertFxOn", "insertFxParams")
+        }
         dropped_values(walked, node_id, dropped)
+        params = with_paths(params, kind_paths)
         scalar_only_drops(node_id, params, dropped, param_space)
         bounded = []
         if "fxEffect" in params:

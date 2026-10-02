@@ -10,7 +10,7 @@ import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
 import { INSERT_FX_OPTIONS } from "../core/control/params";
-import { isPlainRecord } from "../core/plan";
+import { isPlainRecord, type NodeParams } from "../core/plan";
 import { factoryNodeParams } from "./initial-state";
 import { monoPairsInto } from "../core/routing";
 import { hasHiZInput } from "../core/control/translate";
@@ -89,6 +89,10 @@ export interface SkillModel {
    *  spelling (`eqBands[0].on`). The load converts a number written at one of them to on, or to
    *  off for 0 (`booleanParamProblems`). */
   booleanLeaves: Record<string, string[]>;
+  /** The model's factory values, which the load completes a document from. Per node, the
+   *  params `factoryNodeParams` answers; the load drops a value whose kind is not the factory
+   *  value's at the same path (`paramRangeProblems`). */
+  factory: { nodeParams: Record<string, NodeParams> };
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -107,7 +111,18 @@ function skillModel(model: DeviceModel): SkillModel {
       gainMaxDb: HI_Z_A_GAIN_MAX_DB,
     },
     booleanLeaves: booleanLeaves(model),
+    factory: { nodeParams: factoryParams(model) },
   };
+}
+
+/** Each node's factory params, for every node the model's factory values describe. */
+function factoryParams(model: DeviceModel): SkillModel["factory"]["nodeParams"] {
+  const out: SkillModel["factory"]["nodeParams"] = {};
+  for (const n of model.nodes) {
+    const np = factoryNodeParams(model.id, n.id);
+    if (np) out[n.id] = np;
+  }
+  return out;
 }
 
 /** The on/off leaves of each node's factory values, the set `booleanParamProblems` reads. */

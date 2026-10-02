@@ -121,7 +121,11 @@ carries a one-line map of the same directories and points here.
   window, or DROPPED where there is nothing to bound: a leaf that is not a finite number (the window is
   shared across a channel's types and the DEFAULT is not), a `type` the channel's menu does not offer (a
   menu has no nearest member), and an `fxEffect` or its `params` that is not an object at all, which the
-  sanitiser keeps and every reader below then treats as absent. A drop of the effect OBJECT is the one
+  sanitiser keeps and every reader below then treats as absent. On every node the model's factory values
+  describe, a value whose kind is not the factory value's at that path is dropped the same way and the fill
+  supplies the factory value — a value that is not a number where a number belongs, a group or a list where
+  an on/off does, anything but a group where a group does (a number where an on/off belongs is converted
+  instead, below). A drop of the effect OBJECT is the one
   repair that changes what is sent, and in the safe direction — see "An FX channel the plan does not
   describe". The two actions are counted and said
   separately, since a value moved to the nearest one the app can send and a value removed are different
