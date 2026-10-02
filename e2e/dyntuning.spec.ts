@@ -2,6 +2,7 @@ import { test, expect, colorToken, textContrast, type Page } from "./fixtures";
 import { selectWire } from "./graph-helpers";
 import { panelHeight, pickBand, pickPlot, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
+import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
 
 // Channel tuning screens (GATE / COMP / EQ). The meter half needs a live session,
 // which is desktop-only, so this spec stubs the Tauri IPC bridge before boot — and
@@ -608,6 +609,32 @@ test.describe("with a live session", () => {
       await expect(readout(page, label).locator(".v")).toHaveText("—");
       await expect(readout(page, label).locator(".p")).toHaveText("pk —");
     }
+  });
+
+  // The compander's reduction meter reads from the flat region's gain, which the unit lifts
+  // by -T(1 - 1/R) — 7.1 dB at Compander-H's factory settings — so merged into the output
+  // column its bar is shortened by that lift, while the tile prints what the meter reports.
+  test("shortens the compander's merged reduction by the lift the unit applies", async ({ page }) => {
+    await node(page, "ch1").click();
+    await openInsertFxSection(page);
+    await chooseOption(insertFxSection(page).locator(".param", { hasText: "EFFECT TYPE" }).locator("select"), {
+      label: "Compander-H",
+    });
+    await insertFxSection(page).locator("#btn-insfx-screen").click();
+    await expect(screenBox(page)).toBeVisible();
+    const bar = () =>
+      screenBox(page)
+        .locator(".gt-shade.gr")
+        .evaluate((el) => (el as HTMLElement).style.getPropertyValue("--lvl"));
+
+    // 6 dB of reduction is inside the 7.1 dB lift: the tile reads it, the bar is empty.
+    await pushMeters(page, [132, 0, -60]);
+    await expect(readout(page, "INS FX GR").locator(".v")).toHaveText("-6.0");
+    await expect.poll(bar).toBe("0.000");
+    // 12 dB reaches past it by 4.9 dB, on a 54 dB ruler.
+    await pushMeters(page, [132, 0, -120]);
+    await expect(readout(page, "INS FX GR").locator(".v")).toHaveText("-12.0");
+    await expect.poll(bar).toBe(((12 - 10 * (1 - 1 / 3.5)) / 54).toFixed(3));
   });
 
   test("keeps its meters when the device is operated under it", async ({ page }) => {

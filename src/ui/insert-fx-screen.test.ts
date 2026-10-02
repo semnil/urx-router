@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dynHost } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import { DynScreen } from "./dyn-screen";
-import type { DynCtx, DynValues } from "./dyn-screen";
+import type { DynCtx, DynLane, DynValues } from "./dyn-screen";
 import { INSFX_DYN, companderResponse, insertFxScreenFamily } from "./insert-fx-screen";
 import { planToCommands } from "../core/control/translate";
 import {
@@ -168,6 +168,26 @@ describe("the meter lanes", () => {
       "in",
       "out",
     ]);
+  });
+
+  // The meter reads the reduction from the flat region's gain, which the unit lifts; merged
+  // into the output column the bar is shortened by that lift, the processor's own gain. Out
+  // Gain is not in it: the meter reads the same at any Out Gain.
+  it("shortens the compander's merged reduction by its lift, and not by Out Gain", () => {
+    const gainSlot = insertFxParams("compander").find((d) => d.label === "gain")!.slot;
+    for (const [type, lift] of [
+      ["Compander-H", 10 * (1 - 1 / 3.5)],
+      ["Compander-S", 8 * (1 - 1 / 4)],
+    ] as const) {
+      const gr = (): DynLane => INSFX_DYN.bind(holding("ch1", type))!.lanes.find((l) => l.key === "gr")!;
+      h.plan.nodeParams.ch1 = { ...h.plan.nodeParams.ch1, insertFxParams: {} };
+      expect(gr().grOffsetDb, type).toBeCloseTo(lift, 6);
+      h.plan.nodeParams.ch1 = {
+        ...h.plan.nodeParams.ch1,
+        insertFxParams: { [insertFxParamKey("compander", gainSlot)]: -1800 },
+      };
+      expect(gr().grOffsetDb, `${type} at Out Gain -18 dB`).toBeCloseTo(lift, 6);
+    }
   });
 
   it("gives the reduction lane to the compander alone, on the input side", () => {
@@ -751,26 +771,107 @@ describe("the compander's transfer curve", () => {
     return { get: (k: string) => raws.get(k) ?? 0 } as DynValues;
   };
 
-  it("passes the window, holds back above the threshold, and stops past 0 dB", () => {
+  /** The factory compander's lift: -T(1 - 1/R) for Threshold -10 dB at 3.5:1. */
+  const FACTORY_LIFT = 10 * (1 - 1 / 3.5);
+
+  it("lifts the window, holds back above the threshold, and stops past 0 dB", () => {
     const out = companderResponse(factory(), "compander", valueOf("Compander-H"));
-    // The window is Threshold - Width … Threshold = -16 … -10, and passes unchanged.
-    expect(out(-16)).toBeCloseTo(-16, 6);
-    expect(out(-13)).toBeCloseTo(-13, 6);
-    expect(out(-10)).toBeCloseTo(-10, 6);
-    // Above it, the set ratio: -10 + (in + 10) / 3.5.
-    expect(out(-3)).toBeCloseTo(-10 + 7 / 3.5, 6);
-    expect(out(0)).toBeCloseTo(-10 + 10 / 3.5, 6);
+    // The window is Threshold - Width … Threshold = -16 … -10, at unity plus the lift.
+    expect(out(-16)).toBeCloseTo(-16 + FACTORY_LIFT, 6);
+    expect(out(-13)).toBeCloseTo(-13 + FACTORY_LIFT, 6);
+    expect(out(-10)).toBeCloseTo(-10 + FACTORY_LIFT, 6);
+    // Above it, the set ratio: -10 + (in + 10) / 3.5, lifted the same.
+    expect(out(-3)).toBeCloseTo(-10 + 7 / 3.5 + FACTORY_LIFT, 6);
+    // The lift is what brings full scale back to 0 dBFS (with Out Gain at 0 dB).
+    expect(out(0)).toBeCloseTo(0, 6);
     // …and past 0 dBFS nothing more gets out.
     expect(out(6)).toBeCloseTo(out(0), 6);
     expect(out(24)).toBeCloseTo(out(0), 6);
+  });
+
+  /** A compander at one setting, in dB, the way the plan stores it (centi-dB, ratio × 100). */
+  const at = (o: { thr: number; ratio: number; width?: number; outGain?: number }): DynValues => {
+    const raws = new Map<string, number>();
+    for (const d of insertFxParams("compander")) raws.set(`ifx:compander:${d.slot}`, d.def);
+    const slot = (label: string): string =>
+      `ifx:compander:${insertFxParams("compander").find((d) => d.label === label)!.slot}`;
+    raws.set(slot("threshold"), o.thr * 100);
+    raws.set(slot("ratio"), o.ratio * 100);
+    raws.set(slot("width"), (o.width ?? 6) * 100);
+    raws.set(slot("gain"), (o.outGain ?? 0) * 100);
+    return { get: (k: string) => raws.get(k) ?? 0 } as DynValues;
+  };
+  /** The flat region's gain: what the curve puts out in the middle of the window, less what
+   *  goes in. */
+  const flatGain = (o: Parameters<typeof at>[0]): number => {
+    const inDb = o.thr - (o.width ?? 6) / 2;
+    return companderResponse(at(o), "compander", valueOf("Compander-S"))(inDb) - inDb;
+  };
+
+  // The unit's flat-region gain at ten settings (vd-params "コンパンダーと M.B.Comp の入出力"),
+  // against the curve's own. It follows -T(1 - 1/R) where that is under 18 dB and stops at
+  // 18 where it is over; the 15-17 dB points are the ones that tell a ceiling from a curve
+  // bending toward it.
+  it("lifts the window by -T(1 - 1/R), up to an 18 dB ceiling, as the unit reads", () => {
+    for (const [thr, ratio, read] of [
+      [-30, 2, 15.2],
+      [-16, 20, 15.5],
+      [-34, 2, 17.1],
+      [-18, 20, 17.5],
+      [-38, 2, 18.3],
+      [-54, 2, 18.3],
+      [-30, 20, 18.2],
+      [-54, 20, 18.1],
+      [0, 20, 0.1],
+      [-54, 1, -0.1],
+    ] as const) {
+      expect(Math.abs(flatGain({ thr, ratio }) - read), `T ${thr} / R ${ratio}`).toBeLessThanOrEqual(0.5);
+    }
+    // The ceiling itself, rather than a reading near it.
+    expect(flatGain({ thr: -54, ratio: 20 })).toBe(18);
+    // Width does not move it: 1 dB and 90 dB of window lift the same.
+    expect(flatGain({ thr: -54, ratio: 20, width: 1 })).toBeCloseTo(flatGain({ thr: -54, ratio: 20, width: 90 }), 6);
+    // …and Out Gain applies on top: -18 dB takes the 18 dB lift to 0.
+    expect(flatGain({ thr: -54, ratio: 20, outGain: -18 })).toBeCloseTo(0, 6);
+  });
+
+  // The factory settings of both types, against the unit's tone transfers (in → out, dBFS;
+  // the same vd-params section). The curve is within 1.5 dB of every S point and 3.1 dB of
+  // every H point above its floor.
+  it("draws the factory curves through the tone transfers the unit puts out", () => {
+    const typed = (type: string): DynValues => {
+      const raws = new Map<string, number>();
+      for (const d of insertFxParams("compander", valueOf(type))) raws.set(`ifx:compander:${d.slot}`, d.def);
+      return { get: (k: string) => raws.get(k) ?? 0 } as DynValues;
+    };
+    const s = companderResponse(typed("Compander-S"), "compander", valueOf("Compander-S"));
+    for (const [inDb, read] of [
+      [-61, -68],
+      [-44, -43],
+      [-32, -26],
+      [-20, -14],
+      [-8, -3],
+      [-2, -1],
+    ] as const) {
+      expect(Math.abs(s(inDb) - read), `S ${inDb}`).toBeLessThanOrEqual(1.5);
+    }
+    const h = companderResponse(typed("Compander-H"), "compander", valueOf("Compander-H"));
+    for (const [inDb, read] of [
+      [-20, -26],
+      [-14, -6],
+      [-8, -3],
+      [-2, -1],
+    ] as const) {
+      expect(Math.abs(h(inDb) - read), `H ${inDb}`).toBeLessThanOrEqual(3.1);
+    }
   });
 
   it("drops five times as fast on H as one and a half on S, below the window", () => {
     const h = companderResponse(factory(), "compander", valueOf("Compander-H"));
     const s = companderResponse(factory(), "compander", valueOf("Compander-S"));
     // 4 dB under the window: H is 20 dB down from it, S is 6.
-    expect(h(-20)).toBeCloseTo(-16 - 4 * 5, 6);
-    expect(s(-20)).toBeCloseTo(-16 - 4 * 1.5, 6);
+    expect(h(-20)).toBeCloseTo(-16 - 4 * 5 + FACTORY_LIFT, 6);
+    expect(s(-20)).toBeCloseTo(-16 - 4 * 1.5 + FACTORY_LIFT, 6);
     // …and they are the same everywhere else, which is what says the slope is the ONLY
     // difference rather than two unrelated curves.
     for (const inDb of [-16, -13, -10, -3, 0, 6]) expect(h(inDb)).toBeCloseTo(s(inDb), 6);
@@ -891,16 +992,20 @@ describe("what the compander's plot draws beside its curve", () => {
       INSFX_DYN.drawAxes!(axes.ctx, geo, TOK, ctx);
       return { labels: curve.texts.filter((x) => x.text.endsWith(" dB")).map((x) => x.text), unity: axes.ys.slice(-2) };
     };
+    // The factory Compander-H's lift, -T(1 - 1/R) for -10 dB at 3.5:1, is in the curve as well.
+    const lift = 10 * (1 - 1 / 3.5);
     const flat = drawnAt(0);
-    expect(flat.labels).toHaveLength(1);
+    // …and is not part of what the annotation names: -10 + 10 / 3.5 is the reduction at full
+    // scale from the flat region's gain.
+    expect(flat.labels).toEqual([`${(-10 + 10 / 3.5).toFixed(1)} dB`]);
     for (const outGainRaw of [-600, -1800]) {
-      const at = drawnAt(outGainRaw);
-      expect(at.labels, String(outGainRaw)).toEqual(flat.labels);
-      const off = outGainRaw / 100;
-      expect(at.unity[0], String(outGainRaw)).toBeCloseTo(geo.py(-60 + off), 6);
-      expect(at.unity[1], String(outGainRaw)).toBeCloseTo(geo.py(off), 6);
+      const drawn = drawnAt(outGainRaw);
+      expect(drawn.labels, String(outGainRaw)).toEqual(flat.labels);
+      const off = lift + outGainRaw / 100;
+      expect(drawn.unity[0], String(outGainRaw)).toBeCloseTo(geo.py(-60 + off), 6);
+      expect(drawn.unity[1], String(outGainRaw)).toBeCloseTo(geo.py(off), 6);
     }
-    expect(flat.unity[1]).toBeCloseTo(geo.py(0), 6);
+    expect(flat.unity[1]).toBeCloseTo(geo.py(lift), 6);
   });
 
   it("puts the LIVE reduction on the plot, and nothing there without a reading", () => {

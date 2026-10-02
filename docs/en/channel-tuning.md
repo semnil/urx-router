@@ -963,10 +963,14 @@ a slot rather than what is in it.
   adjusts what was selected.
 - **A plot where the response is defined, and nowhere else.** The companders take the transfer
   plot the compressor screens use — the same axes, the same live dot, the same reduction rule —
-  because their response IS their parameters: a window that passes unchanged, an expander under
-  it, the set ratio over the threshold, a limiter past 0 dBFS, and Out Gain moving the whole
-  curve down. The two variants differ in the expander's slope alone (H drops 5 dB per dB under
-  the window, S 1.5). A guitar amp's frequency response and a pitch tracker are not derivable
+  because their response IS their parameters: a window at unity, an expander under it, the set
+  ratio over the threshold and a limiter past 0 dBFS, all of it lifted by the make-up the unit
+  applies of its own, and Out Gain moving the whole curve down. The lift is `min(-T(1 - 1/R), 18)`
+  dB — what brings full scale back to 0 dBFS, up to an 18 dB ceiling past which it stays at 18 —
+  and the window's width does not change it; Out Gain is applied on top of it. The unity
+  reference and the reduction annotation take both out, so the annotation names the reduction
+  from the window's gain at full scale whatever the lift and Out Gain are. The two variants
+  differ in the expander's slope alone (H drops 5 dB per dB under the window, S 1.5). A guitar amp's frequency response and a pitch tracker are not derivable
   from the parameters, and the unit meters neither, so those faces are the lane rack alone —
   which is what `plotGeo` / `drawAxes` / `drawCurve` being optional together is for, and why
   `display` is handed the context: whether the column carries a plot is a question about the
@@ -1326,10 +1330,11 @@ the family the unit METERS (`hasReduction`: the compander and the multi-band com
 row above is why: a Drive amp's noise gate takes the output from -16 dB to the floor, over 100 dB,
 and moves `132` not once — so attenuation cannot decide it.
 
-The reduction merges into the OUTPUT column, as every reduction on every screen does, and takes no
-offset: the rule is to subtract whatever gain the processor adds, and these add none — the compander's
-makeup reaches 0 dB and only attenuates below it, so the level bar and the reduction hanging off the
-top of the same ruler cannot meet.
+The reduction merges into the OUTPUT column, as every reduction on every screen does, and is shortened by
+the gain the processor adds — the rule every merged reduction follows. For the compander that gain is its
+lift: the meter reads the reduction from the window's gain, the same reading at any Out Gain, and Out Gain
+only attenuates the level, so offsetting by the lift alone keeps the level bar and the reduction hanging
+off the top of the same ruler apart.
 
 **The multi-band compressor is the exception, and it is the only one.** Its reduction is metered per
 BAND — `133:0/1/2` are LOW / MID / HIGH — and each of its band faces carries the one that belongs to

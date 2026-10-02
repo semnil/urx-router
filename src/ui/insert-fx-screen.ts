@@ -80,11 +80,11 @@ import type { Messages } from "../i18n/en";
 const LO_DB = -54;
 const TICK_STEP = 6;
 
-/** The transfer plot's own axes, which are not the lane ruler's: this one is a threshold
- *  domain, and it runs BELOW the compander's lowest threshold (-54 dB) so that the window
- *  edge and the expander slope under it are inside the frame rather than on its floor.
- *  Output shares the range because Out Gain only attenuates — nothing this block does puts
- *  a level above its input. */
+/** The compander's transfer plot's own axes, which are not the lane ruler's: this one is a
+ *  threshold domain, and it runs BELOW the compander's lowest threshold (-54 dB) so that the
+ *  window edge and the expander slope under it are inside the frame rather than on its floor.
+ *  Output shares the range because the compander's curve never puts out more than 0 dBFS:
+ *  its lift brings full scale back to 0 dBFS at most, and Out Gain only attenuates. */
 const CURVE_LO_DB = -60;
 const CURVE_OUT_TICKS = [0, -12, -24, -36, -48];
 
@@ -250,6 +250,8 @@ const COMPANDER_H = 1793;
 /** Expander slopes, from the same block in the AG08 controller guide these effects share:
  *  H drops 5 dB for every dB under the window, S drops 1.5. */
 const EXPANDER_RATIO = { h: 5, s: 1.5 } as const;
+/** The most the unit lifts the compander's flat region by, in dB. */
+const COMPANDER_LIFT_MAX_DB = 18;
 
 /** Which engine slot a value lives in, asked of the catalogue by NAME. The numbers are the
  *  device's and belong in one place; written here as literals they would be a second copy
@@ -367,44 +369,61 @@ function mbcResponses(v: DynValues): {
  *  decides whether a face gets a reduction lane at all. */
 const hasReduction = (fam: InsertFxFamily | null): boolean => fam === "compander" || fam === "mbc";
 
-/** The compander's settings in dB, read once per redraw: the curve evaluates its response
- *  ~120 times and each `v.get` walks the plan. */
+/**
+ * The compander's settings in dB, read once per redraw: the curve evaluates its response
+ * ~120 times and each `v.get` walks the plan.
+ *
+ * `lift` is the make-up the unit applies of its own: the flat region (the window between
+ * Threshold - Width and Threshold) comes out `-T(1 - 1/R)` dB above its input, which brings
+ * full scale back to 0 dBFS, up to an 18 dB ceiling past which it stays at 18. Width does not
+ * change it, and Out Gain is applied on top of it.
+ */
 function companderSettings(
   v: DynValues,
   fam: InsertFxFamily,
-): { thr: number; ratio: number; width: number; outGain: number } {
+): { thr: number; ratio: number; width: number; outGain: number; lift: number } {
   const raw = (slot: number, def: number): number => {
     const n = v.get(slotKey(fam, slot));
     return Number.isFinite(n) ? n / 100 : def;
   };
+  const thr = raw(companderSlot("threshold"), -10);
+  const ratio = Math.max(1, raw(companderSlot("ratio"), 3.5));
   return {
-    thr: raw(companderSlot("threshold"), -10),
-    ratio: Math.max(1, raw(companderSlot("ratio"), 3.5)),
+    thr,
+    ratio,
     width: Math.max(0, raw(companderSlot("width"), 6)),
     outGain: raw(companderSlot("gain"), 0),
+    lift: Math.min(-thr * (1 - 1 / ratio), COMPANDER_LIFT_MAX_DB),
   };
 }
 
-/** The gain the compander's curve carries over its whole length — what the unity reference
- *  is lifted by and what the reduction annotation takes out before it calls the rest a
- *  reduction. */
+/** The make-up the unit applies to the compander's flat region, without Out Gain. The GR
+ *  meter reads the reduction from the gain of that region, whatever Out Gain is. */
+export function companderLiftDb(v: DynValues, fam: InsertFxFamily): number {
+  return companderSettings(v, fam).lift;
+}
+
+/** The gain the compander's curve carries over its whole length — the lift and Out Gain —
+ *  which is what the unity reference is lifted by and what the reduction annotation takes
+ *  out before it calls the rest a reduction. */
 export function companderGainDb(v: DynValues, fam: InsertFxFamily): number {
-  return companderSettings(v, fam).outGain;
+  const s = companderSettings(v, fam);
+  return s.lift + s.outGain;
 }
 
 /**
- * The compander's input→output transfer, in dBFS, as the shared block defines it: a
- * window that passes unchanged, an expander below it, the set ratio above the threshold,
- * and a limiter above 0 dB. Out Gain moves the whole curve down (its range only
- * attenuates), so it is added at the end rather than folded into a segment.
+ * The compander's input→output transfer, in dBFS: an expander below the window, the window
+ * at unity, the set ratio above the threshold and a limiter above 0 dB — all of it lifted by
+ * the unit's make-up and moved by Out Gain, which are added at the end rather than folded
+ * into a segment.
  */
 export function companderResponse(
   v: DynValues,
   fam: InsertFxFamily,
   selector: number | undefined,
 ): (inDb: number) => number {
-  const { thr, ratio, width } = companderSettings(v, fam);
-  const gain = companderGainDb(v, fam);
+  const { thr, ratio, width, lift, outGain } = companderSettings(v, fam);
+  const gain = lift + outGain;
   const expand = selector === COMPANDER_H ? EXPANDER_RATIO.h : EXPANDER_RATIO.s;
   const windowLo = thr - width;
   // What the compressor puts out at 0 dBFS. Above that the limiter holds it there, so the
@@ -620,11 +639,12 @@ function lanesOf(ctx: DynCtx, isOutput: boolean): DynLane[] {
       label: g.insfx.tapGr,
       kind: "gr",
       gr: isOutput ? insertFxOutGrAddr(0) : insertFxInGrAddr(),
-      // Merged into the OUTPUT column, as every reduction on every screen is. No offset:
-      // the rule is to subtract whatever gain the processor adds, and these effects add
-      // none — the compander's makeup reaches 0 dB and only attenuates below it, so the
-      // level bar and the reduction hanging off the top of the same ruler cannot meet.
+      // Merged into the OUTPUT column, as every reduction on every screen is, and shortened by
+      // the gain the processor adds — the rule `DynLane.grOffsetDb` carries. That gain is the
+      // compander's lift: the meter reads the reduction from the flat region's gain, and Out
+      // Gain, which is not in it, only attenuates, so the level cannot reach the bar.
       sameSlot: true,
+      grOffsetDb: companderLiftDb(valuesOf(ctx), "compander"),
     });
   }
   return lanes;
@@ -641,8 +661,8 @@ function insFxFace(): DynProcessor {
     outLoDb: CURVE_LO_DB,
     outTicks: CURVE_OUT_TICKS,
     hint: (m) => m.dynTuning.insfx.curveHint,
-    // The compander's curve carries its Out Gain over its whole length, so unity is lifted by
-    // it — down, since it only attenuates — to stay the level with no compression.
+    // The compander's curve carries its lift and its Out Gain over its whole length, so unity
+    // is moved by both to stay the level with no compression.
     unityOffsetDb: (ctx) => (familyOf(ctx) === "compander" ? companderGainDb(valuesOf(ctx), "compander") : 0),
     // The dot and the curve belong to the families whose response is DEFINED by their
     // parameters; on the others the column carries no plot at all, so nothing here is
@@ -1019,7 +1039,7 @@ function insFxFace(): DynProcessor {
         out: companderResponse(v, fam, selector),
         // The reduction annotation `drawTransferCurve` hangs off the top measures how far
         // the curve sits below unity once the gain it carries over its whole length is taken
-        // out — Out Gain, which moves the curve without compressing anything.
+        // out — the lift and Out Gain, which move the curve without compressing anything.
         gainDb: companderGainDb(v, fam),
         loDb: CURVE_LO_DB,
       });
