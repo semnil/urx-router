@@ -825,6 +825,18 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
     expect(planProblems(getModel("URX44V"), numbered).filter((p) => p.reason === "paramRange")).toEqual([]);
   });
 
+  // A Rec Point stage a channel's own list does not offer: the write sends PRE FADER for a
+  // mono-only stage on a stereo channel and PRE COMP for a PRE EQ in SSMCS mode, and the load
+  // takes the document there, so the Inspector's menu has the value it holds.
+  it("moves a Rec Point stage a channel does not offer to the one the write sends", () => {
+    const plan = load({ ch_5_6: { recPoint: 0 }, ch1: { compEqType: 1, recPoint: 2 }, ch2: { recPoint: 2 } });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(["ch1.recPoint 2 -> 1", "ch_5_6.recPoint 0 -> 4"]);
+  });
+
   // The HPF stops on five frequencies 20 Hz apart. A document between two of them was written
   // as it stood, a cutoff the unit's own encoder cannot reach, while the slider sat on a
   // detent and the readout said the document's number; one past the window read one value and

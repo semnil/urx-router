@@ -1924,6 +1924,10 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       // …and PAN/BAL, which an unlinked pair holds at PAN; the secondary's is never sent.
       '{"ch1":{"stereoLink":false,"panBal":1}}',
       '{"ch1":{"stereoLink":true,"panBal":1},"ch2":{"panBal":1}}',
+      // …and a Rec Point stage the channel's own list does not offer, whose list a comp/EQ
+      // order off its menu does not change.
+      '{"ch_5_6":{"recPoint":0},"ch1":{"compEqType":1,"recPoint":2},"ch2":{"recPoint":2}}',
+      '{"ch1":{"compEqType":5,"recPoint":2}}',
       // …and the documents nothing may be said about.
       '{"ch3":{"hiZ":true,"gain":40}}',
       '{"ch3":{"hiZ":false,"phantom":true,"gain":70}}',

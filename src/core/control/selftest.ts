@@ -56,6 +56,7 @@ import { canConnect, isStereoLinkedPair, mirrorLinkedPair, partnerChannel } from
 import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
+  COMP_EQ_SSMCS,
   DELAY_FRAME_RATE_OPTIONS,
   EQ_ONE_KNOB_TYPE_OPTIONS,
   INSERT_FX_NONE,
@@ -66,6 +67,7 @@ import {
   PAN_BAL_PAN,
   PARAMS,
   REC_POINT_OPTIONS,
+  recPointOptionsFor,
 } from "./params";
 import type { ParamSpec } from "./params";
 import { diffNames, reachedAndFailed, sendConverging, sendNames, sendPresetsAndReconverge } from "./client";
@@ -285,15 +287,15 @@ const SILENCE_DB = -200;
 // exercises both banks over the run. Every captured enum must be listed here so
 // it cycles within its legal range — a blind +1 (the fallback for plain numbers)
 // drives a 2-value enum like busType out of range, which the broker rejects.
-// Driver toggles (oneKnob/autoMakeup), insertFx, and EQ 1-knob type (its legal
-// subset depends on the node) are handled separately.
+// Driver toggles (oneKnob/autoMakeup), insertFx, EQ 1-knob type (its legal
+// subset depends on the node) and Rec Point (its stages depend on the channel and
+// its comp/EQ order — sweepRecPoint) are handled separately.
 const ENUM_SWEEP: Record<string, number[]> = {
   compEqType: [0, 1],
   knee: [0, 1, 2],
   mode: [0, 1, 2],
   type: [0, 1, 2],
   busType: BUS_TYPE_OPTIONS.map((o) => o.value),
-  recPoint: REC_POINT_OPTIONS.map((o) => o.value),
   frameRate: DELAY_FRAME_RATE_OPTIONS.map((o) => o.value),
 };
 // fxEffect / insertFxParams are skipped wholesale: their values are raw engine-
@@ -315,6 +317,7 @@ const ENUM_SWEEP: Record<string, number[]> = {
 // comp.oneKnobLevel is a bounded 0..100 raw (not a small enum), so the "+1" nudge
 // runs it past 100 when captured at max; skip it (its round-trip is value-covered).
 const SKIP = new Set([
+  "recPoint",
   "insertFx",
   "insertFxParams",
   "autoMakeup",
@@ -332,6 +335,7 @@ export const PASSES = Math.max(
   INSERT_FX_OPTIONS.length,
   OUTPUT_INSERT_FX_OPTIONS.length,
   EQ_ONE_KNOB_TYPE_OPTIONS.length,
+  REC_POINT_OPTIONS.length,
   ...Object.values(ENUM_SWEEP).map((o) => o.length),
 );
 
@@ -585,6 +589,19 @@ function sweepInputSource(plan: Plan, pass: number, model: DeviceModel): void {
   });
 }
 
+/** Give each captured channel's Rec Point one of the stages that channel offers this pass —
+ *  the stereo channels their two, a MONO IN its five, or four while in SSMCS mode. */
+function sweepRecPoint(plan: Plan, pass: number, model: DeviceModel): void {
+  for (const node of model.nodes) {
+    const np = plan.nodeParams[node.id];
+    const cc = channelControl(model, node.id);
+    if (!cc || np?.recPoint === undefined) continue;
+    const ssmcs = cc.hasMicStrip && np.compEqType === COMP_EQ_SSMCS;
+    const stages = recPointOptionsFor(!cc.hasMicStrip, ssmcs);
+    np.recPoint = stages[pass % stages.length].value;
+  }
+}
+
 /**
  * Build the (silent) perturbed plan for a given sweep pass. `suppress` holds the
  * keys of colliding guesses to drop: each such mapping strips its own plan field
@@ -595,6 +612,8 @@ export function perturbedPlan(model: DeviceModel, original: Plan, pass: number, 
   const plan = structuredClone(original);
   for (const np of Object.values(plan.nodeParams)) perturb(np as Record<string, unknown>, pass);
   for (const c of plan.connections) if (c.params) perturb(c.params as Record<string, unknown>, pass);
+  // After the comp/EQ order has moved, which decides the stages a MONO IN offers.
+  sweepRecPoint(plan, pass, model);
   // Before the insert-FX sweep, which reads the link state to decide what a holder is.
   sweepStereoLink(plan, pass, model);
   sweepInsertFx(plan, pass, model);

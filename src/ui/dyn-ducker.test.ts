@@ -137,8 +137,8 @@ describe("binding", () => {
     });
 
     // A mono-only Rec Point on a stereo strip names a tap that strip has not got. The
-    // inspector cannot offer that pairing, but nothing range-checks an enum on load, so
-    // a hand-edited plan, a `?plan=` link or an unexpected device value all reach it.
+    // inspector cannot offer that pairing and the load moves a document's to PRE FADER, but an
+    // unexpected device value still reaches it.
     // The last resort has to be PRE FADER: falling through to `tapFor` would answer
     // POST, which is after the source's own ducker.
     it("keeps a stereo source off POST when its Rec Point names a tap it has not got", () => {

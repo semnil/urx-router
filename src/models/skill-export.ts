@@ -9,11 +9,11 @@
 import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
-import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
+import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { isPlainRecord, type NodeParams } from "../core/plan";
 import { factoryNodeParams } from "./initial-state";
 import { monoPairsInto } from "../core/routing";
-import { hasHiZInput, nodeLeafRules, type LeafRule } from "../core/control/translate";
+import { channelControl, hasHiZInput, nodeLeafRules, type LeafRule } from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
 import {
@@ -99,7 +99,9 @@ export interface SkillModel {
    *  (`unsent`). The load bounds a value outside it to the value the write sends, and removes an
    *  unsent one (`paramRangeProblems`). A rule that depends on the node's own state carries the
    *  rule that state gives under the state's name — `hiZ` while HI-Z is on, `linked` while a
-   *  pair's primary holds `stereoLink` on — beside the rule the factory state gives. The insert-FX engine keys are not here: which rule a key takes is its
+   *  pair's primary holds `stereoLink` on, `ssmcs` while a MONO IN's `compEqType` is SSMCS —
+   *  beside the rule the factory state gives. A menu rule may carry a `map` from a value off the
+   *  menu to the one it stands for, which wins over the default. The insert-FX engine keys are not here: which rule a key takes is its
    *  family's, which `insertFxParamSpace` carries. */
   leafRules: Record<string, Record<string, LeafRule & Partial<Record<LeafContext, LeafRule>>>>;
 }
@@ -147,13 +149,14 @@ function leafRules(model: DeviceModel): SkillModel["leafRules"] {
 }
 
 /** A node state a rule can depend on, by the name the validator asks it under. */
-type LeafContext = "hiZ" | "linked";
+type LeafContext = "hiZ" | "linked" | "ssmcs";
 
 /** The states that change a node's rules, each as the params that put the node in it. */
 function leafContexts(model: DeviceModel, nodeId: string): [LeafContext, NodeParams][] {
   const out: [LeafContext, NodeParams][] = [];
   if (hasHiZInput(model.id, nodeId)) out.push(["hiZ", { hiZ: true }]);
   if (model.channelPairs.some(([primary]) => primary === nodeId)) out.push(["linked", { stereoLink: true }]);
+  if (channelControl(model, nodeId)?.hasMicStrip) out.push(["ssmcs", { compEqType: COMP_EQ_SSMCS }]);
   return out;
 }
 

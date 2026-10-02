@@ -22,6 +22,7 @@ import {
   DELAY_FRAME_RATE_DEFAULT,
   INSERT_FX_NONE,
   REC_POINT_DEFAULT,
+  REC_POINT_PRE_COMP,
   denormalizeInsertFx,
 } from "./params";
 import { PORT_REF_NONE, SSMCS_MORPHING_MAX, tagPortRef, vdToPortRef } from "./vd";
@@ -91,6 +92,20 @@ describe("FX / Insert-FX raw emit path is bounded to the calibrated catalog rang
     plan.nodeParams["ch1"] = { recPoint: 99 };
     const cmd = planToCommands(model, plan).find((c) => c.name === "REC_POINT" && c.y === 0);
     expect(cmd?.vdValue).toBe(REC_POINT_DEFAULT);
+  });
+
+  // A stage the channel's own Rec Point list does not offer: a mono-only stage on a stereo
+  // channel is PRE FADER, and PRE EQ on a channel in SSMCS mode is PRE COMP, the unit's own move.
+  it("sends a channel only a Rec Point stage its own list offers", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["ch_5_6"] = { recPoint: 0 };
+    plan.nodeParams["ch1"] = { compEqType: 1, recPoint: 2 };
+    plan.nodeParams["ch2"] = { compEqType: 0, recPoint: 2 };
+    const sent = (node: string) =>
+      planToCommands(model, plan).find((c) => c.name === "REC_POINT" && c.node === node)?.vdValue;
+    expect(sent("ch_5_6")).toBe(REC_POINT_DEFAULT);
+    expect(sent("ch1")).toBe(REC_POINT_PRE_COMP);
+    expect(sent("ch2")).toBe(2);
   });
 
   it("coerces an off-menu BUS Type enum back to VARI", () => {

@@ -27,6 +27,8 @@ import {
   PAN_BAL_PAN,
   PARAMS,
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
+  COMP_EQ_SSMCS,
+  recPointOptionsFor,
 } from "./params";
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
 import {
@@ -283,6 +285,43 @@ describe("passesFor (model-driven sweep count)", () => {
     expect(passesFor(getModel("URX44V"))).toBeGreaterThan(PASSES);
     expect(passesFor(getModel("URX44"))).toBeGreaterThan(PASSES);
   });
+});
+
+// A stereo channel offers two Rec Point stages and a MONO IN in SSMCS mode four, and the unit's
+// own list offers no other: the sweep writes each channel only the stages it offers, given the
+// comp/EQ order the same pass gives it, and over the run every one of them.
+describe("Rec Point sweep", () => {
+  for (const id of ["URX44V", "URX22"] as const) {
+    it(`${id}: writes each channel only the stages it offers, and every one of them`, () => {
+      const m = getModel(id);
+      const seed = defaultPlan(id);
+      ensureFixedConnections(m, seed);
+      const seen = new Map<string, Set<number>>();
+      const outside: string[] = [];
+      for (let pass = 0; pass < passesFor(m); pass++) {
+        const plan = perturbedPlan(m, seed, pass);
+        for (const node of m.nodes) {
+          const cc = channelControl(m, node.id);
+          const rp = plan.nodeParams[node.id]?.recPoint;
+          if (!cc || rp === undefined) continue;
+          const ssmcs = cc.hasMicStrip && plan.nodeParams[node.id]?.compEqType === COMP_EQ_SSMCS;
+          const stages = recPointOptionsFor(!cc.hasMicStrip, ssmcs).map((o) => o.value);
+          if (!stages.includes(rp)) outside.push(`p${pass} ${node.id} ${rp}${ssmcs ? " (SSMCS)" : ""}`);
+          seen.set(node.id, (seen.get(node.id) ?? new Set()).add(rp));
+        }
+      }
+      expect(outside).toEqual([]);
+      for (const [node, values] of seen) {
+        const cc = channelControl(m, node)!;
+        expect([...values].sort(), node).toEqual(
+          recPointOptionsFor(!cc.hasMicStrip, false)
+            .map((o) => o.value)
+            .sort(),
+        );
+      }
+      expect(seen.size, "channels swept").toBeGreaterThan(0);
+    });
+  }
 });
 
 // The sweep writes the MONO IN pairs' Signal Type, so what it hands the device in each

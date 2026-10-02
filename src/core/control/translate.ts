@@ -79,7 +79,9 @@ import {
   paramNameForId,
   PARAMS,
   REC_POINT_DEFAULT,
-  REC_POINT_OPTIONS,
+  REC_POINT_PRE_COMP,
+  REC_POINT_PRE_EQ,
+  recPointOptionsFor,
   STEREO_ASSIGN_ON_STEREO,
   STEREO_FADER,
   STEREO_ON,
@@ -1200,7 +1202,7 @@ function pushDynCommands(
  */
 export type BoundRule =
   | { min: number; max: number; integer?: true; steps?: readonly number[]; grid?: number }
-  | { menu: readonly number[]; def: number };
+  | { menu: readonly number[]; def: number; map?: Readonly<Record<number, number>> };
 
 /** A bound rule, or a leaf the write never sends at all (a filter type on a fixed-peaking band),
  *  which the load removes. */
@@ -1208,7 +1210,7 @@ export type LeafRule = BoundRule | { unsent: true };
 
 /** The value a rule admits for `v`, which is the value the write sends for it. */
 export function admitLeaf(rule: BoundRule, v: number): number {
-  if ("menu" in rule) return rule.menu.includes(v) ? v : rule.def;
+  if ("menu" in rule) return rule.menu.includes(v) ? v : (rule.map?.[v] ?? rule.def);
   const x = rule.integer ? Math.round(v) : v;
   const bounded = x < rule.min ? rule.min : x > rule.max ? rule.max : x;
   if (rule.grid !== undefined) return rule.min + rule.grid * Math.round((bounded - rule.min) / rule.grid);
@@ -1219,6 +1221,16 @@ const menuRule = (options: readonly { value: number }[], def: number): BoundRule
   menu: options.map((o) => o.value),
   def,
 });
+
+/** A channel's Rec Point as the write sends it: a stage the channel offers stands; in SSMCS mode
+ *  a PRE EQ is PRE COMP, the move the unit makes itself on that switch; anything else is PRE
+ *  FADER. */
+export function recPointRule(stereo: boolean, ssmcs: boolean): BoundRule {
+  return {
+    ...menuRule(recPointOptionsFor(stereo, ssmcs), REC_POINT_DEFAULT),
+    ...(ssmcs ? { map: { [REC_POINT_PRE_EQ]: REC_POINT_PRE_COMP } } : {}),
+  };
+}
 
 const dynRule = (f: DynField): BoundRule => ({ min: f.min, max: f.max, ...(f.steps ? { steps: f.steps } : {}) });
 const rawRule = (min: number, max: number): BoundRule => ({ min, max, integer: true });
@@ -1248,7 +1260,10 @@ function insertFxKeySlot(
 export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams | undefined): [string, LeafRule][] {
   const out: [string, LeafRule][] = [];
   const cc = channelControl(model, nodeId);
-  if (cc) out.push(["recPoint", menuRule(REC_POINT_OPTIONS, REC_POINT_DEFAULT)]);
+  if (cc) {
+    const compEqType = admitLeaf(menuRule(COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST), np?.compEqType ?? COMP_EQ_COMP_FIRST);
+    out.push(["recPoint", recPointRule(!cc.hasMicStrip, cc.hasMicStrip && compEqType === COMP_EQ_SSMCS)]);
+  }
   const gain = channelGainRange(model, nodeId, np);
   if (gain) out.push(["gain", { min: gain.minDb, max: gain.maxDb }]);
   if (cc?.hasHpf) out.push(["hpfFreq", { min: HPF_FREQ_MIN_HZ, max: HPF_FREQ_MAX_HZ, grid: HPF_FREQ_STEP_HZ }]);
@@ -2234,16 +2249,18 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       out.push(command("COMP_EQ_TYPE", cc.y, boundEnum(np.compEqType, COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST)));
     // Rec Point: per-channel record / direct-out tap (cc.recPoint = mono 137 /
     // stereo 264, resolved by channelControl like fader/on/pan).
-    if (np.recPoint !== undefined)
+    if (np.recPoint !== undefined) {
+      const ssmcs = cc.hasMicStrip && (np.compEqType ?? COMP_EQ_COMP_FIRST) === COMP_EQ_SSMCS;
       out.push(
         rawCommand(
           "REC_POINT",
           cc.recPoint,
           "enum",
           cc.y,
-          boundEnum(np.recPoint, REC_POINT_OPTIONS, REC_POINT_DEFAULT),
+          admitLeaf(recPointRule(!cc.hasMicStrip, ssmcs), np.recPoint),
         ),
       );
+    }
     // Channel-strip section ON (GATE/COMP/EQ). The active COMP/EQ bank follows the
     // type; polarity per toggle. Stereo channels expose only EQ.
     for (const sec of channelSections(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST)) {

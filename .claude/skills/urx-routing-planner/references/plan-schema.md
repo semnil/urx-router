@@ -178,7 +178,10 @@ or inside a group — is written `true` / `false`: a number there loads converte
   carrying `duckerOn` loads but has no effect. The `key` wire only picks the
   trigger; the ducked signal is always the ducker's own channel.
 - `compEqType` — 0 COMP→EQ, 1 SSMCS.
-- `recPoint` — channel record/direct-out tap (enum; absent = PRE FADER).
+- `recPoint` — channel record/direct-out tap: 0 PRE GATE / 1 PRE COMP / 2 PRE EQ /
+  3 PRE INS FX / 4 PRE FADER on a MONO IN (no PRE EQ while `compEqType` is SSMCS),
+  2 PRE EQ / 4 PRE FADER on a stereo channel; absent = PRE FADER. A stage the
+  channel does not offer opens at PRE FADER — a PRE EQ in SSMCS mode at PRE COMP.
 - `stereoLink` — stereo-link a MONO IN pair (set on the odd/primary channel).
 - `panBal` — 0 PAN / 1 BAL for a linked pair, on the primary. An unlinked pair
   holds PAN (the unit's control exists only while the pair is linked), so a

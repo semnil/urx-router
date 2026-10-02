@@ -1219,7 +1219,12 @@ def admit(rule, value):
     grid from the window's floor (a tie going up), or to the nearest stop where the rule has a
     stop table (the first of two equally near)."""
     if "menu" in rule:
-        return value if value in rule["menu"] else rule["def"]
+        if value in rule["menu"]:
+            return value
+        for key, target in (rule.get("map") or {}).items():
+            if float(key) == value:
+                return target
+        return rule["def"]
     v = js_round(value) if rule.get("integer") else value
     v = rule["min"] if v < rule["min"] else rule["max"] if v > rule["max"] else v
     grid = rule.get("grid")
@@ -1300,6 +1305,18 @@ def leaf_rule_bounds(node_id, params, rules, param_space, takes_insert, contexts
             bounded.append((f"{node_id}.insertFxParams.{key}", f"{value!r} is bounded to {admitted!r}"))
 
 
+def comp_eq_type(node_id, params, leaf_rules, factory):
+    """A MONO IN's comp/EQ order as the write sends it: its own value admitted by its rule, or the
+    factory one the load fills in for an absent value."""
+    rule = ((leaf_rules or {}).get(node_id) or {}).get("compEqType")
+    value = params.get("compEqType")
+    if rule is None:
+        return None
+    if not is_number(value):
+        value = ((factory or {}).get(node_id) or {}).get("compEqType")
+    return admit(rule, value) if is_number(value) else None
+
+
 def hi_z_on(node_id, params, hi_z):
     """Whether HI-Z is on for a node: it carries the switch and its params hold it on."""
     return bool(hi_z) and node_id in hi_z.get("channels", []) and read_as_on(params.get("hiZ"))
@@ -1372,7 +1389,11 @@ def node_param_warnings(
                 fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
         contexts = [
             c
-            for c, on in (("hiZ", hi_z_on(node_id, params, hi_z)), ("linked", params.get("stereoLink") is True))
+            for c, on in (
+                ("hiZ", hi_z_on(node_id, params, hi_z)),
+                ("linked", params.get("stereoLink") is True),
+                ("ssmcs", comp_eq_type(node_id, params, leaf_rules, factory) == COMP_EQ_SSMCS),
+            )
             if on
         ]
         leaf_rule_bounds(

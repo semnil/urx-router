@@ -945,6 +945,13 @@ export const REC_POINT_OPTIONS = [
   { value: 4, label: "PRE FADER", stereo: true },
 ];
 
+/** The Rec Point stages one channel offers: a stereo channel the two `stereo` ones, a MONO IN
+ *  every stage, and a MONO IN in SSMCS mode every stage but PRE EQ. The one answer the
+ *  Inspector's menu, the write and the self-test's sweep share. */
+export function recPointOptionsFor(stereo: boolean, ssmcs: boolean): typeof REC_POINT_OPTIONS {
+  return REC_POINT_OPTIONS.filter((o) => (!stereo || o.stereo) && !(ssmcs && o.value === REC_POINT_PRE_EQ));
+}
+
 // BUS Type for MIX 1 / MIX 2 (CH SETTING): VARI = variable per-send level (the
 // default, what the tool models), FIXED = a fixed send level (sends carry no
 // adjustable level). Labels are the device strings. Control address = param 587
