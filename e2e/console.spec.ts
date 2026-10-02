@@ -84,6 +84,15 @@ test("the console lays out the input channels and the master", async ({ page }) 
   await expect(strip(page, "STEREO")).toBeVisible();
 });
 
+// The controls a strip repeats are named only for what they are, so the strip is a group
+// named by its node: that is what puts the channel on a MUTE reached from a control list.
+test("each strip is a group named by its node", async ({ page }) => {
+  const ch1 = page.getByRole("group", { name: "CH 1", exact: true });
+  await expect(ch1.getByRole("button", { name: "MUTE", exact: true })).toBeVisible();
+  await expect(ch1.getByRole("slider", { name: "PAN", exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "STREAMING", exact: true })).toHaveClass(/meter-only/);
+});
+
 test("the longest channel name (CH 11/12) shrinks a step so it fits its scribble", async ({ page }) => {
   // "CH 11/12" (8 chars) overflows the 11px scribble name beside the power LED in
   // SF Mono, so the head drops it to 9px; assert the shrink and that the full label

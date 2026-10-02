@@ -325,6 +325,13 @@ function meterReadCell(): { cell: HTMLElement; value: HTMLElement } {
   return { cell, value };
 }
 
+// A strip is a group named by its node, so a control inside it — named only for what it is
+// ("MUTE", "PAN", "FX 1") — is announced with the channel it belongs to.
+function nameStrip(strip: HTMLElement, m: { label: string }): void {
+  strip.setAttribute("role", "group");
+  strip.setAttribute("aria-label", m.label);
+}
+
 interface StripModel {
   id: string;
   label: string;
@@ -2046,6 +2053,7 @@ export class Console {
     // scribble power LED) — the same inactive dim as every other strip. STREAMING has
     // no on/off, so it never dims (m.inactive is false there).
     const strip = el("div", "con-strip meter-only" + (m.inactive ? " inactive" : ""));
+    nameStrip(strip, m);
     strip.style.setProperty("--rail", m.rail);
 
     const head = el("div", "con-head");
@@ -2449,6 +2457,7 @@ export class Console {
     // otherwise route audio into a bus the unit is not running.
     const rateOff = nodeRateDisabled(m.id, this.hooks.getPlan().sampleRate);
     const strip = el("div", "con-strip" + (m.inactive || rateOff ? " inactive" : ""));
+    nameStrip(strip, m);
     // Programmatically focusable and out of the tab order: it is the floor a popover close
     // lands on when the control that opened it did not survive the rebuild.
     strip.tabIndex = -1;

@@ -520,6 +520,27 @@ describe("what each slider exposes", () => {
   });
 });
 
+// Every strip repeats the same controls under the same names — MUTE, PAN, an "FX 1" send
+// fader — so the strip root is a group named by its node, which is what says which channel
+// one of them belongs to when it is reached any way other than a Tab walk from the scribble.
+describe("the strip root", () => {
+  it("is a group named by its node, meter-only strips included", () => {
+    h = consoleHost();
+    const strips = [...h.host.querySelectorAll<HTMLElement>(".con-strip")];
+    expect(
+      strips.some((s) => s.classList.contains("meter-only")),
+      "a meter-only strip is in the sample",
+    ).toBe(true);
+    for (const s of strips) {
+      const name = s.querySelector(".con-scribble .name .txt")!.textContent;
+      expect(s.getAttribute("role"), name ?? "").toBe("group");
+      expect(s.getAttribute("aria-label")).toBe(name);
+    }
+    // The main fader carries the same name, which is the channel the group says.
+    expect(h.strip("ch1").root.getAttribute("aria-label")).toBe(h.strip("ch1").fader!.getAttribute("aria-label"));
+  });
+});
+
 describe("a device-locked knob", () => {
   // A PAN-linked MIX bus locks its send pan. The knob still paints the value — hiding
   // it would read as "this send has no pan" — but takes no input at all, from any of
