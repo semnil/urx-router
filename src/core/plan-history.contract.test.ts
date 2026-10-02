@@ -58,13 +58,23 @@ const MUTATIONS: Array<[Exclude<keyof Plan, TransientField | "modelId">, (p: Pla
       p.positions.ch1 = { x: 7, y: 8 };
     },
   ],
+  // Two factory wires: one removed (a keyed `connections` entry) and one whose level moves (a
+  // `connParams` entry), so both keyed paths are what the cases below exercise.
   [
     "connections",
     (p) => {
-      p.connections = [...p.connections, { from: "ch1:out", to: "bus.mix2:in", kind: "send", params: { level: -6 } }];
+      p.connections = p.connections
+        .filter((c) => !(c.from === "ch1:out" && c.to === "bus.mix2:in"))
+        .map((c) =>
+          c.from === "ch1:out" && c.to === "bus.mix1:in" ? { ...c, params: { ...c.params, level: -6 } } : c,
+        );
     },
     (p) => {
-      p.connections = [...p.connections, { from: "ch1:out", to: "bus.mix2:in", kind: "send", params: { level: -24 } }];
+      p.connections = p.connections.map((c) =>
+        c.from === "ch1:out" && (c.to === "bus.mix1:in" || c.to === "bus.mix2:in")
+          ? { ...c, params: { ...c.params, level: -24 } }
+          : c,
+      );
     },
   ],
   [
@@ -151,6 +161,10 @@ describe("the history differ covers the whole Plan", () => {
 
     const patch = diffPlans(before, after);
     expect(patch.length, `${field} produced no patch — diffPlans does not read it`).toBeGreaterThan(0);
+    expect(
+      patch.map((e) => e.field),
+      `${field} reached the whole-array fallback rather than a keyed entry`,
+    ).not.toContain("connectionsAll");
 
     // toStrictEqual, not toEqual: toEqual ignores keys whose value is undefined, so
     // it would pass on the resurrected husk this design forbids.
