@@ -67,6 +67,19 @@ describe("the main fader", () => {
     expect(r.readDb!.classList.contains("off")).toBe(false);
   });
 
+  // The same helper as a rack column's: −∞ is the first detent, so the first step up from
+  // it is the floor detent and a wheel notch is one Arrow.
+  it("steps out of −∞ onto the floor detent", () => {
+    h = consoleHost();
+    const r = h.strip("ch1");
+    key(r.fader!, "End");
+    key(r.fader!, "ArrowUp");
+    expect(main("ch1")).toBe(-96);
+    key(r.fader!, "End");
+    wheel(r.fader!, 1);
+    expect(main("ch1")).toBe(-96);
+  });
+
   /** Press the fader at a page y, then release without moving. */
   const press = (fader: HTMLElement, clientY: number): void => {
     fader.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY, pointerId: 1 }));

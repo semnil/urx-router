@@ -1209,9 +1209,10 @@ export class Console {
 
   // The next fader level for a keydown (Arrow = 1 detent, PageUp/Down = 6, Home = max,
   // End = −∞), or null for a non-stepping key. Shared by the main fader and the rack
-  // columns; a step down off the floor lands on −∞ via the range's own step().
+  // columns; a step down off the floor lands on −∞ via the range's own step(). A level
+  // below the floor steps from −∞, so one step up from there lands on the floor detent.
   private faderKeyStep(e: KeyboardEvent, range: LevelRange, cur: number): number | null {
-    const base = cur < range.min ? range.min : cur;
+    const base = cur < range.min ? range.off : cur;
     if (e.key === "ArrowUp") return range.step(base, 1);
     if (e.key === "ArrowDown") return range.step(base, -1);
     if (e.key === "PageUp") return range.step(base, 6);
@@ -1222,9 +1223,10 @@ export class Console {
   }
 
   // One detent up/down from a wheel notch, mirroring the Arrow keys (a step down
-  // off the floor lands on −∞ via the range's own step()). Shared by both faders.
+  // off the floor lands on −∞ via the range's own step(), and a level below the
+  // floor steps from −∞). Shared by both faders.
   private faderWheelStep(range: LevelRange, cur: number, dir: 1 | -1): number {
-    const base = cur < range.min ? range.min : cur;
+    const base = cur < range.min ? range.off : cur;
     return range.step(base, dir);
   }
 

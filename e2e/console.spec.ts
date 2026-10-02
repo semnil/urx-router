@@ -241,8 +241,10 @@ test("a send column fader edits the send level and drives the header readout", a
   await expect(s.locator(".con-sh")).toHaveClass(/readout/);
   await expect(rdout).toContainText("MIX 1");
   const before = await rdout.textContent();
+  await expect(rdout).toHaveText("MIX 1 -∞"); // the send ships off
   await page.keyboard.press("ArrowUp"); // one detent up
   await expect(rdout).not.toHaveText(before ?? "");
+  await expect(rdout).toHaveText("MIX 1 -96.0"); // −∞ is a detent: one press lands on the floor one
   await fader.blur();
   await expect(s.locator(".con-sh")).not.toHaveClass(/readout/); // reverts to SENDS
 });

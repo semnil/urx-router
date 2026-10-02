@@ -1214,6 +1214,9 @@ describe("the model the device turns out to be", () => {
    *  strips. */
   const firstSend = (): HTMLElement =>
     $("console-host").querySelector(".con-strip")!.querySelector<HTMLElement>(".con-vfad")!;
+  /** The send's value as the slider states it. Its valuetext rather than its valuenow: a send
+   *  ships at −∞ and one step up is the floor detent, and the rounded valuenow of both is -96. */
+  const sendValue = (): string | null => firstSend().getAttribute("aria-valuetext");
   /** Step the send one detent up from the keyboard, the way the operator does. */
   const stepSendUp = (): void => {
     for (const type of ["keydown", "keyup"]) {
@@ -1232,12 +1235,12 @@ describe("the model the device turns out to be", () => {
     $("btn-view-console").click();
     $("btn-fetch").click();
     await unit.reading;
-    const before = firstSend().getAttribute("aria-valuenow");
+    const before = sendValue();
     try {
       stepSendUp();
-      expect(firstSend().getAttribute("aria-valuenow"), "the premise: the console took the key").not.toBe(before);
+      expect(sendValue(), "the premise: the console took the key").not.toBe(before);
       await tick();
-      expect(firstSend().getAttribute("aria-valuenow")).toBe(before);
+      expect(sendValue()).toBe(before);
       expect(statusText()).toBe(t().status.busySwitchRead);
     } finally {
       unit.release(0);
@@ -1267,7 +1270,7 @@ describe("the model the device turns out to be", () => {
       $("btn-view-console").click();
       start();
       await unit.reading;
-      const before = firstSend().getAttribute("aria-valuenow");
+      const before = sendValue();
       try {
         stepSendUp();
         await tick();
@@ -1280,7 +1283,7 @@ describe("the model the device turns out to be", () => {
       await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 25_000 });
 
       expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
-      expect(firstSend().getAttribute("aria-valuenow")).toBe(before);
+      expect(sendValue()).toBe(before);
       expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
       expect(statusText()).toBe(t().status.nothingToUndo);
       // Nor did it mark the plan unsaved: New replaces it without asking.
@@ -1786,20 +1789,20 @@ describe("the model the device turns out to be", () => {
     $("btn-view-console").click();
     $("btn-fetch").click();
     await disconnect.asked;
-    const before = firstSend().getAttribute("aria-valuenow");
+    const before = sendValue();
     try {
       expect($<HTMLSelectElement>("model-picker").value, "the premise: the incomplete read switched nothing").toBe(
         "URX44V",
       );
       stepSendUp();
       await tick();
-      expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+      expect(sendValue()).not.toBe(before);
       expect(statusText()).not.toBe(t().status.busySwitchRead);
     } finally {
       disconnect.release();
     }
     await vi.waitFor(() => expect(confirms(shell)).toContain(t().confirm.deviceErrorExport), { timeout: 10_000 });
-    expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+    expect(sendValue()).not.toBe(before);
   });
 
   it("takes edits again once a switched live start's read is over, while its session registers", SLOW, async () => {
@@ -1840,20 +1843,20 @@ describe("the model the device turns out to be", () => {
       $("btn-view-console").click();
       start();
       await disconnect.asked;
-      const before = firstSend().getAttribute("aria-valuenow");
+      const before = sendValue();
       try {
         expect($<HTMLSelectElement>("model-picker").value, "the premise: the failed read switched nothing").toBe(
           "URX44V",
         );
         stepSendUp();
         await tick();
-        expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+        expect(sendValue()).not.toBe(before);
         expect(statusText()).not.toBe(t().status.busySwitchRead);
       } finally {
         disconnect.release();
       }
       await vi.waitFor(() => expect(errors(shell)).toEqual([failure("read-refused")]), { timeout: 10_000 });
-      expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+      expect(sendValue()).not.toBe(before);
     });
   }
 

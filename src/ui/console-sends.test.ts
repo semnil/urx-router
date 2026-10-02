@@ -39,10 +39,8 @@ const colOf = (id: string, short: string): HTMLElement => {
 const level = (id: string, target: string): number | undefined =>
   sendConnection(h.plan, id, target)?.params?.level as number | undefined;
 
-// Every send ships OFF (-96.5 dB, measured on the default URX44V plan), and the level
-// grid is deliberately asymmetric at that end — a step down off the lowest real detent
-// lands on −∞, so a round trip from OFF does not return to OFF. Tests about the ordinary
-// stepping seed a real level first; the OFF end has a case of its own below.
+// Every send ships OFF (-96.5 dB, measured on the default URX44V plan). Tests about the
+// ordinary stepping seed a real level first; the OFF end has a case of its own below.
 const seedLevel = (id: string, target: string, db: number): void => {
   const c = sendConnection(h.plan, id, target)!;
   c.params = { ...c.params, level: db };
@@ -110,27 +108,35 @@ describe("a column's fader", () => {
     expect(col.fader.getAttribute("aria-valuetext")).toBe("off (-∞)");
   });
 
-  // The OFF end is not symmetric, and that is the level grid's own rule rather than
-  // this view's. Measured from the default (OFF = −96.5): a step up clamps the base to
-  // the floor and then steps, landing on −80 — so it climbs out past the floor in one
-  // press, and coming back down takes TWO (−80 → −96 → −∞). A test that assumed a
-  // symmetric round trip would read the second press as a lost edit.
-  it("climbs out of −∞ in one step and needs two to fall back into it", () => {
+  // −∞ is the first of the grid's detents, as it is in the Inspector's level slider: one
+  // step up from it lands on the floor detent (−96) and one step down goes back, PageUp
+  // counts it as the first of its six, and a wheel notch is one Arrow. A level stored
+  // BELOW the floor steps from −∞ too, so its first step up is the floor detent rather
+  // than a press that writes −∞ again.
+  it("steps out of −∞ onto the floor detent, and back into it, one detent per press", () => {
     h = consoleHost();
-    const col = h.sendCol("ch1", "bus.mix1");
-    expect(col.fader.getAttribute("aria-valuetext")).toBe("off (-∞)");
+    const fader = (): HTMLElement => h.sendCol("ch1", "bus.mix1").fader;
+    expect(fader().getAttribute("aria-valuetext")).toBe("off (-∞)");
 
-    key(col.fader, "ArrowUp");
-    const climbed = level("ch1", "bus.mix1")!;
-    expect(climbed).toBe(-80);
+    key(fader(), "ArrowUp");
+    expect(level("ch1", "bus.mix1")).toBe(-96);
+    expect(fader().getAttribute("aria-valuetext")).not.toBe("off (-∞)");
+    key(fader(), "ArrowDown");
+    expect(fader().getAttribute("aria-valuetext")).toBe("off (-∞)");
 
-    key(col.fader, "ArrowDown");
-    const floor = level("ch1", "bus.mix1")!;
-    expect(floor).toBe(-96);
-    expect(col.fader.getAttribute("aria-valuetext")).not.toBe("off (-∞)");
+    key(fader(), "PageUp");
+    expect(level("ch1", "bus.mix1")).toBe(-48);
 
-    key(col.fader, "ArrowDown");
-    expect(col.fader.getAttribute("aria-valuetext")).toBe("off (-∞)");
+    key(fader(), "End");
+    wheel(fader(), 1);
+    expect(level("ch1", "bus.mix1")).toBe(-96);
+
+    seedLevel("ch1", "bus.mix1", -200);
+    key(fader(), "ArrowUp");
+    expect(level("ch1", "bus.mix1")).toBe(-96);
+    seedLevel("ch1", "bus.mix1", -200);
+    key(fader(), "PageUp");
+    expect(level("ch1", "bus.mix1")).toBe(-48);
   });
 
   it("ignores a key that does not step", () => {
