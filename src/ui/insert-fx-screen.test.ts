@@ -873,6 +873,36 @@ describe("what the compander's plot draws beside its curve", () => {
     }
   });
 
+  // Out Gain moves the whole curve without compressing anything, so the reduction the
+  // annotation names is the same at any Out Gain, and the unity reference — the level with
+  // no compression — moves with it.
+  it("names the same reduction at any Out Gain, and moves unity by it", () => {
+    const ctx = holding("ch1", "Compander-H");
+    const geo = INSFX_DYN.plotGeo!(W, H, ctx);
+    const gainSlot = insertFxParams("compander").find((d) => d.label === "gain")!.slot;
+    const drawnAt = (outGainRaw: number): { labels: string[]; unity: number[] } => {
+      const raws: Record<string, number> = {};
+      for (const d of insertFxParams("compander", valueOf("Compander-H"))) raws[`ifx:compander:${d.slot}`] = d.def;
+      raws[`ifx:compander:${gainSlot}`] = outGainRaw;
+      h.plan.nodeParams.ch1!.insertFxParams = { [insertFxParamKey("compander", gainSlot)]: outGainRaw };
+      const curve = recorder();
+      INSFX_DYN.drawCurve!(curve.ctx, geo, vals(raws), TOK, ctx);
+      const axes = recorder();
+      INSFX_DYN.drawAxes!(axes.ctx, geo, TOK, ctx);
+      return { labels: curve.texts.filter((x) => x.text.endsWith(" dB")).map((x) => x.text), unity: axes.ys.slice(-2) };
+    };
+    const flat = drawnAt(0);
+    expect(flat.labels).toHaveLength(1);
+    for (const outGainRaw of [-600, -1800]) {
+      const at = drawnAt(outGainRaw);
+      expect(at.labels, String(outGainRaw)).toEqual(flat.labels);
+      const off = outGainRaw / 100;
+      expect(at.unity[0], String(outGainRaw)).toBeCloseTo(geo.py(-60 + off), 6);
+      expect(at.unity[1], String(outGainRaw)).toBeCloseTo(geo.py(off), 6);
+    }
+    expect(flat.unity[1]).toBeCloseTo(geo.py(0), 6);
+  });
+
   it("puts the LIVE reduction on the plot, and nothing there without a reading", () => {
     // The annotation hanging off the curve is the model's arithmetic at full scale and does
     // not move with the signal; this is the number the meter is reporting. On the live

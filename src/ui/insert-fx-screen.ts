@@ -367,28 +367,44 @@ function mbcResponses(v: DynValues): {
  *  decides whether a face gets a reduction lane at all. */
 const hasReduction = (fam: InsertFxFamily | null): boolean => fam === "compander" || fam === "mbc";
 
+/** The compander's settings in dB, read once per redraw: the curve evaluates its response
+ *  ~120 times and each `v.get` walks the plan. */
+function companderSettings(
+  v: DynValues,
+  fam: InsertFxFamily,
+): { thr: number; ratio: number; width: number; outGain: number } {
+  const raw = (slot: number, def: number): number => {
+    const n = v.get(slotKey(fam, slot));
+    return Number.isFinite(n) ? n / 100 : def;
+  };
+  return {
+    thr: raw(companderSlot("threshold"), -10),
+    ratio: Math.max(1, raw(companderSlot("ratio"), 3.5)),
+    width: Math.max(0, raw(companderSlot("width"), 6)),
+    outGain: raw(companderSlot("gain"), 0),
+  };
+}
+
+/** The gain the compander's curve carries over its whole length — what the unity reference
+ *  is lifted by and what the reduction annotation takes out before it calls the rest a
+ *  reduction. */
+export function companderGainDb(v: DynValues, fam: InsertFxFamily): number {
+  return companderSettings(v, fam).outGain;
+}
+
 /**
  * The compander's input→output transfer, in dBFS, as the shared block defines it: a
  * window that passes unchanged, an expander below it, the set ratio above the threshold,
  * and a limiter above 0 dB. Out Gain moves the whole curve down (its range only
  * attenuates), so it is added at the end rather than folded into a segment.
- *
- * Read once per redraw rather than per sample point: the curve evaluates this ~120 times
- * and each `v.get` walks the plan.
  */
 export function companderResponse(
   v: DynValues,
   fam: InsertFxFamily,
   selector: number | undefined,
 ): (inDb: number) => number {
-  const raw = (slot: number, def: number): number => {
-    const n = v.get(slotKey(fam, slot));
-    return Number.isFinite(n) ? n / 100 : def;
-  };
-  const thr = raw(companderSlot("threshold"), -10);
-  const ratio = Math.max(1, raw(companderSlot("ratio"), 3.5));
-  const width = Math.max(0, raw(companderSlot("width"), 6));
-  const gain = raw(companderSlot("gain"), 0);
+  const { thr, ratio, width } = companderSettings(v, fam);
+  const gain = companderGainDb(v, fam);
   const expand = selector === COMPANDER_H ? EXPANDER_RATIO.h : EXPANDER_RATIO.s;
   const windowLo = thr - width;
   // What the compressor puts out at 0 dBFS. Above that the limiter holds it there, so the
@@ -526,6 +542,30 @@ export function insertFxControlLabel(scope: string | undefined, m: Messages): st
 const rawOf = (ctx: DynCtx, fam: InsertFxFamily, d: InsertFxParamDesc): number =>
   insertFxVal(ctx.plan, ctx.nodeId, fam, d.slot, d.def);
 
+/** Every row of the family the node holds, as raws keyed by field — the screen's `read`.
+ *  Every row rather than one face's: `rowStates` reads the modulation selector, which is on
+ *  the amp face, to lock two rows beside it. */
+function readSlots(ctx: DynCtx): Record<string, unknown> {
+  const fam = familyOf(ctx);
+  if (!fam) return {};
+  const out: Record<string, unknown> = {};
+  const type = effectiveInsertFx(ctx.model, ctx.plan, ctx.nodeId);
+  for (const d of insertFxParams(fam, type)) out[slotKey(fam, d.slot)] = rawOf(ctx, fam, d);
+  return out;
+}
+
+/** The same values as a figure reads them, for the hooks that are handed the context rather
+ *  than the values — the axes and the lanes. */
+function valuesOf(ctx: DynCtx): DynValues {
+  const r = readSlots(ctx);
+  return {
+    get: (k) => {
+      const n = r[k];
+      return typeof n === "number" ? n : Number.NaN;
+    },
+  };
+}
+
 /**
  * The meter lanes either side of the effect.
  *
@@ -601,6 +641,9 @@ function insFxFace(): DynProcessor {
     outLoDb: CURVE_LO_DB,
     outTicks: CURVE_OUT_TICKS,
     hint: (m) => m.dynTuning.insfx.curveHint,
+    // The compander's curve carries its Out Gain over its whole length, so unity is lifted by
+    // it — down, since it only attenuates — to stay the level with no compression.
+    unityOffsetDb: (ctx) => (familyOf(ctx) === "compander" ? companderGainDb(valuesOf(ctx), "compander") : 0),
     // The dot and the curve belong to the families whose response is DEFINED by their
     // parameters; on the others the column carries no plot at all, so nothing here is
     // reached. The multi-band compressor's MAIN face is the one exception inside a family
@@ -704,16 +747,7 @@ function insFxFace(): DynProcessor {
       };
     },
 
-    read: (ctx) => {
-      const fam = familyOf(ctx);
-      if (!fam) return {};
-      const out: Record<string, unknown> = {};
-      // Every row of the family, not only this face's: `rowStates` reads the modulation
-      // selector, which is on the amp face, to lock two rows beside it.
-      const type = effectiveInsertFx(ctx.model, ctx.plan, ctx.nodeId);
-      for (const d of insertFxParams(fam, type)) out[slotKey(fam, d.slot)] = rawOf(ctx, fam, d);
-      return out;
-    },
+    read: readSlots,
 
     // The family comes from the KEY, not from the plan. A device follow can replace the
     // effect while a slider is under the pointer, and the drag goes on firing at a row that
@@ -984,9 +1018,9 @@ function insFxFace(): DynProcessor {
       drawTransferCurve(c, g, tok, {
         out: companderResponse(v, fam, selector),
         // The reduction annotation `drawTransferCurve` hangs off the top measures how far
-        // the curve sits below unity once the processor's own make-up is taken out. This
-        // block's Out Gain only ever attenuates, so there is none to take out.
-        gainDb: 0,
+        // the curve sits below unity once the gain it carries over its whole length is taken
+        // out — Out Gain, which moves the curve without compressing anything.
+        gainDb: companderGainDb(v, fam),
         loDb: CURVE_LO_DB,
       });
       // The two coordinates the curve's shape is BUILT from, named on the axis they live
