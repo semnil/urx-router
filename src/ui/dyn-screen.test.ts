@@ -785,6 +785,64 @@ describe("refresh", () => {
     expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
   });
 
+  // The EQ 1-knob's level is the gesture that drives a refetch on every step: the unit
+  // recomputes the band gains and the follow merges them into the plan while the slider is
+  // still held. With 1-knob on the band rows are reserved out of sight, so the plot is where
+  // those values show — and it has to follow them during the press, not only after it.
+  it("redraws the plot from values a follow lands while a press is held", () => {
+    host = dynHost();
+    const np = host.plan.nodeParams.ch1!;
+    np.eqOneKnob = { ...np.eqOneKnob, on: true };
+    const screen = new DynScreen(host.hooks);
+    screen.open(EQ, "ch1");
+    host.frame();
+    const level = host.box.querySelector<HTMLInputElement>("#dyn-oneknob-level")!;
+    level.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+
+    // Merged in place, as the refetch does: the plan object is the one the press began on.
+    np.eqBands = (np.eqBands ?? []).map((b, i) => (i === 1 ? { ...b, gain: 9 } : b));
+    const from = host.canvas.ys.length;
+    screen.refresh(["ch1"]);
+    host.frame();
+    const held = host.canvas.ys.slice(from);
+    // Still the element under the pointer: the rebuild waits, the plot does not.
+    expect(host.box.querySelector("#dyn-oneknob-level")).toBe(level);
+    expect(held.length).toBeGreaterThan(0);
+
+    // …and what it drew is the curve the rebuild at the release draws from the same values.
+    const after = host.canvas.ys.length;
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    host.frame();
+    expect(host.box.querySelector("#dyn-oneknob-level")).not.toBe(level);
+    expect(host.canvas.ys.slice(after)).toEqual(held);
+  });
+
+  // A knob card's picture is its indicator, painted over a range that is not visible. The
+  // in-place pass moves the range, so the indicator has to move with it.
+  it("turns a knob card's indicator with a value a follow lands while a press is held", () => {
+    host = dynHost();
+    const fx = host.plan.nodeParams["bus.fx2"]?.fxEffect ?? {};
+    host.plan.nodeParams["bus.fx2"] = { ...host.plan.nodeParams["bus.fx2"], fxEffect: { ...fx, type: 1024 } };
+    const screen = new DynScreen(host.hooks);
+    screen.open(DYN_PROCESSORS.fx, "bus.fx2");
+    const rows = rowsByKey(host.box);
+    const held = rows.get("fx:delayHpf")!;
+    const other = rows.get("fx:delayLpf")!;
+    const rot = (input: HTMLInputElement): string =>
+      input.closest(".con-knob")!.querySelector<HTMLElement>(".ind")!.style.getPropertyValue("--rot");
+    held.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+
+    const before = rot(other);
+    const np = host.plan.nodeParams["bus.fx2"]!;
+    np.fxEffect = { ...np.fxEffect, params: { ...np.fxEffect?.params, delayLpf: Number(other.min) } };
+    screen.refresh(["bus.fx2"]);
+    expect(rowsByKey(host.box).get("fx:delayLpf")).toBe(other);
+    expect(other.value).toBe(other.min);
+    // The bottom of the knob's 270° sweep, where the range now sits.
+    expect(rot(other)).toBe("-135deg");
+    expect(rot(other)).not.toBe(before);
+  });
+
   it("does not rebuild on a release that follows no deferred refresh", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);

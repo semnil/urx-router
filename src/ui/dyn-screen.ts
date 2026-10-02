@@ -961,7 +961,9 @@ export class DynScreen {
 
   /** Write the current parameter values into the rows already on screen. Covers a
    *  device-side change arriving mid-gesture; anything structural (which rows exist,
-   *  which are read-only) waits for the rebuild. */
+   *  which are read-only) waits for the rebuild. A knob card's indicator is turned with
+   *  its range, and the plot is redrawn from the same values — on the EQ with 1-knob on,
+   *  the plot is the only place the band values the unit recomputes are shown. */
   private syncValues(): void {
     // One read for the pass. This runs on the follow clock WHILE a control is held, and
     // `val` per input rebuilt the whole record per row — sixteen times on a band face.
@@ -976,10 +978,13 @@ export class DynScreen {
       if (!f) continue;
       const v = valOf(f);
       if (dynFromPos(f, Number(input.value)) !== v) input.value = String(dynToPos(f, v));
+      const ind = input.closest(".con-knob")?.querySelector<HTMLElement>(".ind");
+      if (ind) turnKnob(ind, input);
       const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
       if (out) setLevelText(out, this.valueText(f, v));
     }
     this.syncCap();
+    this.markPlotDirty();
   }
 
   /**
@@ -2086,22 +2091,16 @@ export class DynScreen {
     input.value = String(dynToPos(f, value));
     input.dataset.dyn = f.key;
     input.setAttribute("aria-label", label);
-    const lo = Number(input.min);
-    const hi = Number(input.max);
-    const turn = (pos: number): void => {
-      const frac = hi > lo ? (pos - lo) / (hi - lo) : 0;
-      ind.style.setProperty("--rot", `${-135 + frac * 270}deg`);
-    };
     const show = (v: number): void => {
       const text = this.valueText(f, v);
       setLevelText(val, text);
       input.setAttribute("aria-valuetext", text);
     };
     show(value);
-    turn(Number(input.value));
+    turnKnob(ind, input);
     input.addEventListener("input", () => {
       const pos = Number(input.value);
-      turn(pos);
+      turnKnob(ind, input);
       const v = dynFromPos(f, pos);
       show(v);
       this.setVals({ [f.key]: v });
@@ -2334,6 +2333,15 @@ function loadSels(): Record<string, number> {
     if (typeof v === "number") out[k] = v;
   }
   return out;
+}
+
+/** A knob card's indicator angle for its range's current position: the same 270° sweep the
+ *  console's knobs use, written to the same custom property. */
+function turnKnob(ind: HTMLElement, input: HTMLInputElement): void {
+  const lo = Number(input.min);
+  const hi = Number(input.max);
+  const frac = hi > lo ? (Number(input.value) - lo) / (hi - lo) : 0;
+  ind.style.setProperty("--rot", `${-135 + frac * 270}deg`);
 }
 
 export function channelLabel(model: DeviceModel, nodeId: string): string {
