@@ -1907,8 +1907,15 @@ neither the row it began on nor the fresh one under the still-held pointer, whic
 driving — and once it ends the rows are drawn again from what the plan holds. The hold in turn asks for the row that is on screen
 rather than the one the gesture started on, since a rebuild may already have replaced it. A rebuilt row
 keeps whatever `disabled` state the rebuild gave it — COMP's 1-knob coming on hands threshold / ratio /
-gain / knee to the device and locks those rows — and it does not get focus back, because the screen's own
-rebuild restores none.
+gain / knee to the device and locks those rows — and a row the rebuild locked does not get focus back.
+
+**Every rebuild of the screen carries keyboard focus** to the same control in the new box — a value row by
+the field it edits, a control with an id by that id, anything else by its place among the box's controls
+and what it is — the way the CONSOLE and the inspector carry theirs. That includes the operator's own ON/OFF
+press or select change, which rebuild the column under the focused control. The place is counted over every
+control the box builds, tab stop or not, so a lock that takes the cap or the plot out of the tab order does
+not move the controls after it. Focus is dropped where the control is gone or locked, and where the plan was
+**replaced**: the control it was on belongs to a plan that is gone.
 
 The inspector defers on the same signal, through the gate that already waits out an IME composition and
 an open `<select>` picker. That one is worth naming because a held row is the only one of the three with

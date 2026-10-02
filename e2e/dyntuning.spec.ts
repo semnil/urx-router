@@ -763,6 +763,18 @@ test.describe("comp", () => {
     await expect(paramRow(page, "Threshold").locator("input[type=range]")).toBeEnabled();
   });
 
+  // The press rebuilds the column under the focused button. From the keyboard, focus stays on
+  // the switch that was operated rather than falling to the document.
+  test("keeps keyboard focus on the 1-knob switch it rebuilds", async ({ page }) => {
+    await openFromInspector(page, "ch1", "comp");
+    const on = oneKnobSwitch(page).locator("button", { hasText: "ON" });
+    await on.focus();
+    await page.keyboard.press("Space");
+    await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
+    await expect(on).toHaveAttribute("aria-pressed", "true");
+    await expect(on).toBeFocused();
+  });
+
   test("does not move under the pointer that toggles 1-knob", async ({ page }) => {
     await openFromInspector(page, "ch1", "comp");
     // The switch's own row inside the 1-knob section, never the level row below it.

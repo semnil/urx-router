@@ -1084,10 +1084,8 @@ describe("refresh", () => {
 
   // The other order, and the one an ordinary gesture takes: the press ends while the app is
   // still in the background, and the refresh lands at that release. What must not happen is
-  // a row left disabled by the treatment, or focus parked on the node that was replaced.
-  // Focus is not moved to the new row: no rebuild in this app restores focus (the CONSOLE
-  // and the inspector do not either), and doing it on this path alone would make this the
-  // one repaint that behaves differently.
+  // a row left disabled by the treatment, or focus parked on the node that was replaced: the
+  // rebuild carries focus to the row that replaced it, as every rebuild of this screen does.
   it("leaves no disabled row and no focus on a detached node when a release lands a deferred refresh", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
@@ -1105,7 +1103,7 @@ describe("refresh", () => {
     expect(now).not.toBe(row);
     expect(now.disabled).toBe(false);
     expect(row.isConnected).toBe(false);
-    expect(document.activeElement).not.toBe(row);
+    expect(document.activeElement).toBe(now);
   });
 
   // The wiring itself, on the path with no rebuild racing it: the row this screen builds
@@ -1185,6 +1183,77 @@ describe("refresh", () => {
 // The panel reads in the order the unit's own screen reads it, and the 1-knob is a stage
 // above it rather than three rows inside it. Both are rules over every screen; COMP is
 // where they were broken, so it is where they are pinned.
+// Every rebuild replaces every element in the box, so focus is carried across it — to the
+// same control in the new box — while the plan is the one the screen was drawn from. The
+// CONSOLE and the inspector carry theirs the same way.
+describe("keyboard focus across a rebuild", () => {
+  it("stays on a value row a device follow rebuilds under it", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const before = rowsByKey(host.box).get("threshold")!;
+    before.focus();
+    host.plan.nodeParams.ch1 = { ...host.plan.nodeParams.ch1, gate: { threshold: -30 } };
+    screen.refresh(["ch1"]);
+    const after = rowsByKey(host.box).get("threshold")!;
+    expect(after).not.toBe(before);
+    expect(document.activeElement).toBe(after);
+  });
+
+  // The commonest rebuild is the operator's own: an ON/OFF press. Here it also locks the cap,
+  // which takes it out of the tab order ahead of the button — a position counted over tab
+  // stops alone would then land on the button after this one.
+  it("stays on the ON/OFF button the operator pressed, through the lock it applies", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const knobOn = (): HTMLButtonElement =>
+      [...host.box.querySelectorAll<HTMLElement>(".prefs-section")]
+        .find((s) => s.querySelector("h3")?.textContent === t().inspector.oneKnob)!
+        .querySelector<HTMLButtonElement>(".prefs-row button")!;
+    const pressed = knobOn();
+    expect(pressed.textContent).toBe(t().inspector.on);
+    pressed.focus();
+    pressed.click();
+    expect((host.plan.nodeParams.ch1?.comp as { oneKnob?: boolean }).oneKnob).toBe(true);
+    expect(pressed.isConnected).toBe(false);
+    expect(host.box.querySelector("#dyn-threshold-cap")!.getAttribute("tabindex")).toBe("-1");
+    expect(document.activeElement).toBe(knobOn());
+  });
+
+  it("stays on a select whose change rebuilt the screen", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(EQ, "ch1");
+    // The band's filter type, in Parameters: LOW is a band that has one.
+    const typeSelect = (): HTMLSelectElement =>
+      [...host.box.querySelectorAll<HTMLElement>(".prefs-row")]
+        .find((r) => r.querySelector(".lbl")?.textContent === t().inspector.type)!
+        .querySelector<HTMLSelectElement>("select")!;
+    const before = typeSelect();
+    expect(before.disabled).toBe(false);
+    before.focus();
+    before.value = [...before.options].find((o) => o.value !== before.value)!.value;
+    before.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(before.isConnected).toBe(false);
+    expect(document.activeElement).toBe(typeSelect());
+  });
+
+  // The control focus was on belongs to the plan that was replaced; carrying it would hand
+  // the keyboard a control of a document the operator did not reach it in.
+  it("drops focus when the plan was replaced", () => {
+    host = dynHost();
+    let plan = host.plan;
+    const screen = new DynScreen({ ...host.hooks, getPlan: () => plan });
+    screen.open(GATE, "ch1");
+    rowsByKey(host.box).get("threshold")!.focus();
+    plan = structuredClone(host.plan);
+    screen.refresh();
+    expect(screen.isOpen()).toBe(true);
+    expect(host.box.contains(document.activeElement)).toBe(false);
+  });
+});
+
 describe("the compressor's panel", () => {
   /** The parameter rows' visible labels, in the order they were built. */
   const labels = (): string[] =>

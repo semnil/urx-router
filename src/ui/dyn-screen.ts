@@ -35,6 +35,7 @@ import {
   holdAppInert,
   holdInertOnBlur,
   onInertHoldsEnd,
+  preserveFocus,
   settingsRow,
   settingsSection,
   sliderRow,
@@ -922,7 +923,8 @@ export class DynScreen {
     // the plan that took its place without waiting for the press, and what the press drives
     // writes nothing until it ends.
     const plan = this.hooks.getPlan();
-    if (plan !== this.drawnFor) {
+    const replaced = plan !== this.drawnFor;
+    if (replaced) {
       this.drawnFor = plan;
       this.endDrag?.();
       this.stalePress = this.grabbed;
@@ -942,7 +944,9 @@ export class DynScreen {
       this.syncValues();
       return;
     }
-    this.render();
+    // Keyboard focus is carried while the plan is the one the screen was drawn from, and
+    // dropped when it was replaced: the control it was on belongs to a plan that is gone.
+    this.render(!replaced);
     this.measure();
     // render() replaced the canvas, so the size watch has to be re-attached to it.
     this.watchPlotSize();
@@ -1433,11 +1437,21 @@ export class DynScreen {
 
   // ---------------------------------------------------------------- rendering
 
-  private render(): void {
+  /** Rebuild the box. `carryFocus` hands keyboard focus from a control in the old box to
+   *  the same control in the new one — the rebuild replaces every element, so focus would
+   *  otherwise fall to the body on every rebuild, the operator's own ON/OFF press included. */
+  private render(carryFocus = true): void {
     const m = t();
     const proc = this.proc;
     if (!proc) return;
     const g = m.dynTuning;
+    const restoreFocus = carryFocus
+      ? preserveFocus(
+          this.box,
+          (active) => this.focusMark(active),
+          (mark) => this.focusTarget(mark),
+        )
+      : null;
     this.readTokens();
     this.box.replaceChildren();
     this.bars.clear();
@@ -1497,6 +1511,47 @@ export class DynScreen {
     this.box.append(title, grid, actions);
     this.syncCap();
     this.paint();
+    restoreFocus?.();
+  }
+
+  /**
+   * Where keyboard focus sits in the box, as the key the rebuilt box is searched by: a value
+   * row by the field it edits, a control with an id by that id, and anything else by its
+   * position among the box's controls plus the classes that say what it is.
+   *
+   * The position is counted over every control the box builds, tab stop or not, so a lock
+   * that takes the cap or the plot out of the tab order does not move the controls after it.
+   * The classes leave out the ones that say what STATE a control is in — a pressed choice,
+   * a lock, a MIDI arming — since pressing a choice is exactly what rebuilds it.
+   */
+  private focusMark(active: HTMLElement): FocusMark | null {
+    const idx = screenControls(this.box).indexOf(active);
+    if (idx < 0) return null;
+    return {
+      dyn: active instanceof HTMLInputElement ? active.dataset.dyn : undefined,
+      id: active.id || undefined,
+      idx,
+      shape: controlShape(active),
+    };
+  }
+
+  /** The control a focus mark names in the rebuilt box, or null — dropping the focus is
+   *  the outcome where the control is gone, or locked by the rebuild. A field key that no
+   *  longer has a row names nothing, rather than falling through to a position. */
+  private focusTarget(mark: FocusMark): HTMLElement | null {
+    let hit: HTMLElement | null | undefined;
+    if (mark.dyn !== undefined) {
+      hit = [...this.box.querySelectorAll<HTMLInputElement>("input[data-dyn]")].find((i) => i.dataset.dyn === mark.dyn);
+    } else {
+      const byId = mark.id === undefined ? null : document.getElementById(mark.id);
+      if (byId && this.box.contains(byId)) hit = byId;
+      else {
+        const at = screenControls(this.box)[mark.idx];
+        if (at && controlShape(at) === mark.shape) hit = at;
+      }
+    }
+    if (!hit || (hit as HTMLButtonElement).disabled || hit.getAttribute("aria-disabled") === "true") return null;
+    return hit;
   }
 
   private displayColumn(proc: DynProcessor): HTMLElement {
@@ -2360,6 +2415,30 @@ function loadSels(): Record<string, number> {
     if (typeof v === "number") out[k] = v;
   }
   return out;
+}
+
+/** Where keyboard focus was in a tuning screen's box, as `focusMark` records it. */
+interface FocusMark {
+  dyn?: string;
+  id?: string;
+  idx: number;
+  shape: string;
+}
+
+/** Every control a tuning screen's box builds, in document order, whether or not it is a tab
+ *  stop right now. */
+function screenControls(box: HTMLElement): HTMLElement[] {
+  return [...box.querySelectorAll<HTMLElement>("input, select, button, canvas, [tabindex]")];
+}
+
+/** Classes a control carries for the state it is in rather than for what it is. */
+const STATE_CLASSES: ReadonlySet<string> = new Set(["on", "locked", "midi-armed", "midi-mapped"]);
+
+/** What a control is, for telling a rebuilt control from another one in its place: the
+ *  element and its classes, less the state ones. */
+function controlShape(el: HTMLElement): string {
+  const cls = [...el.classList].filter((c) => !STATE_CLASSES.has(c)).sort();
+  return `${el.tagName}.${cls.join(".")}`;
 }
 
 /** A knob card's indicator angle for its range's current position: the same 270° sweep the
