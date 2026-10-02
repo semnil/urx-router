@@ -1255,14 +1255,18 @@ def family_slots(param_space):
     return out
 
 
-def leaf_rule_bounds(node_id, params, rules, param_space, takes_insert, bounded):
+def leaf_rule_bounds(node_id, params, rules, param_space, takes_insert, dropped, bounded):
     """The values the load moves to the value the write sends (core/plan-validate.ts
     `paramRangeProblems`, by `nodeLeafRules`): each leaf models.json `leafRules` lists for the
     node, and each insert-FX engine key under the rule of the family it names — a bare slot
-    under the family the selector names, the key it is re-keyed to on load."""
+    under the family the selector names, the key it is re-keyed to on load. A leaf the write
+    never sends (`unsent`) is removed instead."""
     for path, rule in (rules or {}).items():
         value = value_at(params, leaf_steps(path))
         if not is_number(value):
+            continue
+        if rule.get("unsent"):
+            dropped.append((f"{node_id}.{path}", "the write never sends this key here, so the load removes it"))
             continue
         admitted = admit(rule, value)
         if admitted != value:
@@ -1358,7 +1362,7 @@ def node_param_warnings(
             if not gone:
                 fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
         leaf_rule_bounds(
-            node_id, params, (leaf_rules or {}).get(node_id), param_space, takes_insert_fx(node_id), bounded
+            node_id, params, (leaf_rules or {}).get(node_id), param_space, takes_insert_fx(node_id), dropped, bounded
         )
         hi_z_bounds(node_id, params, hi_z, bounded)
         for path, why in dropped:

@@ -259,6 +259,10 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
           np,
         );
       if (typeof stored !== "number" || !Number.isFinite(stored)) continue;
+      if ("unsent" in rule) {
+        out.push({ reason: "paramRange", node, where: "node", key: path, stored, action: "drop" });
+        continue;
+      }
       const bound = admitLeaf(rule, stored);
       if (bound !== stored)
         out.push({ reason: "paramRange", node, where: "node", key: path, stored, action: "bound", bound });

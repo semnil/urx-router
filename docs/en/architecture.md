@@ -127,7 +127,8 @@ carries a one-line map of the same directories and points here.
   an on/off does, anything but a group where a group does (a number where an on/off belongs is converted
   instead, below). Every node-param leaf the write bounds is bounded the same way, to the value the write
   sends, by the one rule the write bounds it by (`nodeLeafRules` / `admitLeaf` in `translate.ts`) — an enum
-  off its menu to the menu's default. That reaches the oscillator, which is scene-external: under the
+  off its menu to the menu's default — and a leaf the write never sends at all, a filter type on one of the
+  PEQ's two fixed-peaking bands, is dropped. That reaches the oscillator, which is scene-external: under the
   Scene-only device scope the write does not carry it, while the load still moves it and says so. A drop of
   the effect OBJECT is the one
   repair that changes what is sent, and in the safe direction — see "An FX channel the plan does not

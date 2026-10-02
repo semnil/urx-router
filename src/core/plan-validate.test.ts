@@ -19,6 +19,7 @@ import {
 import { trackCountAtRate } from "./constraints";
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
 import { nodeLeafRules, planToCommands } from "./control/translate";
+import { eqResponse } from "./eq-response";
 import { insertFxDriverSlots, insertFxFamilyOf, insertFxWritableSlots } from "./control/insert-fx-effect";
 import { sendPansToSources, validatePlan } from "./routing";
 import { deserialize, emptyPlan, ensureFixedConnections, fixedConnection, PLAN_VERSION, serialize } from "./plan";
@@ -805,6 +806,40 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
     );
   });
 
+  // A band the write bounds (and a LOW / HIGH type off its menu, sent as Shelving) used to load
+  // as written, so the response plot drew one filter while the unit ran another — and a Q of 0
+  // blanked the whole curve. A type parked on a mid band is never sent, and goes.
+  it("bounds an EQ band to what the write sends, and drops a type on a fixed-peaking band", () => {
+    const factory = defaultPlan("URX44V").nodeParams.ch1!.eqBands!;
+    const plan = load({
+      ch1: {
+        eqBands: [
+          { ...factory[0], type: 7, gain: 30, freq: 30000, q: 0 },
+          { ...factory[1], type: 2 },
+          factory[2],
+          factory[3],
+        ],
+      },
+    });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${p.action === "drop" ? "(dropped)" : String(p.bound)}`)
+        .sort(),
+    ).toEqual(
+      [
+        "ch1.eqBands.0.type 7 -> 1",
+        "ch1.eqBands.0.q 0 -> 0.5",
+        "ch1.eqBands.0.freq 30000 -> 20000",
+        "ch1.eqBands.0.gain 30 -> 18",
+        "ch1.eqBands.1.type 2 -> (dropped)",
+      ].sort(),
+    );
+    applyParamRange(plan, paramRangeProblems(plan));
+    expect(plan.nodeParams.ch1!.eqBands![1]).not.toHaveProperty("type");
+    const curve = eqResponse(plan.nodeParams.ch1!.eqBands!.map((b, index) => ({ ...b, index }) as never));
+    expect(Number.isFinite(curve(1000))).toBe(true);
+  });
+
   // The claim the repair rests on: what the load writes down is what the write was already
   // sending, for every leaf of every node, in each shape a document can be outside it in.
   it("never changes what the write path sends, and settles in one pass", () => {
@@ -829,17 +864,19 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
             typeof extra.insertFx === "number" ? { ...at, insertFxParams: engineSlotsOf(extra.insertFx) } : at;
           for (const [path, rule] of nodeLeafRules(model, node.id, withSlots)) {
             const shapes: [string, number, boolean][] =
-              "menu" in rule
-                ? [
-                    ["off the menu", Math.max(...rule.menu) + 1, true],
-                    ["between", rule.menu[0] + 0.5, true],
-                  ]
-                : [
-                    ["below", rule.min - 1.25, true],
-                    ["above", rule.max + 1.25, true],
-                    // Inside a plain window there is nothing to move.
-                    ["between", (rule.min + rule.max) / 2 + 0.3, rule.integer === true || rule.steps !== undefined],
-                  ];
+              "unsent" in rule
+                ? [["unsent", 1, true]]
+                : "menu" in rule
+                  ? [
+                      ["off the menu", Math.max(...rule.menu) + 1, true],
+                      ["between", rule.menu[0] + 0.5, true],
+                    ]
+                  : [
+                      ["below", rule.min - 1.25, true],
+                      ["above", rule.max + 1.25, true],
+                      // Inside a plain window there is nothing to move.
+                      ["between", (rule.min + rule.max) / 2 + 0.3, rule.integer === true || rule.steps !== undefined],
+                    ];
             for (const [shape, v, outside] of shapes) {
               const np = structuredClone(withSlots) as Record<string, unknown>;
               const keys = path.split(".");

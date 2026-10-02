@@ -74,7 +74,7 @@ const warningPath = (line) => {
  *  where a value the load moves is a different answer. */
 const removalPath = (line) => {
   const m = /^WARNING: node param (.+?): the app drops this value on load/.exec(line);
-  return m ? m[1] : null;
+  return m ? m[1].replace(/\[(\d+)\]/g, ".$1") : null;
 };
 
 /** The paths the tool says the app removes. Node-level advice (selector warnings, "verify on
@@ -1162,8 +1162,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     const { deserializeDocument } = await import("../src/core/plan.ts");
     const { paramRangeProblems: prp, applyParamRange } = await import("../src/core/plan-validate.ts");
 
+    // An array is walked by index, since a band's own key can be what the load removes.
     const removed = (wrote, got, path, out) => {
-      if (wrote === null || typeof wrote !== "object" || Array.isArray(wrote)) return out;
+      if (wrote === null || typeof wrote !== "object") return out;
       for (const k of Object.keys(wrote)) {
         const here = path ? `${path}.${k}` : k;
         const has = got !== null && typeof got === "object" && Object.prototype.hasOwnProperty.call(got, k);
@@ -1241,6 +1242,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       '{"bus.stream":{"delay":true}}',
       '{"bus.mon1":{"phonesLevel":true}}',
       '{"ch3":{"hiZ":{"a":1},"phantom":true}}',
+      // A filter type on a fixed-peaking band, which the write never sends.
+      '{"ch1":{"eqBands":[{},{"type":2},{},{}]}}',
+      '{"bus.mix1":{"eqBands":[{},{},{"type":0},{}]}}',
       // …and the documents nothing may be said about, so a checker that reported everything
       // would fail here rather than passing every row above.
       '{"ch1":{"gate":{"threshold":-20}}}',
@@ -1856,8 +1860,14 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         "bus.stereo": { ...factory.nodeParams["bus.stereo"], insertFx: 1792, insertFxParams: { 25: 99 } },
       };
       const corpus = [
-        ["every bounded leaf above its rule", moved((r) => (r.menu ? Math.max(...r.menu) + 1 : r.max + 1.25))],
-        ["every bounded leaf below its rule", moved((r) => (r.menu ? Math.min(...r.menu) - 1 : r.min - 1.25))],
+        [
+          "every bounded leaf above its rule",
+          moved((r) => (r.unsent ? undefined : r.menu ? Math.max(...r.menu) + 1 : r.max + 1.25)),
+        ],
+        [
+          "every bounded leaf below its rule",
+          moved((r) => (r.unsent ? undefined : r.menu ? Math.min(...r.menu) - 1 : r.min - 1.25)),
+        ],
         [
           "every menu, integer or stepped leaf between two settings",
           moved((r) => (r.menu ? r.menu[0] + 0.5 : r.integer || r.steps ? (r.min + r.max) / 2 + 0.3 : undefined)),

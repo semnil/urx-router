@@ -1192,24 +1192,28 @@ function pushDynCommands(
  * (`plan-validate.ts` `paramRangeProblems`), so the plan, the screen and the wire read one
  * value.
  */
-export type LeafRule =
+export type BoundRule =
   { min: number; max: number; integer?: true; steps?: readonly number[] } | { menu: readonly number[]; def: number };
 
+/** A bound rule, or a leaf the write never sends at all (a filter type on a fixed-peaking band),
+ *  which the load removes. */
+export type LeafRule = BoundRule | { unsent: true };
+
 /** The value a rule admits for `v`, which is the value the write sends for it. */
-export function admitLeaf(rule: LeafRule, v: number): number {
+export function admitLeaf(rule: BoundRule, v: number): number {
   if ("menu" in rule) return rule.menu.includes(v) ? v : rule.def;
   const x = rule.integer ? Math.round(v) : v;
   const bounded = x < rule.min ? rule.min : x > rule.max ? rule.max : x;
   return rule.steps ? rule.steps[nearestStepIndex(rule.steps, bounded)] : bounded;
 }
 
-const menuRule = (options: readonly { value: number }[], def: number): LeafRule => ({
+const menuRule = (options: readonly { value: number }[], def: number): BoundRule => ({
   menu: options.map((o) => o.value),
   def,
 });
 
-const dynRule = (f: DynField): LeafRule => ({ min: f.min, max: f.max, ...(f.steps ? { steps: f.steps } : {}) });
-const rawRule = (min: number, max: number): LeafRule => ({ min, max, integer: true });
+const dynRule = (f: DynField): BoundRule => ({ min: f.min, max: f.max, ...(f.steps ? { steps: f.steps } : {}) });
+const rawRule = (min: number, max: number): BoundRule => ({ min, max, integer: true });
 
 /** An insert-FX engine key's family and slot: the family its own key names, or — for a bare
  *  slot number — the family the node's selector names. Null for a key that is neither. */
@@ -1259,6 +1263,17 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
         out.push([`ssmcs.eq.${band}.${f.key}`, rawRule(f.min, f.max)]);
       }
     }
+  }
+  const peq = inputEq(model, nodeId, COMP_EQ_COMP_FIRST) ?? outputEq(nodeId);
+  for (const band of peq?.bands ?? []) {
+    const at = `eqBands.${band.index}`;
+    if (band.type === null) out.push([`${at}.type`, { unsent: true }]);
+    else
+      out.push([
+        `${at}.type`,
+        menuRule(band.name === "low" ? EQ_TYPE_LOW_OPTIONS : EQ_TYPE_HIGH_OPTIONS, EQ_TYPE_SHELVING),
+      ]);
+    for (const f of eqBandFields(band.index)) out.push([`${at}.${f.key}`, dynRule(f)]);
   }
   if (eqOneKnob(model, nodeId, COMP_EQ_COMP_FIRST)) {
     out.push(["eqOneKnob.type", menuRule(EQ_ONE_KNOB_TYPE_ALL_OPTIONS, EQ_ONE_KNOB_TYPE_DEFAULT)]);
@@ -1515,15 +1530,18 @@ function pushEqBandCommands(out: VdCommand[], ctrl: EqControl, bands: EqBand[]):
   for (const band of ctrl.bands) {
     const v = bands[band.index];
     if (!v) continue;
+    const [q, freq, gain] = eqBandFields(band.index).map(dynRule);
     for (const inst of ctrl.instances) {
       if (v.on !== undefined) out.push(rawCommand("EQ_BAND_ON", band.on, "bool", inst, v.on ? 1 : 0));
       if (v.type !== undefined && band.type !== null) {
         const opts = band.name === "low" ? EQ_TYPE_LOW_OPTIONS : EQ_TYPE_HIGH_OPTIONS;
         out.push(rawCommand("EQ_BAND_TYPE", band.type, "enum", inst, boundEnum(v.type, opts, EQ_TYPE_SHELVING)));
       }
-      if (v.q !== undefined) out.push(rawCommand("EQ_BAND_Q", band.q, "q", inst, v.q));
-      if (v.freq !== undefined) out.push(rawCommand("EQ_BAND_FREQ", band.freq, "eqFreq", inst, v.freq));
-      if (v.gain !== undefined) out.push(rawCommand("EQ_BAND_GAIN", band.gain, "eqGain", inst, v.gain));
+      if (v.q !== undefined) out.push(rawCommand("EQ_BAND_Q", band.q, "q", inst, admitLeaf(q, v.q)));
+      if (v.freq !== undefined)
+        out.push(rawCommand("EQ_BAND_FREQ", band.freq, "eqFreq", inst, admitLeaf(freq, v.freq)));
+      if (v.gain !== undefined)
+        out.push(rawCommand("EQ_BAND_GAIN", band.gain, "eqGain", inst, admitLeaf(gain, v.gain)));
     }
   }
 }

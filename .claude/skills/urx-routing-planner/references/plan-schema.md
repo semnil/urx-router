@@ -154,8 +154,9 @@ or inside a group — is written `true` / `false`: a number there loads converte
 - `pan` — output-bus master balance (STEREO / MIX), `-63` … `0` … `+63`. Absent =
   center. Distinct from a send's `pan`, which is a connection param.
 - `eqOn` (bool); `eqBands` — array of up to 4 `{ on, type, freq, q, gain }`
-  (freq Hz, q 0.50–16.00, gain ±18 dB; `type` is the filter-type enum on the
-  LOW/HIGH bands only).
+  (freq Hz 20–20000, q 0.50–16.00, gain ±18 dB; `type` is the filter-type enum —
+  0 Peaking / 1 Shelving / 2 HPF or LPF — on the LOW/HIGH bands only: a `type`
+  on one of the two mid bands is never sent, and the load removes it).
 - `eqOneKnob` — `{ on, type, level }` (type 0 Intensity / 1 Vocal / 2 Loudness;
   level 0–100). When on, the device drives the 4 bands, so do not also set
   `eqBands`.
@@ -319,7 +320,8 @@ write sends, and counted with the values moved: the `gate`, `comp` and `ducker` 
 windows (a COMP `ratio` to the nearest stop of its ladder), the `ssmcs` raws and the
 `insertFxParams` engine values to whole numbers inside their windows (an engine key by the family
 its own name gives, a bare slot by the one the selector names), the EQ 1-knob and COMP 1-knob
-levels to 0–100, the oscillator's `interval` to 1–30, and an enum off its menu — `compEqType`,
+levels to 0–100, the oscillator's `interval` to 1–30, an EQ band's `q`, `freq` and `gain` to
+their windows, and an enum off its menu — a LOW / HIGH band's `type`, `compEqType`,
 `recPoint`, `panBal`, `busType`, a COMP `knee`, an EQ 1-knob `type`, the oscillator's `mode`, the
 STREAMING delay's `frameRate` — to the menu's default, which is what the write sends for it.
 `plan_tool.py` warns about each one, from the rules `models.json` carries (`leafRules`). A

@@ -22,6 +22,10 @@ import { dynHost, pickBand } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import type { MidiLearnHooks } from "./midi-learn";
 import { deserialize, serialize } from "../core/plan";
+import { planProblems, prepareLoadedPlan } from "../core/plan-validate";
+import { EQ_TYPE_PASS } from "../core/control/params";
+import { defaultPlan } from "../models/initial-state";
+import { getModel } from "../models";
 import { setLang, t } from "../i18n";
 
 const EQ = DYN_PROCESSORS.eq;
@@ -323,6 +327,20 @@ describe("the filter type", () => {
     open();
     selectBand(1); // a mid band is fixed peaking
     expect(locked(t().inspector.q, PARAMS())).toBe(false);
+  });
+
+  // A document can park a type on a mid band, which the write never sends; the load removes
+  // it, so the band's Q and gain stay the operator's.
+  it("leaves a mid band's Q and gain editable in a document that parked a type there", () => {
+    const doc = JSON.parse(serialize(defaultPlan("URX44V")));
+    doc.nodeParams.ch1.eqBands[1] = { ...doc.nodeParams.ch1.eqBands[1], type: EQ_TYPE_PASS, gain: 6, q: 2 };
+    const plan = deserialize(JSON.stringify(doc));
+    prepareLoadedPlan(getModel("URX44V"), plan, planProblems(getModel("URX44V"), plan));
+    host = dynHost({ plan });
+    open();
+    selectBand(1);
+    expect(locked(t().inspector.q, PARAMS())).toBe(false);
+    expect(locked(t().inspector.eqGain, PARAMS())).toBe(false);
   });
 });
 
