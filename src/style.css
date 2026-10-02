@@ -4933,10 +4933,41 @@ button.consent-btn-primary {
   .gt-notes button[aria-pressed="true"],
   .menu-panel .menu-item[aria-checked="true"],
   .mw-learnbtn.on,
-  .con-panbtn.open {
+  .con-panbtn.open,
+  .view-tabs button[aria-pressed="true"] {
     background: Canvas;
     color: CanvasText;
     border: 3px double CanvasText;
+  }
+  /* The same rim on two controls that must not change size with their state. The
+     Follow USB badge gives the rim's extra width back out of its padding, so the
+     toolbar does not shift when the state lands; the popover row takes the rim as an
+     inset outline, so the rows below it stay where they are. */
+  .follow-usb[data-state="on"] {
+    background: Canvas;
+    color: CanvasText;
+    border: 3px double CanvasText;
+    padding: 3px 8px;
+  }
+  .con-ifxpop .irow.active {
+    background: Canvas;
+    color: CanvasText;
+    outline: 3px double CanvasText;
+    outline-offset: -3px;
+  }
+
+  /* A state drawn only as a filled dot: the fill is a system colour, which the mode
+     keeps, and the unlit LED keeps a rim so its place still shows. */
+  .sec-led {
+    border: 1px solid CanvasText;
+  }
+  .sec-led.on,
+  .prefs-row.dirty .lblc::before,
+  .udk-row.dirty .knob::before,
+  .midi-target.midi-mapped::before,
+  #dyn-screen-box .prefs-row.midi-mapped-row::before,
+  .con-sh .dots i {
+    background: CanvasText;
   }
 
   /* Anything whose job is to point at a position: the filled bar becomes an

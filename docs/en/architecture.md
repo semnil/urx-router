@@ -1101,7 +1101,9 @@ from them. Nothing in it touches a declaration used outside the query, so the or
 pixel-identical.
 
 - **An outline.** An engaged control takes `3px double CanvasText`, a weight measured to keep its three
-  pixel rows distinct under the system palette (the other widths of a double border were not measured). Anything whose job is to mark a position or a path — the knob
+  pixel rows distinct under the system palette (the other widths of a double border were not measured).
+  Two controls take it without changing size: the FOLLOW USB badge gives the rim's extra width back out
+  of its padding, and the INS FX popover's held row draws it as an inset outline. Anything whose job is to mark a position or a path — the knob
   pointer, the fader and mini-fader cap bars, the 0-dB lines, the slot each cap rides in, and the
   parameter sliders' track — trades its fill for an outline of the same geometry.
 - **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
@@ -1115,7 +1117,10 @@ A third mechanism exists but is narrow: a **system** colour may still be used as
 and the slider thumbs take `background: Canvas` for one reason only — to keep occluding the track they
 ride over the way an opaque handle does in the ordinary themes, which is the layering the 0-dB rule is
 written against. An *author* colour cannot be used this way; the mode replaces it. An outlined track
-without this is worse than no rule at all: the line reads straight through the handle.
+without this is worse than no rule at all: the line reads straight through the handle. The status dots
+are the other use: a section's ON LED, Device setup's pending-edit dot, learn mode's already-mapped dot
+and the collapsed SENDS header's active-send dots are a fill and nothing else, so each paints
+`CanvasText`, and the unlit LED keeps a `CanvasText` rim so its place still shows.
 
 Two traps are worth stating.
 

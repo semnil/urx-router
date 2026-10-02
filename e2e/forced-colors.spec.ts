@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "./fixtures";
+import { LIVE_COMMANDS, stubTauriDevice } from "./tauri-stub";
 
 // Windows high contrast (`forced-colors: active`). Chromium only, which the app
 // tier already is — WebView2 is the engine that ships, and its own answer is not
@@ -171,6 +172,77 @@ test("an engaged control stays distinguishable from an idle one in forced colors
   // in this mode. If this ever stops being true the assertion above is still
   // correct, but the justification in the CSS comment has moved.
   expect(on.background).toBe(off.background);
+});
+
+// The engaged states the shared list did not name. Each is compared with its idle twin
+// on the same surface, since the mode forces both to the same background.
+test("the view tab, the INS FX popover's held row and a section's ON LED keep their state", async ({ page }) => {
+  const look = (el: Locator) =>
+    el.evaluate((node) => {
+      const s = getComputedStyle(node);
+      const r = node.getBoundingClientRect();
+      return {
+        border: s.borderTopStyle,
+        outline: s.outlineStyle,
+        background: s.backgroundColor,
+        height: r.height,
+      };
+    });
+
+  await page.emulateMedia({ forcedColors: "active" });
+  const pressedTab = await look(page.locator("#btn-view-graph"));
+  const idleTab = await look(page.locator("#btn-view-console"));
+  expect(pressedTab.border).toBe("double");
+  expect(idleTab.border).not.toBe("double");
+
+  // The factory plan's CH 1 holds no insert effect, so its popover's held row is No
+  // Effect, and every other row is idle.
+  await page.click("#btn-view-console");
+  const ch1 = strip(page, "CH 1");
+  await ch1.locator(".con-ifxopen").click();
+  const pop = page.locator(".con-ifxpop");
+  await expect(pop).toBeVisible();
+  const held = await look(pop.locator(".irow.active"));
+  const idleRow = await look(pop.locator(".irow:not(.active):not(.off)").first());
+  expect(held.outline).toBe("double");
+  expect(idleRow.outline).not.toBe("double");
+  // Drawn inside the row, so the held row is the height every other row is.
+  expect(held.height).toBe(idleRow.height);
+  await page.keyboard.press("Escape");
+
+  // A section's ON LED is a dot with nothing but its fill: CH 1's EQ is on in the factory
+  // plan and its GATE is off, so one inspector carries both.
+  await page.click("#btn-view-graph");
+  await page.locator('#graph-host g.node[data-id="ch1"]').click();
+  const led = (title: string) =>
+    page.locator("#inspector .insp-section summary", { hasText: new RegExp(`^${title}$`) }).locator(".sec-led");
+  const on = await look(led("EQ"));
+  const off = await look(led("GATE"));
+  expect(on.background).not.toBe(off.background);
+  expect(off.border, "the unlit LED keeps a rim").toBe("solid");
+});
+
+// The badge sits in the toolbar beside the rate it governs, so its state must not move
+// the controls around it: the rim's extra width comes out of its padding.
+test("Follow USB on keeps the badge's size and shows its state", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS, values: { 766: 48000, 848: 1 } });
+  await page.goto("/");
+  const badge = page.locator("#follow-usb");
+  await badge.click();
+  await expect(badge).toHaveAttribute("data-state", "on");
+  const box = async () => {
+    const r = await badge.evaluate((el) => {
+      const b = el.getBoundingClientRect();
+      return { w: b.width, h: b.height, border: getComputedStyle(el).borderTopStyle };
+    });
+    return r;
+  };
+  const normal = await box();
+  await page.emulateMedia({ forcedColors: "active" });
+  const forced = await box();
+  expect(forced.border).toBe("double");
+  expect(forced.w).toBe(normal.w);
+  expect(forced.h).toBe(normal.h);
 });
 
 test("a position indicator survives as a shape, not as a fill", async ({ page }) => {
