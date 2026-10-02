@@ -179,6 +179,25 @@ describe.skipIf(!python)("plan_tool.py's output", () => {
     expect(r.stdout).toContain("model: URX44Vé—");
   });
 
+  // The app's loader drops one leading byte-order mark, so a document saved with one has to
+  // read the same here as it does there.
+  it("reads a document behind a byte-order mark as the app does", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const dir = mkdtempSync(join(tmpdir(), "urx-plan-tool-bom-"));
+    const text = JSON.stringify(doc({ type: 0, params: { revxLpf: 40 } }));
+    const run = (body) => {
+      const file = join(dir, "plan.json");
+      writeFileSync(file, body);
+      return spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    };
+    expect(() => deserializeDocument("\uFEFF" + text)).not.toThrow();
+    const plain = run(text);
+    const bom = run("\uFEFF" + text);
+    expect(bom.status, bom.stderr).toBe(0);
+    expect(bom.stdout).toBe(plain.stdout);
+    expect(bom.stderr).toBe(plain.stderr);
+  });
+
   it("writes a warning's dash as the character, not as its escape", () => {
     const r = validate({ ...doc({}), connections: "x" });
     expect(r.status, r.stdout).toBe(0);

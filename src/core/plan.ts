@@ -512,7 +512,9 @@ export function deserialize(text: string): Plan {
 }
 
 export function deserializeDocument(text: string): PlanDocument {
-  const data = JSON.parse(text) as Record<string, unknown>;
+  // One leading byte-order mark is dropped: a desktop read keeps it and a browser read does
+  // not, and every entry point reaches this function.
+  const data = JSON.parse(text.startsWith("﻿") ? text.slice(1) : text) as Record<string, unknown>;
   if (data.format !== PLAN_FORMAT) {
     throw new PlanError("notPlanFile");
   }

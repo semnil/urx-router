@@ -1288,7 +1288,8 @@ def main(argv=None):
     pu.add_argument("--base", default=DEFAULT_BASE, help="demo base URL")
     args = ap.parse_args(argv)
 
-    with open(args.plan, encoding="utf-8") as fh:
+    # utf-8-sig drops one leading byte-order mark, as the app's loader does.
+    with open(args.plan, encoding="utf-8-sig") as fh:
         plan = json.load(fh)
     models = load_models()
     problems, warnings = validate(plan, models)

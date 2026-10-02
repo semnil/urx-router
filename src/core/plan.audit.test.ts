@@ -240,6 +240,14 @@ describe("deserialize tolerance to malformed documents", () => {
   it("throws on a syntactically invalid JSON string (JSON.parse propagates)", () => {
     expect(() => deserialize("{ not json")).toThrow();
   });
+
+  // A file read on the desktop keeps a leading byte-order mark, which JSON.parse refuses,
+  // while a browser read strips it — one document, two answers by entry point.
+  it("loads a document behind one leading byte-order mark, and refuses a second", () => {
+    const plan = emptyPlan("URX44V");
+    expect(deserialize("\uFEFF" + serialize(plan))).toEqual(deserialize(serialize(plan)));
+    expect(() => deserialize("\uFEFF\uFEFF" + serialize(plan))).toThrow();
+  });
 });
 
 describe("ensureFixedConnections idempotency across models", () => {
