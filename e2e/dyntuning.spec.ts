@@ -406,6 +406,31 @@ test("a value row stops following the pointer once the window is gone", async ({
   expect(await value()).not.toBe(dragged);
 });
 
+// Escape closes the screen from the keyboard while the mouse button is still down on the cap.
+// The drag ends with the screen: the moves that follow, button still held, write nothing —
+// the threshold the reopened screen reads is the one the cap had when Escape was pressed.
+test("Escape mid-drag ends the cap's drag with the screen", async ({ page }) => {
+  await openFromInspector(page, "ch1");
+  const cap = screenBox(page).locator("#dyn-threshold-cap");
+  const box = (await cap.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + 30, { steps: 3 });
+  const dragged = await cap.getAttribute("aria-valuenow");
+  // The premise: the drag moved the value before Escape.
+  expect(dragged).not.toBe("-50");
+
+  await page.keyboard.press("Escape");
+  await expect(screenBox(page)).toBeHidden();
+  await page.mouse.move(x, y + 90, { steps: 3 });
+  await page.mouse.up();
+
+  await openFromInspector(page, "ch1");
+  await expect(screenBox(page).locator("#dyn-threshold-cap")).toHaveAttribute("aria-valuenow", dragged!);
+});
+
 test("prints — for a tap that has not reported, never a floor value", async ({ page }) => {
   await openFromInspector(page, "ch1");
   // Not live: no frame has arrived, and a GR of 0 dB would claim the gate is

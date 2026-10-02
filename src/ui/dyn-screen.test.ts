@@ -753,18 +753,76 @@ describe("refresh", () => {
   });
 
   // The same verdict has to be reached before the deferral, or a screen held open
-  // by a pointer would keep writing into a bank the plan no longer emits.
-  it("closes on a vanished processor even while a pointer is down", () => {
+  // by a pointer would keep writing into a bank the plan no longer emits. And the close
+  // has to end the drag that pointer is making: the cap keeps its capture otherwise, and
+  // every captured move writes the threshold into a bank nothing emits.
+  it("closes on a vanished processor even while a pointer is down, and ends the drag", () => {
     host = dynHost();
     let present = true;
     const vanishing = { ...GATE, bind: (ctx: Parameters<typeof GATE.bind>[0]) => (present ? GATE.bind(ctx) : null) };
     const screen = new DynScreen(host.hooks);
     screen.open(vanishing, "ch1");
-    host.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    const cap = host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+    const at = (type: string, clientY: number): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, clientY, pointerId: 1 });
+    cap.dispatchEvent(at("pointerdown", 40));
+    cap.dispatchEvent(at("pointermove", 80));
+    // The positive control: the drag is live before the processor goes.
+    const written = host.patches.length;
+    expect(written).toBeGreaterThan(0);
 
     present = false;
     screen.refresh();
     expect(screen.isOpen()).toBe(false);
+    cap.dispatchEvent(at("pointermove", 150));
+    expect(host.patches.length).toBe(written);
+    expect(cap.hasPointerCapture(1)).toBe(false);
+  });
+
+  // Escape closes the screen from the keyboard while the mouse button can still be down on
+  // the cap or the plot. Neither drag may outlive the screen: their moves would go on
+  // writing the threshold into the plan and out to a live unit until the release.
+  const escape = (): void =>
+    void document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+  it("ends a cap drag when Escape closes the screen under it", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const cap = host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+    const at = (type: string, clientY: number): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, clientY, pointerId: 1 });
+    cap.dispatchEvent(at("pointerdown", 40));
+    cap.dispatchEvent(at("pointermove", 80));
+    const written = host.patches.length;
+    expect(written).toBeGreaterThan(0);
+    escape();
+    expect(screen.isOpen()).toBe(false);
+    cap.dispatchEvent(at("pointermove", 150));
+    expect(host.patches.length).toBe(written);
+    expect(cap.hasPointerCapture(1)).toBe(false);
+  });
+
+  it("ends a plot drag when Escape closes the screen under it", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    host.frame();
+    const cv = host.box.querySelector<HTMLCanvasElement>("#dyn-curve")!;
+    const at = (type: string, offsetX: number): PointerEvent => {
+      const ev = new PointerEvent(type, { bubbles: true, pointerId: 1 });
+      Object.defineProperty(ev, "offsetX", { value: offsetX });
+      return ev;
+    };
+    cv.dispatchEvent(at("pointerdown", 200));
+    cv.dispatchEvent(at("pointermove", 300));
+    const written = host.patches.length;
+    expect(written).toBeGreaterThan(0);
+    escape();
+    expect(screen.isOpen()).toBe(false);
+    cv.dispatchEvent(at("pointermove", 500));
+    expect(host.patches.length).toBe(written);
+    expect(cv.hasPointerCapture(1)).toBe(false);
   });
 
   // Device follow runs on its own clock and, under COMP 1-knob, on every step of a

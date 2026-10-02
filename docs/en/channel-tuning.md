@@ -1842,6 +1842,11 @@ so `loadPlan` refreshes the screen: it reads the plan through a closure and so h
 but nothing else tells it to redraw. The refresh re-resolves the binding too, so a screen whose node or
 processor the new plan does not have closes itself instead of writing into something that is gone.
 
+**A close ends the gesture under it.** Escape, and a processor taken away by a follow, both close the
+screen while the button can still be down on the threshold cap or the plot, whose drags hold the pointer
+capture. `close()` ends those drags and drops the press state, and nothing is written while the screen
+is closed — which also covers a value row, whose drag the engine keeps driving after the screen is hidden.
+
 The scrims all share `.consent-scrim`'s one z-index, which makes document order the tiebreak — and on
 its own would put the **load report** behind the tuning screen, where a report about the very drop that
 raised it could not be read.

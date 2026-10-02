@@ -851,6 +851,13 @@ export class DynScreen {
 
   close(): void {
     if (!this.isOpen()) return;
+    // A gesture does not outlive the screen it was made on: Escape and a processor taken
+    // away both close with the button still down, and a cap or plot drag left armed would
+    // go on writing through the captured pointer until the release.
+    this.endDrag?.();
+    this.grabbed = false;
+    this.refreshPending = false;
+    this.stalePress = false;
     if (this.redrawRaf) cancelAnimationFrame(this.redrawRaf);
     this.redrawRaf = 0;
     this.dismiss.detach();
@@ -1319,8 +1326,10 @@ export class DynScreen {
     return this.p().read(this.ctx());
   }
 
+  /** Writes nothing while closed, which also covers a native range whose drag the engine
+   *  goes on driving after the screen is hidden. */
   private setVals(patch: Record<string, number | boolean>): void {
-    if (this.stalePress) return;
+    if (this.stalePress || !this.isOpen()) return;
     const ctx = this.ctx();
     this.hooks.onUpdateNodeParams(this.nodeId, this.p().patch(ctx, patch), this.p().written?.(ctx, patch));
   }
