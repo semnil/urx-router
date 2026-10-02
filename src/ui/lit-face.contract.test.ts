@@ -28,12 +28,14 @@ import { NAMED_TOKENS, recorder, vals } from "./dyn-plot.test-util";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import { defaultPlan } from "../models/initial-state";
 import { getModel } from "../models";
-import { INSERT_FX_OPTIONS } from "../core/control/params";
+import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { effectiveInsertFx } from "../core/control/translate";
 import { t } from "../i18n";
 
 /** The compander, by name off the shared table rather than as a literal. */
 const COMPANDER_H = INSERT_FX_OPTIONS.find((o) => o.label === "Compander-H")!.value;
+/** The multi-band compressor, the one family whose plot names its bands. */
+const MBC = OUTPUT_INSERT_FX_OPTIONS.find((o) => o.label === "M.B.Comp")!.value;
 
 /** The tokens that are lamps and gradients, never faces to print on. */
 const NOT_A_FACE = ["--led", "--seg"];
@@ -121,5 +123,36 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
     // the screen not at all — while staying green. (A curve that only strokes paints no
     // face and writes no text, so the recorder cannot tell those two apart.)
     expect(effectiveInsertFx(getModel("URX44V"), plan, "ch1"), "CH 1 must hold a compander").toBe(COMPANDER_H);
+  });
+});
+
+// A tick label, a band name, any number a plot prints, is text read on the groove, and
+// --plot-faint is a rule's tone there rather than an ink: text takes --plot-dim, the tier
+// the DOM tick column on the same groove prints in. Driven over every processor's axes and
+// curve, on nodes holding each kind of plot, with each band selected in turn.
+describe("a plot prints no text in --plot-faint", () => {
+  it("draws every tick label and band name in an ink, not in the rules' tone", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: COMPANDER_H, insertFxOn: true };
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], insertFx: MBC, insertFxOn: true };
+    const offenders: string[] = [];
+    let texts = 0;
+    for (const [kind, proc] of Object.entries(DYN_PROCESSORS)) {
+      if (!proc.drawCurve || !proc.plotGeo) continue;
+      for (const nodeId of ["ch1", "bus.mix1", "out.ducker1"])
+        for (const sel of [0, 1, 2, 3]) {
+          const ctx = { nodeId, sel, plan, model: getModel("URX44V"), m: t() } as never;
+          const r = recorder();
+          const geo = proc.plotGeo(600, 320, ctx);
+          proc.drawAxes?.(r.ctx, geo, NAMED_TOKENS, ctx);
+          proc.drawCurve(r.ctx, geo, vals(), NAMED_TOKENS, ctx);
+          texts += r.texts.length;
+          for (const text of r.texts)
+            if (text.style === "--plot-faint") offenders.push(`${kind} on ${nodeId}: "${text.text}"`);
+        }
+    }
+    expect([...new Set(offenders)], "print it in --plot-dim").toEqual([]);
+    // The positive control: the drive reached text at all.
+    expect(texts).toBeGreaterThan(100);
   });
 });

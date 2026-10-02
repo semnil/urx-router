@@ -183,7 +183,7 @@ export const DUCKER_DYN: DynPlotProcessor = {
     c.font = PLOT_FONT;
     c.strokeStyle = tok["--plot-line"];
     c.lineWidth = 1;
-    c.fillStyle = tok["--plot-faint"];
+    c.fillStyle = tok["--plot-dim"];
     c.textAlign = "center";
     for (const ms of T_TICKS) {
       c.beginPath();

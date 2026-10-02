@@ -91,7 +91,9 @@
   /* Plot chrome for anything drawn on the groove (which stays dark in the light
      theme too, so meters read as LEDs on black). These do NOT flip with the
      theme: the light theme's own --line on a dark groove draws as bright white
-     rules. Only the meter colors follow the theme, as the console's meters do. */
+     rules. Only the meter colors follow the theme, as the console's meters do.
+     --plot-faint is a tone for rules and marks; text on the groove takes --plot-dim
+     or --plot-ink. */
   --plot-line: #38301f;
   --plot-faint: #6f6450;
   --plot-dim: #ab9b7d;
@@ -4906,8 +4908,8 @@ button.consent-btn-primary {
   font-family: var(--mono);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
-  /* --plot-faint is sized for the pinned-dark groove; these numbers sit on the
-     panel, where it measures 2.62:1. The dim tier is the panel's own step. */
+  /* Text on the groove takes --plot-dim, as the plots' own tick labels do;
+     --plot-faint is the rules' tone there, not an ink. */
   color: var(--plot-dim);
 }
 .gt-scale .t::before {

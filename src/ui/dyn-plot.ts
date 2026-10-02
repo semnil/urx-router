@@ -60,7 +60,7 @@ export function drawDbAxes(
   c.font = PLOT_FONT;
   c.strokeStyle = tok["--plot-line"];
   c.lineWidth = 1;
-  c.fillStyle = faint;
+  c.fillStyle = tok["--plot-dim"];
   c.textAlign = "center";
   const inStep = Math.round((HI_DB - o.loDb) / 6);
   for (let db = o.loDb; db <= HI_DB; db += inStep) {

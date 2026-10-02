@@ -72,7 +72,7 @@ export function drawFreqAxes(c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Re
   c.font = PLOT_FONT;
   c.lineWidth = 1;
   c.strokeStyle = tok["--plot-line"];
-  c.fillStyle = tok["--plot-faint"];
+  c.fillStyle = tok["--plot-dim"];
   c.textAlign = "center";
   for (const hz of FREQ_TICKS) {
     c.beginPath();

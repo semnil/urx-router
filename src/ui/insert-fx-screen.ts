@@ -1096,7 +1096,7 @@ function drawMbcBands(
 
   // Each band named inside the width it was given, so the three segments of the step read
   // as bands rather than as three unrelated levels.
-  c.fillStyle = tok["--plot-faint"];
+  c.fillStyle = tok["--plot-dim"];
   for (const [i, b] of MBC_BANDS.entries()) {
     if (bounds[i + 1] - bounds[i] < 26) continue;
     c.fillText(bandName(b.band, ctx.m), (bounds[i] + bounds[i + 1]) / 2, g.h - g.pad.b - 6);
