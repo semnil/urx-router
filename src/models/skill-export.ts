@@ -241,7 +241,8 @@ export function renderModelMarkdown(model: DeviceModel): string {
   lines.push(
     "Each row is a legal wire from -> to with its kind. fixed wires are structural:",
     "they always exist (seeded into every plan) and cannot be removed; you may set",
-    "their params (level/pan/on) but not delete them.",
+    "their params (level/pan/on) but not delete them. *(fixed)* after a destination marks",
+    "every source in that row; after a source, that source alone.",
     "",
   );
   for (const kind of ROUTE_KIND_ORDER) {
@@ -250,14 +251,15 @@ export function renderModelMarkdown(model: DeviceModel): string {
     lines.push(`### kind: \`${kind}\``, `_${ROUTE_KIND_DESC[kind]}_`, "");
     // Rows are grouped by destination (sorted) so the same selector's sources sit
     // together; sources within a row keep model order. fixed marks a destination
-    // any of whose wires is structural.
+    // all of whose wires are structural; a row that mixes structural and removable
+    // wires marks each structural source instead.
     // A destination that takes a MONO IN pair as two wires says which pairs, and which
     // channel's slot each half is written with.
     const dests = [...new Set(group.map((r) => r.to))].sort();
     for (const to of dests) {
       const into = group.filter((r) => r.to === to);
-      const fixed = into.some((r) => r.fixed);
-      const sources = into.map((r) => `\`${r.from}\``).join(", ");
+      const fixed = into.every((r) => r.fixed);
+      const sources = into.map((r) => `\`${r.from}\`${!fixed && r.fixed ? " *(fixed)*" : ""}`).join(", ");
       const pairs = kind === "patch" ? monoPairsInto(model, to) : [];
       const pairNote = pairs.length
         ? ` — or two wires, one from each channel of a MONO IN pair (${pairs
