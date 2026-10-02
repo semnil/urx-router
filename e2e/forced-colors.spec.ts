@@ -387,6 +387,41 @@ test("the surfaces where the colour IS the reading are opted out", async ({ page
   const board = await page.locator("#graph-host").evaluate((node) => getComputedStyle(node).forcedColorAdjust);
   expect(board).toBe("none");
 
+  // The inspector's keys to the board's colours carry them outside the board's island:
+  // the empty inspector's legend, a selected node's routing list and its colour picker.
+  // Each keeps a CanvasText edge, and the picker's selection and focus rings are restated
+  // in system colours, which still resolve to the contrast palette inside an island.
+  const fca = (l: Locator) => l.evaluate((node) => getComputedStyle(node).forcedColorAdjust);
+  const legendDot = page.locator("#inspector .conn-row .dot").first();
+  await expect(legendDot).toBeAttached();
+  expect(await fca(legendDot), "legend dot").toBe("none");
+  expect(await legendDot.evaluate((n) => getComputedStyle(n).borderTopStyle), "legend dot edge").toBe("solid");
+  await page.locator('#graph-host g.node[data-id="ch1"]').click();
+  const routingDot = page.locator("#inspector .conn-row .dot[class*='dot-']").first();
+  await expect(routingDot).toBeAttached();
+  expect(await fca(routingDot), "routing dot").toBe("none");
+  const swatch = page.locator("#inspector .swatch:not(.swatch-none)").first();
+  expect(await fca(swatch), "colour swatch").toBe("none");
+  const system = (name: string) =>
+    page.evaluate((n) => {
+      const probe = document.createElement("span");
+      probe.style.color = n;
+      document.body.append(probe);
+      const c = getComputedStyle(probe).color;
+      probe.remove();
+      return c;
+    }, name);
+  const canvasText = await system("CanvasText");
+  expect(await swatch.evaluate((n) => getComputedStyle(n).borderTopColor), "swatch edge").toBe(canvasText);
+  const sel = page.locator("#inspector .swatch.sel");
+  await page.locator("#inspector .swatch:not(.swatch-none):not(.sel)").first().click();
+  await expect(sel).not.toHaveClass(/swatch-none/);
+  expect(await sel.evaluate((n) => getComputedStyle(n).outlineColor), "selection ring").toBe(canvasText);
+  await page.keyboard.press("Shift");
+  await sel.focus();
+  expect(await sel.evaluate((n) => n.matches(":focus-visible")), "the premise: a keyboard focus").toBe(true);
+  expect(await sel.evaluate((n) => getComputedStyle(n).outlineColor), "focus ring").toBe(await system("Highlight"));
+
   await page.click("#btn-view-console");
   await expect(page.locator("#console-host")).toBeVisible();
   for (const selector of [".con-scribble", ".con-meter", ".mtrcol"]) {

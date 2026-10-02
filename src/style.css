@@ -5081,4 +5081,33 @@ button.consent-btn-primary {
     outline: 1px solid CanvasText;
     outline-offset: -1px;
   }
+
+  /* The inspector's colour keys and the colour picker carry the board's colours
+     outside the board's island, so each is an island of its own. Their edges and the
+     picker's selection and focus rings are restated in system colours, which still
+     resolve to the contrast palette inside an island; the focus ring is restated on
+     the selected swatch too, whose own focus rule outranks the plain one. */
+  #inspector .swatch:not(.swatch-none),
+  .conn-row .dot {
+    forced-color-adjust: none;
+  }
+  #inspector .swatch {
+    border-color: CanvasText;
+  }
+  #inspector .swatch.sel {
+    outline-color: CanvasText;
+  }
+  #inspector .swatch:focus-visible,
+  #inspector .swatch.sel:focus-visible {
+    outline-color: Highlight;
+  }
+  .conn-row .dot {
+    border: 1px solid CanvasText;
+  }
+
+  /* The MIDI window's gang rail marks membership, so it trades its fill for an edge. */
+  .mw-list tr.linked td:first-child::before {
+    background: none;
+    border-left: 2px solid CanvasText;
+  }
 }

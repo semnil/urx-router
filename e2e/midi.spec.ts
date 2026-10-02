@@ -479,6 +479,19 @@ test("one physical control can gang several console controls", async ({ page }) 
   await expect(member).toHaveClass(/\blinked\b/);
   await expect(member.locator(".mw-addr, .mw-linked")).toHaveText("Linked");
   await expect(member).not.toContainText("CC 7"); // no repeated code address
+  // The rail is a fill, which a Windows contrast theme forces to the background; there
+  // it becomes an edge of the same place.
+  await win.emulateMedia({ forcedColors: "active" });
+  const rail = await member
+    .locator("td")
+    .first()
+    .evaluate((td) => {
+      const s = getComputedStyle(td, "::before");
+      return { edge: s.borderLeftStyle, fill: s.backgroundColor };
+    });
+  expect(rail.edge).toBe("solid");
+  expect(rail.fill).toMatch(/, 0\)$|^transparent$/);
+  await win.emulateMedia({ forcedColors: "none" });
   // The reported bug: the marker must not shift the mode/behavior select column.
   // Head and member selects stay left-aligned.
   const headSel = await head.locator(".mw-mode, .mw-btn").boundingBox();

@@ -1111,7 +1111,10 @@ pixel-identical.
   vocabulary of wires and rails — opts out with `forced-color-adjust: none`. Forcing those into two
   system colours would not raise contrast, it would delete the information. The board additionally
   takes a rim so the island still has an edge. The property inherits, so `.gt-slot` covers a lane's
-  sides, bar, shade, peak and threshold cap at once.
+  sides, bar, shade, peak and threshold cap at once. The inspector's keys to those colours are islands
+  too — the legend's and the routing list's dots and the node-colour picker's swatches — each with a
+  `CanvasText` edge, and the picker's selection ring and focus ring restated in system colours, which
+  still resolve to the contrast palette inside an island.
 
 A third mechanism exists but is narrow: a **system** colour may still be used as a fill. The fader caps
 and the slider thumbs take `background: Canvas` for one reason only — to keep occluding the track they
