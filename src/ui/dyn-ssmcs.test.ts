@@ -557,6 +557,22 @@ describe("the EQ face", () => {
     }
   });
 
+  // The band control is the plot, as on the shipped EQ screen, so the band it is set to is
+  // stated on the canvas by name.
+  it("exposes the selected band on the plot as a slider's value", () => {
+    const cv = (): HTMLCanvasElement => h!.box.querySelector<HTMLCanvasElement>("canvas.gt-pickplot")!;
+    expect(cv().getAttribute("role")).toBe("slider");
+    expect(cv().getAttribute("aria-valuemax")).toBe("2");
+    for (const [name, key] of [
+      ["LOW", "low"],
+      ["MID", "mid"],
+      ["HIGH", "high"],
+    ] as const) {
+      band(name);
+      expect(cv().getAttribute("aria-valuetext"), name).toBe(t().inspector.ssmcs.bands[key]);
+    }
+  });
+
   it("meters the two taps that bracket the EQ", () => {
     expect(readouts(h!.box).map((r) => r.label)).toEqual(["PRE EQ", "PRE INS FX"]);
   });

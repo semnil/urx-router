@@ -264,6 +264,9 @@ export interface DynBarItem {
 export interface DynPlotPicks {
   count: number;
   hit: (c: CanvasRenderingContext2D, g: DynPlotGeo, at: { x: number; y: number }) => number | null;
+  /** What pick `i` is called — the band's own name — which the canvas exposes as the value
+   *  it is set to, since a canvas has no text of its own to say which one is selected. */
+  label: (i: number) => string;
 }
 
 export interface DynRowCtx extends DynCtx {
@@ -1918,6 +1921,14 @@ export class DynScreen {
     if (picks.count <= 0) return;
     cv.tabIndex = 0;
     cv.classList.add("gt-pickplot");
+    // A slider over the picks, which is what its keys already are: the arrows step, Home and
+    // End go to the ends, and the value is the selected one, by name. The hint stays the
+    // canvas's own name.
+    cv.setAttribute("role", "slider");
+    cv.setAttribute("aria-valuemin", "0");
+    cv.setAttribute("aria-valuemax", String(picks.count - 1));
+    cv.setAttribute("aria-valuenow", String(this.sel));
+    cv.setAttribute("aria-valuetext", picks.label(this.sel));
     // Through `pressSegment` for the same reason the bar's buttons are: selecting rebuilds
     // the column, so the canvas the key was pressed on is replaced and focus falls to the
     // body — a keyboard user would land nowhere after one arrow press.

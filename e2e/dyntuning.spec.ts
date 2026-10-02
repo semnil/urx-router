@@ -890,8 +890,14 @@ test.describe("eq", () => {
     // The plot itself takes the press, and says so by being in the tab order.
     await expect(pickPlot(page)).toHaveAttribute("tabindex", "0");
     await expect(bandPill(page)).toHaveText("LOW");
+    // …and it is a slider whose value is the band, by name, so the band it is set to is
+    // stated on the control being operated rather than only on the heading below it.
+    await expect(pickPlot(page)).toHaveAttribute("role", "slider");
+    await expect(pickPlot(page)).toHaveAttribute("aria-valuetext", "LOW");
     await pickBand(page, 1);
     await expect(bandPill(page)).toHaveText("LOW MID");
+    await expect(pickPlot(page)).toHaveAttribute("aria-valuetext", "LOW MID");
+    await expect(pickPlot(page)).toHaveAttribute("aria-valuenow", "1");
   });
 
   // The plot is a focus stop inside a box that clips its overflow, so its ring is drawn

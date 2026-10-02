@@ -223,6 +223,31 @@ describe("the rate lock", () => {
   });
 });
 
+// The band control is the plot: a canvas, one focus stop, whose arrow keys select the band.
+// A canvas has no text of its own, so the band it is set to has to be stated on it — the
+// pill on the Parameters heading says it too, but not on the control being operated.
+describe("the band the plot is set to", () => {
+  it("is exposed on the canvas as a slider's value, by the band's own name", () => {
+    host = dynHost();
+    open();
+    const cv = (): HTMLCanvasElement => host.box.querySelector<HTMLCanvasElement>("canvas.gt-pickplot")!;
+    expect(cv().getAttribute("role")).toBe("slider");
+    expect(cv().getAttribute("aria-valuemin")).toBe("0");
+    expect(cv().getAttribute("aria-valuemax")).toBe("3");
+    expect(cv().getAttribute("aria-valuenow")).toBe("0");
+    expect(cv().getAttribute("aria-valuetext")).toBe(t().inspector.eqBand.low);
+    selectBand(1);
+    expect(cv().getAttribute("aria-valuenow")).toBe("1");
+    expect(cv().getAttribute("aria-valuetext")).toBe(t().inspector.eqBand.lowMid);
+    selectBand(3);
+    expect(cv().getAttribute("aria-valuetext")).toBe(t().inspector.eqBand.high);
+    // …and the name is the one the Parameters heading carries for the same band.
+    expect(section(t().dynTuning.parameters).querySelector("h3 .prefs-lock")?.textContent).toBe(
+      t().inspector.eqBand.high,
+    );
+  });
+});
+
 describe("the 1-knob", () => {
   const oneKnobOn = (): void => void (host.plan.nodeParams["ch1"]!.eqOneKnob = { on: true, type: 0, level: 0 });
 

@@ -786,6 +786,7 @@ export const SSMCS_EQ_DYN: DynPlotProcessor = {
   plotPicks: (ctx) => ({
     count: SSMCS_EQ_BAND_NAMES.length,
     hit: (c, g, at) => pickBandMarker(c, g, eqBandMarks(stripOf(ctx), bandOf(ctx)), at),
+    label: (i) => ctx.m.inspector.ssmcs.bands[SSMCS_EQ_BAND_NAMES[i]],
   }),
   paramsTag: (ctx) => ({ text: ctx.m.inspector.ssmcs.bands[bandOf(ctx)], shown: true }),
   hint: (ctx) => ctx.m.dynTuning.eq.plotHint,

@@ -418,7 +418,9 @@ target wants, and the plot carries nothing else a press means.
 
 **The plot is a focus stop and the arrow keys move the band**, the keyboard reach a segmented bar
 would have. A canvas is a single stop, so Left/Right step and Home/End go to the ends. Selecting rebuilds the column, so focus is restored onto the new canvas the
-same way the bars restore theirs. With 1-knob on nothing is selectable and the canvas leaves the tab
+same way the bars restore theirs. The canvas is exposed as a slider over the bands — its value is the
+selected band's index, its value text the band's own name — since a canvas has no text of its own to say
+which band it is set to; the hint stays its accessible name. With 1-knob on nothing is selectable and the canvas leaves the tab
 order rather than standing in it as a stop that does nothing.
 
 **The plot's axes are frequency against gain**, so it carries no live dot. Each band gets a **marker** —
