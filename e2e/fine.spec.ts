@@ -172,7 +172,9 @@ test.describe("console view", () => {
     await expect(val).toHaveText("2.04");
     await page.keyboard.up("Shift");
     await wheelOver(page, time, 100);
-    await expect(val).toHaveText("1.0"); // coarse again — a coarse notch re-snaps to its grid
+    // Coarse again: the notch steps to the adjacent 1 ms point in the direction it turns,
+    // not to the nearest point past it.
+    await expect(val).toHaveText("2.0");
   });
 
   test("the main fader keeps its detent grid under Shift", async ({ page }) => {

@@ -403,6 +403,51 @@ describe("a head knob", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
   });
 
+  // A key or a wheel notch steps to the next grid point in the direction of travel. The
+  // TIME knob's own fine mode and the Inspector's 0.01 ms slider both leave the value
+  // between two 1 ms points, and a nearest-snap of the stepped sum lands one point past
+  // the adjacent one from there. On-grid values are the control: they step one point
+  // either way.
+  it("steps a key or a wheel notch to the adjacent grid point from a value between two", () => {
+    h = consoleHost();
+    const time = (): number | undefined => h.plan.nodeParams["bus.stream"]?.delay?.time;
+    const knob = (): HTMLElement =>
+      h.strip("bus.stream").root.querySelector<HTMLElement>(".con-gain.has-fine .con-knob")!;
+    const from = (v: number): HTMLElement => {
+      const np = (h.plan.nodeParams["bus.stream"] ??= {});
+      np.delay = { ...np.delay, time: v };
+      h.view.refresh();
+      return knob();
+    };
+
+    key(from(12), "ArrowDown");
+    expect(time()).toBe(11);
+    key(from(12), "ArrowUp");
+    expect(time()).toBe(13);
+
+    key(from(12.34), "ArrowDown");
+    expect(time()).toBe(12);
+    key(from(12.34), "ArrowUp");
+    expect(time()).toBe(13);
+    key(from(12.6), "ArrowUp");
+    expect(time()).toBe(13);
+    key(from(12.5), "ArrowUp");
+    expect(time()).toBe(13);
+    key(from(12.6), "ArrowDown");
+    expect(time()).toBe(12);
+    wheel(from(12.34), -1);
+    expect(time()).toBe(12);
+    wheel(from(2.04), -1);
+    expect(time()).toBe(2);
+    key(from(1.03), "ArrowUp", { shiftKey: true });
+    expect(time()).toBe(1.04);
+    key(from(1.03), "ArrowDown", { shiftKey: true });
+    expect(time()).toBe(1.02);
+    // The double-click still resets to the factory value.
+    from(12.34).dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(time()).toBe(defaultPlan("URX44V").nodeParams["bus.stream"]?.delay?.time);
+  });
+
   it("arms for MIDI instead of moving while learn is on", () => {
     const armed: string[] = [];
     h = consoleHost({ midi: learnHooks(armed) });

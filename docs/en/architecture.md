@@ -1278,7 +1278,9 @@ since the slider refuses the gesture it describes. `ui/fine.ts` tracks the key g
 it toggles the `.fine-mode` root class (the tag CSS) and swaps the `step` attribute of every
 `input[data-fine-step]`, so native slider drag, arrow keys and the wheel all inherit the fine grid; the
 console knob reads the modifier per event (drag rebases when Shift flips mid-gesture, so entering or
-leaving fine never jumps the value). Faders, sends and every other parameter keep their normal grids — the
+leaving fine never jumps the value), and its keys and wheel step to the adjacent grid point in the
+direction of travel, so a value fine mode left between two coarse points moves one point, not two (the
+drag and the double-click reset keep the nearest point). Faders, sends and every other parameter keep their normal grids — the
 device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set.
 
 - **Meter point (per-strip tap)** — a node exposes several observable meter tap points along its signal

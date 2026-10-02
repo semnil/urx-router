@@ -3546,6 +3546,13 @@ export class Console {
       show(v);
       this.commit(id, k.keys);
     };
+    // One step for a key or a wheel notch, snapped in the direction of travel: from a value
+    // between two grid points the next point that way, never the nearest one past it. The
+    // drag and the double-click reset keep `apply`'s nearest snap.
+    const stepBy = (dir: 1 | -1, st: number): void => {
+      const at = k.get() / st;
+      apply((dir > 0 ? Math.floor(at + 1e-9) + 1 : Math.ceil(at - 1e-9) - 1) * st, st);
+    };
     const syncPartner = (): void => {
       if (partnerSync) this.syncPartnerStrip(id, k.pairs);
     };
@@ -3581,8 +3588,8 @@ export class Console {
     knob.addEventListener("keydown", (e) => {
       if (this.midiLearnKey(e, midiId)) return;
       const st = stepFor(e);
-      if (e.key === "ArrowUp" || e.key === "ArrowRight") apply(k.get() + st, st);
-      else if (e.key === "ArrowDown" || e.key === "ArrowLeft") apply(k.get() - st, st);
+      if (e.key === "ArrowUp" || e.key === "ArrowRight") stepBy(1, st);
+      else if (e.key === "ArrowDown" || e.key === "ArrowLeft") stepBy(-1, st);
       else return;
       e.preventDefault();
       syncPartner();
@@ -3597,8 +3604,7 @@ export class Console {
     onWheelStep(
       knob,
       (dir) => {
-        const st = stepFor();
-        apply(k.get() + dir * st, st);
+        stepBy(dir, stepFor());
         syncPartner();
       },
       () => this.hooks.midi?.learnActive(),
