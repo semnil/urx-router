@@ -5,6 +5,7 @@
 // The vd module adds live hardware control over the Device Center broker.
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use tauri::State;
 
 mod keepawake;
@@ -55,8 +56,9 @@ fn io_error(e: &std::io::Error) -> String {
 // Reject a path whose extension (case-insensitive) is outside the command's
 // allowlist, so each file IO command only touches the file kinds its native
 // dialog offers.
-fn check_extension(path: &str, allowed: &[&str]) -> Result<(), String> {
-    let ext = std::path::Path::new(path)
+fn check_extension(path: impl AsRef<Path>, allowed: &[&str]) -> Result<(), String> {
+    let ext = path
+        .as_ref()
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase());
@@ -98,17 +100,38 @@ async fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> 
 /// on disk before the error is raised, and the app aborting cleanly afterwards
 /// no longer helps — there is nothing left to abort back to. The rename is
 /// atomic on the same filesystem, which a sibling temp guarantees.
-fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
+///
+/// An existing destination is resolved first and written THROUGH: a symlink keeps
+/// naming the file it points at, that file receives the new contents, and the
+/// temp sits beside it, so the rename stays on that file's filesystem. What the
+/// operator set on the replaced file carries over to the new one — its mode, and
+/// on macOS its extended attributes (Finder tags) and ACL; on Windows the replace
+/// itself keeps its ACL, attributes and alternate data streams. A directory this
+/// process cannot write fails the save as it stands, with the previous file left
+/// whole: nothing is written in place.
+///
+/// `allowed` is the calling command's extension allowlist, asked again of the
+/// resolved path — a link with an allowed name does not make the file it points at
+/// one the command may write.
+fn write_atomic(path: &str, bytes: &[u8], allowed: &[&str]) -> Result<(), String> {
+    let (target, existing) = match fs::canonicalize(path) {
+        Ok(real) => (real, true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (PathBuf::from(path), false),
+        Err(e) => return Err(io_error(&e)),
+    };
+    check_extension(&target, allowed)?;
     // A unique sibling, created exclusively. `{path}.tmp` is a name two writers to the
     // same destination both open — a double-fired save, or a dev build and an installed
     // one exporting to the same file — and the second `write` truncates under the first,
     // so whichever `rename` lands last can install a mixed body over the target: exactly
     // the corruption an atomic write exists to prevent. It also destroyed a pre-existing
     // operator file that happened to be named `plan.json.tmp`.
-    let mut tmp = String::new();
+    let mut tmp = PathBuf::new();
     let mut file = None;
     for n in 0..64u32 {
-        let candidate = format!("{path}.{}.{n}.tmp", std::process::id());
+        let mut candidate = target.clone().into_os_string();
+        candidate.push(format!(".{}.{n}.tmp", std::process::id()));
+        let candidate = PathBuf::from(candidate);
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -135,17 +158,101 @@ fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
         }
     }
     drop(file);
-    if let Err(e) = fs::rename(&tmp, path) {
+    let installed = if existing {
+        carry_metadata(&target, &tmp).and_then(|()| replace_existing(&target, &tmp))
+    } else {
+        fs::rename(&tmp, &target)
+    };
+    if let Err(e) = installed {
         let _ = fs::remove_file(&tmp);
         return Err(io_error(&e));
     }
     Ok(())
 }
 
+/// Give the temp file what the operator set on the file it replaces: the mode, and
+/// on macOS the extended attributes and the ACL. `copyfile` is asked for those two
+/// alone — its STAT half would also stamp the replaced file's modification time on
+/// the new contents. Windows carries all of it in `replace_existing`.
+fn carry_metadata(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let c = |p: &Path| {
+            std::ffi::CString::new(p.as_os_str().as_bytes())
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+        };
+        let (src, dst) = (c(from)?, c(to)?);
+        // SAFETY: both are NUL-terminated paths that outlive the call, and a null state
+        // asks copyfile to allocate and free its own.
+        let rc = unsafe {
+            libc::copyfile(
+                src.as_ptr(),
+                dst.as_ptr(),
+                std::ptr::null_mut(),
+                libc::COPYFILE_ACL | libc::COPYFILE_XATTR,
+            )
+        };
+        if rc < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    #[cfg(unix)]
+    fs::set_permissions(to, fs::metadata(from)?.permissions())?;
+    #[cfg(not(unix))]
+    let _ = (from, to);
+    Ok(())
+}
+
+/// Put the temp file in the place of an existing one.
+#[cfg(not(windows))]
+fn replace_existing(target: &Path, tmp: &Path) -> std::io::Result<()> {
+    fs::rename(tmp, target)
+}
+
+/// Put the temp file in the place of an existing one with `ReplaceFileW`, which
+/// merges the replaced file's ACL, attributes and alternate data streams into the
+/// replacement; a plain rename would leave the replacement's own. A merge that
+/// fails fails the replace, and the replaced file keeps its contents.
+///
+/// Two failures are finished with a rename instead: a destination that is gone by
+/// now, which leaves nothing to merge, and the one where the replaced file has
+/// already been removed and the replacement still carries its temp name — moving it
+/// is what completes the replace rather than leaving neither under the name.
+#[cfg(windows)]
+fn replace_existing(target: &Path, tmp: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_UNABLE_TO_MOVE_REPLACEMENT};
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
+    let (replaced, replacement) = (wide(target), wide(tmp));
+    // SAFETY: both are NUL-terminated wide paths that outlive the call; the backup name
+    // and the two reserved arguments are null, as the call allows.
+    let ok = unsafe {
+        ReplaceFileW(
+            replaced.as_ptr(),
+            replacement.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if ok != 0 {
+        return Ok(());
+    }
+    let e = std::io::Error::last_os_error();
+    match e.raw_os_error().map(|code| code as u32) {
+        Some(ERROR_FILE_NOT_FOUND | ERROR_UNABLE_TO_MOVE_REPLACEMENT) => fs::rename(tmp, target),
+        _ => Err(e),
+    }
+}
+
 #[tauri::command]
 async fn write_text_file(path: String, contents: String) -> Result<(), String> {
-    check_extension(&path, &["json", "md"])?;
-    tauri::async_runtime::spawn_blocking(move || write_atomic(&path, contents.as_bytes()))
+    const ALLOWED: &[&str] = &["json", "md"];
+    check_extension(&path, ALLOWED)?;
+    tauri::async_runtime::spawn_blocking(move || write_atomic(&path, contents.as_bytes(), ALLOWED))
         .await
         .map_err(file_io)?
 }
@@ -171,9 +278,10 @@ async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<(), Strin
     .decode_utf8()
     .map_err(file_io)?
     .into_owned();
-    check_extension(&path, &["png", "pdf"])?;
+    const ALLOWED: &[&str] = &["png", "pdf"];
+    check_extension(&path, ALLOWED)?;
     let bytes = bytes.clone();
-    tauri::async_runtime::spawn_blocking(move || write_atomic(&path, &bytes))
+    tauri::async_runtime::spawn_blocking(move || write_atomic(&path, &bytes, ALLOWED))
         .await
         .map_err(file_io)?
 }
@@ -672,7 +780,7 @@ fn save_window_scales(app: &tauri::AppHandle) {
     // can be written.
     if let Err(e) = fs::create_dir_all(&dir)
         .map_err(|e| io_error(&e))
-        .and_then(|()| write_atomic(&path.to_string_lossy(), &body))
+        .and_then(|()| write_atomic(&path.to_string_lossy(), &body, &["json"]))
     {
         eprintln!("window scale save: {e}");
     }
@@ -1583,7 +1691,7 @@ mod tests {
         let decoy = dir.join("plan.json.tmp");
         std::fs::write(&decoy, b"the operator's own file").unwrap();
 
-        super::write_atomic(target.to_str().unwrap(), b"{}").unwrap();
+        super::write_atomic(target.to_str().unwrap(), b"{}", &["json"]).unwrap();
 
         assert_eq!(std::fs::read(&target).unwrap(), b"{}");
         assert_eq!(
@@ -1599,6 +1707,176 @@ mod tests {
             .filter(|n| n != "plan.json" && n != "plan.json.tmp")
             .collect();
         assert!(strays.is_empty(), "left behind: {strays:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The names in `dir`, for asserting that a write left nothing of its own behind.
+    fn names_in(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    // A save over an existing file replaces its CONTENTS. A symlink chosen in the save
+    // panel keeps naming the file it pointed at, and that file is the one that takes the
+    // save — the temp beside it, so nothing is left in either directory.
+    #[cfg(unix)]
+    #[test]
+    fn an_atomic_write_goes_through_a_symlink_to_the_file_it_names() {
+        let dir = scratch_dir("atomic-link");
+        let (here, there) = (dir.join("docs"), dir.join("synced"));
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::create_dir_all(&there).unwrap();
+        let real = there.join("studio.json");
+        std::fs::write(&real, b"old").unwrap();
+        let link = here.join("studio.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        super::write_atomic(link.to_str().unwrap(), b"new", &["json"]).unwrap();
+
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the link is still a link"
+        );
+        assert_eq!(
+            std::fs::read(&real).unwrap(),
+            b"new",
+            "the file it names took the save"
+        );
+        assert_eq!(names_in(&here), vec!["studio.json"]);
+        assert_eq!(names_in(&there), vec!["studio.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The extension allowlist is asked of the file the write lands on as well as of the
+    // name the dialog returned: a link named like a plan does not make the file it
+    // points at one a plan save may overwrite.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_with_an_allowed_name_does_not_open_its_target_to_a_write() {
+        let dir = scratch_dir("atomic-ext");
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("notes.txt");
+        std::fs::write(&real, b"keep").unwrap();
+        let link = dir.join("plan.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let e = super::write_atomic(link.to_str().unwrap(), b"{}", &["json"]).unwrap_err();
+
+        assert!(e.starts_with("file-bad-extension"), "{e}");
+        assert_eq!(std::fs::read(&real).unwrap(), b"keep");
+        assert_eq!(names_in(&dir), vec!["notes.txt", "plan.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The mode the operator gave the file survives the save, including one that does
+    // not let the owner write it.
+    #[cfg(unix)]
+    #[test]
+    fn an_atomic_write_keeps_the_replaced_files_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch_dir("atomic-mode");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("plan.json");
+        std::fs::write(&target, b"old").unwrap();
+        for mode in [0o600, 0o400] {
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode)).unwrap();
+
+            super::write_atomic(target.to_str().unwrap(), b"new", &["json"]).unwrap();
+
+            let after = std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(after, mode, "{mode:o} became {after:o}");
+            assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        }
+        assert_eq!(names_in(&dir), vec!["plan.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // On macOS a Finder tag is an extended attribute and a sharing grant is an ACL entry;
+    // both survive the save. The modification time is the save's own, not the replaced
+    // file's — a copy of the file's whole metadata would carry that over too.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_atomic_write_keeps_the_replaced_files_tags_and_acl_and_takes_a_new_mtime() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch_dir("atomic-meta");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("plan.json");
+        std::fs::write(&target, b"old").unwrap();
+        let c_target = CString::new(target.as_os_str().as_bytes()).unwrap();
+        let tag = CString::new("com.apple.metadata:_kMDItemUserTags").unwrap();
+        let value = b"Red";
+        // SAFETY: NUL-terminated name and path, and a value buffer of the given length.
+        let rc = unsafe {
+            libc::setxattr(
+                c_target.as_ptr(),
+                tag.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(rc, 0, "setxattr: {}", std::io::Error::last_os_error());
+        let acl = |path: &std::path::Path| -> String {
+            let out = std::process::Command::new("/bin/ls")
+                .env("LC_ALL", "C")
+                .arg("-le")
+                .arg(path)
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let grant = "everyone allow readattr";
+        let status = std::process::Command::new("/bin/chmod")
+            .args(["+a", grant])
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(acl(&target).contains(grant), "the fixture holds the grant");
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(946_684_800);
+        std::fs::File::options()
+            .write(true)
+            .open(&target)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o400)).unwrap();
+
+        super::write_atomic(target.to_str().unwrap(), b"new", &["json"]).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        let mut buf = [0u8; 16];
+        // SAFETY: as above, with a buffer the call may fill up to its length.
+        let n = unsafe {
+            libc::getxattr(
+                c_target.as_ptr(),
+                tag.as_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(n, value.len() as isize, "the tag is gone");
+        assert_eq!(&buf[..value.len()], value);
+        assert!(acl(&target).contains(grant), "the ACL entry is gone");
+        let meta = std::fs::metadata(&target).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o7777, 0o400);
+        assert!(
+            meta.modified().unwrap() > old + std::time::Duration::from_secs(86_400),
+            "the save carried the replaced file's modification time"
+        );
+        assert_eq!(names_in(&dir), vec!["plan.json"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

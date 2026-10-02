@@ -3768,6 +3768,11 @@ app commands (`read_text_file` / `read_binary_file` / `write_text_file` / `write
 `async` with the `std::fs` work on a worker thread (`spawn_blocking`, like the vd commands) and each
 enforcing an extension allowlist (read text: `json`; read binary: `urxf`; write text: `json` / `md`;
 write binary: `png` / `pdf`).
+A write fills a temp file and renames it into place, so a failure leaves the previous file whole. Over an
+existing file it goes through to the file the path resolves to — a symlink keeps naming it, and the allowlist
+is asked of that file too — and keeps what was set on it: the mode, on macOS the extended attributes (Finder
+tags) and the ACL, on Windows the ACL, attributes and alternate data streams (`ReplaceFileW`). A directory
+the app cannot write fails the save; nothing is written in place.
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
 array — with the destination path in a percent-encoded `x-file-path` request header. The webview
 itself runs under a strict CSP (`security.csp` + `devCsp` in `tauri.conf.json`): scripts from

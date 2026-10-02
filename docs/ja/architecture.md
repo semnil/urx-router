@@ -3328,7 +3328,12 @@ localStorage レコード (`urx-settings`、`core/settings.ts`。`?reset` のク
 ファイル IO は小さな自前 command (`read_text_file` / `read_binary_file` / `write_text_file` / `write_binary_file`)。
 いずれも `async` で `std::fs` 処理をワーカースレッドに逃がし (`spawn_blocking`・vd command と同方式)、
 拡張子の許可リストを強制する
-(テキスト読込: `json`・バイナリ読込: `urxf`・テキスト書込: `json` / `md`・バイナリ書込: `png` / `pdf`)。`write_binary_file` は PNG/PDF の
+(テキスト読込: `json`・バイナリ読込: `urxf`・テキスト書込: `json` / `md`・バイナリ書込: `png` / `pdf`)。
+書込は一時ファイルを埋めてから rename で置き換えるので、失敗しても元のファイルはそのまま残る。既存ファイルへの書込は
+パスが解決する先のファイルへ通す — シンボリックリンクはそのファイルを指したまま残り、許可リストはそのファイルにも
+問う — そのファイルに設定されていたもの (モード、macOS では拡張属性 (Finder タグ) と ACL、Windows では ACL・属性・
+代替データストリーム (`ReplaceFileW`)) を引き継ぐ。アプリが書き込めないディレクトリでは保存が失敗し、その場への
+上書きはしない。`write_binary_file` は PNG/PDF の
 バイト列を IPC リクエストの raw ボディで受け取り (JSON の数値配列は使わない)、保存先パスはパーセントエンコードした
 `x-file-path` リクエストヘッダで渡す。webview 自体は厳格な CSP の下で動く (`tauri.conf.json` の `security.csp` +
 `devCsp`): スクリプトは `'self'` のみ、インラインスタイルは許可、画像は出力用ラスタライザとノイズテクスチャのため `blob:` / `data:` を許可、`connect-src` は Tauri IPC の
