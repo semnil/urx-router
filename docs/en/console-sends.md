@@ -226,7 +226,11 @@ All rack edits go through the shared `markChanged` funnel (identical to the grap
 STEREO-linked pairs mirror via `mirrorLinkedPair`, and device-side changes arrive through `follow` →
 `refreshStrip`, which rebuilds the whole strip including the rack. If the strip's SEND PAN popover
 is open, `refreshStrip` re-opens it against the fresh strip's PAN ▾ button, so the knobs re-read
-the plan and the trigger keeps its open marking (device follow and external MIDI alike). Sends
+the plan and the trigger keeps its open marking (device follow and external MIDI alike). A
+rebuilt MIX strip re-opens ANOTHER strip's open SEND PAN popover the same way when one of the
+FIXED / Pan Link locks its knobs read has changed — a Pan Link turned on at the unit announces
+only the MIX bus — and leaves it alone otherwise, since a re-open under a knob being dragged
+ends the drag. A knob the re-open locked hands the focus to the PAN ▾ button. Sends
 have no meters — the broker exposes no per-send meter addresses — so the rack contains no signal
 display by design.
 

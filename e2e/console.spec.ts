@@ -1,5 +1,7 @@
 import { test, expect, scrollsByWheel, textContrast, type Locator, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
+import { LIVE_COMMANDS, heldReadsOf, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
+import { PARAMS } from "../src/core/control/params";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
 // "CH 11/12"). The console runs against the factory plan, so we do NOT seed
@@ -441,6 +443,34 @@ test("the PAN ▾ button reads active while its SEND PAN popover is open", async
   await expect(page.locator(".con-spop")).toBeHidden();
   await expect(btn2).not.toHaveClass(/\bopen\b/);
   await expect(btn2).toHaveAttribute("aria-expanded", "false");
+});
+
+// A Pan Link turned on at the unit announces only the MIX bus, so the follow rebuilds that
+// bus's strip and not CH 1's, whose SEND PAN popover is open: the popover is re-read from the
+// MIX strip and its MIX 1 knob locks. The whole-device read the follow takes afterwards closes
+// every popover, which would hide the difference, so that read is held for the case.
+test("a Pan Link the unit turns on locks the open SEND PAN popover's knob for that bus", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await page.click("#btn-view-console");
+  await strip(page, "CH 1").locator(".con-panbtn").click();
+  const knob = page.locator('.con-spop .con-knob[aria-label="MIX 1"]');
+  await expect(knob).toHaveAttribute("tabindex", "0");
+  await expect(knob).not.toHaveAttribute("aria-disabled", "true");
+
+  await setHeldReads(page, [PARAMS.PAN_LINK.id]);
+  await setDeviceValue(page, PARAMS.PAN_LINK.id, 0, 1);
+  await notifyParam(page, PARAMS.PAN_LINK.id, 0, 1);
+  await expect(knob).toHaveAttribute("aria-disabled", "true");
+  // The read that would close the popover is waiting, so what is on screen is the follow's.
+  await expect.poll(() => heldReadsOf(page), { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect(page.locator(".con-spop")).toBeVisible();
+  await expect(knob).toHaveAttribute("aria-disabled", "true");
+  await setHeldReads(page, []);
 });
 
 test("the SEND PAN popover flips above its anchor near the viewport bottom", async ({ page }) => {

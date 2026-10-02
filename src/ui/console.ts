@@ -516,6 +516,7 @@ export class Console {
   private sendsOpen = loadJson<unknown>(this.SENDS_STORE, true) !== false;
   private sendPanPop!: HTMLElement;
   private sendPanOpenFor: string | null = null;
+  private sendPanLocks = ""; // sendPanLockKey of the open SEND PAN popover, as it was drawn
   private tapBtn: HTMLElement | null = null; // the meter-point badge the open popover anchors to
   private sendPanBtn: HTMLElement | null = null; // the PAN ▾ button the open popover anchors to
   private tapPop!: HTMLElement;
@@ -635,6 +636,21 @@ export class Console {
     if (this.sendPanOpenFor === stripId) {
       const btn = fresh.querySelector<HTMLElement>(".con-panbtn");
       if (btn) this.openSendPan(stripId, btn);
+      else this.closeSendPan();
+    }
+    // A MIX bus's own locks decide whether another strip's open SEND PAN knob for that bus
+    // is live, so a rebuilt MIX strip re-opens the popover against its owner's button — or
+    // closes it where that button is gone — when one of those locks changed. Only then: a
+    // re-open under a knob being dragged ends the drag.
+    const panOwner = this.sendPanOpenFor;
+    if (
+      panOwner !== null &&
+      panOwner !== stripId &&
+      this.isMixBus(stripId) &&
+      this.sendPanLockKey(panOwner) !== this.sendPanLocks
+    ) {
+      const btn = this.refs.get(panOwner)?.root.querySelector<HTMLElement>(".con-panbtn");
+      if (btn) this.openSendPan(panOwner, btn);
       else this.closeSendPan();
     }
     // Same for the INS FX popover, and for a second reason: its list is drawn from the
@@ -1334,6 +1350,19 @@ export class Console {
     }
   }
 
+  /** The FIXED and Pan Link locks of every MIX bus a strip's SEND PAN popover draws a
+   *  knob for, as one comparable string. */
+  private sendPanLockKey(stripId: string): string {
+    const plan = this.hooks.getPlan();
+    return this.sendSlots()
+      .filter((target) => this.isMixBus(target) && this.hasSend(stripId, target))
+      .map((target) => {
+        const { busFixed, panLinked } = mixSendLocks(plan, target);
+        return `${target}:${busFixed}:${panLinked}`;
+      })
+      .join(",");
+  }
+
   // Open the SEND PAN popover below a strip's PAN ▾ button: the strip's MIX sends'
   // pan as rotary knobs laid out in horizontal columns (destination label above,
   // value below), echoing the rack columns. FX sends are mono and carry no pan.
@@ -1383,6 +1412,7 @@ export class Console {
     this.sendPanPop.append(ph, grid);
     this.sendPanPop.hidden = false;
     this.sendPanOpenFor = stripId;
+    this.sendPanLocks = this.sendPanLockKey(stripId);
     // Mark the trigger active so it reads as the open popover's owner; closeSendPan
     // clears it (the anchor outlives the open/close cycle — a render closes the
     // popover before rebuilding the strips).
