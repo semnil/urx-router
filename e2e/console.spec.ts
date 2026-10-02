@@ -581,6 +581,47 @@ test("an inactive strip dims what carries no text, and its controls keep their s
   expect(await strength(sendless), "a sendless strip's SENDS header").toBe(1);
 });
 
+// The CONSOLE popovers' rows are 24px targets, and the SENDS rack's enable chip, PRE button
+// and header reach into half of each gap around them: a press in a gap lands on the nearer
+// control rather than on nothing, and never on the far one.
+test("popover rows are 24px targets, and the rack's controls take their gaps", async ({ page }) => {
+  const ch1 = strip(page, "CH 1");
+  const heights = (l: Locator) => l.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+  await ch1.locator(".con-tap").click();
+  const tapRows = await heights(page.locator(".con-tappop .crow"));
+  expect(tapRows.length).toBeGreaterThan(1);
+  for (const h of tapRows) expect(h, "a meter-point row").toBeGreaterThanOrEqual(24);
+  await page.keyboard.press("Escape");
+  await ch1.locator(".con-ifxopen").click();
+  const ifxRows = await heights(page.locator(".con-ifxpop .irow"));
+  expect(ifxRows.length).toBeGreaterThan(1);
+  for (const h of ifxRows) expect(h, "an INS FX row").toBeGreaterThanOrEqual(24);
+  await page.keyboard.press("Escape");
+
+  const at = (x: number, y: number) =>
+    page.evaluate(
+      ([px, py]) => {
+        const e = document.elementFromPoint(px, py);
+        return e?.closest(".con-sl, .con-slp, .con-sh")?.className.split(" ")[0] ?? e?.className ?? "";
+      },
+      [x, y] as const,
+    );
+  const column = ch1.locator(".con-scol").first();
+  const chip = (await column.locator(".con-sl").boundingBox())!;
+  const pre = (await column.locator(".con-slp").boundingBox())!;
+  const mid = chip.x + chip.width / 2;
+  // Every point of the gap between the two belongs to one of them, the upper part to the
+  // chip; nothing in it falls through to the column.
+  expect(await at(mid, chip.y + chip.height + 0.25), "just under the enable chip").toBe("con-sl");
+  for (let y = chip.y + chip.height; y < pre.y; y += 0.5)
+    expect(["con-sl", "con-slp"], `the gap at ${y}`).toContain(await at(mid, y));
+  expect(await at(mid, pre.y - 0.25), "just over the PRE button").toBe("con-slp");
+  expect(await at(mid, pre.y + pre.height / 2), "the PRE button's own middle").toBe("con-slp");
+  expect(await at(mid, pre.y + pre.height + 2), "just under the PRE button").toBe("con-slp");
+  const label = (await ch1.locator(".con-sh .lb").boundingBox())!;
+  expect(await at(label.x + 2, label.y - 4), "just over the SENDS header").toBe("con-sh");
+});
+
 test("a MIX strip's head MUTE drives the MIX → STEREO TO ST switch", async ({ page }) => {
   // The MIX → STEREO "TO ST" ships off, so the MIX strip's MUTE starts pressed
   // (muted = not summed into the main mix). Clicking it turns TO ST on.

@@ -2542,12 +2542,14 @@ input[type="range"]:focus-visible,
   position: relative;
   padding: 5px 0 6px;
 }
+/* The spine runs between the first and the last node's centre, each end tucked inside
+   its node. */
 .con-tappop .chain::before {
   content: "";
   position: absolute;
   left: 16px;
-  top: 12px;
-  bottom: 13px;
+  top: 14.5px;
+  bottom: 15.5px;
   width: 2px;
   background: linear-gradient(180deg, #5a4d31, #3a3220);
   border-radius: 1px;
@@ -2555,11 +2557,14 @@ input[type="range"]:focus-visible,
 [data-theme="light"] .con-tappop .chain::before {
   background: linear-gradient(180deg, #cabd9f, #b3a684);
 }
+/* Each row is a 24px target, the WCAG 2.5.8 minimum: the rows abut, so no spacing
+   between them can stand in for a shorter one. */
 .con-tappop .crow {
   position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 24px;
   padding: 4px 10px;
   cursor: pointer;
 }
@@ -2922,8 +2927,13 @@ input[type="range"]:focus-visible,
 }
 /* rack header: SENDS label / value readout (swaps in on column touch) / active-send
    dots (collapsed) / collapse arrow. Fixed height so the readout swap never reflows. */
+/* The header clips its readout, so its hit area grows by padding rather than by a
+   pseudo-element: into the rack's padding above and to each side and half the gap below,
+   with margins that keep its place in the rack at 13px. */
 .con-sh {
-  height: 13px;
+  height: 20px;
+  padding: 5px 5px 2px;
+  margin: -5px -5px -2px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -3018,6 +3028,24 @@ input[type="range"]:focus-visible,
 }
 .con-sends {
   --rack-btn-h: 18px;
+}
+/* The enable chip and the PRE button take half of each gap around them as hit area, through
+   a transparent box that takes no layout: neighbours meet at the middle of a gap and never
+   overlap. The box is placed against the padding edge, so each inset counts the border. */
+.con-sl,
+.con-slp {
+  position: relative;
+}
+.con-sl::after,
+.con-slp::after {
+  content: "";
+  position: absolute;
+}
+.con-sl::after {
+  inset: -3px -2.5px -2.5px;
+}
+.con-slp::after {
+  inset: -2.5px -2.5px -4.5px;
 }
 .con-sl,
 .con-slp {
@@ -3559,10 +3587,12 @@ input[type="range"]:focus-visible,
 .con-ifxpop .ilist {
   padding: 4px 0;
 }
+/* A 24px target, as the meter-point rows are; the name and the reason are centred in it. */
 .con-ifxpop .irow {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+  min-height: 24px;
   padding: 4px 10px;
   cursor: pointer;
 }

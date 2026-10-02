@@ -250,13 +250,15 @@ display by design.
 
 - Strips without sends carry a blank rack band while expanded (alignment cost; collapse
   mitigates).
-- Sub-24 px touch targets in the browser demo (desktop-first product; relative drag and keyboard
-  paths mitigate).
+- The rack's controls are under 24 px across (desktop-first product; relative drag and keyboard
+  paths mitigate). The enable chip, the PRE button and the `SENDS` header take half of each gap
+  around them as hit area, so a press between two controls lands on the nearer one; the popover
+  rows above the rack (meter point, INS FX type, FX effect type) are full 24 px targets.
 - Comparing one send across many strips is slightly slower than on horizontal rows (the
   fixed-y-band advantage is traded for grammar consistency and the elimination of the pan
   misread).
-- 19 px column pitch relies on pointer capture + the drag threshold to avoid adjacent-column
-  mis-grabs.
+- The 21.5 px column pitch (18.5 px columns, 3 px apart) relies on pointer capture + the drag
+  threshold to avoid adjacent-column mis-grabs.
 
 ## Edit → device data path
 
