@@ -144,8 +144,9 @@ or inside a group — is written `true` / `false`: a number there loads converte
 **Stable, human-readable (author these freely):**
 - `on` — channel / STEREO master / FX channel / MONITOR on. `false` = muted.
 - `hpf` (bool), `hpfFreq` (Hz, 40–120, default 80).
-- `gain` — head-amp input gain in dB (-8 … +70), analog mic channels; -8 … +40
-  while `hiZ` is on.
+- `gain` — head-amp input gain in dB: -8 … +70 on an analog mic channel (A.Gain),
+  -8 … +40 while `hiZ` is on, -24 … +24 on a stereo channel (D.Gain). A gain past
+  its channel's range opens at the nearer end.
 - `phantom`, `phase`, `phaseL`, `phaseR`, `clipSafe`, `hiZ` (bool). `phantom` and
   `hiZ` are never on together: on a channel carrying HI-Z (CH 3/4 on URX44/44V,
   CH 2 on URX22) with `hiZ` on, the app opens the plan with `phantom` off and
@@ -320,8 +321,9 @@ write sends, and counted with the values moved: the `gate`, `comp` and `ducker` 
 windows (a COMP `ratio` to the nearest stop of its ladder), the `ssmcs` raws and the
 `insertFxParams` engine values to whole numbers inside their windows (an engine key by the family
 its own name gives, a bare slot by the one the selector names), the EQ 1-knob and COMP 1-knob
-levels to 0–100, the oscillator's `interval` to 1–30, an EQ band's `q`, `freq` and `gain` to
-their windows, and an enum off its menu — a LOW / HIGH band's `type`, `compEqType`,
+levels to 0–100, the oscillator's `interval` to 1–30 and its `level` to -96–0, a channel's
+`gain` to its own range, an EQ band's `q`, `freq` and `gain` to their windows, and an enum
+off its menu — a LOW / HIGH band's `type`, `compEqType`,
 `recPoint`, `panBal`, `busType`, a COMP `knee`, an EQ 1-knob `type`, the oscillator's `mode`, the
 STREAMING delay's `frameRate` — to the menu's default, which is what the write sends for it.
 `plan_tool.py` warns about each one, from the rules `models.json` carries (`leafRules`). A

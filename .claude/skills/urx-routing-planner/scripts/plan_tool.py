@@ -1255,13 +1255,16 @@ def family_slots(param_space):
     return out
 
 
-def leaf_rule_bounds(node_id, params, rules, param_space, takes_insert, dropped, bounded):
+def leaf_rule_bounds(node_id, params, rules, param_space, takes_insert, contexts, dropped, bounded):
     """The values the load moves to the value the write sends (core/plan-validate.ts
     `paramRangeProblems`, by `nodeLeafRules`): each leaf models.json `leafRules` lists for the
     node, and each insert-FX engine key under the rule of the family it names — a bare slot
     under the family the selector names, the key it is re-keyed to on load. A leaf the write
-    never sends (`unsent`) is removed instead."""
+    never sends (`unsent`) is removed instead. A rule carrying a variant for a state the node is
+    in (`contexts`) is read under that variant."""
     for path, rule in (rules or {}).items():
+        for context in contexts:
+            rule = rule.get(context, rule)
         value = value_at(params, leaf_steps(path))
         if not is_number(value):
             continue
@@ -1293,19 +1296,21 @@ def leaf_rule_bounds(node_id, params, rules, param_space, takes_insert, dropped,
             bounded.append((f"{node_id}.insertFxParams.{key}", f"{value!r} is bounded to {admitted!r}"))
 
 
+def hi_z_on(node_id, params, hi_z):
+    """Whether HI-Z is on for a node: it carries the switch and its params hold it on."""
+    return bool(hi_z) and node_id in hi_z.get("channels", []) and read_as_on(params.get("hiZ"))
+
+
 def hi_z_bounds(node_id, params, hi_z, bounded):
-    """A channel carrying HI-Z with HI-Z on: the load turns +48V off (HI-Z kept) and bounds
-    A.Gain above the HI-Z ceiling to that ceiling, the pair of repairs `paramRangeProblems`
-    makes. `hi_z` is the `hiZ` entry models.json carries."""
-    if not hi_z or node_id not in hi_z.get("channels", []) or not read_as_on(params.get("hiZ")):
+    """A channel carrying HI-Z with HI-Z on: the load turns +48V off (HI-Z kept), the repair
+    `paramRangeProblems` makes beside A.Gain's ceiling there, which is the `hiZ` variant of the
+    gain's rule. `hi_z` is the `hiZ` entry models.json carries."""
+    if not hi_z_on(node_id, params, hi_z):
         return
     if "phantom" in params and read_as_on(params["phantom"]):
         bounded.append(
             (f"{node_id}.phantom", f"{params['phantom']!r} is bounded to False — +48V and HI-Z are never on together")
         )
-    gain, ceiling = params.get("gain"), hi_z.get("gainMaxDb")
-    if is_number(gain) and ceiling is not None and gain > ceiling:
-        bounded.append((f"{node_id}.gain", f"{gain!r} is bounded to {ceiling!r} — A.Gain stops there while HI-Z is on"))
 
 
 def node_param_warnings(
@@ -1361,8 +1366,16 @@ def node_param_warnings(
             gone = fx_effect_warnings(node_id, params["fxEffect"], dropped)
             if not gone:
                 fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
+        contexts = [c for c, on in (("hiZ", hi_z_on(node_id, params, hi_z)),) if on]
         leaf_rule_bounds(
-            node_id, params, (leaf_rules or {}).get(node_id), param_space, takes_insert_fx(node_id), dropped, bounded
+            node_id,
+            params,
+            (leaf_rules or {}).get(node_id),
+            param_space,
+            takes_insert_fx(node_id),
+            contexts,
+            dropped,
+            bounded,
         )
         hi_z_bounds(node_id, params, hi_z, bounded)
         for path, why in dropped:

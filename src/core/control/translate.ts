@@ -43,6 +43,7 @@ import {
   insertFxDriverSlots,
 } from "./insert-fx-effect";
 import { isFixedConnection, monoPairOf, requiresSource, sendTapWritable } from "../routing";
+import { channelGainRange } from "../input-lock";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
   BUS_TYPE_OPTIONS,
@@ -124,6 +125,8 @@ import {
   gateRangeToVd,
   holdToVd,
   levelToVd,
+  OSC_LEVEL_MAX_DB,
+  OSC_LEVEL_MIN_DB,
   panToVd,
   phonesLevelToVd,
   PORT_REF_NONE,
@@ -1241,6 +1244,8 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
   const out: [string, LeafRule][] = [];
   const cc = channelControl(model, nodeId);
   if (cc) out.push(["recPoint", menuRule(REC_POINT_OPTIONS, REC_POINT_DEFAULT)]);
+  const gain = channelGainRange(model, nodeId, np);
+  if (gain) out.push(["gain", { min: gain.minDb, max: gain.maxDb }]);
   if (model.channelPairs.some(([primary]) => primary === nodeId))
     out.push(["panBal", menuRule(PAN_BAL_OPTIONS, PAN_BAL_PAN)]);
   if (cc?.hasMicStrip) {
@@ -1282,6 +1287,7 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
   if (MIX_FADER_INSTANCES[nodeId]) out.push(["busType", menuRule(BUS_TYPE_OPTIONS, BUS_TYPE_VARI)]);
   if (duckerControl(model, nodeId)) for (const f of DUCKER_FIELDS) out.push([`ducker.${f.key}`, dynRule(f)]);
   if (nodeId === "bus.osc") {
+    out.push(["osc.level", { min: OSC_LEVEL_MIN_DB, max: OSC_LEVEL_MAX_DB }]);
     out.push(["osc.mode", menuRule(OSC_MODE_OPTIONS, OSC_MODE_SINE)]);
     out.push(["osc.interval", rawRule(1, 30)]);
   }

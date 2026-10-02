@@ -1910,6 +1910,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       '{"ch3":{"hiZ":true,"phantom":true,"gain":60}}',
       '{"ch4":{"hiZ":1,"phantom":1,"gain":41}}',
       '{"ch3":{"hiZ":true,"phantom":false,"gain":70},"ch4":{"hiZ":true,"phantom":true}}',
+      // …and a gain past its channel's own range, with HI-Z off, on an A.Gain and a D.Gain
+      // channel, beside the oscillator level.
+      '{"ch1":{"gain":-12},"ch2":{"gain":71},"ch_5_6":{"gain":30},"bus.osc":{"osc":{"level":5}}}',
       // …and the documents nothing may be said about.
       '{"ch3":{"hiZ":true,"gain":40}}',
       '{"ch3":{"hiZ":false,"phantom":true,"gain":70}}',

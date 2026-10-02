@@ -94,11 +94,14 @@ export interface SkillModel {
    *  value's at the same path (`paramRangeProblems`). */
   factory: { nodeParams: Record<string, NodeParams> };
   /** Per node, every leaf the write bounds, in the validator's path spelling, with the rule it
-   *  is bounded by (`nodeLeafRules`): a window, an integer window, or a window whose value then
-   *  moves to the nearest of `steps`. The load bounds a value outside it to the value the write
-   *  sends (`paramRangeProblems`). The insert-FX engine keys are not here: which rule a key takes
-   *  is its family's, which `insertFxParamSpace` carries. */
-  leafRules: Record<string, Record<string, LeafRule>>;
+   *  is bounded by (`nodeLeafRules`): a window, an integer window, a window whose value then
+   *  moves to the nearest of `steps`, a menu with its default, or a leaf the write never sends
+   *  (`unsent`). The load bounds a value outside it to the value the write sends, and removes an
+   *  unsent one (`paramRangeProblems`). A rule that depends on the node's own state carries the
+   *  rule that state gives under the state's name — `hiZ` while HI-Z is on — beside the rule the
+   *  factory state gives. The insert-FX engine keys are not here: which rule a key takes is its
+   *  family's, which `insertFxParamSpace` carries. */
+  leafRules: Record<string, Record<string, LeafRule & Partial<Record<LeafContext, LeafRule>>>>;
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -126,13 +129,29 @@ function skillModel(model: DeviceModel): SkillModel {
 function leafRules(model: DeviceModel): SkillModel["leafRules"] {
   const out: SkillModel["leafRules"] = {};
   for (const n of model.nodes) {
-    const rules: Record<string, LeafRule> = {};
-    for (const [path, rule] of nodeLeafRules(model, n.id, factoryNodeParams(model.id, n.id))) {
-      rules[path.replace(/\.([0-9]+)(?=\.|$)/g, "[$1]")] = rule;
+    const factory = factoryNodeParams(model.id, n.id);
+    const rules: SkillModel["leafRules"][string] = {};
+    for (const [path, rule] of nodeLeafRules(model, n.id, factory)) {
+      const entry: SkillModel["leafRules"][string][string] = { ...rule };
+      // The same table asked again under each state that changes a rule, and the rule kept
+      // where it differs.
+      for (const [context, state] of leafContexts(model, n.id)) {
+        const other = nodeLeafRules(model, n.id, { ...factory, ...state }).find(([p]) => p === path)?.[1];
+        if (other && JSON.stringify(other) !== JSON.stringify(rule)) entry[context] = other;
+      }
+      rules[path.replace(/\.([0-9]+)(?=\.|$)/g, "[$1]")] = entry;
     }
     if (Object.keys(rules).length > 0) out[n.id] = rules;
   }
   return out;
+}
+
+/** A node state a rule can depend on, by the name the validator asks it under. */
+type LeafContext = "hiZ";
+
+/** The states that change a node's rules, each as the params that put the node in it. */
+function leafContexts(model: DeviceModel, nodeId: string): [LeafContext, NodeParams][] {
+  return hasHiZInput(model.id, nodeId) ? [["hiZ", { hiZ: true }]] : [];
 }
 
 /** Each node's factory params, for every node the model's factory values describe. */

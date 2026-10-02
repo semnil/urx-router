@@ -778,6 +778,40 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
     );
   });
 
+  // The encoder clamps a gain only to the union of the A.Gain and D.Gain windows, so a document
+  // past a channel's own range was sent as it stood: below -8 dB A.Gain the preamp keeps its
+  // previous gain, and past ±24 dB D.Gain or below the A.Gain descriptor the write is refused.
+  // The oscillator level's encoder clamps to int16 alone. Both go to the range the unit's own
+  // panel sets, the HI-Z ceiling included.
+  it("bounds a gain to the channel's own range and the oscillator level to -96..0 dB", () => {
+    const plan = load({
+      ch1: { gain: -12 },
+      ch2: { gain: 80 },
+      ch3: { hiZ: true, gain: 60 },
+      ch_5_6: { gain: 30 },
+      ch_7_8: { gain: -30 },
+      "bus.osc": { osc: { level: 5 } },
+    });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(
+      [
+        "ch1.gain -12 -> -8",
+        "ch2.gain 80 -> 70",
+        "ch3.gain 60 -> 40",
+        "ch_5_6.gain 30 -> 24",
+        "ch_7_8.gain -30 -> -24",
+        "bus.osc.osc.level 5 -> 0",
+      ].sort(),
+    );
+    applyParamRange(plan, paramRangeProblems(plan));
+    const sent = planToCommands(getModel("URX44V"), plan);
+    expect(sent.find((c) => c.name === "HA_GAIN" && c.node === "ch_5_6")?.vdValue).toBe(2400);
+    expect(sent.find((c) => c.name === "OSC_LEVEL")?.vdValue).toBe(0);
+  });
+
   // An enum off its menu drew a blank select, and hid or mislabelled the rows that depend on it,
   // while the write sent the menu's default. The oscillator is in it, scene-external as it is.
   it("bounds an enum off its menu to the default the write sends", () => {
@@ -883,7 +917,12 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
               let holder = np;
               for (const k of keys.slice(0, -1)) holder = (holder[k] ??= {}) as Record<string, unknown>;
               holder[keys[keys.length - 1]] = v;
-              cases.push([`${id} ${node.id} ${path} ${shape}`, seeded(node.id, np), outside, driverPath(path)]);
+              cases.push([
+                `${id} ${node.id} ${path} ${shape}`,
+                seeded(node.id, np),
+                outside,
+                driverPath(path) || LOAD_ONLY.has(path),
+              ]);
             }
           }
         }
@@ -895,7 +934,8 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
         applyParamRange(plan, problems);
         const after = planToCommands(model, plan).map((c) => `${c.paramId}:${c.y}=${c.vdValue}`);
         // A slot that decides which others are the unit's is read for that by its stored value,
-        // which the repair moves to the value the write sends for the slot itself.
+        // which the repair moves to the value the write sends for the slot itself; and a value
+        // the load bounds to a narrower window than its encoder's is one the repair moves.
         if (!driver && after.join() !== before.join()) offenders.push(`${name}: the write moved`);
         if (paramRangeProblems(plan).length) offenders.push(`${name}: still reported`);
       }
@@ -908,6 +948,10 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
     for (const id of MODEL_IDS) expect(paramRangeProblems(defaultPlan(id)), id).toEqual([]);
   });
 });
+
+/** The leaves the load bounds to the range the unit's own panel can set, which is narrower than
+ *  the window their encoder clamps the write to. */
+const LOAD_ONLY: ReadonlySet<string> = new Set(["gain", "osc.level"]);
 
 /** Whether a path is an insert-FX slot that drives which other slots the unit owns. */
 function driverPath(path: string): boolean {

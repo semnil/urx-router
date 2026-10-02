@@ -43,6 +43,10 @@ export const HI_Z_A_GAIN_MAX_DB = 40;
 export const D_GAIN_MIN_DB = -24;
 export const D_GAIN_MAX_DB = 24;
 
+/** The oscillator level's range (param 711), in dB. */
+export const OSC_LEVEL_MIN_DB = -96;
+export const OSC_LEVEL_MAX_DB = 0;
+
 /** Plan pan range, matching the inspector slider and the device scale L63 – C –
  *  R63 (1:1 with the broker ±63). */
 export const PAN_MIN = -63;
@@ -251,8 +255,8 @@ export function vdToPan(value: number): number {
   return clamp(Math.round(value), PAN_MIN, PAN_MAX);
 }
 
-// HA gain converters clamp to the union of the analog/digital ranges; the UI
-// slider enforces the tighter per-type bounds.
+// HA gain converters clamp to the union of the analog/digital ranges; the channel's own
+// range is `channelGainRange` (input-lock.ts), which the load and the UI bound a value to.
 const GAIN_MIN_DB = D_GAIN_MIN_DB; // -24, the lower of the two
 const GAIN_MAX_DB = A_GAIN_MAX_DB; // +70, the higher of the two
 

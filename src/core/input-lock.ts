@@ -10,7 +10,8 @@
 // an ON taken while a read is in flight was taken from a plan that had not heard what the unit
 // holds. Whether HI-Z applies to a
 // channel is `hiZOn`: the +48V refusal, the A.Gain range, the both-on list and the load repair
-// (`paramRangeProblems` in plan-validate.ts, which applies the same two bounds on its own) ask it.
+// (`paramRangeProblems` in plan-validate.ts, which turns +48V off there and bounds the gain to
+// `channelGainRange` through translate.ts `nodeLeafRules`) ask it.
 
 import type { DeviceModel } from "../models/types";
 import type { NodeParams, Plan } from "./plan";
