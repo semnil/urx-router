@@ -58,6 +58,7 @@ const monoChannel = (hiZ?: boolean): NodeParams => ({
 
 const stereoChannel = (gain: number): NodeParams => ({
   on: true,
+  recPoint: 4,
   gain,
   phaseL: false,
   phaseR: false,
@@ -68,6 +69,7 @@ const stereoChannel = (gain: number): NodeParams => ({
 
 const outputBus = (): NodeParams => ({
   level: 0,
+  pan: 0,
   insertFx: -1,
   insertFxOn: false,
   eqOn: true,

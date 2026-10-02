@@ -160,6 +160,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
   ch_5_6: {
     on: true,
+    recPoint: 4,
     gain: 0,
     phaseL: false,
     phaseR: false,
@@ -174,6 +175,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
   ch_7_8: {
     on: true,
+    recPoint: 4,
     gain: -14,
     phaseL: false,
     phaseR: false,
@@ -188,6 +190,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
   ch_9_10: {
     on: true,
+    recPoint: 4,
     gain: -14,
     phaseL: false,
     phaseR: false,
@@ -202,6 +205,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
   ch_11_12: {
     on: true,
+    recPoint: 4,
     gain: -14,
     phaseL: false,
     phaseR: false,
@@ -216,6 +220,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
   "bus.stereo": {
     level: 0,
+    pan: 0,
     insertFx: -1,
     insertFxOn: false,
     eqOn: true,
@@ -230,6 +235,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
   "bus.mix1": {
     level: 0,
+    pan: 0,
     busType: 0,
     insertFx: -1,
     insertFxOn: false,
@@ -246,6 +252,7 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   },
   "bus.mix2": {
     level: 0,
+    pan: 0,
     busType: 0,
     insertFx: -1,
     insertFxOn: false,

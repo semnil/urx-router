@@ -119,9 +119,8 @@ describe("binding", () => {
       expect(keyTapOf(4)).toBe("prefader");
     });
 
-    // PRE FADER is the device default, so an unset Rec Point is that tap. This is not
-    // only a crafted-plan case: the factory plan seeds no `recPoint` on the STEREO
-    // channels at all, so keying a ducker from CH 7/8 takes it on a fresh plan.
+    // PRE FADER is the device default, so an unset Rec Point is that tap — the state of a
+    // node a device read could not reach, which the load's fill does not complete.
     it("falls back to PRE FADER when the source names no Rec Point", () => {
       expect(keyTapOf(undefined)).toBe("prefader");
       expect(keyTapOf(undefined, "ch_7_8")).toBe("prefader");
