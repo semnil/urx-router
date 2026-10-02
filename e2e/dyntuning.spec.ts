@@ -1331,6 +1331,20 @@ test.describe("the note under the display fits the space reserved for it", () =>
 
       await openFromInspector(page, "out.ducker1", "ducker");
       await check();
+      await screenBox(page).locator(".consent-btn-secondary").click();
+
+      // The multi-band compressor with its 1-knob on, whose line is the longest the INS FX
+      // screen prints.
+      await node(page, "bus.mix1").click();
+      await openInsertFxSection(page);
+      await chooseOption(insertFxSection(page).locator(".param", { hasText: "EFFECT TYPE" }).locator("select"), {
+        label: "M.B.Comp",
+      });
+      await insertFxSection(page).locator("#btn-insfx-screen").click();
+      await expect(screenBox(page)).toBeVisible();
+      await oneKnobSwitch(page).locator("button", { hasText: "ON" }).click();
+      await expect(screenBox(page).locator(".gt-note")).toContainText("Out Gain");
+      await check();
     });
   }
 });

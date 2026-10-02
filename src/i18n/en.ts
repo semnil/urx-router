@@ -787,7 +787,7 @@ export const en = {
       // Shown in place of the line above while the unit is driving the panel. It says who
       // owns the values rather than what they do, because that is what changed.
       mbcOneKnob: tr(
-        "1-knob is on: the unit is setting every value here from its own level, and nothing edited here is sent to it.",
+        "1-knob is on: the unit sets the bands, Release and the crossovers from its level, so edits to them are not sent. Out Gain and the 1-knob are still sent.",
       ),
       // The pill on a row the unit has taken over — Pitch Fix's Scale and its twelve notes
       // while MIDI Control is not Off, which is when the notes the correction aims at come

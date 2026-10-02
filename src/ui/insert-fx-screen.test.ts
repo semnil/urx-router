@@ -26,7 +26,7 @@ import {
 } from "../core/control/insert-fx-effect";
 import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { recorder, vals } from "./dyn-plot.test-util";
-import { t } from "../i18n";
+import { setLang, t } from "../i18n";
 
 let h: DynHost;
 
@@ -1360,6 +1360,21 @@ describe("the multi-band compressor", () => {
     expect(INSFX_DYN.hint!(mbc(MAIN))).toBe(g.mbcMainHint);
     expect(INSFX_DYN.hint!(mbc(LOW))).toBe(g.mbcBandHint);
     expect(INSFX_DYN.hint!(mbc(MAIN, oneKnobOn()))).toBe(g.mbcOneKnob);
+  });
+
+  // The line that says who owns the panel must not say MAIN's one live row is the unit's: Out
+  // Gain stays writable and sent while the knob is on, so the line names it, in both catalogs.
+  it("names Out Gain as the operator's while the 1-knob owns the rest", () => {
+    const states = INSFX_DYN.rowStates!(mbc(MAIN, oneKnobOn()), {})!;
+    expect(states.has(`ifx:mbc:${MBC_GLOBAL.outGain}`)).toBe(false);
+    try {
+      for (const lang of ["en", "ja"] as const) {
+        setLang(lang);
+        expect(INSFX_DYN.hint!(mbc(MAIN, oneKnobOn())), lang).toContain(t().inspector.insertFxEffect.params.outGain);
+      }
+    } finally {
+      setLang("en");
+    }
   });
 
   it("names a bypassed band's figure as its values rather than as the band", () => {
