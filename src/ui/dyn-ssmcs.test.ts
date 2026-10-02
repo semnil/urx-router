@@ -1173,9 +1173,9 @@ describe("what the curves draw", () => {
   it("marks all three bands on the EQ face, lighting only the selected one", () => {
     draw(SSMCS_EQ_DYN, 1);
     const lit = h!.canvas.faces.filter((f) => f.style === "--led-face");
-    const dim = h!.canvas.faces.filter((f) => f.style === "--plot-dim");
+    const unlit = h!.canvas.faces.filter((f) => f.style === "--plot-faint");
     expect(lit.length).toBe(1);
-    expect(dim.length).toBe(2);
+    expect(unlit.length).toBe(2);
   });
 
   it("keeps a switched-off band's marker on the composite curve", () => {
@@ -1186,13 +1186,13 @@ describe("what the curves draw", () => {
     draw(SSMCS_EQ_DYN, 1);
     // Still three markers: switching a band off takes it out of the response, not off
     // the plot — its frequency is what the operator is still reading.
-    expect(h!.canvas.faces.filter((f) => f.style === "--led-face" || f.style === "--plot-dim").length).toBe(3);
+    expect(h!.canvas.faces.filter((f) => f.style === "--led-face" || f.style === "--plot-faint").length).toBe(3);
   });
 
   it("draws both halves on MAIN, each inside its own frame", () => {
     draw(SSMCS_DYN);
     // The two plots' x ranges do not overlap: the EQ half starts past the divider.
-    const marks = h!.canvas.faces.filter((f) => f.style === "--plot-dim");
+    const marks = h!.canvas.faces.filter((f) => f.style === "--plot-faint");
     expect(marks.length).toBe(3);
     expect(Math.min(...marks.map((m) => m.x0))).toBeGreaterThan(350);
     // And no band is lit — none of them is being edited on this face.
