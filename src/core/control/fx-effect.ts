@@ -147,9 +147,9 @@ function revxTimeBaseUnits(raw: number): number {
 }
 /** How much longer than Hall a REV-X type runs at the same Reverb-Time raw. The unit's
  *  own maxima are the ratio: at Room Size 0 and raw 69 the LCD reads 10.3 s on Hall,
- *  15.2 s on Room and 17.6 s on Plate, and multiplying each by the Room Size scale of 3
- *  lands on the guide's per-type ceilings (31.0 / 45.3 / 52.0 s). The Room Size scale
- *  itself is type-independent. */
+ *  15.2 s on Room and 17.6 s on Plate. Multiplying each by the Room Size scale of 3 gives
+ *  30.9 / 45.6 / 52.8 s, near the guide's nominal per-type ceilings (31.0 / 45.3 / 52.0 s)
+ *  and not fitted to them. The Room Size scale itself is type-independent. */
 const REVX_TYPE_SCALE: Record<number, number> = { 0: 1, 1: 15.2 / 10.3, 2: 17.6 / 10.3 };
 
 /** REV-X Reverb Time seconds for a Reverb-Time raw, the channel's Room Size raw and the
