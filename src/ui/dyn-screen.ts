@@ -183,8 +183,9 @@ export interface DynBinding {
   readoutCols?: number;
   /** The height a bank reserves for all of its faces, where the stylesheet's own number is
    *  not enough. Declared by the binding, like `readoutCols`, because it is a property of
-   *  what the node HOLDS: a guitar amp's panel is eleven rows and overflows the shared
-   *  reserve, and raising that reserve would grow every other bank's faces with it.
+   *  what the node HOLDS: the INS FX screen declares one for every family, since a follow
+   *  can replace the family under an open screen and some families' grids are taller than
+   *  the shared reserve — raising that reserve would grow every other bank's faces with it.
    *  Absent = the stylesheet's number. Every face of one bank must answer the same value,
    *  or the modal resizes between them, which is what the reserve exists to stop. */
   faceReserve?: number;

@@ -52,6 +52,46 @@ test.beforeEach(async ({ page }) => {
   await page.locator("#model-picker").waitFor();
 });
 
+// A device follow can replace the effect a node holds while its screen is open, and the
+// screen re-lays itself in place. So every family reserves one height, and the controls
+// start at the same place whichever effect the screen shows — in Japanese too, where some
+// families' grids run taller than the stylesheet's own reserve.
+test("every INS FX family and face lays out at one height, in Japanese", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => localStorage.setItem("urx-lang", "ja"));
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: {
+      ch2: { insertFx: 256, insertFxOn: true },
+      ch3: { insertFx: 512, insertFxOn: true },
+      ch4: { insertFx: 1793, insertFxOn: true },
+      "bus.stereo": { insertFx: 1792, insertFxOn: true },
+    },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  const heights: Record<string, number> = {};
+  const read = async (what: string) => {
+    heights[what] = await screenBox(page).evaluate((el) => el.getBoundingClientRect().height);
+  };
+  for (const id of ["ch2", "ch3", "ch4", "bus.stereo"]) {
+    await node(page, id).click();
+    await page.locator("#btn-insfx-screen").click();
+    await expect(screenBox(page)).toBeVisible();
+    await read(id);
+    if (id === "bus.stereo")
+      for (const face of ["low", "mid", "high", "main"]) {
+        await page.click(`#dyn-face-insfx-${face}`);
+        await read(`${id} ${face}`);
+      }
+    await closeScreen(page);
+  }
+  expect(Object.keys(heights)).toHaveLength(8);
+  expect(new Set(Object.values(heights)).size, JSON.stringify(heights)).toBe(1);
+});
+
 test("guitar amp (Clean) reveals common params + cabinet list", async ({ page }) => {
   await node(page, "ch1").click();
   await chooseOption(insertSelect(page), { label: "Clean" });

@@ -1226,10 +1226,14 @@ on one line at 16.63px. `--led-ink` IS `--led-face`, so a separator drawn in it 
 face and a full mask reads as one solid block once the gap is gone; lit, the separator takes the ink
 the label takes, softened.
 
-**No family declares a reserved height.** A reserve exists so a bank's faces start their
-controls at the same place. The guitar amp and Pitch Fix are one face each, and the multi-band
-compressor's four are two rows of cards by construction (MAIN six, a band six, three columns), so no
-family needs one and the shared 520px is what every family takes.
+**The INS FX screen declares one reserved height for every family, 548px.** A reserve exists so
+the controls start at the same place whatever the screen shows, and this screen changes family
+without closing: a device follow that replaces the effect re-lays the same modal. The shared 520px is
+below some families' grids in Japanese — with macOS fonts at 1440x900, in Chromium and WebKit, the
+guitar amps' grid is 522.4-523.4px and the multi-band compressor's 525.4px on every face, against
+516.4px for Pitch Fix and 493.4px for the companders. 548px leaves 22.6px over the tallest of them for
+a wider font stack. `e2e/insertfx.spec.ts` opens every family and every multi-band face in Japanese
+and holds them to one height.
 
 **A gesture reads the Key the plan holds, not the one the row was drawn with.** A row's handlers
 close over the context they were built with, and the rebuild that would replace them is deferred for

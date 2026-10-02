@@ -4578,9 +4578,8 @@ button.consent-btn-primary {
 
      The 520px is the shipped bank's number and the default a face gets. A bank whose
      tallest face needs more says so from its binding, which sets `--gt-face-min` here: the
-     INS FX guitar amp's AMP face measures 614px in English and 622px in Japanese (Chromium,
-     macOS, 1280x900) against its cabinet face's 520, so without one the modal would jump
-     94px on the segment that moves between them — the jump this rule exists to remove. */
+     INS FX screen does, with one number for every family, since a device follow can
+     replace the effect inside an open screen. */
   min-height: min(var(--gt-face-min, 520px), calc(100vh - 211px));
   /* Below the reserve the panel would CLIP rather than shrink — a column has nowhere to
      put its rows and the box hides what overflows — so the grid takes a scroll instead of

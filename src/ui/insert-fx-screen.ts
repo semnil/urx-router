@@ -238,6 +238,10 @@ const isPanelFirst = (fam: InsertFxFamily): boolean => isGuitar(fam) || fam === 
  *  a panel carrying all of that at once says nothing about which values belong together.
  *  Every other family is one processor, and one processor is one face. */
 const isBanked = (fam: InsertFxFamily): boolean => fam === "mbc";
+/** The panel height every family's screen reserves, one number for all of them, so a
+ *  follow that replaces the effect inside an open screen leaves the controls where they
+ *  were. */
+const INSFX_FACE_RESERVE = 548;
 
 /** The two companders differ in ONE number that the family does not carry: the slope
  *  below the window. `compander` is both of them, so the expander ratio is read off the
@@ -611,10 +615,10 @@ function insFxFace(): DynProcessor {
     key: "insfx",
     loDb: LO_DB,
     tickStep: TICK_STEP,
-    // One reserved height across every family, not only across the two guitar faces: a
-    // device follow can replace the effect inside this modal, and a panel whose controls
-    // start at a different height each time is the same resize under the pointer that the
-    // reserve exists to stop.
+    // One reserved height across every family: a device follow can replace the effect
+    // inside this modal, and a panel whose controls start at a different height each time is
+    // the same resize under the pointer that the reserve exists to stop. `bind` declares the
+    // height, since the stylesheet's default is below some families' grids.
     banked: true,
     // The effect's own name is in the title because the screen shows one effect and the
     // selector that picked it is on another surface: without it the heading names a slot
@@ -656,9 +660,7 @@ function insFxFace(): DynProcessor {
         lanes,
         // A guitar amp's panel is a dozen controls and its display is a level rack with
         // nothing else in it, so the two columns swap. The companders keep the ordinary
-        // order: their display is the point of the screen. The reserve rides with it: both
-        // of the amp's faces answer the same number, which is what keeps the modal still
-        // when the segment moves between them.
+        // order: their display is the point of the screen.
         // A guitar amp is a dozen continuous values against a display that is a level rack
         // and nothing else, and the real control it stands for is a row of knobs. Both
         // halves of that arrangement ride together: the columns swap AND the sliders
@@ -669,6 +671,9 @@ function insFxFace(): DynProcessor {
         // the controls beside it — the Key, the Scale and the twelve notes, drawn twice on
         // one face — and there was no lane rack on that face at all.
         ...(isPanelFirst(fam) ? { paramsFirst: true as const } : {}),
+        // Every family answers the same reserve, so a follow that swaps the family keeps the
+        // modal still.
+        faceReserve: INSFX_FACE_RESERVE,
         // The multi-band compressor takes the amp's knobs — its values are the same kind of
         // thing — but THREE to a row rather than the amps' seven, and with the display
         // column still first, because its display is a plot rather than a rack alone. Three
