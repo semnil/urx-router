@@ -1370,7 +1370,11 @@ def node_param_warnings(
             gone = fx_effect_warnings(node_id, params["fxEffect"], dropped)
             if not gone:
                 fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
-        contexts = [c for c, on in (("hiZ", hi_z_on(node_id, params, hi_z)),) if on]
+        contexts = [
+            c
+            for c, on in (("hiZ", hi_z_on(node_id, params, hi_z)), ("linked", params.get("stereoLink") is True))
+            if on
+        ]
         leaf_rule_bounds(
             node_id,
             params,

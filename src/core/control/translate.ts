@@ -1252,8 +1252,12 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
   const gain = channelGainRange(model, nodeId, np);
   if (gain) out.push(["gain", { min: gain.minDb, max: gain.maxDb }]);
   if (cc?.hasHpf) out.push(["hpfFreq", { min: HPF_FREQ_MIN_HZ, max: HPF_FREQ_MAX_HZ, grid: HPF_FREQ_STEP_HZ }]);
+  // PAN/BAL exists only while the pair is linked; an unlinked pair reads PAN.
   if (model.channelPairs.some(([primary]) => primary === nodeId))
-    out.push(["panBal", menuRule(PAN_BAL_OPTIONS, PAN_BAL_PAN)]);
+    out.push([
+      "panBal",
+      np?.stereoLink === true ? menuRule(PAN_BAL_OPTIONS, PAN_BAL_PAN) : { menu: [PAN_BAL_PAN], def: PAN_BAL_PAN },
+    ]);
   if (cc?.hasMicStrip) {
     out.push(["compEqType", menuRule(COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST)]);
     for (const f of GATE_FIELDS) out.push([`gate.${f.key}`, dynRule(f)]);

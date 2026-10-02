@@ -1921,6 +1921,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       // …and a gain past its channel's own range, with HI-Z off, on an A.Gain and a D.Gain
       // channel, beside the oscillator level.
       '{"ch1":{"gain":-12},"ch2":{"gain":71},"ch_5_6":{"gain":30},"bus.osc":{"osc":{"level":5}}}',
+      // …and PAN/BAL, which an unlinked pair holds at PAN; the secondary's is never sent.
+      '{"ch1":{"stereoLink":false,"panBal":1}}',
+      '{"ch1":{"stereoLink":true,"panBal":1},"ch2":{"panBal":1}}',
       // …and the documents nothing may be said about.
       '{"ch3":{"hiZ":true,"gain":40}}',
       '{"ch3":{"hiZ":false,"phantom":true,"gain":70}}',

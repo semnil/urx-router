@@ -812,6 +812,19 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
     expect(sent.find((c) => c.name === "OSC_LEVEL")?.vdValue).toBe(0);
   });
 
+  // PAN/BAL is a linked pair's mode: the unit's control and the app's exist only while the pair
+  // is linked, and unlinking leaves PAN. A document holding BAL on an unlinked pair loads PAN.
+  it("sets PAN on an unlinked pair, and leaves a linked pair's BAL alone", () => {
+    expect(paramRangeProblems(load({ ch1: { stereoLink: false, panBal: 1 } }))).toEqual([
+      { reason: "paramRange", node: "ch1", where: "node", key: "panBal", stored: 1, action: "bound", bound: 0 },
+    ]);
+    expect(paramRangeProblems(load({ ch1: { panBal: 1 } })).map((p) => p.key)).toEqual(["panBal"]);
+    expect(paramRangeProblems(load({ ch1: { stereoLink: true, panBal: 1 } }))).toEqual([]);
+    // A link written as a number is a link to every check that reads the converted document.
+    const numbered = load({ ch1: { stereoLink: 1, panBal: 1 } });
+    expect(planProblems(getModel("URX44V"), numbered).filter((p) => p.reason === "paramRange")).toEqual([]);
+  });
+
   // The HPF stops on five frequencies 20 Hz apart. A document between two of them was written
   // as it stood, a cutoff the unit's own encoder cannot reach, while the slider sat on a
   // detent and the readout said the document's number; one past the window read one value and
@@ -968,7 +981,7 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
 
 /** The leaves the load bounds to the range the unit's own panel can set, which is narrower than
  *  the window their encoder clamps the write to. */
-const LOAD_ONLY: ReadonlySet<string> = new Set(["gain", "osc.level", "hpfFreq"]);
+const LOAD_ONLY: ReadonlySet<string> = new Set(["gain", "osc.level", "hpfFreq", "panBal"]);
 
 /** Whether a path is an insert-FX slot that drives which other slots the unit owns. */
 function driverPath(path: string): boolean {

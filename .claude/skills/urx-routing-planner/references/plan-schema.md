@@ -180,7 +180,9 @@ or inside a group — is written `true` / `false`: a number there loads converte
 - `compEqType` — 0 COMP→EQ, 1 SSMCS.
 - `recPoint` — channel record/direct-out tap (enum; absent = PRE FADER).
 - `stereoLink` — stereo-link a MONO IN pair (set on the odd/primary channel).
-- `panBal` — 0 PAN / 1 BAL for a linked pair.
+- `panBal` — 0 PAN / 1 BAL for a linked pair, on the primary. An unlinked pair
+  holds PAN (the unit's control exists only while the pair is linked), so a
+  document carrying BAL there opens at PAN.
 - `busType` — MIX 1/2: 0 VARI / 1 FIXED. On a FIXED bus a send into it keeps only
   its `on`: the unit takes it after the source's fader at a fixed level, placed by
   the source's own PAN / BAL, so the send's `level`, `pan` and `tap` have no effect — no

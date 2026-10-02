@@ -98,8 +98,8 @@ export interface SkillModel {
    *  moves to the nearest of `steps`, a menu with its default, or a leaf the write never sends
    *  (`unsent`). The load bounds a value outside it to the value the write sends, and removes an
    *  unsent one (`paramRangeProblems`). A rule that depends on the node's own state carries the
-   *  rule that state gives under the state's name — `hiZ` while HI-Z is on — beside the rule the
-   *  factory state gives. The insert-FX engine keys are not here: which rule a key takes is its
+   *  rule that state gives under the state's name — `hiZ` while HI-Z is on, `linked` while a
+   *  pair's primary holds `stereoLink` on — beside the rule the factory state gives. The insert-FX engine keys are not here: which rule a key takes is its
    *  family's, which `insertFxParamSpace` carries. */
   leafRules: Record<string, Record<string, LeafRule & Partial<Record<LeafContext, LeafRule>>>>;
 }
@@ -147,11 +147,14 @@ function leafRules(model: DeviceModel): SkillModel["leafRules"] {
 }
 
 /** A node state a rule can depend on, by the name the validator asks it under. */
-type LeafContext = "hiZ";
+type LeafContext = "hiZ" | "linked";
 
 /** The states that change a node's rules, each as the params that put the node in it. */
 function leafContexts(model: DeviceModel, nodeId: string): [LeafContext, NodeParams][] {
-  return hasHiZInput(model.id, nodeId) ? [["hiZ", { hiZ: true }]] : [];
+  const out: [LeafContext, NodeParams][] = [];
+  if (hasHiZInput(model.id, nodeId)) out.push(["hiZ", { hiZ: true }]);
+  if (model.channelPairs.some(([primary]) => primary === nodeId)) out.push(["linked", { stereoLink: true }]);
+  return out;
 }
 
 /** Each node's factory params, for every node the model's factory values describe. */
