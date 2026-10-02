@@ -319,8 +319,11 @@ write sends, and counted with the values moved: the `gate`, `comp` and `ducker` 
 windows (a COMP `ratio` to the nearest stop of its ladder), the `ssmcs` raws and the
 `insertFxParams` engine values to whole numbers inside their windows (an engine key by the family
 its own name gives, a bare slot by the one the selector names), the EQ 1-knob and COMP 1-knob
-levels to 0–100, and the oscillator's `interval` to 1–30. `plan_tool.py` warns about each one,
-from the rules `models.json` carries (`leafRules`).
+levels to 0–100, the oscillator's `interval` to 1–30, and an enum off its menu — `compEqType`,
+`recPoint`, `panBal`, `busType`, a COMP `knee`, an EQ 1-knob `type`, the oscillator's `mode`, the
+STREAMING delay's `frameRate` — to the menu's default, which is what the write sends for it.
+`plan_tool.py` warns about each one, from the rules `models.json` carries (`leafRules`). A
+repair reaches the oscillator too, which the Scene-only device scope does not write.
 
 The same step drops, on every node, a value whose KIND is not the factory value's at that
 path, and the factory value is filled in: an on/off or a group where a number belongs

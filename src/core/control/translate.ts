@@ -1186,24 +1186,27 @@ function pushDynCommands(
 
 /**
  * What one stored node-param leaf can hold, as the write sends it: a window, an INTEGER window
- * (a broker raw, rounded first), or a window whose value then moves to the nearest of a stop
- * table. The emit bounds each leaf through the rule here (`admitLeaf`), and the load bounds a
- * document to the same answer (`plan-validate.ts` `paramRangeProblems`), so the plan, the
- * screen and the wire read one value.
+ * (a broker raw, rounded first), a window whose value then moves to the nearest of a stop
+ * table, or a MENU, where a value off it is sent as the menu's default. The emit bounds each
+ * leaf through the rule here (`admitLeaf`), and the load bounds a document to the same answer
+ * (`plan-validate.ts` `paramRangeProblems`), so the plan, the screen and the wire read one
+ * value.
  */
-export interface LeafRule {
-  min: number;
-  max: number;
-  integer?: true;
-  steps?: readonly number[];
-}
+export type LeafRule =
+  { min: number; max: number; integer?: true; steps?: readonly number[] } | { menu: readonly number[]; def: number };
 
 /** The value a rule admits for `v`, which is the value the write sends for it. */
 export function admitLeaf(rule: LeafRule, v: number): number {
+  if ("menu" in rule) return rule.menu.includes(v) ? v : rule.def;
   const x = rule.integer ? Math.round(v) : v;
   const bounded = x < rule.min ? rule.min : x > rule.max ? rule.max : x;
   return rule.steps ? rule.steps[nearestStepIndex(rule.steps, bounded)] : bounded;
 }
+
+const menuRule = (options: readonly { value: number }[], def: number): LeafRule => ({
+  menu: options.map((o) => o.value),
+  def,
+});
 
 const dynRule = (f: DynField): LeafRule => ({ min: f.min, max: f.max, ...(f.steps ? { steps: f.steps } : {}) });
 const rawRule = (min: number, max: number): LeafRule => ({ min, max, integer: true });
@@ -1233,10 +1236,16 @@ function insertFxKeySlot(
 export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams | undefined): [string, LeafRule][] {
   const out: [string, LeafRule][] = [];
   const cc = channelControl(model, nodeId);
+  if (cc) out.push(["recPoint", menuRule(REC_POINT_OPTIONS, REC_POINT_DEFAULT)]);
+  if (model.channelPairs.some(([primary]) => primary === nodeId))
+    out.push(["panBal", menuRule(PAN_BAL_OPTIONS, PAN_BAL_PAN)]);
   if (cc?.hasMicStrip) {
+    out.push(["compEqType", menuRule(COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST)]);
     for (const f of GATE_FIELDS) out.push([`gate.${f.key}`, dynRule(f)]);
     for (const f of COMP_FIELDS) out.push([`comp.${f.key}`, dynRule(f)]);
+    out.push(["comp.knee", menuRule(COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)]);
     out.push(["comp.oneKnobLevel", rawRule(0, 100)]);
+    out.push(["ssmcs.comp.knee", menuRule(COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)]);
     for (const f of ssmcsMainFields()) out.push([`ssmcs.${f.key}`, rawRule(f.min, f.max)]);
     for (const f of ssmcsCompFields()) {
       const group = isSsmcsScKey(f.key) ? "sc" : "comp";
@@ -1251,10 +1260,18 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
       }
     }
   }
-  if (eqOneKnob(model, nodeId, COMP_EQ_COMP_FIRST))
+  if (eqOneKnob(model, nodeId, COMP_EQ_COMP_FIRST)) {
+    out.push(["eqOneKnob.type", menuRule(EQ_ONE_KNOB_TYPE_ALL_OPTIONS, EQ_ONE_KNOB_TYPE_DEFAULT)]);
     out.push(["eqOneKnob.level", rawRule(EQ_ONE_KNOB_LEVEL_MIN, EQ_ONE_KNOB_LEVEL_MAX)]);
+  }
+  if (MIX_FADER_INSTANCES[nodeId]) out.push(["busType", menuRule(BUS_TYPE_OPTIONS, BUS_TYPE_VARI)]);
   if (duckerControl(model, nodeId)) for (const f of DUCKER_FIELDS) out.push([`ducker.${f.key}`, dynRule(f)]);
-  if (nodeId === "bus.osc") out.push(["osc.interval", rawRule(1, 30)]);
+  if (nodeId === "bus.osc") {
+    out.push(["osc.mode", menuRule(OSC_MODE_OPTIONS, OSC_MODE_SINE)]);
+    out.push(["osc.interval", rawRule(1, 30)]);
+  }
+  if (nodeId === "bus.stream")
+    out.push(["delay.frameRate", menuRule(DELAY_FRAME_RATE_OPTIONS, DELAY_FRAME_RATE_DEFAULT)]);
   const ifx = insertFxControl(model, nodeId);
   const params = np?.insertFxParams;
   if (ifx && params && typeof params === "object") {
@@ -1327,7 +1344,7 @@ function planRaw(v: number | undefined, def: number): number {
 // passthrough encoding. An off-menu value would otherwise be written verbatim and
 // select something the plan never named.
 function boundEnum(v: number, options: readonly { value: number }[], def: number): number {
-  return options.some((o) => o.value === v) ? v : def;
+  return admitLeaf(menuRule(options, def), v);
 }
 
 function pushFxEffectCommands(

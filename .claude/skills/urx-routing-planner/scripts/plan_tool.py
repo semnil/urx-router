@@ -1214,8 +1214,11 @@ def js_round(value):
 
 def admit(rule, value):
     """The value a leaf rule admits (core/control/translate.ts `admitLeaf`), which is the value
-    the write sends: rounded first for an integer window, then held to the window, then moved
-    to the nearest stop where the rule has a stop table (the first of two equally near)."""
+    the write sends: a value off a menu is the menu's default; a window rounds first where it is
+    an integer one, then holds the value to the window, then moves it to the nearest stop where
+    the rule has a stop table (the first of two equally near)."""
+    if "menu" in rule:
+        return value if value in rule["menu"] else rule["def"]
     v = js_round(value) if rule.get("integer") else value
     v = rule["min"] if v < rule["min"] else rule["max"] if v > rule["max"] else v
     steps = rule.get("steps")

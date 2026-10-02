@@ -1856,11 +1856,11 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         "bus.stereo": { ...factory.nodeParams["bus.stereo"], insertFx: 1792, insertFxParams: { 25: 99 } },
       };
       const corpus = [
-        ["every bounded leaf above its rule", moved((r) => r.max + 1.25)],
-        ["every bounded leaf below its rule", moved((r) => r.min - 1.25)],
+        ["every bounded leaf above its rule", moved((r) => (r.menu ? Math.max(...r.menu) + 1 : r.max + 1.25))],
+        ["every bounded leaf below its rule", moved((r) => (r.menu ? Math.min(...r.menu) - 1 : r.min - 1.25))],
         [
-          "every integer or stepped leaf between two settings",
-          moved((r) => (r.integer || r.steps ? (r.min + r.max) / 2 + 0.3 : undefined)),
+          "every menu, integer or stepped leaf between two settings",
+          moved((r) => (r.menu ? r.menu[0] + 0.5 : r.integer || r.steps ? (r.min + r.max) / 2 + 0.3 : undefined)),
         ],
         ["insert-FX engine keys", engine],
         ["the factory document", structuredClone(factory.nodeParams)],

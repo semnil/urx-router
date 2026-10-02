@@ -777,6 +777,34 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
     );
   });
 
+  // An enum off its menu drew a blank select, and hid or mislabelled the rows that depend on it,
+  // while the write sent the menu's default. The oscillator is in it, scene-external as it is.
+  it("bounds an enum off its menu to the default the write sends", () => {
+    const plan = load({
+      ch1: { compEqType: 2, panBal: 2, comp: { knee: 7 }, eqOneKnob: { type: 5 } },
+      ch2: { insertFx: 256, insertFxParams: { "guitar-clean:19": 3 } },
+      "bus.mix1": { busType: 2 },
+      "bus.osc": { osc: { mode: 3 } },
+      "bus.stream": { delay: { frameRate: 9 } },
+    });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(
+      [
+        "ch1.compEqType 2 -> 0",
+        "ch1.panBal 2 -> 0",
+        "ch1.comp.knee 7 -> 1",
+        "ch1.eqOneKnob.type 5 -> 0",
+        "ch2.insertFxParams.guitar-clean:19 3 -> 2",
+        "bus.mix1.busType 2 -> 0",
+        "bus.osc.osc.mode 3 -> 0",
+        "bus.stream.delay.frameRate 9 -> 5",
+      ].sort(),
+    );
+  });
+
   // The claim the repair rests on: what the load writes down is what the write was already
   // sending, for every leaf of every node, in each shape a document can be outside it in.
   it("never changes what the write path sends, and settles in one pass", () => {
@@ -800,18 +828,24 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
           const withSlots: NodeParams =
             typeof extra.insertFx === "number" ? { ...at, insertFxParams: engineSlotsOf(extra.insertFx) } : at;
           for (const [path, rule] of nodeLeafRules(model, node.id, withSlots)) {
-            for (const [shape, v] of [
-              ["below", rule.min - 1.25],
-              ["above", rule.max + 1.25],
-              ["between", (rule.min + rule.max) / 2 + 0.3],
-            ] as const) {
+            const shapes: [string, number, boolean][] =
+              "menu" in rule
+                ? [
+                    ["off the menu", Math.max(...rule.menu) + 1, true],
+                    ["between", rule.menu[0] + 0.5, true],
+                  ]
+                : [
+                    ["below", rule.min - 1.25, true],
+                    ["above", rule.max + 1.25, true],
+                    // Inside a plain window there is nothing to move.
+                    ["between", (rule.min + rule.max) / 2 + 0.3, rule.integer === true || rule.steps !== undefined],
+                  ];
+            for (const [shape, v, outside] of shapes) {
               const np = structuredClone(withSlots) as Record<string, unknown>;
               const keys = path.split(".");
               let holder = np;
               for (const k of keys.slice(0, -1)) holder = (holder[k] ??= {}) as Record<string, unknown>;
               holder[keys[keys.length - 1]] = v;
-              // Inside a plain window there is nothing to move.
-              const outside = shape !== "between" || rule.integer === true || rule.steps !== undefined;
               cases.push([`${id} ${node.id} ${path} ${shape}`, seeded(node.id, np), outside, driverPath(path)]);
             }
           }
