@@ -1530,6 +1530,73 @@ describe("the multi-band compressor", () => {
     expect(r.ys[0]).toBeCloseTo(mainGeo.py(0), 6);
   });
 
+  // A band's make-up reaches +18 dB, so its face runs its output axis to +18 the way the COMP
+  // screen does: a ceiling at 0 dBFS cut every curve whose make-up put it above full scale.
+  it("keeps a band's curve inside the frame at the top of its make-up", () => {
+    const ctx = mbc(LOW);
+    const geo = INSFX_DYN.plotGeo!(W, H, ctx);
+    const r = recorder();
+    // Threshold -6 dB, 2:1, make-up raw 55 = +18 dB: full scale comes out at +15 dBFS.
+    INSFX_DYN.drawCurve!(r.ctx, geo, vals({ "ifx:mbc:9": 121, "ifx:mbc:10": 2, "ifx:mbc:11": 55 }), TOK, ctx);
+    const curve = r.ys.slice(0, 121);
+    expect(Math.min(...curve)).toBeGreaterThanOrEqual(geo.pad.t);
+    expect(curve.at(-1)).toBeCloseTo(geo.py(15), 6);
+    // MAIN keeps its own frequency axes, and a compander keeps the 0 dBFS ceiling.
+    expect(INSFX_DYN.plotGeo!(W, H, holding("ch1", "Compander-H")).py(0)).toBeCloseTo(geo.pad.t, 6);
+  });
+
+  // The curve carries the band's make-up over its whole length, so unity is lifted by it to
+  // stay the level with no compression; a bypassed band carries none.
+  it("lifts a band face's unity by that band's make-up", () => {
+    const unity = (ctx: DynCtx): number[] => {
+      const r = recorder();
+      INSFX_DYN.drawAxes!(r.ctx, INSFX_DYN.plotGeo!(W, H, ctx), TOK, ctx);
+      return r.ys.slice(-2);
+    };
+    const geo = INSFX_DYN.plotGeo!(W, H, mbc(LOW));
+    // Make-up raw 47 = +10 dB.
+    const lifted = unity(mbc(LOW, { [insertFxParamKey("mbc", MBC_BANDS[0].gain)]: 47 }));
+    expect(lifted[0]).toBeCloseTo(geo.py(-60 + 10), 6);
+    expect(lifted[1]).toBeCloseTo(geo.py(10), 6);
+    const bypassed = unity(
+      mbc(LOW, {
+        [insertFxParamKey("mbc", MBC_BANDS[0].gain)]: 47,
+        [insertFxParamKey("mbc", MBC_BANDS[0].bypass)]: 1,
+      }),
+    );
+    expect(bypassed[1]).toBeCloseTo(geo.py(0), 6);
+  });
+
+  // The dot's output is the POST tap, after Out Gain, which the band's curve leaves out — so
+  // the reading is brought back by Out Gain to sit on the curve. Factory MID: -20 dB at 2:1
+  // with +2 dB of make-up and Out Gain +4, so a tone at -44 comes out at -38 and is on the
+  // curve at -42.
+  it("puts a band's live dot on its curve, Out Gain taken back off the output reading", () => {
+    const ctx = mbc(2);
+    const geo = INSFX_DYN.plotGeo!(W, H, ctx);
+    const r = recorder();
+    INSFX_DYN.drawLive!(r.ctx, geo, (k) => (k === "in" ? -44 : k === "out" ? -38 : null), TOK, ctx);
+    const dot = r.faces.at(-1)!;
+    expect((dot.y0 + dot.y1) / 2).toBeCloseTo(geo.py(-42), 6);
+    expect((dot.x0 + dot.x1) / 2).toBeCloseTo(geo.px(-44), 6);
+  });
+
+  // Merged into the output column, a band's reduction is shortened by the gain between the
+  // band's input and that column — its make-up and Out Gain — and never lengthened.
+  it("shortens a band's merged reduction by its make-up and Out Gain, never by less than 0", () => {
+    const offset = (params: Record<string, number>): number | undefined =>
+      INSFX_DYN.bind(mbc(LOW, params))!.lanes.find((l) => l.key === "gr")!.grOffsetDb;
+    // Factory: +2 dB of make-up and Out Gain +4.
+    expect(offset({})).toBe(6);
+    // +10 dB of make-up and Out Gain -12.
+    expect(
+      offset({ [insertFxParamKey("mbc", MBC_BANDS[0].gain)]: 47, [insertFxParamKey("mbc", MBC_GLOBAL.outGain)]: 52 }),
+    ).toBe(0);
+    expect(
+      offset({ [insertFxParamKey("mbc", MBC_BANDS[0].gain)]: 55, [insertFxParamKey("mbc", MBC_GLOBAL.outGain)]: 70 }),
+    ).toBe(24);
+  });
+
   it("takes a band with no make-up left off the frame rather than along its floor", () => {
     // Gain raw 0 is -∞ on the unit, which is a band putting out nothing — and a line lying
     // on the plot's bottom edge is where a very quiet band would be drawn too.

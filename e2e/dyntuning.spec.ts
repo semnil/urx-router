@@ -637,6 +637,31 @@ test.describe("with a live session", () => {
     await expect.poll(bar).toBe(((12 - 10 * (1 - 1 / 3.5)) / 54).toFixed(3));
   });
 
+  // A multi-band compressor band's reduction, merged into the output column, is shortened by
+  // the gain between the band's input and that column: its make-up and Out Gain, +2 and +4 dB
+  // at the factory settings.
+  test("shortens a multi-band band's merged reduction by its make-up and Out Gain", async ({ page }) => {
+    await node(page, "bus.mix1").click();
+    await openInsertFxSection(page);
+    await chooseOption(insertFxSection(page).locator(".param", { hasText: "EFFECT TYPE" }).locator("select"), {
+      label: "M.B.Comp",
+    });
+    await insertFxSection(page).locator("#btn-insfx-screen").click();
+    await expect(screenBox(page)).toBeVisible();
+    await screenBox(page).locator("#dyn-face-insfx-low").click();
+    const bar = () =>
+      screenBox(page)
+        .locator(".gt-shade.gr")
+        .evaluate((el) => (el as HTMLElement).style.getPropertyValue("--lvl"));
+
+    await pushMeters(page, [133, 0, -50]);
+    await expect(readout(page, "INS FX GR").locator(".v")).toHaveText("-5.0");
+    await expect.poll(bar).toBe("0.000");
+    await pushMeters(page, [133, 0, -120]);
+    await expect(readout(page, "INS FX GR").locator(".v")).toHaveText("-12.0");
+    await expect.poll(bar).toBe((6 / 54).toFixed(3));
+  });
+
   test("keeps its meters when the device is operated under it", async ({ page }) => {
     // Opened from the CONSOLE, so that view is visible behind the modal. Turning a
     // knob on the unit arrives as a param notify; follow applies it and, once the

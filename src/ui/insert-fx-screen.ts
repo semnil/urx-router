@@ -25,8 +25,10 @@ import {
   insertFxParamKey,
   insertFxParams,
   MBC_BANDS,
+  MBC_GLOBAL,
   MBC_ONE_KNOB,
   mbcBandCurve,
+  mbcOutGainDb,
   mbcXoverHz,
   pitchDeviceDriven,
   mbcXoverLabel,
@@ -87,6 +89,10 @@ const TICK_STEP = 6;
  *  its lift brings full scale back to 0 dBFS at most, and Out Gain only attenuates. */
 const CURVE_LO_DB = -60;
 const CURVE_OUT_TICKS = [0, -12, -24, -36, -48];
+/** A multi-band compressor band face's output axis. It runs to +18 dB like the COMP screen's,
+ *  because a band's make-up reaches +18: a ceiling at 0 dBFS would cut every curve whose
+ *  make-up puts it above full scale, and the reduction annotation hanging off the top with it. */
+const MBC_BAND_OUT_TICKS = [18, 6, -6, -18, -30, -42, -54];
 
 /** A field's key is its family and its engine slot. Both halves are needed: an insert-FX
  *  value has no plan sub-object to borrow a name from, and a row can outlive the family it
@@ -363,6 +369,24 @@ function mbcResponses(v: DynValues): {
   });
 }
 
+/** The make-up one band's own curve carries over its whole length, in dB: what the face's
+ *  unity reference is lifted by. 0 for a bypassed band, which passes at unity, and for a band
+ *  with no make-up left, whose curve is off the frame. */
+function mbcBandMakeupDb(v: DynValues, band: "low" | "mid" | "high"): number {
+  const b = MBC_BANDS.find((x) => x.band === band);
+  if (!b || mbcRaw(v, b.bypass)) return 0;
+  const db = mbcBandCurve({
+    threshold: mbcRaw(v, b.threshold),
+    ratio: mbcRaw(v, b.ratio),
+    gain: mbcRaw(v, b.gain),
+  }).gainDb;
+  return Number.isFinite(db) ? db : 0;
+}
+
+/** The multi-band compressor's Out Gain, in dB. It is applied to the sum of the bands, after
+ *  every band's curve. */
+const mbcOutGain = (v: DynValues): number => mbcOutGainDb(mbcRaw(v, MBC_GLOBAL.outGain));
+
 /** Which families the unit meters a reduction for. Not "which are dynamics processors" —
  *  a guitar amp carries a noise gate and Pitch Fix attenuates, and neither moves the
  *  meter. The compander and the multi-band compressor are the two, and the pair is what
@@ -620,8 +644,11 @@ function lanesOf(ctx: DynCtx, isOutput: boolean): DynLane[] {
         gr: insertFxOutGrAddr(MBC_BAND_RANK[band]),
         // Merged into the OUTPUT column, as every reduction on every screen is: one band's
         // reduction against the level it was taken off reads better than a column of its
-        // own, and there is only one of them on this face to merge.
+        // own, and there is only one of them on this face to merge. Shortened by the gain
+        // between the band's input and that column — its make-up and Out Gain — and never
+        // lengthened, where the two together take level away.
         sameSlot: true,
+        grOffsetDb: Math.max(0, mbcBandMakeupDb(valuesOf(ctx), band) + mbcOutGain(valuesOf(ctx))),
       });
     }
     return lanes;
@@ -671,6 +698,24 @@ function insFxFace(): DynProcessor {
     // reading of nothing.
     on: (ctx) => hasCurve(familyOf(ctx)) && !isMbcMain(ctx),
   });
+  // A multi-band compressor band face's own pair of axes and offsets. Its output runs to +18
+  // dB; its unity is lifted by the band's make-up, which the curve carries; and the dot's
+  // output reading is taken after Out Gain, which the band's curve does not carry, so it is
+  // brought back by that much to sit on the curve.
+  const bandPlot = transferPlot({
+    loDb: CURVE_LO_DB,
+    outLoDb: CURVE_LO_DB,
+    outTicks: MBC_BAND_OUT_TICKS,
+    hint: (m) => m.dynTuning.insfx.curveHint,
+    unityOffsetDb: (ctx) => {
+      const band = MBC_FACES[ctx.sel - 1];
+      return band ? mbcBandMakeupDb(valuesOf(ctx), band) : 0;
+    },
+    outOffsetDb: (ctx) => -mbcOutGain(valuesOf(ctx)),
+    on: (ctx) => isMbcBandFace(ctx),
+  });
+  /** Which of the two transfer plots a face draws on. */
+  const plotOf = (ctx: DynCtx): typeof plot => (isMbcBandFace(ctx) ? bandPlot : plot);
   return {
     key: "insfx",
     loDb: LO_DB,
@@ -982,8 +1027,9 @@ function insFxFace(): DynProcessor {
     // make-up up: what MAIN sets is where the bands are split and how loud each comes back,
     // and both of those are on those two axes. Overridden AFTER the spread, delegating to
     // the factory everywhere else, so one face's axes cannot silently become every face's.
-    plotGeo: (w, h, ctx) => (isMbcMain(ctx) ? freqGeo(w, h) : plot.plotGeo!(w, h, ctx)),
-    drawAxes: (c, g, tok, ctx) => (isMbcMain(ctx) ? drawFreqAxes(c, g, tok) : plot.drawAxes!(c, g, tok, ctx)),
+    plotGeo: (w, h, ctx) => (isMbcMain(ctx) ? freqGeo(w, h) : plotOf(ctx).plotGeo!(w, h, ctx)),
+    drawAxes: (c, g, tok, ctx) => (isMbcMain(ctx) ? drawFreqAxes(c, g, tok) : plotOf(ctx).drawAxes!(c, g, tok, ctx)),
+    drawLive: (c, g, read, tok, ctx) => plotOf(ctx).drawLive!(c, g, read, tok, ctx),
     // AFTER the spread: `transferPlot` supplies a display of its own, and this screen's is
     // the one that decides whether there is a plot in the column at all.
     display: (parts, ctx) => (hasCurve(familyOf(ctx)) ? splitDisplay(parts) : parts.lanes()),

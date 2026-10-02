@@ -1399,12 +1399,17 @@ by looking at it. The two crossovers are separately ranged and overlap (L-M reac
 at 42.5 Hz), so the upper one can be set below the lower; the band between them is then given no width
 rather than the three being reordered into a picture that reads as valid.
 
-**A band face: that band's transfer**, on the axes every other compressor screen uses — unity to its
-own threshold, the set ratio above it, its make-up added, and the reduction annotation over it. Out
-Gain is in none of them: that one is applied to the SUM of the three, so folding it into a band's curve
-would say every band is trimmed on its own. A band whose make-up is at the bottom of its range puts out
-nothing at all (`-∞` on the unit) and is drawn off the frame rather than along its floor, where a
-merely quiet band would also be.
+**A band face: that band's transfer** — unity to its own threshold, the set ratio above it, its make-up
+added, and the reduction annotation over it — on an output axis that runs to +18 dB as the COMP screen's
+does, since a band's make-up reaches +18 and a ceiling at 0 dBFS would cut the curve and the annotation
+off the top. The unity reference is lifted by the band's make-up, which the curve carries over its whole
+length. Out Gain is in none of the curves: it is applied to the SUM of the three, so folding it into a
+band's curve would say every band is trimmed on its own. The live dot's output reading is the POST tap,
+after Out Gain, so it is brought back by Out Gain to sit on the curve; and the band's reduction, merged
+into the output column, is shortened by the band's make-up plus Out Gain — the gain between the band's
+input and that column — and never lengthened where the two together take level away. A band whose
+make-up is at the bottom of its range puts out nothing at all (`-∞` on the unit) and is drawn off the
+frame rather than along its floor, where a merely quiet band would also be.
 
 **MAIN's figure is on the CANVAS, and that is what makes it follow a knob.** The display column is
 built once per panel, so a strip of elements there would not: moving L-M Xover from 125 Hz to

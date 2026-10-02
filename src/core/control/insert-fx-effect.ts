@@ -408,8 +408,10 @@ export const mbcReleaseLabel = (index: number): string => {
   const ms = MBC_RELEASE_MS[index] ?? 0;
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`;
 };
-/** MBC Out Gain raw → display ("+4 dB"). raw = dB + 64. */
-export const mbcOutGainLabel = (raw: number): string => `${raw - 64} dB`;
+/** MBC Out Gain raw → dB. raw = dB + 64. */
+export const mbcOutGainDb = (raw: number): number => raw - 64;
+/** MBC Out Gain raw → display ("+4 dB"). */
+export const mbcOutGainLabel = (raw: number): string => `${mbcOutGainDb(raw)} dB`;
 
 /**
  * One band's compressor in the plot's own units, from the three raws that shape it.
