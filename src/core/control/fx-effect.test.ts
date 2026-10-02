@@ -233,10 +233,15 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect([53, 54, 55].map(fx2FreqHz)).toEqual([315, 335, 355]);
     expect([44, 45, 46].map(revxFreqHz)).toEqual([3150, 3550, 4000]);
   });
-  it("Initial/ER delay = raw × 200/127", () => {
-    expect(initDelayMs(0)).toBeCloseTo(0, 1);
-    expect(initDelayMs(26)).toBeCloseTo(41.0, 0);
-    expect(initDelayMs(127)).toBeCloseTo(200, 1);
+  // The unit's LCD prints these to 0.1 ms, so each point is held to that: raw 0 is the
+  // range's own 0.1 ms floor, raw 2 is REV-X's factory Initial Delay, and the other three
+  // are the points a law through the ends has to pass on its way.
+  it("Initial/ER delay = 0.1 + raw × 199.9/127, on the points the LCD prints", () => {
+    expect(initDelayMs(0)).toBeCloseTo(0.1, 1);
+    expect(initDelayMs(2)).toBeCloseTo(3.2, 1);
+    expect(initDelayMs(4)).toBeCloseTo(6.4, 1);
+    expect(initDelayMs(26)).toBeCloseTo(41.0, 1);
+    expect(initDelayMs(127)).toBeCloseTo(200.0, 1);
   });
   it("Mono delay = raw / 10, on the three points that disproved raw / 14.976", () => {
     // Read off the unit with Sync off. 7563 is the raw the retired record claimed was

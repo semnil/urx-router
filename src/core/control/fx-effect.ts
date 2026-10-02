@@ -100,9 +100,10 @@ export function revxFreqHz(raw: number): number {
 export function fx2FreqHz(raw: number): number {
   return preferredNumber(R40, raw + 47);
 }
-/** Initial Delay / ER-Reverb Delay (REV-X + Rev.R3): linear ms = raw × 200/127. */
+/** Initial Delay / ER-Reverb Delay (REV-X + Rev.R3): linear from 0.1 ms at raw 0 to
+ *  200.0 ms at raw 127, ms = 0.1 + raw × 199.9/127. */
 export function initDelayMs(raw: number): number {
-  return (raw * 200) / 127;
+  return 0.1 + (raw * 199.9) / 127;
 }
 /** Delay time for BOTH delay types: linear ms = raw / 10. The two differ in the
  *  RANGE they accept, not in how a raw reads. */
