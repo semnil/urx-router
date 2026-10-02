@@ -817,7 +817,7 @@ export const en = {
     paramsBounded: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} outside what this app can write, and now read as the nearest value it can send`,
     paramsDropped: (count: number): string =>
-      `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the effect's own default`,
+      `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the default`,
     streamingSourceSupplied: tr("The plan named no STREAMING source, so STREAMING takes STEREO"),
     booleanParamsConverted: (count: number): string =>
       `${count} on/off ${count === 1 ? "value written as a number was" : "values written as numbers were"} converted to on/off`,

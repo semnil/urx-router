@@ -620,7 +620,7 @@ export const ja: Messages = {
     paramsBounded: (count: number): string =>
       `このアプリが書き込める範囲の外にあった保存値 ${count} 件を、送信できる最も近い値に寄せました`,
     paramsDropped: (count: number): string =>
-      `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、エフェクト自身の既定値を使います`,
+      `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、既定値を使います`,
     streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
     booleanParamsConverted: (count: number): string =>
       `数値で書かれていたオン/オフの値 ${count} 件を、オン/オフの値に変換しました`,
