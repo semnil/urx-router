@@ -535,6 +535,23 @@ test("a re-render keeps the strip scroll offset and the focused control", async 
   expect(await stripsScroll(page)).toBe(scrolled);
 });
 
+// The control is found again by what it is, not by where it stood: turning HI-Z off from the
+// keyboard brings +48V back into the tab order ahead of it, and the focus stays on Hi-Z
+// rather than on HPF, the chip that took its old place — where the next Space would write.
+test("a re-render that moves the tab order keeps the focus on the same chip", async ({ page }) => {
+  const ch3 = strip(page, "CH 3");
+  const hiZ = ch3.getByRole("button", { name: "Hi-Z", exact: true });
+  const hpf = ch3.getByRole("button", { name: "HPF", exact: true });
+  await hiZ.click();
+  await expect(hiZ).toHaveAttribute("aria-pressed", "true");
+  await expect(ch3.getByRole("button", { name: "+48", exact: true })).toHaveAttribute("aria-disabled", "true");
+  await hiZ.focus();
+  await page.keyboard.press("Space");
+  await expect(hiZ).toHaveAttribute("aria-pressed", "false");
+  await expect(hiZ).toBeFocused();
+  await expect(hpf).toHaveAttribute("aria-pressed", "false");
+});
+
 // The scroll offset survives a rebuild on its own: `render()` clears and refills the
 // rack in one task, so the empty rack is never laid out and the offset is never
 // clipped. Saving and rewriting it around the rebuild instead forces a synchronous

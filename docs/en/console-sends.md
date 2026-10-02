@@ -186,10 +186,16 @@ still claims is given back — and that is the state an operator most needs to r
   operator on `<body>`, a whole strip rack away from where they were. A PRESS is the other case:
   the focus belongs to whatever was pressed, and taking it back would move the caret out of the
   control the operator just aimed at. The same rule covers all three popovers.
+- **An ordinary control is carried by its own identity, not by its place.** Each control is built
+  with a `data-ctl` (its MIDI id where it has one, else a fixed name), and a rebuild looks that
+  identity up among the controls the rebuilt strip — or the re-opened popover — offers to the
+  keyboard. A control a lock took out of the tab order (a +48V that HI-Z locked, a SEND PAN knob
+  under Pan Link) or one the rate withheld answers nothing, so the focus is dropped, or handed to
+  the popover's trigger, rather than passed to the neighbour that moved up into its place.
 - **A focus this view placed itself outlives the next rebuild.** The two anchors below are
-  `tabindex="-1"` — present, not tabbable — so the strip rebuild's focus carry-over, which keys
-  an ordinary control by its position in the tab order, comes back empty for them and drops to
-  `<body>`. A device-follow repaint of the same channel is enough to trigger it, so the place the
+  `tabindex="-1"` — present, not tabbable — so the strip rebuild's focus carry-over, which looks
+  an ordinary control up among the controls the keyboard can reach, finds nothing for them and
+  drops to `<body>`. A device-follow repaint of the same channel is enough to trigger it, so the place the
   view hands the operator would not survive the next thing the unit says. They are keyed by NAME
   in the console's own capture instead of widening what counts as focusable, which the Inspector
   also keys against. The popovers are the other half: they live outside the strip rack and are

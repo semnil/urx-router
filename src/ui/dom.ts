@@ -449,9 +449,9 @@ export function focusables(root: HTMLElement): HTMLElement[] {
  *  nothing to carry, or the key names nothing in the rebuilt panel — dropping focus is
  *  the wanted outcome there, not handing it to whatever moved into the slot).
  *
- *  How a control is keyed is the caller's: the console keys by strip + index, the
- *  inspector by the row's label. What must not differ lives here — the containment
- *  check, and `focus({ preventScroll: true })`, which keeps the surface where the
+ *  How a control is keyed is the caller's: the console keys by strip + the control's own
+ *  identity, the inspector by the row's label. What must not differ lives here — the
+ *  containment check, and `focus({ preventScroll: true })`, which keeps the surface where the
  *  operator left it when the restored control sits off screen (measured honoured on
  *  both engines; scripts/meter-bench.mjs's scrollCheck holds it against WKWebView on
  *  every bench run, so a copy that dropped it would show up there).

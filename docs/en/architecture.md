@@ -1313,7 +1313,8 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   read-back. The transient state those elements held is carried across the rebuild rather than lost with them:
   each strip's meter ballistics move onto the fresh lanes when it still meters the same tap (`carryMeterState`,
   shared with `refreshStrip`), and keyboard focus is handed back to the same control (`captureFocus`, matched
-  by strip id + index + class, dropped when the rebuild changed that strip's shape, and dropped when the plan
+  by strip id + the control's own identity (`data-ctl`), dropped when the rebuilt strip no longer offers that
+  control to the keyboard — a chip a lock turned read-only, an opener the rate withheld — and dropped when the plan
   itself was replaced — a file load, a model switch — since the control it stood on belongs to the plan that
   is gone, and a key still held there must reach nothing in the one that took its place).
   The strip rack's scroll offset carries itself and is deliberately not saved and restored: the clear and the

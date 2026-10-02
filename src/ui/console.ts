@@ -333,6 +333,16 @@ function nameStrip(strip: HTMLElement, m: { label: string }): void {
   strip.setAttribute("aria-label", m.label);
 }
 
+// Focus inside an open popover: the popover, the strip it belongs to, and the row as its
+// identity and its position among the popover's tabbable rows (-1 where it is not one).
+interface PopoverFocusMark {
+  pop: "tap" | "pan" | "ifx";
+  id: string;
+  idx: number;
+  ctl: string | undefined;
+  sel: readonly string[];
+}
+
 interface StripModel {
   id: string;
   label: string;
@@ -848,6 +858,7 @@ export class Console {
   private buildTapBadge(id: string): HTMLElement {
     const tap = tapFor(id, this.tapKeyOf(id), this.hooks.getModel().id);
     const badge = el("div", "con-tap");
+    badge.dataset.ctl = "meter-point";
     badge.setAttribute("role", "button");
     badge.setAttribute("aria-haspopup", "menu");
     badge.tabIndex = 0;
@@ -924,6 +935,7 @@ export class Console {
     const chain = el("div", "chain");
     for (const tp of tapsFor(id, this.hooks.getModel().id)) {
       const row = el("div", "crow" + (tp.key === cur ? " active" : ""));
+      row.dataset.ctl = "tap:" + tp.key;
       row.setAttribute("role", "menuitemradio");
       row.setAttribute("aria-checked", String(tp.key === cur));
       row.tabIndex = 0;
@@ -977,6 +989,7 @@ export class Console {
     const rack = el("div", "con-sends" + (hasAny ? "" : " empty"));
 
     const sh = el("div", "con-sh" + (hasAny ? "" : " dim"));
+    sh.dataset.ctl = "sends";
     sh.setAttribute("role", "button");
     sh.setAttribute("aria-expanded", String(this.sendsOpen));
     sh.tabIndex = 0;
@@ -1028,6 +1041,7 @@ export class Console {
     const panbtn = el("button", "con-panbtn") as HTMLButtonElement;
     panbtn.type = "button";
     panbtn.dataset.strip = m.id;
+    panbtn.dataset.ctl = "send-pan";
     panbtn.setAttribute("aria-haspopup", "true");
     panbtn.setAttribute("aria-expanded", "false");
     const cv = el("span", "cv");
@@ -1072,6 +1086,7 @@ export class Console {
     const fader = el("div", "con-vfad" + (busFixed ? " readonly" : ""));
     fader.setAttribute("role", "slider");
     fader.setAttribute("aria-label", SEND_LABEL[target]);
+    fader.dataset.ctl = controlId(m.id, "level", target);
     setLevelRange(fader, range);
     if (busFixed) {
       fader.setAttribute("aria-disabled", "true");
@@ -1140,6 +1155,10 @@ export class Console {
                 title: t().console.preHint,
               },
     );
+
+    // Each keeps one identity whatever lock it is drawn under, for the focus carry-over.
+    chip.dataset.ctl = controlId(m.id, "mute", target);
+    preBtn.dataset.ctl = controlId(m.id, "tap", target);
 
     // A FIXED-bus send fader is display-only: paint its value but skip the wiring.
     if (!busFixed) this.wireColFader(m.id, target, c, ref, range, swap, readoutText);
@@ -1413,6 +1432,7 @@ export class Console {
       // offer, and it is marked as checked rather than as available.
       const disabled = entry.lock !== null && !isNone && !current;
       const row = el("div", "irow" + (current ? " active" : "") + (disabled ? " off" : ""));
+      row.dataset.ctl = "insfx:" + entry.option.value;
       row.setAttribute("role", "menuitemradio");
       row.setAttribute("aria-checked", String(current));
       const nm = el("span", "nm");
@@ -1476,6 +1496,7 @@ export class Console {
     // an easier one, and the easier one is what stops being true first.
     const openable = insertFxScreenFamily(model, plan, id) !== null;
     const open = el("div", "iopen" + (openable ? "" : " off"));
+    open.dataset.ctl = "open-screen";
     open.textContent = dynOpenLabel("insfx", t());
     if (openable) {
       open.setAttribute("role", "button");
@@ -1503,6 +1524,7 @@ export class Console {
 
   private fxTypeOpenChip(id: string): HTMLElement {
     const chip = el("div", "con-chip con-chip-open con-fxopen");
+    chip.dataset.ctl = "open:fx";
     // Always "▸": an FX channel always holds an effect, so this never stands for the "+"
     // the INS FX opener shows over an empty strip.
     chip.textContent = "▸";
@@ -1526,6 +1548,7 @@ export class Console {
    *  by. */
   private fxEffectFaceChip(): HTMLElement {
     const chip = el("div", "con-chip con-fxface static on");
+    chip.dataset.ctl = "fx-face";
     chip.textContent = t().console.effect;
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", "true");
@@ -1569,6 +1592,7 @@ export class Console {
     for (const option of fxEffectTypes(fxIndex)) {
       const current = option.value === cur;
       const row = el("div", "irow" + (current ? " active" : ""));
+      row.dataset.ctl = "fx:" + option.value;
       row.setAttribute("role", "menuitemradio");
       row.setAttribute("aria-checked", String(current));
       const nm = el("span", "nm");
@@ -1588,6 +1612,7 @@ export class Console {
 
     const foot = el("div", "ifoot");
     const open = el("div", "iopen");
+    open.dataset.ctl = "open-screen";
     open.textContent = dynOpenLabel("fx", t());
     open.setAttribute("role", "button");
     // An effect on a bus the rate has taken away is still an effect to tune — the screen says
@@ -1834,6 +1859,7 @@ export class Console {
   private wirePower(scrib: HTMLElement, led: HTMLElement, m: StripModel, spec: PowerSpec): void {
     led.classList.toggle("on", spec.on);
     scrib.classList.add("power");
+    scrib.dataset.ctl = spec.midiId;
     scrib.setAttribute("role", "button");
     scrib.setAttribute("aria-pressed", String(spec.on));
     scrib.setAttribute("aria-label", `${m.label} ${t().console.power}`);
@@ -1889,6 +1915,7 @@ export class Console {
 
   private dynOpenChip(kind: DynKind, id: string): HTMLElement {
     const chip = el("div", "con-chip con-chip-open");
+    chip.dataset.ctl = "open:" + kind;
     chip.textContent = "▸";
     chip.setAttribute("role", "button");
     // What it opens, for `focusOpener` to find it by after a rebuild.
@@ -1918,6 +1945,7 @@ export class Console {
    *  was: it said why in a tooltip and then opened anyway. */
   private insFxVacantChip(id: string, whyNone?: string, locked?: boolean): HTMLElement {
     const chip = el("div", IFX_VACANT_CLS + (locked ? " readonly" : ""));
+    chip.dataset.ctl = "ifx-face";
     chip.textContent = "INS FX";
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-haspopup", "menu");
@@ -1941,6 +1969,7 @@ export class Console {
    *  nothing, since what it offers there is a choice rather than a way in. */
   private insFxOpenChip(id: string, holds: boolean): HTMLElement {
     const chip = el("div", "con-chip con-chip-open con-ifxopen");
+    chip.dataset.ctl = "open:insfx";
     chip.textContent = holds ? "▸" : "+";
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-haspopup", "menu");
@@ -1956,7 +1985,8 @@ export class Console {
   // for the head chips, con-sl / con-slp for the rack's enable chip / PRE button);
   // opts.mute paints the MUTE colour, opts.after runs after the toggle (before commit),
   // opts.readonlyTitle renders it inert with a tooltip, opts.midiId arms MIDI learn,
-  // opts.rerender rebuilds the whole view for a toggle whose effect reaches other strips.
+  // opts.rerender rebuilds the whole view for a toggle whose effect reaches other strips,
+  // opts.ctl names the chip for the focus carry-over (its MIDI id, else its label, when unset).
   private buildChip(
     id: string,
     label: string,
@@ -1971,9 +2001,10 @@ export class Console {
       after?: (next: boolean) => void;
       rerender?: boolean;
       keys?: readonly string[];
+      ctl?: string;
     },
   ): HTMLElement {
-    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender, keys } = opts ?? {};
+    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender, keys, ctl } = opts ?? {};
     // Normalised before it reaches the DOM. The device write is `np.<flag> ? 1 : 0`
     // and the load funnel passes a finite numeric leaf through unchecked, so a plan
     // authored elsewhere reaches here carrying 1 — `String(1)` is "1", which is not
@@ -1981,6 +2012,7 @@ export class Console {
     const state = Boolean(on);
     const chip = el("div", cls + (mute ? " mute" : "") + (state ? " on" : "") + (readonlyTitle ? " readonly" : ""));
     chip.textContent = label;
+    chip.dataset.ctl = ctl ?? midiId ?? label;
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", String(state));
     // A hover tooltip spelling out a terse label (e.g. C.INT → Cue Interrupt).
@@ -2254,18 +2286,20 @@ export class Console {
     });
   }
 
-  // Where keyboard focus sits inside the strips, as (strip id, index among that
-  // strip's focusable elements, class). A rebuild derives the same strips from the
-  // same plan, so the index addresses the same control; the class is the check that
-  // it really did — when the rebuild changed a strip's shape (a chip appeared, the
-  // strip is gone), focus is dropped rather than handed to some other control. The
-  // scroll offset is deliberately left out: the rack's is not restored (see
+  // Where keyboard focus sits inside the strips, as (strip id, the control's own identity).
+  // The scroll offset is deliberately left out: the rack's is not restored (see
   // preserveFocus), only focus is.
   /**
    * Carry the keyboard's place across a rebuild of the strips.
    *
-   * An ordinary control is keyed by its POSITION in the strip's tab order plus its class,
-   * which is what makes a control that moved refuse to answer for one that took its slot.
+   * An ordinary control is keyed by the identity it is built with (`data-ctl` — its MIDI id
+   * where it has one, else a fixed name such as the opener's kind), and the restore looks
+   * for that identity among the controls the rebuilt strip offers to the keyboard. So a
+   * control is found wherever the rebuild put it, and one the rebuild took away or turned
+   * read-only answers nothing: the focus is dropped rather than handed to whatever moved
+   * into its place — a +48V that HI-Z just locked does not pass the focus to HPF beside it.
+   * A control built without an identity falls back to its position in the strip's tab
+   * order plus its class.
    *
    * Two places the focus can be are not in that order at all, and both are ones this view
    * puts it in itself: the INS FX face where a sample rate has dropped the disclosure, and
@@ -2304,29 +2338,31 @@ export class Console {
 
   /** Focus standing inside an open popover, recorded as the row it is on AND the strip the
    *  popover belongs to — the two answers a rebuild can need, since a path may re-open the
-   *  popover (the row is still there) or close it (only the trigger is). */
-  private popoverMark(
-    active: HTMLElement,
-  ): { pop: "tap" | "pan" | "ifx"; id: string; idx: number; sel: readonly string[] } | null {
+   *  popover (the row is still there) or close it (only the trigger is). The row is keyed
+   *  by its identity as a strip control is, and by its position only where it has none. */
+  private popoverMark(active: HTMLElement): PopoverFocusMark | null {
     for (const p of this.popovers) {
       if (p.openFor === null || !p.box.contains(active)) continue;
-      return { pop: p.kind, id: p.openFor, idx: focusables(p.box).indexOf(active), sel: p.sel };
+      return {
+        pop: p.kind,
+        id: p.openFor,
+        idx: focusables(p.box).indexOf(active),
+        ctl: active.dataset.ctl,
+        sel: p.sel,
+      };
     }
     return null;
   }
 
   /** …and where it goes afterwards, decided by what the rebuild actually did rather than by
-   *  which path called: the same row where the popover is open again, the trigger on the
-   *  rebuilt strip where it is not. */
-  private restorePopoverFocus(mark: {
-    pop: "tap" | "pan" | "ifx";
-    id: string;
-    idx: number;
-    sel: readonly string[];
-  }): HTMLElement | null {
+   *  which path called: the same row where the popover is open again and still offers it to
+   *  the keyboard, the trigger on the rebuilt strip otherwise — a SEND PAN knob a lock just
+   *  turned read-only hands the focus to the PAN button, not to the knob beside it. */
+  private restorePopoverFocus(mark: PopoverFocusMark): HTMLElement | null {
     const p = this.popovers.find((x) => x.kind === mark.pop);
-    if (p && p.openFor !== null && mark.idx >= 0) {
-      const row = focusables(p.box)[mark.idx];
+    if (p && p.openFor !== null) {
+      const rows = focusables(p.box);
+      const row = mark.ctl !== undefined ? rows.find((r) => r.dataset.ctl === mark.ctl) : rows[mark.idx];
       if (row) return row;
     }
     const root = this.refs.get(mark.id)?.root;
@@ -2355,6 +2391,8 @@ export class Console {
           if (!r.root.contains(active)) continue;
           if (active === r.root) return { id, anchor: "strip-root" as const };
           if (active.classList.contains("con-ifxface")) return { id, anchor: "ifx-face" as const };
+          const ctl = active.dataset.ctl;
+          if (ctl !== undefined) return { id, ctl };
           const idx = focusables(r.root).indexOf(active);
           return idx < 0 ? null : { id, idx, cls: active.className };
         }
@@ -2370,6 +2408,7 @@ export class Console {
           // fresh close would have.
           return mark.anchor === "ifx-face" ? (root.querySelector<HTMLElement>(".con-ifxface") ?? root) : root;
         }
+        if ("ctl" in mark) return focusables(root).find((c) => c.dataset.ctl === mark.ctl);
         const target = focusables(root)[mark.idx];
         return target?.className === mark.cls ? target : null;
       },
@@ -2735,6 +2774,7 @@ export class Console {
         proc.append(
           this.buildChip(m.id, "INS FX", false, () => false, {
             cls: IFX_FACE_CLS,
+            ctl: "ifx-face",
             readonlyTitle:
               selected?.option.maxRate !== undefined
                 ? t().inspector.insFxRateLockedAt(selected.option.label, formatRate(selected.option.maxRate))
@@ -2751,7 +2791,7 @@ export class Console {
             // Selection belongs to the popover and the bypass to this face, so the face
             // writes the bypass alone and the strip it sits on is the only thing that
             // changes. Nothing else shows the value, so there is nothing to keep in step.
-            { cls: IFX_FACE_CLS, keys: ["insertFxOn"], midiId: controlId(m.id, "insertFxOn") },
+            { cls: IFX_FACE_CLS, keys: ["insertFxOn"], midiId: controlId(m.id, "insertFxOn"), ctl: "ifx-face" },
           ),
         );
       // Dropped where the popover behind it can do NOTHING: a strip holding nothing at a
@@ -2889,6 +2929,7 @@ export class Console {
     const fader = el("div", "con-fader");
     fader.setAttribute("role", "slider");
     fader.setAttribute("aria-label", m.label);
+    fader.dataset.ctl = controlId(m.id, "level");
     setLevelRange(fader, m.range);
     fader.tabIndex = 0;
     const track = el("div", "track");
@@ -3537,6 +3578,7 @@ export class Console {
     knob.setAttribute("aria-label", ariaLabel);
     knob.setAttribute("aria-valuemin", String(k.min));
     knob.setAttribute("aria-valuemax", String(k.max));
+    knob.dataset.ctl = midiId ?? "knob:" + ariaLabel;
     knob.append(el("i", "ind"));
     const val = el("span", valCls);
     if (k.readonlyTitle) {

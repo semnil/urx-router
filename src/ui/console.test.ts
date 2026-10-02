@@ -113,6 +113,112 @@ describe("Console UI", () => {
     document.body.removeChild(host);
   });
 
+  // A control is found by its own identity, not by its place in the strip's tab order. A
+  // chip that turns read-only leaves the tab order, so every control after it moves up one
+  // place — and the head chips share one class, so a position key handed the focus to the
+  // neighbour: Space after turning HI-Z off wrote HPF, a device-side HI-Z change put the
+  // next Space on +48V, and A.GAIN's arrows went to PAN.
+  describe("carries the focus by the control's identity when a lock moves the tab order", () => {
+    let h: ConsoleHost;
+    afterEach(() => h?.restore());
+    const chip = (label: string): HTMLElement =>
+      [...h.strip("ch3").root.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === label)!;
+    const knob = (id: string, label: string): HTMLElement =>
+      h.strip(id).root.querySelector<HTMLElement>(`.con-knob[aria-label="${label}"]`)!;
+    const withHiZ = (on: boolean): Plan => {
+      const plan = defaultPlan("URX44V");
+      plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: on, phantom: false };
+      return plan;
+    };
+
+    it("keeps it on Hi-Z when Space turns Hi-Z off and +48V comes back into the order", () => {
+      h = consoleHost({ plan: withHiZ(true) });
+      expect(chip("+48").tabIndex, "the premise: +48V is locked out of the order").toBe(-1);
+      chip("Hi-Z").focus();
+      chip("Hi-Z").dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+      expect(h.plan.nodeParams.ch3?.hiZ).toBe(false);
+      expect(chip("+48").tabIndex, "and is back in it").toBe(0);
+      expect(document.activeElement).toBe(chip("Hi-Z"));
+    });
+
+    it("keeps it on φ when the unit turns Hi-Z off under it", () => {
+      h = consoleHost({ plan: withHiZ(true) });
+      chip("φ").focus();
+      h.plan.nodeParams.ch3 = { ...h.plan.nodeParams.ch3, hiZ: false };
+      h.view.refresh();
+      expect(document.activeElement).toBe(chip("φ"));
+    });
+
+    it("keeps it on A.GAIN when the unit turns Hi-Z on under it", () => {
+      h = consoleHost({ plan: withHiZ(false) });
+      knob("ch3", "A.GAIN").focus();
+      h.plan.nodeParams.ch3 = { ...h.plan.nodeParams.ch3, hiZ: true };
+      h.view.refresh();
+      expect(document.activeElement).toBe(knob("ch3", "A.GAIN"));
+    });
+
+    // A control the rebuild turned read-only is still there, out of the order, and still
+    // able to take focus programmatically — it is not handed the focus: a key there operates
+    // nothing.
+    it("drops it from +48V when the unit turns Hi-Z on and locks +48V", () => {
+      h = consoleHost({ plan: withHiZ(false) });
+      chip("+48").focus();
+      h.plan.nodeParams.ch3 = { ...h.plan.nodeParams.ch3, hiZ: true };
+      h.view.refresh();
+      expect(chip("+48").getAttribute("aria-disabled"), "the premise: +48V is locked").toBe("true");
+      expect(h.host.contains(document.activeElement)).toBe(false);
+    });
+
+    // The control itself can be the one that left: the stereo EQ opener is withheld above
+    // 96 kHz. Dropped then, rather than handed to the Ducker opener that moved up into its
+    // place.
+    it("drops it when the control it stood on is gone, rather than handing it on", () => {
+      h = consoleHost();
+      const opener = (kind: string): HTMLElement | null =>
+        h.strip("ch_5_6").root.querySelector<HTMLElement>(`[data-dyn-open="${kind}"]`);
+      opener("eq")!.focus();
+      h.plan.sampleRate = 192000;
+      h.view.refresh();
+      expect(opener("eq"), "the premise: the rate took the opener away").toBeNull();
+      expect(document.activeElement).not.toBe(opener("ducker"));
+      expect(h.host.contains(document.activeElement)).toBe(false);
+    });
+
+    // A SEND PAN knob a lock turns read-only leaves the popover's tab order the same way;
+    // re-opened against the strip, the popover hands the focus to its trigger rather than
+    // to the MIX 2 knob that moved up into MIX 1's place.
+    it("hands a row a lock took out of the popover's order to the trigger, not its neighbour", () => {
+      h = consoleHost();
+      const panBtn = (): HTMLElement => h.strip("ch1").root.querySelector<HTMLElement>(".con-panbtn")!;
+      panBtn().click();
+      const mix1 = (): HTMLElement => h.host.querySelector<HTMLElement>('.con-spop .con-knob[aria-label="MIX 1"]')!;
+      mix1().focus();
+      (h.plan.nodeParams["bus.mix1"] ??= {}).panLink = true;
+      h.view.refreshStrip("ch1");
+      expect(mix1().getAttribute("aria-disabled"), "the premise: the knob is locked now").toBe("true");
+      expect(document.activeElement).toBe(panBtn());
+    });
+  });
+
+  // Every control a strip offers the keyboard carries an identity, and no two in one strip
+  // carry the same one, on every model — a control without one falls back to the position
+  // key, and two with one would hand the focus between them.
+  it.each(["URX22", "URX44", "URX44V"] as const)("names every keyboard control of a %s strip once", (modelId) => {
+    const h = consoleHost({ modelId });
+    try {
+      for (const root of h.host.querySelectorAll<HTMLElement>(".con-strip")) {
+        const ctls = [...root.querySelectorAll<HTMLElement>('input, select, button, [tabindex="0"]')].map(
+          (c) => c.dataset.ctl,
+        );
+        expect(ctls.length).toBeGreaterThan(0);
+        expect(ctls.includes(undefined), root.getAttribute("aria-label") ?? "").toBe(false);
+        expect(new Set(ctls).size, root.getAttribute("aria-label") ?? "").toBe(ctls.length);
+      }
+    } finally {
+      h.restore();
+    }
+  });
+
   // Not across a replaced plan, though: the control the focus stood on belongs to the plan
   // that is gone, so the rebuild for the plan that took its place hands the focus to nothing
   // — and a key still held on it reaches no control of the new plan. Both places the focus is
