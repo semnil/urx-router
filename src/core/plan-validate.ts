@@ -8,19 +8,20 @@
 
 import type { DeviceModel } from "../models/types";
 import { parseRef, ref } from "../models/types";
-import { factoryNodeParams, fillFactoryParams } from "../models/initial-state";
+import { factoryNodeNames, factoryNodeParams, fillFactoryParams } from "../models/initial-state";
 import { getModel, MODEL_IDS } from "../models";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import { fixedConnection, isPlainRecord, requiredSourceWire, SEND_LEVEL_UNNAMED_DB, setPlanSampleRate } from "./plan";
-import { connParamContestKey, deepEqual, nodeParamContestPath } from "./plan-history";
+import { connParamContestKey, deepEqual, nodeNameContestKey, nodeParamContestPath } from "./plan-history";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "./plan";
 import {
   admitLeaf,
   effectiveInsertFx,
   insertFxControl,
   insertFxWireState,
+  nameControl,
   nodeLeafRules,
   sendControl,
 } from "./control/translate";
@@ -805,15 +806,33 @@ export function completeInsertFxParams(model: DeviceModel, plan: Plan): string[]
   return names;
 }
 
-/** A document as the loader opens it: its own wire params recorded as the document's, repaired
- *  (`applyLoadRepairs`), then completed from the model's factory values — a value a repair
- *  dropped is completed like any other absent one — and each selected insert effect from its
- *  type's defaults, both recorded as the fill's, then put back through the rate rule, which a
- *  Track Count the fill completes can exceed. */
+/** Give each nameable node a document leaves unnamed — no entry, or an empty one — the model's
+ *  factory name. A name the write does not send is one the unit keeps as it has it, while every
+ *  surface draws the node's label there, so the load supplies the name the write then sends.
+ *  Returns the contest names it set. */
+export function completeNodeNames(model: DeviceModel, plan: Plan): string[] {
+  const factory = factoryNodeNames(model.id);
+  const names: string[] = [];
+  for (const node of model.nodes) {
+    if (plan.nodeNames[node.id] || !nameControl(model, node.id) || !factory[node.id]) continue;
+    plan.nodeNames[node.id] = factory[node.id];
+    names.push(nodeNameContestKey(node.id));
+  }
+  return names;
+}
+
+/** A document as the loader opens it: its own wire params and names recorded as the document's,
+ *  repaired (`applyLoadRepairs`), then completed from the model's factory values — a value a
+ *  repair dropped is completed like any other absent one — each selected insert effect from its
+ *  type's defaults and each unnamed node from its factory name, all recorded as the fill's, then
+ *  put back through the rate rule, which a Track Count the fill completes can exceed. */
 export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
-  // The document's own wire params are what it wrote, as its node params are (the fill records
-  // those); a repair below that completes one records its own.
+  // The document's own wire params and names are what it wrote, as its node params are (the
+  // fill records those); a repair below that completes one records its own.
   const source = (plan.paramSource ??= new Map());
+  for (const [id, name] of Object.entries(plan.nodeNames)) {
+    if (name && !source.has(nodeNameContestKey(id))) source.set(nodeNameContestKey(id), "load");
+  }
   for (const c of plan.connections) {
     for (const key of Object.keys(c.params ?? {})) {
       const name = connParamContestKey(c.from, c.to, key);
@@ -823,6 +842,7 @@ export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: Load
   const repairs = applyLoadRepairs(model, plan, problems);
   fillFactoryParams(model.id, plan);
   for (const name of completeInsertFxParams(model, plan)) source.set(name, "default");
+  for (const name of completeNodeNames(model, plan)) source.set(name, "default");
   setPlanSampleRate(plan, plan.sampleRate);
   return repairs;
 }

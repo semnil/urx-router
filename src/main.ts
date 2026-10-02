@@ -187,7 +187,7 @@ import {
   type SendOutcome,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
-import { cmdAddr, collisionOwners } from "./core/control/translate";
+import { cmdAddr, collisionOwners, unnamedNodes } from "./core/control/translate";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
@@ -363,8 +363,8 @@ function sharedSettingText(owners: SharedOwners[]): string {
  *  Every strip by name, not the first few and a count: the list is bounded by the model, and a
  *  name is the only part of this the operator can act on — a count tells them something is
  *  wrong somewhere and leaves them the whole board to look through. */
-function unauthoredNoteFor(changing: ReadonlySet<number>, scope: WriteScope): string {
-  const nodes = unauthoredWriteNodes(getModel(modelId), plan, scope, changing);
+function unauthoredNoteFor(changing: ReadonlySet<number>, scope: WriteScope, renaming?: ReadonlySet<string>): string {
+  const nodes = unauthoredWriteNodes(getModel(modelId), plan, scope, changing, renaming);
   if (!nodes.length) return "";
   return t().confirm.unauthoredWrite(nodes.map((id) => graph.labelOf(id)).join(", "));
 }
@@ -3566,12 +3566,18 @@ if (!DEMO) {
             // owner's, which reports "no changes to write".
             const owners = collisionOwners(dryRun(getModel(modelId), plan));
             const sharedNote = owners.length ? sharedSettingText(owners) : "";
+            // A node whose name is empty has no name to send, and the unit keeps its own: said
+            // rather than counted as a match, since nothing here knows whether the two agree.
+            const unnamed = unnamedNodes(getModel(modelId), plan);
+            const unnamedLabels = unnamed.map((id) => graph.labelOf(id)).join(", ");
             if (total === 0) {
-              setStatus(
-                (sharedNote ? `${t().status.writeNoChanges} ${sharedNote}` : t().status.writeNoChanges) + adoptedNote(),
-              );
+              const nothing = unnamed.length
+                ? t().status.writeNamesNotSent(unnamedLabels, unnamed.length)
+                : t().status.writeNoChanges;
+              setStatus((sharedNote ? `${nothing} ${sharedNote}` : nothing) + adoptedNote());
               return null;
             }
+            const renaming = new Set(nameWrites.filter((w) => w.name === undefined).map((w) => w.node));
             // What the operator never chose, from the addresses that will actually move. The
             // plan is dense, so a write carries keys nobody set; naming the strips is what makes
             // that a decision rather than a surprise. Built inside the ask, since a retry is the
@@ -3579,7 +3585,8 @@ if (!DEMO) {
             const ask = (): string =>
               [
                 sharedNote,
-                unauthoredNoteFor(new Set(diffs.map((d) => cmdAddr(d.command))), scope),
+                unauthoredNoteFor(new Set(diffs.map((d) => cmdAddr(d.command))), scope, renaming),
+                unnamed.length ? t().confirm.namesNotSent(unnamedLabels, unnamed.length) : "",
                 t().confirm.write(total),
               ]
                 .filter(Boolean)

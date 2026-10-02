@@ -36,6 +36,9 @@ loads the plan as authored":
   scalar where a group belongs — is dropped on load (core/plan-validate.ts
   `paramRangeProblems`) and the factory value filled in, which is reported as a
   warning,
+- a nameable node the document leaves unnamed is given its factory name on load
+  (models.json `factory.nodeNames`; core/plan-validate.ts `completeNodeNames`), and the
+  write sends it, which is reported as a warning,
 - every node-param leaf the write bounds (models.json `leafRules`, and the insert-FX
   engine slots of `insertFxParamSpace`) is bounded on load to the value the write
   sends (core/plan-validate.ts `paramRangeProblems`), which is reported as a
@@ -239,6 +242,7 @@ def validate(plan, models):
     paired, paired_kept = paired_view(view, model, kept, pairs)
     warnings.extend(linked_send_pan_warnings(paired, model, paired_kept))
     warnings.extend(collection_warnings(view))
+    warnings.extend(name_fill_warnings(view, (model.get("factory") or {}).get("nodeNames")))
     warnings.extend(
         node_param_warnings(
             view,
@@ -616,6 +620,26 @@ def name_warnings(plan):
                 "reads a name back trims one off, so a plan keeping one is re-sent on every sync"
             )
     return out
+
+
+def name_fill_warnings(plan, factory_names):
+    """The names the app's load supplies (core/plan-validate.ts `completeNodeNames`): every
+    nameable node — the ones models.json `factory.nodeNames` carries — that the document leaves
+    unnamed is given its factory name, and the write sends it. Unnamed is no entry, an entry
+    that is not a string, or one the load's own cut and trim leave empty."""
+    names = plan.get("nodeNames")
+    names = names if isinstance(names, dict) else {}
+    filled = []
+    for node_id in factory_names or {}:
+        value = names.get(node_id)
+        if not isinstance(value, str) or not value[:NODE_NAME_MAX_CHARS].rstrip():
+            filled.append(node_id)
+    if not filled:
+        return []
+    return [
+        "nodeNames: the app gives the nodes this plan leaves unnamed their factory names on load, "
+        f"and the write sends them ({', '.join(filled)})"
+    ]
 
 
 # Node-param sections carrying the DEVICE's own internal units — what the app

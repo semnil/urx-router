@@ -1024,6 +1024,27 @@ describe("LiveSync late echo of a write the snapshot has moved past", () => {
     expect(live.isEcho(a.paramId, a.x, a.y, a.vdValue)).toBe(false);
   });
 
+  // A name the field holds empty has no value to send, so the flush sends nothing for it and the
+  // unit keeps the last name it was sent; the next name the field holds goes out as any edit does.
+  it("sends nothing for a name cleared empty, and sends the next one the plan holds", async () => {
+    const plan = basePlan();
+    plan.nodeNames = { ...plan.nodeNames, ch1: "Vox" };
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    const values = (): string[] => vi.mocked(vdSetStr).mock.calls.map((c) => c[3]);
+
+    const { ch1: _cleared, ...rest } = plan.nodeNames;
+    plan.nodeNames = rest;
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(values()).toEqual([]);
+
+    plan.nodeNames = { ...plan.nodeNames, ch1: "Kick" };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(values()).toContain("Kick");
+  });
+
   it("does the same for a name the snapshot has moved past", async () => {
     const plan = basePlan();
     const live = liveFor(plan);

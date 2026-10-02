@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { cmdAddr, planToCommands } from "../core/control/translate";
-import { connectionContestKey, connParamContestKey, nodeParamContestPath } from "../core/plan-history";
+import {
+  connectionContestKey,
+  connParamContestKey,
+  nodeNameContestKey,
+  nodeParamContestPath,
+} from "../core/plan-history";
 import { markParamSource } from "./param-source";
 import type { ParamSource, Plan } from "../core/plan";
 import { getModel } from "../models";
@@ -506,5 +511,30 @@ describe("a send level", () => {
     plan.paramSource!.delete(LEVEL);
     if (source) markParamSource(plan, [connectionContestKey(...SEND)], source);
     expect(unauthoredWriteNodes(MODEL, plan, "all", levelAddrs(plan)).includes("ch1")).toBe(reported);
+  });
+});
+
+// A name goes out on the string path, not as an address, so the write hands over which nodes it
+// renames. One the load filled from the factory is named like any value nobody chose; one the
+// document or an edit wrote is not.
+describe("a name the write changes", () => {
+  it.each<[ParamSource | undefined, boolean]>([
+    ["default", true],
+    ["device", true],
+    [undefined, true],
+    ["load", false],
+    ["manual", false],
+  ])("names the node whose name is recorded as %s: %s", (source, reported) => {
+    const plan = filledPlan();
+    for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "load");
+    if (source) markParamSource(plan, [nodeNameContestKey("ch2")], source);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(), new Set(["ch2"])).includes("ch2")).toBe(reported);
+  });
+
+  it("says nothing about a name the write does not change", () => {
+    const plan = filledPlan();
+    for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "load");
+    markParamSource(plan, [nodeNameContestKey("ch2")], "default");
+    expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(), new Set())).toEqual([]);
   });
 });

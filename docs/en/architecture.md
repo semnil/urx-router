@@ -721,7 +721,12 @@ carries a one-line map of the same directories and points here.
 - **Plan** — the mutable state the user creates. It holds `modelId`, node positions (`positions`),
   connections (`connections`), per-connection parameters (level / pan / pre-post, etc.),
   node name overrides (`nodeNames`, the device's CH SETTING name — read and written over the string
-  IPC for the same nodes that carry a color; an empty name falls back to the model's default label).
+  IPC for the same nodes that carry a color; an empty name falls back to the model's default label.
+  An empty name is never sent — Live sync stops sending a name the moment its field is emptied and
+  resumes with the next name it holds, the unit keeping the last one sent, and Device > Write says
+  which names are empty and not sent instead of reporting a match. The load gives every nameable node a
+  document leaves unnamed — no entry, or an empty one — its factory name, recorded as the fill's, so
+  the write confirm names the strip when that name would move the unit: `completeNodeNames`).
   The toolbar's labels toggle chooses whether the canvas shows the planner's fixed labels ("CH 1",
   the default) or these device names ("ch 1"); model mode ignores `nodeNames` entirely),
   node color overrides

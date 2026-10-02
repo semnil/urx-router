@@ -991,6 +991,66 @@ describe("Fetch from device", () => {
     expect(sent.map((a) => a.value)).toContain(insertFxDefaults("compander", 1793)[6]);
   });
 
+  // A document that leaves a name out loads with the model's factory name, which the write then
+  // sends: that name is the fill's, so the write moving the unit onto it names the strip, while a
+  // name the document wrote does not.
+  it.each([
+    ["names the strip whose name the load filled", false],
+    ["names nothing when the document wrote that name", true],
+  ])("%s", SLOW, async (_name, writesName) => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const model = getModel("URX44V");
+    const written = defaultPlan("URX44V");
+    if (!writesName) delete written.nodeNames.ch1;
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: clockReads(false, 48_000) }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const sentNames = shell.invokes.flatMap((cmd, i) => (cmd === "vd_set_str" ? [shell.args[i]!.value] : []));
+    expect(sentNames, "the premise: the factory name goes out").toContain(defaultPlan("URX44V").nodeNames.ch1);
+    expect(stripsNamed(asked[0])).toEqual(writesName ? [] : [fullLabel(model.nodes.find((n) => n.id === "ch1")!)]);
+  });
+
+  // An empty name has no value to send, and the unit keeps its own. Said by the write rather than
+  // counted as a match: on its own it is what the write reports instead of "already matches",
+  // and beside other changes it is a line of the confirm.
+  it("says which names are empty and not sent, instead of reporting a match", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(statusText(), "the premise: the unit matches the plan").toContain(t().status.writeNoChanges);
+
+    selectNode("ch1");
+    const field = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.value = "";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    const namesSent = (): number => shell.invokes.filter((cmd) => cmd === "vd_set_str").length;
+    const before = namesSent();
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 3);
+    const { fullLabel } = await import("./models/types");
+    const label = fullLabel(getModel("URX44V").nodes.find((n) => n.id === "ch1")!);
+    expect(statusText()).toBe(t().status.writeNamesNotSent(label, 1));
+    expect(namesSent(), "nothing is sent for it").toBe(before);
+
+    // Beside a change that does go out, the confirm says it.
+    selectNode("ch2");
+    const other = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    other.value = "Kick";
+    other.dispatchEvent(new Event("input", { bubbles: true }));
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 4);
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked.at(-1)).toContain(t().confirm.namesNotSent(label, 1));
+  });
+
   // The params of a wire a scene-scoped document carries over are the plan on screen's as the wire
   // is: the OSC assign into STEREO of a plan nothing vouches for stays unvouched-for after a scene
   // file is dropped over it, so the write moving the unit's assign names STEREO.
@@ -4139,8 +4199,11 @@ describe("Write to device", () => {
     described.nodeParams["ch1"] = { level: -10 };
     // The factory values, but WRITTEN IN the document: same numbers on the wire, different
     // provenance — which is the whole distinction the note is drawn from. The channels' sends
-    // are theirs too, and the write carries them on the same strips.
-    for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    // and names are theirs too, and the write carries them on the same strips.
+    for (const id of ["bus.fx1", "bus.fx2"]) {
+      described.nodeParams[id] = factory.nodeParams[id]!;
+      described.nodeNames[id] = factory.nodeNames[id]!;
+    }
     described.connections = factory.connections.filter((c) => c.from === "bus.fx1:out" || c.from === "bus.fx2:out");
     const told = await runWrite(described);
     expect(told.count("vd_set"), "the positive control").toBeGreaterThan(0);
@@ -4161,9 +4224,12 @@ describe("Write to device", () => {
     const factory = defaultPlan("URX44V");
     const described = emptyPlan("URX44V");
     described.nodeParams["ch1"] = { level: -10 };
-    // The FX channels are what the document names — their params and their sends; everything
-    // else is left to the fill.
-    for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    // The FX channels are what the document names — their params, their sends and their names;
+    // everything else is left to the fill.
+    for (const id of ["bus.fx1", "bus.fx2"]) {
+      described.nodeParams[id] = factory.nodeParams[id]!;
+      described.nodeNames[id] = factory.nodeNames[id]!;
+    }
     described.connections = factory.connections.filter((c) => c.from === "bus.fx1:out" || c.from === "bus.fx2:out");
     const link = encodeURIComponent(Buffer.from(serialize(described), "utf8").toString("base64url"));
     // Reads that never reflect a write: every address answers its clock value or 0, so the

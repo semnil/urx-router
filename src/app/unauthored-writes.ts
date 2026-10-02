@@ -28,7 +28,7 @@ import {
   type WriteScope,
 } from "../core/control/translate";
 import type { Plan } from "../core/plan";
-import { connectionContestKey, connParamContestKey } from "../core/plan-history";
+import { connectionContestKey, connParamContestKey, nodeNameContestKey } from "../core/plan-history";
 import { ref, type DeviceModel } from "../models/types";
 
 /**
@@ -44,6 +44,9 @@ import { ref, type DeviceModel } from "../models/types";
  * changing it leaves an engine parameter the operator dialled in as theirs, which is what it
  * is.
  *
+ * `renaming` is the nodes whose NAME the write changes, which goes out on the string path
+ * rather than as an address: such a node is named when its name is one nobody chose.
+ *
  * Returns node ids in the model's own order, so a caller naming strips lists them the way the
  * board does.
  */
@@ -52,8 +55,9 @@ export function unauthoredWriteNodes(
   plan: Plan,
   scope: WriteScope,
   changing: ReadonlySet<number>,
+  renaming: ReadonlySet<string> = new Set(),
 ): string[] {
-  if (!changing.size) return [];
+  if (!changing.size && !renaming.size) return [];
   const source = plan.paramSource;
   // A wire's param carries a record of its own once something writes that param; until then
   // it answers to the wire's — a wire drawn, imported or read whole is recorded by presence.
@@ -79,7 +83,7 @@ export function unauthoredWriteNodes(
   }
 
   const origins = planToCommandOrigins(model, plan, scope);
-  const named = new Set<string>();
+  const named = new Set<string>([...renaming].filter((id) => !chose(nodeNameContestKey(id))));
   for (const c of planToCommands(model, plan, scope)) {
     const addr = cmdAddr(c);
     if (c.node === undefined || !changing.has(addr)) continue;

@@ -884,6 +884,8 @@ export const en = {
       `+48V and Hi-Z are both on for ${channels} — turn one of them off before writing to the device; nothing was sent`,
     writeConnecting: tr("Connecting to the device…"),
     writeNoChanges: tr("Device already matches the plan — nothing to write"),
+    writeNamesNotSent: (strips: string, count: number): string =>
+      `Nothing to write — ${count === 1 ? "the name of" : "the names of"} ${strips} ${count === 1 ? "is" : "are"} empty and not sent, so the device keeps its own`,
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
     writePartial: (n: number, failed: number): string => `Wrote ${n}, ${failed} failed`,
     writeStopped: (n: number, notSent: number): string =>
@@ -983,6 +985,8 @@ export const en = {
       `Write ${n} change${n === 1 ? "" : "s"} to the device? This overwrites the device's current settings.`,
     unauthoredWrite: (strips: string): string =>
       `The write also changes settings you did not edit — values the plan filled in for you, or values the device has moved since it was read.\nAffected: ${strips}`,
+    namesNotSent: (strips: string, count: number): string =>
+      `${count === 1 ? "The name of" : "The names of"} ${strips} ${count === 1 ? "is" : "are"} empty and not sent — the device keeps its own.`,
     firmwareMismatch: (device: string, supported: string): string =>
       `The connected device's firmware (${device}) differs from the version this app was tested with (${supported}). It may not work correctly. Continue anyway?`,
     selfTest: tr(

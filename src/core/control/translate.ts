@@ -2877,6 +2877,12 @@ export interface NameWrite {
  * pass through on the way to the wire. It is what `diffNames` compares the device's
  * value against, so a value that is not normalized here can never match one.
  */
+/** The nameable nodes the plan gives no name, which `planToNameWrites` sends nothing for — the
+ *  unit keeps whatever name it holds there. In the model's order. */
+export function unnamedNodes(model: DeviceModel, plan: Plan): string[] {
+  return model.nodes.filter((n) => !plan.nodeNames[n.id] && nameControl(model, n.id) !== null).map((n) => n.id);
+}
+
 export function planToNameWrites(model: DeviceModel, plan: Plan): NameWrite[] {
   const out: NameWrite[] = [];
   for (const node of model.nodes) {

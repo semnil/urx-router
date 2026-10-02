@@ -302,7 +302,10 @@ the section's presence for that reason, not only on a `type` written into it.
 
 ## nodeNames / nodeColors / notes
 
-- `nodeNames` — display/CH-SETTING name override per node id (string).
+- `nodeNames` — display/CH-SETTING name override per node id (string). A nameable node
+  the document leaves unnamed — no entry, or an empty one — loads with the model's
+  factory name (`ch 1`, …), and the write sends it; the validator lists the nodes it
+  names. A name is never written empty, so omitting one does not keep the unit's name.
 - `nodeColors` — hex accent color per node id (e.g. `"#4a78c0"`).
 - `notes` — free-text annotation per node id; `noteCollapsed` lists ids shown
   minimized.

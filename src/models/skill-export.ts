@@ -11,10 +11,10 @@ import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
 import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, PAN_BAL_BAL } from "../core/control/params";
 import { fixedConnection, isPlainRecord, SEND_LEVEL_UNNAMED_DB, type ConnParams, type NodeParams } from "../core/plan";
-import { factoryNodeParams } from "./initial-state";
+import { factoryNodeNames, factoryNodeParams } from "./initial-state";
 import { INSERT_FX_PAIR_KEYS, monoPairsInto, PAIR_OWN_NODE_KEYS } from "../core/routing";
 import { isRackSend } from "../core/plan-validate";
-import { channelControl, hasHiZInput, nodeLeafRules, type LeafRule } from "../core/control/translate";
+import { channelControl, hasHiZInput, nameControl, nodeLeafRules, type LeafRule } from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
 import {
@@ -98,8 +98,10 @@ export interface SkillModel {
   booleanLeaves: Record<string, string[]>;
   /** The model's factory values, which the load completes a document from. Per node, the
    *  params `factoryNodeParams` answers; the load drops a value whose kind is not the factory
-   *  value's at the same path (`paramRangeProblems`). */
-  factory: { nodeParams: Record<string, NodeParams> };
+   *  value's at the same path (`paramRangeProblems`). And per nameable node, the name the load
+   *  gives one the document leaves unnamed (`completeNodeNames`) — a node absent here carries
+   *  no name on the unit. */
+  factory: { nodeParams: Record<string, NodeParams>; nodeNames: Record<string, string> };
   /** Per node, every leaf the write bounds, in the validator's path spelling, with the rule it
    *  is bounded by (`nodeLeafRules`): a window, an integer window, a window whose value then
    *  moves to the nearest of `steps`, a menu with its default, or a leaf the write never sends
@@ -144,7 +146,14 @@ function skillModel(model: DeviceModel): SkillModel {
       gainMaxDb: HI_Z_A_GAIN_MAX_DB,
     },
     booleanLeaves: booleanLeaves(model),
-    factory: { nodeParams: factoryParams(model) },
+    factory: {
+      nodeParams: factoryParams(model),
+      nodeNames: Object.fromEntries(
+        model.nodes
+          .filter((n) => nameControl(model, n.id) && factoryNodeNames(model.id)[n.id])
+          .map((n) => [n.id, factoryNodeNames(model.id)[n.id]]),
+      ),
+    },
     leafRules: leafRules(model),
     linkedPairs: {
       own: [...PAIR_OWN_NODE_KEYS],

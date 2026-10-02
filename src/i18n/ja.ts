@@ -680,6 +680,8 @@ export const ja: Messages = {
       `${channels} で +48V と Hi-Z が両方オンになっています — どちらかを切ってから書き込んでください。何も送信していません`,
     writeConnecting: "デバイスに接続しています…",
     writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
+    writeNamesNotSent: (strips: string): string =>
+      `書き込む変更はありません — ${strips} の名前は空のため送信せず、デバイスは自身の名前を保ちます`,
     written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
     writePartial: (n: number, failed: number): string => `${n} 件書き込み、${failed} 件失敗`,
     writeStopped: (n: number, notSent: number): string => `失敗のため書き込みを停止: ${n} 件送信、${notSent} 件未送信`,
@@ -768,6 +770,8 @@ export const ja: Messages = {
     write: (n: number): string => `${n} 件の変更をデバイスに書き込みますか? デバイスの現在の設定を上書きします。`,
     unauthoredWrite: (strips: string): string =>
       `操作していない設定も変更されます — プランが補った既定値、または読み込み後にデバイス側で変わった値です。\n対象: ${strips}`,
+    namesNotSent: (strips: string): string =>
+      `${strips} の名前は空のため送信しません — デバイスは自身の名前を保ちます。`,
     firmwareMismatch: (device: string, supported: string): string =>
       `接続中のデバイスのファームウェア (${device}) は、このアプリの動作確認バージョン (${supported}) と異なります。正しく動作しない可能性があります。続行しますか?`,
     selfTest:

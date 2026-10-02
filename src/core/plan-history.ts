@@ -754,6 +754,12 @@ export function connParamContestKey(from: string, to: string, param: string): st
   return contestName("connParams", wireKey(from, to), param);
 }
 
+/** The same, for a node's name: the name an edit or a device read that sets or clears it
+ *  records it under. */
+export function nodeNameContestKey(nodeId: string): string {
+  return contestName("nodeNames", nodeId);
+}
+
 /** The same, for a wire's presence: the name an edit or a device read that adds or removes
  *  the wire records it under. */
 export function connectionContestKey(from: string, to: string): string {

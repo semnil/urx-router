@@ -72,6 +72,12 @@ export function factoryNodeParams(modelId: ModelId, nodeId: string): NodeParams 
   return INITIAL[modelId].nodeParams[nodeId];
 }
 
+/** The model's factory names, which the load gives a nameable node a document leaves
+ *  unnamed. Every nameable node carries one. */
+export function factoryNodeNames(modelId: ModelId): Readonly<Record<string, string>> {
+  return INITIAL[modelId].nodeNames;
+}
+
 export function fillFactoryParams(modelId: ModelId, plan: Plan): void {
   const source = (plan.paramSource ??= new Map<string, ParamSource>());
   // The document's own leaves first: everything already here was written by whoever wrote

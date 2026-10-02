@@ -20,7 +20,7 @@ import {
 } from "./plan-validate";
 import { trackCountAtRate } from "./constraints";
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
-import { nodeLeafRules, planToCommands } from "./control/translate";
+import { nameControl, nodeLeafRules, planToCommands } from "./control/translate";
 import { eqResponse } from "./eq-response";
 import {
   insertFxDefaults,
@@ -34,7 +34,7 @@ import type { NodeParams, Plan, PlanConnection } from "./plan";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
-import { connParamContestKey, nodeParamContestPath } from "./plan-history";
+import { connParamContestKey, nodeNameContestKey, nodeParamContestPath } from "./plan-history";
 import {
   BUS_TYPE_FIXED,
   INSERT_FX_NONE,
@@ -1649,6 +1649,34 @@ describe("prepareLoadedPlan", () => {
     );
     expect(plan.nodeParams.ch3!.insertFxParams).toBeUndefined();
     expect(plan.nodeParams.ch2!.insertFxParams, "No Effect, the factory selection").toBeUndefined();
+  });
+
+  // A name the write does not send is one the unit keeps, while every surface draws the node's
+  // label there. The load gives each nameable node a document leaves unnamed — no entry, or an
+  // empty one — its factory name, recorded as the fill's; a name the document wrote is its own.
+  it.each(MODEL_IDS)("%s: names every nameable node a document leaves unnamed, recorded as the fill's", (id) => {
+    const m = getModel(id);
+    const factory = defaultPlan(id).nodeNames;
+    const plan = deserialize(
+      JSON.stringify({
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: id,
+        nodeNames: { ch1: "Vox", ch2: "" },
+      }),
+    );
+    expect(plan.nodeNames.ch2, "the premise: an empty entry survives the sanitiser").toBe("");
+    prepareLoadedPlan(m, plan, planProblems(m, plan));
+    expect(plan.nodeNames.ch1).toBe("Vox");
+    expect(plan.paramSource?.get(nodeNameContestKey("ch1"))).toBe("load");
+    const nameable = m.nodes.filter((n) => nameControl(m, n.id)).map((n) => n.id);
+    expect(nameable.length, "the premise: the model has names to fill").toBeGreaterThan(2);
+    for (const node of nameable.filter((n) => n !== "ch1")) {
+      expect(plan.nodeNames[node], node).toBe(factory[node]);
+      expect(plan.paramSource?.get(nodeNameContestKey(node)), node).toBe("default");
+    }
+    // Nothing is named that the unit has no name for.
+    expect(Object.keys(plan.nodeNames).sort()).toEqual(nameable.sort());
   });
 
   it("puts a Track Count the completion supplies back through the rate rule", () => {

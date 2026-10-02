@@ -414,8 +414,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       "bus.fx1, bus.fx2: carry no usable fxEffect",
       false,
     ],
-    ["a boolean where the selector goes", { ch1: { insertFx: true } }, "ch1, ch2", true],
-    ["a selector the document wrote", { ch1: { insertFx: 1793 } }, "ch1, ch2", false],
+    // The insert-FX list alone names ch4 beside bus.stereo; the name list puts the stereo channels between.
+    ["a boolean where the selector goes", { ch1: { insertFx: true } }, "ch1, ch2, ch3, ch4, bus.stereo", true],
+    ["a selector the document wrote", { ch1: { insertFx: 1793 } }, "ch1, ch2, ch3, ch4, bus.stereo", false],
   ])("%s", (_name, nodeParams, needle, warned) => {
     const out = toolWarnings(dir, {
       format: "urx-router-plan",
@@ -1644,6 +1645,66 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     // Both answers are real populations: documents the load completes and documents it leaves.
     expect(added.yes).toBeGreaterThan(0);
     expect(added.no).toBeGreaterThan(0);
+  });
+
+  // The load gives every nameable node a document leaves unnamed its factory name, which the write
+  // sends. The nodes the app names are compared with the ones the tool says it names: no names at
+  // all, some, an empty entry, a blank one, one past the field width whose cut is blank, and a name
+  // that is not a string — beside a document naming every node. Every model, since which nodes
+  // carry a name is a model fact.
+  it("agrees with the app about the names the load supplies", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { nodeNameContestKey } = await import("../src/core/plan-history.ts");
+    const { defaultPlan } = await import("../src/models/initial-state.ts");
+    const supplied = { yes: 0, no: 0 };
+    for (const modelId of MODEL_IDS) {
+      const every = defaultPlan(modelId).nodeNames;
+      const corpus = [
+        ["no names at all", undefined],
+        ["some names", { ch1: "Vox", ch2: "Gtr" }],
+        ["an empty entry", { ...every, ch1: "" }],
+        ["a blank entry", { ...every, ch1: "   " }],
+        ["a blank cut", { ...every, ch1: "        x" }],
+        ["a name that is not a string", { ...every, ch1: 5 }],
+        ["every node named", every],
+      ];
+      for (const [name, nodeNames] of corpus) {
+        const plan = {
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections: [],
+          nodeParams: {},
+          ...(nodeNames === undefined ? {} : { nodeNames }),
+        };
+        expect(deserializeDocument(JSON.stringify(plan)).plan.modelId).toBe(modelId);
+        const loaded = await appLoad(plan, true);
+        const app = [...loaded.paramSource]
+          .filter(([key, from]) => from === "default" && key.startsWith(nodeNameContestKey("")))
+          .map(([key]) => key)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) =>
+            /^WARNING: nodeNames: the app gives the nodes this plan leaves unnamed their factory names on load, and the write sends them \((.*)\)$/.exec(
+              l,
+            ),
+          )
+          .filter((m) => m !== null)
+          .flatMap((m) => m[1].split(", ").map((id) => nodeNameContestKey(id)))
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        supplied[app.length > 0 ? "yes" : "no"]++;
+      }
+    }
+    // Both answers are real populations: documents the load names, and documents it leaves.
+    expect(supplied.yes).toBeGreaterThan(0);
+    expect(supplied.no).toBeGreaterThan(0);
   });
 
   // The load gives a selected insert effect every engine slot the document leaves out, at the
