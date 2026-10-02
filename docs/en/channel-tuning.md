@@ -1514,7 +1514,11 @@ under the pointer that "no row is ever removed" exists to stop.
 
 ### Where the catalogue's defaults come from
 
-**A `def` is what the screen prints before a device read has filled the plan**, so it is the
+**A `def` is what a selection and a load put in the plan for a slot nobody named, and what the
+screen prints for one the plan does not hold** (`seedInsertFxParams`) — the unit fills an engine
+with those values on the transition into a type and not on a same-value write, so the plan holds
+them rather than leaving the slot to the unit. Pitch Fix's MIDI Control, Scale and note mask have no
+descriptor row and carry theirs in the same catalogue (`insertFxDefaults`). So it is the
 unit's own number or it is a guess — and a guess has a shape no measurement produces: mid-scale
 round numbers, or one value repeated where the unit gives each band its own. The defaults here are
 the unit's.

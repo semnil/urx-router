@@ -10,7 +10,10 @@
 // Plan storage keeps RAW broker integers keyed by engine SLOT (insertFxParams on
 // the node), so a captured plan round-trips and the inspector edits raw with a
 // display-only formatter. The selector binds the engine and populates per-type
-// defaults; urx-router only writes the slots the plan explicitly carries.
+// defaults on the transition INTO a type; urx-router writes the slots the plan
+// carries, and a selection and a load put every writable slot of the selected type
+// in the plan at that type's default (`seedInsertFxParams`), so the plan holds what
+// the screen shows.
 //
 // A SELECTOR WRITE IS NOT REVERSIBLE. Writing the selector makes the device fill
 // the bound engine array with that type's defaults, and selecting the ORIGINAL type
@@ -814,9 +817,10 @@ function companderTyped(selector: number | undefined): InsertFxParamDesc[] {
 // ---- writable-slot enumeration (translate / readback) ----
 //
 // Every engine array slot urx-router writes for a family, plus any mirror slot.
-// Plan storage is a slot→raw map; translate only emits the slots the plan carries
-// (absent slots keep the device's per-type default), and readback reads them all.
-// slot0 (type) / slot1 (on) / slot2 (mix) are device-managed by the selector.
+// Plan storage is a slot→raw map; translate emits the slots the plan carries, a
+// selection and a load fill the ones it does not (`seedInsertFxParams`), and readback
+// reads them all. slot0 (type) / slot1 (on) / slot2 (mix) are device-managed by the
+// selector.
 
 export interface InsertFxSlotSpec {
   slot: number;
@@ -949,6 +953,52 @@ export function reKeyInsertFxParams(
     delete next[slot];
   }
   return next;
+}
+
+/** Pitch Fix's slots no descriptor row carries, at what the unit comes up at: MIDI Control
+ *  off (both bits), Scale Chromatic, and every note of the mask on. */
+const PITCH_UNLISTED_DEFS: Readonly<Record<number, number>> = {
+  [PITCH_MIDI_ENABLE_SLOT]: 0,
+  [PITCH_MIDI_REALTIME_SLOT]: 0,
+  [PITCH_SCALE_SLOT]: PITCH_SCALE_CHROMATIC,
+  ...Object.fromEntries(PITCH_NOTE_SLOTS.map((slot) => [slot, 1])),
+};
+
+/** Every writable slot of `family` at the default its type comes up at, keyed by slot — what
+ *  the screen shows for a slot the plan does not hold, and what a selection or a load puts in
+ *  the plan there. `selector` matters to the compander alone, as in `insertFxParams`. */
+export function insertFxDefaults(family: InsertFxFamily, selector?: number): Readonly<Record<number, number>> {
+  const out: Record<number, number> = {};
+  for (const d of insertFxParams(family, selector)) out[d.slot] = d.def;
+  if (family === "pitch") Object.assign(out, PITCH_UNLISTED_DEFS);
+  return out;
+}
+
+/**
+ * `params` with every writable slot of the effect `selector` names that it does not hold —
+ * under the family's own key or the bare slot number — set to that type's default under the
+ * family's key, and the keys it set. The unit fills the engine with those defaults on the
+ * transition into a type and not on a same-value write, so a plan that leaves a slot out is
+ * one whose write sends nothing there while the screen prints the default. A value the map
+ * holds is never replaced, and a selector naming no family (No Effect, an unknown value)
+ * seeds nothing.
+ */
+export function seedInsertFxParams(
+  params: Record<string, number> | undefined,
+  selector: number,
+): { params: Record<string, number> | undefined; seeded: string[] } {
+  const family = insertFxFamilyOf(selector);
+  if (!family) return { params, seeded: [] };
+  const defaults = insertFxDefaults(family, selector);
+  const next = { ...params };
+  const seeded: string[] = [];
+  for (const { slot } of insertFxWritableSlots(family)) {
+    const key = insertFxParamKey(family, slot);
+    if (next[key] !== undefined || next[String(slot)] !== undefined) continue;
+    next[key] = defaults[slot];
+    seeded.push(key);
+  }
+  return { params: seeded.length > 0 ? next : params, seeded };
 }
 
 export function insertFxDeviceDriven(

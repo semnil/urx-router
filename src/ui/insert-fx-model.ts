@@ -27,9 +27,10 @@ export function insertFxVal(plan: Plan, nodeId: string, fam: InsertFxFamily, slo
 }
 
 // The re-key rule belongs with the catalogue that defines the namespace: a slot is keyed by
-// family, and the bare number a readback writes is the device's own shape. It is re-exported
-// here so the editor's modules take the whole value model from one import.
-export { reKeyInsertFxParams } from "../core/control/insert-fx-effect";
+// family, and the bare number a readback writes is the device's own shape. So does the seed a
+// selection takes, which the load applies too. Both are re-exported here so the editor's
+// modules take the whole value model from one import.
+export { reKeyInsertFxParams, seedInsertFxParams } from "../core/control/insert-fx-effect";
 
 /** Park the outgoing effect's engine values under its own family before the
  *  selector names another one: a bare slot number left behind would be read as the

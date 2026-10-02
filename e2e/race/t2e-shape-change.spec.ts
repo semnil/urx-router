@@ -26,6 +26,9 @@ import { closeDynScreen, graphNode, insertFxBypass, insertFxSelect, param, param
 // value. `en.ts` is a plain data module with no DOM and no `src/ui` behind it, so it
 // costs the harness nothing (the note in t4-midi.spec.ts is about importing a VIEW).
 import { en } from "../../src/i18n/en";
+// The insert-FX catalogue, for the engine slots a selection puts in the plan. A data module like
+// `en.ts`: no DOM and no `src/ui` behind it.
+import { ENGINE_GUITAR, insertFxWritableSlots } from "../../src/core/control/insert-fx-effect";
 import { chooseOption } from "../choose-option";
 
 // T2e shape-change — the two catalog cases whose subject is a constraint that lives in
@@ -874,10 +877,13 @@ test.describe("T2e shape-change", () => {
     );
     console.log(`ledger for the gesture (ui): ${uiKeys.join(", ")}`);
 
-    // The premise, asserted: exactly one address entered the set, and it is the bypass
-    // the selector binds. (An engine-array slot enters only once the plan carries one —
-    // ch2's params are unread, so this selection adds the ON and nothing else.)
-    expect(added).toEqual([insertFxOnAddr(1)]);
+    // The premise, asserted: the bypass the selector binds entered the set, and with it every
+    // engine slot of the chosen type, which the selection puts in the plan at that type's own
+    // defaults — in the order the emit sends them, each mirror after its slot.
+    const engine = insertFxWritableSlots("guitar-clean")
+      .flatMap((s) => (s.mirror === undefined ? [s.slot] : [s.slot, s.mirror]))
+      .map((y) => `${ENGINE_GUITAR}:0:${y}`);
+    expect([...added].sort()).toEqual([insertFxOnAddr(1), ...engine].sort());
     // …and it entered the REGISTRATION with the write set, in the selection's own flush
     // (live.ts followSetStale → DeviceFollow.refresh at the end of a flush that
     // captured). This pinned the opposite while the re-subscribe ran at begin() and after
@@ -888,7 +894,7 @@ test.describe("T2e shape-change", () => {
     // have re-registered through follow.ts whatever the flush did.
     expect(deviceReflectsAfter(trace, ampAt)).toBe(0);
     expect(regAfterAmp.has(insertFxOnAddr(1))).toBe(true);
-    expect(ampWrites.map((s) => s.addr)).toEqual([insertFxAddr(1), insertFxOnAddr(1)]);
+    expect(ampWrites.map((s) => s.addr)).toEqual([insertFxAddr(1), ...engine, insertFxOnAddr(1)]);
     // …and the two nodes whose MENUS the gesture just changed got no insert-FX write of
     // their own. Stated of the flush, not of the run: INSERT_FX is a converge param, and
     // the round behind this flush re-sends a large slice of the plan against this fake

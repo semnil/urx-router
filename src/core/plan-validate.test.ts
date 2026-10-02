@@ -22,14 +22,19 @@ import { trackCountAtRate } from "./constraints";
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
 import { nodeLeafRules, planToCommands } from "./control/translate";
 import { eqResponse } from "./eq-response";
-import { insertFxDriverSlots, insertFxFamilyOf, insertFxWritableSlots } from "./control/insert-fx-effect";
+import {
+  insertFxDefaults,
+  insertFxDriverSlots,
+  insertFxFamilyOf,
+  insertFxWritableSlots,
+} from "./control/insert-fx-effect";
 import { sendPansToSources, validatePlan } from "./routing";
 import { deserialize, emptyPlan, ensureFixedConnections, fixedConnection, PLAN_VERSION, serialize } from "./plan";
 import type { NodeParams, Plan, PlanConnection } from "./plan";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
-import { connParamContestKey } from "./plan-history";
+import { connParamContestKey, nodeParamContestPath } from "./plan-history";
 import {
   BUS_TYPE_FIXED,
   INSERT_FX_NONE,
@@ -123,7 +128,9 @@ describe("insertFxSlotProblems", () => {
     const COMP_S = INSERT_FX_OPTIONS.find((o) => o.label === "Compander-S")!.value;
 
     it.each([
-      ["the selector", { insertFx: COMP_H }, { insertFx: COMP_S }, ["insertFx"]],
+      // The load gives each selected effect its own type's defaults, and the two companders
+      // come up at different ones, so the engine values the write sends differ as well.
+      ["the selector", { insertFx: COMP_H }, { insertFx: COMP_S }, ["insertFx", "insertFxParams"]],
       ["the bypass", { insertFx: COMP_H, insertFxOn: true }, { insertFx: COMP_H, insertFxOn: false }, ["insertFxOn"]],
       [
         // Slot 6 is the compander's Threshold — a slot the write SENDS. Slot 0 is the
@@ -136,8 +143,9 @@ describe("insertFxSlotProblems", () => {
       ],
       // The member the document leaves out is filled with the factory value, so omitting
       // one side is a disagreement too — and the report has to say so, since "I only set
-      // it on one channel" is the likeliest way to author this by hand.
-      ["one side omitted", { insertFx: COMP_H, insertFxOn: true }, {}, ["insertFx", "insertFxOn"]],
+      // it on one channel" is the likeliest way to author this by hand. The named side's
+      // engine values are its type's defaults, which No Effect sends none of.
+      ["one side omitted", { insertFx: COMP_H, insertFxOn: true }, {}, ["insertFx", "insertFxOn", "insertFxParams"]],
       // Several at once: every disagreeing key is named, not just the first.
       [
         "all three",
@@ -167,6 +175,13 @@ describe("insertFxSlotProblems", () => {
         "the engine values match",
         { insertFx: COMP_H, insertFxParams: { "0": 12 } },
         { insertFx: COMP_H, insertFxParams: { "0": 12 } },
+      ],
+      // The side that names no engine value is given the type's defaults, which is what the
+      // other side wrote.
+      [
+        "one side writes the type's defaults and the other none",
+        { insertFx: COMP_H, insertFxParams: { "compander:6": -1000, "compander:7": 350 } },
+        { insertFx: COMP_H },
       ],
     ])("says nothing when %s", (_name, ch1, ch2) => {
       expect(insertFxPairProblems(u44v, linked(ch1, ch2))).toEqual([]);
@@ -1608,6 +1623,32 @@ describe("prepareLoadedPlan", () => {
     const loaded = doc();
     load(loaded);
     expect(loaded.nodeParams["bus.fx1"]?.fxEffect?.type).toBe(factoryType);
+  });
+
+  // The unit fills an engine with the type's defaults only on the transition into it, so a slot
+  // the document leaves out is one the write would send nothing for while the screen prints the
+  // default. The load puts the default in the plan, recorded as the fill's.
+  it("gives a selected insert effect every engine slot the document leaves out, recorded as the fill's", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams.ch1 = { insertFx: 1794, insertFxParams: { "compander:6": -900 } };
+    plan.nodeParams["bus.stereo"] = { insertFx: 1792 };
+    // An effect off the node's own menu reaches the unit as No Effect, so nothing is filled.
+    plan.nodeParams.ch3 = { insertFx: 1792 };
+    load(plan);
+    const at = (node: string, key: string) => nodeParamContestPath(node, `insertFxParams.${key}`);
+    const ch1 = plan.nodeParams.ch1!.insertFxParams!;
+    expect(ch1["compander:6"]).toBe(-900);
+    expect(plan.paramSource?.get(at("ch1", "compander:6"))).toBe("load");
+    const defaults = insertFxDefaults("compander", 1794);
+    for (const { slot } of insertFxWritableSlots("compander").filter((s) => s.slot !== 6)) {
+      expect(ch1[`compander:${slot}`], `slot ${slot}`).toBe(defaults[slot]);
+      expect(plan.paramSource?.get(at("ch1", `compander:${slot}`)), `slot ${slot}`).toBe("default");
+    }
+    expect(Object.keys(plan.nodeParams["bus.stereo"]!.insertFxParams ?? {})).toHaveLength(
+      insertFxWritableSlots("mbc").length,
+    );
+    expect(plan.nodeParams.ch3!.insertFxParams).toBeUndefined();
+    expect(plan.nodeParams.ch2!.insertFxParams, "No Effect, the factory selection").toBeUndefined();
   });
 
   it("puts a Track Count the completion supplies back through the rate rule", () => {

@@ -948,6 +948,49 @@ describe("Fetch from device", () => {
     expect(stripsNamed(asked[0])).toEqual(writesLevel ? [] : [fullLabel(ch1)]);
   });
 
+  // The unit fills an engine with the type's defaults only on the transition into it, so a write
+  // of a selector it already holds moves nothing there. A selection made in the app puts those
+  // defaults in the plan: the write over a unit already running that effect, tuned otherwise,
+  // sends them, and its confirm names the strip, since they are the type's and not the operator's.
+  it("sends a chosen effect's defaults over a unit already running it, and names the strip", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const { ENGINE_COMPANDER_INPUT, insertFxDefaults } = await import("./core/control/insert-fx-effect");
+    const model = getModel("URX44V");
+    const ifx = insertFxControl(model, "ch1")!;
+    const read = clockReads(false, 48_000);
+    const held: Record<number, number> = { 6: -2000, 7: 800 };
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX44V")), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        // CH 1 runs Compander-H with a threshold and a ratio of its own.
+        vd_get: (a: Record<string, unknown>) =>
+          a.paramId === ifx.param
+            ? 1793
+            : a.paramId === ENGINE_COMPANDER_INPUT && held[Number(a.y)] !== undefined
+              ? held[Number(a.y)]
+              : read(a),
+      }),
+    }))!;
+    selectNode("ch1");
+    const sel = [...document.querySelectorAll<HTMLElement>("#inspector .param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.insertFxType)!
+      .querySelector("select")!;
+    sel.value = "1793";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    expect(stripsNamed(asked[0])).toEqual([fullLabel(model.nodes.find((n) => n.id === "ch1")!)]);
+    const sent = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set" ? shell.args[i] : undefined))
+      .filter((a): a is Record<string, unknown> => !!a && a.paramId === ENGINE_COMPANDER_INPUT && a.y === 6);
+    expect(sent.map((a) => a.value)).toContain(insertFxDefaults("compander", 1793)[6]);
+  });
+
   // The params of a wire a scene-scoped document carries over are the plan on screen's as the wire
   // is: the OSC assign into STEREO of a plan nothing vouches for stays unvouched-for after a scene
   // file is dropped over it, so the write moving the unit's assign names STEREO.

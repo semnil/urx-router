@@ -81,7 +81,7 @@ import {
   withLinkedPartner,
 } from "../core/routing";
 import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected } from "../core/control/params";
-import { parkOutgoingInsertFxParams } from "./insert-fx-model";
+import { parkOutgoingInsertFxParams, seedInsertFxParams } from "./insert-fx-model";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import {
   DELAY_TIME_MAX_MS,
@@ -426,8 +426,10 @@ export interface ConsoleHooks {
    *  `written` names the contest keys the edit ASSERTED — its own and the ones a pair
    *  mirror carried — not only the ones whose value moved. A device read in flight
    *  arbitrates by authorship, so a write that lands on the value already there is
-   *  invisible to it otherwise. */
-  onChange: (written?: readonly string[]) => void;
+   *  invisible to it otherwise. `defaults` names, as (node, dotted path) pairs, the values the
+   *  edit put in as a type's defaults rather than as anything the operator chose — an effect
+   *  selection's seeded engine slots, on the strip and on a mirrored partner. */
+  onChange: (written?: readonly string[], defaults?: ReadonlyArray<readonly [string, string]>) => void;
   /** The meter stream could not be registered. Bars stuck on the floor are
    *  indistinguishable from silence, so the host surfaces this rather than
    *  leaving a live session that quietly shows nothing. */
@@ -3255,7 +3257,7 @@ export class Console {
   /** Apply a console edit to `id`: mirror it onto the linked partner — plus the insert
    *  FX, which the pair holds one of — then run the shared change funnel. Returns whether
    *  it mirrored (the caller rebuilds so the partner strip catches up). */
-  private commit(id: string, written: readonly string[] = []): boolean {
+  private commit(id: string, written: readonly string[] = [], defaults: readonly string[] = []): boolean {
     const model = this.hooks.getModel();
     const plan = this.hooks.getPlan();
     const mirrored = mirrorLinkedPair(model, plan, id);
@@ -3273,7 +3275,10 @@ export class Console {
     }
     // A linked MIX's send pans from this strip (and a mirrored partner) follow its position.
     keys.push(...alignLinkedSendPans(plan, withLinkedPartner(model, plan, id)));
-    this.hooks.onChange(keys);
+    // The insert-FX mirror copies the engine values, defaults included.
+    const seeded = defaults.map((path) => [id, path] as const);
+    if (partner && insFxMirrored) seeded.push(...defaults.map((path) => [partner, path] as const));
+    this.hooks.onChange(keys, seeded);
     return mirrored || insFxMirrored;
   }
 
@@ -3388,14 +3393,21 @@ export class Console {
   private setInsFx(id: string, value: number): void {
     const np = this.nodeParamsOf(id);
     const parked = parkOutgoingInsertFxParams(np);
-    if (parked) np.insertFxParams = parked;
+    // The plan takes the selected type's defaults for every slot it does not hold, which is
+    // what the screen shows and what the unit fills the engine with.
+    const { params, seeded } = seedInsertFxParams(parked ?? undefined, value);
+    if (parked || seeded.length > 0) np.insertFxParams = params;
     np.insertFx = value;
     np.insertFxOn = value !== INSERT_FX_NONE;
     this.closeTypePop();
     // Only what this edit wrote. The engine values are named when there were some to
     // park and not otherwise — naming that group on a selection that moved nothing in it
     // would take the device's answer for every slot the re-key merely copied.
-    this.commit(id, parked ? INSERT_FX_PAIR_KEYS : ["insertFx", "insertFxOn"]);
+    this.commit(
+      id,
+      parked ? INSERT_FX_PAIR_KEYS : ["insertFx", "insertFxOn"],
+      seeded.map((key) => `insertFxParams.${key}`),
+    );
     this.render();
     // Asked of the same function the launcher beside the list asks, so the press that
     // chooses and the press that opens cannot disagree about whether there is a screen.

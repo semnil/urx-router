@@ -281,7 +281,11 @@ wherever that raw value happens to sit on the device's curve, so have the user d
 the effect in on the device and fetch it back rather than authoring one.
 
 **For `ssmcs` and `insertFxParams`, omitting a key keeps nothing.** The loader fills
-it from the model's factory values and the write sends it, the same as any other key.
+it and the write sends it, the same as any other key — an `ssmcs` key from the model's
+factory values, and an `insertFxParams` slot of the selected effect from that effect's
+own defaults (the validator lists the slots it fills). The unit fills an engine with
+those defaults only when the selector moves INTO a type, so a plan selecting an effect
+the unit already runs still overwrites the unit's engine values with them.
 What a plan cannot do is author one either — the numbers are the device's own internal
 units and a hand-written value lands wherever it happens to sit on the unit's curve.
 So where these matter, have the user dial the effect in on the unit and fetch the plan

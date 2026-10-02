@@ -22,6 +22,7 @@ import {
 } from "../core/control/params";
 import { planToCommands } from "../core/control/translate";
 import { fxParams } from "../core/control/fx-effect";
+import { insertFxDefaults, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 import type { DeviceModel } from "../models/types";
 import { setLang, t } from "../i18n";
 
@@ -1029,6 +1030,29 @@ describe("insert FX", () => {
     const patch = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)![1];
     expect(patch.insertFxParams).toBeDefined();
     expect(Object.keys(patch.insertFxParams!)).not.toContain("3");
+  });
+
+  // The unit fills the engine with the type's defaults on the transition into it and not on a
+  // same-value write, so a selection that carried no engine values left a write that sends
+  // nothing there while the screen printed the defaults. The selection seeds them, and names them
+  // as defaults rather than as values the operator chose.
+  it("seeds the selected type's defaults and names them as defaults", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    const sel = [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.insertFxType)!
+      .querySelector("select")!;
+    sel.value = "1794";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    const [id, patch, , defaults] = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)!;
+    expect(id).toBe("ch1");
+    const expected = insertFxDefaults("compander", 1794);
+    const slots = insertFxWritableSlots("compander").map((s) => s.slot);
+    expect(patch.insertFxParams).toEqual(
+      Object.fromEntries(slots.map((slot) => [`compander:${slot}`, expected[slot]])),
+    );
+    expect([...(defaults ?? [])].sort()).toEqual(slots.map((slot) => `insertFxParams.compander:${slot}`).sort());
   });
 });
 

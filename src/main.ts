@@ -190,7 +190,12 @@ import { askRateChoice } from "./ui/rate-choice";
 import { cmdAddr, collisionOwners } from "./core/control/translate";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
-import { markParamSource as markSource } from "./app/param-source";
+import {
+  markAuthored,
+  markParamSource as markSource,
+  noteSeededDefaults,
+  type SeededDefault,
+} from "./app/param-source";
 import type { SharedOwners, WriteScope } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
@@ -633,7 +638,10 @@ const consoleView = new Console(consoleHost, {
   // A console edit changed the plan: flag dirty + schedule live sync. The console
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
-  onChange: (written) => markChanged("ui", written),
+  onChange: (written, defaults) => {
+    noteSeededDefaults(plan, seededDefaults, defaults ?? []);
+    markChanged("ui", written);
+  },
   // The meter stream failed to register. Floor-stuck bars read as "no signal",
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
@@ -1508,6 +1516,9 @@ async function applyPreventSleep(on: boolean): Promise<string | null> {
 // Undo / redo over the plan. Assigned below (after the views it re-renders exist),
 // so every funnel reaches it optionally — the same shape as live / midi.
 let planHistory: PlanHistory | null = null;
+// The engine slots an effect selection seeded with its type's defaults, held until the history
+// entry carrying them closes, when they are recorded as the fill's rather than the operator's.
+const seededDefaults = new Map<string, SeededDefault>();
 
 // A device read that carries a model switch (Fetch / Live-sync start) runs against a plan of
 // the unit's model, and that plan replaces the one on screen once the read lands — so while
@@ -1712,7 +1723,7 @@ const inspectorActions = {
     // ducked-channel PRE-send note appears/clears with the tap.
     if (patch.oscL !== undefined || patch.oscR !== undefined || patch.tap !== undefined) refreshInspector();
   },
-  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[]) => {
+  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[], defaults?: readonly string[]) => {
     const prev = plan.nodeParams[id];
     const partner = partnerChannel(getModel(modelId), id);
     plan.nodeParams[id] = { ...prev, ...patch };
@@ -1736,6 +1747,10 @@ const inspectorActions = {
     // The insert FX takes a pass of its own beside it, which is what names the pair's
     // three insert-FX keys whatever this edit was. Both write the same values.
     const insFxMirrored = mirrorLinkedInsertFx(getModel(modelId), plan, id);
+    // The insert-FX mirror copies the engine values, defaults included.
+    const seeded = (defaults ?? []).map((path) => [id, path] as const);
+    if (partner && insFxMirrored) seeded.push(...(defaults ?? []).map((path) => [partner, path] as const));
+    noteSeededDefaults(plan, seededDefaults, seeded);
     // The patch's own keys, not only the ones whose value moved: this funnel asserts
     // every member it carries, and a device read in flight must not take back one that
     // happened to already hold the asserted value.
@@ -2272,6 +2287,8 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
   // Replacing the whole plan invalidates the live snapshot; leave sync first.
   // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
   deactivateLive();
+  // A seeded slot names a node of the plan being replaced.
+  seededDefaults.clear();
   // deactivateLive drops the subscription and the timers, but a reconcile / refetch
   // already awaiting the device is not reachable from there — the read itself is what
   // still points at the plan being replaced.
@@ -2898,7 +2915,7 @@ planHistory = new PlanHistory({
   reflect: (touch) => reflectHistory(touch),
   labelOf: (id) => graph.labelOf(id),
   onStatus: (msg) => setStatus(msg),
-  onAuthored: (names) => markSource(plan, names, "manual"),
+  onAuthored: (names) => markAuthored(plan, names, seededDefaults),
   // A device read merges into `plan` across many awaits and re-bases the live snapshot
   // from its own copy, and a file flow can replace the plan outright: patching under
   // either acts on a premise that is still moving. Every read that RE-AUTHORS the plan

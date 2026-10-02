@@ -20,6 +20,7 @@ import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, insertFxSelected } from ".
 import { insertFxControl, planToCommands } from "../core/control/translate";
 import { getModel } from "../models";
 import { fxEffectTypes } from "../core/control/fx-effect";
+import { insertFxDefaults, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 import { defaultPlan } from "../models/initial-state";
 import { t } from "../i18n";
 
@@ -668,15 +669,33 @@ describe("the INS FX chip", () => {
       expect(now.insertFxOn).toBe(true);
       // The half that says the press was not merely cosmetic: the selector the unit is
       // given now carries the chosen effect, where the stale value was sent as No Effect.
-      // Asserted on the SELECTOR and not on the engine array — translate writes only the
-      // slots the plan carries, and a freshly chosen effect carries none, so a count there
-      // would be zero for the right reason and prove nothing.
       const sent = planToCommands(getModel("URX44V"), h.plan)
         .filter((c) => c.name === "INSERT_FX")
         .map((c) => c.planValue);
       expect(sent).toContain(now.insertFx);
       expect(sent).not.toContain(stale);
     });
+  });
+
+  // The unit fills the engine with the type's defaults on the transition into it and not on a
+  // same-value write, so the selection puts them in the plan, where the screen reads them and the
+  // write sends them — and names them as defaults rather than as values the operator chose.
+  it("seeds the chosen type's defaults and names them as defaults", () => {
+    h = consoleHost();
+    openerOf("ch1").click();
+    popRow("Compander-S").click();
+    const expected = insertFxDefaults("compander", 1794);
+    const slots = insertFxWritableSlots("compander").map((s) => s.slot);
+    expect(h.plan.nodeParams.ch1!.insertFxParams).toEqual(
+      Object.fromEntries(slots.map((slot) => [`compander:${slot}`, expected[slot]])),
+    );
+    expect([...h.changeDefaults().at(-1)!].map(([id, path]) => `${id} ${path}`).sort()).toEqual(
+      slots.map((slot) => `ch1 insertFxParams.compander:${slot}`).sort(),
+    );
+    const engine = planToCommands(getModel("URX44V"), h.plan).filter(
+      (c) => c.node === "ch1" && c.name === "INSERT_FX_EFFECT",
+    );
+    expect(engine.length).toBeGreaterThanOrEqual(slots.length);
   });
 
   // The positive control for the pair above: an effect the node's own control DOES carry

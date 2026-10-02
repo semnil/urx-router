@@ -258,9 +258,10 @@ export interface NodeParams {
   /** Insert-FX effect parameters: RAW broker values keyed by effect FAMILY + engine
    *  array slot (`insertFxParamKey`, see control/insert-fx-effect.ts), mirroring the
    *  device so a captured plan round-trips. The selected `insertFx` value picks which
-   *  family's entries are read; absent slots fall back to the family's factory
-   *  defaults. A bare slot number is the device-shaped namespace a readback writes and
-   *  reads as the currently selected family's. */
+   *  family's entries are read; a slot the map does not hold reads as the selected type's
+   *  default, which a selection and a load put in the map (`seedInsertFxParams`). A bare
+   *  slot number is the device-shaped namespace a readback writes and reads as the
+   *  currently selected family's. */
   insertFxParams?: Record<string, number>;
   /** COMP_EQ_TYPE: 0 = COMP->EQ, 1 = SSMCS (MONO IN channels). Absent = COMP->EQ. */
   compEqType?: number;

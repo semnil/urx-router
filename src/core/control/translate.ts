@@ -1430,9 +1430,9 @@ function pushFxEffectCommands(
 // (guitar 697 / pitch 701 / compander 689 / output 693). Slots + defaults from
 // the calibrated catalog; mirror slots (Pitch Coarse/Fine/Formant) get the same
 // raw. The selector (emitted by the caller) binds the engine first.
-// Only slots the plan explicitly carries are written; absent slots are left to
-// the device's per-type defaults populated by the selector (guitar-amp common
-// params differ per type, so a single catalog default would clobber them). The
+// Only slots the plan carries are written. A selection and a load put every writable
+// slot of the selected type in the plan at that type's own default
+// (`seedInsertFxParams`), so the plan holds what the screen shows. The
 // writable list is a deliberate subset of what a readback fills: a slot the unit
 // answers but this app must not write back is in insertFxReadableSlots and not
 // here, so a read does not round-trip in full.
@@ -1470,8 +1470,8 @@ function pushInsertFxEffectCommands(
   for (const s of insertFxWritableSlots(family)) {
     if (driven.has(s.slot)) continue;
     const v = params[insertFxParamKey(family, s.slot)] ?? params[String(s.slot)];
-    // No catalog default to fall back on here (an absent slot is left to the
-    // device's per-type default), so a non-finite raw is dropped, not substituted.
+    // A slot the plan does not hold as a finite raw sends nothing; no default is
+    // substituted here.
     if (!Number.isFinite(v)) continue;
     const raw = boundRaw(v, s.rawMin, s.rawMax);
     const name = drivers.has(s.slot) ? "INSERT_FX_DRIVER" : "INSERT_FX_EFFECT";

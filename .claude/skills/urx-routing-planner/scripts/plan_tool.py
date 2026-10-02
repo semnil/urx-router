@@ -803,7 +803,8 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
     a way the unit can tell apart, so leaving one out makes this checker refuse a plan the
     app loads:
 
-    - the value is read under the FAMILY's namespace, bare key second;
+    - the value is read under the FAMILY's namespace, bare key second, and a slot holding
+      neither is the type's default, which the load fills it with;
     - a value that is not a finite number is not sent at all — a boolean included, since
       `Number.isFinite(true)` is false in the app;
     - what IS sent is the value bounded to that slot's own range, so two numbers past the
@@ -848,6 +849,10 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
         if slot in driven:
             continue
         value = insert_fx_slot_value(params, family, slot)
+        # A slot the document leaves out is given its type's default on load
+        # (`completeInsertFxParams`), and the write sends that.
+        if value is None:
+            value = spec.get("def")
         # `Number.isFinite` in the app, which a boolean is not — and `is_number` already
         # draws that line for the same reason, so it is asked rather than re-stated.
         if not is_number(value):
@@ -856,6 +861,24 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
         name = "INSERT_FX_DRIVER" if spec.get("driver") else "INSERT_FX_EFFECT"
         out.append((name, slot, raw))
     return tuple(out)
+
+
+def insert_fx_seeded(params, param_space):
+    """The engine keys the app's load adds for a node's selected insert effect
+    (core/plan-validate.ts `completeInsertFxParams`): every slot the write can send that the
+    sanitised map holds under neither the family's key nor the bare slot number, at the type's
+    own default and under the family's key. `params` is one node's; the caller asks only where
+    the node's own menu carries the selector."""
+    space = param_space.get(str(params.get("insertFx"))) if isinstance(param_space, dict) else None
+    if not isinstance(space, dict):
+        return []
+    family = space.get("family")
+    held = sanitized_params(params.get("insertFxParams"))
+    return [
+        f"{family}:{spec['slot']}"
+        for spec in space.get("slots") or []
+        if insert_fx_slot_value(held, family, spec["slot"]) is None
+    ]
 
 
 def insert_fx_pair_problems(plan, pairs, param_space):
@@ -1600,6 +1623,12 @@ def node_param_warnings(
         if "insertFx" in params:
             out.append(f"node {node_id}: {SELECTOR_KEYS['insertFx']} resets that effect's parameters on the device")
         slot = insert_fx_slot(node_id, params, nodes)
+        seeded = insert_fx_seeded(params, param_space) if slot else []
+        if seeded:
+            out.append(
+                f"node {node_id}: the app fills insertFxParams {', '.join(seeded)} with the selected "
+                "effect's own defaults on load, and the write sends them"
+            )
         if slot:
             held = slot_holders.setdefault(slot, [])
             # A STEREO-linked pair holds one insert effect between its two channels — the unit

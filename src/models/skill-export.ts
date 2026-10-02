@@ -18,6 +18,7 @@ import { channelControl, hasHiZInput, nodeLeafRules, type LeafRule } from "../co
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
 import {
+  insertFxDefaults,
   insertFxDeviceDriven,
   insertFxDriverSlots,
   insertFxFamilyOf,
@@ -62,9 +63,10 @@ export interface SkillModel {
     {
       /** The namespace stored values live under (`guitar-clean`, `pitch`, …). */
       family: string;
-      /** Every slot a write can send, with the range it is bounded to, the second slot a
-       *  mirrored value also goes to, and whether it is sent under the DRIVER name. */
-      slots: { slot: number; rawMin: number; rawMax: number; mirror?: number; driver?: true }[];
+      /** Every slot a write can send, with the range it is bounded to, the default the load
+       *  gives a slot the document leaves out (`seedInsertFxParams`), the second slot a mirrored
+       *  value also goes to, and whether it is sent under the DRIVER name. */
+      slots: { slot: number; rawMin: number; rawMax: number; def: number; mirror?: number; driver?: true }[];
       /** The slots the unit drives ITSELF while `gate` is non-zero, which the write then
        *  leaves out. Absent for a family that drives nothing. */
       driven?: { gate: number; slots: number[] };
@@ -260,12 +262,14 @@ function insertFxParamSpaceBySelector(): SkillModel["insertFxParamSpace"] {
     const family = insertFxFamilyOf(option.value);
     if (!family) continue;
     const drivers = insertFxDriverSlots(family);
+    const defaults = insertFxDefaults(family, option.value);
     const slots = [...insertFxWritableSlots(family)]
       .sort((a, b) => a.slot - b.slot)
       .map((s) => ({
         slot: s.slot,
         rawMin: s.rawMin,
         rawMax: s.rawMax,
+        def: defaults[s.slot],
         ...(s.mirror !== undefined ? { mirror: s.mirror } : {}),
         ...(drivers.has(s.slot) ? { driver: true as const } : {}),
       }));

@@ -651,7 +651,8 @@ carries a one-line map of the same directories and points here.
   plan take back — it takes the plan the converge SENT as well as the live one, since the live flush clones
   before its await and one address is a different key under a different effect type /
   `param-source.ts` where each of a plan's parameter values came from — the fill records `load` /
-  `default` as it goes, an edit records `manual`, and a settled read or a landed write records
+  `default` as it goes, an edit records `manual` — the engine slots an effect selection seeds with
+  the type's defaults excepted, which are `default` — and a settled read or a landed write records
   `device` for everything they reached. Transient, and never serialized: the document holds state,
   not a record of how it was operated /
   `unauthored-writes.ts` which of a write's changes the operator never chose. The plan is dense — the

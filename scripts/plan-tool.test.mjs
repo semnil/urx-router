@@ -622,6 +622,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       expect(spec, `selector ${selector} has a slot with a range`).toBeDefined();
       const [lo, hi] = [spec.rawMin, spec.rawMax];
       const slot = spec.slot;
+      const def = space.slots.find((x) => x.slot === slot).def;
       const q = `${space.family}:${slot}`;
       const ask = (ch1, ch2) => {
         const plan = {
@@ -678,7 +679,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         [`above ${q} max`, { [q]: hi }, { [q]: hi + 1 }, true],
         // A boolean is not a finite number, so the write sends neither.
         [`boolean ${q} against boolean`, { [q]: true }, { [q]: false }, true],
-        [`boolean ${q} against omitted`, { [q]: true }, {}, true],
+        // …while a slot the document leaves out takes the type's default, which it does send.
+        [`boolean ${q} against omitted`, { [q]: true }, {}, false],
+        [`${q} at the type's default against omitted`, { [q]: def }, {}, true],
         // The control for the three above: inside the range, two numbers still differ.
         [`${q} inside the range`, { [q]: lo }, { [q]: hi }, false],
       ];
@@ -1641,6 +1644,65 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     // Both answers are real populations: documents the load completes and documents it leaves.
     expect(added.yes).toBeGreaterThan(0);
     expect(added.no).toBeGreaterThan(0);
+  });
+
+  // The load gives a selected insert effect every engine slot the document leaves out, at the
+  // type's own default, and the write sends them. The keys the app adds are compared with the ones
+  // the tool says it fills: an effect with no engine values, with some, with a bare slot number,
+  // on an output bus and on a channel — beside the documents nothing may be said about: every slot
+  // written, No Effect, an effect off the node's own menu, and a stereo channel, which has no
+  // insert effect at all.
+  it("agrees with the app about the insert-FX engine slots the load fills", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { nodeParamContestPath } = await import("../src/core/plan-history.ts");
+    const full = Object.fromEntries(SPACE["1793"].slots.map((x) => [`compander:${x.slot}`, x.def]));
+    const corpus = [
+      ["a compander with no engine values", { ch1: { insertFx: 1793 } }],
+      ["a compander with one", { ch1: { insertFx: 1794, insertFxParams: { "compander:6": -900 } } }],
+      ["a bare slot number", { ch3: { insertFx: 1793, insertFxParams: { 7: 500 } } }],
+      ["Pitch Fix", { ch2: { insertFx: 512 } }],
+      ["a guitar amp", { ch1: { insertFx: 256 } }],
+      ["the multi-band compressor on STEREO", { "bus.stereo": { insertFx: 1792 } }],
+      // …and the documents nothing may be said about.
+      ["every slot written", { ch1: { insertFx: 1793, insertFxParams: full } }],
+      ["No Effect", { ch1: { insertFx: -1 } }],
+      ["an effect off the channel's menu", { ch1: { insertFx: 1792 } }],
+      ["an off-menu value", { ch1: { insertFx: 4242 } }],
+      ["a stereo channel", { ch_5_6: { insertFx: 1793 } }],
+    ];
+    const filled = { yes: 0, no: 0 };
+    for (const [name, nodeParams] of corpus) {
+      const plan = {
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: "URX44V",
+        positions: {},
+        connections: [],
+        nodeParams,
+      };
+      const loaded = await appLoad(plan, true);
+      const app = [...loaded.paramSource]
+        .filter(([key, from]) => from === "default" && key.includes(`${"\u0000"}insertFxParams${"\u0000"}`))
+        .map(([key]) => key)
+        .sort();
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, `${name}\n${r.stdout}`).toBe(0);
+      const tool = r.stderr
+        .split(/\r?\n/)
+        .map((l) =>
+          /^WARNING: node (\S+): the app fills insertFxParams (.*) with the selected effect's own defaults/.exec(l),
+        )
+        .filter((m) => m !== null)
+        .flatMap((m) => m[2].split(", ").map((key) => nodeParamContestPath(m[1], `insertFxParams.${key}`)))
+        .sort();
+      expect(tool, `${name}\n${r.stderr}`).toEqual(app);
+      filled[app.length > 0 ? "yes" : "no"]++;
+    }
+    // Both answers are real populations: documents the load completes, and documents it leaves.
+    expect(filled.yes).toBeGreaterThan(0);
+    expect(filled.no).toBeGreaterThan(0);
   });
 
   // A fixed send the document lists without a level goes out at unity, and the app's load writes

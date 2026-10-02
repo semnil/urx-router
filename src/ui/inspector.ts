@@ -98,7 +98,7 @@ import { EQ_FREQ_POS_MAX, eqFreqToPos, eqPosToHz, formatDb, formatGainDb, format
 import { clearSectionOverride, recordSectionOpen, resolveSectionOpen } from "./inspector-sections";
 import { isBalanceChannel, sendFields, sendlessNote } from "./send-fields";
 import type { ParamField } from "./send-fields";
-import { parkOutgoingInsertFxParams } from "./insert-fx-model";
+import { parkOutgoingInsertFxParams, seedInsertFxParams } from "./insert-fx-model";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -108,8 +108,15 @@ export interface InspectorActions {
   /** `written` names what the edit ASSERTED, as dotted paths (`"osc.on"`), for the
    *  funnel's write witness. Give it wherever the patch REBUILDS a nested group: the
    *  patch key alone names the whole group, which claims every sibling the rebuild
-   *  merely copied. Absent means the patch's own keys, which is right for a scalar. */
-  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[]) => void;
+   *  merely copied. Absent means the patch's own keys, which is right for a scalar.
+   *  `defaults` names, the same way, the values the edit put in as a type's defaults rather
+   *  than as anything the operator chose — an effect selection's seeded engine slots. */
+  onUpdateNodeParams: (
+    id: string,
+    patch: NodeParams,
+    written?: readonly string[],
+    defaults?: readonly string[],
+  ) => void;
   onRenameNode: (id: string, name: string) => void;
   onRecolorNode: (id: string, color: string | null) => void;
   onOpenRecent: (path: string) => void;
@@ -912,8 +919,16 @@ export function renderInspector(
             const sel = Number(v);
             const patch: NodeParams = sel === INSERT_FX_NONE ? { insertFx: sel } : { insertFx: sel, insertFxOn: true };
             const parked = parkOutgoingInsertFxParams(plan.nodeParams[node.id]);
-            if (parked) patch.insertFxParams = parked;
-            actions.onUpdateNodeParams(node.id, patch);
+            // The plan takes the selected type's defaults for every slot it does not hold,
+            // which is what the screen shows and what the unit fills the engine with.
+            const { params, seeded } = seedInsertFxParams(parked ?? undefined, sel);
+            if (parked || seeded.length > 0) patch.insertFxParams = params;
+            actions.onUpdateNodeParams(
+              node.id,
+              patch,
+              undefined,
+              seeded.map((key) => `insertFxParams.${key}`),
+            );
           },
         ),
       );

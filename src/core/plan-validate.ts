@@ -14,9 +14,17 @@ import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import { fixedConnection, isPlainRecord, requiredSourceWire, SEND_LEVEL_UNNAMED_DB, setPlanSampleRate } from "./plan";
-import { connParamContestKey, deepEqual } from "./plan-history";
+import { connParamContestKey, deepEqual, nodeParamContestPath } from "./plan-history";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "./plan";
-import { admitLeaf, insertFxWireState, nodeLeafRules, sendControl } from "./control/translate";
+import {
+  admitLeaf,
+  effectiveInsertFx,
+  insertFxControl,
+  insertFxWireState,
+  nodeLeafRules,
+  sendControl,
+} from "./control/translate";
+import { seedInsertFxParams } from "./control/insert-fx-effect";
 import { hiZOn } from "./input-lock";
 import {
   INSERT_FX_PAIR_KEYS,
@@ -95,6 +103,7 @@ export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPa
   // answering it must not complete the caller's plan behind their back.
   const filled = structuredClone(plan);
   fillFactoryParams(model.id, filled);
+  completeInsertFxParams(model, filled);
   for (const [a, b] of linked) {
     const sa = insertFxWireState(model, filled, a);
     const sb = insertFxWireState(model, filled, b);
@@ -777,10 +786,30 @@ export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadP
   return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans };
 }
 
+/** Give each node's selected insert effect every engine slot it leaves out, at that type's own
+ *  default (`seedInsertFxParams`), the effect being the one the write acts on
+ *  (`effectiveInsertFx`). Returns the contest names it set. The factory values carry no engine
+ *  values, so this is the half of the completion `fillFactoryParams` cannot supply. */
+export function completeInsertFxParams(model: DeviceModel, plan: Plan): string[] {
+  const names: string[] = [];
+  for (const node of model.nodes) {
+    const np = plan.nodeParams[node.id];
+    if (!insertFxControl(model, node.id) || np?.insertFx === undefined) continue;
+    const selector = effectiveInsertFx(model, plan, node.id);
+    if (selector === undefined) continue;
+    const { params, seeded } = seedInsertFxParams(np.insertFxParams, selector);
+    if (seeded.length === 0) continue;
+    plan.nodeParams[node.id] = { ...np, insertFxParams: params };
+    for (const key of seeded) names.push(nodeParamContestPath(node.id, `insertFxParams.${key}`));
+  }
+  return names;
+}
+
 /** A document as the loader opens it: its own wire params recorded as the document's, repaired
  *  (`applyLoadRepairs`), then completed from the model's factory values — a value a repair
- *  dropped is completed like any other absent one — then put back through the rate rule, which
- *  a Track Count the fill completes can exceed. */
+ *  dropped is completed like any other absent one — and each selected insert effect from its
+ *  type's defaults, both recorded as the fill's, then put back through the rate rule, which a
+ *  Track Count the fill completes can exceed. */
 export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
   // The document's own wire params are what it wrote, as its node params are (the fill records
   // those); a repair below that completes one records its own.
@@ -793,6 +822,7 @@ export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: Load
   }
   const repairs = applyLoadRepairs(model, plan, problems);
   fillFactoryParams(model.id, plan);
+  for (const name of completeInsertFxParams(model, plan)) source.set(name, "default");
   setPlanSampleRate(plan, plan.sampleRate);
   return repairs;
 }
