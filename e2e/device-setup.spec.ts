@@ -1,4 +1,4 @@
-import { test, expect, textContrast } from "./fixtures";
+import { test, expect, colorToken, contrastRatio, textContrast } from "./fixtures";
 import { dialogsOf, stubTauriDevice, strWritesOf, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 
@@ -110,6 +110,21 @@ test("the sub-headings and the knob column heads clear AA in the light theme", a
   await expect(head).toBeVisible();
   expect(await textContrast(page, sub)).toBeGreaterThanOrEqual(4.5);
   expect(await textContrast(page, head)).toBeGreaterThanOrEqual(4.5);
+});
+
+// The dot that marks a row Apply will write is a state graphic on the panel, drawn in the
+// accent's ink so it reads at 3:1 in the light theme.
+test("the pending-edit dot reads on the light panel", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await stubTauriDevice(page, { values: DEVICE_VALUES });
+  await page.goto("/");
+  await openSetup(page);
+  await chooseOption(page.locator(".udk-row").first().locator("select").first(), "Monitor");
+  const dirty = page.locator(".udk-row.dirty .knob").first();
+  await expect(dirty).toBeVisible();
+  const dot = await dirty.evaluate((el) => getComputedStyle(el, "::before").backgroundColor);
+  expect(dot).toBe(await colorToken(page, "--led-ink"));
+  expect(await contrastRatio(page, dot, await colorToken(page, "--panel"))).toBeGreaterThanOrEqual(3);
 });
 
 test("a knob assignment writes its three columns together", async ({ page }) => {

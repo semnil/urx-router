@@ -34,6 +34,11 @@
   /* Ink on any lit accent face. Dark in both themes: the light --led carries
      ~7.6:1 with this and ~2.5:1 with white. */
   --on-accent-ink: #14110d;
+  /* The MIDI-learn rings as shares of --led-ink: the dashed ring on every armable
+     control, and the armed ring at the bottom of its pulse. The light theme's are
+     stronger, since its ink is drawn on a light panel. */
+  --learn-ring: 55%;
+  --learn-trough: 30%;
 
   --ctl-bg: #221c13;
   --ctl-bg2: #2c2517;
@@ -126,6 +131,8 @@
      face and would need an exception there. */
   --led-ink: #755407;
   --led-face: #ffc24d;
+  --learn-ring: 100%;
+  --learn-trough: 70%;
 
   --ctl-bg: #e9e2d3;
   --ctl-bg2: #f6f2ea;
@@ -4139,8 +4146,8 @@ button.consent-btn-primary {
   height: 6px;
   margin-right: 7px;
   border-radius: 50%;
-  background: var(--led);
-  box-shadow: 0 0 6px var(--led);
+  background: var(--led-ink);
+  box-shadow: 0 0 6px var(--led-ink);
 }
 /* Rendered with .prefs-ver, which already carries the dim mono readout face. */
 .dev-pending {
@@ -4265,23 +4272,23 @@ button.consent-btn-primary {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--led);
+  background: var(--led-ink);
   pointer-events: none;
 }
 /* No border-radius here: the outline follows each element's own radius (chips /
    fader caps keep theirs, knobs stay circular) — declaring one would override
    the knob's 50% and square it while learn mode is on. */
 .midi-target {
-  outline: 1px dashed color-mix(in srgb, var(--led) 55%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--led-ink) var(--learn-ring), transparent);
   outline-offset: 1px;
 }
 .midi-target.midi-armed {
-  outline: 2px solid var(--led);
+  outline: 2px solid var(--led-ink);
   animation: midi-armed-pulse 1s ease-in-out infinite;
 }
 @keyframes midi-armed-pulse {
   50% {
-    outline-color: color-mix(in srgb, var(--led) 30%, transparent);
+    outline-color: color-mix(in srgb, var(--led-ink) var(--learn-trough), transparent);
   }
 }
 /* The only animation here with no end: learn mode arms a control and it pulses
@@ -4305,7 +4312,7 @@ button.consent-btn-primary {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--led);
+  background: var(--led-ink);
   box-shadow: 0 0 0 1px var(--panel);
   pointer-events: none;
   z-index: 1;

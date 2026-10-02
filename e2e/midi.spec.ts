@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, colorToken, contrastRatio, type Page } from "./fixtures";
 import { planParamZ } from "./plan-param";
 import { LIVE_COMMANDS } from "./tauri-stub";
 import { pickBand, screenBox } from "./dyn-helpers";
@@ -318,6 +318,33 @@ test("MIDI control is available without --experimental; only the self-test is ga
   await expect(page.locator("#btn-fetch")).toBeVisible(); // the menu itself is open
   await expect(page.locator("#btn-midi")).toBeVisible();
   await expect(page.locator("#btn-selftest")).toBeHidden();
+});
+
+// Learn mode's marks are state graphics on the panel, so each reads at 3:1 there in the
+// light theme too: the dashed ring on an armable control, the armed ring and the dot on a
+// control that is already bound, all in the accent's ink. Reduced motion holds the armed
+// ring still, so the one colour it has is the one measured.
+test("learn mode's rings and dot read on the light panel", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  await page.click("#btn-view-console");
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  const panel = await colorToken(page, "--panel");
+  const fader = strip(page, "CH 1").locator(".con-fader");
+  const ring = () => fader.evaluate((el) => getComputedStyle(el).outlineColor);
+  await setLearn(page, win, true);
+  await expect(fader).toHaveClass(/\bmidi-target\b/);
+  expect(await contrastRatio(page, await ring(), panel), "an armable control's ring").toBeGreaterThanOrEqual(3);
+  await fader.click();
+  await expect(fader).toHaveClass(/\bmidi-armed\b/);
+  expect(await contrastRatio(page, await ring(), panel), "the armed ring").toBeGreaterThanOrEqual(3);
+  await sendMidi(page, [0xb0, 7, 100], [0xb0, 7, 101]);
+  await expect(fader).toHaveClass(/\bmidi-mapped\b/);
+  const dot = await fader.evaluate((el) => getComputedStyle(el, "::before").backgroundColor);
+  expect(dot).toBe(await colorToken(page, "--led-ink"));
+  expect(await contrastRatio(page, dot, panel), "the bound dot").toBeGreaterThanOrEqual(3);
 });
 
 test("closing the MIDI window drops learn mode", async ({ page }) => {
