@@ -1499,8 +1499,8 @@ mod imp {
             };
             return write_verdict(&vdp, param_id, x, y);
         }
-        drain_late_reply(link, subs, &base, verb);
-        Err(format!("broker-timeout: write at {param_id}:{x}:{y}"))
+        Err(drain_late_reply(link, subs, &base, verb)
+            .unwrap_or_else(|| format!("broker-timeout: write at {param_id}:{x}:{y}")))
     }
 
     /// A command that timed out may still have its reply in flight. The vd protocol
@@ -1509,7 +1509,16 @@ mod imp {
     /// it with a stale value. Drain what is already buffered (bounded, and only
     /// after a timeout, so the healthy path pays nothing) and drop any reply for the
     /// address that just gave up. Notifies stay batched via subs, as everywhere else.
-    fn drain_late_reply(link: &mut Link, subs: &mut Subs, base: &str, method: &str) {
+    ///
+    /// A device-lost push met here ends the drain and comes back as the command's
+    /// error, in place of its deadline: this reader consumes frames like the reply
+    /// loops do, and the push arrives once.
+    fn drain_late_reply(
+        link: &mut Link,
+        subs: &mut Subs,
+        base: &str,
+        method: &str,
+    ) -> Option<String> {
         // TWO bounds, because they answer different questions and neither covers the
         // other. FRAMES caps the busy case: under Live sync the broker streams meters
         // continuously, so a wall clock alone would run to the end absorbing notifies —
@@ -1525,19 +1534,23 @@ mod imp {
         for _ in 0..DRAIN_FRAMES {
             match link.read_frame() {
                 Ok(Some(msg)) => {
+                    if let Some(err) = synchronize_lost(&msg) {
+                        return Some(err);
+                    }
                     if reply_for(subs, &msg, base, method).is_some() {
-                        return; // the straggler is consumed; the socket is clean again
+                        return None; // the straggler is consumed; the socket is clean again
                     }
                 }
                 // A read timeout is silence, not the end: keep waiting until the floor.
                 Ok(None) => {
                     if Instant::now() >= deadline {
-                        return;
+                        return None;
                     }
                 }
-                Err(_) => return, // the link is gone; there is nothing left to clean
+                Err(_) => return None, // the link is gone; there is nothing left to clean
             }
         }
+        None
     }
 
     /// Frames drain_late_reply will look through for a straggler before giving up.
@@ -1616,8 +1629,8 @@ mod imp {
                 format!("broker-bad-response: no current_value at {param_id}:{x}:{y}")
             });
         }
-        drain_late_reply(link, subs, &base, verb);
-        Err(format!("broker-timeout: value at {param_id}:{x}:{y}"))
+        Err(drain_late_reply(link, subs, &base, verb)
+            .unwrap_or_else(|| format!("broker-timeout: value at {param_id}:{x}:{y}")))
     }
 
     fn do_get(
@@ -2527,6 +2540,86 @@ mod imp {
             assert_eq!(
                 vdp_target(&devices(json!({ "vdpport": 51234 }))).map(|(_, m)| m),
                 Ok("URX".to_string())
+            );
+        }
+    }
+
+    #[cfg(test)]
+    mod session_tests {
+        // The readers that consume frames during a session, driven over a loopback
+        // socket whose other end the test writes as the broker. A frame the test sends
+        // is buffered before the reader runs, so no case depends on a peer's timing.
+        use super::{
+            arm_socket, drain_late_reply, LineReader, Link, Subs, DEVICE_LOST_PREFIX, READ_TIMEOUT,
+        };
+        use serde_json::{json, Value};
+        use std::io::Write;
+        use std::net::{TcpListener, TcpStream};
+
+        /// A link over the default endpoint's framing, and the broker's end of it.
+        fn vdp_link() -> (Link, TcpStream) {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let sock = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (peer, _) = listener.accept().unwrap();
+            arm_socket(&sock, READ_TIMEOUT).unwrap();
+            (
+                Link::Vdp {
+                    sock,
+                    reader: LineReader::new(),
+                },
+                peer,
+            )
+        }
+
+        /// One `vdp` message from the broker, in the bare envelope this endpoint uses.
+        fn send(peer: &mut TcpStream, vdp: Value) {
+            peer.write_all(format!("{}\n", json!({ "vdp": vdp })).as_bytes())
+                .unwrap();
+        }
+
+        fn synchronize(status: &str) -> Value {
+            json!({
+                "method": "notify",
+                "uri": "/vd/synchronize",
+                "data": { "sync_status": status }
+            })
+        }
+
+        const ADDR: &str = "/vd/parameters/1:0:0";
+
+        // The unplug's push can be the first frame after a command's deadline, where
+        // the late drain is the reader that consumes it. The push is sent once, so the
+        // drain has to hand it back for the command to fail with it — a drain that
+        // dropped it left the command reporting a broker deadline, and the session
+        // unlatched against a broker answering from its cache.
+        #[test]
+        fn the_late_drain_hands_back_a_device_lost_push() {
+            let (mut link, mut peer) = vdp_link();
+            send(&mut peer, synchronize("offline"));
+
+            let err = drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get")
+                .expect("the push is what the drain reports");
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+        }
+
+        // …while a straggler, an `online` status and silence leave the command's own
+        // deadline as its error.
+        #[test]
+        fn the_late_drain_reports_nothing_for_a_straggler_or_silence() {
+            let (mut link, mut peer) = vdp_link();
+            send(&mut peer, synchronize("online"));
+            send(
+                &mut peer,
+                json!({ "method": "get", "uri": ADDR, "data": { "current_value": 3 } }),
+            );
+            assert_eq!(
+                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get"),
+                None
+            );
+            assert_eq!(
+                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get"),
+                None,
+                "a quiet link ends the drain at its floor"
             );
         }
     }
