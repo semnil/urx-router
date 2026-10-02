@@ -819,6 +819,8 @@ export const en = {
     paramsDropped: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the default`,
     streamingSourceSupplied: tr("The plan named no STREAMING source, so STREAMING takes STEREO"),
+    sendLevelsSupplied: (count: number): string =>
+      `${count} ${count === 1 ? "send was" : "sends were"} listed without a level, and now ${count === 1 ? "reads" : "read"} 0 dB, the level a write sends`,
     booleanParamsConverted: (count: number): string =>
       `${count} on/off ${count === 1 ? "value written as a number was" : "values written as numbers were"} converted to on/off`,
     linkedSendPansAligned: (count: number): string =>

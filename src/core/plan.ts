@@ -37,6 +37,10 @@ export const SDREC_NODE_ID = "out.sdrec";
 // here as well, as part of the plan's own vocabulary.
 export { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB };
 
+/** The level a fixed send carries when its wire names none: unity, what the write sends for
+ *  it. The load completes a document's wire with it (`plan-validate.ts`). */
+export const SEND_LEVEL_UNNAMED_DB = 0;
+
 export interface ConnParams {
   level?: number;
   pan?: number;

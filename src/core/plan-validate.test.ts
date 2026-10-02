@@ -15,6 +15,7 @@ import {
   planProblems,
   prepareLoadedPlan,
   requiredSourceProblems,
+  sendLevelProblems,
 } from "./plan-validate";
 import { trackCountAtRate } from "./constraints";
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
@@ -27,6 +28,7 @@ import type { NodeParams, Plan, PlanConnection } from "./plan";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
+import { connParamContestKey } from "./plan-history";
 import {
   BUS_TYPE_FIXED,
   INSERT_FX_NONE,
@@ -1060,6 +1062,76 @@ describe("requiredSourceProblems", () => {
 
   it("neither refuses the document nor asks the operator about it", () => {
     const [problem] = requiredSourceProblems(u44v, doc([]));
+    expect(problem).toBeDefined();
+    expect(isRefusal(problem)).toBe(false);
+    expect(needsDecision(problem)).toBe(false);
+  });
+});
+
+// A fixed send the document lists without a level: the write sends it at unity, while the CONSOLE's
+// send rack and the MIDI feedback read a send with no level as off. The load gives it the level
+// the write sends, records that level as the fill's, and says so.
+describe("sendLevelProblems", () => {
+  const u44v = getModel("URX44V");
+  const doc = (connections: unknown, modelId = "URX44V"): Plan =>
+    deserialize(JSON.stringify({ format: "urx-router-plan", version: PLAN_VERSION, modelId, connections }));
+  // The one send the document lists is the only one with a level on the wire: a send a plan is
+  // missing goes out as SEND_ON 0 alone.
+  const sent = (m: ReturnType<typeof getModel>, plan: Plan) =>
+    planToCommands(m, plan)
+      .filter((c) => c.name === "SEND_LEVEL")
+      .map((c) => `${c.paramId}:${c.vdValue}`);
+
+  it.each(MODEL_IDS)("%s: completes a listed send with no level at the level the write sends", (id) => {
+    const m = getModel(id);
+    const rule = m.rules.find((r) => r.fixed && r.kind === "send" && r.to === "bus.mix1:in")!;
+    expect(rule, "the premise: the model has a fixed send into MIX 1").toBeDefined();
+    for (const params of [{ pan: -20 }, { tap: "pre" }, undefined]) {
+      const plan = doc([{ from: rule.from, to: rule.to, kind: "send", ...(params ? { params } : {}) }], id);
+      const before = sent(m, plan);
+      expect(before.length, "the premise: the send reaches the wire").toBeGreaterThan(0);
+      const problems = sendLevelProblems(m, plan);
+      expect(problems, JSON.stringify(params)).toEqual([{ reason: "sendLevel", from: rule.from, to: rule.to }]);
+      expect(planProblems(m, plan).filter((p) => p.reason === "sendLevel")).toEqual(problems);
+      prepareLoadedPlan(m, plan, planProblems(m, plan));
+      const wire = plan.connections.find((c) => c.from === rule.from && c.to === rule.to)!;
+      expect(wire.params).toEqual({ ...params, level: 0 });
+      // What the write sends does not move: the completion writes down the level it already sent.
+      expect(sent(m, plan)).toEqual(before);
+      expect(plan.paramSource?.get(connParamContestKey(rule.from, rule.to, "level"))).toBe("default");
+      for (const key of Object.keys(params ?? {})) {
+        expect(plan.paramSource?.get(connParamContestKey(rule.from, rule.to, key)), key).toBe("load");
+      }
+      expect(sendLevelProblems(m, plan)).toEqual([]);
+    }
+  });
+
+  // A main path into STEREO is the channel's fader, which every reader takes at unity without a
+  // level, as the write does — and which the app itself saves without one.
+  it("leaves a send that carries a level, a main path, and a wire that is not a send, alone", () => {
+    const plan = doc([
+      { from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: -96.5 } },
+      { from: "ch2:out", to: "bus.stereo:in", kind: "send", params: { pan: 10 } },
+      { from: "bus.fx1:out", to: "bus.stereo:in", kind: "send" },
+      { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" },
+      { from: "bus.mix1:out", to: "bus.stereo:in", kind: "sendSwitch", params: { on: true } },
+    ]);
+    expect(plan.connections, "the premise: every wire survives the sanitiser").toHaveLength(5);
+    expect(sendLevelProblems(u44v, plan)).toEqual([]);
+  });
+
+  it("finds nothing in a new plan or the factory plan, as the app saves either", () => {
+    for (const id of MODEL_IDS) {
+      for (const plan of [emptyPlan(id), defaultPlan(id)]) {
+        ensureFixedConnections(getModel(id), plan);
+        expect(sendLevelProblems(getModel(id), plan), id).toEqual([]);
+        expect(sendLevelProblems(getModel(id), deserialize(serialize(plan))), id).toEqual([]);
+      }
+    }
+  });
+
+  it("neither refuses the document nor asks the operator about it", () => {
+    const [problem] = sendLevelProblems(u44v, doc([{ from: "ch1:out", to: "bus.mix1:in", kind: "send" }]));
     expect(problem).toBeDefined();
     expect(isRefusal(problem)).toBe(false);
     expect(needsDecision(problem)).toBe(false);

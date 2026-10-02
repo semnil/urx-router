@@ -13,6 +13,7 @@ import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../c
 import { isPlainRecord, type NodeParams } from "../core/plan";
 import { factoryNodeParams } from "./initial-state";
 import { monoPairsInto } from "../core/routing";
+import { isRackSend } from "../core/plan-validate";
 import { channelControl, hasHiZInput, nodeLeafRules, type LeafRule } from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
@@ -42,6 +43,10 @@ export interface SkillModel {
    *  the app's load gives a document that names none. Carried so the validator reports that
    *  completion from the model rather than spelling STREAMING out itself. */
   requiredSources: Record<string, string>;
+  /** The fixed sends the write sends a level for — the CONSOLE's send rack, into the MIX and FX
+   *  buses — as `<from> -> <to>`. The load gives one a document lists without a level the level the
+   *  write sends (`sendLevelProblems`); a main path into STEREO is not one of them. */
+  rackSends: string[];
   /** Per insert-FX selector, the channels' and the output buses': everything a reader needs to work out what a write
    *  SENDS for that effect's engine values. Model-INDEPENDENT — carried per model because the
    *  file is keyed by model id, and a key beside those would read as a fourth model to
@@ -115,6 +120,7 @@ function skillModel(model: DeviceModel): SkillModel {
     rules: model.rules.map((r) => [r.from, r.to, r.kind, Boolean(r.fixed)]),
     channelPairs: model.channelPairs.map(([a, b]) => [a, b]),
     requiredSources: { ...model.requiredSources },
+    rackSends: model.rules.filter((r) => isRackSend(model, r.from, r.to)).map((r) => `${r.from} -> ${r.to}`),
     insertFxParamSpace: insertFxParamSpaceBySelector(),
     fxChannels: fxChannelCatalogue(),
     hiZ: {

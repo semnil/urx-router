@@ -13,9 +13,10 @@ import { getModel, MODEL_IDS } from "../models";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
-import { fixedConnection, isPlainRecord, requiredSourceWire, setPlanSampleRate } from "./plan";
+import { fixedConnection, isPlainRecord, requiredSourceWire, SEND_LEVEL_UNNAMED_DB, setPlanSampleRate } from "./plan";
+import { connParamContestKey } from "./plan-history";
 import type { Plan } from "./plan";
-import { admitLeaf, insertFxWireState, nodeLeafRules } from "./control/translate";
+import { admitLeaf, insertFxWireState, nodeLeafRules, sendControl } from "./control/translate";
 import { hiZOn } from "./input-lock";
 import { mixSendLocks, sourcePan, validatePlan } from "./routing";
 import type { PlanProblem } from "./routing";
@@ -384,6 +385,49 @@ export function applyRequiredSources(model: DeviceModel, plan: Plan, problems: R
   for (const p of problems) plan.connections.push(requiredSourceWire(model, p.to));
 }
 
+/** A fixed send into a MIX or FX bus — one `sendControl` writes, a column of the CONSOLE's send
+ *  rack — that the document lists without a level. The write sends it at unity
+ *  (`SEND_LEVEL_UNNAMED_DB`), while the send rack and the MIDI feedback read a send with no level
+ *  as off — so the loader completes the wire with the level the write sends, records it as the
+ *  fill's (the write confirm names the strip when that level would move the unit), and says so.
+ *  A main path into STEREO is the channel's fader, which every reader takes at unity without a
+ *  level, as the write does, so it is left as written. Like every check in this file it does NOT
+ *  run on a device readback or the `.urxf` import, which give every send its level. */
+export interface SendLevelProblem {
+  reason: "sendLevel";
+  /** The send's source, as its out ref. */
+  from: string;
+  /** The send's destination input ref. */
+  to: string;
+}
+
+/** Every fixed rack send the document lists with no level, in the document's own order. */
+export function sendLevelProblems(model: DeviceModel, plan: Plan): SendLevelProblem[] {
+  return plan.connections
+    .filter((c) => c.params?.level === undefined && isRackSend(model, c.from, c.to))
+    .map((c) => ({ reason: "sendLevel" as const, from: c.from, to: c.to }));
+}
+
+/** Whether `from -> to` is a fixed send the write sends a SEND_LEVEL for. */
+export function isRackSend(model: DeviceModel, from: string, to: string): boolean {
+  return (
+    model.rules.some((r) => r.fixed && r.kind === "send" && r.from === from && r.to === to) &&
+    sendControl(model, parseRef(from).nodeId, parseRef(to).nodeId) !== null
+  );
+}
+
+/** Give each reported send the level the write sends, recorded as the fill's. Separate from
+ *  finding them for the reason `applyParamRange` is. */
+export function applySendLevels(plan: Plan, problems: SendLevelProblem[]): void {
+  const source = (plan.paramSource ??= new Map());
+  for (const p of problems) {
+    const send = plan.connections.find((c) => c.from === p.from && c.to === p.to);
+    if (!send) continue;
+    send.params = { ...send.params, level: SEND_LEVEL_UNNAMED_DB };
+    source.set(connParamContestKey(p.from, p.to, "level"), "default");
+  }
+}
+
 /** A send into a MIX bus whose Pan Link is on, carrying a pan other than its source's own pan /
  *  balance. While Pan Link is on the unit holds every send pan into that MIX there, and the write
  *  sends none of them, so the pan a document carries is one the unit never takes — while the
@@ -498,14 +542,16 @@ export function applyBooleanParams(plan: Plan, problems: BooleanParamProblem[]):
 
 /** Everything a plan load reports: an illegal wire (refused), a slot claimed twice (the
  *  operator decides), a value outside its range (normalized, then reported), a receiver
- *  given no source (completed, then reported), a linked send pan off its source's value
- *  (set to it, then reported), or an on/off written as a number (converted, then reported). */
+ *  given no source (completed, then reported), a send listed without a level (completed,
+ *  then reported), a linked send pan off its source's value (set to it, then reported), or an
+ *  on/off written as a number (converted, then reported). */
 export type LoadProblem =
   | PlanProblem
   | InsertFxSlotProblem
   | InsertFxPairProblem
   | ParamRangeProblem
   | RequiredSourceProblem
+  | SendLevelProblem
   | LinkedSendPanProblem
   | BooleanParamProblem;
 
@@ -527,6 +573,7 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
     ...insertFxSlotProblems(model, read),
     ...paramRangeProblems(read),
     ...requiredSourceProblems(model, read),
+    ...sendLevelProblems(model, read),
     ...linkedSendPanProblems(model, read),
   ];
 }
@@ -540,6 +587,7 @@ export function isRefusal(problem: LoadProblem): boolean {
     problem.reason !== "insertFxSlot" &&
     problem.reason !== "paramRange" &&
     problem.reason !== "requiredSource" &&
+    problem.reason !== "sendLevel" &&
     problem.reason !== "linkedSendPan" &&
     problem.reason !== "booleanParam"
   );
@@ -560,13 +608,15 @@ export interface LoadRepairs {
   booleans: BooleanParamProblem[];
   ranged: ParamRangeProblem[];
   supplied: RequiredSourceProblem[];
+  sendLevels: SendLevelProblem[];
   linkedPans: LinkedSendPanProblem[];
 }
 
 /** Apply every repair `planProblems` reported, in the order `planProblems` reads them: an on/off
  *  written as a number is converted first, then a value outside what the app can write is
  *  bounded or dropped, a receiver the unit never leaves without a source gets the one a new plan
- *  carries, and a send into a MIX whose Pan Link is on takes its source's own pan / balance.
+ *  carries, a send listed without a level gets the one the write sends, and a send into a MIX
+ *  whose Pan Link is on takes its source's own pan / balance.
  *  Refusals and decisions are the caller's; the reasons they carry are not repaired here. */
 export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
   const booleans = problems.filter((p) => p.reason === "booleanParam");
@@ -575,15 +625,27 @@ export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadP
   applyParamRange(plan, ranged);
   const supplied = problems.filter((p) => p.reason === "requiredSource");
   applyRequiredSources(model, plan, supplied);
+  const sendLevels = problems.filter((p) => p.reason === "sendLevel");
+  applySendLevels(plan, sendLevels);
   const linkedPans = problems.filter((p) => p.reason === "linkedSendPan");
   applyLinkedSendPans(model, plan, linkedPans);
-  return { booleans, ranged, supplied, linkedPans };
+  return { booleans, ranged, supplied, sendLevels, linkedPans };
 }
 
-/** A document as the loader opens it: repaired (`applyLoadRepairs`), then completed from the
- *  model's factory values — a value a repair dropped is completed like any other absent one —
- *  then put back through the rate rule, which a Track Count the fill completes can exceed. */
+/** A document as the loader opens it: its own wire params recorded as the document's, repaired
+ *  (`applyLoadRepairs`), then completed from the model's factory values — a value a repair
+ *  dropped is completed like any other absent one — then put back through the rate rule, which
+ *  a Track Count the fill completes can exceed. */
 export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
+  // The document's own wire params are what it wrote, as its node params are (the fill records
+  // those); a repair below that completes one records its own.
+  const source = (plan.paramSource ??= new Map());
+  for (const c of plan.connections) {
+    for (const key of Object.keys(c.params ?? {})) {
+      const name = connParamContestKey(c.from, c.to, key);
+      if (!source.has(name)) source.set(name, "load");
+    }
+  }
   const repairs = applyLoadRepairs(model, plan, problems);
   fillFactoryParams(model.id, plan);
   setPlanSampleRate(plan, plan.sampleRate);

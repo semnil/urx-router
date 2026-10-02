@@ -12,6 +12,7 @@ import type { ConnectionKind, DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
 import type {
   CompParams,
+  ConnParams,
   EqBand,
   EqOneKnobParams,
   FxEffectParams,
@@ -20,9 +21,9 @@ import type {
   SsmcsBand,
   SsmcsParams,
 } from "../plan";
-import { incomingConnection, normalizeNodeName, SSMCS_INITIAL } from "../plan";
+import { incomingConnection, normalizeNodeName, SEND_LEVEL_UNNAMED_DB, SSMCS_INITIAL } from "../plan";
 import type { NodeParams } from "../plan";
-import { nodeParamContestPath } from "../plan-history";
+import { connParamContestKey, nodeParamContestPath } from "../plan-history";
 import type { ParamRangeProblem } from "../plan-validate";
 import {
   FX_CHANNEL_NODE_INDEX,
@@ -310,8 +311,8 @@ function stampOrigin(command: VdCommand, planValue: number): VdCommand {
   } else {
     // No read of its own. One value going to every linked instance is a run of commands with
     // the SAME parameter and the same value, so only the one immediately before it can lend a
-    // name — matching on the value alone attributed a channel's fader, which comes off a
-    // connection, to whichever parameter had last been read carrying a zero.
+    // name — matching on the value alone would attribute a value the emit supplies itself to
+    // whichever parameter had last been read carrying the same value.
     const before = originCursor.previous;
     origin = before && before.name === command.name && before.planValue === planValue ? before.origin : null;
   }
@@ -2130,23 +2131,46 @@ function recordingParams(
   nodeParams: Plan["nodeParams"],
   read: (name: string, value: unknown) => void,
 ): Plan["nodeParams"] {
-  const wrap = (value: unknown, path: string[]): unknown => {
-    if (value === null || typeof value !== "object") return value;
-    return new Proxy(value as object, {
-      get(target, prop, receiver) {
-        const held = Reflect.get(target, prop, receiver);
-        if (typeof prop !== "string") return held;
-        if (held !== null && typeof held === "object") return wrap(held, [...path, prop]);
-        read([...path, prop].join("."), held);
-        return held;
-      },
-    });
-  };
   const out: Plan["nodeParams"] = {};
   for (const [nodeId, params] of Object.entries(nodeParams)) {
-    out[nodeId] = wrap(params, []) as NodeParams;
+    out[nodeId] = recording(params, (path) => nodeParamContestPath(nodeId, path.join(".")), read) as NodeParams;
   }
   return out;
+}
+
+/** The same for each wire's params, named the way the differ names one. A wire's endpoints and
+ *  kind are read too, to find it, and are not values a command carries. */
+function recordingConnections(
+  connections: Plan["connections"],
+  read: (name: string, value: unknown) => void,
+): Plan["connections"] {
+  return connections.map((c) =>
+    c.params
+      ? {
+          ...c,
+          params: recording(c.params, (path) => connParamContestKey(c.from, c.to, path.join(".")), read) as ConnParams,
+        }
+      : c,
+  );
+}
+
+/** `value`, recording every read of a leaf it carries under the name `nameOf` gives its path. */
+function recording(
+  value: unknown,
+  nameOf: (path: string[]) => string,
+  read: (name: string, value: unknown) => void,
+  path: string[] = [],
+): unknown {
+  if (value === null || typeof value !== "object") return value;
+  return new Proxy(value as object, {
+    get(target, prop, receiver) {
+      const held = Reflect.get(target, prop, receiver);
+      if (typeof prop !== "string") return held;
+      if (held !== null && typeof held === "object") return recording(held, nameOf, read, [...path, prop]);
+      read(nameOf([...path, prop]), held);
+      return held;
+    },
+  });
 }
 
 /**
@@ -2170,11 +2194,13 @@ export function planToCommandOrigins(
   scope: WriteScope = "all",
 ): Map<number, string | null | undefined> {
   const cursor: NonNullable<typeof originCursor> = {};
+  const read = (name: string, value: unknown): void => {
+    cursor.fresh = { name, value };
+  };
   const proxied = {
     ...plan,
-    nodeParams: recordingParams(plan.nodeParams, (name, value) => {
-      cursor.fresh = { name, value };
-    }),
+    nodeParams: recordingParams(plan.nodeParams, read),
+    connections: recordingConnections(plan.connections, read),
   };
   originCursor = cursor;
   let commands: VdCommand[];
@@ -2186,8 +2212,7 @@ export function planToCommandOrigins(
   const origins = new Map<number, string | null | undefined>();
   for (const c of collapseSharedAddrs(commands)) {
     if (scope !== "all" && (PARAMS[c.name] as ParamSpec).sceneExternal === true) continue;
-    const key = c.origin;
-    origins.set(cmdAddr(c), key === undefined || key === null ? key : nodeParamContestPath(c.node ?? "", key));
+    origins.set(cmdAddr(c), c.origin);
   }
   return origins;
 }
@@ -2377,7 +2402,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     const fromId = parseRef(conn.from).nodeId;
     const cc = channelControl(model, fromId);
     if (cc) {
-      out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? 0));
+      out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? SEND_LEVEL_UNNAMED_DB));
       out.push(rawCommand("CH_PAN", cc.pan, "pan", cc.y, conn.params?.pan ?? 0));
       // → STEREO bus assign ON (post-fader, firmware V1.3). Ships ON; distinct from
       // the channel master CH_ON (emitted above from np.on).
@@ -2386,7 +2411,15 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       const fxY = fxChannelIndex(fromId);
       const mixL = MIX_FADER_INSTANCES[fromId]?.[0];
       if (fxY !== null) {
-        out.push(rawCommand("FX_CHANNEL_FADER", PARAMS.FX_CHANNEL_FADER.id, "level", fxY, conn.params?.level ?? 0));
+        out.push(
+          rawCommand(
+            "FX_CHANNEL_FADER",
+            PARAMS.FX_CHANNEL_FADER.id,
+            "level",
+            fxY,
+            conn.params?.level ?? SEND_LEVEL_UNNAMED_DB,
+          ),
+        );
         out.push(rawCommand("FX_CHANNEL_BAL", PARAMS.FX_CHANNEL_BAL.id, "pan", fxY, conn.params?.pan ?? 0));
         out.push(rawCommand("STEREO_ASSIGN_ON", FX_STEREO_ASSIGN_ON, "bool", fxY, (conn.params?.on ?? true) ? 1 : 0));
       } else if (mixL !== undefined) {
@@ -2415,11 +2448,11 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
         for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 0));
         continue;
       }
-      const on = (conn.params?.on ?? true) ? 1 : 0;
-      for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
+      for (const p of sc.level)
+        out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? SEND_LEVEL_UNNAMED_DB));
       if (!panLinked.has(bus.id))
         for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
-      for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, on));
+      for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, (conn.params?.on ?? true) ? 1 : 0));
       // CH -> FX taps are read-only (broker max_value=0 rejects a PRE write); they
       // are read back but never written. Other taps are settable. See sendTapWritable.
       if (sendTapWritable(model, conn.from, conn.to))

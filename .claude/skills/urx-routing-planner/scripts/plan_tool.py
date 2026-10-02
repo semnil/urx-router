@@ -16,6 +16,9 @@ loads the plan as authored":
   `requiredSources`) that the document gives no wire is completed on load with the
   model's default source (core/plan-validate.ts `requiredSourceProblems`), which is
   reported as a warning — the plan loads, with a wire it did not name,
+- a fixed send into a MIX or FX bus the document lists without a level is given 0 dB on
+  load, the level the write sends for it (core/plan-validate.ts `sendLevelProblems`), which
+  is reported as a warning — the plan loads with a level it did not write,
 - a send into a MIX bus whose Pan Link is on takes its source's own pan / balance on
   load (core/plan-validate.ts `linkedSendPanProblems`) wherever the document gives it
   another, which is reported as a warning — the plan loads with the pan the unit
@@ -47,7 +50,7 @@ Usage:
 
 Exit code is non-zero when the plan has hard validation problems, so the skill
 can branch on it. Warnings (a dropped wire or value, a wire the load adds, a
-linked send pan the load sets, an on/off the load converts, a misplaced Ducker
+send level the load completes, a linked send pan the load sets, an on/off the load converts, a misplaced Ducker
 param, raw-encoded params, a destructive effect selector, a contended insert-FX
 slot)
 are advisory and never fail the plan — but they all mean something worth telling
@@ -225,6 +228,7 @@ def validate(plan, models):
     view = converted(plan, conversions)
 
     warnings.extend(required_source_warnings(view, model, kept))
+    warnings.extend(send_level_warnings(model, kept))
     warnings.extend(linked_send_pan_warnings(view, model, kept))
     warnings.extend(collection_warnings(view))
     warnings.extend(
@@ -314,6 +318,22 @@ def required_source_warnings(plan, model, kept):
         label = model["nodes"].get(node_of(to), {}).get("label", node_of(to))
         why = f"the unit never leaves {label} without a source, and the document gives it none"
         out.append(f"connection {frm} -> {to}: the app adds this wire on load — {why}")
+    return out
+
+
+def send_level_warnings(model, kept):
+    """The send levels the app's load completes (core/plan-validate.ts `sendLevelProblems`): a
+    fixed send into a MIX or FX bus (models.json `rackSends`) the document lists with no level is
+    given 0 dB, the level the write sends for it. A main path into STEREO is not one. The pair
+    decides, whatever kind the wire is written under, since the load restates the kind; a wire
+    the loader dropped is not asked."""
+    sends = set(model.get("rackSends") or [])
+    out = []
+    for c in kept:
+        if f"{c['from']} -> {c['to']}" not in sends or (c.get("params") or {}).get("level") is not None:
+            continue
+        why = "the document lists it without one, and 0 dB is the level a write sends for it"
+        out.append(f"connection {c['from']} -> {c['to']}: the app sets this send's level to 0 on load — {why}")
     return out
 
 

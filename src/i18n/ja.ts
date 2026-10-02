@@ -622,6 +622,8 @@ export const ja: Messages = {
     paramsDropped: (count: number): string =>
       `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、既定値を使います`,
     streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
+    sendLevelsSupplied: (count: number): string =>
+      `レベルの書かれていなかった Send ${count} 件を、書き込みが送る 0 dB にしました`,
     booleanParamsConverted: (count: number): string =>
       `数値で書かれていたオン/オフの値 ${count} 件を、オン/オフの値に変換しました`,
     linkedSendPansAligned: (count: number): string =>

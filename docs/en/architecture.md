@@ -136,9 +136,13 @@ carries a one-line map of the same directories and points here.
   separately, since a value moved to the nearest one the app can send and a value removed are different
   events. A receiver the unit never leaves without a source that the document gives no wire — STREAMING —
   is completed the same way, with its default source, and said on the same line (`requiredSourceProblems`;
-  see "A plan that names no STREAMING source"). A send into a MIX bus whose Pan Link is on that carries a pan
-  other than its source's own is set to the source's value the same way and said on the same line
-  (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
+  see "A plan that names no STREAMING source"). A fixed send into a MIX or FX bus the document lists without a
+  level — which the write sends at unity while the CONSOLE's send rack and the MIDI feedback read a send with no
+  level as off; a main path into STEREO is the fader, which every reader takes at unity, and is left as written —
+  is given that unity level the same way, recorded as the fill's so the write confirm names its strip when
+  that level would move the unit, and said on the same line (`sendLevelProblems`). A send into a MIX bus
+  whose Pan Link is on that carries a pan other than its source's own is set to the source's value the same
+  way and said on the same line (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
   number — a leaf the model's factory values hold as a boolean, at the same path on the same node — is
   converted to the on/off the write sends, off for 0 and on for any other number, and said on the same
   line (`booleanParamProblems`). It comes first, and every other check reads the document as it leaves it,
@@ -647,7 +651,9 @@ carries a one-line map of the same directories and points here.
   loader completes a document from the model's factory values — so a write carries keys nobody set, and
   this names the strips they are on by re-emitting the plan with those keys blanked: an address that
   survives that emit is one an authored key asks for. `load` counts as authored (the document named the
-  value); `default` and `device` do not. A routing selector is named only for a wire the app completed —
+  value); `default` and `device` do not. A wire's params are asked the same way — a send level the load
+  completed is `default`, and a fixed send the document left out, which the install seeds, carries no
+  record — with the wire's own record standing for a param nothing recorded separately. A routing selector is named only for a wire the app completed —
   the load, or a Fetch / Live-sync start that found the unit on NONE (see "A plan that names no STREAMING
   source")
 
@@ -3814,7 +3820,7 @@ type's defaults, and selecting the old type back does not bring the old values w
 is put in front of the operator instead of being taken by a document's silence:
 `app/unauthored-writes.ts` reports the strips a write moves at addresses whose value the operator
 did not choose, and the write confirm names them. The join is `planToCommandOrigins`: the emit runs
-once over a plan whose node parameters record their reads, and `rawCommand` — the one seat holding
+once over a plan whose node parameters and wire params record their reads, and `rawCommand` — the one seat holding
 both a command and the value it carries — writes the key onto the command as it builds it. Carried
 there rather than in a table beside it, because the shared-address collapse hands back a COPY of
 the command that survives it.
@@ -3826,9 +3832,8 @@ LEVEL go out as one chain — therefore gives each its own key, which reading th
 not. What the command CARRIES need not be what the key holds: the emit inverts (the SSMCS bank's
 COMP and EQ send ON as 0), rounds and clamps, and each of those is that key's value going out. A
 run of commands sending one value to every linked instance takes the name from the one before it,
-matched on the parameter as well as the value — matched on the value alone, a channel's fader, which
-comes off a connection rather than a node parameter, would take whichever parameter had last been read
-carrying a zero.
+matched on the parameter as well as the value — matched on the value alone, a command the emit supplies
+itself would take whichever parameter had last been read carrying the same value.
 
 Three answers, not two. A key the plan does not carry names nothing: the emit asks before it decides
 whether to send one, then supplies the value itself, and that is nobody's to have chosen — except at a

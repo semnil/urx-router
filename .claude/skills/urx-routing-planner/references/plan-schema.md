@@ -108,8 +108,11 @@ cannot be removed; you only set their `params` (e.g. raise a send `level`, or
 turn a `sendSwitch` `on`). A fixed wire you leave out keeps the app's seed: unity
 for a channel's main path into STEREO, `-96.5` (off / -∞) for every other fixed
 send, and off for MIX→STEREO. **Listing one is not the same as leaving it out** —
-a listed wire with no `level` writes 0 dB (unity), so list a fixed send only with
-the params you mean.
+a listed send into a MIX or FX bus with no `level` loads at 0 dB (unity) — the load
+writes that level into the plan and the validator warns that it does — so list a fixed
+send only with the params you mean. A listed main path into STEREO with no `level` is the
+channel's fader at unity, as the seed is. Either way the level is the app's rather than the document's, and
+the write confirm names the strip when writing it would move the unit.
 
 ### connection params (ConnParams)
 

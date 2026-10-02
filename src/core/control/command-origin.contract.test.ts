@@ -7,8 +7,9 @@
 // is prove itself: the rule is about when a read belongs to a command, and a rule is not a
 // measurement.
 //
-// So this measures. Every leaf of a factory-filled plan is moved, one at a time and in both
-// directions, and the addresses whose value follows it are that leaf's. The stamp has to agree:
+// So this measures. Every leaf of a factory-filled plan is moved — its node params and each
+// wire's params — one at a time and in both directions, and the addresses whose value follows
+// it are that leaf's. The stamp has to agree:
 // a command stamped with a key must be one that key really moves, and one stamped as the emit's
 // own constant must be a command no leaf moves at all. Both directions matter — the first is a
 // warning about the wrong strip, the second a write that goes out unmentioned.
@@ -18,7 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 import { cmdAddr, planToCommandOrigins, planToCommands } from "./translate";
-import { nodeParamContestPath, walkParamLeaves } from "../plan-history";
+import { connParamContestKey, nodeParamContestPath, walkParamLeaves } from "../plan-history";
 import { isPlainRecord, type NodeParams, type Plan } from "../plan";
 import { getModel } from "../../models";
 import { COMP_EQ_SSMCS } from "./params";
@@ -43,8 +44,8 @@ function filled(modelId: ModelId, ssmcs = false): Plan {
   return plan;
 }
 
-/** One leaf moved off its value: a step either way for a number, the other way for a switch,
- *  and — for `by` 0 — taken out altogether.
+/** One leaf moved off its value: a step either way for a number, the other way for a switch or a
+ *  send's PRE / POST tap, and — for `by` 0 — taken out altogether.
  *
  *  All three, because no one of them moves every value. A step does not move an enum whose
  *  neighbouring integers are not on its option list: `insertFx` sits at -1 (No Effect), where
@@ -61,6 +62,8 @@ function shift(value: unknown, target: string, by: number, path: string[] = []):
   if (by === 0) return undefined;
   if (typeof value === "number") return value + by;
   if (typeof value === "boolean") return !value;
+  // A send's tap is the one leaf written as a word.
+  if (value === "pre" || value === "post") return value === "pre" ? "post" : "pre";
   return value;
 }
 
@@ -94,6 +97,29 @@ describe.each(MODEL_IDS.flatMap((id) => [[id, false] as const, [id, true] as con
         }
       }
     }
+
+    // …and each wire's params, the values a fader, a pan, a send and an assign come off.
+    plan.connections.forEach((conn, i) => {
+      if (!conn.params) return;
+      const leaves: string[] = [];
+      walkParamLeaves(conn.params, (leaf) => leaves.push(leaf));
+      for (const leaf of leaves) {
+        for (const by of [1, -1, 0]) {
+          const connections = plan.connections.map((c, j) =>
+            j === i ? { ...c, params: shift(c.params, leaf, by) as typeof c.params } : c,
+          );
+          const after = new Map(
+            planToCommands(model, { ...plan, connections }, "all").map((c) => [cmdAddr(c), c.vdValue]),
+          );
+          for (const [addr, value] of held) {
+            const moved = after.has(addr) ? after.get(addr) !== value : by === 0;
+            if (!moved) continue;
+            if (!moves.has(addr)) moves.set(addr, new Set());
+            moves.get(addr)!.add(connParamContestKey(conn.from, conn.to, leaf));
+          }
+        }
+      }
+    });
 
     const origins = planToCommandOrigins(model, plan, "all");
 

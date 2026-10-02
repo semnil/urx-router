@@ -177,9 +177,10 @@ plan from the unit and edit that. Remember:
      adds it), so list the source the user wants — one wire, never two.
    - **Fixed sends** (marked `(fixed)` in the reference: CH/FX → STEREO, CH →
      MIX/FX, MIX → STEREO) always exist. You don't list them to keep them; you
-     list them with `params` to set level/pan or turn them `on` — and listing one
-     without a `level` sets it to unity rather than keeping its seeded -∞, so
-     always give the level you mean.
+     list them with `params` to set level/pan or turn them `on` — and listing a send
+     into a MIX or FX bus without a `level` loads it at unity rather than keeping its
+     seeded -∞ (the validator warns that the app sets it), so always give the level you
+     mean.
    - Use the right `kind` for the route — `send` into a bus, `source` into a
      channel, `patch` into an output, etc.
 
@@ -240,6 +241,8 @@ select into the one device-wide slot and the unit runs one at a time — not as 
 document to repair before it can be opened. The same report also lists what the
 load repairs without asking — `[paramRange]` rows for values it bounds or drops,
 `[requiredSource] bus.stereo:out -> bus.stream:in` for the STREAMING source it adds,
+`[sendLevel] <from> -> <to>` for a send into a MIX or FX bus listed without a level,
+given 0 dB,
 `[linkedSendPan] <from> -> <to>: <stored> -> <pan>` for a send pan into a MIX
 whose Pan Link is on, set to its source's own, and `[booleanParam] <node>.<path>:
 <number> -> <true|false>` for an on/off written as a number — and those need no

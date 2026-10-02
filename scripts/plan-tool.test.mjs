@@ -1637,6 +1637,63 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     expect(added.no).toBeGreaterThan(0);
   });
 
+  // A fixed send the document lists without a level goes out at unity, and the app's load writes
+  // that level into the plan. The sends whose level the load SUPPLIES are compared with the ones
+  // the tool says it sets: a send carrying only a pan, only a tap, or no params at all, into a MIX
+  // and into an FX bus, and one written under the wrong kind, which the load restates — beside the
+  // documents nothing may be said about: a send carrying a level, a main path into STEREO (the
+  // channel's fader, read at unity without one), the TO ST switch, a source wire, and the wires the
+  // loader drops. Every model, since the rule table is a model fact.
+  it("agrees with the app about the send levels the load supplies", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const send = (from, to, extra = {}) => ({ from, to, kind: "send", ...extra });
+    const corpus = [
+      ["a send with a pan only", [send("ch1:out", "bus.mix1:in", { params: { pan: -20 } })]],
+      ["a send with a tap only", [send("ch1:out", "bus.mix2:in", { params: { tap: "pre" } })]],
+      ["a send with no params", [send("ch1:out", "bus.fx1:in")]],
+      ["a send written as a source", [{ from: "ch1:out", to: "bus.mix1:in", kind: "source" }]],
+      // …and the documents nothing may be said about.
+      ["a send with a level", [send("ch1:out", "bus.mix1:in", { params: { level: -96.5 } })]],
+      ["a main path with no level", [send("ch1:out", "bus.stereo:in", { params: { pan: 10 } })]],
+      ["the TO ST switch", [{ from: "bus.mix1:out", to: "bus.stereo:in", kind: "sendSwitch" }]],
+      ["a source wire", [{ from: "bus.stereo:out", to: "bus.stream:in", kind: "source" }]],
+      ["a send the loader drops for its params", [send("ch1:out", "bus.mix1:in", { params: "x" })]],
+      ["a send whose level is null", [send("ch1:out", "bus.mix1:in", { params: { level: null } })]],
+      ["a send whose level is text", [send("ch1:out", "bus.mix1:in", { params: { level: "0" } })]],
+    ];
+    const supplied = { yes: 0, no: 0 };
+    for (const modelId of MODEL_IDS) {
+      for (const [name, connections] of corpus) {
+        const plan = { format: "urx-router-plan", version: PLAN_VERSION, modelId, positions: {}, connections };
+        const before = deserializeDocument(JSON.stringify(plan)).plan.connections;
+        const loaded = await appLoad(plan, false);
+        const app = loaded.connections
+          .filter((c) => {
+            const was = before.find((b) => b.from === c.from && b.to === c.to);
+            return was !== undefined && was.params?.level === undefined && c.params?.level !== undefined;
+          })
+          .map((c) => `${c.from} -> ${c.to} = ${c.params.level}`)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) => /^WARNING: connection (\S+ -> \S+): the app sets this send's level to (\S+) on load/.exec(l))
+          .filter((m) => m !== null)
+          .map((m) => `${m[1]} = ${m[2]}`)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        supplied[app.length > 0 ? "yes" : "no"]++;
+      }
+    }
+    // Both answers are real populations: documents whose send levels the load supplies, and
+    // documents it leaves as written.
+    expect(supplied.yes).toBeGreaterThan(0);
+    expect(supplied.no).toBeGreaterThan(0);
+  });
+
   // While a MIX bus's Pan Link is on, the unit holds every send pan into it at its source's own
   // pan / balance, and the app's load sets the document's there. The sends whose pan the load
   // CHANGES — or adds, where the document omits the send — are compared with the ones the tool

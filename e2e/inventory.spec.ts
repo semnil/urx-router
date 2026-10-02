@@ -94,6 +94,7 @@ const SURFACES: Record<SurfaceName, Surface> = {
       "status.paramsBounded",
       "status.paramsDropped",
       "status.streamingSourceSupplied",
+      "status.sendLevelsSupplied",
       "status.linkedSendPansAligned",
       "status.planLoaded",
     ],
@@ -363,8 +364,9 @@ test("the load report shows all three framings and both Copy faces", async ({ pa
 });
 
 // One document the load repairs every way it can: two on/off values written as numbers, two FX
-// values bounded and two dropped, no STREAMING source, and two send pans into a MIX whose Pan Link
-// is on — two of each, since a counted note is read in its plural wording. The Pan Link is one of
+// values bounded and two dropped, no STREAMING source, sends listed without a level, and two send
+// pans into a MIX whose Pan Link is on — two or more of each, since a counted note is read in its
+// plural wording. The Pan Link is one of
 // the numbers, so the send pans are set only because the conversion ran first.
 test("the status line after a load names every repair the load made", async ({ page }) => {
   const revxLpf = fxParams(0).find((d) => d.key === "revxLpf")!;

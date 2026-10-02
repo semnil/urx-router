@@ -908,6 +908,72 @@ describe("Fetch from device", () => {
     expect(stripsNamed(asked[0])).toEqual([fullLabel(stream)]);
   });
 
+  // A send the document lists without a level loads at the unity the write sends, and that level
+  // is the fill's: the write that moves the unit's send there names the strip, said on the load's
+  // status line first. The control is the same document with the level written, on the same unit.
+  it.each([
+    ["names the strip whose send level the load supplied", false],
+    ["names nothing when the document wrote that level", true],
+  ])("%s", SLOW, async (_name, writesLevel) => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const model = getModel("URX44V");
+    const written = defaultPlan("URX44V");
+    const send = written.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in")!;
+    send.params = writesLevel ? { ...send.params, level: 0 } : { pan: send.params?.pan ?? 0 };
+    const levels = sendControl(model, "ch1", "bus.mix1")!.level;
+    const read = clockReads(false, 48_000);
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        // The unit holds that send at -10 dB, which a write of unity moves.
+        vd_get: (a: Record<string, unknown>) =>
+          levels.includes(Number(a.paramId) + Number(a.x ?? 0)) ? levelToVd(-10) : read(a),
+      }),
+    }))!;
+    await vi.waitFor(
+      () =>
+        expect(statusText()).toBe(
+          writesLevel ? t().status.planLoaded : [t().status.sendLevelsSupplied(1), t().status.planLoaded].join(" — "),
+        ),
+      { timeout: 10_000 },
+    );
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const ch1 = model.nodes.find((n) => n.id === "ch1")!;
+    expect(stripsNamed(asked[0])).toEqual(writesLevel ? [] : [fullLabel(ch1)]);
+  });
+
+  // The params of a wire a scene-scoped document carries over are the plan on screen's as the wire
+  // is: the OSC assign into STEREO of a plan nothing vouches for stays unvouched-for after a scene
+  // file is dropped over it, so the write moving the unit's assign names STEREO.
+  it("keeps the record of a carried-over wire's params", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const scene = serialize(defaultPlan("URX44V"), { sceneOnly: true });
+    expect(JSON.parse(scene).connections.some((c: { from: string }) => c.from === "bus.osc:out")).toBe(false);
+    const shell = (await bootApp({
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        vd_get: clockReads(false, 48_000),
+        read_text_file: () => scene,
+      }),
+    }))!;
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/scene.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("scene.json")), { timeout: 10_000 });
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const stereo = getModel("URX44V").nodes.find((n) => n.id === "bus.stereo")!;
+    expect(stripsNamed(asked[0])).toContain(fullLabel(stereo));
+  });
+
   // A scene-scoped document leaves STREAMING's source to the plan on screen, and that wire keeps
   // the record it had there: the one the load supplied is still named by the next write.
   it("still names that source after a scene-scoped document carries it over", SLOW, async () => {
@@ -4029,8 +4095,10 @@ describe("Write to device", () => {
     const described = emptyPlan("URX44V");
     described.nodeParams["ch1"] = { level: -10 };
     // The factory values, but WRITTEN IN the document: same numbers on the wire, different
-    // provenance — which is the whole distinction the note is drawn from.
+    // provenance — which is the whole distinction the note is drawn from. The channels' sends
+    // are theirs too, and the write carries them on the same strips.
     for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    described.connections = factory.connections.filter((c) => c.from === "bus.fx1:out" || c.from === "bus.fx2:out");
     const told = await runWrite(described);
     expect(told.count("vd_set"), "the positive control").toBeGreaterThan(0);
     expect(confirms(told).filter((m) => stripsNamed(m).includes(fxLabel("bus.fx1")))).toEqual([]);
@@ -4050,8 +4118,10 @@ describe("Write to device", () => {
     const factory = defaultPlan("URX44V");
     const described = emptyPlan("URX44V");
     described.nodeParams["ch1"] = { level: -10 };
-    // The FX channels are what the document names; everything else is left to the fill.
+    // The FX channels are what the document names — their params and their sends; everything
+    // else is left to the fill.
     for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    described.connections = factory.connections.filter((c) => c.from === "bus.fx1:out" || c.from === "bus.fx2:out");
     const link = encodeURIComponent(Buffer.from(serialize(described), "utf8").toString("base64url"));
     // Reads that never reflect a write: every address answers its clock value or 0, so the
     // converge runs out with a residual and the write is not a landing.

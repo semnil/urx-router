@@ -43,6 +43,7 @@ import {
   applyPatch,
   clonePlanState,
   connectionContestKey,
+  connParamContestKey,
   diffPlans,
   nodeParamContestPath,
   PlanWriteWitness,
@@ -2416,7 +2417,11 @@ function loadFromText(text: string, path?: string): boolean | null {
     // omits is a key the panel draws a default for and the write does not send. The DEVICE
     // paths do not come through here: a fetch fills from the unit, and a node it could not
     // read stays absent on purpose.
-    const { booleans, ranged, supplied, linkedPans } = prepareLoadedPlan(getModel(next.modelId), next, problems);
+    const { booleans, ranged, supplied, sendLevels, linkedPans } = prepareLoadedPlan(
+      getModel(next.modelId),
+      next,
+      problems,
+    );
     // A STREAMING source the load supplied is recorded as the fill's, so the write confirm
     // names that receiver when the write moves it.
     markSource(
@@ -2432,11 +2437,19 @@ function loadFromText(text: string, path?: string): boolean | null {
       for (const name of sceneExternalParamNames(next)) {
         markSource(next, [name], plan.paramSource?.get(name) ?? "default");
       }
-      // The same for the device-wide wires, whose record is the one a load completion leaves.
+      // The same for the device-wide wires, whose record is the one a load completion leaves,
+      // and for the params they carry, which answer to the wire's record where they have none
+      // of their own — so one with no record here has none there either.
       for (const c of next.connections.filter(isSceneExternalConnection)) {
         const name = connectionContestKey(c.from, c.to);
         const from = plan.paramSource?.get(name);
         if (from !== undefined) markSource(next, [name], from);
+        for (const key of Object.keys(c.params ?? {})) {
+          const leaf = connParamContestKey(c.from, c.to, key);
+          const leafFrom = plan.paramSource?.get(leaf);
+          if (leafFrom !== undefined) markSource(next, [leaf], leafFrom);
+          else next.paramSource?.delete(leaf);
+        }
       }
     }
     const finishLoad = (): boolean => {
@@ -2458,6 +2471,7 @@ function loadFromText(text: string, path?: string): boolean | null {
         ...(boundCount > 0 ? [t().status.paramsBounded(boundCount)] : []),
         ...(dropCount > 0 ? [t().status.paramsDropped(dropCount)] : []),
         ...(supplied.length > 0 ? [t().status.streamingSourceSupplied] : []),
+        ...(sendLevels.length > 0 ? [t().status.sendLevelsSupplied(sendLevels.length)] : []),
         ...(linkedPans.length > 0 ? [t().status.linkedSendPansAligned(linkedPans.length)] : []),
       ];
       const line = (what: string): string => [...notes, what].join(" — ");
