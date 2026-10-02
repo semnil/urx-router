@@ -1,4 +1,4 @@
-import { test, expect, colorToken, type Locator, type Page } from "./fixtures";
+import { test, expect, colorToken, contrastRatio, type Locator, type Page } from "./fixtures";
 import { stubTauriBoot } from "./tauri-stub";
 import { drag, port } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
@@ -317,6 +317,26 @@ test.describe("toolbar", () => {
     expect(heights.length, "the inspector shows a select").toBeGreaterThan(2);
     for (const s of heights) expect(s.h, `${s.id} is a 40px target`).toBeGreaterThanOrEqual(40);
   });
+
+  // The pressed view tab is white on a purple face. The dark theme's rail purple is a
+  // mid-tone, so the tab takes a darker shade of the same hue there; the light theme's
+  // rail colour already carries white.
+  for (const theme of ["dark", "light"] as const) {
+    test(`the pressed view tab's label clears AA in the ${theme} theme`, async ({ page }) => {
+      await page.addInitScript((t) => localStorage.setItem("urx-theme", t), theme);
+      await page.goto("/");
+      const tab = page.locator("#btn-view-graph");
+      await expect(tab).toHaveAttribute("aria-pressed", "true");
+      const { ink, face } = await tab.evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { ink: s.color, face: s.backgroundColor };
+      });
+      const rail = await colorToken(page, "--rail-channel");
+      if (theme === "light") expect(face).toBe(rail);
+      else expect(face).not.toBe(rail);
+      expect(await contrastRatio(page, ink, face)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
 
   // The View menu's two toggles are checkbox items with one label each: the state is
   // aria-checked, and the pressed look is keyed on it, so a checked toggle prints in the

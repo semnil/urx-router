@@ -98,6 +98,34 @@ export async function colorToken(page: Page, name: string): Promise<string> {
   return resolved;
 }
 
+/** The WCAG 2.1 contrast ratio of an ink over its ground, both as a computed style reports
+ *  them. The page paints the pair into a canvas and reads the pixel back, so every form a
+ *  computed colour can take (`rgb()`, `color(srgb ...)`, a `color-mix` result) is resolved
+ *  by the engine that produced it, and an ink carrying alpha is composited over the ground
+ *  the way it is drawn. The ground has to be opaque: a ratio against a translucent one is a
+ *  ratio against whatever happens to be behind the probe. */
+export async function contrastRatio(page: Page, ink: string, ground: string): Promise<number> {
+  return page.evaluate(
+    ([fg, bg]) => {
+      const c = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+      const paint = (...layers: string[]): number => {
+        c.clearRect(0, 0, 1, 1);
+        for (const layer of layers) {
+          c.fillStyle = layer;
+          c.fillRect(0, 0, 1, 1);
+        }
+        const [r, g, b, a] = c.getImageData(0, 0, 1, 1).data;
+        if (a !== 255) throw new Error(`the ground ${bg} is not opaque`);
+        const lin = (v: number) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+        return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+      };
+      const [hi, lo] = [paint(bg, fg), paint(bg)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    },
+    [ink, ground],
+  );
+}
+
 /** Drive one native slider through the gesture `holdInertOnBlur` exists for: press, drag,
  *  lose the window, keep the button down through a focus return, release, and press again.
  *  The DRAG is real (only an engine can drive a native slider) and only the blur is

@@ -2065,9 +2065,15 @@ input[type="range"]:focus-visible,
 .gt-modes button:last-child {
   border-right: 0;
 }
+/* The pressed tab is the channel rail's purple with white ink. The dark rail is a
+   mid-tone, so the dark face is a deeper shade of the same hue; the light rail carries
+   white as it is. */
 .view-tabs button[aria-pressed="true"] {
-  background: var(--rail-channel);
+  background: color-mix(in srgb, var(--rail-channel) 85%, #000);
   color: #fff;
+}
+[data-theme="light"] .view-tabs button[aria-pressed="true"] {
+  background: var(--rail-channel);
 }
 .view-tabs button:focus-visible,
 .udk-banks button:focus-visible,
