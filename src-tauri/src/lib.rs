@@ -1971,21 +1971,31 @@ mod tests {
             );
         }
 
-        // …and the MIDI window is granted the relay pair and nothing else. Its whole
-        // description rests on this: it is a view of the main window's state.
+        // …and the MIDI window is granted the relay pair, the devtools hotkey a debug
+        // build injects into every webview, and nothing else. Its whole description
+        // rests on this: it is a view of the main window's state. The list is compared
+        // whole — a scoped entry by its identifier — so a core set added back fails here:
+        // `core:default` carries the event emit the main window's listeners answer.
         let midi: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/midi-window.json")).unwrap();
         let mut midi_perms: Vec<&str> = midi["permissions"]
             .as_array()
             .unwrap()
             .iter()
-            .filter_map(|v| v.as_str())
-            .filter(|p| p.starts_with("allow-"))
+            .map(|v| {
+                v.as_str()
+                    .or_else(|| v["identifier"].as_str())
+                    .expect("a permission is a string or names an identifier")
+            })
             .collect();
         midi_perms.sort_unstable();
         assert_eq!(
             midi_perms,
-            vec!["allow-midi-ui-attach-window", "allow-midi-ui-to-main"]
+            vec![
+                "allow-midi-ui-attach-window",
+                "allow-midi-ui-to-main",
+                "core:webview:allow-internal-toggle-devtools"
+            ]
         );
     }
 }
