@@ -124,6 +124,9 @@ import {
   GATE_RANGE_OFF_DB,
   gateRangeToVd,
   holdToVd,
+  HPF_FREQ_MAX_HZ,
+  HPF_FREQ_MIN_HZ,
+  HPF_FREQ_STEP_HZ,
   levelToVd,
   OSC_LEVEL_MAX_DB,
   OSC_LEVEL_MIN_DB,
@@ -1196,7 +1199,8 @@ function pushDynCommands(
  * value.
  */
 export type BoundRule =
-  { min: number; max: number; integer?: true; steps?: readonly number[] } | { menu: readonly number[]; def: number };
+  | { min: number; max: number; integer?: true; steps?: readonly number[]; grid?: number }
+  | { menu: readonly number[]; def: number };
 
 /** A bound rule, or a leaf the write never sends at all (a filter type on a fixed-peaking band),
  *  which the load removes. */
@@ -1207,6 +1211,7 @@ export function admitLeaf(rule: BoundRule, v: number): number {
   if ("menu" in rule) return rule.menu.includes(v) ? v : rule.def;
   const x = rule.integer ? Math.round(v) : v;
   const bounded = x < rule.min ? rule.min : x > rule.max ? rule.max : x;
+  if (rule.grid !== undefined) return rule.min + rule.grid * Math.round((bounded - rule.min) / rule.grid);
   return rule.steps ? rule.steps[nearestStepIndex(rule.steps, bounded)] : bounded;
 }
 
@@ -1246,6 +1251,7 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
   if (cc) out.push(["recPoint", menuRule(REC_POINT_OPTIONS, REC_POINT_DEFAULT)]);
   const gain = channelGainRange(model, nodeId, np);
   if (gain) out.push(["gain", { min: gain.minDb, max: gain.maxDb }]);
+  if (cc?.hasHpf) out.push(["hpfFreq", { min: HPF_FREQ_MIN_HZ, max: HPF_FREQ_MAX_HZ, grid: HPF_FREQ_STEP_HZ }]);
   if (model.channelPairs.some(([primary]) => primary === nodeId))
     out.push(["panBal", menuRule(PAN_BAL_OPTIONS, PAN_BAL_PAN)]);
   if (cc?.hasMicStrip) {

@@ -812,6 +812,19 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
     expect(sent.find((c) => c.name === "OSC_LEVEL")?.vdValue).toBe(0);
   });
 
+  // The HPF stops on five frequencies 20 Hz apart. A document between two of them was written
+  // as it stood, a cutoff the unit's own encoder cannot reach, while the slider sat on a
+  // detent and the readout said the document's number; one past the window read one value and
+  // sent another. Both go to the nearest detent, a tie going up as the slider rounds.
+  it("moves an HPF frequency to the nearest of its five detents, inside 40..120 Hz", () => {
+    const plan = load({ ch1: { hpfFreq: 70 }, ch2: { hpfFreq: 200 }, ch3: { hpfFreq: 39 }, ch4: { hpfFreq: 100 } });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(["ch1.hpfFreq 70 -> 80", "ch2.hpfFreq 200 -> 120", "ch3.hpfFreq 39 -> 40"]);
+  });
+
   // An enum off its menu drew a blank select, and hid or mislabelled the rows that depend on it,
   // while the write sent the menu's default. The oscillator is in it, scene-external as it is.
   it("bounds an enum off its menu to the default the write sends", () => {
@@ -909,7 +922,11 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
                       ["below", rule.min - 1.25, true],
                       ["above", rule.max + 1.25, true],
                       // Inside a plain window there is nothing to move.
-                      ["between", (rule.min + rule.max) / 2 + 0.3, rule.integer === true || rule.steps !== undefined],
+                      [
+                        "between",
+                        (rule.min + rule.max) / 2 + 0.3,
+                        rule.integer === true || rule.steps !== undefined || rule.grid !== undefined,
+                      ],
                     ];
             for (const [shape, v, outside] of shapes) {
               const np = structuredClone(withSlots) as Record<string, unknown>;
@@ -951,7 +968,7 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
 
 /** The leaves the load bounds to the range the unit's own panel can set, which is narrower than
  *  the window their encoder clamps the write to. */
-const LOAD_ONLY: ReadonlySet<string> = new Set(["gain", "osc.level"]);
+const LOAD_ONLY: ReadonlySet<string> = new Set(["gain", "osc.level", "hpfFreq"]);
 
 /** Whether a path is an insert-FX slot that drives which other slots the unit owns. */
 function driverPath(path: string): boolean {

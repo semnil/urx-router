@@ -143,7 +143,8 @@ or inside a group — is written `true` / `false`: a number there loads converte
 
 **Stable, human-readable (author these freely):**
 - `on` — channel / STEREO master / FX channel / MONITOR on. `false` = muted.
-- `hpf` (bool), `hpfFreq` (Hz, 40–120, default 80).
+- `hpf` (bool), `hpfFreq` (Hz, 40–120 in 20 Hz steps — 40 / 60 / 80 / 100 / 120 —
+  default 80; a value between two steps opens at the nearer one, a tie going up).
 - `gain` — head-amp input gain in dB: -8 … +70 on an analog mic channel (A.Gain),
   -8 … +40 while `hiZ` is on, -24 … +24 on a stereo channel (D.Gain). A gain past
   its channel's range opens at the nearer end.
@@ -322,7 +323,8 @@ windows (a COMP `ratio` to the nearest stop of its ladder), the `ssmcs` raws and
 `insertFxParams` engine values to whole numbers inside their windows (an engine key by the family
 its own name gives, a bare slot by the one the selector names), the EQ 1-knob and COMP 1-knob
 levels to 0–100, the oscillator's `interval` to 1–30 and its `level` to -96–0, a channel's
-`gain` to its own range, an EQ band's `q`, `freq` and `gain` to their windows, and an enum
+`gain` to its own range, an `hpfFreq` to the nearest of its five steps, an EQ band's `q`,
+`freq` and `gain` to their windows, and an enum
 off its menu — a LOW / HIGH band's `type`, `compEqType`,
 `recPoint`, `panBal`, `busType`, a COMP `knee`, an EQ 1-knob `type`, the oscillator's `mode`, the
 STREAMING delay's `frameRate` — to the menu's default, which is what the write sends for it.

@@ -1827,10 +1827,8 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
   it("agrees with the app about the node-param values it bounds on load", async () => {
     const { deserializeDocument, serialize } = await import("../src/core/plan.ts");
     const { planProblems } = await import("../src/core/plan-validate.ts");
-    const { defaultPlan } = await import("../src/models/initial-state.ts");
-    const models = JSON.parse(
-      readFileSync(join(ROOT, ".claude/skills/urx-routing-planner/scripts/models.json"), "utf8"),
-    );
+    const { defaultPlan, factoryNodeParams } = await import("../src/models/initial-state.ts");
+    const { nodeLeafRules } = await import("../src/core/control/translate.ts");
     const set = (np, path, v) => {
       const keys = path.replace(/\[(\d+)\]/g, ".$1").split(".");
       let holder = np;
@@ -1840,7 +1838,15 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     let bounded = 0;
     for (const modelId of MODEL_IDS) {
       const factory = JSON.parse(serialize(defaultPlan(modelId)));
-      const rules = models[modelId].leafRules;
+      // The leaves come from the app's own table rather than from models.json, so a rule the
+      // export leaves out is a leaf the tool is asked about and cannot answer.
+      const model = getModel(modelId);
+      const rules = Object.fromEntries(
+        model.nodes.map((n) => [
+          n.id,
+          Object.fromEntries(nodeLeafRules(model, n.id, factoryNodeParams(modelId, n.id))),
+        ]),
+      );
       const moved = (pick) => {
         const np = structuredClone(factory.nodeParams);
         for (const [node, leaves] of Object.entries(rules))
@@ -1869,8 +1875,10 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           moved((r) => (r.unsent ? undefined : r.menu ? Math.min(...r.menu) - 1 : r.min - 1.25)),
         ],
         [
-          "every menu, integer or stepped leaf between two settings",
-          moved((r) => (r.menu ? r.menu[0] + 0.5 : r.integer || r.steps ? (r.min + r.max) / 2 + 0.3 : undefined)),
+          "every menu, integer, gridded or stepped leaf between two settings",
+          moved((r) =>
+            r.menu ? r.menu[0] + 0.5 : r.integer || r.steps || r.grid ? (r.min + r.max) / 2 + 0.3 : undefined,
+          ),
         ],
         ["insert-FX engine keys", engine],
         ["the factory document", structuredClone(factory.nodeParams)],

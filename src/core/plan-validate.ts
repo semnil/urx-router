@@ -121,9 +121,10 @@ export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPa
  *  the write bounds it by (`nodeLeafRules` / `admitLeaf` in translate.ts, `where: "node"`); plus
  *  +48V on a channel carrying HI-Z with HI-Z on, bounded to off (HI-Z kept) — the app never
  *  turns the two on together. A channel's gain is bounded to its own range (`channelGainRange`:
- *  A.Gain -8..+70 dB, -8..+40 under HI-Z, D.Gain -24..+24), and the oscillator level to
- *  -96..0 dB — both encoders clamp only to a wider window, so here the load moves what the
- *  write sends, onto a value the unit's own panel can set. A device read keeps +48V and HI-Z both on where the unit holds
+ *  A.Gain -8..+70 dB, -8..+40 under HI-Z, D.Gain -24..+24), the oscillator level to -96..0
+ *  dB and the HPF frequency to the nearest of its five 20 Hz detents — their encoders clamp
+ *  only to a wider window (the HPF's at 0.1 Hz), so here the load moves what the write sends,
+ *  onto a value the unit's own panel can set. A device read keeps +48V and HI-Z both on where the unit holds
  *  them, so a file this build saved can carry that pair. A repair reaches the oscillator, which
  *  is scene-external: under the Scene-only device scope the write does not carry it, while the
  *  load still moves it and says so. */
