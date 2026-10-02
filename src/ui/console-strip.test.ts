@@ -461,6 +461,65 @@ describe("a head knob", () => {
   });
 });
 
+// aria-valuenow is a number the slider role reads against a range, and without one the range
+// is 0..100: a −8 dB gain, a fader at −96 dB and a pan at L10 all read as 0 there. Each
+// slider carries its own range with its value inside it, and a valuetext that says what its
+// face says — which is also what tells −∞ from the floor detent, and the detents either side
+// of 0 dB from each other, where the rounded number is one value for both.
+describe("what each slider exposes", () => {
+  it("carries its own range with its value inside it, and a valuetext", () => {
+    h = consoleHost();
+    h.strip("ch1").root.querySelector<HTMLButtonElement>(".con-panbtn")!.click(); // the SEND PAN knobs too
+    const sliders = [...h.host.querySelectorAll<HTMLElement>('[role="slider"]')];
+    const kinds = new Set(sliders.map((s) => s.classList[0]));
+    expect([...kinds].sort(), "every kind of slider is in the sample").toEqual(["con-fader", "con-knob", "con-vfad"]);
+    expect(
+      sliders.some((s) => s.closest(".con-spop")),
+      "a SEND PAN knob is in the sample",
+    ).toBe(true);
+    for (const s of sliders) {
+      const what = `${s.className} "${s.getAttribute("aria-label")}"`;
+      for (const attr of ["aria-valuenow", "aria-valuemin", "aria-valuemax", "aria-valuetext"])
+        expect(s.getAttribute(attr), `${what} ${attr}`).toBeTruthy();
+      const now = Number(s.getAttribute("aria-valuenow"));
+      expect(Number(s.getAttribute("aria-valuemin")), what).toBeLessThanOrEqual(now);
+      expect(now, what).toBeLessThanOrEqual(Number(s.getAttribute("aria-valuemax")));
+    }
+  });
+
+  it("reads the main fader's −∞ apart from the floor, and the detents either side of 0 dB apart", () => {
+    h = consoleHost();
+    const text = (): string | null => h.strip("ch1").fader!.getAttribute("aria-valuetext");
+    key(h.strip("ch1").fader!, "End");
+    expect(text()).toBe("off (-∞)");
+    key(h.strip("ch1").fader!, "ArrowUp");
+    expect(text()).toBe("-96.0 dB");
+
+    const c = sendConnection(h.plan, "ch1", "bus.stereo")!;
+    c.params = { ...c.params, level: -1.2 };
+    h.view.refresh();
+    const seen: Array<string | null> = [];
+    for (let i = 0; i < 3; i++) {
+      key(h.strip("ch1").fader!, "ArrowUp");
+      seen.push(text());
+    }
+    expect(seen).toEqual(["-0.4 dB", "0.0 dB", "+0.4 dB"]);
+    expect(text(), "the readout's own text, with its unit").toBe(h.strip("ch1").readDb!.textContent + " dB");
+  });
+
+  it("reads a knob as its face prints it", () => {
+    h = consoleHost();
+    const box = [...h.strip("ch1").root.querySelectorAll<HTMLElement>(".con-gain")].find(
+      (b) => b.querySelector(".con-knob")?.getAttribute("aria-label") === "PAN",
+    )!;
+    const knob = box.querySelector<HTMLElement>(".con-knob")!;
+    for (let i = 0; i < 10; i++) key(knob, "ArrowLeft");
+    expect(knob.getAttribute("aria-valuenow")).toBe("-10");
+    expect(knob.getAttribute("aria-valuetext")).toBe("L10");
+    expect(box.querySelector(".val")!.textContent).toBe("L10");
+  });
+});
+
 describe("a device-locked knob", () => {
   // A PAN-linked MIX bus locks its send pan. The knob still paints the value — hiding
   // it would read as "this send has no pan" — but takes no input at all, from any of

@@ -173,6 +173,23 @@ function fmtDb(db: number, r: LevelRange): { text: string; off: boolean } {
   return { text: (db > 0 ? "+" : "") + db.toFixed(1), off: false };
 }
 
+// A level fader's accessible value: the readout's text with its unit, or "off (-∞)" below
+// the floor, so −∞ and the floor detent, and the detents either side of 0 dB, are read
+// apart where the rounded aria-valuenow is one number for both. Shared by the main fader
+// and the rack columns, which put `prefix` ("PRE, ") in front of a pre-fader send.
+function levelValueText(db: number, r: LevelRange, prefix = ""): string {
+  const f = fmtDb(db, r);
+  return f.off ? "off (-∞)" : prefix + f.text + " dB";
+}
+
+// The range a level fader's rounded aria-valuenow runs over, in place of the slider
+// role's default 0..100: −∞ rounds to the floor's integer, and the top is the scale's
+// maximum.
+function setLevelRange(fader: HTMLElement, r: LevelRange): void {
+  fader.setAttribute("aria-valuemin", String(Math.round(r.off)));
+  fader.setAttribute("aria-valuemax", String(r.max));
+}
+
 /**
  * Track a pointer drag that started on `control`, in the one place all three of this
  * view's drags share: the capture, the two `window` listeners, the teardown, and the
@@ -1044,6 +1061,7 @@ export class Console {
     const fader = el("div", "con-vfad" + (busFixed ? " readonly" : ""));
     fader.setAttribute("role", "slider");
     fader.setAttribute("aria-label", SEND_LABEL[target]);
+    setLevelRange(fader, range);
     if (busFixed) {
       fader.setAttribute("aria-disabled", "true");
       fader.title = rateOff ? t().inspector.fx2RateLocked : t().inspector.busFixedSend;
@@ -1242,9 +1260,8 @@ export class Console {
   // Paint a send column's fader cap position + accessible value from a dB level + tap.
   private updateColLevel(ref: SendColRef, range: LevelRange, db: number, pre: boolean): void {
     ref.cap.style.setProperty("--pos", (1 - dbToFrac(db, range)) * 100 + "%");
-    const f = fmtDb(db, range);
     ref.fader.setAttribute("aria-valuenow", String(Math.round(db)));
-    ref.fader.setAttribute("aria-valuetext", f.off ? "off (-∞)" : (pre ? "PRE, " : "") + f.text + " dB");
+    ref.fader.setAttribute("aria-valuetext", levelValueText(db, range, pre ? "PRE, " : ""));
   }
 
   // Fill a collapsed-header dots row: one amber dot per active (ON) send.
@@ -2859,6 +2876,7 @@ export class Console {
     const fader = el("div", "con-fader");
     fader.setAttribute("role", "slider");
     fader.setAttribute("aria-label", m.label);
+    setLevelRange(fader, m.range);
     fader.tabIndex = 0;
     const track = el("div", "track");
     // The 0 dB line rides the fader (not the inset track) so it shares the cap's
@@ -2984,6 +3002,7 @@ export class Console {
     setLevelText(r.readDb, f.text);
     r.readDb.classList.toggle("off", f.off);
     r.fader.setAttribute("aria-valuenow", String(Math.round(db)));
+    r.fader.setAttribute("aria-valuetext", levelValueText(db, r.m.range));
   }
 
   // ---- meters ----
@@ -3503,6 +3522,8 @@ export class Console {
     const knob = el("div", "con-knob" + (k.readonlyTitle ? " readonly" : ""));
     knob.setAttribute("role", "slider");
     knob.setAttribute("aria-label", ariaLabel);
+    knob.setAttribute("aria-valuemin", String(k.min));
+    knob.setAttribute("aria-valuemax", String(k.max));
     knob.append(el("i", "ind"));
     const val = el("span", valCls);
     if (k.readonlyTitle) {
@@ -3539,6 +3560,8 @@ export class Console {
       val.textContent = k.format(v);
       knob.style.setProperty("--rot", angle(v) + "deg");
       knob.setAttribute("aria-valuenow", String(v));
+      // The face's own text ("L63", "C", "+8"), which is what the number means.
+      knob.setAttribute("aria-valuetext", k.format(v));
     };
     const apply = (raw: number, st = k.step): void => {
       const v = Math.max(k.min, Math.min(k.max, scrubFloat(Math.round(raw / st) * st)));

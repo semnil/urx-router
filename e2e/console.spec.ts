@@ -116,6 +116,14 @@ test("a fader edits its level via the keyboard", async ({ page }) => {
   // ArrowUp walks one detent of the device's level_gain grid (0.0 -> +0.4 dB).
   await page.keyboard.press("ArrowUp");
   await expect(readout).toHaveText("+0.4");
+  // The slider says the same: the readout with its unit, against the level range rather
+  // than the slider role's default 0..100.
+  const fader = s.locator(".con-fader");
+  await expect(fader).toHaveAttribute("aria-valuetext", "+0.4 dB");
+  await expect(fader).toHaveAttribute("aria-valuemin", "-96");
+  await expect(fader).toHaveAttribute("aria-valuemax", "10");
+  await page.keyboard.press("End");
+  await expect(fader).toHaveAttribute("aria-valuetext", "off (-∞)");
 });
 
 test("head MUTE and EQ chips toggle their pressed state", async ({ page }) => {
