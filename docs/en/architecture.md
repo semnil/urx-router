@@ -329,7 +329,9 @@ carries a one-line map of the same directories and points here.
     - `fx-effect.ts` catalog of FX-channel effects (Rev-X/Rev.R3/Mono Delay/Ping Pong) — slot addressing of
       the type selector + parameter arrays, and raw↔display encoding. The two filter tables are R20 (REV-X)
       and R40 (Rev.R3 / delay) at their own offsets, and each family is PRINTED at its own precision: FX1
-      an integer below 1 kHz, FX2 three significant figures throughout, both three at or above 1 kHz
+      an integer below 1 kHz, FX2 three significant figures throughout, both three at or above 1 kHz.
+      Every delay time (Mono / Ping Pong, Initial / ER-Rev Delay) prints to 0.1 ms across its range, and
+      the REV-X Reverb Time to three significant figures
     - `insert-fx-effect.ts` effect parameter catalog for insert FX (Guitar Amp Classics/Pitch
       Fix/Compander-H/S/Multi-Band Comp) — reads/writes the engine arrays bound by the selector (Guitar 697
       / Pitch 701 / Compander 689 / output 693) via slot addressing; raw↔display uses values calibrated

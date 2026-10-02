@@ -254,6 +254,33 @@ describe("fx-effect encodings (live calibration anchors)", () => {
   it("both delay types read a raw the same way", () => {
     for (const raw of [10, 5000, 13500]) expect(delayMs(raw)).toBe(pingPongDelayMs(raw));
   });
+  // The LCD prints a delay to 0.1 ms across the whole range, and that is also the step an
+  // arrow key moves a Mono row by — so a label rounded to whole ms above 10 ms gave ten
+  // consecutive settings one reading.
+  it("prints every delay time to 0.1 ms, as the LCD does", () => {
+    const mono = fxParams(1024).find((d) => d.key === MONO_DELAY_KEY)!;
+    expect(mono.format!(7563, {})).toBe("756.3 ms");
+    expect(mono.format!(5000, {})).toBe("500.0 ms");
+    expect(mono.format!(5004, {})).toBe("500.4 ms");
+    expect(mono.format!(27000, {})).toBe("2700.0 ms");
+    expect(mono.format!(1, {})).toBe("0.1 ms");
+    // Initial / ER-Rev Delay, on the points its law is held to.
+    const revx = fxParams(0).find((d) => d.key === "revxInitialDelay")!;
+    expect([0, 2, 4, 127].map((r) => revx.format!(r, {}))).toEqual(["0.1 ms", "3.2 ms", "6.4 ms", "200.0 ms"]);
+    const revr3 = fxParams(768).find((d) => d.label === "initialDelay")!;
+    expect(revr3.format!(26, {})).toBe("41.0 ms");
+  });
+  it("prints a REV-X Reverb Time to three significant figures, as the LCD does", () => {
+    const hall = fxParams(0).find((d) => d.key === "reverbTime")!;
+    expect(hall.format!(24, { roomSize: 0 })).toBe("0.927 s");
+    expect(hall.format!(69, { roomSize: 0 })).toBe("10.3 s");
+    // The three types' floors, which a fixed two decimals printed as 0.10 / 0.15 / 0.18.
+    expect([0, 1, 2].map((t) => fxParams(t).find((d) => d.key === "reverbTime")!.format!(0, { roomSize: 0 }))).toEqual([
+      "0.103 s",
+      "0.152 s",
+      "0.176 s",
+    ]);
+  });
   it("Ping Pong delay = raw / 10 (LCD-confirmed 2026-07-19)", () => {
     expect(pingPongDelayMs(13500)).toBeCloseTo(1350, 1); // official max
     expect(pingPongDelayMs(20218)).toBeCloseTo(2021.8, 1);
@@ -268,7 +295,7 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect(mono.rawMax).toBe(27000); // 2700 ms
     // Same raw, same displayed ms — the split is the range, and it is what keeps a
     // Mono time above 1350 ms off a descriptor that would have the device clamp it.
-    expect(pp.format!(13500, {})).toBe("1350 ms");
+    expect(pp.format!(13500, {})).toBe("1350.0 ms");
     expect(pp.format!(13500, {})).toBe(mono.format!(13500, {}));
     expect(mono.rawMax).toBeGreaterThan(pp.rawMax!);
   });

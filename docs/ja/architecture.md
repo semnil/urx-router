@@ -300,7 +300,8 @@ flowchart TD
     - `fx-effect.ts` FX チャンネルのエフェクトのカタログ (Rev-X / Rev.R3 / Mono Delay / Ping Pong) — タイプ
       セレクタとパラメータ配列のスロットアドレッシング、および raw↔表示のエンコード。2 つのフィルタ表は
       R20 (REV-X) と R40 (Rev.R3 / delay) をそれぞれのオフセットで引く。**表示精度はファミリーごとに別**で、
-      FX1 は 1 kHz 未満が整数、FX2 は全域が有効数字 3 桁、1 kHz 以上は両者とも 3 桁
+      FX1 は 1 kHz 未満が整数、FX2 は全域が有効数字 3 桁、1 kHz 以上は両者とも 3 桁。遅延時間 (Mono /
+      Ping Pong、Initial / ER-Rev Delay) は全域 0.1 ms 単位、REV-X の Reverb Time は有効数字 3 桁で表示する
     - `insert-fx-effect.ts` Insert FX のエフェクトパラメータカタログ (Guitar Amp Classics / Pitch Fix /
       Compander-H/S / Multi-Band Comp) — セレクタが束縛するエンジン配列 (Guitar 697 / Pitch 701 /
       Compander 689 / 出力 693) をスロットアドレッシングで読み書きする。raw↔表示は実機 LCD に対して較正した値を

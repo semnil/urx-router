@@ -214,6 +214,11 @@ export function formatFx2Hz(hz: number): string {
 function formatSec(s: number): string {
   return `${s < 10 ? s.toFixed(2) : s.toFixed(1)} s`;
 }
+/** REV-X Reverb Time, to the three significant figures the unit prints it with (0.927,
+ *  2.79, 31.0) — a fixed decimal count drops a digit below 1 s and adds one above 10 s. */
+function formatRevxSec(s: number): string {
+  return `${threeFigures(s)} s`;
+}
 /** The FX2 / delay filters read THRU rather than a frequency at the ends of their
  *  windows — the HPF's bottom six raws and the LPF's top one. The official ranges
  *  spell that out and put the word on the end it belongs to: the HPF's is written
@@ -226,8 +231,10 @@ function fx2HpfLabel(raw: number): string {
 function fx2LpfLabel(raw: number): string {
   return raw >= FX2_LPF_THRU ? "THRU" : formatFx2Hz(fx2FreqHz(raw));
 }
+/** A delay time, to the 0.1 ms the unit prints across the whole range — which is also the
+ *  step the keyboard and the wheel move a delay row by, so every step reads differently. */
 function formatMs(ms: number): string {
-  return `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
+  return `${ms.toFixed(1)} ms`;
 }
 
 // ---- per-effect parameter descriptors ----
@@ -278,7 +285,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     rawMax: 69,
     rawStep: 1,
     def: 23,
-    format: (r, c) => formatSec(revxTimeSec(r, c.roomSize ?? 31)),
+    format: (r, c) => formatRevxSec(revxTimeSec(r, c.roomSize ?? 31)),
   },
   {
     key: "revxInitialDelay",
@@ -698,7 +705,7 @@ export function fxParams(type: number): FxParamDesc[] {
     // Reverb Time is the one display that cannot be written without knowing the type.
     const format =
       family === "revx" && d.key === "reverbTime"
-        ? (r: number, c: Record<string, number>) => formatSec(revxTimeSec(r, c.roomSize ?? 31, type))
+        ? (r: number, c: Record<string, number>) => formatRevxSec(revxTimeSec(r, c.roomSize ?? 31, type))
         : d.format;
     return def === d.def && format === d.format ? d : { ...d, def, format };
   });
