@@ -4,7 +4,17 @@ import { defaultPlan } from "../../models/initial-state";
 import type { ModelId } from "../../models/types";
 import { emptyPlan, ensureFixedConnections } from "../plan";
 import type { Plan } from "../plan";
-import { COLOR_OFF_INDEX, COLOR_PALETTE, EQ_TYPE_PASS, PARAMS, colorIndexToHex, hexToColorIndex } from "./params";
+import {
+  COLOR_OFF,
+  COLOR_OFF_INDEX,
+  COLOR_PALETTE,
+  EQ_TYPE_PASS,
+  PARAMS,
+  colorIndexToHex,
+  colorIndexToPlan,
+  hexToColorIndex,
+  isPlanColor,
+} from "./params";
 import type { ParamSpec } from "./params";
 import {
   addrKey,
@@ -1475,6 +1485,26 @@ describe("CH SETTING color", () => {
     const stream = cmds.filter((c) => c.name === "STREAM_COLOR");
     expect(stream.map((c) => c.y)).toEqual([0, 1]);
     expect(stream.every((c) => c.paramId === 704 && c.vdValue === 1)).toBe(true);
+  });
+
+  // The unit's Off is palette index 10 on every colour param: written as itself, never left to
+  // the unit, and the one plan value besides the ten palette hexes.
+  it("writes Off as the Off index, on every instance", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeColors.ch1 = COLOR_OFF;
+    plan.nodeColors["bus.stereo"] = COLOR_OFF;
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "CH_COLOR" || c.name === "STEREO_COLOR");
+    expect(cmds.length).toBeGreaterThan(1);
+    expect(cmds.every((c) => c.vdValue === COLOR_OFF_INDEX)).toBe(true);
+    expect([isPlanColor(COLOR_OFF), isPlanColor("#4A78C0"), isPlanColor("#abcdef"), isPlanColor("url(x)")]).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
+    expect(colorIndexToPlan(COLOR_OFF_INDEX)).toBe(COLOR_OFF);
+    expect(colorIndexToPlan(11)).toBeNull();
   });
 
   it("skips uncolored nodes and non-palette hex (never guesses a write)", () => {

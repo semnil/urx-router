@@ -15,6 +15,8 @@ import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
 import {
   BUS_TYPE_FIXED,
+  COLOR_OFF,
+  COLOR_PALETTE,
   COMP_EQ_SSMCS,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
@@ -811,7 +813,9 @@ describe("node controls report their edits", () => {
     expect(act.onRenameNode).toHaveBeenLastCalledWith("ch1", "あ".repeat(8));
   });
 
-  it("recolors a node from a swatch and clears it from the none swatch", () => {
+  // The none swatch is the unit's Off, written as Off: a colour the plan merely left out would
+  // send nothing, and the unit would keep the colour it has.
+  it("recolors a node from a swatch and sets Off from the none swatch", () => {
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
     const swatches = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];
     expect(swatches.length).toBeGreaterThan(1);
@@ -820,7 +824,21 @@ describe("node controls report their edits", () => {
     const calls = vi.mocked(act.onRecolorNode).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls.every(([id]) => id === "ch1")).toBe(true);
-    expect(calls.some(([, color]) => color === null)).toBe(true);
+    expect(calls.map(([, color]) => color)).toEqual([COLOR_PALETTE.at(-1)!.hex, COLOR_OFF]);
+  });
+
+  it("rings the none swatch for Off, and sets Off from a second press on the active one", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeColors.ch1 = COLOR_OFF;
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
+    const swatches = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];
+    expect(swatches.filter((b) => b.classList.contains("sel"))).toEqual([swatches[0]]);
+    plan.nodeColors.ch1 = COLOR_PALETTE[0].hex.toUpperCase();
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
+    const again = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];
+    expect(again.filter((b) => b.classList.contains("sel"))).toEqual([again[1]]);
+    again[1].click();
+    expect(vi.mocked(act.onRecolorNode).mock.calls.at(-1)).toEqual(["ch1", COLOR_OFF]);
   });
 
   it("hides a node and closes the panel from their own buttons", () => {

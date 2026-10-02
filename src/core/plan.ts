@@ -364,8 +364,9 @@ export interface Plan {
   /** User-chosen channel/bus name overrides, keyed by node id (mirrors the
    *  device CH SETTING name). Absent / empty = the model's default label. */
   nodeNames: Record<string, string>;
-  /** User-chosen channel/bus color overrides (hex), keyed by node id (mirrors
-   *  the device CH SETTING color). Drawn as a top accent cap; absent = none. */
+  /** Channel/bus colors, keyed by node id (mirrors the device CH SETTING color): a palette
+   *  hex, or `COLOR_OFF` for the device Off (`isPlanColor`). Drawn as a top accent cap; Off
+   *  and absent draw none, and an absent one is not written. */
   nodeColors: Record<string, string>;
   /** Node ids the user collapsed off the canvas (shelved by hand or via "hide unused"). */
   hidden: string[];
@@ -670,8 +671,9 @@ function stringRecord(v: unknown): Record<string, string> {
  *  code points via the string iterator, so a surrogate pair is one character and the
  *  result is never half of one. Names are the one plan string that leaves the app on
  *  the device link, and they left it uncut — the numeric leaves have `boundRaw`
- *  between them and the wire, and nothing played that part for strings. Notes and
- *  colors are the app's own and stay unbounded. */
+ *  between them and the wire, and nothing played that part for strings. Notes are the
+ *  app's own and stay unbounded; a colour is one of the unit's palette values
+ *  (`isPlanColor`). */
 export function clipNodeName(name: string): string {
   const chars = [...name];
   return chars.length <= NODE_NAME_MAX_CHARS ? name : chars.slice(0, NODE_NAME_MAX_CHARS).join("");

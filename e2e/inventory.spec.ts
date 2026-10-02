@@ -97,6 +97,7 @@ const SURFACES: Record<SurfaceName, Surface> = {
       "status.sendLevelsSupplied",
       "status.linkedPairsAligned",
       "status.linkedSendPansAligned",
+      "status.colorsDropped",
       "status.planLoaded",
     ],
     composed: ["status.streamingSourceSupplied", "status.planLoaded"],
@@ -366,8 +367,9 @@ test("the load report shows all three framings and both Copy faces", async ({ pa
 
 // One document the load repairs every way it can: two on/off values written as numbers, two FX
 // values bounded and two dropped, no STREAMING source, sends listed without a level, two
-// STEREO-linked pairs whose members disagree, and two send pans into a MIX whose Pan Link is on —
-// two or more of each, since a counted note is read in its plural wording. The Pan Link is one of
+// STEREO-linked pairs whose members disagree, two send pans into a MIX whose Pan Link is on, and two
+// node colours that are not the unit's — two or more of each, since a counted note is read in its
+// plural wording. The Pan Link is one of
 // the numbers, so the send pans are set only because the conversion ran first.
 test("the status line after a load names every repair the load made", async ({ page }) => {
   const revxLpf = fxParams(0).find((d) => d.key === "revxLpf")!;
@@ -391,6 +393,7 @@ test("the status line after a load names every repair the load made", async ({ p
       ch3: { hpf: 0, stereoLink: true, panBal: 0 },
       ch4: { hpf: true },
     },
+    nodeColors: { ch1: "#ff0000", ch2: "url(https://example.invalid/x)" },
   };
   await page.goto(`/?plan=${planParam(plan)}`);
   await expect(page.locator("#statusbar")).toContainText(en.status.planLoaded);

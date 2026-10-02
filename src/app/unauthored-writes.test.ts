@@ -3,6 +3,7 @@ import { cmdAddr, planToCommands } from "../core/control/translate";
 import {
   connectionContestKey,
   connParamContestKey,
+  nodeColorContestKey,
   nodeNameContestKey,
   nodeParamContestPath,
 } from "../core/plan-history";
@@ -18,8 +19,8 @@ const MODEL = getModel("URX44V");
 
 const everyAddr = (plan: Plan): Set<number> => new Set(planToCommands(MODEL, plan, "all").map(cmdAddr));
 
-/** Re-mark every key of one node, the way an edit or a device read would — its own params and
- *  those of the sends it owns, which the write carries on the node's strip. */
+/** Re-mark every key of one node, the way an edit or a device read would — its own params, its
+ *  colour and those of the sends it owns, which the write carries on the node's strip. */
 function markNode(plan: Plan, nodeId: string, source: ParamSource): number {
   const prefix = nodeParamContestPath(nodeId, "");
   const sends = new Set(
@@ -27,6 +28,7 @@ function markNode(plan: Plan, nodeId: string, source: ParamSource): number {
       .filter((c) => c.from === `${nodeId}:out`)
       .flatMap((c) => Object.keys(c.params ?? {}).map((key) => connParamContestKey(c.from, c.to, key))),
   );
+  sends.add(nodeColorContestKey(nodeId));
   let n = 0;
   for (const key of plan.paramSource!.keys()) {
     if (key.startsWith(prefix) || sends.has(key)) {

@@ -2390,6 +2390,7 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
       if (p.reason === "linkedSendPan")
         return `[${p.reason}] ${p.from} -> ${p.to}: ${p.stored ?? "(none)"} -> ${p.pan}`;
       if (p.reason === "booleanParam") return `[${p.reason}] ${p.node}.${p.path}: ${p.stored} -> ${p.value}`;
+      if (p.reason === "nodeColor") return `[${p.reason}] ${p.node}: ${JSON.stringify(p.stored)} -> (dropped)`;
       return `[${p.reason}] ${p.from} -> ${p.to}`;
     }),
   ].join("\n");
@@ -2436,7 +2437,7 @@ function loadFromText(text: string, path?: string): boolean | null {
     // omits is a key the panel draws a default for and the write does not send. The DEVICE
     // paths do not come through here: a fetch fills from the unit, and a node it could not
     // read stays absent on purpose.
-    const { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans } = prepareLoadedPlan(
+    const { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, colors } = prepareLoadedPlan(
       getModel(next.modelId),
       next,
       problems,
@@ -2493,6 +2494,7 @@ function loadFromText(text: string, path?: string): boolean | null {
         ...(sendLevels.length > 0 ? [t().status.sendLevelsSupplied(sendLevels.length)] : []),
         ...(linkedPairs.length > 0 ? [t().status.linkedPairsAligned(linkedPairs.length)] : []),
         ...(linkedPans.length > 0 ? [t().status.linkedSendPansAligned(linkedPans.length)] : []),
+        ...(colors.length > 0 ? [t().status.colorsDropped(colors.length)] : []),
       ];
       const line = (what: string): string => [...notes, what].join(" — ");
       if (path) {

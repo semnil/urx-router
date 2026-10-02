@@ -1016,6 +1016,39 @@ describe("Fetch from device", () => {
     expect(stripsNamed(asked[0])).toEqual(writesName ? [] : [fullLabel(model.nodes.find((n) => n.id === "ch1")!)]);
   });
 
+  // A document that leaves a colour out loads with the model's factory colour, which the write
+  // then sends — the fill's, so the write moving the unit onto it names the strip, while a colour
+  // the document wrote does not. Off goes out as the unit's Off index.
+  it.each([
+    ["names the strip whose colour the load filled", false],
+    ["names nothing when the document wrote that colour", true],
+  ])("%s", SLOW, async (_name, writesColor) => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const { COLOR_OFF, COLOR_OFF_INDEX, planColorIndex } = await import("./core/control/params");
+    const model = getModel("URX44V");
+    const written = defaultPlan("URX44V");
+    // The unit answers 0 at an address nothing wrote, so STEREO's factory colour moves it.
+    expect(planColorIndex(written.nodeColors["bus.stereo"]), "the premise").not.toBe(0);
+    if (!writesColor) delete written.nodeColors["bus.stereo"];
+    written.nodeColors.ch1 = COLOR_OFF;
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: clockReads(false, 48_000) }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const stereo = fullLabel(model.nodes.find((n) => n.id === "bus.stereo")!);
+    expect(stripsNamed(asked[0])).toEqual(writesColor ? [] : [stereo]);
+    const offSent = shell.invokes.some(
+      (cmd, i) =>
+        cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.CH_COLOR.id && shell.args[i]?.value === COLOR_OFF_INDEX,
+    );
+    expect(offSent, "Off goes out as the Off index").toBe(true);
+  });
+
   // An empty name has no value to send, and the unit keeps its own. Said by the write rather than
   // counted as a match: on its own it is what the write reports instead of "already matches",
   // and beside other changes it is a line of the confirm.

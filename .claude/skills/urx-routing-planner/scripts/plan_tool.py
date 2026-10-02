@@ -36,6 +36,11 @@ loads the plan as authored":
   scalar where a group belongs — is dropped on load (core/plan-validate.ts
   `paramRangeProblems`) and the factory value filled in, which is reported as a
   warning,
+- a node colour that is not one of the unit's palette colours or its Off (models.json
+  `colors`) is dropped on load (core/plan-validate.ts `nodeColorProblems`), and a
+  colourable node left without one is given its factory colour (models.json
+  `factory.nodeColors`; `completeNodeColors`), which the write sends — both reported as
+  warnings,
 - a nameable node the document leaves unnamed is given its factory name on load
   (models.json `factory.nodeNames`; core/plan-validate.ts `completeNodeNames`), and the
   write sends it, which is reported as a warning,
@@ -243,6 +248,7 @@ def validate(plan, models):
     warnings.extend(linked_send_pan_warnings(paired, model, paired_kept))
     warnings.extend(collection_warnings(view))
     warnings.extend(name_fill_warnings(view, (model.get("factory") or {}).get("nodeNames")))
+    warnings.extend(color_warnings(view, model.get("colors"), (model.get("factory") or {}).get("nodeColors")))
     warnings.extend(
         node_param_warnings(
             view,
@@ -640,6 +646,41 @@ def name_fill_warnings(plan, factory_names):
         "nodeNames: the app gives the nodes this plan leaves unnamed their factory names on load, "
         f"and the write sends them ({', '.join(filled)})"
     ]
+
+
+def is_plan_color(value, colors):
+    """The app's admission rule for a node colour (core/control/params.ts `isPlanColor`): one of
+    the unit's palette hexes, compared without case, or its Off spelling — models.json `colors`."""
+    if not isinstance(value, str):
+        return False
+    return value == colors["off"] or value.lower() in {hex_.lower() for hex_ in colors["palette"]}
+
+
+def color_warnings(plan, colors, factory_colors):
+    """The colours the app's load drops and supplies (core/plan-validate.ts `nodeColorProblems` and
+    `completeNodeColors`): a string that is no plan colour is dropped, and every colourable node —
+    the ones models.json `factory.nodeColors` carries — left without one is given its factory
+    colour, which the write sends. A value that is not a string is the document sanitiser's, which
+    `collection_warnings` reports; it leaves the node without a colour all the same."""
+    if not colors:
+        return []
+    entries = plan.get("nodeColors")
+    entries = entries if isinstance(entries, dict) else {}
+    out = []
+    for node_id, value in entries.items():
+        if node_id == "__proto__" or not isinstance(value, str) or is_plan_color(value, colors):
+            continue
+        out.append(
+            f"nodeColors[{node_id}]: the app drops this colour on load — {value!r} is not one of the "
+            f"unit's palette colours ({', '.join(colors['palette'])}) or {colors['off']!r}"
+        )
+    filled = [n for n in factory_colors or {} if not is_plan_color(entries.get(n), colors)]
+    if filled:
+        out.append(
+            "nodeColors: the app gives the colourable nodes this plan leaves without a colour their "
+            f"factory colours on load, and the write sends them ({', '.join(filled)})"
+        )
+    return out
 
 
 # Node-param sections carrying the DEVICE's own internal units — what the app

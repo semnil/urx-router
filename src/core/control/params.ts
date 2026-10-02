@@ -751,6 +751,37 @@ export function hexToColorIndex(hex: string): number | null {
   return i === -1 ? null : i;
 }
 
+/** The plan's spelling of the device Off colour: no cap, written as `COLOR_OFF_INDEX`. A plan
+ *  colour is one of the palette hexes or this; an absent one is a colour nobody set. */
+export const COLOR_OFF = "off";
+
+/** Whether `value` is a colour a plan may hold: a palette hex, in any case, or `COLOR_OFF`.
+ *  The one admission rule — the load, the emit, every surface that paints one and the skill's
+ *  validator (through the generated data) all ask it. */
+export function isPlanColor(value: unknown): value is string {
+  return typeof value === "string" && planColorIndex(value) !== null;
+}
+
+/** A plan colour as the unit's palette index — `COLOR_OFF_INDEX` for Off — or null for anything
+ *  that is not one. */
+export function planColorIndex(value: string | undefined): number | null {
+  if (value === COLOR_OFF) return COLOR_OFF_INDEX;
+  return value === undefined ? null : hexToColorIndex(value);
+}
+
+/** A palette index as a plan colour: the swatch hex, `COLOR_OFF` for Off, or null for an index
+ *  the palette does not carry. */
+export function colorIndexToPlan(index: number): string | null {
+  return index === COLOR_OFF_INDEX ? COLOR_OFF : colorIndexToHex(index);
+}
+
+/** The swatch a plan colour paints, or null where it paints none: Off, absent, or a value that
+ *  is not a plan colour. */
+export function planColorHex(value: string | undefined): string | null {
+  const index = planColorIndex(value);
+  return index === null ? null : colorIndexToHex(index);
+}
+
 /** Ids of the port-ref selectors (raw or tagged), derived from the registry. An
  *  unread selector address defaults to the broker's NONE sentinel, not 0. */
 export const PORT_REF_PARAM_IDS: ReadonlySet<number> = new Set(

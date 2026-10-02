@@ -306,7 +306,13 @@ the section's presence for that reason, not only on a `type` written into it.
   the document leaves unnamed — no entry, or an empty one — loads with the model's
   factory name (`ch 1`, …), and the write sends it; the validator lists the nodes it
   names. A name is never written empty, so omitting one does not keep the unit's name.
-- `nodeColors` — hex accent color per node id (e.g. `"#4a78c0"`).
+- `nodeColors` — the CH SETTING color per node id: one of the unit's ten palette
+  colors — Blue `#4a78c0`, Orange `#e8913a`, Yellow `#d9b441`, Purple `#8e6fc0`,
+  Cyan `#3fa6a0`, Magenta `#c0628f`, Red `#d9534f`, Green `#5c9e64`, LtGreen
+  `#8ec46a`, White `#d8dce0` (case does not matter) — or `"off"`, the unit's Off.
+  Any other string is dropped on load and reported, and a colorable node left without
+  a color loads with the model's factory color, which the write sends; the validator
+  lists both. The list itself is in `scripts/models.json` (`colors`).
 - `notes` — free-text annotation per node id; `noteCollapsed` lists ids shown
   minimized.
 - `hidden` — node ids collapsed off the canvas.

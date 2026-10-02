@@ -7,8 +7,8 @@
 // is prove itself: the rule is about when a read belongs to a command, and a rule is not a
 // measurement.
 //
-// So this measures. Every leaf of a factory-filled plan is moved — its node params and each
-// wire's params — one at a time and in both directions, and the addresses whose value follows
+// So this measures. Every leaf of a factory-filled plan is moved — its node params, each wire's
+// params and each node's colour — one at a time and in both directions, and the addresses whose value follows
 // it are that leaf's. The stamp has to agree:
 // a command stamped with a key must be one that key really moves, and one stamped as the emit's
 // own constant must be a command no leaf moves at all. Both directions matter — the first is a
@@ -19,10 +19,10 @@
 
 import { describe, expect, it } from "vitest";
 import { cmdAddr, planToCommandOrigins, planToCommands } from "./translate";
-import { connParamContestKey, nodeParamContestPath, walkParamLeaves } from "../plan-history";
+import { connParamContestKey, nodeColorContestKey, nodeParamContestPath, walkParamLeaves } from "../plan-history";
 import { isPlainRecord, type NodeParams, type Plan } from "../plan";
 import { getModel } from "../../models";
-import { COMP_EQ_SSMCS } from "./params";
+import { COLOR_OFF, COLOR_PALETTE, COMP_EQ_SSMCS } from "./params";
 import { MODEL_IDS } from "../../models";
 import { defaultPlan, fillFactoryParams } from "../../models/initial-state";
 import type { ModelId } from "../../models/types";
@@ -120,6 +120,26 @@ describe.each(MODEL_IDS.flatMap((id) => [[id, false] as const, [id, true] as con
         }
       }
     });
+
+    // …and each node's colour, which the emit writes as a palette index: moved onto another
+    // palette entry, onto Off, and taken out.
+    for (const [nodeId, color] of Object.entries(plan.nodeColors)) {
+      const other = COLOR_PALETTE.map((c) => c.hex).find((hex) => hex !== color)!;
+      for (const next of [other, COLOR_OFF, undefined]) {
+        const nodeColors = { ...plan.nodeColors };
+        if (next === undefined) delete nodeColors[nodeId];
+        else nodeColors[nodeId] = next;
+        const after = new Map(
+          planToCommands(model, { ...plan, nodeColors }, "all").map((c) => [cmdAddr(c), c.vdValue]),
+        );
+        for (const [addr, value] of held) {
+          const moved = after.has(addr) ? after.get(addr) !== value : next === undefined;
+          if (!moved) continue;
+          if (!moves.has(addr)) moves.set(addr, new Set());
+          moves.get(addr)!.add(nodeColorContestKey(nodeId));
+        }
+      }
+    }
 
     const origins = planToCommandOrigins(model, plan, "all");
 

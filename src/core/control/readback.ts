@@ -45,7 +45,7 @@ import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
 import { silentKey } from "./params";
 import type { SilentFamily } from "./params";
 import {
-  colorIndexToHex,
+  colorIndexToPlan,
   COMP_EQ_SSMCS,
   FX_STEREO_ASSIGN_ON,
   insertFxAvailable,
@@ -916,8 +916,8 @@ async function readPass(
     const cc = colorControl(model, node.id);
     if (!cc) continue;
     try {
-      const hex = colorIndexToHex(await vdGet(cc.param, 0, cc.instances[0]));
-      if (hex) plan.nodeColors[node.id] = hex;
+      const color = colorIndexToPlan(await vdGet(cc.param, 0, cc.instances[0]));
+      if (color) plan.nodeColors[node.id] = color;
       else delete plan.nodeColors[node.id];
       applied++;
     } catch (e) {

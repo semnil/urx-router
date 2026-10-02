@@ -40,7 +40,7 @@ import {
   type MeterTap,
 } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
-import { COMP_EQ_COMP_FIRST } from "../core/control/params";
+import { COMP_EQ_COMP_FIRST, planColorHex } from "../core/control/params";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 import { dynOpenLabel } from "./dyn-registry";
 import type { DynKind } from "./dyn-registry";
@@ -1685,7 +1685,7 @@ export class Console {
   // are mid-tones where that ink loses by 30-40 Lc, and two of them reach neither
   // ink's floor, which is exactly where the halo does the work.
   private paintScribble(scrib: HTMLElement, m: StripModel): void {
-    const color = this.hooks.getPlan().nodeColors?.[m.id];
+    const color = planColorHex(this.hooks.getPlan().nodeColors?.[m.id]);
     const ink = color ? inkOn(color) : this.inkForRail(m.rail);
     if (color) scrib.style.background = color;
     if (!ink) return;

@@ -23,7 +23,7 @@ import type {
 } from "../plan";
 import { incomingConnection, normalizeNodeName, SEND_LEVEL_UNNAMED_DB, SSMCS_INITIAL } from "../plan";
 import type { NodeParams } from "../plan";
-import { connParamContestKey, nodeParamContestPath } from "../plan-history";
+import { connParamContestKey, nodeColorContestKey, nodeParamContestPath } from "../plan-history";
 import type { ParamRangeProblem } from "../plan-validate";
 import {
   FX_CHANNEL_NODE_INDEX,
@@ -69,7 +69,7 @@ import {
   EQ_TYPE_LOW_OPTIONS,
   EQ_TYPE_SHELVING,
   FX_STEREO_ASSIGN_ON,
-  hexToColorIndex,
+  planColorIndex,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   OSC_MODE_OPTIONS,
@@ -2201,6 +2201,7 @@ export function planToCommandOrigins(
     ...plan,
     nodeParams: recordingParams(plan.nodeParams, read),
     connections: recordingConnections(plan.connections, read),
+    nodeColors: recording(plan.nodeColors, ([id]) => nodeColorContestKey(id), read) as Plan["nodeColors"],
   };
   originCursor = cursor;
   let commands: VdCommand[];
@@ -2729,15 +2730,14 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   }
 
   // CH SETTING color (palette index): input channels (20) and MIX/STEREO buses
-  // (586 / 496), written to every linked instance. Emitted only when the node
-  // carries a color, so an uncolored node leaves the device's color untouched; a
-  // hex outside the device palette is skipped rather than guessed.
+  // (586 / 496), written to every linked instance — a palette hex as its index and
+  // `COLOR_OFF` as the Off index. A node the plan gives no color sends nothing, and a
+  // value that is no plan color is skipped rather than guessed; the load completes an
+  // absent color and drops an off-palette one, so neither reaches here from a document.
   for (const node of model.nodes) {
-    const hex = plan.nodeColors[node.id];
-    if (!hex) continue;
     const cc = colorControl(model, node.id);
     if (!cc) continue;
-    const index = hexToColorIndex(hex);
+    const index = planColorIndex(plan.nodeColors[node.id]);
     if (index === null) continue;
     for (const inst of cc.instances) out.push(rawCommand(cc.name, cc.param, "raw", inst, index));
     own(node.id);

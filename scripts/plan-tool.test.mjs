@@ -1398,7 +1398,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
   it("names the collection entries the app never copies", () => {
     for (const [key, entry] of [
       ["nodeNames", '"__proto__":"x","ch1":"Vox"'],
-      ["nodeColors", '"__proto__":"x","ch1":"#ffffff"'],
+      ["nodeColors", '"__proto__":"x","ch1":"#4a78c0"'],
       ["notes", '"__proto__":"x","ch1":"hi"'],
       ["positions", '"__proto__":{"x":1,"y":2},"ch1":{"x":1,"y":2}'],
     ]) {
@@ -1645,6 +1645,80 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     // Both answers are real populations: documents the load completes and documents it leaves.
     expect(added.yes).toBeGreaterThan(0);
     expect(added.no).toBeGreaterThan(0);
+  });
+
+  // A colour is one of the unit's palette entries or its Off, and the load drops any other; a
+  // colourable node left without one is given its factory colour, which the write sends. The nodes
+  // whose colour the app drops, and the ones it colours, are compared with the tool's two lists:
+  // no colours at all, an off-palette hex, a url(), a short hex, a value that is not a string,
+  // Off, and a palette hex in another case — beside a document colouring every node.
+  it("agrees with the app about the colours the load drops and supplies", async () => {
+    const { nodeColorContestKey } = await import("../src/core/plan-history.ts");
+    const { defaultPlan } = await import("../src/models/initial-state.ts");
+    const seen = { dropped: 0, filled: 0, none: 0 };
+    for (const modelId of MODEL_IDS) {
+      const every = defaultPlan(modelId).nodeColors;
+      const corpus = [
+        ["no colours at all", undefined],
+        ["an off-palette hex", { ...every, ch1: "#ff0000" }],
+        ["a url()", { ...every, ch1: "url(https://example.invalid/x)" }],
+        ["a short hex", { ...every, ch1: "#ff0" }],
+        ["a value that is not a string", { ...every, ch1: 5 }],
+        ["Off", { ...every, ch1: "off" }],
+        ["a palette hex in another case", { ...every, ch1: every.ch1.toUpperCase() }],
+        ["every node coloured", every],
+      ];
+      for (const [name, nodeColors] of corpus) {
+        const plan = {
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections: [],
+          nodeParams: {},
+          ...(nodeColors === undefined ? {} : { nodeColors }),
+        };
+        const loaded = await appLoad(plan, true);
+        const { planProblems } = await import("../src/core/plan-validate.ts");
+        const { deserializeDocument } = await import("../src/core/plan.ts");
+        const read = deserializeDocument(JSON.stringify(plan)).plan;
+        const appDropped = planProblems(getModel(modelId), read)
+          .filter((p) => p.reason === "nodeColor")
+          .map((p) => p.node)
+          .sort();
+        const appFilled = [...loaded.paramSource]
+          .filter(([key, from]) => from === "default" && key.startsWith(nodeColorContestKey("")))
+          .map(([key]) => key)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const lines = r.stderr.split(/\r?\n/);
+        const toolDropped = lines
+          .map((l) => /^WARNING: nodeColors\[(\S+)\]: the app drops this colour on load/.exec(l)?.[1])
+          .filter((id) => id !== undefined)
+          .sort();
+        const toolFilled = lines
+          .map((l) =>
+            /^WARNING: nodeColors: the app gives the colourable nodes .* on load, and the write sends them \((.*)\)$/.exec(
+              l,
+            ),
+          )
+          .filter((m) => m !== null)
+          .flatMap((m) => m[1].split(", ").map((id) => nodeColorContestKey(id)))
+          .sort();
+        expect(toolDropped, `${modelId} ${name}\n${r.stderr}`).toEqual(appDropped);
+        expect(toolFilled, `${modelId} ${name}\n${r.stderr}`).toEqual(appFilled);
+        if (appDropped.length) seen.dropped++;
+        if (appFilled.length) seen.filled++;
+        if (!appDropped.length && !appFilled.length) seen.none++;
+      }
+    }
+    // Each answer is a real population.
+    expect(seen.dropped).toBeGreaterThan(0);
+    expect(seen.filled).toBeGreaterThan(0);
+    expect(seen.none).toBeGreaterThan(0);
   });
 
   // The load gives every nameable node a document leaves unnamed its factory name, which the write

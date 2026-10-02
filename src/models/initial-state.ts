@@ -78,6 +78,12 @@ export function factoryNodeNames(modelId: ModelId): Readonly<Record<string, stri
   return INITIAL[modelId].nodeNames;
 }
 
+/** The model's factory colours, which the load gives a colourable node a document leaves
+ *  without one. Every colourable node carries one. */
+export function factoryNodeColors(modelId: ModelId): Readonly<Record<string, string>> {
+  return INITIAL[modelId].nodeColors;
+}
+
 export function fillFactoryParams(modelId: ModelId, plan: Plan): void {
   const source = (plan.paramSource ??= new Map<string, ParamSource>());
   // The document's own leaves first: everything already here was written by whoever wrote

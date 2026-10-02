@@ -731,8 +731,12 @@ carries a one-line map of the same directories and points here.
   the default) or these device names ("ch 1"); model mode ignores `nodeNames` entirely),
   node color overrides
   (`nodeColors`, the device CH SETTING color, drawn as a thin top accent cap; the picker offers the
-  device's fixed palette so a chosen color is read and written 1:1 to hardware — input channels,
-  MIX, STEREO, FX and STREAMING; the CH SETTING **Icon**, a sibling of name and color, is
+  device's fixed palette and its Off — the plan's `"off"`, written as palette index 10 — so a chosen
+  color is read and written 1:1 to hardware — input channels, MIX, STEREO, FX and STREAMING. A plan
+  holds one of those eleven values or none (`isPlanColor`): the load drops any other string and says
+  so, and gives every colorable node a document leaves without a color its factory color, recorded as
+  the fill's so the write confirm names the strip when that color would move the unit
+  (`nodeColorProblems`, `completeNodeColors`); the CH SETTING **Icon**, a sibling of name and color, is
   intentionally not modeled — every node kind exposes it, but its value is a bare glyph id that
   would have to be calibrated against the unit's screen first), hidden nodes (`hidden`),
   and per-node notes (`notes`) with their minimized state (`noteCollapsed`). It serializes to JSON.
@@ -3814,7 +3818,8 @@ corrupt input at two levels. A collection that is not the right container at all
 empty default (`positions` included, symmetrically); within a collection each element is validated on
 its own and a non-conforming one is dropped rather than the document refused — a wire that is null,
 wrong-typed or carries an unknown `kind`; a node parameter leaf that is not a finite number or a
-boolean; a note, name or colour that is not a string; a hidden / note-collapsed id that is not a
+boolean; a note, name or colour that is not a string (a colour that is a string but not one the
+unit has is the load funnel's, which drops it and says so); a hidden / note-collapsed id that is not a
 string; a position whose coordinates are not both finite. This keeps garbled values from a hand edit,
 a generator or an older build out of the plan, where they would break routing invariants or reach a
 formatter that throws on them — a note written as an object would load cleanly and then take the

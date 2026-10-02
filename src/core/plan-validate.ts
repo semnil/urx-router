@@ -8,16 +8,23 @@
 
 import type { DeviceModel } from "../models/types";
 import { parseRef, ref } from "../models/types";
-import { factoryNodeNames, factoryNodeParams, fillFactoryParams } from "../models/initial-state";
+import { factoryNodeColors, factoryNodeNames, factoryNodeParams, fillFactoryParams } from "../models/initial-state";
 import { getModel, MODEL_IDS } from "../models";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
-import type { InsertFxSlot } from "./control/params";
+import { isPlanColor, type InsertFxSlot } from "./control/params";
 import { fixedConnection, isPlainRecord, requiredSourceWire, SEND_LEVEL_UNNAMED_DB, setPlanSampleRate } from "./plan";
-import { connParamContestKey, deepEqual, nodeNameContestKey, nodeParamContestPath } from "./plan-history";
+import {
+  connParamContestKey,
+  deepEqual,
+  nodeColorContestKey,
+  nodeNameContestKey,
+  nodeParamContestPath,
+} from "./plan-history";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "./plan";
 import {
   admitLeaf,
+  colorControl,
   effectiveInsertFx,
   insertFxControl,
   insertFxWireState,
@@ -631,6 +638,30 @@ export function applyLinkedSendPans(model: DeviceModel, plan: Plan, problems: Li
   }
 }
 
+/** A node colour that is no plan colour (`isPlanColor`) — not one of the unit's ten palette
+ *  hexes, nor `COLOR_OFF`. The write sends nothing for one while every surface would paint
+ *  whatever the string says, so the loader drops it — the fill then gives a colourable node its
+ *  factory colour — and says so. Like every check in this file it does NOT run on a device
+ *  readback, which writes palette colours only. */
+export interface NodeColorProblem {
+  reason: "nodeColor";
+  node: string;
+  /** The string the document carries. */
+  stored: string;
+}
+
+/** Every node colour the plan holds that is no plan colour, in the plan's own order. */
+export function nodeColorProblems(plan: Plan): NodeColorProblem[] {
+  return Object.entries(plan.nodeColors)
+    .filter(([, value]) => !isPlanColor(value))
+    .map(([node, stored]) => ({ reason: "nodeColor" as const, node, stored }));
+}
+
+/** Drop each reported colour. Separate from finding them for the reason `applyParamRange` is. */
+export function applyNodeColors(plan: Plan, problems: NodeColorProblem[]): void {
+  for (const p of problems) delete plan.nodeColors[p.node];
+}
+
 /** An on/off leaf written as a number. The document sanitiser keeps any finite number, and the
  *  write sends one where an on/off belongs as on unless it is 0. The loader converts it to that
  *  on/off, so every reader of the plan holds a boolean there and reads what the write sends,
@@ -687,7 +718,8 @@ export function applyBooleanParams(plan: Plan, problems: BooleanParamProblem[]):
  *  given no source (completed, then reported), a send listed without a level (completed,
  *  then reported), a linked pair whose members disagree (the primary copied onto the
  *  secondary, then reported), a linked send pan off its source's value (set to it, then
- *  reported), or an on/off written as a number (converted, then reported). */
+ *  reported), an on/off written as a number (converted, then reported), or a colour that is no
+ *  plan colour (dropped, then reported). */
 export type LoadProblem =
   | PlanProblem
   | InsertFxSlotProblem
@@ -697,7 +729,8 @@ export type LoadProblem =
   | SendLevelProblem
   | LinkedPairProblem
   | LinkedSendPanProblem
-  | BooleanParamProblem;
+  | BooleanParamProblem
+  | NodeColorProblem;
 
 // Every violation the plan loader reports on a file / ?plan= link / drop, in one
 // list so a load path cannot pick up half of them. The caller splits them by
@@ -725,6 +758,7 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
     ...sendLevelProblems(model, read),
     ...pairs,
     ...linkedSendPanProblems(model, paired),
+    ...nodeColorProblems(read),
   ];
 }
 
@@ -740,7 +774,8 @@ export function isRefusal(problem: LoadProblem): boolean {
     problem.reason !== "sendLevel" &&
     problem.reason !== "linkedPair" &&
     problem.reason !== "linkedSendPan" &&
-    problem.reason !== "booleanParam"
+    problem.reason !== "booleanParam" &&
+    problem.reason !== "nodeColor"
   );
 }
 
@@ -762,14 +797,15 @@ export interface LoadRepairs {
   sendLevels: SendLevelProblem[];
   linkedPairs: LinkedPairProblem[];
   linkedPans: LinkedSendPanProblem[];
+  colors: NodeColorProblem[];
 }
 
 /** Apply every repair `planProblems` reported, in the order `planProblems` reads them: an on/off
  *  written as a number is converted first, then a value outside what the app can write is
  *  bounded or dropped, a receiver the unit never leaves without a source gets the one a new plan
  *  carries, a send listed without a level gets the one the write sends, a linked pair's
- *  secondary takes its primary's shared values, and a send into a MIX whose Pan Link is on
- *  takes its source's own pan / balance.
+ *  secondary takes its primary's shared values, a send into a MIX whose Pan Link is on
+ *  takes its source's own pan / balance, and a colour that is no plan colour is dropped.
  *  Refusals and decisions are the caller's; the reasons they carry are not repaired here. */
 export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
   const booleans = problems.filter((p) => p.reason === "booleanParam");
@@ -784,7 +820,9 @@ export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadP
   applyLinkedPairs(model, plan, linkedPairs);
   const linkedPans = problems.filter((p) => p.reason === "linkedSendPan");
   applyLinkedSendPans(model, plan, linkedPans);
-  return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans };
+  const colors = problems.filter((p) => p.reason === "nodeColor");
+  applyNodeColors(plan, colors);
+  return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, colors };
 }
 
 /** Give each node's selected insert effect every engine slot it leaves out, at that type's own
@@ -821,17 +859,35 @@ export function completeNodeNames(model: DeviceModel, plan: Plan): string[] {
   return names;
 }
 
-/** A document as the loader opens it: its own wire params and names recorded as the document's,
- *  repaired (`applyLoadRepairs`), then completed from the model's factory values — a value a
- *  repair dropped is completed like any other absent one — each selected insert effect from its
- *  type's defaults and each unnamed node from its factory name, all recorded as the fill's, then
- *  put back through the rate rule, which a Track Count the fill completes can exceed. */
+/** Give each colourable node a document leaves without a colour the model's factory colour, so
+ *  absent no longer means "leave the unit alone" — the write sends a colour for every node it can.
+ *  Returns the contest names it set. */
+export function completeNodeColors(model: DeviceModel, plan: Plan): string[] {
+  const factory = factoryNodeColors(model.id);
+  const names: string[] = [];
+  for (const node of model.nodes) {
+    if (plan.nodeColors[node.id] !== undefined || !colorControl(model, node.id) || !factory[node.id]) continue;
+    plan.nodeColors[node.id] = factory[node.id];
+    names.push(nodeColorContestKey(node.id));
+  }
+  return names;
+}
+
+/** A document as the loader opens it: its own wire params, names and colours recorded as the
+ *  document's, repaired (`applyLoadRepairs`), then completed from the model's factory values — a
+ *  value a repair dropped is completed like any other absent one — each selected insert effect
+ *  from its type's defaults, and each unnamed or uncoloured node from its factory name or colour,
+ *  all recorded as the fill's, then put back through the rate rule, which a Track Count the fill
+ *  completes can exceed. */
 export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
   // The document's own wire params and names are what it wrote, as its node params are (the
   // fill records those); a repair below that completes one records its own.
   const source = (plan.paramSource ??= new Map());
   for (const [id, name] of Object.entries(plan.nodeNames)) {
     if (name && !source.has(nodeNameContestKey(id))) source.set(nodeNameContestKey(id), "load");
+  }
+  for (const id of Object.keys(plan.nodeColors)) {
+    if (!source.has(nodeColorContestKey(id))) source.set(nodeColorContestKey(id), "load");
   }
   for (const c of plan.connections) {
     for (const key of Object.keys(c.params ?? {})) {
@@ -843,6 +899,7 @@ export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: Load
   fillFactoryParams(model.id, plan);
   for (const name of completeInsertFxParams(model, plan)) source.set(name, "default");
   for (const name of completeNodeNames(model, plan)) source.set(name, "default");
+  for (const name of completeNodeColors(model, plan)) source.set(name, "default");
   setPlanSampleRate(plan, plan.sampleRate);
   return repairs;
 }

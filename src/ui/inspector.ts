@@ -52,7 +52,9 @@ import {
   PAN_BAL_PAN,
   PAN_BAL_OPTIONS,
   COMP_EQ_SSMCS,
+  COLOR_OFF,
   COLOR_PALETTE,
+  planColorHex,
   DELAY_FRAME_RATE_OPTIONS,
   DELAY_FRAME_RATE_DEFAULT,
   insertFxEngaged,
@@ -1510,8 +1512,8 @@ function enumSelect(
 // "none" swatch is the device "Off" state (no cap).
 const NODE_COLORS = COLOR_PALETTE.map((c) => c.hex);
 
-// A row of color swatches plus a "none" clear option. The active color (or none)
-// is ringed. Selecting toggles: clicking the active color clears it.
+// A row of color swatches plus a "none" option, which sets the device Off. The active color
+// (or none) is ringed. Selecting toggles: clicking the active color sets Off.
 function colorSwatches(
   label: string,
   current: string | undefined,
@@ -1520,18 +1522,20 @@ function colorSwatches(
   const { row } = paramBlock(label, "");
   const strip = document.createElement("div");
   strip.className = "swatches";
+  // What the plan holds, as the swatch it paints: none for Off and for a node with no color.
+  const shown = planColorHex(current);
   const none = document.createElement("button");
   none.type = "button";
-  none.className = "swatch swatch-none" + (current ? "" : " sel");
+  none.className = "swatch swatch-none" + (shown ? "" : " sel");
   none.title = label;
-  none.addEventListener("click", () => onPick(null));
+  none.addEventListener("click", () => onPick(COLOR_OFF));
   strip.append(none);
   for (const c of NODE_COLORS) {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "swatch" + (current === c ? " sel" : "");
+    b.className = "swatch" + (shown === c ? " sel" : "");
     b.style.background = c;
-    b.addEventListener("click", () => onPick(current === c ? null : c));
+    b.addEventListener("click", () => onPick(shown === c ? COLOR_OFF : c));
     strip.append(b);
   }
   row.append(strip);

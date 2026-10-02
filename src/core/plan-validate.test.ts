@@ -11,6 +11,7 @@ import {
   isRefusal,
   linkedPairProblems,
   linkedSendPanProblems,
+  nodeColorProblems,
   needsDecision,
   paramRangeProblems,
   planProblems,
@@ -20,7 +21,7 @@ import {
 } from "./plan-validate";
 import { trackCountAtRate } from "./constraints";
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
-import { nameControl, nodeLeafRules, planToCommands } from "./control/translate";
+import { colorControl, nameControl, nodeLeafRules, planToCommands } from "./control/translate";
 import { eqResponse } from "./eq-response";
 import {
   insertFxDefaults,
@@ -34,7 +35,7 @@ import type { NodeParams, Plan, PlanConnection } from "./plan";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
-import { connParamContestKey, nodeNameContestKey, nodeParamContestPath } from "./plan-history";
+import { connParamContestKey, nodeColorContestKey, nodeNameContestKey, nodeParamContestPath } from "./plan-history";
 import {
   BUS_TYPE_FIXED,
   INSERT_FX_NONE,
@@ -1677,6 +1678,43 @@ describe("prepareLoadedPlan", () => {
     }
     // Nothing is named that the unit has no name for.
     expect(Object.keys(plan.nodeNames).sort()).toEqual(nameable.sort());
+  });
+
+  // A colour is one of the unit's ten palette entries or its Off. Anything else is dropped and
+  // reported, and a colourable node left without one — dropped or never written — takes its
+  // factory colour, recorded as the fill's; Off and a palette hex in any case are the document's.
+  it.each(MODEL_IDS)("%s: drops a colour the unit has not and colours every colourable node", (id) => {
+    const m = getModel(id);
+    const factory = defaultPlan(id).nodeColors;
+    const plan = deserialize(
+      JSON.stringify({
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: id,
+        nodeColors: {
+          ch1: "url(https://example.invalid/x)",
+          ch2: "#FF0000",
+          "bus.stereo": "off",
+          "bus.mix1": "#4A78C0",
+        },
+      }),
+    );
+    const problems = planProblems(m, plan);
+    const colors = problems.filter((p) => p.reason === "nodeColor");
+    expect(colors.map((p) => p.node).sort()).toEqual(["ch1", "ch2"]);
+    expect(colors.some(isRefusal)).toBe(false);
+    expect(colors.some(needsDecision)).toBe(false);
+    const repairs = prepareLoadedPlan(m, plan, problems);
+    expect(repairs.colors).toEqual(colors);
+    expect(plan.nodeColors["bus.stereo"]).toBe("off");
+    expect(plan.nodeColors["bus.mix1"]).toBe("#4A78C0");
+    expect(plan.paramSource?.get(nodeColorContestKey("bus.stereo"))).toBe("load");
+    const colourable = m.nodes.filter((n) => colorControl(m, n.id)).map((n) => n.id);
+    for (const node of colourable.filter((n) => n !== "bus.stereo" && n !== "bus.mix1")) {
+      expect(plan.nodeColors[node], node).toBe(factory[node]);
+      expect(plan.paramSource?.get(nodeColorContestKey(node)), node).toBe("default");
+    }
+    expect(nodeColorProblems(plan)).toEqual([]);
   });
 
   it("puts a Track Count the completion supplies back through the rate rule", () => {

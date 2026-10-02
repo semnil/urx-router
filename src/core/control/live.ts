@@ -972,10 +972,8 @@ export class LiveSync {
       // The set can only be rebuilt by a capture, and a flush reaches one only through a
       // `sideEffect` param's converge or refetch epilogue — so an edit that moves the set
       // with no such head in it would leave the registration behind until something
-      // reconciled. No gesture produces one today (every default connection is fixed
-      // routing the graph refuses to cut, and none of the 310 routes an operator could
-      // draw moves the set), which is a property of the current model rather than of this
-      // layer: the comparison is an integer per address and holds it by construction.
+      // reconciled. The comparison is an integer per address and holds that by
+      // construction, whichever edit moved the set.
       // Taken before the first await so the rebuild cannot interleave with a capture, and
       // the snapshot is left alone — nothing has been read.
       if (!this.followSetMatches(commands)) this.rebuildFollowSet(model, plan, scope, commands);

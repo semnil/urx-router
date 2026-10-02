@@ -8,7 +8,14 @@ import { ref } from "../../models/types";
 vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdGet, vdGetStr } from "../platform";
-import { COLOR_PALETTE, dGainParam, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS, silentKey } from "./params";
+import {
+  COLOR_OFF,
+  COLOR_PALETTE,
+  dGainParam,
+  PARAMS,
+  PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
+  silentKey,
+} from "./params";
 import { fxEffectTypes, fxParams } from "./fx-effect";
 import { defaultPlan } from "../../models/initial-state";
 import { applyDeviceState, applySilentState, formatReadbackReport, heldByHold } from "./readback";
@@ -1298,6 +1305,18 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(target.nodeColors["bus.stereo"]).toBe(COLOR_PALETTE[6].hex);
     // An unset colorable node reads the device default index 0 = Blue.
     expect(target.nodeColors.ch2).toBe(COLOR_PALETTE[0].hex);
+  });
+
+  // The unit's Off reads back as the plan's Off, which the next write sends as Off — not as an
+  // absent colour, which would send nothing and leave whatever the unit then holds.
+  it("reads the Off index back as Off", async () => {
+    const source = emptyPlan("URX44V");
+    ensureFixedConnections(model, source);
+    source.nodeColors.ch1 = COLOR_OFF;
+    mockVdGetFrom(deviceTableFor(source));
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target);
+    expect(target.nodeColors.ch1).toBe(COLOR_OFF);
   });
 
   // A name arrives bounded, like one typed into the app. The unit's own screen takes

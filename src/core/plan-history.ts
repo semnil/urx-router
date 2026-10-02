@@ -760,6 +760,11 @@ export function nodeNameContestKey(nodeId: string): string {
   return contestName("nodeNames", nodeId);
 }
 
+/** The same, for a node's colour. */
+export function nodeColorContestKey(nodeId: string): string {
+  return contestName("nodeColors", nodeId);
+}
+
 /** The same, for a wire's presence: the name an edit or a device read that adds or removes
  *  the wire records it under. */
 export function connectionContestKey(from: string, to: string): string {

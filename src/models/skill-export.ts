@@ -9,12 +9,26 @@
 import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
-import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, PAN_BAL_BAL } from "../core/control/params";
+import {
+  COLOR_OFF,
+  COLOR_PALETTE,
+  COMP_EQ_SSMCS,
+  INSERT_FX_OPTIONS,
+  OUTPUT_INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
+} from "../core/control/params";
 import { fixedConnection, isPlainRecord, SEND_LEVEL_UNNAMED_DB, type ConnParams, type NodeParams } from "../core/plan";
-import { factoryNodeNames, factoryNodeParams } from "./initial-state";
+import { factoryNodeColors, factoryNodeNames, factoryNodeParams } from "./initial-state";
 import { INSERT_FX_PAIR_KEYS, monoPairsInto, PAIR_OWN_NODE_KEYS } from "../core/routing";
 import { isRackSend } from "../core/plan-validate";
-import { channelControl, hasHiZInput, nameControl, nodeLeafRules, type LeafRule } from "../core/control/translate";
+import {
+  channelControl,
+  colorControl,
+  hasHiZInput,
+  nameControl,
+  nodeLeafRules,
+  type LeafRule,
+} from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
 import {
@@ -100,8 +114,16 @@ export interface SkillModel {
    *  params `factoryNodeParams` answers; the load drops a value whose kind is not the factory
    *  value's at the same path (`paramRangeProblems`). And per nameable node, the name the load
    *  gives one the document leaves unnamed (`completeNodeNames`) — a node absent here carries
-   *  no name on the unit. */
-  factory: { nodeParams: Record<string, NodeParams>; nodeNames: Record<string, string> };
+   *  no name on the unit. And per colourable node, the colour the load gives one the document
+   *  leaves without a colour (`completeNodeColors`). */
+  factory: {
+    nodeParams: Record<string, NodeParams>;
+    nodeNames: Record<string, string>;
+    nodeColors: Record<string, string>;
+  };
+  /** The colours a plan may hold (`isPlanColor`): the unit's palette, as hexes compared without
+   *  case, and the spelling of its Off. The load drops any other. */
+  colors: { palette: string[]; off: string };
   /** Per node, every leaf the write bounds, in the validator's path spelling, with the rule it
    *  is bounded by (`nodeLeafRules`): a window, an integer window, a window whose value then
    *  moves to the nearest of `steps`, a menu with its default, or a leaf the write never sends
@@ -153,7 +175,13 @@ function skillModel(model: DeviceModel): SkillModel {
           .filter((n) => nameControl(model, n.id) && factoryNodeNames(model.id)[n.id])
           .map((n) => [n.id, factoryNodeNames(model.id)[n.id]]),
       ),
+      nodeColors: Object.fromEntries(
+        model.nodes
+          .filter((n) => colorControl(model, n.id) && factoryNodeColors(model.id)[n.id])
+          .map((n) => [n.id, factoryNodeColors(model.id)[n.id]]),
+      ),
     },
+    colors: { palette: COLOR_PALETTE.map((c) => c.hex), off: COLOR_OFF },
     leafRules: leafRules(model),
     linkedPairs: {
       own: [...PAIR_OWN_NODE_KEYS],

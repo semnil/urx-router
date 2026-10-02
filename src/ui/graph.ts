@@ -30,7 +30,7 @@ import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import { getSettings } from "../core/settings";
 import type { ExportOptions, SaveResult } from "../core/storage";
 import { oscAssign } from "../core/control/translate";
-import { SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
+import { planColorHex, SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
 import { trackCountCeiling } from "../core/constraints";
 import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
 import { sendlessNote } from "./send-fields";
@@ -1142,7 +1142,7 @@ export class Graph {
 
     // User color override (plan.nodeColors): a thin accent cap along the top
     // edge. Keeps the kind rail intact, so the cap is purely additional.
-    const capColor = this.plan.nodeColors?.[node.id];
+    const capColor = planColorHex(this.plan.nodeColors?.[node.id]);
     if (capColor) g.append(svgRect(6, 0, NODE_W - 6, 3, 1.5, capColor));
 
     for (const sx of [12, NODE_W - 12]) {
