@@ -530,14 +530,52 @@ export interface SettingsRowOptions {
   legend?: HTMLElement;
 }
 
+let labelSeq = 0;
+
+/** A fresh element id, unique for the document's lifetime, for a label a control points
+ *  its name at. */
+export function labelId(prefix = "lbl"): string {
+  return `${prefix}-${++labelSeq}`;
+}
+
+/** Point a row's control at the label that names it. A select or a text / range field takes
+ *  the label as its name; so does a switch carrying aria-pressed, whose pressed state is what
+ *  says on or off; any other lone button keeps its own words after the label; a set of
+ *  buttons becomes a group the label names. A control that already carries a name keeps it. */
+function nameControl(control: HTMLElement, id: string): void {
+  const named = (e: Element): boolean => e.hasAttribute("aria-label") || e.hasAttribute("aria-labelledby");
+  const fields = control.matches("select, input")
+    ? [control]
+    : [...control.querySelectorAll<HTMLElement>("select, input")];
+  if (fields.length) {
+    for (const f of fields) if (!named(f)) f.setAttribute("aria-labelledby", id);
+    return;
+  }
+  if (control.matches("button")) {
+    if (named(control)) return;
+    if (control.hasAttribute("aria-pressed")) control.setAttribute("aria-labelledby", id);
+    else {
+      if (!control.id) control.id = labelId("ctl");
+      control.setAttribute("aria-labelledby", `${id} ${control.id}`);
+    }
+    return;
+  }
+  if (control.querySelector("button") && !control.hasAttribute("role")) {
+    control.setAttribute("role", "group");
+    control.setAttribute("aria-labelledby", id);
+  }
+}
+
 /** A label + control row. A locked row keeps its tag at full opacity while the rest
  *  of it dims, and every control inside it is disabled — including `input`, which a
- *  row holding a slider needs. */
+ *  row holding a slider needs. The label names the control (`nameControl`). */
 export function settingsRow(labelText: string, control: HTMLElement, opts: SettingsRowOptions = {}): HTMLElement {
   const row = el("div", opts.cls ? `prefs-row ${opts.cls}` : "prefs-row");
   const lblc = el("span", "lblc");
   const lbl = el("span", "lbl");
   lbl.textContent = labelText;
+  lbl.id = labelId();
+  nameControl(control, lbl.id);
   lblc.append(lbl);
   if (opts.legend) lblc.append(opts.legend);
   if (opts.tag) lblc.append(settingsPill(opts.tag));

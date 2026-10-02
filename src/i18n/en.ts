@@ -358,6 +358,21 @@ export const en = {
     type: tr("Type"),
     name: dev("Name"),
     color: dev("Color"),
+    // The unit's [Color] picker prints these in English in every Language, in its palette
+    // order (COLOR_PALETTE's index), and its Off.
+    colorName: {
+      blue: dev("Blue"),
+      orange: dev("Orange"),
+      yellow: dev("Yellow"),
+      purple: dev("Purple"),
+      cyan: dev("Cyan"),
+      magenta: dev("Magenta"),
+      red: dev("Red"),
+      green: dev("Green"),
+      ltGreen: dev("LtGreen"),
+      white: dev("White"),
+      off: dev("Off"),
+    },
     recPoint: dev("Rec Point"),
     inputsFrom: (n: number): string => `Inputs (${n})`,
     outputsTo: (n: number): string => `Outputs (${n})`,

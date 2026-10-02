@@ -933,7 +933,9 @@ the inspector, and the open modal itself.
 > on one of the unit's own screens keeps that screen's English label, in every app language** — the unit
 > is English there whichever of its three display languages is selected. That was **read off the hardware
 > with its own Language set to Japanese**, screen by screen: GATE, COMP, EQ, DUCKER, OSCILLATOR, MONITOR
-> and CH SETTING carry no kana at all. The Japanese user guide names the same controls in English too
+> and CH SETTING carry no kana at all. CH SETTING's [Color] picker prints its colours as words — `Blue`,
+> `Orange`, `Yellow`, `Purple`, `Cyan`, `Magenta`, `Red`, `Green`, `LtGreen` (where the broker's table writes
+> `Light Green`), `White` and `Off` — and those are the names the Inspector's swatches carry. The Japanese user guide names the same controls in English too
 > (`[Attack]`, `[Hold]`, `[Decay]`, `[Release]`, `[Knee]`, `[Threshold]`, `[Gain]`, `[Frequency]`,
 > `[HPF Freq.]`, `[Level]`, `[Width]`, `[Interval]`, `[Pan]`, `[Name]`, `[Color]`, and the `Assign`
 > sub-menu). **The INS FX screens were read the same way on 2026-08-28, and again on 2026-08-30**, and

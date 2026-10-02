@@ -91,7 +91,7 @@ import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
-import { holdInertOnBlur, isHoldingInert, onInertHoldsEnd, wheelStep } from "./dom";
+import { holdInertOnBlur, isHoldingInert, labelId, onInertHoldsEnd, wheelStep } from "./dom";
 import { dynOpenLabel } from "./dyn-registry";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import type { DynKind } from "./dyn-registry";
@@ -665,7 +665,16 @@ export function renderInspector(
         const locked = sec.key === "eqOn" && eqLocked;
         const on = locked ? false : processorOn(np, sec.key);
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
-        body.append(sectionToggle(node.id, sec.key, on, actions, locked ? m.inspector.eqRateLocked : undefined));
+        body.append(
+          sectionToggle(
+            node.id,
+            sec.key,
+            on,
+            actions,
+            m.inspector[sec.key],
+            locked ? m.inspector.eqRateLocked : undefined,
+          ),
+        );
         if (sec.key === "gateOn" && dyn) body.append(dynLauncher("gate", node.id, actions, m));
         else if (sec.key === "compOn" && ssmcs) body.append(dynLauncher("ssmcsComp", node.id, actions, m));
         else if (sec.key === "compOn" && dyn?.comp) body.append(dynLauncher("comp", node.id, actions, m));
@@ -713,7 +722,7 @@ export function renderInspector(
       if (oeq) {
         const on = processorOn(np, "eqOn");
         const { el, body } = section(m.inspector.eqOn, { open: on, on, key: "eqOn" });
-        body.append(sectionToggle(node.id, "eqOn", on, actions));
+        body.append(sectionToggle(node.id, "eqOn", on, actions, m.inspector.eqOn));
         body.append(dynLauncher("eq", node.id, actions, m));
         host.append(el);
       }
@@ -941,6 +950,7 @@ export function renderInspector(
             "insertFxOn",
             !ifxRateLocked && ifxOn,
             actions,
+            m.inspector.insertFx,
             !ifxRateLocked
               ? undefined
               : ifxEntry?.option.maxRate !== undefined
@@ -1114,6 +1124,7 @@ function sectionToggle(
   key: string,
   on: boolean,
   actions: InspectorActions,
+  name: string,
   lockedTitle?: string,
 ): HTMLElement {
   // A lockedTitle shows the value with both buttons disabled + a tooltip (e.g. the
@@ -1126,6 +1137,7 @@ function sectionToggle(
       actions.onUpdateNodeParams(nodeId, { [key]: v });
     },
     lockedTitle,
+    name,
   );
 }
 
@@ -1218,16 +1230,19 @@ function rangeSlider(
   fmt: (v: number) => string,
   onInput: (v: number) => void,
 ): HTMLElement {
-  const { row, value } = paramBlock(label, fmt(cur));
+  const { row, value, labelId: id } = paramBlock(label, fmt(cur));
   const slider = document.createElement("input");
   slider.type = "range";
   slider.min = String(min);
   slider.max = String(max);
   slider.step = String(step);
   slider.value = String(cur);
+  nameBy(slider, id);
+  slider.setAttribute("aria-valuetext", fmt(cur));
   slider.addEventListener("input", () => {
     const v = Number(slider.value);
     setLevelText(value, fmt(v));
+    slider.setAttribute("aria-valuetext", fmt(v));
     onInput(v);
   });
   wheelStep(slider);
@@ -1313,7 +1328,7 @@ function fxEffectSection(
 function duckerBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): HTMLElement {
   const on = processorOn(np, "duckerOn");
   const { el, body } = section(m.inspector.duckerOn, { open: on, on, key: "duckerOn" });
-  body.append(sectionToggle(nodeId, "duckerOn", on, actions));
+  body.append(sectionToggle(nodeId, "duckerOn", on, actions, m.inspector.duckerOn));
   // The detail sliders moved to the tuning screen, for the reason stated on
   // `dynLauncher`: they belong beside the meters that say what they are doing, and a
   // second copy here would sit at a stale position after the screen moved a value and
@@ -1362,16 +1377,20 @@ function snappedSlider(
   fmt: (v: number) => string,
   onChange: (v: number) => void,
 ): HTMLElement {
-  const { row, value } = paramBlock(label, fmt(cur));
+  const { row, value, labelId: id } = paramBlock(label, fmt(cur));
   const slider = document.createElement("input");
   slider.type = "range";
   slider.min = "0";
   slider.max = String(posMax);
   slider.step = "1";
   slider.value = String(toPos(cur));
+  nameBy(slider, id);
+  // The position is a grid index; what it stands for is the value the readout prints.
+  slider.setAttribute("aria-valuetext", fmt(cur));
   slider.addEventListener("input", () => {
     const v = fromPos(Number(slider.value));
     setLevelText(value, fmt(v));
+    slider.setAttribute("aria-valuetext", fmt(v));
     onChange(v);
   });
   wheelStep(slider);
@@ -1414,27 +1433,45 @@ function balanceControl(label: string, cur: number, onChange: (v: number) => voi
 // (e.g. a plain send ON/OFF) do not re-render the inspector, so without this the
 // button would stay visually stale until the next selection.
 function selectToggle(group: HTMLElement, button: HTMLButtonElement): void {
-  group.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
-  button.classList.add("on");
+  group.querySelectorAll("button").forEach((x) => {
+    x.classList.toggle("on", x === button);
+    x.setAttribute("aria-pressed", String(x === button));
+  });
+}
+
+/** A two-button group, named by its row's label or, for a section's bare toggle, by the
+ *  section's own name. */
+function toggleGroup(labelId: string | undefined, name?: string): HTMLElement {
+  const group = document.createElement("div");
+  group.className = "toggle";
+  group.setAttribute("role", "group");
+  if (labelId !== undefined) group.setAttribute("aria-labelledby", labelId);
+  else if (name !== undefined) group.setAttribute("aria-label", name);
+  return group;
 }
 
 // `lockedTitle`, when set, renders the pair read-only: both buttons disabled (no
 // click handler) and the reason shown as a row tooltip — the value is still visible.
-function boolToggle(label: string, value: boolean, onChange: (v: boolean) => void, lockedTitle?: string): HTMLElement {
-  // Read as truthiness, not `=== on`. The device write is `np.mono ? 1 : 0` and the
-  // load funnel passes a finite numeric leaf through unchecked, so a plan authored
-  // elsewhere reaches here carrying 1 — under a strict compare NEITHER button lights
-  // and the row emits aria-pressed="1", which is not an ARIA boolean at all.
+// `name` names a pair that has no row label of its own (a section's bare toggle).
+function boolToggle(
+  label: string,
+  value: boolean,
+  onChange: (v: boolean) => void,
+  lockedTitle?: string,
+  name?: string,
+): HTMLElement {
+  // Read as truthiness, not `=== on`, so a value that reaches here as a number (1 / 0)
+  // lights and presses the button the write would send.
   const state = Boolean(value);
-  const { row } = paramBlock(label, "");
+  const { row, labelId: id } = paramBlock(label, "");
   if (lockedTitle !== undefined) row.title = lockedTitle;
-  const group = document.createElement("div");
-  group.className = "toggle";
+  const group = toggleGroup(id, name);
   const make = (on: boolean, text: string): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = text;
     b.classList.toggle("on", state === on);
+    b.setAttribute("aria-pressed", String(state === on));
     if (lockedTitle === undefined)
       b.addEventListener("click", () => {
         selectToggle(group, b);
@@ -1457,8 +1494,9 @@ function selectControl(
   onChange: (v: string) => void,
   disabled = false,
 ): HTMLElement {
-  const { row } = paramBlock(label, "");
+  const { row, labelId: id } = paramBlock(label, "");
   const sel = document.createElement("select");
+  nameBy(sel, id);
   for (const o of options) {
     const opt = document.createElement("option");
     opt.value = o.value;
@@ -1498,26 +1536,41 @@ function enumSelect(
 // "none" swatch is the device "Off" state (no cap).
 const NODE_COLORS = COLOR_PALETTE.map((c) => c.hex);
 
+/** The unit's own name for each palette entry, in COLOR_PALETTE's order. */
+export function colorNames(m: Messages): string[] {
+  const c = m.inspector.colorName;
+  return [c.blue, c.orange, c.yellow, c.purple, c.cyan, c.magenta, c.red, c.green, c.ltGreen, c.white];
+}
+
 // A row of color swatches plus a "none" clear option. The active color (or none)
-// is ringed. Selecting toggles: clicking the active color clears it.
+// is ringed and pressed; each swatch is named the way the unit's picker names it.
+// Selecting toggles: clicking the active color clears it.
 function colorSwatches(
   label: string,
   current: string | undefined,
   onPick: (color: string | null) => void,
 ): HTMLElement {
-  const { row } = paramBlock(label, "");
+  const { row, labelId: id } = paramBlock(label, "");
   const strip = document.createElement("div");
   strip.className = "swatches";
-  const none = document.createElement("button");
-  none.type = "button";
-  none.className = "swatch swatch-none" + (current ? "" : " sel");
-  none.title = label;
-  none.addEventListener("click", () => onPick(null));
-  strip.append(none);
-  for (const c of NODE_COLORS) {
+  strip.setAttribute("role", "group");
+  nameBy(strip, id);
+  const swatch = (name: string, selected: boolean): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "swatch" + (current === c ? " sel" : "");
+    b.className = "swatch" + (selected ? " sel" : "");
+    b.title = name;
+    b.setAttribute("aria-label", name);
+    b.setAttribute("aria-pressed", String(selected));
+    return b;
+  };
+  const none = swatch(t().inspector.colorName.off, !current);
+  none.classList.add("swatch-none");
+  none.addEventListener("click", () => onPick(null));
+  strip.append(none);
+  const names = colorNames(t());
+  for (const [i, c] of NODE_COLORS.entries()) {
+    const b = swatch(names[i], current === c);
     b.style.background = c;
     b.addEventListener("click", () => onPick(current === c ? null : c));
     strip.append(b);
@@ -1546,9 +1599,10 @@ function textInput(
   onInput: (v: string) => void,
   clip?: (v: string) => string,
 ): HTMLElement {
-  const { row } = paramBlock(label, "");
+  const { row, labelId: id } = paramBlock(label, "");
   const input = document.createElement("input");
   input.type = "text";
+  nameBy(input, id);
   input.value = value;
   input.placeholder = placeholder;
   let composing = false;
@@ -1583,9 +1637,8 @@ function textInput(
 
 function tapControl(conn: PlanConnection, onUpdate: UpdateParams, editable = true): HTMLElement {
   const cur = conn.params?.tap ?? "post";
-  const { row } = paramBlock(t().inspector.prePost, "");
-  const group = document.createElement("div");
-  group.className = "toggle";
+  const { row, labelId: id } = paramBlock(t().inspector.prePost, "");
+  const group = toggleGroup(id);
   // CH → FX taps are read-only: the device rejects software writes, so the device
   // (LCD) value is shown but the buttons are disabled, with an explanatory tooltip.
   if (!editable) row.title = t().inspector.prePostLcdOnly;
@@ -1594,6 +1647,7 @@ function tapControl(conn: PlanConnection, onUpdate: UpdateParams, editable = tru
     b.type = "button";
     b.textContent = text;
     b.classList.toggle("on", cur === tap);
+    b.setAttribute("aria-pressed", String(cur === tap));
     b.disabled = !editable;
     if (editable)
       b.addEventListener("click", () => {
@@ -1607,7 +1661,10 @@ function tapControl(conn: PlanConnection, onUpdate: UpdateParams, editable = tru
   return row;
 }
 
-function paramBlock(labelText: string, valueText: string): { row: HTMLElement; value: HTMLElement } {
+function paramBlock(
+  labelText: string,
+  valueText: string,
+): { row: HTMLElement; value: HTMLElement; labelId: string | undefined } {
   const row = document.createElement("div");
   row.className = "param";
   // What main.ts keys a carried-over focus by, stamped while the row is being built so
@@ -1617,16 +1674,25 @@ function paramBlock(labelText: string, valueText: string): { row: HTMLElement; v
   value.className = "param-val";
   setLevelText(value, valueText);
   // An empty label + value (a bare section ON/OFF toggle whose name is in the
-  // section header) skips the label row so the toggle sits flush.
+  // section header) skips the label row so the toggle sits flush. The label carries an id
+  // the row's control names itself by.
+  let id: string | undefined;
   if (labelText !== "" || valueText !== "") {
     const head = document.createElement("div");
     head.className = "param-label";
     const label = document.createElement("span");
     label.textContent = labelText;
+    id = labelId("insp-lbl");
+    label.id = id;
     head.append(label, value);
     row.append(head);
   }
-  return { row, value };
+  return { row, value, labelId: id };
+}
+
+/** Name a control by its row's label, where the row has one. */
+function nameBy(control: HTMLElement, id: string | undefined): void {
+  if (id !== undefined) control.setAttribute("aria-labelledby", id);
 }
 
 // Inline warning that the selected node's values were not read from the device

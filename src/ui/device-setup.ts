@@ -18,6 +18,7 @@ import {
   holdAppInert,
   onOff,
   holdInertOnBlur,
+  labelId,
   onWheelStep,
   settingsChoice,
   settingsNote,
@@ -50,6 +51,10 @@ import {
 import type { DeviceSetup, SetupField, SetupWrite, UdkAssignment } from "../core/control/device-setup";
 import { TIME_ZONE_CITIES } from "../core/control/timezones";
 import type { DeviceModel } from "../models/types";
+
+/** The ids of the knob columns' heads (Function / Parameter 1 / Parameter 2), which name
+ *  each knob row's three selects together with the knob's own name. */
+const UDK_COLUMN_IDS = ["device-setup-udk-fn", "device-setup-udk-p1", "device-setup-udk-p2"];
 
 /** What one diff pass answers: what to mark, what to count, what to send. */
 interface SetupChanges {
@@ -421,9 +426,10 @@ export class DeviceSetupPanel {
     const m = t().deviceSetup;
     const head = el("div", "udk-head");
     const cols = el("div", "cols");
-    for (const label of [m.function, m.param1, m.param2]) {
+    for (const [i, label] of [m.function, m.param1, m.param2].entries()) {
       const span = el("span", "");
       span.textContent = label;
+      span.id = UDK_COLUMN_IDS[i];
       cols.append(span);
     }
     head.append(el("span", ""), cols);
@@ -447,7 +453,7 @@ export class DeviceSetupPanel {
     };
     // Picking a function re-seeds the two parameter columns from the catalog: the
     // device stores whatever it is given, so an inconsistent triple would be shown
-    // on the unit verbatim.
+    // on the unit verbatim. Each select is named by its knob and its column's head.
     sel.append(
       settingsSelect(
         UDK_FUNCTIONS.map((f) => f.fn),
@@ -470,6 +476,9 @@ export class DeviceSetupPanel {
         m.unset,
       ),
     );
+    name.id = labelId("udk-knob");
+    for (const [i, select] of [...sel.children].entries())
+      select.setAttribute("aria-labelledby", `${name.id} ${UDK_COLUMN_IDS[i]}`);
     row.append(name, sel);
     return row;
   }

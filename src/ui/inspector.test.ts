@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { compositionGate, inspectorNodes, renderInspector } from "./inspector";
+import { colorNames, compositionGate, inspectorNodes, renderInspector } from "./inspector";
 import type { InspectorActions } from "./inspector";
 import { resetSectionCache } from "./inspector-sections";
 import type { Selection } from "./graph";
@@ -15,6 +15,7 @@ import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
 import {
   BUS_TYPE_FIXED,
+  COLOR_PALETTE,
   COMP_EQ_SSMCS,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
@@ -1306,5 +1307,114 @@ describe("renderInspector — the sample-rate warning card's preference", () => 
     expect(panel.textContent).not.toContain(t().warning.stereoEq);
     expect(panel.textContent).toContain(t().warning.duckerTitle); // the other switch stands
     expect(eqLock()).toBe(t().inspector.eqRateLocked); // and so does the lock it named
+  });
+});
+
+// What a screen reader is given: every control named by its row's label (a two-button pair
+// as a group the label names), which button of a pair is pressed, each colour swatch named
+// the way the unit's own picker names it, and a snapped slider's value as the value it
+// stands for rather than its grid position.
+describe("names and states a screen reader is given", () => {
+  /** The name a control's attributes give it: aria-labelledby's referents, else
+   *  aria-label, else its own text. */
+  const nameOf = (el: Element): string => {
+    const by = el.getAttribute("aria-labelledby");
+    if (by)
+      return by
+        .split(/\s+/)
+        .map((ref) => document.getElementById(ref)?.textContent ?? "")
+        .join(" ")
+        .trim();
+    return (el.getAttribute("aria-label") ?? el.textContent ?? "").trim();
+  };
+
+  it.each(MODEL_IDS)("names every control, and presses one button of every pair, on %s", (id) => {
+    const model = getModel(id);
+    const plan = defaultPlan(id);
+    const selections: Selection[] = [
+      ...model.nodes.map((n) => nodeSel(n.id)),
+      ...plan.connections.map((c) => connSel(c.from, c.to)),
+    ];
+    let pairs = 0;
+    for (const sel of selections) {
+      const host = document.createElement("div");
+      document.body.append(host);
+      renderInspector(host, model, plan, sel, actions());
+      const where = JSON.stringify(sel);
+      for (const c of host.querySelectorAll("input, select, button"))
+        expect(nameOf(c), `${where}: ${c.outerHTML.slice(0, 80)}`).not.toBe("");
+      for (const g of host.querySelectorAll(".toggle")) {
+        pairs++;
+        expect(g.getAttribute("role"), where).toBe("group");
+        expect(nameOf(g), `${where}: a pair's group`).not.toBe("");
+        const pressed = [...g.querySelectorAll("button")].map((b) => b.getAttribute("aria-pressed"));
+        expect(
+          pressed.filter((p) => p === "true"),
+          `${where}: ${pressed}`,
+        ).toHaveLength(1);
+        expect(
+          pressed.every((p) => p === "true" || p === "false"),
+          where,
+        ).toBe(true);
+      }
+      host.remove();
+    }
+    // The positive control: the sweep met pairs at all.
+    expect(pairs).toBeGreaterThan(10);
+  });
+
+  it("moves the pressed state with a click on a pair", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const pair = panel.querySelector<HTMLElement>('.param[data-param-label="+48V"] .toggle')!;
+    const [on, off] = [...pair.querySelectorAll("button")];
+    const before = on.getAttribute("aria-pressed");
+    (before === "true" ? off : on).click();
+    expect(on.getAttribute("aria-pressed")).toBe(before === "true" ? "false" : "true");
+    expect(off.getAttribute("aria-pressed")).toBe(before === "true" ? "true" : "false");
+  });
+
+  it("names each colour swatch the way the unit does and presses the chosen one", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeColors = { ...plan.nodeColors, ch1: COLOR_PALETTE[8].hex };
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
+    const strip = panel.querySelector(".swatches")!;
+    expect(strip.getAttribute("role")).toBe("group");
+    expect(nameOf(strip)).toBe(t().inspector.color);
+    const swatches = [...strip.querySelectorAll("button.swatch")];
+    expect(swatches.map((s) => s.getAttribute("aria-label"))).toEqual([
+      "Off",
+      "Blue",
+      "Orange",
+      "Yellow",
+      "Purple",
+      "Cyan",
+      "Magenta",
+      "Red",
+      "Green",
+      "LtGreen",
+      "White",
+    ]);
+    expect(swatches.map((s) => s.getAttribute("aria-pressed"))).toEqual(swatches.map((_, i) => String(i === 9)));
+  });
+
+  it("keeps the colour names in the palette's order", () => {
+    // The broker's table names one entry Light Green where the unit prints LtGreen; every
+    // other name is the same word, so the two lists line up entry by entry.
+    expect(colorNames(t()).map((n) => n.replace(/^Lt/, "Light "))).toEqual(COLOR_PALETTE.map((c) => c.name));
+  });
+
+  it("gives a send's level the level as its value, not the grid position", () => {
+    const plan = defaultPlan("URX44V");
+    const send = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    renderInspector(panel, getModel("URX44V"), plan, connSel(send.from, send.to), act);
+    const row = panel.querySelector<HTMLElement>(`.param[data-param-label="${t().inspector.level}"]`)!;
+    const slider = row.querySelector<HTMLInputElement>('input[type="range"]')!;
+    const readout = () => row.querySelector(".param-val")!.textContent;
+    expect(nameOf(slider)).toBe(t().inspector.level);
+    expect(slider.getAttribute("aria-valuetext")).toBe(readout());
+    slider.value = String(Number(slider.value) + 1);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(slider.getAttribute("aria-valuetext")).toBe(readout());
+    expect(slider.getAttribute("aria-valuetext")).not.toBe(slider.value);
   });
 });

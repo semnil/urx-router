@@ -197,6 +197,18 @@ describe("DeviceSetupPanel", () => {
       document.querySelectorAll<HTMLButtonElement>("#device-setup-banks button")[1].getAttribute("aria-pressed"),
     ).toBe("true");
 
+    // Each of a knob's three selects is named by the knob and its column's head.
+    const named = [...document.querySelectorAll<HTMLSelectElement>(".udk-row select")].map((s) =>
+      (s.getAttribute("aria-labelledby") ?? "")
+        .split(/\s+/)
+        .map((ref) => document.getElementById(ref)?.textContent ?? "")
+        .join(" "),
+    );
+    const knob = document.querySelector(".udk-row .knob")!.textContent;
+    const heads = [...document.querySelectorAll(".udk-head .cols span")].map((h) => h.textContent);
+    expect(heads).toHaveLength(3);
+    expect(named.slice(0, 3)).toEqual(heads.map((h) => `${knob} ${h}`));
+
     const fn = document.querySelector<HTMLSelectElement>(".udk-row select")!;
     change(fn, "Monitor");
     const row = document.querySelector(".udk-row");

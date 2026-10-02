@@ -952,8 +952,9 @@ test.describe("T2 shape-change", () => {
     const preBtn = page
       .locator("#inspector .param", { hasText: "Pre/Post" })
       .getByRole("button", { name: "PRE", exact: true });
-    // The selected state of this pair is the `on` class, not aria-pressed (ui/inspector.ts).
+    // The pair carries its selected state as aria-pressed as well as the `on` class.
     await expect(preBtn).toHaveClass(/\bon\b/);
+    await expect(preBtn).toHaveAttribute("aria-pressed", "true");
     // Read-only while live, which the follow must not have changed.
     await expect(preBtn).toBeDisabled();
   });

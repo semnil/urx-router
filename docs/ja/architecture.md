@@ -720,7 +720,9 @@ UI は英語を基本とし、日本語ローカライズに対応する。実�
 > **本体の画面にあるコントロールを写した行は、その画面の英語ラベルを
 > どの言語でもそのまま使う** — 本体は 3 つの表示言語のどれを選んでも当該画面が英語のままである。これは**本体の
 > Language を日本語にした状態で実機を画面ごとに目視**して確認した: GATE / COMP / EQ / DUCKER / OSCILLATOR /
-> MONITOR / CH SETTING のいずれにも仮名は 1 つも出ない。日本語版ユーザーガイドも同じコントロールを英語で
+> MONITOR / CH SETTING のいずれにも仮名は 1 つも出ない。CH SETTING の [Color] ピッカーは色を語として表示する —
+> `Blue` / `Orange` / `Yellow` / `Purple` / `Cyan` / `Magenta` / `Red` / `Green` / `LtGreen` (ブローカーの表は
+> `Light Green` と書く) / `White` / `Off` — ので、インスペクタのスウォッチはその名前を持つ。日本語版ユーザーガイドも同じコントロールを英語で
 > 参照している (`[Attack]` / `[Hold]` / `[Decay]` / `[Release]` / `[Knee]` / `[Threshold]` / `[Gain]` /
 > `[Frequency]` / `[HPF Freq.]` / `[Level]` / `[Width]` / `[Interval]` / `[Pan]` / `[Name]` / `[Color]`、
 > および `Assign` サブメニュー)。**INS FX の各画面は 2026-08-28 に、さらに 2026-08-30 に同じ方法で読んだ**。

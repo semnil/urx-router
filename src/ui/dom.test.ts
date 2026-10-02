@@ -9,6 +9,7 @@ import {
   holdAppInert,
   holdInertOnBlur,
   onOff,
+  onOffButton,
   onWheelStep,
   popLeft,
   popTop,
@@ -474,6 +475,40 @@ describe("settings builders", () => {
     ).toBe(true);
     expect(built.querySelector(".lblc")?.children[1]).toBe(legend);
     expect(built.querySelector(".prefs-lock")?.textContent).toBe("Unavailable");
+  });
+
+  // The row's label is what names its control: a select or a field by itself, a pair of
+  // faces as a group, a switch carrying aria-pressed by the label alone (its pressed state
+  // says on or off), and any other lone button by the label followed by its own words.
+  it("names a row's control by the row's label", () => {
+    document.body.replaceChildren();
+    const nameOf = (c: Element): string =>
+      (c.getAttribute("aria-labelledby") ?? "")
+        .split(/\s+/)
+        .map((ref) => document.getElementById(ref)?.textContent ?? "")
+        .join(" ")
+        .trim();
+    const select = settingsSelect([1, 2], 1, String, vi.fn());
+    const pair = settingsChoice(["A", "B"], 0, vi.fn());
+    const sw = onOffButton(true, vi.fn());
+    const action = document.createElement("button");
+    action.textContent = "Check now";
+    const named = document.createElement("input");
+    named.setAttribute("aria-label", "Own name");
+    document.body.append(
+      settingsRow("Theme", select),
+      settingsRow("Scope", pair),
+      settingsRow("Bypass", sw),
+      settingsRow("Updates", action),
+      settingsRow("Level", named),
+    );
+    expect(nameOf(select)).toBe("Theme");
+    expect(pair.getAttribute("role")).toBe("group");
+    expect(nameOf(pair)).toBe("Scope");
+    expect(nameOf(sw)).toBe("Bypass");
+    expect(nameOf(action)).toBe("Updates Check now");
+    expect(named.hasAttribute("aria-labelledby")).toBe(false);
+    document.body.replaceChildren();
   });
 
   it("selects only inactive choices and handles empty or numeric selects", () => {
