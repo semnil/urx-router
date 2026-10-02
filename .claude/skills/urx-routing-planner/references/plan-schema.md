@@ -186,6 +186,13 @@ or inside a group — is written `true` / `false`: a number there loads converte
   2 PRE EQ / 4 PRE FADER on a stereo channel; absent = PRE FADER. A stage the
   channel does not offer opens at PRE FADER — a PRE EQ in SSMCS mode at PRE COMP.
 - `stereoLink` — stereo-link a MONO IN pair (set on the odd/primary channel).
+  A linked pair holds one set of values, the primary's: everything but `stereoLink`,
+  `panBal`, the input stage (`gain`, `clipSafe`, `phase`, `phantom`, `hiZ`) and the
+  insert effect is the pair's, and so are its sends' `level`, `on` and `tap` (and
+  `pan` in BAL). Writing the values on the primary alone is enough — the load copies
+  them onto the secondary, which then holds the primary's rather than its own
+  factory values — and a secondary written differently is overwritten the same way
+  (the validator warns that the app copies it).
 - `panBal` — 0 PAN / 1 BAL for a linked pair, on the primary. An unlinked pair
   holds PAN (the unit's control exists only while the pair is linked), so a
   document carrying BAL there opens at PAN.

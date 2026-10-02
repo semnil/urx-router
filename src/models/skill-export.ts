@@ -9,10 +9,10 @@
 import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
-import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
-import { isPlainRecord, type NodeParams } from "../core/plan";
+import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, PAN_BAL_BAL } from "../core/control/params";
+import { fixedConnection, isPlainRecord, SEND_LEVEL_UNNAMED_DB, type ConnParams, type NodeParams } from "../core/plan";
 import { factoryNodeParams } from "./initial-state";
-import { monoPairsInto } from "../core/routing";
+import { INSERT_FX_PAIR_KEYS, monoPairsInto, PAIR_OWN_NODE_KEYS } from "../core/routing";
 import { isRackSend } from "../core/plan-validate";
 import { channelControl, hasHiZInput, nodeLeafRules, type LeafRule } from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
@@ -109,6 +109,20 @@ export interface SkillModel {
    *  menu to the one it stands for, which wins over the default. The insert-FX engine keys are not here: which rule a key takes is its
    *  family's, which `insertFxParamSpace` carries. */
   leafRules: Record<string, Record<string, LeafRule & Partial<Record<LeafContext, LeafRule>>>>;
+  /** What the load's linked-pair repair reads (`linkedPairProblems`). A STEREO-linked pair holds
+   *  one set of values, and the load copies the primary's onto the secondary: every node param
+   *  but `own` — the pair-level flags and the input stage each member keeps — and `insertFx`, the
+   *  insert effect, which the refusal answers for instead; and each pair of fixed sends' level,
+   *  on/off and PRE/POST, plus the pan when the primary's `panBal` is `bal`. A send is read the
+   *  way the write reads it: one the document omits as the params the install seeds it with
+   *  (`sendSeeds`, keyed `<from> -> <to>`), and a missing level as `unnamedSendLevel`. */
+  linkedPairs: {
+    own: string[];
+    insertFx: string[];
+    bal: number;
+    sendSeeds: Record<string, ConnParams>;
+    unnamedSendLevel: number;
+  };
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -130,6 +144,17 @@ function skillModel(model: DeviceModel): SkillModel {
     booleanLeaves: booleanLeaves(model),
     factory: { nodeParams: factoryParams(model) },
     leafRules: leafRules(model),
+    linkedPairs: {
+      own: [...PAIR_OWN_NODE_KEYS],
+      insertFx: [...INSERT_FX_PAIR_KEYS],
+      bal: PAN_BAL_BAL,
+      sendSeeds: Object.fromEntries(
+        model.rules
+          .filter((r) => r.fixed && r.kind === "send")
+          .map((r) => [`${r.from} -> ${r.to}`, fixedConnection(model, r).params ?? {}]),
+      ),
+      unnamedSendLevel: SEND_LEVEL_UNNAMED_DB,
+    },
   };
 }
 

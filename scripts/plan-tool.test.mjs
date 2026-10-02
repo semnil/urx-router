@@ -26,7 +26,13 @@ import { fileURLToPath } from "node:url";
 import { deserialize, PLAN_VERSION } from "../src/core/plan";
 import { insertFxPairProblems, paramRangeProblems } from "../src/core/plan-validate";
 import { getModel, MODEL_IDS } from "../src/models";
-import { BUS_TYPE_FIXED, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../src/core/control/params";
+import {
+  BUS_TYPE_FIXED,
+  INSERT_FX_NONE,
+  INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
+  PAN_BAL_PAN,
+} from "../src/core/control/params";
 import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
 import { atLeast, newestPython } from "./python.test-util.mjs";
 
@@ -1694,11 +1700,120 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     expect(supplied.no).toBeGreaterThan(0);
   });
 
+  // A STEREO-linked pair holds one set of values, and the app's load copies the primary's onto a
+  // secondary that disagrees. The pairs the app copies, and what it names, are compared with the
+  // ones the tool says it copies: a pair split on a dynamics group and the HPF, a document naming
+  // only the primary, a link written as a number, a value of the wrong kind, a pair of sends in PAN
+  // mode and in BAL, an ON one member omits — beside the documents nothing may be said about: an
+  // agreeing pair, an unlinked one, one differing only in each member's own input stage or in an
+  // insert effect stored but not sent, and a scalar where a group belongs, which the fill replaces.
+  // Every model, since the pairs are a model fact.
+  it("agrees with the app about the linked pairs the load aligns", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { planProblems } = await import("../src/core/plan-validate.ts");
+    const send = (from, to, params) => ({
+      from: `${from}:out`,
+      to: `${to}:in`,
+      kind: "send",
+      ...(params ? { params } : {}),
+    });
+    const corpus = [
+      [
+        "a pair split on the gate and the HPF",
+        {
+          ch1: { stereoLink: true, panBal: PAN_BAL_PAN, gate: { threshold: -50 }, hpfFreq: 100 },
+          ch2: { gate: { threshold: -30 }, hpfFreq: 60 },
+        },
+      ],
+      [
+        "a document naming only the primary",
+        { ch1: { stereoLink: true, panBal: PAN_BAL_BAL, gateOn: true, gate: { threshold: -40 } } },
+      ],
+      ["a link written as a number", { ch1: { stereoLink: 1, hpfFreq: 100 } }],
+      ["a value of the wrong kind on the secondary", { ch1: { stereoLink: true }, ch2: { hpfFreq: true } }],
+      [
+        "a pair of sends in PAN mode",
+        { ch1: { stereoLink: true, panBal: PAN_BAL_PAN } },
+        [
+          send("ch1", "bus.mix1", { level: -10 }),
+          send("ch1", "bus.stereo", { pan: -63 }),
+          send("ch2", "bus.stereo", { pan: 63 }),
+        ],
+      ],
+      [
+        "a pair of mains in BAL",
+        { ch1: { stereoLink: true, panBal: PAN_BAL_BAL } },
+        [send("ch1", "bus.stereo", { pan: -25 }), send("ch2", "bus.stereo", { pan: 40 })],
+      ],
+      [
+        "an ON the primary omits",
+        { ch1: { stereoLink: true } },
+        [send("ch2", "bus.mix2", { level: -96.5, on: false })],
+      ],
+      // …and the documents nothing may be said about.
+      ["an agreeing pair", { ch1: { stereoLink: true, hpfFreq: 100 }, ch2: { hpfFreq: 100 } }],
+      ["an unlinked pair", { ch1: { hpfFreq: 100 }, ch2: { hpfFreq: 60 } }],
+      ["a link written off", { ch1: { stereoLink: false, hpfFreq: 100 } }],
+      ["a pair apart in its input stages", { ch1: { stereoLink: true, gain: 10, phantom: true }, ch2: { gain: 30 } }],
+      [
+        "an insert effect stored but not sent",
+        {
+          ch1: { stereoLink: true, insertFx: INSERT_FX_NONE },
+          ch2: { insertFx: INSERT_FX_NONE, insertFxParams: { stray: 5 } },
+        },
+      ],
+      ["a scalar where a group belongs", { ch1: { stereoLink: true }, ch2: { gate: 5 } }],
+      [
+        "mains apart in PAN mode",
+        { ch1: { stereoLink: true, panBal: PAN_BAL_PAN } },
+        [send("ch1", "bus.stereo", { pan: -63 }), send("ch2", "bus.stereo", { pan: 63 })],
+      ],
+    ];
+    const aligned = { yes: 0, no: 0 };
+    for (const modelId of MODEL_IDS) {
+      for (const [name, nodeParams, connections = []] of corpus) {
+        const plan = {
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections,
+          nodeParams,
+        };
+        const loaded = deserializeDocument(JSON.stringify(plan)).plan;
+        const app = planProblems(getModel(modelId), loaded)
+          .filter((p) => p.reason === "linkedPair")
+          .map(
+            (p) =>
+              `${p.nodes[1]} <- ${p.nodes[0]}: ${[...p.keys, ...p.sends.map((to) => `send -> ${to}`)].sort().join(", ")}`,
+          )
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) => /^WARNING: node (\S+): the app copies (\S+)'s values onto it on load \((.*)\) — /.exec(l))
+          .filter((m) => m !== null)
+          .map((m) => `${m[1]} <- ${m[2]}: ${m[3].split(", ").sort().join(", ")}`)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        aligned[app.length > 0 ? "yes" : "no"]++;
+      }
+    }
+    // Both answers are real populations: documents whose pairs the load aligns, and documents it
+    // leaves as written.
+    expect(aligned.yes).toBeGreaterThan(0);
+    expect(aligned.no).toBeGreaterThan(0);
+  });
+
   // While a MIX bus's Pan Link is on, the unit holds every send pan into it at its source's own
   // pan / balance, and the app's load sets the document's there. The sends whose pan the load
   // CHANGES — or adds, where the document omits the send — are compared with the ones the tool
   // says it sets, value included, so neither half can be read off the other's problem list: a
-  // mono, a stereo and an FX source, a STEREO-linked pair in PAN and in BAL, a FIXED MIX with the
+  // mono, a stereo and an FX source, a STEREO-linked pair in PAN and in BAL — one in BAL whose two
+  // balances disagree, which the linked-pair copy settles first — a FIXED MIX with the
   // link on, a pan, a send or a main path the document omits, and a link written as a number,
   // which the load converts to on before it asks, beside the documents nothing may be said
   // about — an unlinked MIX, a link written off, one written as 0, and sends already at their
@@ -1722,6 +1837,11 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       [
         "a STEREO-linked pair in BAL",
         [main("ch1", -25), main("ch2", -25), send("ch1", "bus.mix1", -40), send("ch2", "bus.mix1", -40)],
+        { ...pair(PAN_BAL_BAL), ...linked() },
+      ],
+      [
+        "a STEREO-linked pair in BAL whose mains disagree",
+        [main("ch1", -25), main("ch2", 40), send("ch1", "bus.mix1", 10), send("ch2", "bus.mix1", 10)],
         { ...pair(PAN_BAL_BAL), ...linked() },
       ],
       [

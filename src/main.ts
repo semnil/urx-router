@@ -2362,6 +2362,8 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
     ...problems.map((p) => {
       if (p.reason === "insertFxSlot") return `[${p.reason}] ${p.slot}: ${p.nodes.join(", ")}`;
       if (p.reason === "insertFxPair") return `[${p.reason}] ${p.nodes.join(" / ")}: ${p.keys.join(", ")}`;
+      if (p.reason === "linkedPair")
+        return `[${p.reason}] ${p.nodes.join(" / ")}: ${[...p.keys, ...p.sends.map((to) => `send -> ${to}`)].join(", ")}`;
       if (p.reason === "paramRange") {
         // JSON rather than String(): a stored value is a number in the ordinary case but can be
         // a boolean or an object, and `[object Object]` names neither what was there nor why.
@@ -2417,7 +2419,7 @@ function loadFromText(text: string, path?: string): boolean | null {
     // omits is a key the panel draws a default for and the write does not send. The DEVICE
     // paths do not come through here: a fetch fills from the unit, and a node it could not
     // read stays absent on purpose.
-    const { booleans, ranged, supplied, sendLevels, linkedPans } = prepareLoadedPlan(
+    const { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans } = prepareLoadedPlan(
       getModel(next.modelId),
       next,
       problems,
@@ -2472,6 +2474,7 @@ function loadFromText(text: string, path?: string): boolean | null {
         ...(dropCount > 0 ? [t().status.paramsDropped(dropCount)] : []),
         ...(supplied.length > 0 ? [t().status.streamingSourceSupplied] : []),
         ...(sendLevels.length > 0 ? [t().status.sendLevelsSupplied(sendLevels.length)] : []),
+        ...(linkedPairs.length > 0 ? [t().status.linkedPairsAligned(linkedPairs.length)] : []),
         ...(linkedPans.length > 0 ? [t().status.linkedSendPansAligned(linkedPans.length)] : []),
       ];
       const line = (what: string): string => [...notes, what].join(" — ");

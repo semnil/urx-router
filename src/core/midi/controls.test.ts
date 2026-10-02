@@ -1396,9 +1396,11 @@ describe("what a mirrored pair covers", () => {
         },
       }),
     );
-    // Reachable, like the insert-FX pair: nothing makes the two agree before a press arrives.
+    // Reachable, like the insert-FX pair: the codec keeps it, and while a DOCUMENT carrying it is
+    // repaired on load — the primary's value copied onto the secondary — a device read that
+    // reached one member alone still brings it.
     expect([back.nodeParams.ch1?.on, back.nodeParams.ch2?.on]).toEqual([true, false]);
-    expect(planProblems(model, back)).toEqual([]);
+    expect(planProblems(model, back).map((p) => p.reason)).toEqual(["linkedPair"]);
 
     const a = press("ch1", PAN_BAL_BAL, true, false);
     const b = press("ch2", PAN_BAL_BAL, true, false);

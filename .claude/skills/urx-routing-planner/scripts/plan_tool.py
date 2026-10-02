@@ -19,6 +19,10 @@ loads the plan as authored":
 - a fixed send into a MIX or FX bus the document lists without a level is given 0 dB on
   load, the level the write sends for it (core/plan-validate.ts `sendLevelProblems`), which
   is reported as a warning — the plan loads with a level it did not write,
+- a STEREO-linked pair whose members disagree about a value the pair holds once has the
+  primary's values copied onto the secondary on load (core/plan-validate.ts
+  `linkedPairProblems`), which is reported as a warning — a document naming only the
+  primary loads with the secondary holding the primary's values,
 - a send into a MIX bus whose Pan Link is on takes its source's own pan / balance on
   load (core/plan-validate.ts `linkedSendPanProblems`) wherever the document gives it
   another, which is reported as a warning — the plan loads with the pan the unit
@@ -50,7 +54,8 @@ Usage:
 
 Exit code is non-zero when the plan has hard validation problems, so the skill
 can branch on it. Warnings (a dropped wire or value, a wire the load adds, a
-send level the load completes, a linked send pan the load sets, an on/off the load converts, a misplaced Ducker
+send level the load completes, a linked pair the load aligns, a linked send pan
+the load sets, an on/off the load converts, a misplaced Ducker
 param, raw-encoded params, a destructive effect selector, a contended insert-FX
 slot)
 are advisory and never fail the plan — but they all mean something worth telling
@@ -229,7 +234,10 @@ def validate(plan, models):
 
     warnings.extend(required_source_warnings(view, model, kept))
     warnings.extend(send_level_warnings(model, kept))
-    warnings.extend(linked_send_pan_warnings(view, model, kept))
+    pairs = linked_pair_problems(view, model, kept)
+    warnings.extend(linked_pair_warnings(pairs))
+    paired, paired_kept = paired_view(view, model, kept, pairs)
+    warnings.extend(linked_send_pan_warnings(paired, model, paired_kept))
     warnings.extend(collection_warnings(view))
     warnings.extend(
         node_param_warnings(
@@ -335,6 +343,159 @@ def send_level_warnings(model, kept):
         why = "the document lists it without one, and 0 dB is the level a write sends for it"
         out.append(f"connection {c['from']} -> {c['to']}: the app sets this send's level to 0 on load — {why}")
     return out
+
+
+def filled(carried, factory):
+    """One value as the app's load completes it from the factory value at the same place
+    (models/initial-state.ts `mergeUnder`): the document wins at every key, a group recurses, a
+    list merges by index, and a scalar where the factory holds a group or a list is replaced by
+    it. `carried` is MISSING where the document has nothing there."""
+    if carried is MISSING:
+        return copy.deepcopy(factory)
+    if isinstance(factory, list) and isinstance(carried, list):
+        out = [filled(carried[i] if i < len(carried) else MISSING, f) for i, f in enumerate(factory)]
+        return out + carried[len(factory):]
+    if isinstance(factory, dict) and isinstance(carried, dict):
+        out = dict(carried)
+        for key, value in factory.items():
+            out[key] = filled(carried.get(key, MISSING), value)
+        return out
+    if isinstance(factory, (dict, list)):
+        return copy.deepcopy(factory)
+    return carried
+
+
+def js_equal(a, b):
+    """The app's structural equality (`deepEqual`): an on/off never equals a number, which
+    Python's `True == 1` would say it does."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(js_equal(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(js_equal(x, y) for x, y in zip(a, b))
+    if isinstance(a, (dict, list)) or isinstance(b, (dict, list)):
+        return False
+    return a == b
+
+
+def pair_sends(model, a, b):
+    """The fixed sends both members of a pair have into one destination, in the primary's
+    rule order, as (primary's from, secondary's from, to)."""
+    rules = {(frm, to) for frm, to, kind, fixed in model["rules"] if fixed and kind == "send"}
+    return [
+        (frm, f"{b}:out", to)
+        for frm, to, kind, fixed in model["rules"]
+        if fixed and kind == "send" and frm == f"{a}:out" and (f"{b}:out", to) in rules
+    ]
+
+
+def sent_send(model, by_wire, frm, to):
+    """A send's params as the write reads them: a listed send's own, an omitted one's seed."""
+    spec = model["linkedPairs"]
+    listed = by_wire.get((frm, to))
+    params = (listed.get("params") or {}) if listed is not None else spec["sendSeeds"].get(f"{frm} -> {to}", {})
+    level = params.get("level")
+    on = params.get("on")
+    pan = params.get("pan")
+    return {
+        "level": spec["unnamedSendLevel"] if level is None else level,
+        "on": True if on is None else on,
+        "tap": "pre" if params.get("tap") == "pre" else "post",
+        "pan": 0 if pan is None else pan,
+    }
+
+
+def pair_copies(model, key):
+    spec = model["linkedPairs"]
+    return key not in spec["own"] and key not in spec["insertFx"]
+
+
+def pair_send_keys(view_np, model, primary):
+    bal = view_np.get(primary, {}).get("panBal") if isinstance(view_np.get(primary), dict) else None
+    shared_pan = is_number(bal) and bal == model["linkedPairs"]["bal"]
+    return ("level", "on", "tap", "pan") if shared_pan else ("level", "on", "tap")
+
+
+def linked_pair_problems(plan, model, kept):
+    """The STEREO-linked pairs whose members disagree (core/plan-validate.ts
+    `linkedPairProblems`): a node param the pair holds once, as the fill completes it, or a pair
+    of fixed sends into one destination, read the way the write reads them — the pan only in BAL.
+    The insert effect is the refusal's. Returns (primary, secondary, keys, sends)."""
+    node_params = plan.get("nodeParams")
+    node_params = node_params if isinstance(node_params, dict) else {}
+    factory = (model.get("factory") or {}).get("nodeParams") or {}
+    by_wire = {(c["from"], c["to"]): c for c in kept}
+    out = []
+    for a, b in model.get("channelPairs") or []:
+        if sanitized(node_params, a, "stereoLink") is not True:
+            continue
+        def done(node_id):
+            params = node_params.get(node_id)
+            carried = sanitize_record(params) if isinstance(params, dict) else MISSING
+            return filled(carried, factory.get(node_id, {}))
+        pa, pb = done(a), done(b)
+        keys = [
+            k
+            for k in dict.fromkeys([*pa.keys(), *pb.keys()])
+            if pair_copies(model, k) and not js_equal(pa.get(k, MISSING), pb.get(k, MISSING))
+        ]
+        send_keys = pair_send_keys(node_params, model, a)
+        sends = []
+        for fa, fb, to in pair_sends(model, a, b):
+            sa, sb = sent_send(model, by_wire, fa, to), sent_send(model, by_wire, fb, to)
+            if any(not js_equal(sa[k], sb[k]) for k in send_keys):
+                sends.append(to)
+        if keys or sends:
+            out.append((a, b, keys, sends))
+    return out
+
+
+def linked_pair_warnings(problems):
+    out = []
+    for a, b, keys, sends in problems:
+        what = ", ".join([*keys, *(f"send -> {to}" for to in sends)])
+        why = "a STEREO-linked pair holds one set of values, the odd channel's"
+        out.append(f"node {b}: the app copies {a}'s values onto it on load ({what}) — {why}")
+    return out
+
+
+def paired_view(plan, model, kept, problems):
+    """The plan and its kept wires as the linked-pair copy leaves them: the secondary's shared
+    node params replaced by the primary's, and each pair of sends' shared params copied, an
+    omitted member given its seed."""
+    if not problems:
+        return plan, kept
+    view = copy.deepcopy(plan)
+    wires = copy.deepcopy(kept)
+    node_params = view.get("nodeParams") if isinstance(view.get("nodeParams"), dict) else {}
+    seeds = model["linkedPairs"]["sendSeeds"]
+    for a, b, _keys, _sends in problems:
+        src = node_params.get(a) if isinstance(node_params.get(a), dict) else {}
+        own = node_params.get(b) if isinstance(node_params.get(b), dict) else {}
+        merged = {k: v for k, v in own.items() if not pair_copies(model, k)}
+        merged.update({k: copy.deepcopy(v) for k, v in src.items() if pair_copies(model, k)})
+        node_params[b] = merged
+        send_keys = pair_send_keys(node_params, model, a)
+        for fa, fb, to in pair_sends(model, a, b):
+            find = lambda frm: next((c for c in wires if c["from"] == frm and c["to"] == to), None)
+            if find(fa) is None and find(fb) is None:
+                continue
+            for frm in (fa, fb):
+                if find(frm) is None:
+                    seed = seeds.get(f"{frm} -> {to}", {})
+                    wires.append({"from": frm, "to": to, "kind": "send", **({"params": dict(seed)} if seed else {})})
+            ca, cb = find(fa), find(fb)
+            params = dict(cb.get("params") or {})
+            for k in send_keys:
+                value = (ca.get("params") or {}).get(k)
+                if value is None:
+                    params.pop(k, None)
+                else:
+                    params[k] = value
+            cb["params"] = params
+    view["nodeParams"] = node_params
+    return view, wires
 
 
 MIX_BUSES = ("bus.mix1", "bus.mix2")

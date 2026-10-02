@@ -9,6 +9,7 @@ import {
   insertFxPairProblems,
   insertFxSlotProblems,
   isRefusal,
+  linkedPairProblems,
   linkedSendPanProblems,
   needsDecision,
   paramRangeProblems,
@@ -1135,6 +1136,166 @@ describe("sendLevelProblems", () => {
     expect(problem).toBeDefined();
     expect(isRefusal(problem)).toBe(false);
     expect(needsDecision(problem)).toBe(false);
+  });
+});
+
+// A STEREO-linked pair holds one set of values on the unit, which copies the odd channel's onto the
+// even one when the pair is linked. A document whose members disagree is two values the unit cannot
+// hold, so the load copies the primary's onto the secondary and says so — a document naming only the
+// primary included, whose secondary would otherwise take its own factory values.
+describe("linkedPairProblems", () => {
+  const u44v = getModel("URX44V");
+  const doc = (nodeParams: unknown, connections: unknown[] = []): Plan =>
+    deserialize(
+      JSON.stringify({ format: "urx-router-plan", version: PLAN_VERSION, modelId: "URX44V", nodeParams, connections }),
+    );
+  const load = (plan: Plan) => prepareLoadedPlan(u44v, plan, planProblems(u44v, plan));
+  /** What the write sends for one param on each member, by the address's y. */
+  const sentPair = (plan: Plan, name: string): number[] =>
+    planToCommands(u44v, plan)
+      .filter((c) => c.name === name && (c.node === "ch1" || c.node === "ch2"))
+      .map((c) => c.vdValue);
+  const send = (from: string, to: string, params?: Record<string, unknown>) => ({
+    from: `${from}:out`,
+    to: `${to}:in`,
+    kind: "send",
+    ...(params ? { params } : {}),
+  });
+
+  it("copies the primary's shared values onto a secondary that disagrees, and says which", () => {
+    const plan = doc({
+      ch1: { stereoLink: true, panBal: PAN_BAL_PAN, gate: { threshold: -50 }, hpfFreq: 100, gain: 20 },
+      ch2: { gate: { threshold: -30 }, hpfFreq: 60, gain: 40 },
+    });
+    expect(sentPair(plan, "GATE_THRESHOLD"), "the premise: the write sends two thresholds").toHaveLength(2);
+    const problems = linkedPairProblems(u44v, plan);
+    expect(problems.map((p) => [p.nodes, [...p.keys].sort(), p.sends])).toEqual([
+      [["ch1", "ch2"], ["gate", "hpfFreq"], []],
+    ]);
+    expect(planProblems(u44v, plan).filter((p) => p.reason === "linkedPair")).toEqual(problems);
+    const repairs = load(plan);
+    expect(repairs.linkedPairs).toEqual(problems);
+    expect(plan.nodeParams.ch2?.gate).toEqual(plan.nodeParams.ch1?.gate);
+    expect(plan.nodeParams.ch2?.hpfFreq).toBe(100);
+    // The input stage is each member's own.
+    expect(plan.nodeParams.ch2?.gain).toBe(40);
+    for (const name of ["GATE_THRESHOLD", "HPF_FREQ"]) {
+      const [a, b] = sentPair(plan, name);
+      expect(b, name).toBe(a);
+    }
+    expect(linkedPairProblems(u44v, plan)).toEqual([]);
+  });
+
+  it("gives the secondary of a document naming only the primary the primary's values", () => {
+    const plan = doc({ ch1: { stereoLink: true, panBal: PAN_BAL_BAL, gateOn: true, gate: { threshold: -40 } } });
+    expect(plan.nodeParams.ch2, "the premise: the document names only the primary").toBeUndefined();
+    const [problem] = linkedPairProblems(u44v, plan);
+    expect(problem?.keys.sort()).toEqual(["gate", "gateOn"]);
+    expect(isRefusal(problem)).toBe(false);
+    expect(needsDecision(problem)).toBe(false);
+    load(plan);
+    expect(plan.nodeParams.ch2?.gateOn).toBe(true);
+    expect(plan.nodeParams.ch2?.gate?.threshold).toBe(-40);
+    expect(plan.nodeParams.ch2?.gain, "the factory input stage").toBe(defaultPlan("URX44V").nodeParams.ch2?.gain);
+  });
+
+  it("leaves an agreeing pair, an unlinked one and a pair differing only in its own values alone", () => {
+    const shared = { gate: { threshold: -40 }, hpfFreq: 100 };
+    expect(linkedPairProblems(u44v, doc({ ch1: { stereoLink: true, ...shared }, ch2: shared }))).toEqual([]);
+    expect(linkedPairProblems(u44v, doc({ ch1: { ...shared }, ch2: { hpfFreq: 60 } }))).toEqual([]);
+    expect(linkedPairProblems(u44v, doc({ ch1: { stereoLink: false }, ch2: { hpfFreq: 60 } }))).toEqual([]);
+    const own = doc({
+      ch1: { stereoLink: true, gain: 10, phase: true, phantom: true },
+      ch2: { gain: 30, phase: false, phantom: false },
+    });
+    expect(linkedPairProblems(u44v, own)).toEqual([]);
+  });
+
+  // The insert effect is the refusal's: a pair disagreeing about what the write sends there is
+  // refused, and one agreeing about it keeps what each member stores.
+  it("neither compares nor copies the insert effect", () => {
+    const fx = INSERT_FX_OPTIONS[1].value;
+    const plan = doc({
+      ch1: { stereoLink: true, insertFx: fx, insertFxOn: true },
+      ch2: { insertFx: fx, insertFxOn: true, insertFxParams: { stray: 5 } },
+    });
+    expect(linkedPairProblems(u44v, plan)).toEqual([]);
+    const split = doc({
+      ch1: { stereoLink: true, insertFx: fx, insertFxOn: true, hpfFreq: 100 },
+      ch2: { insertFx: fx },
+    });
+    const [problem] = linkedPairProblems(u44v, split);
+    expect(problem?.keys).toEqual(["hpfFreq"]);
+    load(split);
+    expect(split.nodeParams.ch2?.insertFxOn, "the secondary keeps its own").not.toBe(true);
+  });
+
+  it("copies each pair of sends the way the write reads them, the pan in BAL only", () => {
+    const panMode = doc({ ch1: { stereoLink: true, panBal: PAN_BAL_PAN } }, [
+      send("ch1", "bus.mix1", { level: -10 }),
+      send("ch1", "bus.stereo", { pan: -63 }),
+      send("ch2", "bus.stereo", { pan: 63 }),
+      send("ch2", "bus.mix2", { level: -96.5, on: false }),
+    ]);
+    const [problem] = linkedPairProblems(u44v, panMode);
+    // MIX 1: the secondary omits it and takes the seed. MIX 2: absent ON is on.
+    expect(problem?.sends).toEqual(["bus.mix1:in", "bus.mix2:in"]);
+    load(panMode);
+    const wire = (from: string, to: string) => panMode.connections.find((c) => c.from === from && c.to === to);
+    expect(wire("ch2:out", "bus.mix1:in")?.params?.level).toBe(-10);
+    expect(wire("ch2:out", "bus.mix2:in")?.params?.on).toBeUndefined();
+    expect(wire("ch1:out", "bus.mix2:in"), "the primary's seed, added to copy from").toBeDefined();
+    expect(wire("ch2:out", "bus.mix2:in")?.params?.level).toBe(wire("ch1:out", "bus.mix2:in")?.params?.level);
+    // Each member's own position outside BAL.
+    expect([wire("ch1:out", "bus.stereo:in")?.params?.pan, wire("ch2:out", "bus.stereo:in")?.params?.pan]).toEqual([
+      -63, 63,
+    ]);
+
+    const bal = doc({ ch1: { stereoLink: true, panBal: PAN_BAL_BAL } }, [
+      send("ch1", "bus.stereo", { pan: -25 }),
+      send("ch2", "bus.stereo", { pan: 40 }),
+    ]);
+    expect(linkedPairProblems(u44v, bal)[0]?.sends).toEqual(["bus.stereo:in"]);
+    load(bal);
+    expect(bal.connections.find((c) => c.from === "ch2:out" && c.to === "bus.stereo:in")?.params?.pan).toBe(-25);
+  });
+
+  // In BAL the copy moves the secondary's balance, which is the pan a linked MIX holds its send at,
+  // so the send-pan repair reads the pair as the copy leaves it.
+  it("comes before the send pans a Pan Link sets", () => {
+    const plan = doc({ ch1: { stereoLink: true, panBal: PAN_BAL_BAL }, "bus.mix1": { panLink: true } }, [
+      send("ch1", "bus.stereo", { pan: -25 }),
+      send("ch2", "bus.stereo", { pan: 40 }),
+      send("ch1", "bus.mix1", { pan: 10 }),
+      send("ch2", "bus.mix1", { pan: 10 }),
+    ]);
+    const pans = planProblems(u44v, plan).filter((p) => p.reason === "linkedSendPan");
+    expect(pans.map((p) => `${p.from} ${p.pan}`)).toEqual(["ch1:out -25", "ch2:out -25"]);
+    load(plan);
+    expect(plan.connections.find((c) => c.from === "ch2:out" && c.to === "bus.mix1:in")?.params?.pan).toBe(-25);
+  });
+
+  it("gives a copied send param the primary's record of where it came from", () => {
+    const plan = doc({ ch1: { stereoLink: true } }, [
+      send("ch1", "bus.mix1", { level: -10 }),
+      send("ch2", "bus.mix1", { level: -20 }),
+    ]);
+    load(plan);
+    expect(plan.paramSource?.get(connParamContestKey("ch2:out", "bus.mix1:in", "level"))).toBe("load");
+    const seeded = doc({ ch1: { stereoLink: true } }, [send("ch2", "bus.mix1", { level: -20 })]);
+    load(seeded);
+    expect(seeded.paramSource?.has(connParamContestKey("ch2:out", "bus.mix1:in", "level"))).toBe(false);
+  });
+
+  it("finds nothing in a new plan or the factory plan", () => {
+    for (const id of MODEL_IDS) {
+      const factory = defaultPlan(id);
+      for (const [a] of getModel(id).channelPairs)
+        factory.nodeParams[a] = { ...factory.nodeParams[a], stereoLink: true };
+      ensureFixedConnections(getModel(id), factory);
+      expect(linkedPairProblems(getModel(id), factory), id).toEqual([]);
+      expect(linkedPairProblems(getModel(id), emptyPlan(id)), id).toEqual([]);
+    }
   });
 });
 

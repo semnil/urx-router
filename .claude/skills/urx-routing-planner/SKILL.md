@@ -243,6 +243,9 @@ load repairs without asking — `[paramRange]` rows for values it bounds or drop
 `[requiredSource] bus.stereo:out -> bus.stream:in` for the STREAMING source it adds,
 `[sendLevel] <from> -> <to>` for a send into a MIX or FX bus listed without a level,
 given 0 dB,
+`[linkedPair] <primary> / <secondary>: <keys>` for a STEREO-linked pair whose
+secondary takes the primary's values (a linked pair holds one set, the primary's,
+so a plan may write them on the primary alone),
 `[linkedSendPan] <from> -> <to>: <stored> -> <pan>` for a send pan into a MIX
 whose Pan Link is on, set to its source's own, and `[booleanParam] <node>.<path>:
 <number> -> <true|false>` for an on/off written as a number — and those need no

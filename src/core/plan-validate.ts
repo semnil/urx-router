@@ -7,18 +7,26 @@
 // messages. Nothing here runs on a device readback (see insertFxSlotProblems).
 
 import type { DeviceModel } from "../models/types";
-import { parseRef } from "../models/types";
+import { parseRef, ref } from "../models/types";
 import { factoryNodeParams, fillFactoryParams } from "../models/initial-state";
 import { getModel, MODEL_IDS } from "../models";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import { fixedConnection, isPlainRecord, requiredSourceWire, SEND_LEVEL_UNNAMED_DB, setPlanSampleRate } from "./plan";
-import { connParamContestKey } from "./plan-history";
-import type { Plan } from "./plan";
+import { connParamContestKey, deepEqual } from "./plan-history";
+import type { ConnParams, NodeParams, Plan, PlanConnection } from "./plan";
 import { admitLeaf, insertFxWireState, nodeLeafRules, sendControl } from "./control/translate";
 import { hiZOn } from "./input-lock";
-import { mixSendLocks, sourcePan, validatePlan } from "./routing";
+import {
+  INSERT_FX_PAIR_KEYS,
+  isBalLinkedPair,
+  isStereoLinkedPair,
+  mixSendLocks,
+  pairSharesNodeKey,
+  sourcePan,
+  validatePlan,
+} from "./routing";
 import type { PlanProblem } from "./routing";
 
 /** One device-wide 1-of insert-FX slot claimed by more than one node. Not a wire,
@@ -428,6 +436,130 @@ export function applySendLevels(plan: Plan, problems: SendLevelProblem[]): void 
   }
 }
 
+/** A STEREO-linked MONO IN pair whose members disagree about a value the pair holds once. The
+ *  unit keeps one set of values for a linked pair — it copies the odd channel's onto the even one
+ *  when the pair is linked, and mirrors a write to either member onto the other — while the write
+ *  sends each member from its own params, so a disagreeing pair is two values the unit cannot hold
+ *  and a converge that alternates between them. The loader copies the primary's values onto the
+ *  secondary, the copy `mirrorLinkedPair` makes on an edit, and says so. A document naming only
+ *  the primary is the same repair: the secondary takes the primary's values rather than its own
+ *  factory ones.
+ *
+ *  What is compared is what the write would send: the node params the pair shares
+ *  (`pairSharesNodeKey`) as the fill completes them, and each pair of fixed sends into one
+ *  destination — level, on/off and PRE/POST, and the pan in BAL, where the pair holds one balance —
+ *  read the way the emit reads them, a send the document omits as the one the install seeds. The
+ *  insert effect is not: a pair disagreeing about it is refused (`insertFxPairProblems`), and one
+ *  agreeing about what the write sends keeps what each member stores.
+ *  Like every check in this file it does NOT run on a device readback or the `.urxf` import. */
+export interface LinkedPairProblem {
+  reason: "linkedPair";
+  /** The pair, primary first. */
+  nodes: [string, string];
+  /** The shared node-param keys whose values disagree, in the primary's key order. */
+  keys: string[];
+  /** The destinations whose two sends disagree, as input refs, in rule order. */
+  sends: string[];
+}
+
+const INSERT_FX_KEYS: ReadonlySet<string> = new Set(INSERT_FX_PAIR_KEYS);
+
+/** Whether a linked pair holds `key` once and this check carries it. */
+const pairCopies = (key: string): boolean => pairSharesNodeKey(key) && !INSERT_FX_KEYS.has(key);
+
+/** The send params a linked pair holds once: the pan only in BAL. */
+const pairSendKeys = (bal: boolean): Array<keyof ConnParams> =>
+  bal ? ["level", "on", "tap", "pan"] : ["level", "on", "tap"];
+
+/** The fixed sends both members of a pair have into one destination, as rule pairs. */
+function pairSends(model: DeviceModel, a: string, b: string): Array<[RoutingRuleOf, RoutingRuleOf]> {
+  const out: Array<[RoutingRuleOf, RoutingRuleOf]> = [];
+  for (const ra of model.rules) {
+    if (!ra.fixed || ra.kind !== "send" || ra.from !== ref(a, "out")) continue;
+    const rb = model.rules.find((r) => r.fixed && r.kind === "send" && r.from === ref(b, "out") && r.to === ra.to);
+    if (rb) out.push([ra, rb]);
+  }
+  return out;
+}
+type RoutingRuleOf = DeviceModel["rules"][number];
+
+/** A send's params as the write reads them: a listed send's own (a missing level the one the
+ *  load completes it with), an omitted one's seed. */
+function sentParams(model: DeviceModel, plan: Plan, rule: RoutingRuleOf): Record<string, unknown> {
+  const listed = plan.connections.find((c) => c.from === rule.from && c.to === rule.to);
+  const params: ConnParams = listed ? (listed.params ?? {}) : (fixedConnection(model, rule).params ?? {});
+  return {
+    level: params.level ?? SEND_LEVEL_UNNAMED_DB,
+    on: params.on ?? true,
+    tap: params.tap === "pre" ? "pre" : "post",
+    pan: params.pan ?? 0,
+  };
+}
+
+/** Every STEREO-linked pair whose members disagree, in the model's pair order. */
+export function linkedPairProblems(model: DeviceModel, plan: Plan): LinkedPairProblem[] {
+  const out: LinkedPairProblem[] = [];
+  const linked = model.channelPairs.filter(([a]) => isStereoLinkedPair(model, plan, a));
+  if (linked.length === 0) return out;
+  // The fill mutates, so it runs on a copy, for the reason insertFxPairProblems gives.
+  const filled = structuredClone(plan);
+  fillFactoryParams(model.id, filled);
+  for (const [a, b] of linked) {
+    const pa = (filled.nodeParams[a] ?? {}) as Record<string, unknown>;
+    const pb = (filled.nodeParams[b] ?? {}) as Record<string, unknown>;
+    const keys = [...new Set([...Object.keys(pa), ...Object.keys(pb)])].filter(
+      (k) => pairCopies(k) && !deepEqual(pa[k], pb[k]),
+    );
+    const sendKeys = pairSendKeys(isBalLinkedPair(model, plan, a));
+    const sends = pairSends(model, a, b)
+      .filter(([ra, rb]) => {
+        const sa = sentParams(model, plan, ra);
+        const sb = sentParams(model, plan, rb);
+        return sendKeys.some((k) => sa[k] !== sb[k]);
+      })
+      .map(([ra]) => ra.to);
+    if (keys.length > 0 || sends.length > 0) out.push({ reason: "linkedPair", nodes: [a, b], keys, sends });
+  }
+  return out;
+}
+
+/** Copy each reported pair's primary onto its secondary: every node param the pair holds once,
+ *  an absent one staying absent, and each pair of sends' shared params — the omitted member of a
+ *  send pair given the send the install seeds, so the copy has a wire on both sides. A copied send
+ *  param takes the primary's record of where it came from. Separate from finding them for the
+ *  reason `applyParamRange` is. */
+export function applyLinkedPairs(model: DeviceModel, plan: Plan, problems: LinkedPairProblem[]): void {
+  const source = plan.paramSource;
+  for (const { nodes } of problems) {
+    const [a, b] = nodes;
+    const src = (plan.nodeParams[a] ?? {}) as Record<string, unknown>;
+    const next: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(plan.nodeParams[b] ?? {})) if (!pairCopies(k)) next[k] = v;
+    for (const [k, v] of Object.entries(src)) if (pairCopies(k)) next[k] = structuredClone(v);
+    plan.nodeParams[b] = next as NodeParams;
+    const sendKeys = pairSendKeys(isBalLinkedPair(model, plan, a));
+    for (const [ra, rb] of pairSends(model, a, b)) {
+      const find = (r: RoutingRuleOf): PlanConnection | undefined =>
+        plan.connections.find((c) => c.from === r.from && c.to === r.to);
+      if (!find(ra) && !find(rb)) continue;
+      for (const r of [ra, rb]) if (!find(r)) plan.connections.push(fixedConnection(model, r));
+      const ca = find(ra)!;
+      const cb = find(rb)!;
+      const params: ConnParams = { ...cb.params };
+      for (const k of sendKeys) {
+        const value = ca.params?.[k];
+        if (value === undefined) delete params[k];
+        else (params as Record<string, unknown>)[k] = value;
+        const from = source?.get(connParamContestKey(ca.from, ca.to, k));
+        const name = connParamContestKey(cb.from, cb.to, k);
+        if (from !== undefined) source?.set(name, from);
+        else source?.delete(name);
+      }
+      cb.params = params;
+    }
+  }
+}
+
 /** A send into a MIX bus whose Pan Link is on, carrying a pan other than its source's own pan /
  *  balance. While Pan Link is on the unit holds every send pan into that MIX there, and the write
  *  sends none of them, so the pan a document carries is one the unit never takes — while the
@@ -543,8 +675,9 @@ export function applyBooleanParams(plan: Plan, problems: BooleanParamProblem[]):
 /** Everything a plan load reports: an illegal wire (refused), a slot claimed twice (the
  *  operator decides), a value outside its range (normalized, then reported), a receiver
  *  given no source (completed, then reported), a send listed without a level (completed,
- *  then reported), a linked send pan off its source's value (set to it, then reported), or an
- *  on/off written as a number (converted, then reported). */
+ *  then reported), a linked pair whose members disagree (the primary copied onto the
+ *  secondary, then reported), a linked send pan off its source's value (set to it, then
+ *  reported), or an on/off written as a number (converted, then reported). */
 export type LoadProblem =
   | PlanProblem
   | InsertFxSlotProblem
@@ -552,6 +685,7 @@ export type LoadProblem =
   | ParamRangeProblem
   | RequiredSourceProblem
   | SendLevelProblem
+  | LinkedPairProblem
   | LinkedSendPanProblem
   | BooleanParamProblem;
 
@@ -561,11 +695,16 @@ export type LoadProblem =
 // Both halves check a plan built elsewhere; neither runs on a device readback.
 // The on/off conversions come first and the other checks read the document as they leave
 // it, which is the order the loader applies them in: `panLink: 1` is a linked MIX to the
-// send-pan check, and `stereoLink: 1` a linked pair to the insert-FX pair check.
+// send-pan check, and `stereoLink: 1` a linked pair to the insert-FX pair check. The send-pan
+// check reads it as the linked-pair copy leaves it too, since in BAL that copy moves the pans
+// it compares against.
 export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
   const booleans = booleanParamProblems(model, plan);
   const read = booleans.length > 0 ? structuredClone(plan) : plan;
   applyBooleanParams(read, booleans);
+  const pairs = linkedPairProblems(model, read);
+  const paired = pairs.length > 0 ? structuredClone(read) : read;
+  applyLinkedPairs(model, paired, pairs);
   return [
     ...booleans,
     ...validatePlan(model, read),
@@ -574,7 +713,8 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
     ...paramRangeProblems(read),
     ...requiredSourceProblems(model, read),
     ...sendLevelProblems(model, read),
-    ...linkedSendPanProblems(model, read),
+    ...pairs,
+    ...linkedSendPanProblems(model, paired),
   ];
 }
 
@@ -588,6 +728,7 @@ export function isRefusal(problem: LoadProblem): boolean {
     problem.reason !== "paramRange" &&
     problem.reason !== "requiredSource" &&
     problem.reason !== "sendLevel" &&
+    problem.reason !== "linkedPair" &&
     problem.reason !== "linkedSendPan" &&
     problem.reason !== "booleanParam"
   );
@@ -609,14 +750,16 @@ export interface LoadRepairs {
   ranged: ParamRangeProblem[];
   supplied: RequiredSourceProblem[];
   sendLevels: SendLevelProblem[];
+  linkedPairs: LinkedPairProblem[];
   linkedPans: LinkedSendPanProblem[];
 }
 
 /** Apply every repair `planProblems` reported, in the order `planProblems` reads them: an on/off
  *  written as a number is converted first, then a value outside what the app can write is
  *  bounded or dropped, a receiver the unit never leaves without a source gets the one a new plan
- *  carries, a send listed without a level gets the one the write sends, and a send into a MIX
- *  whose Pan Link is on takes its source's own pan / balance.
+ *  carries, a send listed without a level gets the one the write sends, a linked pair's
+ *  secondary takes its primary's shared values, and a send into a MIX whose Pan Link is on
+ *  takes its source's own pan / balance.
  *  Refusals and decisions are the caller's; the reasons they carry are not repaired here. */
 export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
   const booleans = problems.filter((p) => p.reason === "booleanParam");
@@ -627,9 +770,11 @@ export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadP
   applyRequiredSources(model, plan, supplied);
   const sendLevels = problems.filter((p) => p.reason === "sendLevel");
   applySendLevels(plan, sendLevels);
+  const linkedPairs = problems.filter((p) => p.reason === "linkedPair");
+  applyLinkedPairs(model, plan, linkedPairs);
   const linkedPans = problems.filter((p) => p.reason === "linkedSendPan");
   applyLinkedSendPans(model, plan, linkedPans);
-  return { booleans, ranged, supplied, sendLevels, linkedPans };
+  return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans };
 }
 
 /** A document as the loader opens it: its own wire params recorded as the document's, repaired

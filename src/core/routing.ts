@@ -364,7 +364,7 @@ export function applyPairTransition(model: DeviceModel, plan: Plan, primary: str
 
 /** The node params a linked pair does NOT share: the pair-level flags, which live on the
  *  primary alone, and the head-amp values each member keeps its own of. */
-const PAIR_OWN_NODE_KEYS = ["stereoLink", "panBal", "gain", "clipSafe", "phase", "phantom", "hiZ"] as const;
+export const PAIR_OWN_NODE_KEYS = ["stereoLink", "panBal", "gain", "clipSafe", "phase", "phantom", "hiZ"] as const;
 
 /** Whether an edit to `path` on one member of a linked pair reaches the other — the one
  *  place that question is answered, so `mirrorLinkedPair`'s copy, the MIDI catalogue's

@@ -140,9 +140,16 @@ carries a one-line map of the same directories and points here.
   level — which the write sends at unity while the CONSOLE's send rack and the MIDI feedback read a send with no
   level as off; a main path into STEREO is the fader, which every reader takes at unity, and is left as written —
   is given that unity level the same way, recorded as the fill's so the write confirm names its strip when
-  that level would move the unit, and said on the same line (`sendLevelProblems`). A send into a MIX bus
+  that level would move the unit, and said on the same line (`sendLevelProblems`). A STEREO-linked pair whose
+  members disagree about a value the pair holds once — a node param `pairSharesNodeKey` calls shared, as the
+  fill completes it, or a pair of sends' level, on/off and PRE/POST, and the pan in BAL — has the primary's
+  values copied onto the secondary the same way, the copy the unit makes when a pair is linked and the one
+  `mirrorLinkedPair` makes on an edit, and is said on the same line (`linkedPairProblems`). A document naming
+  only the primary is that repair too, and a valid shape: the secondary takes the primary's values rather
+  than its own factory ones. The insert effect stays the refusal's. A send into a MIX bus
   whose Pan Link is on that carries a pan other than its source's own is set to the source's value the same
-  way and said on the same line (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
+  way and said on the same line, reading the pair as its copy leaves it, since in BAL the copy moves the
+  balance the send is held at (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
   number — a leaf the model's factory values hold as a boolean, at the same path on the same node — is
   converted to the on/off the write sends, off for 0 and on for any other number, and said on the same
   line (`booleanParamProblems`). It comes first, and every other check reads the document as it leaves it,

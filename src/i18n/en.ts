@@ -819,6 +819,8 @@ export const en = {
     paramsDropped: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the default`,
     streamingSourceSupplied: tr("The plan named no STREAMING source, so STREAMING takes STEREO"),
+    linkedPairsAligned: (count: number): string =>
+      `${count} STEREO-linked ${count === 1 ? "pair now holds" : "pairs now hold"} the odd channel's shared settings on both channels, as the unit does`,
     sendLevelsSupplied: (count: number): string =>
       `${count} ${count === 1 ? "send was" : "sends were"} listed without a level, and now ${count === 1 ? "reads" : "read"} 0 dB, the level a write sends`,
     booleanParamsConverted: (count: number): string =>
