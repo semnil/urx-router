@@ -1409,7 +1409,8 @@ after Out Gain, so it is brought back by Out Gain to sit on the curve; and the b
 into the output column, is shortened by the band's make-up plus Out Gain — the gain between the band's
 input and that column — and never lengthened where the two together take level away. A band whose
 make-up is at the bottom of its range puts out nothing at all (`-∞` on the unit) and is drawn off the
-frame rather than along its floor, where a merely quiet band would also be.
+frame rather than along its floor, where a merely quiet band would also be — with no reduction
+annotation, since the level it is drawn at is a placement rather than a property of the band.
 
 **MAIN's figure is on the CANVAS, and that is what makes it follow a knob.** The display column is
 built once per panel, so a strip of elements there would not: moving L-M Xover from 125 Hz to

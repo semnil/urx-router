@@ -358,8 +358,9 @@ function mbcResponses(v: DynValues): {
     const silent = c.gainDb === -Infinity;
     return {
       band: b.band,
-      // What the annotation over the curve takes off before it calls the rest a reduction.
-      gainDb: silent ? 0 : c.gainDb,
+      // What the annotation over the curve takes off before it calls the rest a reduction. A
+      // silent band's is its own off-frame level, so it names no reduction at all.
+      gainDb: silent ? CURVE_LO_DB - 40 : c.gainDb,
       thresholdDb: c.thresholdDb,
       out: (inDb: number): number =>
         silent

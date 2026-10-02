@@ -1605,9 +1605,16 @@ describe("the multi-band compressor", () => {
     const r = recorder();
     INSFX_DYN.drawCurve!(r.ctx, geo, vals({ "ifx:mbc:11": 0 }), TOK, ctx);
     expect(r.ys[0]).toBeGreaterThan(geo.py(-60));
-    // The positive control: with make-up the same face draws inside the frame.
+    // …and names no reduction: the level it is drawn at is a placement, not a property of
+    // the band, so a figure printed from it would be invented.
+    const reductions = (texts: Array<{ text: string }>): string[] =>
+      texts.map((x) => x.text).filter((t) => t.endsWith(" dB"));
+    expect(reductions(r.texts)).toEqual([]);
+    // The positive control: with make-up the same face draws inside the frame, and the
+    // reduction at full scale for -20 dB at 2:1 is named.
     const ok = recorder();
     INSFX_DYN.drawCurve!(ok.ctx, geo, vals({ "ifx:mbc:9": 107, "ifx:mbc:10": 2, "ifx:mbc:11": 39 }), TOK, ctx);
     expect(ok.ys[0]).toBeLessThanOrEqual(geo.py(-60));
+    expect(reductions(ok.texts)).toEqual(["-10.0 dB"]);
   });
 });
