@@ -2798,7 +2798,7 @@ than a routing choice, and emitting it would make every Live-sync flush re-asser
 written with a single `vdSet`. Live sync registers 848 for notifies alongside the plan's writable set and
 **intercepts** it ahead of node resolution (`DeviceFollow`'s `intercept` hook) — an address with no owner node
 would otherwise escalate every change to a full device re-read. The **FOLLOW USB** badge beside the Rate picker
-shows and toggles the state. Before any device has been read it is drawn as a dimmed "unknown" (clicking it then
+shows and toggles the state. Before any device has been read it is drawn as a dashed "unknown" (clicking it then
 reads the state rather than toggling), never as "off", and in the desktop build it is never hidden — hiding it until a device action
 would mean the warning only arrives once the operator has already committed to one. It is session-scoped rather than persisted, since a
 remembered value would be a claim about

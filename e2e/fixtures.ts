@@ -102,28 +102,58 @@ export async function colorToken(page: Page, name: string): Promise<string> {
  *  them. The page paints the pair into a canvas and reads the pixel back, so every form a
  *  computed colour can take (`rgb()`, `color(srgb ...)`, a `color-mix` result) is resolved
  *  by the engine that produced it, and an ink carrying alpha is composited over the ground
- *  the way it is drawn. The ground has to be opaque: a ratio against a translucent one is a
- *  ratio against whatever happens to be behind the probe. */
-export async function contrastRatio(page: Page, ink: string, ground: string): Promise<number> {
+ *  the way it is drawn, as is an `alpha` the ink is drawn at. The ground has to be opaque: a
+ *  ratio against a translucent one is a ratio against whatever happens to be behind the probe. */
+export async function contrastRatio(page: Page, ink: string, ground: string, alpha = 1): Promise<number> {
   return page.evaluate(
-    ([fg, bg]) => {
+    ([fg, bg, a]) => {
       const c = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
       const paint = (...layers: string[]): number => {
         c.clearRect(0, 0, 1, 1);
-        for (const layer of layers) {
+        for (const [i, layer] of layers.entries()) {
+          c.globalAlpha = i === 0 ? 1 : a;
           c.fillStyle = layer;
           c.fillRect(0, 0, 1, 1);
         }
-        const [r, g, b, a] = c.getImageData(0, 0, 1, 1).data;
-        if (a !== 255) throw new Error(`the ground ${bg} is not opaque`);
+        const [r, g, b, cover] = c.getImageData(0, 0, 1, 1).data;
+        if (cover !== 255) throw new Error(`the ground ${bg} is not opaque`);
         const lin = (v: number) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
         return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
       };
       const [hi, lo] = [paint(bg, fg), paint(bg)].sort((x, y) => y - x);
       return (hi + 0.05) / (lo + 0.05);
     },
-    [ink, ground],
+    [ink, ground, alpha] as const,
   );
+}
+
+/** The WCAG 2.1 ratio of a text element's ink over the ground it is read on: the nearest
+ *  opaque background at or above it. The element's own opacity, and that of every element
+ *  between it and that ground, is folded into the ink the way it composites. Refuses a
+ *  ground whose own layer is dimmed, since the ratio is then against whatever is behind
+ *  that layer. */
+export async function textContrast(page: Page, target: Locator): Promise<number> {
+  const { ink, ground, alpha } = await target.evaluate((el) => {
+    const probe = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+    const opaque = (css: string): boolean => {
+      probe.clearRect(0, 0, 1, 1);
+      probe.fillStyle = css;
+      probe.fillRect(0, 0, 1, 1);
+      return probe.getImageData(0, 0, 1, 1).data[3] === 255;
+    };
+    let alpha = 1;
+    for (let n: Element | null = el; n; n = n.parentElement) {
+      const s = getComputedStyle(n);
+      if (opaque(s.backgroundColor)) {
+        for (let up: Element | null = n; up; up = up.parentElement)
+          if (Number(getComputedStyle(up).opacity) < 1) throw new Error("the ground's own layer is dimmed");
+        return { ink: getComputedStyle(el).color, ground: s.backgroundColor, alpha };
+      }
+      alpha *= Number(s.opacity);
+    }
+    throw new Error("no opaque ground above the element");
+  });
+  return contrastRatio(page, ink, ground, alpha);
 }
 
 /** Drive one native slider through the gesture `holdInertOnBlur` exists for: press, drag,

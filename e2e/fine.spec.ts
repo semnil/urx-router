@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, textContrast, type Page } from "./fixtures";
 import { wheelOver } from "./graph-helpers";
 import { pickBand } from "./dyn-helpers";
 
@@ -15,9 +15,9 @@ const strip = (page: Page, name: string) => page.locator(".con-strip", { has: pa
 // LOCKED is DIM composed with the locked row's own 0.45, not that 0.45 alone: opacity on
 // one element cascades rather than multiplying, so the flat value printed the legend
 // heavier than the label it annotates (measured at 1.56x its ink, against 0.90x live).
-const DIM = "0.55";
+const DIM = "0.75";
 const LIT = "1";
-const LOCKED = "0.2475";
+const LOCKED = "0.3375";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -93,6 +93,19 @@ test.describe("tuning-screen sliders", () => {
     await expect(row.locator(".param-val")).toHaveText("+0.5 dB");
     expect(await tag.boundingBox()).toEqual(before);
   });
+
+  // Printed at its silkscreen level, the legend still reads at the dim tier's ink: the
+  // level is set per theme, and the light theme prints it at full ink.
+  for (const theme of ["dark", "light"] as const) {
+    test(`the idle FINE legend clears AA in the ${theme} theme`, async ({ page }) => {
+      await page.addInitScript((t) => localStorage.setItem("urx-theme", t), theme);
+      await page.reload();
+      await openScreen(page, /^EQ$/, "#btn-eq-screen");
+      const tag = page.locator("#dyn-screen-box .prefs-row.has-fine .fine-tag");
+      await expect(tag).toBeVisible();
+      expect(await textContrast(page, tag)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
 
   test("the legend survives the device taking the row, ahead of the tag that says so", async ({ page }) => {
     await openScreen(page, /^COMP$/, "#btn-comp-screen");

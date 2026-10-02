@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, textContrast } from "./fixtures";
 import { dialogsOf, stubTauriDevice, strWritesOf, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 
@@ -95,6 +95,21 @@ test("an edit is pending until Apply, which sends only what changed", async ({ p
   // The baseline moved, so the screen is clean again and Apply goes inert.
   await expect(page.locator("#device-setup-apply")).toBeDisabled();
   await expect(page.locator("#device-setup-pending")).toHaveText("");
+});
+
+// The sub-page names and the knob columns' heads are labels the rows below are read by,
+// at the dim tier's ink in the light theme too.
+test("the sub-headings and the knob column heads clear AA in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await stubTauriDevice(page, { values: DEVICE_VALUES });
+  await page.goto("/");
+  await openSetup(page);
+  const sub = page.locator("#device-setup-modal .dev-sub").first();
+  const head = page.locator("#device-setup-modal .udk-head span:not(:empty)").first();
+  await expect(sub).toBeVisible();
+  await expect(head).toBeVisible();
+  expect(await textContrast(page, sub)).toBeGreaterThanOrEqual(4.5);
+  expect(await textContrast(page, head)).toBeGreaterThanOrEqual(4.5);
 });
 
 test("a knob assignment writes its three columns together", async ({ page }) => {

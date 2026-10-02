@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, textContrast } from "./fixtures";
 import type { Page } from "./fixtures";
 import { dialogsOf, setRefusedReads, stubTauriDevice, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
@@ -123,6 +123,20 @@ test("the Follow USB badge reads as unknown until a device has been read", async
   await expect(badge).toHaveAttribute("data-state", "on");
   await expect(badge).toHaveAttribute("aria-pressed", "true");
 });
+
+// Unknown is an operable state — a click reads the device — so its label is held to the
+// same ink as any control's. The dashed border is what tells it from off.
+for (const theme of ["dark", "light"] as const) {
+  test(`the unknown badge's label clears AA in the ${theme} theme`, async ({ page }) => {
+    await page.addInitScript((t) => localStorage.setItem("urx-theme", t), theme);
+    await stubDevice(page, { deviceRate: 48000, followUsb: true });
+    await page.goto("/");
+    const badge = page.locator("#follow-usb");
+    await expect(badge).toHaveAttribute("data-state", "unknown");
+    await expect(badge).toHaveCSS("border-top-style", "dashed");
+    expect(await textContrast(page, badge)).toBeGreaterThanOrEqual(4.5);
+  });
+}
 
 test("clicking the badge while unknown reads the device instead of toggling it", async ({ page }) => {
   await stubDevice(page, { deviceRate: 48000, followUsb: true });

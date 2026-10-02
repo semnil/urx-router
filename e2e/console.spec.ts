@@ -1,4 +1,4 @@
-import { test, expect, scrollsByWheel, type Page } from "./fixtures";
+import { test, expect, scrollsByWheel, textContrast, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
@@ -35,6 +35,24 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-view-console");
   await expect(page.locator("#console-host")).toBeVisible();
+});
+
+// What releasing does is written on the No Effect row of a strip that holds an effect.
+// That row is an enabled entry, so its note keeps the dim tier's ink: in the light theme
+// that tier has no room for a fade.
+test("the INS FX popover's release note clears AA in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await page.reload();
+  await page.click("#btn-view-console");
+  const ch1 = strip(page, "CH 1");
+  const pop = page.locator(".con-ifxpop");
+  await ch1.locator(".con-ifxopen").click();
+  await pop.locator(".irow", { hasText: "Clean" }).first().click();
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+  await ch1.locator(".con-ifxopen").click();
+  const why = pop.locator(".irow:not(.off) .why");
+  await expect(why).toHaveText("release");
+  expect(await textContrast(page, why)).toBeGreaterThanOrEqual(4.5);
 });
 
 test("GRAPH / CONSOLE tabs switch the visible view", async ({ page }) => {

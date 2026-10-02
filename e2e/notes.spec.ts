@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, colorToken, contrastRatio, type Page } from "./fixtures";
 import { faceplate } from "./graph-helpers";
 
 // A node is a g.node carrying its id; the note controls live inside it.
@@ -24,6 +24,20 @@ test.beforeEach(async ({ page }) => {
   });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+});
+
+// The empty editor's placeholder says what the field is for, at the dim tier's ink on the
+// editor's face; the ground taken is the darker end of its gradient.
+test("the note editor's placeholder clears AA in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await page.reload();
+  await node(page, "ch1").dblclick();
+  await expect(overlay(page)).toBeVisible();
+  const { ink, opacity } = await overlay(page).evaluate((el) => {
+    const s = getComputedStyle(el, "::placeholder");
+    return { ink: s.color, opacity: Number(s.opacity) };
+  });
+  expect(await contrastRatio(page, ink, await colorToken(page, "--ctl-bg"), opacity)).toBeGreaterThanOrEqual(4.5);
 });
 
 test("double-clicking a node opens its note editor", async ({ page }) => {

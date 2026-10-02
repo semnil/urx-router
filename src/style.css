@@ -95,8 +95,10 @@
   /* The two dims that have to compose: a printed legend's own silkscreen level, and how
      far a row that does not apply falls. `opacity` on one element cascades rather than
      multiplying, so the composed value is written as their product (see .fine-tag) —
-     named here so it cannot be a stale copy of either. Neither varies by theme. */
-  --fine-dim: 0.55;
+     named here so it cannot be a stale copy of either. The legend's level is set per
+     theme, so the printed legend keeps the dim tier's legibility on every ground it lands
+     on; the row's dim is the same in both. */
+  --fine-dim: 0.75;
   --row-lock-dim: 0.45;
 
   color-scheme: dark;
@@ -161,6 +163,9 @@
   --grain-op: 0.045;
   --vignette: rgba(90, 75, 40, 0.22);
   --ctl-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 1px 1px rgba(0, 0, 0, 0.12);
+  /* The light dim tier is printed at full ink: it sits at the tier's floor, so any fade
+     of it falls below the tier. */
+  --fine-dim: 1;
 
   color-scheme: light;
 }
@@ -408,7 +413,7 @@ select#rate-picker:disabled {
 /* Follow USB: the device's clock policy, sitting next to the rate it governs. Lit
    when on (the device is slaved to its USB host, so the rate picker cannot make a
    change stick), plain when off. Before any device has been read it is drawn as its
-   own dimmed, dashed "unknown" — never as "off", which is the state in which the
+   own dashed "unknown" — never as "off", which is the state in which the
    picker IS trusted, and never hidden, since the warning is worth the least once the
    operator has already committed to a device action. */
 .follow-usb {
@@ -433,7 +438,6 @@ select#rate-picker:disabled {
 }
 
 .follow-usb[data-state="unknown"] {
-  color: color-mix(in srgb, var(--text-dim) 60%, transparent);
   border-style: dashed;
 }
 
@@ -1039,6 +1043,9 @@ input[type="range"]:focus-visible,
 .note-edit-overlay::placeholder {
   color: var(--text-dim);
   opacity: 0.8;
+}
+[data-theme="light"] .note-edit-overlay::placeholder {
+  opacity: 1;
 }
 
 .warning {
@@ -3531,6 +3538,8 @@ input[type="range"]:focus-visible,
   font: 600 8px var(--mono);
   letter-spacing: 0.5px;
   color: var(--text-dim);
+}
+.con-ifxpop .irow.off .why {
   opacity: 0.75;
 }
 .con-ifxpop .irow:hover {
@@ -3928,6 +3937,13 @@ button.consent-btn-primary {
   border: 1px dashed var(--ctl-border);
   border-radius: 999px;
   padding: 1px 7px;
+}
+/* The light dim tier sits at the tier's floor, so these labels print it at full ink
+   there; the dark theme keeps the fade. */
+[data-theme="light"] .prefs-lock,
+[data-theme="light"] .dev-sub,
+[data-theme="light"] .udk-head span {
+  color: var(--text-dim);
 }
 /* Faces and selects reuse the inspector-toggle / rack-select / tool-button
    recipes above; only the width constraints are prefs-specific. */

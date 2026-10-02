@@ -236,7 +236,7 @@ let followUsbState: boolean | null = null;
 // Paint the badge from the state above. Separate from the setter so the language
 // switch can re-label it without pretending to change the state (applyStaticI18n).
 //
-// Three states, not two. Unknown is drawn as its own thing (dimmed, aria-pressed
+// Three states, not two. Unknown is drawn as its own thing (dashed, aria-pressed
 // "mixed") rather than hidden: the badge exists to warn that the rate picker will
 // not stick, and hiding it until a device action meant the warning only ever
 // arrived after the operator had already committed to one. It must still never be

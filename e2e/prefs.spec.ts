@@ -1,4 +1,4 @@
-import { test, expect, scrollsByWheel } from "./fixtures";
+import { test, expect, scrollsByWheel, textContrast } from "./fixtures";
 import type { Page } from "./fixtures";
 import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
@@ -13,6 +13,17 @@ test.describe("plain browser", () => {
     await page.addInitScript(() => localStorage.setItem("urx-lang", "en"));
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  });
+
+  // The tag says why the row is locked, so it keeps the dim tier's ink while the row it
+  // sits on dims; in the light theme that tier has no room for a fade.
+  test("the desktop-only tag clears AA in the light theme", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+    await page.reload();
+    await page.click("#btn-prefs");
+    const tag = page.locator("#prefs-device-scope").locator("..").locator(".prefs-lock");
+    await expect(tag).toHaveText("Desktop app only");
+    expect(await textContrast(page, tag)).toBeGreaterThanOrEqual(4.5);
   });
 
   test("the gear opens the modal; desktop-only rows are locked and tagged", async ({ page }) => {
