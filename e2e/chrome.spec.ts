@@ -1,4 +1,4 @@
-import { test, expect, colorToken, type Page } from "./fixtures";
+import { test, expect, colorToken, type Locator, type Page } from "./fixtures";
 import { stubTauriBoot } from "./tauri-stub";
 import { drag, port } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
@@ -181,6 +181,76 @@ test.describe("canvas hit-test", () => {
 
     await expect(wires(page)).toHaveCount(base + 1);
     await expect(page.locator("#statusbar")).toHaveText("Connected");
+  });
+});
+
+// The three focus vocabularies, each where it is read: the amber ring on an ordinary
+// ground, and on a lit amber face an inset ring in the face's own ink. A pin per surface
+// that wears the third one, because the rule names each by selector and a surface the
+// list misses keeps the amber ring on amber, which changes no pixel.
+test.describe("focus ring", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("urx-lang", "en");
+      localStorage.setItem("urx-theme", "dark");
+      localStorage.setItem("urx-model", "URX44V");
+    });
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  });
+
+  /** Focus a control the way a keyboard does, so `:focus-visible` is what matches. */
+  const keyboardFocus = async (page: Page, target: Locator) => {
+    await page.keyboard.press("Shift");
+    await target.focus();
+    expect(await target.evaluate((el) => el.matches(":focus-visible")), "the premise: a keyboard focus").toBe(true);
+  };
+  const ring = (target: Locator) =>
+    target.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { style: s.outlineStyle, color: s.outlineColor, offset: s.outlineOffset, face: s.backgroundColor };
+    });
+
+  test("a lit chip's ring is drawn in the face's ink, not the accent the face is lit in", async ({ page }) => {
+    await page.click("#btn-view-console");
+    const chip = page
+      .locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) })
+      .locator(".con-chip", { hasText: /^EQ$/ })
+      .first();
+    await expect(chip).toHaveClass(/\bon\b/);
+    await keyboardFocus(page, chip);
+    const r = await ring(chip);
+    expect(r.style).toBe("solid");
+    expect(r.face).toBe(await colorToken(page, "--led-face"));
+    expect(r.color).toBe(await colorToken(page, "--on-accent-ink"));
+  });
+
+  test("the selected swatch's ring moves out and lights when it takes focus", async ({ page }) => {
+    await page.locator('#graph-host g.node[data-id="ch1"]').click();
+    const sel = page.locator("#inspector .swatch.sel");
+    await expect(sel).toHaveCount(1);
+    const idle = await ring(sel);
+    await keyboardFocus(page, sel);
+    const focused = await ring(sel);
+    expect(focused.color).toBe(await colorToken(page, "--led"));
+    expect(focused.color).not.toBe(idle.color);
+    expect(parseFloat(focused.offset)).toBeGreaterThan(parseFloat(idle.offset));
+  });
+
+  test("a checked menu item takes an inset ring, since its rail is already lit", async ({ page }) => {
+    await page.click("#btn-view");
+    await page.click("#btn-hide-off");
+    await page.locator("#btn-view").focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("End");
+    await page.keyboard.press("ArrowUp");
+    const item = page.locator("#btn-hide-off");
+    await expect(item).toBeFocused();
+    await expect(item).toHaveAttribute("aria-checked", "true");
+    const r = await ring(item);
+    expect(r.style).toBe("solid");
+    expect(r.color).toBe(await colorToken(page, "--led"));
+    expect(parseFloat(r.offset)).toBeLessThan(0);
   });
 });
 

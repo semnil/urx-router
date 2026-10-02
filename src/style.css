@@ -681,6 +681,13 @@ button.consent-btn-secondary {
   outline: none;
 }
 
+/* A checked item already holds its rail at full height, so the rail cannot also mark
+   focus there; an inset ring does. */
+.menu-panel .menu-item[aria-checked="true"]:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
+}
+
 /* A not-yet-available action (e.g. device write before it ships): dimmed, no
    rail, and inert to hover/click. */
 .menu-panel .menu-item:disabled {
@@ -721,10 +728,11 @@ select:focus-visible,
   outline-offset: 2px;
 }
 
-/* The second focus vocabulary, and the reason there are two: an amber ring is
+/* The second focus vocabulary, and the reason there are three: an amber ring is
    invisible on an amber face. A white outline with a dark halo reads on any of
    them, and the halo is what makes it read in the light theme too — white alone
-   would vanish on the panel.
+   would vanish on the panel. The third is the rule below this one, for a lit face
+   whose ring is drawn inside it.
 
    These eight surfaces carried no rule at all and were showing the UA's blue
    ring. Three of them genuinely need the white (the lit faces: the primary
@@ -747,6 +755,20 @@ input[type="range"]:focus-visible,
   box-shadow:
     var(--ctl-shadow),
     0 0 0 4px rgba(0, 0, 0, 0.9);
+}
+
+/* The third focus vocabulary: a lit face that wears its ring INSIDE it, as each of
+   these does in every state. The segmented bars and the SENDS rack clip what is drawn
+   outside them, so the white ring and its outer halo would be cut off there; the inset
+   ring keeps its place and takes the face's own ink instead of the accent the face is
+   lit in. */
+.con-chip.on:focus-visible,
+.con-sl.on:focus-visible,
+.con-slp.on:focus-visible,
+.udk-banks button[aria-pressed="true"]:focus-visible,
+.gt-notes button[aria-pressed="true"]:focus-visible,
+.con-ifxpop .irow.active:focus-visible {
+  outline-color: var(--on-accent-ink);
 }
 
 /* ---- stage ---- */
@@ -1182,6 +1204,12 @@ input[type="range"]:focus-visible,
 #inspector .swatch.sel {
   outline: 2px solid var(--text);
   outline-offset: 1px;
+}
+
+/* The selected swatch already wears a ring, so focus moves it out and lights it. */
+#inspector .swatch.sel:focus-visible {
+  outline-color: var(--led);
+  outline-offset: 3px;
 }
 
 .swatch-none {
