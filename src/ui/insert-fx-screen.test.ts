@@ -81,14 +81,16 @@ describe("what the screen binds to", () => {
 
   it("binds the multi-band compressor's first face, three cards to a row", () => {
     // What the three bands share: the two crossovers and the levels they come back at.
-    // Three columns is what makes the four faces the same height — six cards and four are
-    // both two rows — so the segment that moves between them does not resize the modal.
+    // Three columns is what makes the four faces the same height — MAIN's six cards and a
+    // band face's six are both two rows — so the segment that moves between them does not
+    // resize the modal.
     const binding = INSFX_DYN.bind(holding("bus.mix1", "M.B.Comp"));
     expect(binding).not.toBeNull();
     expect(binding!.fields).toHaveLength(6);
     expect(binding!.knobGrid).toBe(true);
     expect(binding!.knobCols).toBe(3);
-    // The 1-knob pair is not among them: the app never writes it, so it is not a field.
+    // The 1-knob pair is not among them: its own section above the panel draws it, so it
+    // is not a field.
     const slots = binding!.fields.map((f) => Number(/:(\d+)$/.exec(f.key)?.[1]));
     expect(slots).not.toContain(MBC_GLOBAL.oneKnobOn);
     expect(slots).not.toContain(MBC_GLOBAL.oneKnobLevel);

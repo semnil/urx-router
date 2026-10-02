@@ -424,9 +424,6 @@ function familyOf(ctx: DynCtx): InsertFxFamily | null {
  * A value the node's own control does not carry answers null as well, because the emit path
  * turns it into No Effect and writes no engine parameter — an editor over it would collect
  * edits nothing ever sends.
- *
- * One family answers null: the multi-band compressor's bands and globals are a structured
- * layout rather than a list, and the flat catalogue carries none of it.
  */
 export function insertFxScreenFamily(model: DeviceModel, plan: Plan, nodeId: string): InsertFxFamily | null {
   const v = effectiveInsertFx(model, plan, nodeId);
@@ -678,7 +675,7 @@ function insFxFace(): DynProcessor {
         // thing — but THREE to a row rather than the amps' seven, and with the display
         // column still first, because its display is a plot rather than a rack alone. Three
         // is what makes the four faces the same height: MAIN is six cards and a band face
-        // four, so both are two rows, and the segment that moves between them does not
+        // six, so both are two rows, and the segment that moves between them does not
         // resize the modal under the pointer.
         //
         // Only the multi-band compressor states a count. The amps and Pitch Fix take the
