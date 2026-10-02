@@ -128,7 +128,10 @@ export const COMP_DYN: DynPlotProcessor = {
     unityOffsetDb: (ctx) => makeupOf(ctx),
   }),
   offNote: (ctx) => flagOffNote(ctx, "compOn"),
-  read: io.read,
+  // A comp group holding no knee reads as the default knee, which is the one the Knee row
+  // shows: knee is not a field, so the host's own fallback for it is 0 (Soft). Read-side
+  // only — `patch` merges onto what the plan holds.
+  read: (ctx) => ({ knee: COMP_KNEE_DEFAULT, ...io.read(ctx) }),
   patch: io.patch,
   // Knee is a three-value selector, which the catalog does not carry: a control
   // that answers null neither rings nor arms.

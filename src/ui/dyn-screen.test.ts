@@ -34,7 +34,7 @@ vi.mock("../core/meters", async (importOriginal) => {
 
 import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
-import { COMP_EQ_SSMCS, COMP_KNEE_OPTIONS } from "../core/control/params";
+import { COMP_EQ_SSMCS, COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS } from "../core/control/params";
 import { barLevels, dynHost, pickBand, readouts, rowsByKey, segments } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import { MeterStore } from "../core/meters";
@@ -1052,6 +1052,45 @@ describe("the compressor's panel", () => {
     expect(rows).toEqual([t().inspector.on, t().inspector.autoMakeup, t().inspector.oneKnobLevel]);
     // …and none of the three is left behind in Parameters.
     expect(labels()).not.toContain(t().inspector.autoMakeup);
+    screen.close();
+  });
+
+  // The Knee row and the curve read one value. Knee is a selector rather than a field, so the
+  // host's own fallback for a key the plan does not hold is 0 — Soft — and the curve drew
+  // that under a row showing the default.
+  it("draws a comp group holding no knee at the knee its Knee row shows", () => {
+    host = dynHost();
+    const base = { ...(host.plan.nodeParams.ch1?.comp ?? {}) } as Record<string, unknown>;
+    delete base.knee;
+    const withKnee = (knee?: number): void => {
+      host.plan.nodeParams.ch1 = { ...host.plan.nodeParams.ch1, comp: knee === undefined ? base : { ...base, knee } };
+    };
+    const screen = new DynScreen(host.hooks);
+    withKnee(undefined);
+    screen.open(COMP, "ch1");
+    /** The points one redraw puts on the canvas. */
+    const drawn = (): number[] => {
+      const from = host.canvas.ys.length;
+      screen.refresh();
+      return host.canvas.ys.slice(from);
+    };
+    const pressed = (): string[] =>
+      Array.from(
+        [...host.box.querySelectorAll<HTMLElement>(".prefs-row")]
+          .find((r) => r.querySelector(".lbl")?.textContent === t().inspector.dyn.knee)!
+          .querySelectorAll("button[aria-pressed=true]"),
+        (b) => b.textContent ?? "",
+      );
+    const absent = drawn();
+    const absentRow = pressed();
+    withKnee(COMP_KNEE_DEFAULT);
+    const byDefault = drawn();
+    withKnee(COMP_KNEE_OPTIONS.find((o) => o.value !== COMP_KNEE_DEFAULT)!.value);
+    const other = drawn();
+    // The positive control: the knee does move the curve, so equality below is a reading.
+    expect(other).not.toEqual(byDefault);
+    expect(absent).toEqual(byDefault);
+    expect(absentRow).toEqual([COMP_KNEE_OPTIONS.find((o) => o.value === COMP_KNEE_DEFAULT)!.label]);
     screen.close();
   });
 
