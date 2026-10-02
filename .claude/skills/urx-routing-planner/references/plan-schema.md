@@ -78,7 +78,9 @@ Each wire is one object:
   - `send` — channel/FX → bus summing send (many allowed; carries level/pan/tap).
   - `sendSwitch` — ON/OFF assign into a bus, no level/pan (e.g. MIX → STEREO
     "TO ST", oscillator assigns).
-- `params` (optional) — per-wire values, see below.
+- `params` (optional) — per-wire values, see below. Leave the key out for a wire
+  with none: `"params": null` is not an omission, and the app drops the whole wire
+  (`plan_tool.py` warns about it).
 
 **Single-input rule:** a `source`/`patch`/`record`/`key` destination accepts at
 most one incoming wire. Two wires into the same `:in` of that kind is the

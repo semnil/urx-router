@@ -116,9 +116,12 @@ def wire_dropped(conn):
         return "from / to must be strings"
     if conn.get("kind") not in KNOWN_KINDS:
         return f"unknown kind {conn.get('kind')!r}"
-    params = conn.get("params")
-    if params is None:
+    if "params" not in conn:
         return None
+    params = conn["params"]
+    # A JSON null is not absence to the app: it is a value that is not an object.
+    if params is None:
+        return "params is null, which is not an object — omit the key for a wire with no params"
     if not isinstance(params, dict):
         return "params must be an object"
     for key in ("level", "pan"):
