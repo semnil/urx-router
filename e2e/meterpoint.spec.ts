@@ -49,6 +49,21 @@ test("the badge reports its popover open, and the rows sit in a named menu", asy
   await expect(badge).toHaveAttribute("aria-expanded", "false");
 });
 
+// From the keyboard the badge puts the focus on the checked row — the popover sits after the
+// whole strip rack in the tab order — and the popover closes once the focus leaves it.
+test("the badge opened from the keyboard puts the focus on the checked row", async ({ page }) => {
+  const badge = strip(page, "CH 1").locator(".con-tap");
+  await badge.focus();
+  await page.keyboard.press("Enter");
+  const menu = page.getByRole("menu", { name: "METER POINT", exact: true });
+  await expect(menu.getByRole("menuitemradio", { name: "POST" })).toBeFocused();
+  await menu.getByRole("menuitemradio", { name: "INPUT" }).focus();
+  await expect(page.locator(".con-tappop")).toBeVisible(); // a row to a row keeps it open
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator(".con-tappop")).toBeHidden();
+  await expect(badge).toHaveAttribute("aria-expanded", "false");
+});
+
 test("selecting a tap updates the badge and persists across reload", async ({ page }) => {
   await strip(page, "CH 1").locator(".con-tap").click();
   await page.locator(".con-tappop .crow", { has: page.getByText("PRE EQ", { exact: true }) }).click();

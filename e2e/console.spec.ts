@@ -473,6 +473,53 @@ test("a Pan Link the unit turns on locks the open SEND PAN popover's knob for th
   await setHeldReads(page, []);
 });
 
+// From the keyboard the PAN ▾ button hands the focus to the popover's first knob, which is
+// otherwise the whole strip rack away in the tab order; a pointer press leaves it on the button.
+// Once the focus leaves both, the popover closes.
+test("the PAN ▾ button opened from the keyboard puts the focus on the first SEND PAN knob", async ({ page }) => {
+  const btn = strip(page, "CH 1").locator(".con-panbtn");
+  const mix1 = page.locator('.con-spop .con-knob[aria-label="MIX 1"]');
+  await btn.click();
+  await expect(page.locator(".con-spop")).toBeVisible();
+  await expect(mix1).not.toBeFocused();
+  await btn.click();
+  await expect(page.locator(".con-spop")).toBeHidden();
+
+  await btn.focus();
+  await page.keyboard.press("Enter");
+  await expect(mix1).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator(".con-spop")).toBeHidden();
+  await expect(btn).toHaveAttribute("aria-expanded", "false");
+});
+
+// A device-side change to CH 1 rebuilds its strip under an open SEND PAN popover and re-opens
+// the popover against the fresh button. The button that had the focus is removed by that
+// rebuild, which is not the operator moving the focus: the popover stays open.
+test("a device-side rebuild of the strip keeps its SEND PAN popover open over a focused button", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await page.click("#btn-view-console");
+  const btn = strip(page, "CH 1").locator(".con-panbtn");
+  await btn.click();
+  await btn.focus();
+  await expect(page.locator(".con-spop")).toBeVisible();
+  await btn.evaluate((el) => el.setAttribute("data-before", ""));
+
+  await setHeldReads(page, [PARAMS.CH_PAN.id]);
+  await setDeviceValue(page, PARAMS.CH_PAN.id, 0, 10);
+  await notifyParam(page, PARAMS.CH_PAN.id, 0, 10);
+  await expect(strip(page, "CH 1").locator(".con-panbtn[data-before]"), "the strip was rebuilt").toHaveCount(0);
+  await expect(page.locator(".con-spop")).toBeVisible();
+  await expect(btn).toHaveAttribute("aria-expanded", "true");
+  await expect(btn).toBeFocused();
+  await setHeldReads(page, []);
+});
+
 test("the SEND PAN popover flips above its anchor near the viewport bottom", async ({ page }) => {
   // The static "below" class never changes, so only the geometry proves the flip.
   // Measure the popover at the default viewport (room below), then shrink the

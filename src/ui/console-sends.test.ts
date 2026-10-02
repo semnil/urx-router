@@ -1015,3 +1015,126 @@ describe("where the focus goes when a popover closes", () => {
     expect(document.activeElement, "the press owns the focus, not the popover that closed").toBe(elsewhere);
   });
 });
+
+// The popovers are appended after the whole strip rack, so from a trigger the next Tab walks
+// the rest of the rack before it reaches the popover. Opened from the KEYBOARD a popover takes
+// the focus — onto a list's checked row, onto SEND PAN's first knob — and once the focus
+// leaves both the popover and its trigger the popover closes, so it does not stand open over
+// the strips the focus moved on to. A pointer open, and the re-open a one-strip rebuild runs,
+// leave the focus where it is.
+describe("a popover the keyboard opens", () => {
+  const tapBadge = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-tap")!;
+  const panBtn = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-panbtn")!;
+  const tapPop = (): HTMLElement => h.host.querySelector<HTMLElement>(".con-tappop")!;
+  const spop = (): HTMLElement => h.host.querySelector<HTMLElement>(".con-spop")!;
+  /** A click on a native button as the keyboard produces it (Enter / Space): no click count. */
+  const keyClick = (el: HTMLElement): void =>
+    void el.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+  const pointerClick = (el: HTMLElement): void =>
+    void el.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+  const focusout = (from: HTMLElement, to: HTMLElement | null): void =>
+    void from.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: to }));
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("takes the focus onto the meter point's checked row", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    expect(tapPop().contains(document.activeElement)).toBe(true);
+    expect((document.activeElement as HTMLElement).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("takes the focus onto SEND PAN's first knob", () => {
+    h = consoleHost();
+    panBtn("ch1").focus();
+    keyClick(panBtn("ch1"));
+    expect(document.activeElement).toBe(spop().querySelector(".con-knob"));
+  });
+
+  it.each([
+    ["INS FX", (id: string) => h.strip(id).root.querySelector<HTMLElement>(".con-ifxopen")!, "ch1"],
+    ["EFFECT TYPE", (id: string) => h.strip(id).root.querySelector<HTMLElement>(".con-fxopen")!, "bus.fx1"],
+  ] as const)("takes the focus onto the %s list's checked row", (_name, opener, id) => {
+    h = consoleHost();
+    opener(id).focus();
+    key(opener(id), "Enter");
+    const pop = h.host.querySelector<HTMLElement>(".con-ifxpop")!;
+    expect(pop.hidden).toBe(false);
+    expect(pop.contains(document.activeElement)).toBe(true);
+    expect((document.activeElement as HTMLElement).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("leaves the focus where a pointer open found it", () => {
+    h = consoleHost();
+    panBtn("ch1").focus();
+    pointerClick(panBtn("ch1"));
+    expect(spop().hidden).toBe(false);
+    expect(document.activeElement).toBe(panBtn("ch1"));
+
+    tapBadge("ch2").focus();
+    pointerClick(tapBadge("ch2"));
+    expect(tapPop().hidden).toBe(false);
+    expect(document.activeElement).toBe(tapBadge("ch2"));
+  });
+
+  it("leaves a focus elsewhere alone when a one-strip rebuild re-opens the popover", () => {
+    h = consoleHost();
+    pointerClick(panBtn("ch1"));
+    const elsewhere = h.strip("ch2").fader!;
+    elsewhere.focus();
+    h.view.refreshStrip("ch1");
+    expect(spop().hidden, "re-opened").toBe(false);
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it("closes once the focus leaves both the popover and its trigger, and not before", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    const rows = [...tapPop().querySelectorAll<HTMLElement>(".crow")];
+    rows[0].focus();
+    expect(tapPop().hidden, "a row to another row").toBe(false);
+    tapBadge("ch1").focus();
+    expect(tapPop().hidden, "a row to the trigger").toBe(false);
+    rows[0].focus();
+
+    const outside = h.strip("ch2").fader!;
+    outside.focus();
+    expect(tapPop().hidden, "out of both").toBe(true);
+    expect(tapBadge("ch1").getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement, "the focus stays where it went").toBe(outside);
+  });
+
+  // WKWebView blurs the focused element when the window loses the OS foreground, naming no new
+  // target; Playwright's focus emulation keeps document.hasFocus() true, so this is the case
+  // that pins it. The same event with the window still focused is the positive control.
+  it("stays open when the window loses the foreground", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    const row = document.activeElement as HTMLElement;
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    focusout(row, null);
+    expect(tapPop().hidden).toBe(false);
+    hasFocus.mockReturnValue(true);
+    focusout(row, null);
+    expect(tapPop().hidden).toBe(true);
+  });
+
+  it("stays open when a press lands on a part of it that takes no focus", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    const row = document.activeElement as HTMLElement;
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    tapPop()
+      .querySelector<HTMLElement>(".ph")!
+      .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    focusout(row, null);
+    expect(tapPop().hidden).toBe(false);
+    document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    focusout(row, null);
+    expect(tapPop().hidden, "the press is over").toBe(true);
+  });
+});

@@ -531,6 +531,8 @@ export class Console {
   private typePopBtn: HTMLElement | null = null;
   private typePopKind: "insfx" | "fx" = "insfx";
   private stripsHost!: HTMLElement;
+  // A pointer is down inside an open popover (see `closeOnFocusLeave`).
+  private pressInPop = false;
   /** The plan the strips were last built from. A different one at a render is that plan replaced. */
   private builtFor: Plan | null = null;
 
@@ -696,6 +698,7 @@ export class Console {
     // so a press on the trigger is excluded).
     document.addEventListener("pointerdown", (e) => {
       const tgt = e.target as HTMLElement;
+      this.pressInPop = this.popovers.some((p) => p.openFor !== null && p.box.contains(tgt));
       if (this.tapOpenFor && !this.tapPop.contains(tgt) && !tgt.closest(".con-tap")) this.closeTapPop();
       if (this.sendPanOpenFor && !this.sendPanPop.contains(tgt) && !tgt.closest(".con-panbtn")) this.closeSendPan();
       if (this.typePopFor && !this.typePop.contains(tgt) && !tgt.closest(".con-ifxface, .con-ifxopen, .con-fxopen"))
@@ -712,6 +715,41 @@ export class Console {
       if (this.tapOpenFor) this.closeTapPop(true);
       if (this.typePopFor) this.closeTypePop(true);
     });
+    const pressEnd = (): void => void (this.pressInPop = false);
+    document.addEventListener("pointerup", pressEnd);
+    document.addEventListener("pointercancel", pressEnd);
+    this.host.addEventListener("focusout", (e) => this.closeOnFocusLeave(e));
+  }
+
+  /**
+   * Close a popover once the keyboard focus leaves both it and the trigger that opened it —
+   * a Tab out of its last row, a Shift+Tab out of its first — so an open popover does not
+   * stand over the strips the focus has moved on to. Closed without handing the focus back:
+   * it has already gone somewhere the operator chose.
+   *
+   * A focusout that names no new target is not the focus leaving in two cases, and is
+   * ignored in both: the window losing the OS foreground (WKWebView blurs the focused element
+   * then, and `document.hasFocus()` answers false), and a press on a part of the popover that
+   * takes no focus (its header, its foot). A focused element this view's own rebuild removes
+   * (Chromium reports that as a focusout naming no target) closes nothing either: it belongs
+   * to no strip on screen by then, and a popover being re-opened has let go of its open state.
+   */
+  private closeOnFocusLeave(e: FocusEvent): void {
+    const to = e.relatedTarget instanceof Node ? e.relatedTarget : null;
+    if (to === null && (!document.hasFocus() || this.pressInPop)) return;
+    const from = e.target instanceof Node ? e.target : null;
+    if (from === null) return;
+    for (const p of this.popovers) {
+      if (p.openFor === null) continue;
+      const root = this.refs.get(p.openFor)?.root;
+      const owns = (n: Node): boolean =>
+        p.box.contains(n) ||
+        (n instanceof Element && !!root?.contains(n) && p.sel.some((sel) => n.closest(sel) !== null));
+      if (!owns(from) || (to !== null && owns(to))) continue;
+      if (p.kind === "tap") this.closeTapPop();
+      else if (p.kind === "pan") this.closeSendPan();
+      else this.closeTypePop();
+    }
   }
 
   // dB tick labels for a strip's fader range (per-channel scale between the fader
@@ -892,15 +930,15 @@ export class Console {
     const cv = el("span", "cv");
     cv.textContent = "▾";
     badge.append(ico, name, cv);
-    const toggle = (): void => {
+    const toggle = (viaKey: boolean): void => {
       if (this.tapOpenFor === id) this.closeTapPop();
-      else this.openTapPop(id, badge);
+      else this.openTapPop(id, badge, viaKey);
     };
-    badge.addEventListener("click", toggle);
+    badge.addEventListener("click", () => toggle(false));
     badge.addEventListener("keydown", (e) => {
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
-        toggle();
+        toggle(true);
       } else if (e.key === "Escape") {
         this.closeTapPop();
       }
@@ -948,7 +986,7 @@ export class Console {
     this.closeTypePop();
   }
 
-  private openTapPop(id: string, anchor: HTMLElement): void {
+  private openTapPop(id: string, anchor: HTMLElement, focusIn = false): void {
     this.closePopovers();
     const cur = this.tapKeyOf(id);
     this.tapPop.replaceChildren();
@@ -986,6 +1024,20 @@ export class Console {
     anchor.setAttribute("aria-expanded", "true");
     // Position fixed near the badge, clamped to the viewport (top-right aligned).
     this.placePopover(this.tapPop, anchor, "right", 2);
+    if (focusIn) this.focusInto(this.tapPop);
+  }
+
+  /**
+   * Move the focus into a popover the KEYBOARD opened: onto its checked row, or its first
+   * control where no row is checked or the checked one takes no focus. A popover is appended
+   * after the whole strip rack, so without this the next Tab walks the rest of the rack
+   * before it reaches the popover. Nothing moves where the popover offers the keyboard no
+   * control. A pointer open and the re-open after a strip rebuild leave the focus alone.
+   */
+  private focusInto(pop: HTMLElement): void {
+    const rows = focusables(pop);
+    const checked = rows.find((r) => r.getAttribute("aria-checked") === "true");
+    (checked ?? rows[0])?.focus({ preventScroll: true });
   }
 
   private closeTapPop(restore = false): void {
@@ -1073,9 +1125,10 @@ export class Console {
     const cv = el("span", "cv");
     cv.textContent = "▾";
     panbtn.append(document.createTextNode("PAN"), cv);
-    panbtn.addEventListener("click", () => {
+    // A native button: a click the keyboard produced (Enter / Space) carries no click count.
+    panbtn.addEventListener("click", (e) => {
       if (this.sendPanOpenFor === m.id) this.closeSendPan();
-      else this.openSendPan(m.id, panbtn);
+      else this.openSendPan(m.id, panbtn, e.detail === 0);
     });
     rack.append(panbtn);
     return { el: rack, cols };
@@ -1366,7 +1419,7 @@ export class Console {
   // Open the SEND PAN popover below a strip's PAN ▾ button: the strip's MIX sends'
   // pan as rotary knobs laid out in horizontal columns (destination label above,
   // value below), echoing the rack columns. FX sends are mono and carry no pan.
-  private openSendPan(stripId: string, anchor: HTMLElement): void {
+  private openSendPan(stripId: string, anchor: HTMLElement, focusIn = false): void {
     this.closePopovers();
     const plan = this.hooks.getPlan();
     this.sendPanPop.replaceChildren();
@@ -1421,6 +1474,7 @@ export class Console {
     anchor.setAttribute("aria-expanded", "true");
     // Anchor below the PAN ▾ button, centred on it (upward caret), clamped to the viewport.
     this.placePopover(this.sendPanPop, anchor, "center", 8);
+    if (focusIn) this.focusInto(this.sendPanPop);
   }
 
   // ---- INS FX popover ----
@@ -1428,9 +1482,9 @@ export class Console {
   /** Open the type popover for a strip, or close it when it is already this strip's.
    *  Both the face and the disclosure call this, so pressing either one twice closes it
    *  — the toggle the meter badge and the PAN button already have. */
-  private toggleInsFxPop(id: string, anchor: HTMLElement): void {
+  private toggleInsFxPop(id: string, anchor: HTMLElement, focusIn = false): void {
     if (this.typePopFor === id) this.closeTypePop();
-    else this.openInsFxPop(id, anchor);
+    else this.openInsFxPop(id, anchor, focusIn);
   }
 
   /**
@@ -1445,7 +1499,7 @@ export class Console {
    * including the three — rate ceiling, STEREO-linked pair, slot taken — that make
    * everything else unpickable.
    */
-  private openInsFxPop(id: string, anchor: HTMLElement): void {
+  private openInsFxPop(id: string, anchor: HTMLElement, focusIn = false): void {
     this.closePopovers();
     const model = this.hooks.getModel();
     const plan = this.hooks.getPlan();
@@ -1560,6 +1614,7 @@ export class Console {
     anchor.classList.add("open");
     anchor.setAttribute("aria-expanded", "true");
     this.placePopover(this.typePop, anchor, "center", 8);
+    if (focusIn) this.focusInto(this.typePop);
   }
 
   private fxTypeOpenChip(id: string): HTMLElement {
@@ -1574,9 +1629,9 @@ export class Console {
     const label = t().inspector.fxEffect.effectType;
     chip.title = label;
     chip.setAttribute("aria-label", label);
-    this.wireActivate(chip, undefined, () => {
+    this.wireActivate(chip, undefined, (viaKey) => {
       if (this.typePopFor === id && this.typePopKind === "fx") this.closeTypePop(true);
-      else this.openFxTypePop(id, chip);
+      else this.openFxTypePop(id, chip, viaKey);
     });
     return chip;
   }
@@ -1613,7 +1668,7 @@ export class Console {
    * There is no ON row here, and the INS FX popover's bypass has no counterpart: an FX
    * channel's effect has no switch of its own beside the strip's [ON].
    */
-  private openFxTypePop(id: string, anchor: HTMLElement): void {
+  private openFxTypePop(id: string, anchor: HTMLElement, focusIn = false): void {
     this.closePopovers();
     const plan = this.hooks.getPlan();
     const fxIndex = FX_CHANNEL_NODE_INDEX[id];
@@ -1671,6 +1726,7 @@ export class Console {
     anchor.classList.add("open");
     anchor.setAttribute("aria-expanded", "true");
     this.placePopover(this.typePop, anchor, "center", 8);
+    if (focusIn) this.focusInto(this.typePop);
   }
 
   /**
@@ -1875,20 +1931,21 @@ export class Console {
   }
 
   // Wire an element as an activatable button: keyboard (Space / Enter), MIDI-learn
-  // mark + arming, and click. `run` performs the edit; in learn mode arming consumes
-  // the activation instead. Shared by the toggle chips and the scribble power button.
-  private wireActivate(el: HTMLElement, midiId: string | undefined, run: () => void): void {
+  // mark + arming, and click. `run` performs the edit, told whether the keyboard
+  // activated it; in learn mode arming consumes the activation instead. Shared by the
+  // toggle chips and the scribble power button.
+  private wireActivate(el: HTMLElement, midiId: string | undefined, run: (viaKey: boolean) => void): void {
     el.tabIndex = 0;
     this.midiMark(el, midiId);
-    const activate = (): void => {
+    const activate = (viaKey: boolean): void => {
       if (this.midiArm(midiId)) return;
-      run();
+      run(viaKey);
     };
-    el.addEventListener("click", activate);
+    el.addEventListener("click", () => activate(false));
     el.addEventListener("keydown", (e) => {
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
-        activate();
+        activate(true);
       }
     });
   }
@@ -1998,7 +2055,7 @@ export class Console {
       chip.tabIndex = -1;
       return chip;
     }
-    this.wireActivate(chip, undefined, () => this.toggleInsFxPop(id, chip));
+    this.wireActivate(chip, undefined, (viaKey) => this.toggleInsFxPop(id, chip, viaKey));
     return chip;
   }
 
@@ -2017,7 +2074,7 @@ export class Console {
     const label = t().inspector.insertFx;
     chip.title = label;
     chip.setAttribute("aria-label", label);
-    this.wireActivate(chip, undefined, () => this.toggleInsFxPop(id, chip));
+    this.wireActivate(chip, undefined, (viaKey) => this.toggleInsFxPop(id, chip, viaKey));
     return chip;
   }
 

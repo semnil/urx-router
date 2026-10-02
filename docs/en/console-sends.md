@@ -186,6 +186,15 @@ still claims is given back — and that is the state an operator most needs to r
   operator on `<body>`, a whole strip rack away from where they were. A PRESS is the other case:
   the focus belongs to whatever was pressed, and taking it back would move the caret out of the
   control the operator just aimed at. The same rule covers all three popovers.
+- **A popover opened from the keyboard takes the focus, and closes once the focus leaves it.** The
+  popovers are appended after the whole strip rack, so from a trigger the next Tab would walk the
+  rest of the rack first. Enter or Space on a trigger therefore moves the focus onto the popover's
+  checked row (meter point, INS FX type, FX effect type) or its first knob (SEND PAN); a pointer
+  open, and the re-open after a strip rebuild, leave the focus where it is. A focus that then moves
+  to an element outside both the popover and its trigger closes the popover without handing the
+  focus back. A focusout naming no new element is not that: the window losing the OS foreground
+  (`document.hasFocus()` false — WKWebView blurs on deactivation), and a press on a part of the
+  popover that takes no focus, both leave it open.
 - **An ordinary control is carried by its own identity, not by its place.** Each control is built
   with a `data-ctl` (its MIDI id where it has one, else a fixed name), and a rebuild looks that
   identity up among the controls the rebuilt strip — or the re-opened popover — offers to the

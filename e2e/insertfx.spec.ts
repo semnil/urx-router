@@ -860,6 +860,29 @@ test("the console INS FX pair chooses an effect and opens its screen", async ({ 
   await expect(insertSelect(page)).toHaveValue("-1");
 });
 
+// From the keyboard the disclosure puts the focus on the list's checked row — the list sits
+// after the whole strip rack in the tab order — and the effect is released without the pointer.
+test("the console INS FX disclosure opened from the keyboard puts the focus on the checked row", async ({ page }) => {
+  await page.click("#btn-view-console");
+  const strip = page.locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) });
+  const opener = strip.locator(".con-ifxopen");
+  const pop = page.locator(".con-ifxpop");
+  await opener.click();
+  await pop.locator(".irow", { hasText: "Crunch" }).first().click();
+  await closeScreen(page);
+
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  await expect(pop).toBeVisible();
+  const crunch = pop.getByRole("menuitemradio", { name: "Crunch" });
+  await expect(crunch).toBeFocused();
+  await expect(crunch).toHaveAttribute("aria-checked", "true");
+  await pop.getByRole("menuitemradio", { name: "No Effect" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(pop).toBeHidden();
+  await expect(strip.locator(".con-ifxface")).toHaveClass(/\bvacant\b/);
+});
+
 // The launcher asks whether the SCREEN would open, not whether the strip holds something.
 // It used to ask the second, which the multi-band compressor satisfied while the screen
 // refused it — so on that strip the row was live, said "open me" and did nothing when
