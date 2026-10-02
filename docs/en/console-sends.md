@@ -20,7 +20,8 @@ tabs, no send-on-fader mode and no console mode bar (`Output [MAIN]` / `Send to 
 The head MUTE chip controls the → STEREO main path (on the strips that have that send: channels,
 FX channels, MIX buses); the rack never touches the main path. The node master ON/OFF (CH_ON / MIX 675 /
 STEREO / MONITOR, all `np.on`, and the oscillator's `osc.on`) is a **power LED** on the scribble — the whole
-scribble is its button; when off the strip dims (the shared `isNodeInactive` predicate, matching the graph),
+scribble is its button; when off the strip dims its grooves, meter, knob faces and scribble ground (the shared
+`isNodeInactive` predicate, matching the graph) while its labels and fader caps keep their strength,
 so there is no separate red "CH MUTE" badge. STEREO and the MONITOR buses have no → STEREO send, so they carry no
 MUTE chip; the power LED is their only on/off.
 
@@ -56,7 +57,7 @@ visually fuse into one 0 dB reference line, so a strip's send distribution reads
   aligned across strips.
 - A strip that lacks a particular send leaves that column blank (e.g. FX channels show only
   MIX 1 / MIX 2). Strips with no sends at all (MIX / MONITOR / STEREO / OSCILLATOR / STREAMING)
-  render a dimmed `SENDS` header only — its collapse arrow still works, so the global collapse is
+  render a `SENDS` header only — its collapse arrow still works, so the global collapse is
   reachable from any strip. Meter-only strips get the same spacer so fader tops stay aligned.
 
 ### Send enable chip

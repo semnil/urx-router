@@ -1,4 +1,4 @@
-import { test, expect, scrollsByWheel, textContrast, type Page } from "./fixtures";
+import { test, expect, scrollsByWheel, textContrast, type Locator, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
@@ -531,6 +531,54 @@ test("muting the channel master in the inspector dims the console strip", async 
   const ch = strip(page, "CH 1");
   await expect(ch).toHaveClass(/inactive/);
   await expect(ch.locator(".con-scribble.power")).toHaveAttribute("aria-pressed", "false");
+});
+
+/** How strongly an element is drawn: its own opacity times every ancestor's. */
+const strength = (l: Locator) =>
+  l.evaluate((el) => {
+    let o = 1;
+    for (let n: Element | null = el; n; n = n.parentElement) o *= Number(getComputedStyle(n).opacity);
+    return o;
+  });
+
+// A strip whose master is off dims what carries no text — its grooves, its meter, its knob
+// faces and its scribble's ground — while its controls stay operable, so their labels and
+// the fader cap keep full strength. A send switched off and a strip with no sends keep
+// their column and their header at full strength as well.
+test("an inactive strip dims what carries no text, and its controls keep their strength", async ({ page }) => {
+  await muteMasterViaInspector(page, "ch1");
+  const ch = strip(page, "CH 1");
+  await expect(ch).toHaveClass(/inactive/);
+  // The positive control: the strip is marked at all.
+  expect(await strength(ch.locator(".con-fader .track")), "fader groove").toBeLessThan(1);
+  expect(await strength(ch.locator(".con-meter").first()), "meter").toBeLessThan(1);
+  const knob = ch.locator(".con-knob").first();
+  await expect(knob).toBeVisible();
+  const veil = await knob.evaluate((el) => getComputedStyle(el, "::after").backgroundColor);
+  expect(veil, "knob face veil").not.toMatch(/, 0\)$|^transparent$/);
+  expect(await ch.locator(".con-scribble").evaluate((el) => getComputedStyle(el).boxShadow), "scribble veil").toContain(
+    "inset",
+  );
+  for (const [what, el] of [
+    ["MUTE chip", ch.getByRole("button", { name: "MUTE" })],
+    ["EQ chip", ch.locator(".con-chip", { hasText: /^EQ$/ }).first()],
+    ["fader cap", ch.locator(".con-fader .cap")],
+    ["knob", knob],
+    ["scribble", ch.locator(".con-scribble")],
+    ["send chip", ch.locator(".con-sl").first()],
+    ["SENDS header", ch.locator(".con-sh")],
+  ] as const)
+    expect(await strength(el), what).toBe(1);
+
+  const ch2 = strip(page, "CH 2");
+  const column = ch2.locator(".con-scol").first();
+  await column.locator(".con-sl").click();
+  await expect(column).toHaveClass(/\boff\b/);
+  expect(await strength(column.locator(".con-sl")), "an OFF column's enable chip").toBe(1);
+
+  const sendless = strip(page, "STEREO").locator(".con-sh");
+  await expect(sendless).toHaveClass(/\bdim\b/);
+  expect(await strength(sendless), "a sendless strip's SENDS header").toBe(1);
 });
 
 test("a MIX strip's head MUTE drives the MIX → STEREO TO ST switch", async ({ page }) => {

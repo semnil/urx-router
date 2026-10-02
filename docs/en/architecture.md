@@ -1347,7 +1347,9 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   `np.on`, or the oscillator's `osc.on`), the strip **dims** — the shared `isNodeInactive` predicate the graph
   view uses, so both views dim the same nodes — with the unlit power LED, not a badge, marking why. The head
   MUTE and the rack sends stay operable (the → STEREO send ON/OFF and the node master are independent device
-  params).
+  params), so the dim reaches only what carries no text — the grooves, the meter, the knob faces and the
+  scribble's ground — and the labels and fader caps keep their strength. A send switched off keeps its column
+  at full strength too; its unlit chip and the cap's dim bar say it is off.
 - **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
   parameter) rather than the node-kind rail. The text colour is whichever of black/white has the higher
   actual contrast ratio (WCAG relative luminance, `inkOn`), paired with a faint opposite-tone halo

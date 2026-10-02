@@ -20,7 +20,8 @@ send-on-fader モード、コンソールのモードバー (`Output [MAIN]` / `
 ヘッドの MUTE チップは → STEREO 主経路を制御し (その send を持つストリップ = チャンネル・FX
 チャンネル・MIX Bus のみ)、ラックは主経路に触れない。ノード master ON/OFF (CH_ON / MIX 675 / STEREO /
 MONITOR、いずれも `np.on`、および OSC の `osc.on`) はスクリブル上の**電源 LED** — スクリブル全体がそのボタンで、
-オフのときストリップが減光する (グラフと共有の `isNodeInactive` 述語)。このため赤い「CH MUTE」バッジは別に持たない。
+オフのときストリップは溝・メーター・ノブの面・スクリブルの地を減光し (グラフと共有の `isNodeInactive` 述語)、
+ラベルとフェーダーキャップは減光しない。このため赤い「CH MUTE」バッジは別に持たない。
 STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップを持たず、電源 LED が唯一の ON/OFF。
 
 ## レイアウト
@@ -55,7 +56,7 @@ STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップ�
   列位置は常に全ストリップで揃う。
 - その send を持たないストリップは該当列を空欄にする (例: FX チャンネルは MIX 1 / MIX 2 のみ)。
   send を全く持たないストリップ (MIX / MONITOR / STEREO / OSCILLATOR / STREAMING) は
-  減光した `SENDS` ヘッダのみ表示する — 開閉矢印は機能するので、一括開閉には
+  `SENDS` ヘッダのみ表示する — 開閉矢印は機能するので、一括開閉には
   どのストリップからでも到達できる。メーター専用ストリップにも同じスペーサーを与え、
   フェーダー上端の整列を保つ。
 

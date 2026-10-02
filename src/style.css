@@ -2190,10 +2190,46 @@ input[type="range"]:focus-visible,
      then goes to .con-strips' vertical scroll instead of crushing the fader. */
   min-height: min-content;
 }
-/* A node whose master is off (power LED off): dim the whole strip like the graph
-   dims a muted node, while its other controls (MUTE / sends / EQ) stay operable. */
+/* A node whose master is off (power LED off), or whose bus the rate removes: the parts
+   of the strip that carry no text dim — the fader and mini-fader grooves, the meter, the
+   knob faces and the scribble's ground — the way the graph dims a muted node. Its
+   controls (MUTE / sends / EQ) stay operable, so their labels and the fader caps are not
+   dimmed. The 0-dB lines carry an opacity of their own, so theirs is the product. */
 .con-strip.inactive {
+  --inactive-veil: color-mix(in srgb, var(--panel) 50%, transparent);
+}
+.con-strip.inactive :is(.con-fader, .con-vfad) .track,
+.con-strip.inactive .con-meter {
   opacity: 0.5;
+}
+.con-strip.inactive .con-fader .zero {
+  opacity: 0.3;
+}
+.con-strip.inactive .con-vfad .zero {
+  opacity: 0.25;
+}
+/* The knob face and the scribble's ground take a half-panel veil rather than opacity:
+   the knob's focus ring is its own outline, and the scribble's name and power LED are
+   drawn over its ground. The scribble's veil is an inset shadow, which paints over the
+   ground and under everything inside it. */
+.con-strip.inactive .con-knob::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: var(--inactive-veil);
+  pointer-events: none;
+}
+.con-strip.inactive .con-scribble {
+  box-shadow:
+    var(--ctl-shadow),
+    inset 0 0 0 100vmax var(--inactive-veil);
+}
+.con-strip.inactive .con-scribble.power:focus-visible {
+  box-shadow:
+    var(--ctl-shadow),
+    inset 0 0 0 100vmax var(--inactive-veil),
+    0 0 0 4px rgba(0, 0, 0, 0.9);
 }
 
 .con-head {
@@ -2896,9 +2932,6 @@ input[type="range"]:focus-visible,
   user-select: none;
   overflow: hidden;
 }
-.con-sh.dim {
-  opacity: 0.55;
-}
 .con-sh .lb {
   font: 700 8.5px var(--mono);
   letter-spacing: 1px;
@@ -2962,9 +2995,6 @@ input[type="range"]:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 3px;
-}
-.con-scol.off {
-  opacity: 0.5;
 }
 .con-scol.empty {
   visibility: hidden;
