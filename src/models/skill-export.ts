@@ -9,11 +9,11 @@
 import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
-import { INSERT_FX_OPTIONS } from "../core/control/params";
+import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { isPlainRecord, type NodeParams } from "../core/plan";
 import { factoryNodeParams } from "./initial-state";
 import { monoPairsInto } from "../core/routing";
-import { hasHiZInput } from "../core/control/translate";
+import { hasHiZInput, nodeLeafRules, type LeafRule } from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
 import {
@@ -42,7 +42,7 @@ export interface SkillModel {
    *  the app's load gives a document that names none. Carried so the validator reports that
    *  completion from the model rather than spelling STREAMING out itself. */
   requiredSources: Record<string, string>;
-  /** Per channel insert-FX selector: everything a reader needs to work out what a write
+  /** Per insert-FX selector, the channels' and the output buses': everything a reader needs to work out what a write
    *  SENDS for that effect's engine values. Model-INDEPENDENT — carried per model because the
    *  file is keyed by model id, and a key beside those would read as a fourth model to
    *  anything that asks `modelId in models`.
@@ -93,6 +93,12 @@ export interface SkillModel {
    *  params `factoryNodeParams` answers; the load drops a value whose kind is not the factory
    *  value's at the same path (`paramRangeProblems`). */
   factory: { nodeParams: Record<string, NodeParams> };
+  /** Per node, every leaf the write bounds, in the validator's path spelling, with the rule it
+   *  is bounded by (`nodeLeafRules`): a window, an integer window, or a window whose value then
+   *  moves to the nearest of `steps`. The load bounds a value outside it to the value the write
+   *  sends (`paramRangeProblems`). The insert-FX engine keys are not here: which rule a key takes
+   *  is its family's, which `insertFxParamSpace` carries. */
+  leafRules: Record<string, Record<string, LeafRule>>;
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -112,7 +118,21 @@ function skillModel(model: DeviceModel): SkillModel {
     },
     booleanLeaves: booleanLeaves(model),
     factory: { nodeParams: factoryParams(model) },
+    leafRules: leafRules(model),
   };
+}
+
+/** Each node's bounded leaves, asked of the emit's own rule table with the factory params. */
+function leafRules(model: DeviceModel): SkillModel["leafRules"] {
+  const out: SkillModel["leafRules"] = {};
+  for (const n of model.nodes) {
+    const rules: Record<string, LeafRule> = {};
+    for (const [path, rule] of nodeLeafRules(model, n.id, factoryNodeParams(model.id, n.id))) {
+      rules[path.replace(/\.([0-9]+)(?=\.|$)/g, "[$1]")] = rule;
+    }
+    if (Object.keys(rules).length > 0) out[n.id] = rules;
+  }
+  return out;
 }
 
 /** Each node's factory params, for every node the model's factory values describe. */
@@ -179,7 +199,8 @@ function fxChannelCatalogue(): SkillModel["fxChannels"] {
  */
 function insertFxParamSpaceBySelector(): SkillModel["insertFxParamSpace"] {
   const out: SkillModel["insertFxParamSpace"] = {};
-  for (const option of INSERT_FX_OPTIONS) {
+  for (const option of [...INSERT_FX_OPTIONS, ...OUTPUT_INSERT_FX_OPTIONS]) {
+    if (String(option.value) in out) continue;
     const family = insertFxFamilyOf(option.value);
     if (!family) continue;
     const drivers = insertFxDriverSlots(family);

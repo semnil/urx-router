@@ -28,6 +28,10 @@ loads the plan as authored":
   an on/off or a group where a number belongs, a group where an on/off belongs, a
   scalar where a group belongs — is dropped on load (core/plan-validate.ts
   `paramRangeProblems`) and the factory value filled in, which is reported as a
+  warning,
+- every node-param leaf the write bounds (models.json `leafRules`, and the insert-FX
+  engine slots of `insertFxParamSpace`) is bounded on load to the value the write
+  sends (core/plan-validate.ts `paramRangeProblems`), which is reported as a
   warning, and
 - the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
   of the raw-deflated UTF-8 JSON, padding stripped), read back by `?plan=` on
@@ -232,6 +236,7 @@ def validate(plan, models):
             model.get("insertFxParamSpace"),
             model.get("hiZ"),
             (model.get("factory") or {}).get("nodeParams"),
+            model.get("leafRules"),
         )
     )
     problems.extend(insert_fx_pair_problems(view, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
@@ -1201,6 +1206,86 @@ def with_paths(params, paths, stand_in=MISSING):
     return view
 
 
+def js_round(value):
+    """JavaScript's `Math.round`: the nearest integer, a tie going to +infinity."""
+    floor = math.floor(value)
+    return floor if value - floor < 0.5 else floor + 1
+
+
+def admit(rule, value):
+    """The value a leaf rule admits (core/control/translate.ts `admitLeaf`), which is the value
+    the write sends: rounded first for an integer window, then held to the window, then moved
+    to the nearest stop where the rule has a stop table (the first of two equally near)."""
+    v = js_round(value) if rule.get("integer") else value
+    v = rule["min"] if v < rule["min"] else rule["max"] if v > rule["max"] else v
+    steps = rule.get("steps")
+    if steps:
+        best = 0
+        for i in range(1, len(steps)):
+            if abs(steps[i] - v) < abs(steps[best] - v):
+                best = i
+        v = steps[best]
+    return v
+
+
+def value_at(params, steps):
+    holder = params
+    for step in steps:
+        if isinstance(step, int):
+            holder = holder[step] if isinstance(holder, list) and step < len(holder) else None
+        else:
+            holder = holder.get(step) if isinstance(holder, dict) else None
+        if holder is None:
+            return None
+    return holder
+
+
+INSERT_FX_KEY = re.compile(r"^(.+):([0-9]+)$")
+
+
+def family_slots(param_space):
+    """Each insert-FX family's writable slots, by slot number."""
+    out = {}
+    for space in (param_space or {}).values():
+        if isinstance(space, dict) and isinstance(space.get("family"), str):
+            out[space["family"]] = {s["slot"]: s for s in space.get("slots") or [] if isinstance(s, dict)}
+    return out
+
+
+def leaf_rule_bounds(node_id, params, rules, param_space, takes_insert, bounded):
+    """The values the load moves to the value the write sends (core/plan-validate.ts
+    `paramRangeProblems`, by `nodeLeafRules`): each leaf models.json `leafRules` lists for the
+    node, and each insert-FX engine key under the rule of the family it names — a bare slot
+    under the family the selector names, the key it is re-keyed to on load."""
+    for path, rule in (rules or {}).items():
+        value = value_at(params, leaf_steps(path))
+        if not is_number(value):
+            continue
+        admitted = admit(rule, value)
+        if admitted != value:
+            bounded.append((f"{node_id}.{path}", f"{value!r} is bounded to {admitted!r}"))
+    slots = params.get("insertFxParams")
+    if not takes_insert or not isinstance(slots, dict):
+        return
+    family = insert_fx_family(params.get("insertFx"), param_space)
+    how = insert_fx_dispositions(slots, family)
+    by_family = family_slots(param_space)
+    for key, value in slots.items():
+        if not is_number(value):
+            continue
+        if how.get(key) == REKEY:
+            key = f"{family}:{int(key)}"
+        elif how.get(key) != KEEP:
+            continue
+        m = INSERT_FX_KEY.match(key)
+        spec = by_family.get(m.group(1), {}).get(int(m.group(2))) if m else None
+        if spec is None:
+            continue
+        admitted = admit({"min": spec["rawMin"], "max": spec["rawMax"], "integer": True}, value)
+        if admitted != value:
+            bounded.append((f"{node_id}.insertFxParams.{key}", f"{value!r} is bounded to {admitted!r}"))
+
+
 def hi_z_bounds(node_id, params, hi_z, bounded):
     """A channel carrying HI-Z with HI-Z on: the load turns +48V off (HI-Z kept) and bounds
     A.Gain above the HI-Z ceiling to that ceiling, the pair of repairs `paramRangeProblems`
@@ -1216,7 +1301,9 @@ def hi_z_bounds(node_id, params, hi_z, bounded):
         bounded.append((f"{node_id}.gain", f"{gain!r} is bounded to {ceiling!r} — A.Gain stops there while HI-Z is on"))
 
 
-def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=None, factory=None):
+def node_param_warnings(
+    plan, nodes, pairs, fx_channels, param_space=None, hi_z=None, factory=None, leaf_rules=None
+):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
@@ -1231,6 +1318,11 @@ def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=
     node_params = plan.get("nodeParams")
     if node_params is not None and not isinstance(node_params, dict):
         return ["nodeParams is not an object — the app loads the plan with no node params at all"]
+    def takes_insert_fx(node_id):
+        if node_id in OUTPUT_INSERT_FX_NODES:
+            return True
+        return nodes.get(node_id, {}).get("kind") == "channel" and not STEREO_CHANNEL_RE.match(node_id)
+
     for node_id, params in (node_params or {}).items():
         if node_id == "__proto__":
             out.append(f"node param {node_id}: the app drops this value on load — {PROTO_REMOVED}")
@@ -1262,6 +1354,9 @@ def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=
             gone = fx_effect_warnings(node_id, params["fxEffect"], dropped)
             if not gone:
                 fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
+        leaf_rule_bounds(
+            node_id, params, (leaf_rules or {}).get(node_id), param_space, takes_insert_fx(node_id), bounded
+        )
         hi_z_bounds(node_id, params, hi_z, bounded)
         for path, why in dropped:
             out.append(f"node param {path}: the app drops this value on load — {why}")
@@ -1321,11 +1416,6 @@ def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=
     # only where the document itself puts the channel in that comp/EQ order, since the factory
     # order sends no SSMCS at all.
     written = {i: p for i, p in (node_params or {}).items() if isinstance(p, dict)}
-
-    def takes_insert_fx(node_id):
-        if node_id in OUTPUT_INSERT_FX_NODES:
-            return True
-        return nodes.get(node_id, {}).get("kind") == "channel" and not STEREO_CHANNEL_RE.match(node_id)
 
     # Each of these asks whether the document carries a value the app can USE, not whether the
     # key is present: the loader completes what it drops, so a key holding the wrong kind of

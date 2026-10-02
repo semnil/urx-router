@@ -18,10 +18,11 @@ import {
 } from "./plan-validate";
 import { trackCountAtRate } from "./constraints";
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
-import { planToCommands } from "./control/translate";
+import { nodeLeafRules, planToCommands } from "./control/translate";
+import { insertFxDriverSlots, insertFxFamilyOf, insertFxWritableSlots } from "./control/insert-fx-effect";
 import { sendPansToSources, validatePlan } from "./routing";
 import { deserialize, emptyPlan, ensureFixedConnections, fixedConnection, PLAN_VERSION, serialize } from "./plan";
-import type { Plan, PlanConnection } from "./plan";
+import type { NodeParams, Plan, PlanConnection } from "./plan";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
@@ -736,6 +737,120 @@ describe("paramRangeProblems — a value whose kind is not the factory value's",
     expect(paramRangeProblems(plan).map((p) => `${p.key} ${p.action}`)).toEqual(["hiZ drop"]);
   });
 });
+
+// Every leaf the write bounds is bounded at the load to the same value, through the one rule
+// the emit itself uses (`nodeLeafRules` / `admitLeaf`), so the plan, the screen and the wire
+// read one value.
+describe("paramRangeProblems — the node-param leaves the write bounds", () => {
+  const load = (nodeParams: unknown): Plan =>
+    deserialize(JSON.stringify({ format: "urx-router-plan", version: PLAN_VERSION, modelId: "URX44V", nodeParams }));
+
+  // The COMP Ratio became a stop ladder after documents had been saved on the linear field, so
+  // a shipped document can hold a ratio the unit stops on nowhere.
+  it("bounds a COMP Ratio between two stops to the stop the write sends", () => {
+    expect(paramRangeProblems(load({ ch1: { comp: { ratio: 7.3 } } }))).toEqual([
+      { reason: "paramRange", node: "ch1", where: "node", key: "comp.ratio", stored: 7.3, action: "bound", bound: 7.5 },
+    ]);
+  });
+
+  it("bounds a raw to an integer inside its window, and an insert-FX slot by the family its key names", () => {
+    const plan = load({
+      ch1: { compEqType: 1, ssmcs: { compDrive: 10.5, comp: { ratio: 999 } }, gate: { threshold: -90 } },
+      ch2: { insertFx: 1793, insertFxParams: { "6": 5, "compander:7": 99999 } },
+      "bus.osc": { osc: { interval: 0 } },
+      "bus.stereo": { eqOneKnob: { level: 150 } },
+    });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(
+      [
+        "ch1.ssmcs.compDrive 10.5 -> 11",
+        "ch1.ssmcs.comp.ratio 999 -> 120",
+        "ch1.gate.threshold -90 -> -72",
+        "ch2.insertFxParams.compander:6 5 -> 0",
+        "ch2.insertFxParams.compander:7 99999 -> 2000",
+        "bus.osc.osc.interval 0 -> 1",
+        "bus.stereo.eqOneKnob.level 150 -> 100",
+      ].sort(),
+    );
+  });
+
+  // The claim the repair rests on: what the load writes down is what the write was already
+  // sending, for every leaf of every node, in each shape a document can be outside it in.
+  it("never changes what the write path sends, and settles in one pass", () => {
+    const offenders: string[] = [];
+    for (const id of ["URX44V", "URX22"] as const) {
+      const model = getModel(id);
+      const base = defaultPlan(id);
+      ensureFixedConnections(model, base);
+      const seeded = (node: string, np: Record<string, unknown>): Plan => {
+        const plan = structuredClone(base);
+        plan.nodeParams[node] = { ...plan.nodeParams[node], ...np } as never;
+        return plan;
+      };
+      const cases: [string, Plan, boolean, boolean][] = [];
+      for (const node of model.nodes) {
+        const insertCases: Record<string, unknown>[] = [{}];
+        if (node.id === "ch1") for (const sel of [256, 512, 1793]) insertCases.push({ insertFx: sel });
+        if (node.id === "bus.stereo") for (const sel of [1792, 1794]) insertCases.push({ insertFx: sel });
+        for (const extra of insertCases) {
+          const at: NodeParams = { ...base.nodeParams[node.id], ...extra };
+          const withSlots: NodeParams =
+            typeof extra.insertFx === "number" ? { ...at, insertFxParams: engineSlotsOf(extra.insertFx) } : at;
+          for (const [path, rule] of nodeLeafRules(model, node.id, withSlots)) {
+            for (const [shape, v] of [
+              ["below", rule.min - 1.25],
+              ["above", rule.max + 1.25],
+              ["between", (rule.min + rule.max) / 2 + 0.3],
+            ] as const) {
+              const np = structuredClone(withSlots) as Record<string, unknown>;
+              const keys = path.split(".");
+              let holder = np;
+              for (const k of keys.slice(0, -1)) holder = (holder[k] ??= {}) as Record<string, unknown>;
+              holder[keys[keys.length - 1]] = v;
+              // Inside a plain window there is nothing to move.
+              const outside = shape !== "between" || rule.integer === true || rule.steps !== undefined;
+              cases.push([`${id} ${node.id} ${path} ${shape}`, seeded(node.id, np), outside, driverPath(path)]);
+            }
+          }
+        }
+      }
+      for (const [name, plan, outside, driver] of cases) {
+        const before = planToCommands(model, plan).map((c) => `${c.paramId}:${c.y}=${c.vdValue}`);
+        const problems = paramRangeProblems(plan);
+        if (outside && !problems.length) offenders.push(`${name}: nothing reported`);
+        applyParamRange(plan, problems);
+        const after = planToCommands(model, plan).map((c) => `${c.paramId}:${c.y}=${c.vdValue}`);
+        // A slot that decides which others are the unit's is read for that by its stored value,
+        // which the repair moves to the value the write sends for the slot itself.
+        if (!driver && after.join() !== before.join()) offenders.push(`${name}: the write moved`);
+        if (paramRangeProblems(plan).length) offenders.push(`${name}: still reported`);
+      }
+      expect(cases.length, id).toBeGreaterThan(100);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("finds nothing in any model's shipped default plan", () => {
+    for (const id of MODEL_IDS) expect(paramRangeProblems(defaultPlan(id)), id).toEqual([]);
+  });
+});
+
+/** Whether a path is an insert-FX slot that drives which other slots the unit owns. */
+function driverPath(path: string): boolean {
+  const m = /^insertFxParams\.(.+):([0-9]+)$/.exec(path);
+  const fam = m ? (m[1] as Parameters<typeof insertFxDriverSlots>[0]) : null;
+  return fam !== null && insertFxDriverSlots(fam).has(Number(m![2]));
+}
+
+/** One qualified engine key per writable slot of the family `selector` names, each at a value
+ *  inside its window, for a case that needs every slot to exist. */
+function engineSlotsOf(selector: number): Record<string, number> {
+  const fam = insertFxFamilyOf(selector);
+  return fam ? Object.fromEntries(insertFxWritableSlots(fam).map((s) => [`${fam}:${s.slot}`, s.rawMin])) : {};
+}
 
 // STREAMING's list on the unit has no None, so a document that gives it no wire is completed
 // with the STEREO a new plan carries, and the load says so. Any wire into it counts, whatever

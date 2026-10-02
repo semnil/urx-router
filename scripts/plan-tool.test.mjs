@@ -70,6 +70,13 @@ const warningPath = (line) => {
   return m ? m[1] : null;
 };
 
+/** The same, for the lines that say a value is REMOVED — the question the removal tables ask,
+ *  where a value the load moves is a different answer. */
+const removalPath = (line) => {
+  const m = /^WARNING: node param (.+?): the app drops this value on load/.exec(line);
+  return m ? m[1] : null;
+};
+
 /** The paths the tool says the app removes. Node-level advice (selector warnings, "verify on
  *  the device") is not an answer to this question and is left out. */
 const toolPaths = (dir, plan) => {
@@ -1248,7 +1255,10 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
         `"positions":{},"connections":[],"nodeParams":${np}}`;
       const loaded = deserializeDocument(text).plan;
-      applyParamRange(loaded, prp(loaded));
+      applyParamRange(
+        loaded,
+        prp(loaded).filter((p) => p.action === "drop"),
+      );
       const app = removed(JSON.parse(text).nodeParams, loaded.nodeParams, "", []).sort();
       removals += app.length;
 
@@ -1258,7 +1268,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       expect(r.status, r.stdout).toBe(0);
       const tool = r.stderr
         .split(/\r?\n/)
-        .map(warningPath)
+        .map(removalPath)
         .filter((p) => p !== null)
         .sort();
       expect(tool, `the removals of ${np}`).toEqual(app);
@@ -1344,7 +1354,10 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
           `"positions":{},"connections":[],"nodeParams":${np}}`;
         const loaded = deserializeDocument(text).plan;
-        applyParamRange(loaded, prp(loaded));
+        applyParamRange(
+          loaded,
+          prp(loaded).filter((p) => p.action === "drop"),
+        );
         const app = removedIn(JSON.parse(text).nodeParams, loaded.nodeParams, "", []).sort();
         if (app.length) outcomes.removed += 1;
         else outcomes.kept += 1;
@@ -1355,7 +1368,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         expect(r.status, r.stdout).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
-          .map(warningPath)
+          .map(removalPath)
           .filter((p) => p !== null)
           .sort();
         expect(tool, `${sname} / ${mname}`).toEqual(app);
@@ -1799,6 +1812,82 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     });
     expect(toolWarnings(dir, doc(true))).not.toContain("carry no usable ssmcs");
     expect(toolWarnings(dir, doc(1)), "the control: the real value is warned about").toContain("carry no usable ssmcs");
+  });
+
+  // Every leaf the write bounds is bounded on load to the value the write sends, through the
+  // rule the emit uses. The values the load MOVES — path and value — are compared with the ones
+  // the tool says it bounds: every bounded leaf of every node on every model pushed past each end
+  // of its rule and between two of its settings, and the insert-FX engine keys under a selected
+  // family, a bare slot the load re-keys and a family the key names itself, beside the factory
+  // document nothing may be said about.
+  it("agrees with the app about the node-param values it bounds on load", async () => {
+    const { deserializeDocument, serialize } = await import("../src/core/plan.ts");
+    const { planProblems } = await import("../src/core/plan-validate.ts");
+    const { defaultPlan } = await import("../src/models/initial-state.ts");
+    const models = JSON.parse(
+      readFileSync(join(ROOT, ".claude/skills/urx-routing-planner/scripts/models.json"), "utf8"),
+    );
+    const set = (np, path, v) => {
+      const keys = path.replace(/\[(\d+)\]/g, ".$1").split(".");
+      let holder = np;
+      for (const k of keys.slice(0, -1)) holder = holder[k] ??= {};
+      holder[keys[keys.length - 1]] = v;
+    };
+    let bounded = 0;
+    for (const modelId of MODEL_IDS) {
+      const factory = JSON.parse(serialize(defaultPlan(modelId)));
+      const rules = models[modelId].leafRules;
+      const moved = (pick) => {
+        const np = structuredClone(factory.nodeParams);
+        for (const [node, leaves] of Object.entries(rules))
+          for (const [path, rule] of Object.entries(leaves)) {
+            const v = pick(rule);
+            if (v !== undefined) set((np[node] ??= {}), path, v);
+          }
+        return np;
+      };
+      const engine = {
+        ...structuredClone(factory.nodeParams),
+        ch1: {
+          ...factory.nodeParams.ch1,
+          insertFx: 1793,
+          insertFxParams: { 6: 5, "compander:7": 99999, "pitch:16": -3 },
+        },
+        "bus.stereo": { ...factory.nodeParams["bus.stereo"], insertFx: 1792, insertFxParams: { 25: 99 } },
+      };
+      const corpus = [
+        ["every bounded leaf above its rule", moved((r) => r.max + 1.25)],
+        ["every bounded leaf below its rule", moved((r) => r.min - 1.25)],
+        [
+          "every integer or stepped leaf between two settings",
+          moved((r) => (r.integer || r.steps ? (r.min + r.max) / 2 + 0.3 : undefined)),
+        ],
+        ["insert-FX engine keys", engine],
+        ["the factory document", structuredClone(factory.nodeParams)],
+      ];
+      for (const [name, nodeParams] of corpus) {
+        const plan = { ...factory, nodeParams };
+        const read = deserializeDocument(JSON.stringify(plan)).plan;
+        const app = planProblems(getModel(modelId), read)
+          .filter((p) => p.reason === "paramRange" && p.action === "bound" && p.where === "node")
+          .map((p) => `${p.node}.${p.key} = ${Number(p.bound)}`)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) => /^WARNING: node param (\S+): the app bounds this value on load — .* is bounded to (\S+)$/.exec(l))
+          .filter((m) => m !== null)
+          .map((m) => `${m[1].replace(/\[(\d+)\]/g, ".$1")} = ${Number(m[2])}`)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        bounded += app.length;
+        if (name === "the factory document") expect(app, modelId).toEqual([]);
+      }
+    }
+    expect(bounded, "the corpus reaches documents the load bounds").toBeGreaterThan(0);
   });
 
   // A channel carrying HI-Z with HI-Z on opens with +48V off and A.Gain no higher than +40 dB.

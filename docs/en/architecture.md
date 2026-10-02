@@ -125,7 +125,9 @@ carries a one-line map of the same directories and points here.
   describe, a value whose kind is not the factory value's at that path is dropped the same way and the fill
   supplies the factory value — a value that is not a number where a number belongs, a group or a list where
   an on/off does, anything but a group where a group does (a number where an on/off belongs is converted
-  instead, below). A drop of the effect OBJECT is the one
+  instead, below). Every node-param leaf the write bounds is bounded the same way, to the value the write
+  sends, by the one rule the write bounds it by (`nodeLeafRules` / `admitLeaf` in `translate.ts`). A drop of
+  the effect OBJECT is the one
   repair that changes what is sent, and in the safe direction — see "An FX channel the plan does not
   describe". The two actions are counted and said
   separately, since a value moved to the nearest one the app can send and a value removed are different
@@ -3951,14 +3953,11 @@ The value is authored FROM the device (`authorFromDevice`), the seat a device-si
 takes, rather than pushed as an edit: it is the write path's value rather than the operator's, and an undo
 that put the unwritable raw back would only have it normalised again on the next write.
 
-**SCOPE: the FX channel effect, and nothing else.** The premise holds wherever the emit normalises —
-`translate.ts` has eighteen `boundRaw` and ten `boundEnum` call sites against the two FX ones — and the
-reachable sibling is insert FX, whose engine slots are bounded at the emit while `readback.ts` stores the
-unit's raw verbatim. That case is untouched here: it diverges the same way and `comparePlan` sees it no
-better. The mechanism is bounded to `paramRangeProblems`' own walk for the same reason that walk is
-(`plan-validate.ts`'s SCOPE note): the FX catalogue is the family whose windows have actually moved.
-The walk's two node keys — a HI-Z channel's +48V and A.Gain — are not taken back: `paramRangeAddrs`
-answers only for an FX `params` entry, and the emit sends both keys as the plan holds them.
+**SCOPE: the FX channel effect, and nothing else.** The load bounds every node-param leaf the write
+bounds as well (`paramRangeProblems`), but only an FX `params` entry is taken back here: `paramRangeAddrs`
+answers for that entry alone, and a node-param repair carries no address. The reachable sibling is insert FX,
+whose engine slots are bounded at the emit while `readback.ts` stores the unit's raw verbatim: a plan holding
+such a raw from a device read diverges the same way, and `comparePlan` sees it no better.
 
 A value is **rewritten** rather than dropped in the DESERIALIZER (the node name, below) and in the loader one
 layer later, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
@@ -3969,8 +3968,11 @@ repair reaches past the leaves — the
 sanitiser above keeps a boolean and a non-empty object under any key, so an unreadable effect object loads
 and every reader below reads it as absent, and a truthy one is worse still, since the write path then sends
 that channel's factory defaults over whatever the unit holds. Both actions are reported (`plan-validate.ts`), in
-two sentences rather than one count. The same step bounds two keys of a channel whose HI-Z is on — +48V to
-off and A.Gain to +40 dB (`input-lock.ts`) — and counts them with the bounded FX values. In the deserializer: a **node name** is cut to
+two sentences rather than one count. The same step drops a node-param value whose kind is not the factory
+value's at its path, bounds every node-param leaf the write bounds to the value the write sends, by the rule
+the write bounds it by (`nodeLeafRules` / `admitLeaf` in `translate.ts`), and bounds two keys of a channel whose
+HI-Z is on — +48V to off and A.Gain to +40 dB (`input-lock.ts`) — counting each with the dropped or bounded FX
+values. In the deserializer: a **node name** is cut to
 **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on
 the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured

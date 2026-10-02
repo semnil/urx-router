@@ -165,7 +165,8 @@ or inside a group — is written `true` / `false`: a number there loads converte
   `ratio` is a ladder of stops rather than a free range: 0.05 spacing from 1.00
   to 4.00, then 0.1 to 5.0, 0.2 to 7.0, 0.5 to 10, 1 to 20, 2 to 40, 5 to 70,
   10 to 100, then 150, 200, 300, 500 and the top stop. A value between two stops
-  loads unchanged but reaches the unit as the nearer stop, so write one of them.
+  is moved on load to the nearer stop, which is what the write sends, so write one
+  of them.
   The top stop is the unit's `INF:1` and is written as **655.35** (JSON has no
   infinity to carry).
 - `ducker` — `{ threshold, range (dB), attack, decay (ms) }`; `duckerOn` (bool).
@@ -312,6 +313,14 @@ values removed:
 The last two matter because the sanitiser keeps a boolean and a non-empty object
 under any key, so an unreadable effect object survives the load and every reader
 below treats it as absent.
+
+Outside `fxEffect`, every node-param value the write bounds is bounded on load to the value the
+write sends, and counted with the values moved: the `gate`, `comp` and `ducker` values to their
+windows (a COMP `ratio` to the nearest stop of its ladder), the `ssmcs` raws and the
+`insertFxParams` engine values to whole numbers inside their windows (an engine key by the family
+its own name gives, a bare slot by the one the selector names), the EQ 1-knob and COMP 1-knob
+levels to 0–100, and the oscillator's `interval` to 1–30. `plan_tool.py` warns about each one,
+from the rules `models.json` carries (`leafRules`).
 
 The same step drops, on every node, a value whose KIND is not the factory value's at that
 path, and the factory value is filled in: an on/off or a group where a number belongs

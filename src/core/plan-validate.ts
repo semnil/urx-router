@@ -9,12 +9,13 @@
 import type { DeviceModel } from "../models/types";
 import { parseRef } from "../models/types";
 import { factoryNodeParams, fillFactoryParams } from "../models/initial-state";
+import { getModel, MODEL_IDS } from "../models";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import type { InsertFxSlot } from "./control/params";
 import { fixedConnection, isPlainRecord, requiredSourceWire, setPlanSampleRate } from "./plan";
 import type { Plan } from "./plan";
-import { insertFxWireState } from "./control/translate";
+import { admitLeaf, insertFxWireState, nodeLeafRules } from "./control/translate";
 import { hiZOn } from "./input-lock";
 import { HI_Z_A_GAIN_MAX_DB } from "./control/vd";
 import { mixSendLocks, sourcePan, validatePlan } from "./routing";
@@ -117,18 +118,13 @@ export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPa
  *  SCOPE: the FX channel effect; on every node the model's factory values describe, a leaf or
  *  group whose kind is not the factory value's at that path (`where: "node"`, dropped, so the
  *  fill supplies the factory value) — a number where the factory holds an on/off is converted
- *  instead (`booleanParamProblems`); plus two keys of a channel carrying HI-Z (`where: "node"`):
- *  +48V on while HI-Z is on is bounded to off (HI-Z kept), and A.Gain above +40 dB while HI-Z
- *  is on is bounded to +40 — the app never turns the two on together, and the unit does not
- *  apply an A.Gain above +40 under HI-Z. A device read keeps +48V and HI-Z both on where the
- *  unit holds them, so a file this build saved can carry that pair.
- *  Beyond those, the FX channel effect and nothing else. `translate.ts` bounds twenty addresses by
- *  a window, and this reads one family of them. The others (insert-FX, SSMCS, the two 1-knob
- *  levels, the oscillator interval) have the same shape, and one of them — the oscillator —
- *  is scene-external, so a scene-scoped write would not send it while a whole-plan repair
- *  would still move it. The FX catalogue is the family whose windows have actually moved, so
- *  it is the family a shipped document can be outside of. The name says `param` because the
- *  shape is general; the walk is deliberately not. */
+ *  instead (`booleanParamProblems`); every node-param leaf the write bounds, bounded by the rule
+ *  the write bounds it by (`nodeLeafRules` / `admitLeaf` in translate.ts, `where: "node"`); plus
+ *  +48V on a channel carrying HI-Z with HI-Z on, bounded to off (HI-Z kept) — the app never
+ *  turns the two on together — and an A.Gain above +40 dB there, bounded to +40. A device read keeps +48V and HI-Z both on where the unit holds
+ *  them, so a file this build saved can carry that pair. A repair reaches the oscillator, which
+ *  is scene-external: under the Scene-only device scope the write does not carry it, while the
+ *  load still moves it and says so. */
 export interface ParamRangeProblem {
   reason: "paramRange";
   node: string;
@@ -252,6 +248,20 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
       const key = path[path.length - 1];
       out.push({ reason: "paramRange", node, where: "node", key: path.join("."), stored: parent[key], action: "drop" });
       delete parent[key];
+    }
+    // A value outside what the write sends for it: the value the write sends.
+    const model = MODEL_IDS.includes(plan.modelId) ? getModel(plan.modelId) : null;
+    for (const [path, rule] of model ? nodeLeafRules(model, node, np) : []) {
+      const stored = path
+        .split(".")
+        .reduce<unknown>(
+          (v, k) => (isPlainRecord(v) || Array.isArray(v) ? (v as Record<string, unknown>)[k] : undefined),
+          np,
+        );
+      if (typeof stored !== "number" || !Number.isFinite(stored)) continue;
+      const bound = admitLeaf(rule, stored);
+      if (bound !== stored)
+        out.push({ reason: "paramRange", node, where: "node", key: path, stored, action: "bound", bound });
     }
     // A HI-Z channel with HI-Z on: +48V goes off and A.Gain stops at +40 dB.
     if (!hiZOn(plan.modelId, node, np)) continue;

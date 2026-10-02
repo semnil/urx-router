@@ -1177,12 +1177,96 @@ function pushDynCommands(
   for (const f of fields) {
     const v = vals[f.key];
     if (v === undefined) continue;
-    const bounded = v < f.min ? f.min : v > f.max ? f.max : v;
     // A field with a stop table sends a stop. The control offers nothing else, but a plan
     // saved before it had one — or hand-edited — can hold a value between two, and the unit
     // has no setting there.
-    out.push(command(f.name, y, f.steps ? f.steps[nearestStepIndex(f.steps, bounded)] : bounded));
+    out.push(command(f.name, y, admitLeaf(dynRule(f), v)));
   }
+}
+
+/**
+ * What one stored node-param leaf can hold, as the write sends it: a window, an INTEGER window
+ * (a broker raw, rounded first), or a window whose value then moves to the nearest of a stop
+ * table. The emit bounds each leaf through the rule here (`admitLeaf`), and the load bounds a
+ * document to the same answer (`plan-validate.ts` `paramRangeProblems`), so the plan, the
+ * screen and the wire read one value.
+ */
+export interface LeafRule {
+  min: number;
+  max: number;
+  integer?: true;
+  steps?: readonly number[];
+}
+
+/** The value a rule admits for `v`, which is the value the write sends for it. */
+export function admitLeaf(rule: LeafRule, v: number): number {
+  const x = rule.integer ? Math.round(v) : v;
+  const bounded = x < rule.min ? rule.min : x > rule.max ? rule.max : x;
+  return rule.steps ? rule.steps[nearestStepIndex(rule.steps, bounded)] : bounded;
+}
+
+const dynRule = (f: DynField): LeafRule => ({ min: f.min, max: f.max, ...(f.steps ? { steps: f.steps } : {}) });
+const rawRule = (min: number, max: number): LeafRule => ({ min, max, integer: true });
+
+/** An insert-FX engine key's family and slot: the family its own key names, or — for a bare
+ *  slot number — the family the node's selector names. Null for a key that is neither. */
+function insertFxKeySlot(
+  key: string,
+  selected: import("./insert-fx-effect").InsertFxFamily | null,
+): { family: import("./insert-fx-effect").InsertFxFamily; slot: number } | null {
+  const qualified = /^(.+):([0-9]+)$/.exec(key);
+  if (qualified) {
+    // Every family, from the catalogue's own selectors.
+    const family = [...INSERT_FX_OPTIONS, ...OUTPUT_INSERT_FX_OPTIONS]
+      .map((o) => insertFxFamilyOf(o.value))
+      .find((f) => f === qualified[1]);
+    return family ? { family, slot: Number(qualified[2]) } : null;
+  }
+  return /^[0-9]+$/.test(key) && selected ? { family: selected, slot: Number(key) } : null;
+}
+
+/**
+ * Every leaf of one node's params that the write bounds, by dotted path, with the rule it is
+ * bounded by. `np` is the node as stored; the insert-FX engine keys come from it, since the map
+ * carries one namespace per family.
+ */
+export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams | undefined): [string, LeafRule][] {
+  const out: [string, LeafRule][] = [];
+  const cc = channelControl(model, nodeId);
+  if (cc?.hasMicStrip) {
+    for (const f of GATE_FIELDS) out.push([`gate.${f.key}`, dynRule(f)]);
+    for (const f of COMP_FIELDS) out.push([`comp.${f.key}`, dynRule(f)]);
+    out.push(["comp.oneKnobLevel", rawRule(0, 100)]);
+    for (const f of ssmcsMainFields()) out.push([`ssmcs.${f.key}`, rawRule(f.min, f.max)]);
+    for (const f of ssmcsCompFields()) {
+      const group = isSsmcsScKey(f.key) ? "sc" : "comp";
+      out.push([`ssmcs.${group}.${ssmcsPlanKey(f.key)}`, rawRule(f.min, f.max)]);
+    }
+    out.push(["ssmcs.comp.threshold", rawRule(SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)]);
+    out.push(["ssmcs.comp.makeup", rawRule(SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)]);
+    for (const band of SSMCS_EQ_BAND_NAMES) {
+      for (const f of ssmcsEqBandFields(band)) {
+        if (f.key === "q" && !ssmcsEqBandHasQ(band)) continue;
+        out.push([`ssmcs.eq.${band}.${f.key}`, rawRule(f.min, f.max)]);
+      }
+    }
+  }
+  if (eqOneKnob(model, nodeId, COMP_EQ_COMP_FIRST))
+    out.push(["eqOneKnob.level", rawRule(EQ_ONE_KNOB_LEVEL_MIN, EQ_ONE_KNOB_LEVEL_MAX)]);
+  if (duckerControl(model, nodeId)) for (const f of DUCKER_FIELDS) out.push([`ducker.${f.key}`, dynRule(f)]);
+  if (nodeId === "bus.osc") out.push(["osc.interval", rawRule(1, 30)]);
+  const ifx = insertFxControl(model, nodeId);
+  const params = np?.insertFxParams;
+  if (ifx && params && typeof params === "object") {
+    const sel = np?.insertFx;
+    const selected = typeof sel === "number" && ifx.options.some((o) => o.value === sel) ? insertFxFamilyOf(sel) : null;
+    for (const key of Object.keys(params)) {
+      const at = insertFxKeySlot(key, selected);
+      const spec = at && insertFxWritableSlots(at.family).find((sp) => sp.slot === at.slot);
+      if (spec) out.push([`insertFxParams.${key}`, rawRule(spec.rawMin, spec.rawMax)]);
+    }
+  }
+  return out;
 }
 
 // Push the SSMCS detail value-set commands for one MONO IN channel. Values are
