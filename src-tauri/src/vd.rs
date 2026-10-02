@@ -792,10 +792,12 @@ mod imp {
                     value,
                     reply,
                 }) => {
-                    LinkCounters::bump(&counters.sets);
-                    let _ = reply.send(
-                        health.guard(|| do_set(&mut link, &mut subs, param_id, x, y, json!(value))),
-                    );
+                    // Each count is taken inside the guard: the ledger counts what is put
+                    // on the socket, and a command the latch refuses never reaches it.
+                    let _ = reply.send(health.guard(|| {
+                        LinkCounters::bump(&counters.sets);
+                        do_set(&mut link, &mut subs, param_id, x, y, json!(value))
+                    }));
                 }
                 Ok(Cmd::Get {
                     param_id,
@@ -803,9 +805,10 @@ mod imp {
                     y,
                     reply,
                 }) => {
-                    LinkCounters::bump(&counters.gets);
-                    let _ =
-                        reply.send(health.guard(|| do_get(&mut link, &mut subs, param_id, x, y)));
+                    let _ = reply.send(health.guard(|| {
+                        LinkCounters::bump(&counters.gets);
+                        do_get(&mut link, &mut subs, param_id, x, y)
+                    }));
                 }
                 Ok(Cmd::SetStr {
                     param_id,
@@ -814,10 +817,10 @@ mod imp {
                     value,
                     reply,
                 }) => {
-                    LinkCounters::bump(&counters.sets);
-                    let _ = reply.send(
-                        health.guard(|| do_set(&mut link, &mut subs, param_id, x, y, json!(value))),
-                    );
+                    let _ = reply.send(health.guard(|| {
+                        LinkCounters::bump(&counters.sets);
+                        do_set(&mut link, &mut subs, param_id, x, y, json!(value))
+                    }));
                 }
                 Ok(Cmd::GetStr {
                     param_id,
@@ -825,9 +828,10 @@ mod imp {
                     y,
                     reply,
                 }) => {
-                    LinkCounters::bump(&counters.gets);
-                    let _ = reply
-                        .send(health.guard(|| do_get_str(&mut link, &mut subs, param_id, x, y)));
+                    let _ = reply.send(health.guard(|| {
+                        LinkCounters::bump(&counters.gets);
+                        do_get_str(&mut link, &mut subs, param_id, x, y)
+                    }));
                 }
                 Ok(Cmd::MetersSubscribe {
                     addrs,
@@ -841,8 +845,10 @@ mod imp {
                     unregister_meters(&mut link, &mut subs, &counters);
                     let mut first = Ok(());
                     for &(id, x) in &addrs {
-                        LinkCounters::bump(&counters.regist_frames);
-                        let r = health.guard(|| reg_meter(&mut link, id, x, "regist"));
+                        let r = health.guard(|| {
+                            LinkCounters::bump(&counters.regist_frames);
+                            reg_meter(&mut link, id, x, "regist")
+                        });
                         if first.is_ok() {
                             first = r;
                         }
@@ -869,8 +875,10 @@ mod imp {
                     unregister_params(&mut link, &mut subs, &counters);
                     let mut first = Ok(());
                     for &(id, x, y) in &addrs {
-                        LinkCounters::bump(&counters.regist_frames);
-                        let r = health.guard(|| reg_param(&mut link, id, x, y, "regist"));
+                        let r = health.guard(|| {
+                            LinkCounters::bump(&counters.regist_frames);
+                            reg_param(&mut link, id, x, y, "regist")
+                        });
                         if first.is_ok() {
                             first = r;
                         }
@@ -2815,6 +2823,106 @@ mod imp {
             closed
                 .recv_timeout(Duration::from_secs(10))
                 .expect("a lost session still closes on Shutdown");
+            worker.join().unwrap();
+        }
+
+        /// Send one command built around its reply channel, and wait for the answer.
+        fn ask<T>(
+            tx: &mpsc::Sender<Cmd>,
+            cmd: impl FnOnce(mpsc::Sender<Result<T, String>>) -> Cmd,
+        ) -> Result<T, String> {
+            let (reply, wait) = mpsc::channel();
+            tx.send(cmd(reply)).expect("the worker is serving");
+            wait.recv_timeout(Duration::from_secs(10))
+                .expect("the worker answers")
+        }
+
+        // The ledger counts what was put on the socket. A command the latch refuses never
+        // reaches it, so a lost session's later gets, sets and registrations leave their
+        // rows where they were — while one that does reach the socket is counted.
+        #[test]
+        fn a_command_the_latch_refuses_is_not_counted_as_sent() {
+            let (link, mut peer) = vdp_link();
+            let counters = Arc::new(LinkCounters::default());
+            let (tx, rx) = mpsc::channel();
+            let worker = {
+                let counters = Arc::clone(&counters);
+                std::thread::spawn(move || serve(link, rx, counters))
+            };
+            let get = |reply| Cmd::Get {
+                param_id: 1,
+                x: 0,
+                y: 0,
+                reply,
+            };
+
+            send(
+                &mut peer,
+                json!({ "method": "get", "uri": ADDR, "data": { "current_value": 5 } }),
+            );
+            assert_eq!(ask(&tx, get), Ok(5));
+            assert_eq!(
+                counters.read().gets,
+                1,
+                "a get put on the socket is counted"
+            );
+
+            let (channel, events) = watch();
+            assert_eq!(take_watch(&tx, channel), Ok(()));
+            send(&mut peer, synchronize("lost"));
+            events
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the pump latched the loss");
+
+            assert!(ask(&tx, get).is_err());
+            assert!(ask(&tx, |reply| Cmd::GetStr {
+                param_id: 1,
+                x: 0,
+                y: 0,
+                reply
+            })
+            .is_err());
+            assert!(ask(&tx, |reply| Cmd::Set {
+                param_id: 1,
+                x: 0,
+                y: 0,
+                value: 0,
+                reply
+            })
+            .is_err());
+            assert!(ask(&tx, |reply| Cmd::SetStr {
+                param_id: 1,
+                x: 0,
+                y: 0,
+                value: "ch 1".into(),
+                reply
+            })
+            .is_err());
+            let meters = Channel::new(|_| Ok(()));
+            assert!(ask(&tx, |reply| Cmd::MetersSubscribe {
+                addrs: vec![(115, 0)],
+                channel: meters,
+                reply
+            })
+            .is_err());
+            let params = Channel::new(|_| Ok(()));
+            assert!(ask(&tx, |reply| Cmd::ParamsSubscribe {
+                addrs: vec![(1, 0, 0)],
+                channel: params,
+                reply
+            })
+            .is_err());
+
+            let after = counters.read();
+            assert_eq!(
+                (after.gets, after.sets, after.regist_frames),
+                (1, 0, 0),
+                "commands the latch refused were counted as sent"
+            );
+
+            let (done, closed) = mpsc::channel();
+            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            closed.recv_timeout(Duration::from_secs(10)).unwrap();
             worker.join().unwrap();
         }
 
