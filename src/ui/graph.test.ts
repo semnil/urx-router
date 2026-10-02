@@ -35,6 +35,11 @@ import {
   wireHit,
 } from "./graph.test-util";
 import type { GraphFixture, GraphOptions } from "./graph.test-util";
+
+/** A node's resting dim: on its body when it carries a badge (which stays at full
+ *  strength beside it), on the node itself otherwise. */
+const restingDim = (node: SVGGElement): string | null =>
+  (node.querySelector(":scope > .node-body") ?? node).getAttribute("opacity");
 import { LEVEL_MIN_DB } from "../core/plan";
 import type { Plan } from "../core/plan";
 import { defaultPlan } from "../models/initial-state";
@@ -200,12 +205,33 @@ describe("appearance", () => {
     fx = graphFixture();
     fx.graph.setDisabledNodes(["bus.fx2"]);
     const marked = nodeEl(fx.host, "bus.fx2")!;
-    expect(marked.getAttribute("opacity")).toBe("0.62");
+    expect(restingDim(marked)).toBe("0.62");
     expect(marked.querySelector("rect")?.getAttribute("stroke-dasharray")).toBe("4 3");
     fx.graph.setDisabledNodes([]);
     const cleared = nodeEl(fx.host, "bus.fx2")!;
-    expect(cleared.getAttribute("opacity")).not.toBe("0.62");
+    expect(restingDim(cleared)).not.toBe("0.62");
     expect(cleared.querySelector("rect")?.getAttribute("stroke-dasharray")).toBeNull();
+  });
+
+  // The badge names why the node is dim, so it is read at full strength beside the dim
+  // body, in the ink chosen for the warn face it is printed on.
+  it.each(["dark", "light"] as const)("keeps the OFF and ? badges out of their node's dim (%s)", (theme) => {
+    fx = graphFixture({ seed: (plan) => void (plan.unreadNodes = new Set(["bus.fx1"])) });
+    fx.graph.setTheme(theme);
+    fx.graph.setDisabledNodes(["bus.fx2"]);
+    for (const [id, text] of [
+      ["bus.fx2", "OFF"],
+      ["bus.fx1", "?"],
+    ] as const) {
+      const node = nodeEl(fx.host, id)!;
+      const badge = node.querySelector(":scope > .node-badge")!;
+      expect(badge, id).not.toBeNull();
+      expect(node.querySelector(":scope > .node-body")!.getAttribute("opacity"), id).not.toBe("1");
+      expect(node.getAttribute("opacity"), id).toBe("1");
+      expect(badge.getAttribute("opacity"), id).toBeNull();
+      const ink = [...badge.querySelectorAll("text")].find((t) => t.textContent === text)!;
+      expect(ink.getAttribute("fill"), id).toBe(PALETTES[theme].warnInk);
+    }
   });
 
   // A full device reconcile re-applies the set on every pass, and the set holds at most
@@ -221,7 +247,7 @@ describe("appearance", () => {
     // A set that differs still renders, and the stored set is the new one.
     fx.graph.setDisabledNodes([]);
     expect(nodeEl(fx.host, "bus.fx2")).not.toBe(first);
-    expect(nodeEl(fx.host, "bus.fx2")!.getAttribute("opacity")).not.toBe("0.62");
+    expect(restingDim(nodeEl(fx.host, "bus.fx2")!)).not.toBe("0.62");
   });
 
   // The console view hides the graph host, and a rate excursion past 96 kHz moves the
@@ -238,7 +264,7 @@ describe("appearance", () => {
     // against. A store that had been skipped would leave the node undimmed here.
     fx.host.hidden = false;
     fx.graph.refresh();
-    expect(nodeEl(fx.host, "bus.fx2")!.getAttribute("opacity")).toBe("0.62");
+    expect(restingDim(nodeEl(fx.host, "bus.fx2")!)).toBe("0.62");
   });
 
   // The question is whether the board is drawn against this set, so the comparison is
@@ -253,7 +279,7 @@ describe("appearance", () => {
     const before = nodeEl(fx.host, "bus.fx1");
     fx.graph.setDisabledNodes(["bus.fx2", "bus.fx2"]);
     expect(nodeEl(fx.host, "bus.fx1")).not.toBe(before);
-    expect(nodeEl(fx.host, "bus.fx1")!.getAttribute("opacity")).not.toBe("0.62");
+    expect(restingDim(nodeEl(fx.host, "bus.fx1")!)).not.toBe("0.62");
   });
 
   it("re-labels its chrome on a language switch", () => {

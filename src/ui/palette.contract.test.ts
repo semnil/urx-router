@@ -142,3 +142,36 @@ describe("the wire palette's two layers", () => {
     expect(CSS.slice(at, CSS.indexOf("}", at))).toContain("var(--w-send)");
   });
 });
+
+// The board draws its own text and state marks from PALETTES, on grounds PALETTES also
+// names, so the legibility of each pair is a property of the palette alone: text at
+// 4.5:1, a state mark at 3:1, in both themes (WCAG 2.1 relative luminance).
+describe("the board's palette against its own grounds", () => {
+  const rgb = (hex: string): number[] => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const lum = (c: number[]): number => {
+    const [r, g, b] = c.map((v) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  /** The ratio of `ink`, drawn at `alpha` over `ground`, against that ground. */
+  const ratio = (ink: string, ground: string, alpha = 1): number => {
+    const g = rgb(ground);
+    const shown = rgb(ink).map((v, i) => v * alpha + g[i] * (1 - alpha));
+    const [hi, lo] = [lum(shown), lum(g)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+
+  it.each(Object.keys(PALETTES) as (keyof typeof PALETTES)[])("%s: text and state marks read", (theme) => {
+    const p = PALETTES[theme];
+    const pairs: [string, number, number][] = [
+      ["the PRE label on the canvas", ratio(p.preInk, p.canvasBg), 4.5],
+      ["the OFF / ? badge's ink on its face", ratio(p.warnInk, p.warn), 4.5],
+      ["a node's sublabel on its face", ratio(p.label, p.nodeFill, p.sublabelOpacity), 4.5],
+      ["the selection frame against the canvas", ratio(p.tempWire, p.canvasBg), 3],
+      ["the selection frame against the node", ratio(p.tempWire, p.nodeFill), 3],
+      ["the possible-target ring against the canvas", ratio(p.possibleStroke, p.canvasBg), 3],
+      ["the possible-target ring against the node", ratio(p.possibleStroke, p.nodeFill), 3],
+      ["the possible-target ring against the jack", ratio(p.possibleStroke, p.portOuter), 3],
+    ];
+    for (const [what, r, floor] of pairs) expect(r, `${what} (${r.toFixed(2)})`).toBeGreaterThanOrEqual(floor);
+  });
+});

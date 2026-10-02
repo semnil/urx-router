@@ -173,8 +173,14 @@ interface Palette {
   possibleStroke: string;
   /** Outline for nodes unavailable at the current sample rate. */
   warn: string;
+  /** Ink of the OFF / "?" badge text printed on `warn`. */
+  warnInk: string;
   /** Accent for the PRE (pre-fader) send marker; the brand LED amber. */
   pre: string;
+  /** Ink of the "PRE" label beside that marker, on the canvas. */
+  preInk: string;
+  /** Fill opacity of a node's secondary legend (the sublabel) over `nodeFill`. */
+  sublabelOpacity: number;
   /** In-frame note panel: recessed-well tint and ink. */
   noteWell: string;
   noteInk: string;
@@ -204,7 +210,10 @@ export const PALETTES: Record<ThemeName, Palette> = {
     legalStroke: "#7fd0a0",
     possibleStroke: "#5a7d6a",
     warn: "#e2794e",
+    warnInk: "#14110d",
     pre: "#ffc24d",
+    preInk: "#ffc24d",
+    sublabelOpacity: 0.6,
     noteWell: "rgba(0,0,0,0.24)",
     noteInk: "#e9ddc3",
   },
@@ -227,12 +236,15 @@ export const PALETTES: Record<ThemeName, Palette> = {
       send: "#13836f",
       out: "#b8700a",
     },
-    tempWire: "#9a8d70",
+    tempWire: "#8d8064",
     legalFill: "#cde7d6",
     legalStroke: "#2f8f63",
-    possibleStroke: "#8fb6a0",
+    possibleStroke: "#587d69",
     warn: "#a8461a",
+    warnInk: "#ffffff",
     pre: "#e8920f",
+    preInk: "#755407",
+    sublabelOpacity: 0.75,
     noteWell: "rgba(95,78,42,0.10)",
     noteInk: "#3c3320",
   },
@@ -1169,7 +1181,7 @@ export class Graph {
       const s1 = fitScale(primary, LABEL_FS, 1, LABEL_MAX_W);
       g.append(labelText(primary, LABEL_TIER1_Y, LABEL_FS * s1, s1, p.label, 1));
       const s2 = fitScale(node.sublabel, LABEL_SUB_FS, 0.5, LABEL_MAX_W);
-      g.append(labelText(node.sublabel, LABEL_TIER2_Y, LABEL_SUB_FS * s2, 0.5 * s2, p.label, 0.6));
+      g.append(labelText(node.sublabel, LABEL_TIER2_Y, LABEL_SUB_FS * s2, 0.5 * s2, p.label, p.sublabelOpacity));
     } else {
       // Single line, scaled down only when it would otherwise run under the button.
       const s = fitScale(primary, LABEL_FS, 1, LABEL_MAX_W);
@@ -1217,20 +1229,21 @@ export class Graph {
     // and frames never collide. Precedence: rate-disabled > inactive > unread —
     // a feature unusable at this rate dominates a user mute, which dominates a
     // mere provenance warning.
+    const badges: SVGElement[] = [];
     if (this.disabledNodes.has(node.id)) {
-      g.append(svgRect(NODE_W - 34, -8, 30, 15, 3, p.warn));
+      badges.push(svgRect(NODE_W - 34, -8, 30, 15, 3, p.warn));
       const badge = document.createElementNS(SVGNS, "text");
       badge.setAttribute("x", String(NODE_W - 19));
       badge.setAttribute("y", "0");
       badge.setAttribute("text-anchor", "middle");
       badge.setAttribute("dominant-baseline", "central");
-      badge.setAttribute("fill", "#14110d");
+      badge.setAttribute("fill", p.warnInk);
       badge.setAttribute("font-family", LABEL_FONT);
       badge.setAttribute("font-size", "8.5");
       badge.setAttribute("font-weight", "700");
       badge.style.pointerEvents = "none";
       badge.textContent = "OFF";
-      g.append(badge);
+      badges.push(badge);
     } else if (this.isNodeInactive(node)) {
       // A muted node (CH_ON off) / bypassed ducker (duckerOn off) / oscillator off
       // (osc.on): tag it MUTE (a mute) or OFF (a ducker / the oscillator, whose
@@ -1256,19 +1269,19 @@ export class Graph {
     // Ranks below MUTE and DISABLED (the else-if keeps it from stacking), so the
     // badge sits alone in the top-left, never colliding with their top-right tags.
     else if (this.unreadNodes.has(node.id)) {
-      g.append(svgRect(8, -8, 16, 15, 3, p.warn));
+      badges.push(svgRect(8, -8, 16, 15, 3, p.warn));
       const badge = document.createElementNS(SVGNS, "text");
       badge.setAttribute("x", "16");
       badge.setAttribute("y", "0");
       badge.setAttribute("text-anchor", "middle");
       badge.setAttribute("dominant-baseline", "central");
-      badge.setAttribute("fill", "#14110d");
+      badge.setAttribute("fill", p.warnInk);
       badge.setAttribute("font-family", LABEL_FONT);
       badge.setAttribute("font-size", "9");
       badge.setAttribute("font-weight", "700");
       badge.style.pointerEvents = "none";
       badge.textContent = "?";
-      g.append(badge);
+      badges.push(badge);
     }
 
     if (lines.length) {
@@ -1280,6 +1293,18 @@ export class Graph {
       // No note yet: the pen button is the way in (double-click now traces the
       // signal path instead of opening the note editor).
       g.append(this.makeNoteAdd(node));
+    }
+
+    // The OFF / "?" badge stays at full strength while its node dims: the node's body
+    // goes into a group of its own, which highlightSelectedNode dims instead of the node.
+    if (badges.length) {
+      const body = document.createElementNS(SVGNS, "g");
+      body.classList.add("node-body");
+      body.append(...g.childNodes);
+      const badge = document.createElementNS(SVGNS, "g");
+      badge.classList.add("node-badge");
+      badge.append(...badges);
+      g.append(body, badge);
     }
 
     this.nodeEls.set(node.id, g);
@@ -1689,7 +1714,7 @@ export class Graph {
     label.setAttribute("x", String(p.x));
     label.setAttribute("y", String(p.y - 12));
     label.setAttribute("text-anchor", "middle");
-    label.setAttribute("fill", this.palette.pre);
+    label.setAttribute("fill", this.palette.preInk);
     label.setAttribute("font-family", LABEL_FONT);
     label.setAttribute("font-size", "10.5");
     label.setAttribute("font-weight", "700");
@@ -1778,7 +1803,13 @@ export class Graph {
       // unread node keeps its own dim), and restore the rest to that base.
       const base = this.restingOpacity(node);
       const fadeOff = pathActive && !this.pathNodes.has(id);
-      el.setAttribute("opacity", String(fadeOff ? +(base * 0.3).toFixed(3) : base));
+      // A badged node carries its dim on its body, so the badge beside it keeps full
+      // strength; the node itself then carries the path fade alone.
+      const body = el.querySelector(":scope > .node-body");
+      if (body) {
+        body.setAttribute("opacity", String(base));
+        el.setAttribute("opacity", fadeOff ? "0.3" : "1");
+      } else el.setAttribute("opacity", String(fadeOff ? +(base * 0.3).toFixed(3) : base));
       const disabled = !on && !onPath && this.disabledNodes.has(id);
       // Unread frame ranks below selected/path/disabled but above the plain frame, so
       // a re-highlight restores it instead of reverting an unread node to normal.
