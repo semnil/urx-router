@@ -1229,7 +1229,8 @@ mod imp {
 
         /// One inbound message, or None on read timeout or on a frame that is not
         /// parseable JSON — callers treat both as "nothing yet" and loop, which is
-        /// what the casket path did before this existed.
+        /// what the casket path did before this existed. A binary frame on casket is
+        /// an error (`BINARY_FRAME`): the idle pump discards it, a reply loop fails on it.
         fn read_frame(&mut self) -> Result<Option<Value>, String> {
             match self {
                 Link::Casket { ws, .. } => {
@@ -1279,6 +1280,10 @@ mod imp {
     /// give-up point, and it now carries an explicit floor instead — see there.
     const READ_TIMEOUT: Duration = Duration::from_millis(50);
 
+    /// What `read_text` reports for a binary frame. One spelling, because the idle
+    /// pump discards this one error while every reply loop fails on it.
+    const BINARY_FRAME: &str = "broker-bad-response: binary frame";
+
     /// Read one text message, or None on read timeout. Errors on a closed or
     /// broken connection, or on an unexpected binary frame, so the awaiting
     /// command surfaces the failure to the frontend instead of hanging.
@@ -1288,7 +1293,7 @@ mod imp {
             Ok(Message::Close(_)) => Err("broker-closed".into()),
             // The vd protocol is JSON text only; a binary frame means the link is
             // out of sync, so fail the awaiting command rather than swallow it.
-            Ok(Message::Binary(_)) => Err("broker-bad-response: binary frame".into()),
+            Ok(Message::Binary(_)) => Err(BINARY_FRAME.into()),
             Ok(_) => Ok(None), // ping/pong — ignore
             Err(tungstenite::Error::Io(e))
                 if matches!(
@@ -1886,6 +1891,10 @@ mod imp {
             // pump on its next 5 ms poll, so the cost of ending early on one is a
             // single extra loop; the alternative is a third outcome threaded
             // through every reader to distinguish "skipped" from "drained".
+            //
+            // A binary frame is discarded and the drain goes on: on the idle link it
+            // is noise rather than a failed operation (architecture.md "Aborting on
+            // failure", exception 3). A reply loop still fails on one.
             match link.read_frame() {
                 Ok(Some(msg)) => {
                     if let Some(err) = synchronize_lost(&msg) {
@@ -1894,6 +1903,7 @@ mod imp {
                     subs.absorb(&msg);
                 }
                 Ok(None) => break, // drained — fall through to flush the batch
+                Err(e) if e == BINARY_FRAME => {}
                 Err(_) => return Err("broker-closed".into()),
             }
             // Yield the worker once the budget is spent so a pending command (and the
@@ -2550,11 +2560,14 @@ mod imp {
         // socket whose other end the test writes as the broker. A frame the test sends
         // is buffered before the reader runs, so no case depends on a peer's timing.
         use super::{
-            arm_socket, drain_late_reply, LineReader, Link, Subs, DEVICE_LOST_PREFIX, READ_TIMEOUT,
+            arm_socket, do_get_value, drain_late_reply, pump, LineReader, Link, Subs, BINARY_FRAME,
+            DEVICE_LOST_PREFIX, READ_TIMEOUT,
         };
         use serde_json::{json, Value};
         use std::io::Write;
         use std::net::{TcpListener, TcpStream};
+        use tungstenite::stream::MaybeTlsStream;
+        use tungstenite::{Message, WebSocket};
 
         /// A link over the default endpoint's framing, and the broker's end of it.
         fn vdp_link() -> (Link, TcpStream) {
@@ -2569,6 +2582,32 @@ mod imp {
                 },
                 peer,
             )
+        }
+
+        /// A link over the casket endpoint's framing, and the broker's end of it — the
+        /// one transport that can carry a binary frame.
+        fn casket_link() -> (Link, WebSocket<TcpStream>) {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let addr = listener.local_addr().unwrap();
+            let broker = std::thread::spawn(move || {
+                tungstenite::accept(listener.accept().unwrap().0).unwrap()
+            });
+            let tcp = TcpStream::connect(addr).unwrap();
+            let (ws, _) =
+                tungstenite::client(format!("ws://{addr}/casket"), MaybeTlsStream::Plain(tcp))
+                    .unwrap();
+            if let MaybeTlsStream::Plain(s) = ws.get_ref() {
+                arm_socket(s, READ_TIMEOUT).unwrap();
+            }
+            let link = Link::Casket {
+                ws,
+                dev_uid: "<test>".into(),
+            };
+            (link, broker.join().unwrap())
+        }
+
+        fn send_binary(peer: &mut WebSocket<TcpStream>) {
+            peer.send(Message::Binary(vec![0u8, 1, 2].into())).unwrap();
         }
 
         /// One `vdp` message from the broker, in the bare envelope this endpoint uses.
@@ -2620,6 +2659,33 @@ mod imp {
                 drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get"),
                 None,
                 "a quiet link ends the drain at its floor"
+            );
+        }
+
+        // A stray binary frame on the idle drain is discarded and the drain reads on:
+        // the push behind it is what the pump reports, and a binary frame with nothing
+        // behind it ends the pump as a drained socket does.
+        #[test]
+        fn the_idle_pump_steps_over_a_stray_binary_frame() {
+            let (mut link, mut peer) = casket_link();
+            send_binary(&mut peer);
+            assert_eq!(pump(&mut link, &mut Subs::new()), Ok(()));
+
+            send_binary(&mut peer);
+            let push = json!({ "jsonrpc": "1.0", "params": { "vdp": synchronize("lost") } });
+            peer.send(Message::Text(push.to_string().into())).unwrap();
+            let err = pump(&mut link, &mut Subs::new()).unwrap_err();
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+        }
+
+        // …while a command waiting for its reply still fails on one.
+        #[test]
+        fn a_reply_loop_still_fails_on_a_binary_frame() {
+            let (mut link, mut peer) = casket_link();
+            send_binary(&mut peer);
+            assert_eq!(
+                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                Err(BINARY_FRAME.to_string())
             );
         }
     }
