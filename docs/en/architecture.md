@@ -511,7 +511,9 @@ carries a one-line map of the same directories and points here.
   window) — which is a **view**: it renders a pushed state and reports intents (`ui/midi-protocol.ts`),
   because a MIDI input port delivers its bursts to the window that opened it and only the main window has a
   plan. Both directions are Tauri Channels through one Rust relay (`src-tauri/src/midiwin.rs`), so the
-  second window needs no capability beyond core. It raises itself when learn turns ON and deliberately NOT
+  second window needs no capability beyond the relay pair: `capabilities/midi-window.json` grants the two relay
+  commands and, of core, only the devtools hotkey a debug build injects — no event emit or listen, so a script
+  in it cannot raise an event the main window listens for. It raises itself when learn turns ON and deliberately NOT
   when a binding lands — measured on macOS: a click on a window that is not active does not reach the
   webview (`accept_first_mouse` defaults to false), so raising per binding would make every following assignment
   two clicks; gang members render contiguously below their head with a Linked tag, and the Behavior column's
@@ -680,8 +682,13 @@ carries a one-line map of the same directories and points here.
   make the menu agree with the chord. macOS only; no other platform installs a menu). The installer's
   consent page is `bundle.licenseFile` (`LICENSE.txt` = disclaimer + trademarks + MIT); exiting on
   consent-gate rejection requires the `process:allow-exit` permission. `build.rs` is the crate's build
-  script and nothing else (`tauri_build::build()`): it is what turns `tauri.conf.json` and
-  `capabilities/*.json` into the code `tauri::generate_context!` expands to, so a capability added to the
+  script, and it declares the app's own command set (`tauri_build::try_build` with `AppManifest::commands`) —
+  which is what gives each app command a permission the capability files can grant. A new command therefore
+  takes three edits: `generate_handler!` in `lib.rs`, the list in `build.rs`, and an `allow-<command>` grant
+  in the capability of the window that may call it (`capabilities/default.json`, or `midi-window.json`);
+  `every_app_command_is_declared_and_granted_to_the_window_that_may_call_it` in `lib.rs` fails when one is
+  missing, and the header of `build.rs` carries why the list exists. It is also what turns `tauri.conf.json`
+  and `capabilities/*.json` into the code `tauri::generate_context!` expands to, so a capability added to the
   configuration reaches the binary through it rather than through any Rust under `src/`
 
 
@@ -1477,7 +1484,8 @@ bursts to the window that opened it, so a window with no plan must never open on
 window pushes and reports intents back (`ui/midi-protocol.ts`); everything that decides what it shows stays in
 `ui/midi.ts`. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
-`invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
+`invoke`, so the second window needs no capability beyond the relay pair — its capability grants those two commands
+and, of core, only a debug build's devtools hotkey, so it cannot emit an event the main window listens for. Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —
 a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where an AppKit parent was measured
 and is not used. Closing the main window closes it; closing it drops learn mode, which would

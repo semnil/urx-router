@@ -470,8 +470,10 @@ flowchart TD
   `ui/midi-window-view.ts` が担うので、どちらもウィンドウなしで駆動できる) — それは**ビュー**である: 押し出された
   状態を描き、意図を報告する (`ui/midi-protocol.ts`)。MIDI 入力ポートはそれを開いたウィンドウへバーストを
   届け、プランを持つのはメインウィンドウだけだからである。双方向とも 1 つの Rust リレー
-  (`src-tauri/src/midiwin.rs`) を通る Tauri Channel なので、2 つ目のウィンドウは core 以外の capability を
-  必要としない。learn が ON になったときは自分を前面に出し、割当が着地したときは**意図的に出さない** — macOS で
+  (`src-tauri/src/midiwin.rs`) を通る Tauri Channel なので、2 つ目のウィンドウはリレーの 2 コマンド以外の
+  capability を必要としない: `capabilities/midi-window.json` が許可するのはリレーの 2 コマンドと、core からは
+  デバッグビルドが注入する devtools のホットキーだけで、イベントの emit / listen は含まない。そのためこの窓の
+  スクリプトは、メインウィンドウが待ち受けるイベントを発生させられない。learn が ON になったときは自分を前面に出し、割当が着地したときは**意図的に出さない** — macOS で
   実測: アクティブでないウィンドウへのクリックは webview に届かない (`accept_first_mouse` の既定は false) ので、
   割当ごとに前面化すると次の割当が毎回 2 クリックになってしまう。ギャングのメンバーはヘッドの直下に連続して並び
   Linked タグを付ける。Behavior 列の語彙は表の下に凡例として印字する — リストが実際に使う語彙についてだけ。
@@ -629,9 +631,15 @@ flowchart TD
   無効を切り替えられないので、置き換えることがメニューをコードと一致させる唯一の方法である。macOS のみ。
   他のプラットフォームはメニューを入れない)。インストーラの同意ページは `bundle.licenseFile`
   (`LICENSE.txt` = 免責 + 商標 + MIT)。同意ゲートの拒否で終了するには `process:allow-exit` 権限が要る。
-  `build.rs` はこのクレートのビルドスクリプトそのもの (`tauri_build::build()` だけ) で、`tauri.conf.json` と
-  `capabilities/*.json` を `tauri::generate_context!` が展開するコードへ変換する。設定に足した capability が
-  バイナリへ届く経路は `src/` 配下の Rust ではなくここである
+  `build.rs` はこのクレートのビルドスクリプトで、アプリ自身のコマンド一式を宣言する
+  (`tauri_build::try_build` と `AppManifest::commands`) — capability ファイルが許可できる権限が各アプリコマンドに
+  生まれるのはこれによる。したがって新しいコマンドには 3 箇所の編集が要る: `lib.rs` の `generate_handler!`、
+  `build.rs` の一覧、そしてそのコマンドを呼んでよいウィンドウの capability (`capabilities/default.json`、または
+  `midi-window.json`) への `allow-<command>` の許可。1 つでも欠けると `lib.rs` の
+  `every_app_command_is_declared_and_granted_to_the_window_that_may_call_it` が落ち、一覧がある理由は
+  `build.rs` の冒頭に書いてある。`tauri.conf.json` と `capabilities/*.json` を `tauri::generate_context!` が
+  展開するコードへ変換するのもここで、設定に足した capability がバイナリへ届く経路は `src/` 配下の Rust では
+  なくここである
 
 ## データモデル
 
@@ -1204,7 +1212,9 @@ Vite エントリで、デモビルドでは出力しない (MIDI はデスク�
 「開いたウィンドウ」に届くため、プランを持たない窓が開いてはならない。メインウィンドウが push する状態を描画し、
 意図を返すだけで (`ui/midi-protocol.ts`)、何を見せるかを決める側は `ui/midi.ts` に残る。双方向とも Rust の中継
 (`src-tauri/src/midiwin.rs`) を通した Tauri **Channel** で、メーター / パラメータ通知 / MIDI 入力と同じ作法 —
-これにより通信は `invoke` の内側に留まり、2 つ目のウィンドウに core 以上の capability が要らない。位置とサイズは
+これにより通信は `invoke` の内側に留まり、2 つ目のウィンドウにはリレーの 2 コマンド以上の capability が要らない —
+その capability が許可するのはその 2 コマンドと、core からはデバッグビルドの devtools のホットキーだけなので、
+メインウィンドウが待ち受けるイベントを emit できない。位置とサイズは
 シェルが覚える (「ウィンドウの配置」を参照)。メインウィンドウの前面に留める仕組みはプラットフォームで
 異なり、Windows では Win32 の**所有者 (owner)**、macOS ではラーンが armed の間だけのピンである。macOS では
 AppKit の親子関係の代償を実測したうえで、それを使っていない。メインウィンドウを閉じると
