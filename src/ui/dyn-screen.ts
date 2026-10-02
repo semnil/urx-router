@@ -656,7 +656,13 @@ export class DynScreen {
    *  GATE curve maps `offsetX` — in the NEW width — through the geometry cached for the
    *  old one, so the threshold that gets written is not the one the operator clicked,
    *  and while live it goes to the unit. A ResizeObserver rather than a window `resize`
-   *  listener: it also catches a DPR change and a layout shift that is not a resize. */
+   *  listener: it also catches a layout shift that is not a window resize.
+   *
+   *  It does not catch a device-pixel-ratio change. The observed box is in CSS pixels and
+   *  `measure()` compares CSS sizes only, so a window moved to a display of another scale
+   *  keeps the old backing resolution until the next `drawPlot` — a parameter, theme or
+   *  language change, a rebuild, or a meter frame that moves the overlay — which resizes
+   *  the backing to the current ratio. */
   private plotResize: ResizeObserver | null = null;
   private plotSize = { w: 0, h: 0 };
   private geoCache: DynPlotGeo | null = null;
