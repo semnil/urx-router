@@ -13,6 +13,7 @@ import type { DeviceModel } from "../models/types";
 import { ref as portRef } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
 import {
+  isPlainRecord,
   LEVEL_MAX_DB,
   LEVEL_MIN_DB,
   LEVEL_OFF_DB,
@@ -500,8 +501,9 @@ export class Console {
   // SENDS rack global collapse (one state for every strip so the columns stay
   // aligned), persisted across sessions; the SEND PAN popover and the strip it is
   // open for. Collapse toggles a host class — no re-render — so the state is read
-  // once at build and kept here.
-  private sendsOpen = loadJson<boolean>(this.SENDS_STORE, true);
+  // once at build and kept here. Only a stored `false` reads as collapsed; anything
+  // else stored there reads as the default, open.
+  private sendsOpen = loadJson<unknown>(this.SENDS_STORE, true) !== false;
   private sendPanPop!: HTMLElement;
   private sendPanOpenFor: string | null = null;
   private tapBtn: HTMLElement | null = null; // the meter-point badge the open popover anchors to
@@ -811,16 +813,18 @@ export class Console {
   }
 
   // Persist the per-strip tap choices per model in localStorage (shape:
-  // { [modelId]: { [nodeId]: tapKey } }), reusing the shared JSON storage helpers.
-  private allTaps(): Record<string, Record<string, string>> {
-    return loadJson<Record<string, Record<string, string>>>(this.TAP_STORE, {});
+  // { [modelId]: { [nodeId]: tapKey } }), reusing the shared JSON storage helpers. A
+  // stored value that is not an object (null, a string, a number, an array) reads as
+  // no choices at all, so a pick writes a fresh container instead of throwing.
+  private allTaps(): Record<string, unknown> {
+    const all = loadJson<unknown>(this.TAP_STORE, {});
+    return isPlainRecord(all) ? all : {};
   }
 
   private loadTaps(): void {
     this.meterTap.clear();
     const m = this.allTaps()[this.hooks.getModel().id];
-    if (m && typeof m === "object")
-      for (const [k, v] of Object.entries(m)) if (typeof v === "string") this.meterTap.set(k, v);
+    if (isPlainRecord(m)) for (const [k, v] of Object.entries(m)) if (typeof v === "string") this.meterTap.set(k, v);
   }
 
   private saveTaps(): void {

@@ -100,6 +100,17 @@ describe("view state", () => {
     expect($("graph-host").hidden).toBe(true);
   });
 
+  // A remembered CONSOLE renders inside the module's own initialisation, so a meter-point
+  // store holding something the view never writes is read there before anything else runs.
+  // It reads as no choices: the strips are built, and so is everything wired after the view.
+  it("restores a remembered CONSOLE over a meter-point store that is not an object", async () => {
+    await boot({ "urx-view": "console", "urx-metertap": "null" });
+    expect($("console-host").hidden).toBe(false);
+    expect($("console-host").querySelectorAll(".con-strip").length).toBeGreaterThan(0);
+    $("btn-view-graph").click();
+    expect($("graph-host").hidden).toBe(false);
+  });
+
   it("remembers the label source", async () => {
     await boot();
     const btn = $("btn-labels");

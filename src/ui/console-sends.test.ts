@@ -710,6 +710,44 @@ describe("storage that cannot be trusted", () => {
     localStorage.setItem("urx-metertap", JSON.stringify({ URX44V: "nonsense" }));
     expect(() => (h = consoleHost())).not.toThrow();
   });
+
+  // The container itself, one shape per class JSON can hold that is not an object. A null
+  // used to throw out of every render (an empty CONSOLE, and the module init with it when
+  // CONSOLE was the remembered view); a primitive made every pick throw before it was
+  // saved; an array dropped the pick on the way to storage.
+  it.each(["null", '"x"', "7", "true", "[]"])("reads a tap store holding %s as no choices, and saves a pick", (raw) => {
+    localStorage.setItem("urx-metertap", raw);
+    h = consoleHost();
+    expect(h.host.querySelectorAll(".con-strip").length).toBeGreaterThan(0);
+    const badge = (): HTMLElement => h.strip("ch1").root.querySelector<HTMLElement>(".con-tap")!;
+    badge().click();
+    const other = [...h.host.querySelectorAll<HTMLElement>(".con-tappop .crow")].find(
+      (r) => r.getAttribute("aria-checked") === "false",
+    )!;
+    const label = other.querySelector(".nm")!.textContent!;
+    other.click();
+    expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden).toBe(true);
+    expect(badge().textContent).toContain(label);
+    const stored = JSON.parse(localStorage.getItem("urx-metertap")!) as Record<string, Record<string, string>>;
+    expect(Object.keys(stored)).toEqual(["URX44V"]);
+    expect(stored.URX44V.ch1).toBeTruthy();
+  });
+
+  // Only a stored false collapses the rack; anything else reads as the default, open, and
+  // never reaches aria-expanded as itself.
+  it.each(["1", "0", '"no"', "{}", "null"])("reads a SENDS state of %s as open", (raw) => {
+    localStorage.setItem("urx-sends-open", raw);
+    h = consoleHost();
+    expect(header("ch1").getAttribute("aria-expanded")).toBe("true");
+    expect(h.host.classList.contains("sends-collapsed")).toBe(false);
+  });
+
+  it("reads a stored false as collapsed", () => {
+    localStorage.setItem("urx-sends-open", "false");
+    h = consoleHost();
+    expect(header("ch1").getAttribute("aria-expanded")).toBe("false");
+    expect(h.host.classList.contains("sends-collapsed")).toBe(true);
+  });
 });
 
 describe("the slot set follows the model", () => {
