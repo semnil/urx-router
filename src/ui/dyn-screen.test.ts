@@ -1055,6 +1055,28 @@ describe("the compressor's panel", () => {
     screen.close();
   });
 
+  // 1-knob hands the threshold to the unit, and the native row beside the cap is disabled
+  // for it. The cap is a custom slider, so it has to say the same thing itself.
+  it("takes a locked threshold cap out of the tab order and marks it disabled", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    const comp = host.plan.nodeParams.ch1?.comp as Record<string, unknown>;
+    const capAt = (oneKnob: boolean): HTMLElement => {
+      host.plan.nodeParams.ch1 = { ...host.plan.nodeParams.ch1, comp: { ...comp, oneKnob } };
+      screen.refresh();
+      return host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+    };
+    screen.open(COMP, "ch1");
+    const live = capAt(false);
+    expect(live.tabIndex).toBe(0);
+    expect(live.hasAttribute("aria-disabled")).toBe(false);
+    const locked = capAt(true);
+    expect(rowsByKey(host.box).get("threshold")!.disabled).toBe(true);
+    expect(locked.tabIndex).toBe(-1);
+    expect(locked.getAttribute("aria-disabled")).toBe("true");
+    screen.close();
+  });
+
   // The Knee row and the curve read one value. Knee is a selector rather than a field, so the
   // host's own fallback for a key the plan does not hold is 0 — Soft — and the curve drew
   // that under a row showing the default.

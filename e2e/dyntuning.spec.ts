@@ -690,11 +690,18 @@ test.describe("comp", () => {
 
     // 1-knob on: the device computes threshold / ratio / gain from one level and
     // announces each recomputation, so they stay on screen and stop being editable.
+    const cap = screenBox(page).locator("#dyn-threshold-cap");
+    await expect(cap).toHaveAttribute("tabindex", "0");
+    await expect(cap).not.toHaveAttribute("aria-disabled", /.*/);
     await oneKnobSwitch(page).locator("button", { hasText: "ON" }).click();
     await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
     for (const label of ["Threshold", "Ratio", "Gain"]) {
       await expect(paramRow(page, label).locator("input[type=range]")).toBeDisabled();
     }
+    // The threshold's cap is a custom slider, so it says the same thing the native row does
+    // itself: out of the tab order, and disabled to a reader.
+    await expect(cap).toHaveAttribute("tabindex", "-1");
+    await expect(cap).toHaveAttribute("aria-disabled", "true");
     // Auto Makeup cannot be operated while 1-knob is on. Its row keeps its place
     // rather than going, so nothing below it moves; it only stops being editable.
     await expect(paramRow(page, "Auto Makeup")).toHaveClass(/locked/);

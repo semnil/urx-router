@@ -1727,7 +1727,10 @@ export class DynScreen {
   private capControl(track: HTMLElement): HTMLElement {
     const cap = el("div", "gt-cap");
     cap.id = "dyn-threshold-cap";
-    cap.tabIndex = 0;
+    // A locked cap leaves the tab order and says it is disabled, the way the native row
+    // beside it does when its control is disabled.
+    const locked = this.capLocked();
+    cap.tabIndex = locked ? -1 : 0;
     cap.setAttribute("role", "slider");
     const field = this.capField();
     const m = t();
@@ -1739,7 +1742,10 @@ export class DynScreen {
     );
     cap.setAttribute("aria-valuemin", String(this.capField()?.min ?? this.p().loDb));
     cap.setAttribute("aria-valuemax", String(HI_DB));
-    if (this.capLocked()) cap.classList.add("locked");
+    if (locked) {
+      cap.classList.add("locked");
+      cap.setAttribute("aria-disabled", "true");
+    }
     this.cap = cap;
 
     // The slot's rect is read once per gesture: reading it per move is a forced
