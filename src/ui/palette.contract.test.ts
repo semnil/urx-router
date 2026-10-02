@@ -122,6 +122,17 @@ describe("the wire palette's two layers", () => {
     expect(reads).toBeGreaterThan(20);
   });
 
+  it("draws the board's warn frames and badges in the stylesheet's --warn", () => {
+    // The OFF / "?" badges and the dashed frame of an unread or rate-disabled node are the
+    // same warning the inspector's cards print in --warn, so a change to one layer's value
+    // has to reach the other.
+    for (const theme of Object.keys(PALETTES) as (keyof typeof PALETTES)[]) {
+      expect(tokensIn(THEME_SELECTOR[theme])["--warn"], `--warn in ${THEME_SELECTOR[theme]}`).toBe(
+        PALETTES[theme].warn,
+      );
+    }
+  });
+
   it("keeps the borrowed gang rail on the send colour", () => {
     // The MIDI window's linked-row rail is not a wire; it borrows the send colour to
     // say "these move together". If the token is ever renamed, this is the one reader

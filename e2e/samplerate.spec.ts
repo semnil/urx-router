@@ -138,6 +138,17 @@ for (const theme of ["dark", "light"] as const) {
   });
 }
 
+// On is the state that warns, printed in the tally's red on its own tint.
+test("the badge's label clears AA when on, in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await stubDevice(page, { deviceRate: 48000, followUsb: true });
+  await page.goto("/");
+  const badge = page.locator("#follow-usb");
+  await badge.click();
+  await expect(badge).toHaveAttribute("data-state", "on");
+  expect(await textContrast(page, badge)).toBeGreaterThanOrEqual(4.5);
+});
+
 test("clicking the badge while unknown reads the device instead of toggling it", async ({ page }) => {
   await stubDevice(page, { deviceRate: 48000, followUsb: true });
   await page.goto("/");

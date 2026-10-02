@@ -231,7 +231,7 @@ export const PALETTES: Record<ThemeName, Palette> = {
     legalFill: "#cde7d6",
     legalStroke: "#2f8f63",
     possibleStroke: "#8fb6a0",
-    warn: "#c2531f",
+    warn: "#a8461a",
     pre: "#e8920f",
     noteWell: "rgba(95,78,42,0.10)",
     noteInk: "#3c3320",

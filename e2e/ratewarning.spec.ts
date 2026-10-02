@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, textContrast } from "./fixtures";
 import { chooseOption } from "./choose-option";
 
 // The block diagram flags the stereo-channel (CH 5/6–11/12) EQ as disabled at
@@ -17,6 +17,16 @@ test.beforeEach(async ({ page }) => {
 
 const stereoEqNote = (page: import("@playwright/test").Page) =>
   page.locator("#inspector .warning-line", { hasText: "Stereo channel (CH 5/6–11/12) EQ" });
+
+// The card's title is the warn colour written as text on the card's own tint.
+test("a warning card's title clears AA in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await page.reload();
+  await chooseOption(page.locator("#rate-picker"), "192000");
+  const title = page.locator("#inspector .warning-title").first();
+  await expect(title).toBeVisible();
+  expect(await textContrast(page, title)).toBeGreaterThanOrEqual(4.5);
+});
 
 test("the stereo-channel EQ note appears at 176.4 / 192 kHz, not at 96 kHz", async ({ page }) => {
   await expect(stereoEqNote(page)).toHaveCount(0); // default 48 kHz

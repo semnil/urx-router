@@ -146,10 +146,12 @@
   --danger-bg: #f7ede6;
   --danger-bd: #e0c4b4;
 
-  --warn: #c2531f;
+  /* Each is written as text as well as drawn as a lamp or a frame, so each is dark
+     enough to be read as ink on its own tint and on the panel. */
+  --warn: #a8461a;
   --warn-bg: #f9ece3;
 
-  --tally: #d32f2f;
+  --tally: #b71c1c;
   --tally-bg: #fbe9e9;
   --mute-on: #d32f2f;
   --meter-frame: #9a8a63;
@@ -4035,9 +4037,9 @@ button.consent-btn-primary {
   font-size: 11px;
   color: var(--text);
 }
-/* The on-air tally's ink, on a dot rather than the text: the sentence has to stay
-   readable (red on the panel is only ~4.4:1 at this size) while the lamp carries
-   the "this goes to the hardware" meaning the tally already taught. */
+/* The on-air tally's ink, on a dot rather than the text: the sentence keeps the text
+   ink while the lamp carries the "this goes to the hardware" meaning the tally
+   already taught. */
 .dev-warm::before {
   content: "";
   width: 7px;

@@ -1057,9 +1057,10 @@ with no halo and say nothing.
 > `.dot-send` / `.dot-out`, named for the group rather than the kind). One more reader sits outside the
 > graph entirely: the MIDI window's ganged-row rail borrows `--w-send` to mean "these move together",
 > which a grep for "wire" will not find.
-> **This pair is the one palette relationship with a test.** `src/ui/palette.contract.test.ts` parses
-> style.css and holds every `--w-*` against `PALETTES.wire`, refuses an orphan on either side, and pins
-> `WIRE_GROUP` itself — re-splitting a group has to be a decision, not a drift. The `--rail-*` and
+> **This pair and the warn colour are the palette relationships with a test.** `src/ui/palette.contract.test.ts`
+> parses style.css and holds every `--w-*` against `PALETTES.wire`, refuses an orphan on either side, and pins
+> `WIRE_GROUP` itself — re-splitting a group has to be a decision, not a drift. It also holds `--warn` against
+> `PALETTES.warn`, the colour of the board's OFF / "?" badges and warn frames. The `--rail-*` and
 > `--canvas-bg` pairs still have nothing checking them.
 
 > **What a theme switch repaints, and what it does not.** `applyResolvedTheme()` in `main.ts` is the
