@@ -1201,9 +1201,9 @@ function pushSsmcsBand(
 ): void {
   if (!b) return;
   if (b.on !== undefined) out.push(command(onName, y, b.on ? 1 : 0));
-  if (qName && b.q !== undefined) out.push(command(qName, y, boundRaw(b.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX)));
-  if (b.freq !== undefined) out.push(command(freqName, y, boundRaw(b.freq, freqMin, freqMax)));
-  if (b.gain !== undefined) out.push(command(gainName, y, boundRaw(b.gain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
+  if (qName && isRaw(b.q)) out.push(command(qName, y, boundRaw(b.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX)));
+  if (isRaw(b.freq)) out.push(command(freqName, y, boundRaw(b.freq, freqMin, freqMax)));
+  if (isRaw(b.gain)) out.push(command(gainName, y, boundRaw(b.gain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
 }
 
 // FX-channel effect: the EFFECT TYPE selector (679/683 at y0) plus the effect
@@ -1216,13 +1216,21 @@ function pushSsmcsBand(
 // cases are pure passthroughs (every numeric encoder in vd.ts clamps internally,
 // these two cannot: their range lives in the effect / option catalogs, not in the
 // encoder). The inspector already constrains the same bounds, so this only bites
-// on a hand-edited or `?plan=` payload. Range only — callers state their own
-// policy for a non-finite value, which differs by whether a catalog default
-// exists to fall back on.
+// on a hand-edited or `?plan=` payload. Rounded first: a raw is a broker integer,
+// and the shell refuses a write carrying a fraction. A value that is not a finite
+// number is the caller's to skip (`isRaw`), since what stands in for one differs by
+// whether a catalog default exists to fall back on.
 function boundRaw(raw: number, lo?: number, hi?: number): number {
-  if (lo !== undefined && raw < lo) return lo;
-  if (hi !== undefined && raw > hi) return hi;
-  return raw;
+  const v = Math.round(raw);
+  if (lo !== undefined && v < lo) return lo;
+  if (hi !== undefined && v > hi) return hi;
+  return v;
+}
+
+/** Whether a plan value can go out as a raw at all: a finite number. Anything else is not
+ *  sent, since the shell refuses a write whose value is not an integer. */
+function isRaw(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
 }
 
 // A plan-sourced raw with a catalog default: a non-finite value takes the default
@@ -1330,36 +1338,35 @@ function pushSsmcsCommands(out: VdCommand[], y: number, s: SsmcsParams | undefin
   // carries the same firewall as the FX / DynFields paths: a hand-edited / ?plan=
   // raw is bounded to the calibrated vd.ts range before it reaches the device.
   if (s.on !== undefined) out.push(command("SSMCS_ON", y, s.on ? 1 : 0));
-  if (s.compDrive !== undefined)
+  if (isRaw(s.compDrive))
     out.push(command("SSMCS_COMP_DRIVE", y, boundRaw(s.compDrive, SSMCS_COMP_DRIVE_MIN, SSMCS_COMP_DRIVE_MAX)));
-  if (s.morphing !== undefined)
+  if (isRaw(s.morphing))
     out.push(command("SSMCS_MORPHING", y, boundRaw(s.morphing, SSMCS_MORPHING_MIN, SSMCS_MORPHING_MAX)));
-  if (s.outGain !== undefined)
-    out.push(command("SSMCS_OUT_GAIN", y, boundRaw(s.outGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
+  if (isRaw(s.outGain)) out.push(command("SSMCS_OUT_GAIN", y, boundRaw(s.outGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
   const c = s.comp;
   if (c) {
-    if (c.attack !== undefined)
+    if (isRaw(c.attack))
       out.push(command("SSMCS_COMP_ATTACK", y, boundRaw(c.attack, SSMCS_ATTACK_RAW_MIN, SSMCS_ATTACK_RAW_MAX)));
-    if (c.release !== undefined)
+    if (isRaw(c.release))
       out.push(command("SSMCS_COMP_RELEASE", y, boundRaw(c.release, SSMCS_RELEASE_RAW_MIN, SSMCS_RELEASE_RAW_MAX)));
-    if (c.ratio !== undefined)
+    if (isRaw(c.ratio))
       out.push(command("SSMCS_COMP_RATIO", y, boundRaw(c.ratio, SSMCS_RATIO_RAW_MIN, SSMCS_RATIO_RAW_MAX)));
     if (c.knee !== undefined)
       out.push(command("SSMCS_COMP_KNEE", y, boundEnum(c.knee, COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)));
-    if (c.threshold !== undefined)
+    if (isRaw(c.threshold))
       out.push(
         command("SSMCS_COMP_THRESHOLD", y, boundRaw(c.threshold, SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)),
       );
-    if (c.makeup !== undefined)
+    if (isRaw(c.makeup))
       out.push(command("SSMCS_COMP_MAKEUP", y, boundRaw(c.makeup, SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)));
   }
   const sc = s.sc;
   if (sc) {
     if (sc.on !== undefined) out.push(command("SSMCS_SC_ON", y, sc.on ? 1 : 0));
-    if (sc.q !== undefined) out.push(command("SSMCS_SC_Q", y, boundRaw(sc.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX)));
-    if (sc.freq !== undefined)
+    if (isRaw(sc.q)) out.push(command("SSMCS_SC_Q", y, boundRaw(sc.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX)));
+    if (isRaw(sc.freq))
       out.push(command("SSMCS_SC_FREQ", y, boundRaw(sc.freq, SSMCS_FREQ_RAW_MIN, SSMCS_FREQ_RAW_MAX)));
-    if (sc.gain !== undefined) out.push(command("SSMCS_SC_GAIN", y, boundRaw(sc.gain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
+    if (isRaw(sc.gain)) out.push(command("SSMCS_SC_GAIN", y, boundRaw(sc.gain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
   }
   const eq = s.eq;
   if (eq) {
@@ -2141,7 +2148,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
         if (np.comp.autoMakeup !== undefined) out.push(command("COMP_AUTO_MAKEUP", dyn.y, np.comp.autoMakeup ? 1 : 0));
         if (np.comp.oneKnob !== undefined) out.push(command("COMP_ONE_KNOB", dyn.y, np.comp.oneKnob ? 1 : 0));
         // COMP 1-knob level is a passthrough 0..100 raw (enum encoding), bounded here.
-        if (np.comp.oneKnobLevel !== undefined)
+        if (isRaw(np.comp.oneKnobLevel))
           out.push(command("COMP_ONE_KNOB_LEVEL", dyn.y, boundRaw(np.comp.oneKnobLevel, 0, 100)));
       }
       // SSMCS detail (MONO IN, SSMCS mode). Comp/EQ section ON are emitted above
@@ -2505,7 +2512,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   // only on the device, but emitted whenever present (like freq for Sine). The
   // interval is a passthrough raw (1..30 s), so it carries the emit-path firewall.
   if (osc?.width !== undefined) out.push(command("OSC_BURST_WIDTH", 0, osc.width));
-  if (osc?.interval !== undefined) out.push(command("OSC_BURST_INTERVAL", 0, boundRaw(osc.interval, 1, 30)));
+  if (isRaw(osc?.interval)) out.push(command("OSC_BURST_INTERVAL", 0, boundRaw(osc.interval, 1, 30)));
   own("bus.osc");
 
   // STREAMING DELAY (bus.stream node, global y = 0): on / time / frame rate.

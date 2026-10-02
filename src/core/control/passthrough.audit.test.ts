@@ -108,6 +108,56 @@ describe("FX / Insert-FX raw emit path is bounded to the calibrated catalog rang
   });
 });
 
+// vd_set takes an integer, so a fraction or a boolean reaching a command's vdValue is a write
+// the shell refuses before it reaches the unit, and the write stops there. Every raw family is
+// fed a fractional leaf and a boolean one through a plan no load repaired.
+describe("every emitted vdValue is an integer", () => {
+  const rawPlan = (leaf: number | boolean): ReturnType<typeof emptyPlan> => {
+    const plan = emptyPlan("URX44V");
+    const v = leaf as number;
+    plan.nodeParams["ch1"] = { compEqType: 0, comp: { oneKnobLevel: v } };
+    plan.nodeParams["ch2"] = {
+      compEqType: 1,
+      ssmcs: {
+        compDrive: v,
+        morphing: v,
+        outGain: v,
+        comp: { attack: v, release: v, ratio: v, threshold: v, makeup: v },
+        sc: { q: v, freq: v, gain: v },
+        eq: { low: { freq: v, gain: v }, mid: { q: v, freq: v, gain: v }, high: { freq: v, gain: v } },
+      },
+    };
+    plan.nodeParams["ch3"] = { insertFx: 1793, insertFxParams: { "compander:6": v, "compander:7": v } };
+    plan.nodeParams["bus.stereo"] = { eqOneKnob: { level: v } };
+    plan.nodeParams["bus.osc"] = { osc: { interval: v } };
+    return plan;
+  };
+
+  it("rounds a fractional raw before it is bounded", () => {
+    const cmds = planToCommands(model, rawPlan(10.5));
+    const families = [
+      "COMP_ONE_KNOB_LEVEL",
+      "SSMCS_COMP_DRIVE",
+      "INSERT_FX_EFFECT",
+      "EQ_ONE_KNOB_LEVEL",
+      "OSC_BURST_INTERVAL",
+    ];
+    // The positive control: each family is emitted at all, so an integer check below is not
+    // satisfied by a family that went missing.
+    for (const name of families)
+      expect(
+        cmds.some((c) => c.name === name),
+        name,
+      ).toBe(true);
+    expect(cmds.filter((c) => !Number.isInteger(c.vdValue)).map((c) => `${c.name} ${c.vdValue}`)).toEqual([]);
+  });
+
+  it("sends no command for a raw that is not a number", () => {
+    const cmds = planToCommands(model, rawPlan(true));
+    expect(cmds.filter((c) => !Number.isInteger(c.vdValue)).map((c) => `${c.name} ${c.vdValue}`)).toEqual([]);
+  });
+});
+
 describe("AUDIT: port-ref tag collides with the none sentinel at one port id (KNOWN GAP)", () => {
   it("tagging port 0x7fffffff yields the nothing-selected sentinel", () => {
     // tagPortRef sets bit 31: 0x80000000 | 0x7fffffff = 0xffffffff = PORT_REF_NONE.
