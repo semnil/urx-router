@@ -586,6 +586,31 @@ describe("selecting within a screen", () => {
     expect(modes()[2].getAttribute("aria-pressed")).toBe("true");
   });
 
+  // The store is read while the screen is constructed, which the app does while its entry
+  // module is still running — so a container that is not an object must not throw there,
+  // and the next choice has to be saved as an object again.
+  it("reads a stored selection that is not an object as none, and saves the next one over it", () => {
+    for (const stored of ["null", "[3]", "5"]) {
+      localStorage.setItem("urx-dyn-display2", stored);
+      host = dynHost();
+      let screen: DynScreen | null = null;
+      expect(() => (screen = new DynScreen(host.hooks)), stored).not.toThrow();
+      screen!.open(bank(), "ch1");
+      expect(modes()[1].getAttribute("aria-pressed"), stored).toBe("true");
+      modes()[2].click();
+      const saved: unknown = JSON.parse(localStorage.getItem("urx-dyn-display2")!);
+      expect(saved, stored).toEqual({ [SSMCS_COMP.key]: expect.any(Number) });
+      screen!.close();
+      // …and read back by the next screen, which is what saving it was for.
+      const next = new DynScreen(host.hooks);
+      next.open(bank(), "ch1");
+      expect(modes()[2].getAttribute("aria-pressed"), stored).toBe("true");
+      next.close();
+      host.restore();
+      document.body.replaceChildren();
+    }
+  });
+
   it("resets a cursor-like choice per open, and moves it from the plot's own markers", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);

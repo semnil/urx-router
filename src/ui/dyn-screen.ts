@@ -60,7 +60,7 @@ import type { MeterTap } from "../core/meters";
 import { dynFromPos, dynPosRange, dynToPos, dynValueText, formatDyn } from "../core/control/translate";
 import type { DynField } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
-import { processorOn } from "../core/plan";
+import { isPlainRecord, processorOn } from "../core/plan";
 import type { NodeParams, Plan, PROCESSOR_ON_DEFAULT } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
 
@@ -2300,9 +2300,13 @@ export const PLOT_TOKENS = [
 
 /** The persisted bar selection per processor. A stored value is a segment INDEX, so it
  *  means whatever that bar's item at that position means: renumbering a bar's segments
- *  takes a new store key, since an old index and a new one are indistinguishable. */
+ *  takes a new store key, since an old index and a new one are indistinguishable.
+ *  A stored container that is not an object (null, an array, a primitive) reads as no
+ *  selection at all: the reader runs while the module that owns the screen is being
+ *  constructed, so a throw here would stop the whole app from starting. */
 function loadSels(): Record<string, number> {
-  const raw = loadJson<Record<string, unknown>>(SEL_STORE, {});
+  const raw = loadJson<unknown>(SEL_STORE, {});
+  if (!isPlainRecord(raw)) return {};
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (typeof v === "number") out[k] = v;
