@@ -4575,6 +4575,10 @@ button.consent-btn-primary {
 .gt-curvebox canvas.gt-pickplot {
   cursor: pointer;
 }
+.gt-curvebox canvas.gt-pickplot:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
+}
 /* A plot beside its meters, in signal order: the plot takes the width it can get and the
    rack takes what its lanes need. Every tuning screen uses it — response and levels are
    read together, not as alternatives.

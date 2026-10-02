@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, colorToken, type Page } from "./fixtures";
 import { selectWire } from "./graph-helpers";
 import { panelHeight, pickBand, pickPlot, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
@@ -826,6 +826,28 @@ test.describe("eq", () => {
     await expect(bandPill(page)).toHaveText("LOW");
     await pickBand(page, 1);
     await expect(bandPill(page)).toHaveText("LOW MID");
+  });
+
+  // The plot is a focus stop inside a box that clips its overflow, so its ring is drawn
+  // inside the canvas; a ring outside would be cut off by the box.
+  test("draws the plot's focus ring inside it when the keyboard reaches it", async ({ page }) => {
+    await openFromInspector(page, "ch1", "eq");
+    await pickBand(page, 0);
+    const plot = pickPlot(page);
+    await expect(plot).toBeFocused();
+    const ring = await plot.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return {
+        visible: el.matches(":focus-visible"),
+        style: s.outlineStyle,
+        color: s.outlineColor,
+        offset: s.outlineOffset,
+      };
+    });
+    expect(ring.visible, "the premise: a keyboard focus").toBe(true);
+    expect(ring.style).toBe("solid");
+    expect(ring.color).toBe(await colorToken(page, "--led"));
+    expect(parseFloat(ring.offset)).toBeLessThan(0);
   });
 
   test("says which values the filter type does not read, and never drops their rows", async ({ page }) => {
