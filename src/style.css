@@ -80,6 +80,9 @@
      signal zones above; rose is clear of them and of the amber accent, and sits
      in the ducker rail's family — a ducker's GR is the same class of quantity. */
   --gr: #e0788c;
+  /* GR as INK, for the one place it is text rather than a mark on the groove: the
+     readout tile, which sits on --ctl-bg. The dark theme prints --gr itself. */
+  --gr-ink: var(--gr);
   /* Plot chrome for anything drawn on the groove (which stays dark in the light
      theme too, so meters read as LEDs on black). These do NOT flip with the
      theme: the light theme's own --line on a dark groove draws as bright white
@@ -157,8 +160,11 @@
   --m-red: #d32f2f;
   /* Like the meter colors, GR is drawn on the pinned-dark groove, so it shifts
      only enough to sit beside the light theme's reds — it does not darken the
-     way panel-borne colors do. --plot-* deliberately have no light override. */
+     way panel-borne colors do. --plot-* deliberately have no light override. The
+     readout tile is the one place GR is text on a panel-borne ground, and it reads
+     --gr-ink, which darkens as panel-borne ink does. */
   --gr: #d9697f;
+  --gr-ink: #a8384f;
   --grain-blend: multiply;
   --grain-op: 0.045;
   --vignette: rgba(90, 75, 40, 0.22);
@@ -1502,7 +1508,7 @@ input[type="range"]:focus-visible,
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--plot-faint);
+  color: var(--text-dim);
 }
 
 .linkbar-pop table {
@@ -2158,8 +2164,11 @@ input[type="range"]:focus-visible,
   justify-content: center;
   background: rgba(0, 0, 0, 0.12);
 }
+/* The light canvas under the shade is darker than the grounds the dim tier is set
+   for, so the light labels take a darker ink of their own. */
 [data-theme="light"] .con-grouplabel {
   background: rgba(0, 0, 0, 0.03);
+  color: #605847;
 }
 .con-group.master .con-grouplabel {
   color: var(--led-ink);
@@ -2827,7 +2836,7 @@ input[type="range"]:focus-visible,
   margin-bottom: 2px;
 }
 .con-readout .mtr .cap2 {
-  color: color-mix(in srgb, var(--led) 62%, var(--text-dim));
+  color: color-mix(in srgb, var(--led-ink) 62%, var(--text-dim));
 }
 .con-readout .rv {
   font: 700 12px var(--mono);
@@ -4914,7 +4923,7 @@ button.consent-btn-primary {
   color: var(--text);
 }
 .gt-ro.gr .v {
-  color: var(--gr);
+  color: var(--gr-ink);
 }
 .gt-ro .p {
   font-family: var(--mono);

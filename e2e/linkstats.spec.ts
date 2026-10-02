@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { expect, test, textContrast } from "./fixtures";
 import { LIVE_COMMANDS, linkLogOf, stubTauriDevice } from "./tauri-stub";
 import { LINK_BAR_KEYS, LINK_LEDGER_KEYS, type LinkBarKey, type LinkLedgerKey } from "../src/core/control/link-stats";
 
@@ -84,6 +84,17 @@ test("the bar prints the panel's own words for the rows it carries", async ({ pa
     const rowLabel = await page.locator(`[data-ledger-row="${key}"] .k`).textContent();
     expect(barLabels, `the ${key} cell's label`).toContain(rowLabel);
   }
+});
+
+// The panel's heading is text on the panel, not a mark on the groove the plot tokens are
+// sized for.
+test("the ledger panel's heading clears AA", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "dark"));
+  await liveWithLedger(page);
+  await page.click(".linkbar-open");
+  const heading = page.locator(".linkbar-pop h4");
+  await expect(heading).toBeVisible();
+  expect(await textContrast(page, heading)).toBeGreaterThanOrEqual(4.5);
 });
 
 test("the status message and the readout share the bar without displacing each other", async ({ page }) => {

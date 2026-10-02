@@ -128,32 +128,59 @@ export async function contrastRatio(page: Page, ink: string, ground: string, alp
 }
 
 /** The WCAG 2.1 ratio of a text element's ink over the ground it is read on: the nearest
- *  opaque background at or above it. The element's own opacity, and that of every element
- *  between it and that ground, is folded into the ink the way it composites. Refuses a
- *  ground whose own layer is dimmed, since the ratio is then against whatever is behind
- *  that layer. */
+ *  opaque background at or above it, with every translucent background between the two
+ *  laid over it. The opacity of each element between the text and that ground is folded
+ *  into what that element paints, the way it composites. Refuses a ground whose own layer
+ *  is dimmed, since the ratio is then against whatever is behind that layer. Background
+ *  IMAGES are not read: a gradient or a texture on the way is the caller's to account for. */
 export async function textContrast(page: Page, target: Locator): Promise<number> {
-  const { ink, ground, alpha } = await target.evaluate((el) => {
-    const probe = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
-    const opaque = (css: string): boolean => {
-      probe.clearRect(0, 0, 1, 1);
-      probe.fillStyle = css;
-      probe.fillRect(0, 0, 1, 1);
-      return probe.getImageData(0, 0, 1, 1).data[3] === 255;
+  return target.evaluate((el) => {
+    const c = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+    const cover = (css: string): number => {
+      c.clearRect(0, 0, 1, 1);
+      c.globalAlpha = 1;
+      c.fillStyle = css;
+      c.fillRect(0, 0, 1, 1);
+      return c.getImageData(0, 0, 1, 1).data[3];
     };
-    let alpha = 1;
+    // From the text up to the ground: what each element paints, and at what strength.
+    const chain: { bg: string; opacity: number }[] = [];
+    let ground: Element | null = null;
     for (let n: Element | null = el; n; n = n.parentElement) {
       const s = getComputedStyle(n);
-      if (opaque(s.backgroundColor)) {
-        for (let up: Element | null = n; up; up = up.parentElement)
-          if (Number(getComputedStyle(up).opacity) < 1) throw new Error("the ground's own layer is dimmed");
-        return { ink: getComputedStyle(el).color, ground: s.backgroundColor, alpha };
+      if (cover(s.backgroundColor) === 255) {
+        ground = n;
+        break;
       }
-      alpha *= Number(s.opacity);
+      chain.push({ bg: s.backgroundColor, opacity: Number(s.opacity) });
     }
-    throw new Error("no opaque ground above the element");
+    if (!ground) throw new Error("no opaque ground above the element");
+    for (let up: Element | null = ground; up; up = up.parentElement)
+      if (Number(getComputedStyle(up).opacity) < 1) throw new Error("the ground's own layer is dimmed");
+    // Each layer's strength is its own opacity times every ancestor's below the ground.
+    const strength = chain.map((_, i) => chain.slice(i).reduce((a, l) => a * l.opacity, 1));
+    const paint = (withInk: boolean): number => {
+      c.clearRect(0, 0, 1, 1);
+      c.globalAlpha = 1;
+      c.fillStyle = getComputedStyle(ground!).backgroundColor;
+      c.fillRect(0, 0, 1, 1);
+      for (let i = chain.length - 1; i >= 0; i--) {
+        c.globalAlpha = strength[i];
+        c.fillStyle = chain[i].bg;
+        c.fillRect(0, 0, 1, 1);
+      }
+      if (withInk) {
+        c.globalAlpha = strength[0] ?? 1;
+        c.fillStyle = getComputedStyle(el).color;
+        c.fillRect(0, 0, 1, 1);
+      }
+      const [r, g, b] = c.getImageData(0, 0, 1, 1).data;
+      const lin = (v: number) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    };
+    const [hi, lo] = [paint(true), paint(false)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
   });
-  return contrastRatio(page, ink, ground, alpha);
 }
 
 /** Drive one native slider through the gesture `holdInertOnBlur` exists for: press, drag,

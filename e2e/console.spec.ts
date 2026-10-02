@@ -55,6 +55,21 @@ test("the INS FX popover's release note clears AA in the light theme", async ({ 
   expect(await textContrast(page, why)).toBeGreaterThanOrEqual(4.5);
 });
 
+// The METER caption tells the strip's two readouts apart without relying on colour, so
+// it is text a reader needs; the group labels name the strip groups. Both are read on the
+// light theme's grounds at the dim tier's ink or better.
+test("the METER caption and the group labels clear AA in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await page.reload();
+  await page.click("#btn-view-console");
+  const caption = strip(page, "CH 1").locator(".con-readout .mtr .cap2");
+  await expect(caption).toHaveText("METER");
+  expect(await textContrast(page, caption)).toBeGreaterThanOrEqual(4.5);
+  const group = page.locator(".con-group:not(.master) .con-grouplabel").first();
+  await expect(group).toBeVisible();
+  expect(await textContrast(page, group)).toBeGreaterThanOrEqual(4.5);
+});
+
 test("GRAPH / CONSOLE tabs switch the visible view", async ({ page }) => {
   await expect(page.locator("#graph-host")).toBeHidden();
   await expect(page.locator("#btn-view-console")).toHaveAttribute("aria-pressed", "true");

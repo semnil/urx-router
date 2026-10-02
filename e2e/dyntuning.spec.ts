@@ -1,4 +1,4 @@
-import { test, expect, colorToken, type Page } from "./fixtures";
+import { test, expect, colorToken, textContrast, type Page } from "./fixtures";
 import { selectWire } from "./graph-helpers";
 import { panelHeight, pickBand, pickPlot, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
@@ -813,6 +813,17 @@ const bandRow = (page: Page, label: string) =>
 /** The band pill on the Parameters heading. Scoped to the heading, since the locked rows
  *  below carry the same tag element. */
 const bandPill = (page: Page) => params(page).locator("h3 .prefs-lock");
+
+// The GR readout prints the reduction as text on the tile beside the lanes, which in the
+// light theme is a light ground — not the dark groove the GR colour is drawn on.
+test("the GR readout's value clears AA in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await page.reload();
+  await openFromInspector(page, "ch1", "gate");
+  const value = screenBox(page).locator(".gt-ro.gr .v");
+  await expect(value).toBeVisible();
+  expect(await textContrast(page, value)).toBeGreaterThanOrEqual(4.5);
+});
 
 test.describe("eq", () => {
   test("shows the response and the levels at once, with the plot selecting a band", async ({ page }) => {
