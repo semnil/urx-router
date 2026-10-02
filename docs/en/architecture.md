@@ -1334,8 +1334,10 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   rebuilds the strip at up to 20 Hz, so without a redraw the value flickers against "—" for the whole sweep.
 - **Levels only (no routing)** — CONSOLE adjusts the levels of existing sends / paths; it never adds or
   removes connections (routing stays in the graph). The SENDS-rack mini-fader only mutates an existing
-  connection's `params.level`, so lowering a send to -∞ keeps the wire (the strip stays). INS FX has no
-  separate on/off (No Effect is off), so toggling on restores the last chosen effect (or the first real option).
+  connection's `params.level`, so lowering a send to -∞ keeps the wire (the strip stays). On a strip holding
+  an effect the INS FX face switches the insert's bypass (`insertFxOn`) and leaves the selection alone; on a
+  strip holding nothing it opens the type list, and an effect is selected only in that list
+  ([channel-tuning.md](channel-tuning.md) "Reaching it from a strip").
 - **SENDS rack** — the head always shows the MAIN control set; every strip's MIX/FX sends live in a
   per-strip **SENDS rack** between the head and the fader zone (spec: [console-sends.md](console-sends.md)).
   The rack has one fixed column per model send slot (order FX 1 / FX 2 / MIX 1 / MIX 2 = `SEND_TARGETS`, a
