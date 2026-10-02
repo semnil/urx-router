@@ -37,8 +37,10 @@ export interface DynHost {
   regained: () => number;
   meterErrors: string[];
   closed: () => number;
-  /** Run every frame callback queued so far — one paint pass. */
-  frame: () => void;
+  /** Run every frame callback queued so far — one paint pass — stamped `ms` after the
+   *  previous one (`FRAME_STEP_MS` when omitted). The screen times its peak holds by this
+   *  clock, so a case about how long a hold lasts says how much time passed. */
+  frame: (ms?: number) => void;
   /** Frame callbacks still queued (the screen keeps one alive while metering). */
   pending: () => number;
   /** The recording context every canvas in this host draws into. */
@@ -64,6 +66,11 @@ export interface DynHostOptions {
  */
 /** The height every element measures, so a cap press at a given clientY is one value. */
 export const LANE_H = 200;
+
+/** How far the frame clock moves per `frame()` by default: past the screen's own 30 fps
+ *  cap, so a queued tick always paints, and short enough that a handful of frames is a
+ *  fraction of a peak hold. */
+export const FRAME_STEP_MS = 50;
 
 export function dynHost(opts: DynHostOptions = {}): DynHost {
   const { modelId = "URX44V", live = false, plotSize = { w: 600, h: 320 } } = opts;
@@ -151,11 +158,10 @@ export function dynHost(opts: DynHostOptions = {}): DynHost {
   }) as typeof globalThis.requestAnimationFrame;
   globalThis.cancelAnimationFrame = ((id: number): void => void queue.delete(id)) as typeof cancelAnimationFrame;
 
-  const frame = (): void => {
+  const frame = (ms = FRAME_STEP_MS): void => {
     const due = queue;
     queue = new Map();
-    // Well past the screen's own 30 fps cap, so a queued tick always paints.
-    now += 1000;
+    now += ms;
     for (const fn of due.values()) fn(now);
   };
 

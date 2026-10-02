@@ -510,10 +510,12 @@ export interface DynProcessor {
  *  `DynProcessor` from spreading into every caller. */
 export type DynPlotProcessor = DynProcessor & Required<Pick<DynProcessor, "plotGeo" | "drawAxes" | "drawCurve">>;
 
-/** Peak hold, in notify frames (100 ms each). Nothing on the device sets this —
- *  the level meters hold in hardware and GR holds not at all — so it is a UI
- *  choice: long enough to read a value that arrived while looking elsewhere. */
-const PEAK_HOLD_FRAMES = 12;
+/** Peak hold, in milliseconds of wall time from when the held value was first painted.
+ *  Nothing on the device sets this — the level meters hold in hardware and GR holds not
+ *  at all — so it is a UI choice: long enough to read a value that arrived while looking
+ *  elsewhere. Timed by the frame clock rather than counted in repaints, so it lasts the
+ *  same on every display's refresh rate. */
+const PEAK_HOLD_MS = 1200;
 
 /** Repaint cap. The feed is 10 Hz; this only bounds how soon a new frame reaches
  *  the screen, since no interpolation is applied between frames. */
@@ -555,12 +557,14 @@ interface BarRefs {
 
 /** One bar's held peak, in dB. Kept in the meter's own unit rather than as a
  *  fraction so the readout prints it directly; `db === null` is "nothing held
- *  yet", which is the same distinction the readouts draw between a value and "—". */
+ *  yet", which is the same distinction the readouts draw between a value and "—".
+ *  `at` is the frame time the hold started, NaN for a value taken between frames,
+ *  which the next paint stamps. */
 interface PeakHold {
   db: number | null;
-  age: number;
+  at: number;
 }
-const noPeak = (): PeakHold => ({ db: null, age: 0 });
+const noPeak = (): PeakHold => ({ db: null, at: Number.NaN });
 
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
@@ -633,6 +637,8 @@ export class DynScreen {
 
   private readonly store = new MeterStore();
   private paintN = 0; // frame counter gating the throttled readout text
+  /** The frame clock's time at the last tick, which the peak holds are timed against. */
+  private frameAt = 0;
   /** Last value written per bar, quantized: an idle bar then writes nothing. */
   private barCache = new Map<string, { v: number; p: number }[]>();
   /** The live overlay's last state per lane, so a frame that moved nothing draws nothing. */
@@ -1105,7 +1111,7 @@ export class DynScreen {
           const p = this.peakFor(lane.key, 0);
           if (p.db === null || db < p.db) {
             p.db = db;
-            p.age = 0;
+            p.at = Number.NaN;
           }
         }
       })
@@ -1143,6 +1149,7 @@ export class DynScreen {
     if (!this.raf) {
       let last = 0;
       const tick = (now: number): void => {
+        this.frameAt = now;
         if (now - last >= FRAME_MS) {
           last = now;
           this.paint();
@@ -1223,11 +1230,11 @@ export class DynScreen {
         // is one comparison for every lane — no level/reduction branch.
         if (
           db !== null &&
-          (p.db === null || this.laneFrac(lane, db) > this.laneFrac(lane, p.db) || p.age > PEAK_HOLD_FRAMES)
+          (p.db === null || this.laneFrac(lane, db) > this.laneFrac(lane, p.db) || this.frameAt - p.at > PEAK_HOLD_MS)
         ) {
           p.db = db;
-          p.age = 0;
-        } else if (db !== null) p.age++;
+          p.at = this.frameAt;
+        } else if (p.db !== null && Number.isNaN(p.at)) p.at = this.frameAt;
         const bar = db === null || !off ? db : Math.min(0, db + off);
         const pk = p.db === null || !off ? p.db : Math.min(0, p.db + off);
         this.setBar(lane, i, bar === null ? 0 : this.laneFrac(lane, bar), pk === null ? 0 : this.laneFrac(lane, pk));

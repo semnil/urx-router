@@ -423,6 +423,39 @@ describe("painting", () => {
     expect(after.value).not.toBe(loud);
   });
 
+  // The hold is a span of wall time, not a count of repaints: the repaint cadence follows the
+  // display's refresh rate, and a hold counted in repaints ended at about half its length on a
+  // 60 Hz display and sooner on a faster one. Timed from the paint that first shows the value.
+  it("holds a peak for 1.2 s of frame time, however many repaints that is", async () => {
+    host = dynHost({ live: true });
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    await Promise.resolve();
+    const gr = subscribedAddrs().find(([id]) => id === 107)!;
+    const held = (): boolean => !host.box.querySelector<HTMLElement>(".gt-peak.gr")!.classList.contains("off");
+    /** A deep reduction followed by the idle value, so only the hold keeps it on screen. */
+    const catchOne = (): void => {
+      feed([{ meterId: gr[0], x: gr[1], value: -400 }]);
+      host.frame();
+      feed([{ meterId: gr[0], x: gr[1], value: 32767 }]);
+      expect(held()).toBe(true);
+    };
+
+    // Many short repaints: 34 of them, 1156 ms.
+    catchOne();
+    for (let i = 0; i < 34; i++) host.frame(34);
+    expect(held()).toBe(true);
+    host.frame(100);
+    expect(held()).toBe(false);
+
+    // One long one, the same span.
+    catchOne();
+    host.frame(1150);
+    expect(held()).toBe(true);
+    host.frame(100);
+    expect(held()).toBe(false);
+  });
+
   it("stops the frame loop when the screen is closed mid-feed", async () => {
     host = dynHost({ live: true });
     const screen = new DynScreen(host.hooks);
