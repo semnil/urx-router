@@ -8,7 +8,14 @@ import type { DeviceModel, NodeKind, RoutingRule } from "../models/types";
 import type { NodeParams, Plan, PlanConnection } from "./plan";
 import { hasConnection } from "./plan";
 import { connParamContestKey, nodeParamContestKey } from "./plan-history";
-import { BUS_TYPE_FIXED, BUS_TYPE_VARI, PAN_BAL_BAL, PAN_BAL_PAN, STEREO_PAN_DEFAULT } from "./control/params";
+import {
+  BUS_TYPE_FIXED,
+  BUS_TYPE_VARI,
+  INSERT_FX_NONE,
+  PAN_BAL_BAL,
+  PAN_BAL_PAN,
+  STEREO_PAN_DEFAULT,
+} from "./control/params";
 
 // Language-agnostic failure codes. The UI maps these to localized messages so
 // core stays free of any i18n dependency.
@@ -328,15 +335,19 @@ export function applyPairTransition(model: DeviceModel, plan: Plan, primary: str
     // Measured: a Signal Type transition clears the insert-FX selector and its ON on BOTH
     // members, in either direction and whichever member was holding the effect. Follow it —
     // a selection left in the plan would make the next live converge re-select an effect the
-    // unit has just dropped. The stored engine values go with it: they are read through the
-    // selected family, so a cleared selector leaves them nothing to bind to.
+    // unit has just dropped. The selector and its ON are SET to No Effect and off rather than
+    // removed: an absent selector is one the write sends nothing for, so a unit still holding
+    // an effect would keep it. The stored engine values go: they are read through the selected
+    // family, so a cleared selector leaves them nothing to bind to.
     for (const ch of pair) {
-      // Named whether or not there was anything to delete: the assertion is that this
+      // Named whether or not there was anything to clear: the assertion is that this
       // member carries no insert FX afterwards, which is as true of one that had none.
       for (const key of INSERT_FX_PAIR_KEYS) written.push(nodeParamContestKey(ch, key));
       const cp = plan.nodeParams[ch];
       if (!cp) continue;
-      for (const key of INSERT_FX_PAIR_KEYS) delete cp[key];
+      cp.insertFx = INSERT_FX_NONE;
+      cp.insertFxOn = false;
+      delete cp.insertFxParams;
     }
   }
   const centre = plan.nodeParams[primary]?.stereoLink !== true || isBalLinkedPair(model, plan, primary);

@@ -774,8 +774,8 @@ The constraint core (`core/routing.ts`):
   It therefore takes a mirror pass of its own (`mirrorLinkedInsertFx`) beside the node mirror: the two share
   the `stereoLink` gate and write the same values, and the separate pass is what names the three pair keys as
   the edit's own writes whatever that edit touched.
-  `applyPairTransition` clears `insertFx` / `insertFxOn` / `insertFxParams` on both members at the transition,
-  the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
+  `applyPairTransition` sets `insertFx` to No Effect and `insertFxOn` to off and removes `insertFxParams` on
+  both members at the transition (an absent selector is one the write sends nothing for), the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
   linked pair as a single holder — the app follows what the device does instead of modelling a second copy of
   the rule ([What the app models, and what it leaves to the unit](#what-the-app-models-and-what-it-leaves-to-the-unit)).
   **What a linked pair may take is the companders and nothing else.** The guitar amps and Pitch Fix are
