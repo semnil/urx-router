@@ -20,6 +20,8 @@ declare global {
         onmessage: (batch: Array<{ param_id: number; x: number; y: number; value: number }>) => void;
       } | null;
       meterAddrs: Array<[number, number]>;
+      /** The link watch's channel, so a case can report the link lost the way the shell does. */
+      linkChannel: { onmessage: (event: { reason: string }) => void } | null;
       mem: Record<string, number>;
       /** Reads the app has issued. The only evidence a test has that a background
        *  reconcile ran at all — it is hundreds of reads and nothing else it does is
@@ -109,6 +111,7 @@ test.beforeEach(async ({ page }) => {
       meterChannel: null,
       paramChannel: null,
       meterAddrs: [],
+      linkChannel: null,
       // `vd_get` answers 0 for an address nobody seeded, and 0 is a real value for an
       // enum: CH 1's Rec Point (137:0:0) would read as PRE GATE, which the readback
       // then puts in the plan. The DUCKER key lane reads the tap that names, so a case
@@ -159,7 +162,9 @@ test.beforeEach(async ({ page }) => {
             state.paramChannel = args.channel as Window["__dynTest"]["paramChannel"];
             return Promise.resolve();
           case "vd_params_unsubscribe":
+            return Promise.resolve();
           case "vd_watch_link":
+            state.linkChannel = args.channel as Window["__dynTest"]["linkChannel"];
             return Promise.resolve();
           case "vd_meters_subscribe":
             state.subscribes++;
@@ -560,6 +565,24 @@ test.describe("with a live session", () => {
     await pushMeters(page, [107, 0, 32767]);
     await expect(readout(page, "GATE GR").locator(".v")).toHaveText("0.0");
     await expect(readout(page, "GATE GR").locator(".p")).toHaveText("pk -40.0");
+  });
+
+  // A session that ends by itself — here the link reported lost — stops the screen's frame
+  // loop, and the screen stays open behind the error. What it shows then is the no-feed
+  // state, not the last frame it painted.
+  test("drops its readings when the session ends under it", async ({ page }) => {
+    await openFromInspector(page, "ch1");
+    await pushMeters(page, [106, 0, -153], [107, 0, -239]);
+    await expect(readout(page, "GATE GR").locator(".v")).toHaveText("-23.9");
+    await expect(readout(page, "PRE GATE").locator(".v")).toHaveText("-15.3");
+
+    await page.evaluate(() => window.__dynTest.linkChannel?.onmessage({ reason: "lost" }));
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+    await expect(screenBox(page)).toBeVisible();
+    for (const label of ["PRE GATE", "GATE GR"]) {
+      await expect(readout(page, label).locator(".v")).toHaveText("—");
+      await expect(readout(page, label).locator(".p")).toHaveText("pk —");
+    }
   });
 
   test("keeps its meters when the device is operated under it", async ({ page }) => {

@@ -435,19 +435,35 @@ describe("painting", () => {
     expect(host.pending()).toBe(0);
   });
 
+  // In the order the app's own live-off takes — the session state first, then the screen —
+  // which stops the frame loop. What is on screen then has to be the no-feed state without
+  // another frame arriving to paint it.
   it("falls back to the placeholder when the session goes away", async () => {
     host = dynHost({ live: true });
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
     await Promise.resolve();
-    const [addr] = subscribedAddrs();
-    feed([{ meterId: addr[0], x: addr[1], value: -120 }]);
-    host.frame();
+    feed(subscribedAddrs().map(([meterId, x]) => ({ meterId, x, value: -120 })));
+    for (let i = 0; i < 5; i++) host.frame();
+    const none = t().dynTuning.noReading;
+    // The premise: every lane reads something, and the plot prints the reduction.
+    expect(readouts(host.box).every((c) => c.value !== none)).toBe(true);
+    expect(host.canvas.texts.some((x) => x.text.startsWith("GR "))).toBe(true);
 
     host.setLive(false);
-    // Five frames: the readout text is throttled to every fifth.
-    for (let i = 0; i < 6; i++) host.frame();
-    expect(readouts(host.box).every((c) => c.value === t().dynTuning.noReading)).toBe(true);
+    const from = host.canvas.texts.length;
+    screen.setLive(false);
+    expect(host.pending()).toBe(0);
+    expect(readouts(host.box).every((c) => c.value === none)).toBe(true);
+    expect(readouts(host.box).every((c) => c.peak === `${t().dynTuning.peakPrefix} ${none}`)).toBe(true);
+    expect(barLevels(host.box).every((v) => v === 0)).toBe(true);
+    // …and the plot it redrew, and the next one a slider move asks for, carry no reduction.
+    const slider = rowsByKey(host.box).get("threshold")!;
+    slider.value = String(Number(slider.value) + 6);
+    slider.dispatchEvent(new Event("input"));
+    host.frame();
+    expect(host.canvas.texts.length).toBeGreaterThan(from);
+    expect(host.canvas.texts.slice(from).filter((x) => x.text.startsWith("GR "))).toEqual([]);
   });
 });
 
