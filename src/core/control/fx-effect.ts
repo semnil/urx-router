@@ -788,7 +788,8 @@ export function migrateFxEffectParams(
   delete (fx as unknown as Record<string, unknown>).on;
   delete (fx as unknown as Record<string, unknown>).level;
   const params = fx.params;
-  if (!params) return;
+  // A map that is not an object is left for the load-time repair, which drops it.
+  if (typeof params !== "object" || params === null || Array.isArray(params)) return;
   const type = resolveFxEffectType(fxIndex, fx.type);
   const owned = new Set(fxParams(type).map((d) => d.key));
   const rename = (from: string, to: string): void => {
