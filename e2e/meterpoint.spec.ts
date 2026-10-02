@@ -34,6 +34,21 @@ test("a mono channel defaults to POST and lists its full chain in signal order",
   await expect(pop.locator(".crow.active .nm")).toHaveText("POST");
 });
 
+// The badge reports whether its popover is open, and the rows sit in a menu named for what
+// they choose — the shape the INS FX list and the PAN button already have.
+test("the badge reports its popover open, and the rows sit in a named menu", async ({ page }) => {
+  const badge = strip(page, "CH 1").locator(".con-tap");
+  await expect(badge).toHaveAttribute("aria-expanded", "false");
+  await badge.click();
+  await expect(badge).toHaveAttribute("aria-expanded", "true");
+  const menu = page.getByRole("menu", { name: "METER POINT", exact: true });
+  await expect(menu.getByRole("menuitemradio")).toHaveCount(7);
+  await expect(menu.getByRole("menuitemradio", { name: "POST" })).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".con-tappop")).toBeHidden();
+  await expect(badge).toHaveAttribute("aria-expanded", "false");
+});
+
 test("selecting a tap updates the badge and persists across reload", async ({ page }) => {
   await strip(page, "CH 1").locator(".con-tap").click();
   await page.locator(".con-tappop .crow", { has: page.getByText("PRE EQ", { exact: true }) }).click();

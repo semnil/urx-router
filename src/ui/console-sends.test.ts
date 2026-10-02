@@ -438,6 +438,36 @@ describe("the meter-point popover", () => {
     expect(badge("ch1").textContent).toContain(label);
   });
 
+  // The badge says whether its popover is open — across the one-strip rebuild a device
+  // follow runs under an open popover too — and the rows it opens sit in a menu named for
+  // what they choose.
+  it("reports its open state on the badge and lists its rows inside a named menu", () => {
+    h = consoleHost();
+    const expanded = (): string | null => badge("ch1").getAttribute("aria-expanded");
+    expect(expanded()).toBe("false");
+    badge("ch1").click();
+    expect(expanded()).toBe("true");
+    const pop = h.host.querySelector<HTMLElement>(".con-tappop")!;
+    const rows = [...pop.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    expect(rows.length).toBeGreaterThan(1);
+    for (const r of rows) {
+      const menu = r.closest<HTMLElement>('[role="menu"]');
+      expect(menu !== null && pop.contains(menu)).toBe(true);
+      expect(menu!.getAttribute("aria-label")).toBe(t().console.meterPoint);
+    }
+
+    const before = badge("ch1");
+    h.view.refreshStrip("ch1");
+    expect(badge("ch1"), "the premise: the badge was rebuilt").not.toBe(before);
+    expect(expanded(), "the rebuilt badge reads open").toBe("true");
+    key(document.body, "Escape");
+    expect(expanded(), "and shut once the popover closes").toBe("false");
+
+    badge("ch1").click();
+    badge("ch1").click();
+    expect(expanded()).toBe("false");
+  });
+
   it("opens and closes from the keyboard, and Escape closes it", () => {
     h = consoleHost();
     const pop = (): HTMLElement => h.host.querySelector<HTMLElement>(".con-tappop")!;

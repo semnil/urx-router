@@ -623,6 +623,10 @@ export class Console {
     this.carryMeterState(old, this.refs.get(stripId));
     old.root.replaceWith(fresh);
     this.redrawMeters(stripId);
+    // The meter-point popover stays open across the rebuild — its rows do not depend on
+    // the plan — so only its anchor moves to the fresh strip's badge, which the close then
+    // marks shut.
+    if (this.tapOpenFor === stripId) this.tapBtn = fresh.querySelector<HTMLElement>(".con-tap");
     // The SEND PAN popover floats free of its strip, so the rebuild above left an
     // open one anchored to the detached PAN button with stale knob values. Re-open
     // it against the fresh strip's button: openSendPan re-reads the plan for the
@@ -861,6 +865,8 @@ export class Console {
     badge.dataset.ctl = "meter-point";
     badge.setAttribute("role", "button");
     badge.setAttribute("aria-haspopup", "menu");
+    // A badge rebuilt under its own open popover (`refreshStrip`) reads open from the start.
+    badge.setAttribute("aria-expanded", String(this.tapOpenFor === id));
     badge.tabIndex = 0;
     // A small meter-bars glyph marks this as the METER point selector — so it
     // reads apart from the send-tap PRE/POST chip (which shares the pre/post
@@ -933,6 +939,8 @@ export class Console {
     const ph = el("div", "ph");
     ph.textContent = t().console.meterPoint;
     const chain = el("div", "chain");
+    chain.setAttribute("role", "menu");
+    chain.setAttribute("aria-label", t().console.meterPoint);
     for (const tp of tapsFor(id, this.hooks.getModel().id)) {
       const row = el("div", "crow" + (tp.key === cur ? " active" : ""));
       row.dataset.ctl = "tap:" + tp.key;
@@ -959,6 +967,7 @@ export class Console {
     this.tapPop.hidden = false;
     this.tapOpenFor = id;
     this.tapBtn = anchor;
+    anchor.setAttribute("aria-expanded", "true");
     // Position fixed near the badge, clamped to the viewport (top-right aligned).
     this.placePopover(this.tapPop, anchor, "right", 2);
   }
@@ -969,6 +978,7 @@ export class Console {
     this.tapOpenFor = null;
     this.tapPop.hidden = true;
     this.tapPop.replaceChildren();
+    this.tapBtn?.setAttribute("aria-expanded", "false");
     this.releaseFocus(this.tapBtn, restore, openFor, ".con-tap");
     this.tapBtn = null;
   }

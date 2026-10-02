@@ -1036,7 +1036,8 @@ EQ バンドゲインと COMP ゲインのスライダーは 0.1 dB 刻み (通�
 - **メーターポイント (ストリップ毎のタップ)** — ノードは信号経路上に複数の観測可能なメータータップ点を持ち、
   各ストリップはメーター (とライブ読み値) にどのタップを表示するか選べる。メーター上端の琥珀バッジ (メーターバー
   のグリフを付け送りタップの PRE/POST チップと読み分ける) を押すと
-  縦の信号チェーン popover (`con-tappop`・信号順・選択中をハイライト) が開く。ストリップのスクロールに
+  縦の信号チェーン popover (`con-tappop`・信号順・選択中をハイライト。METER POINT と名付けた `menu` で、
+  バッジが `aria-expanded` を報告する) が開く。ストリップのスクロールに
   クリップされないよう `position: fixed` で配置する。タップ → `meter_id` は実機で確定 (`core/meters.ts`・
   ブロックダイアグラムと照合。ステレオチャンネルの写像は機種別 `NODE_TAPS_URX22` / `NODE_TAPS_URX44`〈URX44V は URX44 のエイリアス〉— メーターはステレオペア位置でインデックスされ、URX22 は先頭ステレオが CH3/4 になるため実機 URX22 で確認済み): mono チャンネルは INPUT → PRE GATE → PRE COMP → PRE EQ →
   PRE INS FX → PRE FADER → POST、stereo チャンネルは INPUT → PRE FADER → PRE DUCKER → POST
