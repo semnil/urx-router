@@ -248,6 +248,28 @@ test.describe("toolbar", () => {
     for (const s of heights) expect(s.h, `${s.id} is a 40px target`).toBeGreaterThanOrEqual(40);
   });
 
+  // The View menu's two toggles are checkbox items with one label each: the state is
+  // aria-checked, and the pressed look is keyed on it, so a checked toggle prints in the
+  // accent ink while its label stays what it was.
+  test("a checked View toggle keeps its label and wears the pressed look", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("urx-lang", "en"));
+    await page.goto("/");
+    const toggle = page.locator("#btn-hide-off");
+    const ink = () => toggle.evaluate((el) => getComputedStyle(el).color);
+    await page.click("#btn-view");
+    await expect(toggle).toHaveAttribute("role", "menuitemcheckbox");
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect(toggle).toHaveText("Hide off sends");
+    const accent = await colorToken(page, "--led-ink");
+    expect(await ink()).not.toBe(accent);
+
+    await toggle.click();
+    await page.click("#btn-view");
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
+    await expect(toggle).toHaveText("Hide off sends");
+    expect(await ink()).toBe(accent);
+  });
+
   // The Device menu only shows under the Tauri shell; stub the bridge so its
   // grouping is testable in the browser.
   async function gotoWithDeviceMenu(page: Page, experimental: boolean): Promise<void> {

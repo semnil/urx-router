@@ -442,7 +442,7 @@ test.describe("with a live session", () => {
   test.beforeEach(async ({ page }) => {
     await page.click("#btn-device");
     await page.click("#btn-live");
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   });
 
   test("subscribes to exactly the three taps of the opened channel", async ({ page }) => {
@@ -734,7 +734,7 @@ test.describe("comp", () => {
     test.beforeEach(async ({ page }) => {
       await page.click("#btn-device");
       await page.click("#btn-live");
-      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
     });
 
     test("subscribes to the compressor's own three taps", async ({ page }) => {
@@ -772,7 +772,7 @@ test.describe("comp, dragging while the device follows", () => {
   test.beforeEach(async ({ page }) => {
     await page.click("#btn-device");
     await page.click("#btn-live");
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   });
 
   test("the 1-knob level survives its own edit and the follow it provokes", async ({ page }) => {
@@ -951,7 +951,7 @@ test.describe("eq", () => {
     test.beforeEach(async ({ page }) => {
       await page.click("#btn-device");
       await page.click("#btn-live");
-      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
     });
 
     test("subscribes to both sides of a stereo node's EQ, L and R", async ({ page }) => {
@@ -1068,7 +1068,7 @@ test.describe("ducker", () => {
     test.beforeEach(async ({ page }) => {
       await page.click("#btn-device");
       await page.click("#btn-live");
-      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
     });
 
     test("subscribes to the key tap, the host's pair and its own reduction", async ({ page }) => {
@@ -1166,7 +1166,7 @@ test.describe("ducker envelope", () => {
   const openDucker = async (page: Page): Promise<void> => {
     await page.click("#btn-device");
     await page.click("#btn-live");
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
     await openFromInspector(page, "out.ducker1", "ducker");
   };
 

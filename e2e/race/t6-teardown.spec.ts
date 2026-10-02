@@ -142,7 +142,7 @@ test.describe("T6 teardown", () => {
       await fileMenu(page, "btn-new");
       await expect(page.locator("#statusbar")).toContainText("Created a new plan");
       const dialogsAfter = await dialogsOf(page);
-      const livePressed = await page.locator("#btn-live").getAttribute("aria-pressed");
+      const livePressed = await page.locator("#btn-live").getAttribute("aria-checked");
 
       // One edit on the plan that REPLACED the one being read, so the current history
       // has a depth of its own. The Edit menu's enabled state crosses IPC on a real
@@ -388,7 +388,7 @@ test.describe("T6 teardown", () => {
     await page.click("#btn-device");
     await mark(page, "double-click");
     await clickLive(page, 2);
-    await page.waitForSelector('#btn-live[aria-pressed="true"]', { state: "attached", timeout: 40_000 });
+    await page.waitForSelector('#btn-live[aria-checked="true"]', { state: "attached", timeout: 40_000 });
     await waitQuiet(page);
 
     const counters = await countersOf(page);
@@ -415,18 +415,18 @@ test.describe("T6 teardown", () => {
 
     await mark(page, "deactivate-attempt");
     await clickLive(page);
-    // aria-pressed here is the pre-activation state and says nothing about the click
+    // aria-checked here is the pre-activation state and says nothing about the click
     // — it is logged, not asserted. What the toggle being enabled does say is that
     // the click was dispatched into a live control rather than an inert one.
-    const pressedDuring = await page.locator("#btn-live").getAttribute("aria-pressed");
+    const pressedDuring = await page.locator("#btn-live").getAttribute("aria-checked");
     const disabledDuring = await page.evaluate(
       () => (document.getElementById("btn-live") as HTMLButtonElement).disabled,
     );
     await releaseBarrier(page);
-    await page.waitForSelector('#btn-live[aria-pressed="true"]', { state: "attached", timeout: 40_000 });
+    await page.waitForSelector('#btn-live[aria-checked="true"]', { state: "attached", timeout: 40_000 });
     await waitQuiet(page);
 
-    const pressedAfter = await page.locator("#btn-live").getAttribute("aria-pressed");
+    const pressedAfter = await page.locator("#btn-live").getAttribute("aria-checked");
     const counters = await countersOf(page);
     const statusAfter = await statusText(page);
 
@@ -435,13 +435,13 @@ test.describe("T6 teardown", () => {
     // between the two clicks is the window they land in, not the way they are made.
     await mark(page, "deactivate-after");
     await clickLive(page);
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
     const countersEnd = await countersOf(page);
 
     const trace = await traceOf(page);
     console.log(timeline(trace, { from: markTime(trace, "deactivate-attempt")! - 200, limit: 40 }));
     console.log(
-      `aria-pressed during=${pressedDuring} (pre-activation) after=${pressedAfter} disabled=${disabledDuring};` +
+      `aria-checked during=${pressedDuring} (pre-activation) after=${pressedAfter} disabled=${disabledDuring};` +
         ` connects=${counters.connects} param subs=${counters.subscribes}/${counters.unsubscribes}` +
         ` → after the control click ${countersEnd.subscribes}/${countersEnd.unsubscribes}; status="${statusAfter}"`,
     );
@@ -470,7 +470,7 @@ test.describe("T6 teardown", () => {
     for (let i = 0; i < 5; i++) {
       await goLive(page);
       await clickLive(page);
-      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
       await page.waitForTimeout(300);
     }
     await waitQuiet(page);
@@ -511,7 +511,7 @@ test.describe("T6 teardown", () => {
     // the whole page, so the Device menu cannot be opened behind it. The toggle is
     // the same button either way — this dispatches it directly.
     await clickLive(page);
-    await page.waitForSelector('#btn-live[aria-pressed="true"]', { state: "attached", timeout: 60_000 });
+    await page.waitForSelector('#btn-live[aria-checked="true"]', { state: "attached", timeout: 60_000 });
     const withScreen = await meterAddrsOf(page);
     // Closing hands the slot back; the console's own set is what it becomes.
     await page.keyboard.press("Escape");
@@ -571,7 +571,7 @@ test.describe("T6 teardown", () => {
       (document.getElementById("btn-live") as HTMLButtonElement).click();
       f.mark("deactivated");
     });
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
     // The verdict below is an ABSENCE, so it may not be bounded by the driver's
     // patience: settleAfter waits for the link to wake up after the mark before it
     // looks for silence, and its grace outstays the 50 ms reflect and the 300/900 ms
@@ -635,7 +635,7 @@ test.describe("T6 teardown", () => {
       (document.getElementById("btn-live") as HTMLButtonElement).click();
       f.mark("deactivated");
     });
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
     await settleAfter(page, "deactivated");
 
     const trace = await traceOf(page);

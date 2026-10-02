@@ -1413,7 +1413,7 @@ function syncDeviceActionUi(): void {
 // Only ever called in the desktop live-sync path, so re-enabling on `off` is safe.
 function setLiveUi(on: boolean): void {
   const liveBtn = document.getElementById("btn-live");
-  if (liveBtn) liveBtn.setAttribute("aria-pressed", String(on));
+  if (liveBtn) liveBtn.setAttribute("aria-checked", String(on));
   const tally = document.getElementById("live-tally");
   if (tally) {
     tally.hidden = !on;
@@ -1854,7 +1854,7 @@ function applyStaticI18n(): void {
   $("btn-device-setup").textContent = m.deviceSetup.menuItem;
   $("btn-compare").textContent = compareAbort ? m.toolbar.compareCancel : m.toolbar.compare;
   $("btn-selftest").textContent = selfTestAbort ? m.toolbar.selfTestCancel : m.toolbar.selfTest;
-  // Live-sync toggle keeps a static label; aria-pressed and the on-air tally
+  // Live-sync toggle keeps a static label; aria-checked and the on-air tally
   // carry the on/off state. The tally is relabelled too — the tag is its whole
   // text, and a language may translate it.
   const liveBtn = document.getElementById("btn-live");
@@ -1871,15 +1871,14 @@ function applyStaticI18n(): void {
   const prefsBtn = $("btn-prefs");
   prefsBtn.title = m.prefs.title;
   prefsBtn.setAttribute("aria-label", m.prefs.title);
-  // Labels toggle shows the source the canvas is currently using.
-  labelsBtn.textContent = labelSource === "device" ? m.toolbar.labelsDevice : m.toolbar.labelsModel;
+  // The two View toggles keep one label each, as Live sync does: checked is the state
+  // the label names, carried by aria-checked and the pressed look.
+  labelsBtn.textContent = m.toolbar.labelsDevice;
   labelsBtn.title = m.toolbar.labelsHint;
-  labelsBtn.setAttribute("aria-pressed", String(labelSource === "device"));
-  // Off-sends toggle: the label names the action it will perform next.
-  const hideOff = graph.isHideOffSends();
-  hideOffBtn.textContent = hideOff ? m.toolbar.showOffSends : m.toolbar.hideOffSends;
+  labelsBtn.setAttribute("aria-checked", String(labelSource === "device"));
+  hideOffBtn.textContent = m.toolbar.hideOffSends;
   hideOffBtn.title = m.toolbar.hideOffSendsHint;
-  hideOffBtn.setAttribute("aria-pressed", String(hideOff));
+  hideOffBtn.setAttribute("aria-checked", String(graph.isHideOffSends()));
   // Demo-only desktop-app link (present in the DOM, shown only in the demo build).
   const desktopLbl = document.getElementById("lbl-desktop");
   const desktopLink = document.getElementById("btn-desktop");
@@ -4486,6 +4485,9 @@ hideOffBtn.addEventListener("click", () => {
   setStatus(next ? t().toolbar.hideOffSends : t().toolbar.showOffSends);
 });
 
+/** An entry of a toolbar menu: an action, or a toggle that carries aria-checked. */
+const MENU_ITEM = ':is([role="menuitem"], [role="menuitemcheckbox"])';
+
 // Wire the File dropdown: open/close, click-outside, and roving keyboard focus
 // across its menu items. The panel is positioned fixed (toolbar clips overflow),
 // so its coordinates are derived from the trigger each time it opens.
@@ -4497,7 +4499,7 @@ setupMenu($<HTMLButtonElement>("btn-view"), $<HTMLElement>("view-menu"));
 
 function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
   const items = (): HTMLButtonElement[] =>
-    Array.from(panel.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled]):not([hidden])'));
+    Array.from(panel.querySelectorAll<HTMLButtonElement>(`${MENU_ITEM}:not([disabled]):not([hidden])`));
   let open = false;
 
   function setOpen(next: boolean, focusFirst = false): void {
@@ -4560,7 +4562,7 @@ function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
   // yields at its first await, so this runs and hides the menu before any
   // confirm dialog renders.
   panel.addEventListener("click", (e) => {
-    if ((e.target as Element).closest('[role="menuitem"]')) setOpen(false);
+    if ((e.target as Element).closest(MENU_ITEM)) setOpen(false);
   });
 }
 

@@ -849,7 +849,7 @@ test("feedback follows UI edits out of the output port", async ({ page }) => {
   // The session's readback is what opens it, and every binding is resynced there.
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
   const synced = await page.evaluate(() => window.__midiTest.sent.at(-1));
   expect(synced?.[0]).toBe(0xb0);
@@ -877,7 +877,7 @@ test("a toggle ignores the echo of its own feedback", async ({ page }) => {
   // case is about what comes BACK off that wire.
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   // Waited on the send itself rather than on the session: the port's own open and the
   // session's readback race here, and whichever runs second is the pass that carries
   // the state out. Moving on before one of them has is what leaves the guard unarmed.
@@ -943,7 +943,7 @@ test("a device fetch does not open the output port; the live session does", asyn
   // so the silence above is the gate rather than a rig that never sends.
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect
     .poll(() => page.evaluate(() => window.__midiTest.sent.find((b) => b[0] === 0xb0 && b[1] === 7)?.[2] ?? -1))
     .toBeGreaterThan(0);

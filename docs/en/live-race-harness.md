@@ -1581,7 +1581,7 @@ not repeat them.
 - **A mousedown that also moves focus fires `focusout`, which is a history boundary**, so a synthetic
   slider drag costs two undo entries — its first edit is committed on the spot
 - **An offline edit before `goLive` makes Live start ask the discard confirm**, which the fake declines
-  by default; `goLive` then times out on `#btn-live[aria-pressed="true"]` with no other symptom
+  by default; `goLive` then times out on `#btn-live[aria-checked="true"]` with no other symptom
 - **Do not print a verdict you did not check.** `analyze()` with an empty spec can only emit invariant
   4, and an offline sweep has neither a read nor a write, so the line always says "clean"
 - **A command named `vd_*` is not automatically a command on the worker.** `onWorker` routed the whole
@@ -1652,7 +1652,7 @@ not repeat them.
   **in the page**, where a driver-side module binding does not exist. It compiles, `pnpm
   typecheck:e2e` passes, and `--list` collects every case; the failure arrives at runtime on the
   **first** command the fake handles. What it presents as is not an error message but an absence:
-  `goLive` times out after 30 s on `#btn-live[aria-pressed="true"]` — the live session never comes up
+  `goLive` times out after 30 s on `#btn-live[aria-checked="true"]` — the live session never comes up
   — in **every** engine (measured 2026-08-13: 4 of `race-webkit`'s 5 cases, and the same case in the
   Chromium `race` project, which is a 30 s timeout at the same locator). The failure text names only
   the locator, so on its own it is indistinguishable from an infrastructure hang, exactly as the

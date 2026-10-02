@@ -64,12 +64,12 @@ afterEach(async () => {
   // session in the middle of starting holds it with the toggle still down, so the two are
   // waited on together — and the loop is what lets a start that completes here be ended.
   for (let i = 0; rate && i < 5; i++) {
-    if (btn?.getAttribute("aria-pressed") === "true") {
+    if (btn?.getAttribute("aria-checked") === "true") {
       btn.click();
-      await vi.waitFor(() => expect(btn.getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+      await vi.waitFor(() => expect(btn.getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
     }
     if (!rate.disabled) break;
-    await vi.waitFor(() => expect(!rate.disabled || btn?.getAttribute("aria-pressed") === "true").toBe(true), {
+    await vi.waitFor(() => expect(!rate.disabled || btn?.getAttribute("aria-checked") === "true").toBe(true), {
       timeout: 25_000,
     });
   }
@@ -1012,7 +1012,7 @@ describe("Fetch from device", () => {
     [
       "live start",
       () => live().click(),
-      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 }),
     ],
   ] as const) {
     it(`drops the undo history on a ${flow} whose read changed no value`, SLOW, async () => {
@@ -1133,7 +1133,7 @@ describe("the model the device turns out to be", () => {
   it("switches to the device's model when a live session offers it", SLOW, async () => {
     const shell = await bootDevice(connectAs("URX22"));
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     expect(confirms(shell)).toEqual([t().confirm.switchModel("URX22", "URX44V")]);
     expect($<HTMLSelectElement>("model-picker").value).toBe("URX22");
@@ -1434,7 +1434,7 @@ describe("the model the device turns out to be", () => {
     [
       "live start",
       () => live().click(),
-      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 }),
     ],
   ] as const) {
     it(`writes nothing into the switched plan from a drag held across a switched ${flow}`, SLOW, async () => {
@@ -1647,7 +1647,7 @@ describe("the model the device turns out to be", () => {
     [
       "live start",
       () => live().click(),
-      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 }),
     ],
   ] as const) {
     it(`takes nothing into the switched plan from a key held across a switched ${flow}`, SLOW, async () => {
@@ -1729,7 +1729,7 @@ describe("the model the device turns out to be", () => {
       () => live().click(),
       async (unit: ReturnType<typeof holdFollowUsb>) => {
         unit.release(0);
-        await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+        await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
       },
       "URX22",
     ],
@@ -1817,7 +1817,7 @@ describe("the model the device turns out to be", () => {
     } finally {
       subscribe.release();
     }
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(oscFace()).toBe("ON");
   });
 
@@ -1979,7 +1979,7 @@ describe("the model the device turns out to be", () => {
 
     const incomplete = (n: number): string => t().status.liveError(t().error.liveReadIncomplete(n));
     expect(countFor(errors(shell)[0], incomplete)).toBeGreaterThan(0);
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect(confirms(shell), "the premise: the switch was offered and taken").toEqual(TAKEN);
     await unswitched(shell);
   });
@@ -2061,7 +2061,7 @@ describe("the model the device turns out to be", () => {
 
     const incomplete = (n: number): string => t().status.liveError(t().error.liveReadIncomplete(n));
     expect(countFor(errors(shell)[0], incomplete)).toBeGreaterThan(0);
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect(flagged()).toEqual([]);
     // Read back from the plan rather than off the panel the edit left drawn: the inspector is
     // rebuilt by way of another node, for the reason the draw-failure cases below give.
@@ -2131,7 +2131,7 @@ describe("the model the device turns out to be", () => {
         expect(armed, "the premise: the switch's plan was the one drawn").toBe(false);
         expect(confirms(shell), "the premise: the switch was offered and taken").toEqual(TAKEN);
         expect(shell.count("vd_params_subscribe")).toBe(0);
-        expect(live().getAttribute("aria-pressed")).toBe("false");
+        expect(live().getAttribute("aria-checked")).toBe("false");
         await vi.waitFor(() => expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false), { timeout: 10_000 });
         expect($("btn-fetch").textContent).toBe(t().toolbar.fetchDevice);
         expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
@@ -2307,7 +2307,7 @@ describe("the undo history across a device read that landed", () => {
     await tick();
   };
   const liveUp = (): Promise<void> =>
-    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
   for (const [flow, cleanup, start, ended] of [
     ["fetch", "vd_disconnect", () => $("btn-fetch").click(), fetchEnded],
@@ -2487,12 +2487,12 @@ describe("a source replaced on the board while a device read was in flight", () 
       .sort();
 
   const stopLive = async (): Promise<void> => {
-    if (live().getAttribute("aria-pressed") !== "true") return;
+    if (live().getAttribute("aria-checked") !== "true") return;
     live().click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
   };
   const liveUp = (): Promise<void> =>
-    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
   interface Flow {
     name: string;
@@ -2584,7 +2584,7 @@ describe("a source replaced on the board while a device read was in flight", () 
       expect(streamingDrawn()).toEqual(["bus.mix2:out"]);
       // Nothing the read is about to do can still be in flight: a live session goes on
       // reading, so the assertions below are taken after it has gone quiet.
-      if (live().getAttribute("aria-pressed") === "true") {
+      if (live().getAttribute("aria-checked") === "true") {
         // The session sends the operator's choice rather than the unit's, and never NONE.
         expect(streamingWrites(shell)).not.toHaveLength(0);
         expect([...new Set(streamingWrites(shell))].sort()).toEqual(streamingFor(sourced(STREAM_IN, "bus.mix2:out")));
@@ -2809,7 +2809,7 @@ describe("the live session", () => {
     // failure the read path can raise, which is what separates this from a failed readback.
     await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
     expect(errors(shell).some((e) => e.includes(t().error.liveFollowStopped))).toBe(true);
-    expect(live().getAttribute("aria-pressed")).not.toBe("true");
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
   });
 
   // The undo history survives a reconcile that authored nothing.
@@ -2822,7 +2822,7 @@ describe("the live session", () => {
   it("keeps the undo history through a reconcile that authored nothing", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     $("btn-view-console").click();
     const slider = (): HTMLElement => $("console-host").querySelector<HTMLElement>('.con-strip [role="slider"]')!;
@@ -2871,7 +2871,7 @@ describe("the live session", () => {
   // address alone.
   const heldByExcursion = async (shell: TauriShell, link = false): Promise<void> => {
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     // Selected through the session, so the unit holds it too: the hold is about a value
     // the app and the device agreed on until the rate moved. `link` puts the pair in
     // STEREO first, so the mirror carries the effect and BOTH members hold one — and it
@@ -2894,7 +2894,7 @@ describe("the live session", () => {
    *  attributed to whichever file is running then. */
   const endLive = async (): Promise<void> => {
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
   };
 
   // `delayMs` stretches each read, for the case that has to end the session inside one.
@@ -2931,7 +2931,7 @@ describe("the live session", () => {
   it("gives the plan STEREO where the unit's STREAMING was on NONE, and sends it with an edit", SLOW, async () => {
     const shell = await bootDevice({}, true, STREAMING_ON_NONE);
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(statusText().startsWith(`${t().status.streamingSourceUnlisted} — `)).toBe(true);
     expect(streamingDrawn()).toEqual(["bus.stereo:out"]);
     await quiet(shell);
@@ -2958,7 +2958,7 @@ describe("the live session", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 25_000 });
     expect(errors(shell)[0]).toBe(t().status.liveError(t().error.liveReadIncomplete(1)));
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect(streamingWrites(shell)).toEqual([]);
   });
 
@@ -2974,7 +2974,7 @@ describe("the live session", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 25_000 });
     expect(errors(shell)[0]).toBe(t().status.liveError(t().error.liveReadIncomplete(1)));
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect(streamingDrawn()).toEqual(["bus.stereo:out"]);
     expect(statusText()).not.toBe(t().status.streamingSourceUnlisted);
     expect(streamingWrites(shell)).toEqual([]);
@@ -3020,7 +3020,7 @@ describe("the live session", () => {
         interval: 5,
       });
       $("btn-live").click();
-      await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
 
       await vi.waitFor(
         () =>
@@ -3053,7 +3053,7 @@ describe("the live session", () => {
   it("abandons a follow read when the plan it was filling is replaced", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     // The session's own starting read, which is what a WHOLE-device sweep costs. The
     // control for the count below, taken from this run rather than written down.
     const sweep = shell.count("vd_get");
@@ -3083,7 +3083,7 @@ describe("the live session", () => {
   it("lets nothing else connect while the ended session's read is still running", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     notifyRate(shell, { delayMs: 1 });
     const before = shell.count("vd_get");
@@ -3095,7 +3095,7 @@ describe("the live session", () => {
     const connects = shell.count("vd_connect");
     const disconnects = shell.count("vd_disconnect");
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
 
     // The toggle is off and the link is NOT: the read is still running over it.
     expect(shell.count("vd_disconnect")).toBe(disconnects);
@@ -3120,7 +3120,7 @@ describe("the live session", () => {
   it("gives the link back and says so when the disconnect itself fails", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     shell.failOnce("vd_disconnect", new Error("control-worker-gone"));
     $("btn-live").click();
@@ -3386,7 +3386,7 @@ describe("the live session", () => {
   it("comes up, prints the tally, and goes down again", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     expect($("live-tally").hidden).toBe(false);
     expect($("live-tally").textContent).toBe(t().toolbar.liveTag);
@@ -3395,7 +3395,7 @@ describe("the live session", () => {
 
     const disconnects = shell.count("vd_disconnect");
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 10_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
     expect($("live-tally").hidden).toBe(true);
     expect(shell.count("vd_params_unsubscribe")).toBe(1);
     // The disconnect is issued from an un-awaited teardown, so it lands after the
@@ -3412,7 +3412,7 @@ describe("the live session", () => {
     expect(picker.disabled).toBe(false);
 
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(picker.disabled).toBe(true);
     expect(($("btn-fetch") as HTMLButtonElement).disabled).toBe(true);
     expect($<HTMLSelectElement>("rate-picker").disabled).toBe(true);
@@ -3436,7 +3436,7 @@ describe("the live session", () => {
     const shell = await bootDevice();
     live().click();
     live().click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(shell.count("vd_connect")).toBe(1);
     expect(shell.count("vd_params_subscribe")).toBe(1);
   });
@@ -3462,11 +3462,11 @@ describe("the live session", () => {
     await vi.waitFor(() => expect(shell.count("vd_params_unsubscribe")).toBe(1), { timeout: 25_000 });
     await invoked(shell, "vd_disconnect");
     expect(errors(shell)).toEqual([t().status.liveError("watch-refused")]);
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect($("live-tally").hidden).toBe(true);
 
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(shell.count("vd_params_subscribe")).toBe(2);
   });
 
@@ -3477,7 +3477,7 @@ describe("the live session", () => {
     });
     $("btn-live").click();
     await vi.waitFor(() => expect(shell.count("plugin:dialog|message")).toBeGreaterThan(0), { timeout: 10_000 });
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect($("live-tally").hidden).toBe(true);
     expect($<HTMLSelectElement>("model-picker").disabled).toBe(false);
   });
@@ -3501,7 +3501,7 @@ describe("the live session", () => {
   it("normalizes a rename arriving from the unit, its padding as well as its length", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     const nc = nameControl(getModel("URX44V"), "ch1")!;
     notifyChannel(shell).onmessage([{ param_id: nc.param, x: 0, y: 0, value: 0, value_str: "1234567  9" }]);
@@ -3541,7 +3541,7 @@ describe("the live session", () => {
         renamedOnUnit && a.paramId === nc.param && a.y === 0 ? "UnitName" : "",
     });
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     renamedOnUnit = true;
     // A scoped (non-direct) parameter: its notify is not applied on its own, it makes
@@ -5465,7 +5465,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
     type.value = String(COMP_EQ_SSMCS);
     type.dispatchEvent(new Event("change", { bubbles: true }));
 
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
     // The positive control: the park ran and reached the nodes it could, so the refusal is
     // what stopped it rather than a flush that never got there.
     expect(
@@ -5570,7 +5570,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
     const gesture = shell.invokes.length;
     pickType(REVX_ROOM);
     $("btn-live").click(); // the session goes, before the flush that would carry it
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).not.toBe("true"), { timeout: 20_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).not.toBe("true"), { timeout: 20_000 });
     await settled(shell);
 
     // The selection is a plan edit, so it stands whatever the link does — losing it at a
@@ -5600,7 +5600,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
     pickType(REVX_ROOM);
 
     // The session goes down, which is the signal the read failed at all.
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 20_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 20_000 });
     expect(
       shell.invokes.some((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture),
       "no type reached the unit",
@@ -6190,7 +6190,7 @@ describe("the Follow USB badge", () => {
   it("writes over the live session's own link rather than opening a second one", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(true, 48_000) });
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     // The session start read the badge on its way up, so the press below is a toggle
     // rather than the read an unknown state would have taken.
     expect(badge().dataset.state).toBe("on");
@@ -6199,7 +6199,7 @@ describe("the Follow USB badge", () => {
     badge().click();
     await vi.waitFor(() => expect(statusText()).toBe(t().status.followUsbOff), { timeout: 10_000 });
     expect(shell.count("vd_connect")).toBe(connects);
-    expect(live().getAttribute("aria-pressed")).toBe("true");
+    expect(live().getAttribute("aria-checked")).toBe("true");
   });
 
   // A write that fails on the session's link is a mirror that did not complete, so it
@@ -6208,12 +6208,12 @@ describe("the Follow USB badge", () => {
   it("takes the session down when the write fails on its link", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(true, 48_000) });
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     const armedAt = shell.invokes.length;
     shell.failOnce("vd_set", new Error("link-gone"));
     badge().click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 10_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
     expect(badge().dataset.state).toBe("unknown");
     // The failure that took the session down was THIS write. `failOnce` arms the next
     // `vd_set` from anyone and the session has writers of its own, so the count alone
@@ -6270,7 +6270,7 @@ describe("the Follow USB badge", () => {
   const settled = async (): Promise<void> =>
     vi.waitFor(
       () => {
-        const up = live().getAttribute("aria-pressed") === "true";
+        const up = live().getAttribute("aria-checked") === "true";
         expect(up || !$<HTMLSelectElement>("rate-picker").disabled).toBe(true);
       },
       { timeout: 25_000 },
@@ -6329,7 +6329,7 @@ describe("the Follow USB badge", () => {
     await settled();
 
     expect(errors(shell)).toEqual([]);
-    expect(live().getAttribute("aria-pressed")).toBe("true");
+    expect(live().getAttribute("aria-checked")).toBe("true");
     expect(badge().dataset.state).toBe("on");
     expect(muted("ch1")).toBe(true);
     expect(insertFxOf("ch1")).toBe(String(COMPANDER_H));
@@ -6349,7 +6349,7 @@ describe("the Follow USB badge", () => {
       timeout: 10_000,
     });
 
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect($("live-tally").hidden).toBe(true);
     expect(badge().dataset.state).toBe("on");
     expect(muted("ch1")).toBe(false);
@@ -6524,7 +6524,7 @@ describe("the Follow USB badge", () => {
     await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 10_000 });
     const incomplete = (n: number): string => t().status.liveError(t().error.liveReadIncomplete(n));
     expect(countFor(errors(shell)[0], incomplete)).toBeGreaterThan(0);
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect(badge().dataset.state).toBe("on");
   });
 
@@ -7147,7 +7147,7 @@ describe("importing a settings file", () => {
     expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(false);
 
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(true);
   });
 
@@ -7158,7 +7158,7 @@ describe("importing a settings file", () => {
   it("refuses a settings file DROPPED onto the window while a live session is up", SLOW, async () => {
     const shell = await bootImport(sampleUrxf());
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     const reads = shell.count("read_binary_file");
 
     // One handler, not zero: an event nobody listens for would make every assertion below
@@ -7170,7 +7170,7 @@ describe("importing a settings file", () => {
     // Refused before the file was even read, and the session it would have disrupted is
     // still up.
     expect(shell.count("read_binary_file")).toBe(reads);
-    expect(live().getAttribute("aria-pressed")).toBe("true");
+    expect(live().getAttribute("aria-checked")).toBe("true");
   });
 });
 
@@ -7563,14 +7563,14 @@ describe("MIDI feedback and the live session", () => {
     expect(shell.count("midi_send")).toBe(0);
 
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), SLOW);
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), SLOW);
     await vi.waitFor(() => expect(shell.count("midi_send")).toBeGreaterThan(0));
 
     // And closes again when the session ends. The edit below MOVES a mapped value, so a
     // pass that ran would carry it: the count staying put is the output side being shut
     // rather than a pass finding nothing.
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"));
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"));
     const sentWhileLive = shell.count("midi_send");
 
     selectNode("ch1");
@@ -7600,7 +7600,7 @@ describe("MIDI feedback and the live session", () => {
 
     $("btn-live").click();
     await invoked(shell, "vd_disconnect");
-    expect(live().getAttribute("aria-pressed")).not.toBe("true");
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
     expect(shell.count("vd_params_subscribe")).toBe(0); // the session never registered
     expect(errors(shell).length).toBeGreaterThan(0); // and said so
     expect(shell.count("midi_send")).toBe(0);
@@ -7762,7 +7762,7 @@ describe("the inspector while the CONSOLE hides it", () => {
   it("holds the rebuild while the CONSOLE hides it, and pays it on the way back", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     selectNode("ch1");
     const before = paramRow(t().inspector.gainAnalog);
 
@@ -7970,7 +7970,7 @@ describe("+48V and Hi-Z on one channel", () => {
     slider.dispatchEvent(new Event("input", { bubbles: true }));
   };
   const liveUp = (): Promise<void> =>
-    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
   it("sends the gain the plan holds when Hi-Z goes on, not the one the panel was drawn with", SLOW, async () => {
     const shell = await bootDevice({}, true, { [at(PARAMS.HA_GAIN.id)]: gainToVd(60), [RATE]: 48_000 });
@@ -8750,7 +8750,7 @@ describe("+48V and Hi-Z on one channel", () => {
       notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
 
       live().click();
-      await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 10_000 });
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
       hold.release();
       await invoked(shell, "vd_disconnect");
       selectNode("ch3");

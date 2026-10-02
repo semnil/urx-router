@@ -244,11 +244,11 @@ test("Live sync takes the hold and ending it releases (stubbed device)", async (
   expect(await keepAwakeCalls(page)).toEqual([]);
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect.poll(() => keepAwakeCalls(page)).toEqual([true]);
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
   await expect.poll(() => keepAwakeCalls(page)).toEqual([true, false]);
 });
 
@@ -259,7 +259,7 @@ test("with the preference off a session holds nothing (stubbed device)", async (
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   // Only the difference is sent: the target never leaves false, so the OS is
   // never called at all.
   expect(await keepAwakeCalls(page)).toEqual([]);
@@ -272,7 +272,7 @@ test("a refused hold leaves the row OFF and says why (stubbed device)", async ({
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await page.click("#btn-prefs");
   await page.click('#prefs-prevent-sleep button:has-text("ON")');
   await expect(page.locator("#prefs-sleep-error")).toContainText("Could not change the sleep setting");

@@ -160,7 +160,7 @@ test.describe("T5 drop", () => {
         // mark, so what the mark measures is escape rather than teardown.
         await page.waitForTimeout(200);
         await mark(page, "teardown");
-        await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+        await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
 
         await releaseBarrier(page);
         await waitQuiet(page);
@@ -410,7 +410,7 @@ test.describe("T5 drop", () => {
     // Counted from the trace rather than from the fake's counters: under the latch a
     // command never reaches the fake's bookkeeping, so the counters would report the
     // release as never attempted when in fact it was issued and rejected.
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
 
     // A fetch attempted afterwards must fail at the connect, not half-run.
     await mark(page, "fetch");

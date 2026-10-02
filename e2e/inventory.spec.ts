@@ -179,6 +179,10 @@ const SURFACES: Record<SurfaceName, Surface> = {
       "prefs.title",
     ],
     neverShown: {
+      // The View toggles keep one label each and carry their state in aria-checked; the
+      // message for the state each turns away from is the status line's.
+      "toolbar.showOffSends": "the status line, when Hide off sends is turned off",
+      "toolbar.labelsModel": "the status line, when Device names is turned off",
       "toolbar.desktopApp": "the demo bundle only",
       "toolbar.desktopAppHint": "the demo bundle only",
       "toolbar.shareUrl": "the demo bundle only",
@@ -862,7 +866,7 @@ test("the Preferences modal shows every section in both the browser and the desk
   await page.click("#prefs-modal .consent-btn-secondary");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await page.click("#btn-prefs");
   await page.click('#prefs-prevent-sleep button:has-text("ON")');
   await expect(page.locator("#prefs-sleep-error")).not.toHaveText("");
@@ -897,7 +901,7 @@ test("the toolbar and its three menus show every entry, in each of their states"
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await takeMenus();
 
-  // Both faces of the two View toggles, each of which names its next action.
+  // Both states of the two View toggles, whose labels stay put while aria-checked moves.
   await page.click("#btn-view");
   await page.click("#btn-hide-off");
   await page.click("#btn-view");
@@ -907,7 +911,7 @@ test("the toolbar and its three menus show every entry, in each of their states"
   // Live sync: the toggle's hint, and the on-air tally that only a session prints.
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#live-tally")).toBeVisible();
   await takeMenus();
   await page.click("#btn-device");

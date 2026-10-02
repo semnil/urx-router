@@ -763,7 +763,7 @@ test.describe("T2b shape-change", () => {
     const burst = setsOf(trace).filter((s) => s.start > burstAt);
     const failedIdx = burst.findIndex((s) => s.detail === "code400");
     const dialogs = await dialogsOf(page);
-    const livePressed = await page.locator("#btn-live").getAttribute("aria-pressed");
+    const livePressed = await page.locator("#btn-live").getAttribute("aria-checked");
 
     console.log(timeline(trace, { from: burstAt - 50, limit: 40 }));
     console.log(

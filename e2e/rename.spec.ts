@@ -75,17 +75,17 @@ test("the labels toggle defaults to model labels and flips both ways", async ({ 
   await node(page, "ch1").click();
   await nameInput(page).fill("VocalMic");
   const labels = page.locator("#btn-labels");
-  await expect(labels).toHaveAttribute("aria-pressed", "false");
+  await expect(labels).toHaveAttribute("aria-checked", "false");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
 
   await page.click("#btn-view");
   await labels.click();
-  await expect(labels).toHaveAttribute("aria-pressed", "true");
+  await expect(labels).toHaveAttribute("aria-checked", "true");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("VocalMic");
 
   await page.click("#btn-view");
   await labels.click();
-  await expect(labels).toHaveAttribute("aria-pressed", "false");
+  await expect(labels).toHaveAttribute("aria-checked", "false");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
 });
 

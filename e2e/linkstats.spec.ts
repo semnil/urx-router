@@ -58,7 +58,7 @@ async function liveWithLedger(page: import("@playwright/test").Page): Promise<vo
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
 }
 
 test("every status-bar cell prints its own figure while live", async ({ page }) => {
@@ -145,7 +145,7 @@ test("the readout belongs to the session: gone when sync goes off", async ({ pag
   await expect(page.locator("#link-stats")).toBeVisible();
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
   await expect(page.locator("#link-stats")).toBeHidden();
 });
 
@@ -157,7 +157,7 @@ test("without --experimental the bar carries the message alone", async ({ page }
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#statusbar")).toContainText("Live sync on");
   await expect(page.locator("#link-stats")).toBeHidden();
 });
@@ -166,7 +166,7 @@ test("the session is logged, and its last line says how it ended", async ({ page
   await liveWithLedger(page);
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
   const lines = await expect
     .poll(async () => (await linkLogOf(page)).length)
     .toBeGreaterThan(0)

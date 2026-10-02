@@ -1322,9 +1322,8 @@ describe("menu keyboard navigation", () => {
   // so today the two lists happen to share a first and a last item; an entry added at
   // either end would separate them, and only this file would still be asserting on the
   // wrong one.
-  const items = (): HTMLButtonElement[] => [
-    ...$("file-menu").querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled]):not([hidden])'),
-  ];
+  const ENTRY = ':is([role="menuitem"], [role="menuitemcheckbox"]):not([disabled]):not([hidden])';
+  const items = (menu = "file-menu"): HTMLButtonElement[] => [...$(menu).querySelectorAll<HTMLButtonElement>(ENTRY)];
 
   it("leaves focus and the default action intact for an unrelated key", async () => {
     await boot();
@@ -1357,6 +1356,24 @@ describe("menu keyboard navigation", () => {
     expect(document.activeElement).toBe(list[list.length - 1]);
     chord("Home");
     expect(document.activeElement).toBe(list[0]);
+  });
+
+  // The View menu ends on its two toggles, which are checkbox items rather than plain
+  // ones: the walk has to reach them, and choosing one has to close the menu like any
+  // other entry.
+  it("walks onto the View menu's toggles and closes on choosing one", async () => {
+    await boot();
+    $("btn-view").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect(items("view-menu").at(-1)).toBe($("btn-labels"));
+
+    chord("End");
+    expect(document.activeElement).toBe($("btn-labels"));
+    chord("ArrowUp");
+    expect(document.activeElement).toBe($("btn-hide-off"));
+
+    $("btn-hide-off").click();
+    expect($("view-menu").hidden).toBe(true);
+    expect($("btn-hide-off").getAttribute("aria-checked")).toBe("true");
   });
 
   // The trigger opens from the keyboard as well as from a press, and each of the three

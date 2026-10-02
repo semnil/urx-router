@@ -136,7 +136,7 @@ test("Track Count is locked and stays visibly dimmed while a live session holds 
 
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
 
   await node(page, "out.sdrec").click();
   await expect(trackCount(page)).toBeDisabled();

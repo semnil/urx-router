@@ -149,7 +149,7 @@
               </svg>
             </button>
             <div id="device-menu" class="menu-panel" role="menu" aria-labelledby="btn-device" hidden>
-              <button id="btn-live" class="menu-item" type="button" role="menuitem" aria-pressed="false" hidden>
+              <button id="btn-live" class="menu-item" type="button" role="menuitemcheckbox" aria-checked="false" hidden>
                 Live sync
               </button>
               <span class="menu-sep" role="separator"></span>
@@ -194,8 +194,20 @@
               <button id="btn-auto" class="menu-item" type="button" role="menuitem">Arrange</button>
               <button id="btn-hide-unused" class="menu-item" type="button" role="menuitem">Hide unused</button>
               <span class="menu-sep" role="separator"></span>
-              <button id="btn-hide-off" class="menu-item" type="button" role="menuitem" aria-pressed="false"></button>
-              <button id="btn-labels" class="menu-item" type="button" role="menuitem" aria-pressed="false"></button>
+              <button
+                id="btn-hide-off"
+                class="menu-item"
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked="false"
+              ></button>
+              <button
+                id="btn-labels"
+                class="menu-item"
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked="false"
+              ></button>
             </div>
           </div>
           <span class="tool-sep"></span>

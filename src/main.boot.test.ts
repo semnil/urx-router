@@ -103,9 +103,9 @@ describe("view state", () => {
   it("remembers the label source", async () => {
     await boot();
     const btn = $("btn-labels");
-    const before = btn.getAttribute("aria-pressed");
+    const before = btn.getAttribute("aria-checked");
     btn.click();
-    expect(btn.getAttribute("aria-pressed")).not.toBe(before);
+    expect(btn.getAttribute("aria-checked")).not.toBe(before);
     expect(localStorage.getItem("urx-labels")).not.toBeNull();
   });
 
@@ -113,13 +113,29 @@ describe("view state", () => {
     await boot();
     const btn = $("btn-hide-off");
     btn.click();
-    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    expect(btn.getAttribute("aria-checked")).toBe("true");
     expect(localStorage.getItem("urx-hide-off")).not.toBeNull();
+  });
+
+  it("keeps one label on each menu toggle and carries its state in aria-checked", async () => {
+    await boot();
+    for (const id of ["btn-live", "btn-hide-off", "btn-labels"]) {
+      expect($(id).getAttribute("role"), id).toBe("menuitemcheckbox");
+      expect($(id).hasAttribute("aria-pressed"), id).toBe(false);
+    }
+    for (const id of ["btn-hide-off", "btn-labels"]) {
+      const btn = $(id);
+      const label = btn.textContent;
+      expect(btn.getAttribute("aria-checked"), id).toBe("false");
+      btn.click();
+      expect(btn.getAttribute("aria-checked"), id).toBe("true");
+      expect(btn.textContent, id).toBe(label);
+    }
   });
 
   it("restores the remembered declutter", async () => {
     await boot({ "urx-hide-off": "1" });
-    expect($("btn-hide-off").getAttribute("aria-pressed")).toBe("true");
+    expect($("btn-hide-off").getAttribute("aria-checked")).toBe("true");
   });
 });
 

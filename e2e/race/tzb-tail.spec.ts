@@ -639,7 +639,7 @@ test.describe("Tzb tail", () => {
     // the session state is hidden by the time it flips.
     await page.click("#btn-device");
     await page.click("#btn-live");
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
     // Read between the halves: leaving live is not a plan replacement, so the entries
     // the arming made are still there. Without this the reset asserted below would also
     // be satisfied by a teardown that had thrown the history away, which is a different
@@ -1050,7 +1050,7 @@ test.describe("Tzb tail", () => {
 
       await mark(page, `loop-${i}-off`);
       await clickLive(page);
-      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
       await waitQuiet(page, 600);
       await mark(page, `loop-${i}-quiet`);
       // A fixed window, not a silence check: the verdict here is an absence, and the

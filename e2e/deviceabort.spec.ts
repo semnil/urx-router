@@ -206,7 +206,7 @@ for (const flow of ["fetch", "live start"] as const) {
       if (released === "before") await page.mouse.up();
       await setHeldReads(page, []);
       await expect(picker).toHaveValue("URX22");
-      if (flow === "live start") await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+      if (flow === "live start") await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
       else await expect(page.locator("#btn-fetch")).toHaveText("Fetch from device");
       await page.mouse.move(x + 55, y + 30, { steps: 3 });
       await page.mouse.up();
@@ -293,7 +293,7 @@ for (const flow of ["fetch", "live start"] as const) {
     );
     await setHeldReads(page, []);
     await expect(picker).toHaveValue("URX22");
-    if (flow === "live start") await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    if (flow === "live start") await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
     else await expect(page.locator("#btn-fetch")).toHaveText("Fetch from device");
     const shown = await level.textContent();
     await page.keyboard.down("ArrowUp"); // a repeat: the key has not been released

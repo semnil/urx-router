@@ -1167,7 +1167,7 @@ export async function goLive(page: Page, latency: Partial<FakeLatency> = {}): Pr
   await page.click("#btn-live", { timeout: SESSION_UP_TIMEOUT_MS });
   // Attached, not visible: the click closes the Device menu, so the toggle that
   // carries the session state is hidden by the time it flips.
-  await page.waitForSelector('#btn-live[aria-pressed="true"]', {
+  await page.waitForSelector('#btn-live[aria-checked="true"]', {
     state: "attached",
     timeout: SESSION_UP_TIMEOUT_MS,
   });

@@ -137,7 +137,7 @@ test("starting Live sync on a unit holding both on keeps its state and says so",
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   await expect(page.locator("#statusbar")).toContainText("+48V and Hi-Z are both on for CH 3, CH 4");
   expect(
     (await writesOf(page)).filter(([id]) => id === 0 || id === 6),
@@ -152,7 +152,7 @@ test("a device follow finding both on says so, and again once the unit turns one
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   // CH 3 is y 2. The unit's panel turns HI-Z and +48V on, announced as one batch.
   await setDeviceValue(page, PARAMS.HI_Z.id, 2, 1);
   await setDeviceValue(page, PARAMS.PHANTOM.id, 2, 1);
@@ -256,7 +256,7 @@ const startLive = async (page: Page): Promise<void> => {
   await page.click("#btn-live");
 };
 const liveOn = (page: Page) =>
-  expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
 
 test("a +48V ON pressed while Live sync's starting read runs is refused where the read finds Hi-Z on", async ({
   page,
