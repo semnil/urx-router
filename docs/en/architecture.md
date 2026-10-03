@@ -2589,7 +2589,7 @@ to a broker that ACKs writes with no unit attached and answers reads from its ca
 command fails until a reconnect, with the cause the drop was met with (`broker-closed`, `device-lost`, `broker-io`, …).
 The worker stays up to answer them — a drop the idle pump meets stops the pump, not the worker — so an action with a
 dialog open between its connect and its first command reports what happened to the link rather than
-`control-worker-gone`, and a link watch asked for once the session is lost is refused with that cause.
+`control-worker-gone`.
 
 ### Reset chains, and what a converge round sends
 

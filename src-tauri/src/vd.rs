@@ -256,13 +256,9 @@ pub enum Cmd {
     /// Drop the current parameter subscription (unregisters each address).
     ParamsUnsubscribe,
     /// Register a channel to receive the link-lost event (see LinkEvent). Replaces
-    /// any prior watch. The worker pushes one event if the broker link fails while
-    /// idle, and latches the session as lost. The reply refuses the watch with the
-    /// latched cause when the session is lost already.
-    WatchLink {
-        channel: Channel<LinkEvent>,
-        reply: Sender<Result<(), String>>,
-    },
+    /// any prior watch. Fire-and-forget; the worker pushes one event if the broker
+    /// link fails while idle, and latches the session as lost.
+    WatchLink { channel: Channel<LinkEvent> },
     /// Unregister everything this session registered, close the socket, and exit.
     /// `done` is signalled once that has actually happened — only the app-exit path
     /// passes one, because it is the only caller whose process may not outlive the
@@ -532,13 +528,9 @@ pub fn params_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
 }
 
 /// Register a channel to receive the link-lost event. Replaces any prior watch.
-/// Blocks until the worker has taken it, and fails with the session's cause when
-/// the link is lost already.
 pub fn watch_link(tx: Sender<Cmd>, channel: Channel<LinkEvent>) -> Result<(), String> {
-    let (reply, rx) = mpsc::channel();
-    tx.send(Cmd::WatchLink { channel, reply })
-        .map_err(|_| CONTROL_WORKER_GONE.to_string())?;
-    rx.recv().map_err(|_| CONTROL_WORKER_GONE.to_string())?
+    tx.send(Cmd::WatchLink { channel })
+        .map_err(|_| CONTROL_WORKER_GONE.to_string())
 }
 
 /// Close the connection of generation `epoch`. A no-op if the current connection
@@ -893,16 +885,8 @@ mod imp {
                     subs.params.clear();
                     subs.param_ch = None;
                 }
-                Ok(Cmd::WatchLink { channel, reply }) => {
-                    // A session already latched as lost refuses the watch with its
-                    // cause: the event the watch would wait for has already been.
-                    let _ = reply.send(match &health.lost {
-                        Some(reason) => Err(reason.clone()),
-                        None => {
-                            link_ch = Some(channel);
-                            Ok(())
-                        }
-                    });
+                Ok(Cmd::WatchLink { channel }) => {
+                    link_ch = Some(channel);
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     // Drain the idle socket so its buffer never backs up. While a
@@ -2598,9 +2582,11 @@ mod imp {
         // The readers that consume frames during a session, and the worker loop around
         // them, driven over a loopback socket whose other end the test writes as the
         // broker. A frame the test sends is buffered before the reader that has to see
-        // it runs, and a case that waits on the worker waits for what the worker sends
-        // back, under a bound, so no case depends on a peer's timing.
-        use super::super::{Cmd, LinkCounters};
+        // it runs, a link watch is queued before the worker starts so it is in place
+        // before the pump first reads, and a case that waits on the worker waits for
+        // what the worker sends back, under a bound, so no case depends on a peer's
+        // timing.
+        use super::super::{watch_link, Cmd, LinkCounters};
         use super::{
             arm_socket, do_get_value, drain_late_reply, pump, serve, LineReader, Link, Subs,
             BINARY_FRAME, DEVICE_LOST_PREFIX, READ_TIMEOUT,
@@ -2764,16 +2750,13 @@ mod imp {
             (ch, rx)
         }
 
-        /// Ask the worker to take a watch, and return its answer.
-        fn take_watch(
-            tx: &mpsc::Sender<Cmd>,
-            channel: Channel<super::super::LinkEvent>,
-        ) -> Result<(), String> {
-            let (reply, wait) = mpsc::channel();
-            tx.send(Cmd::WatchLink { channel, reply })
-                .expect("the worker is serving");
-            wait.recv_timeout(Duration::from_secs(10))
-                .expect("the worker answers")
+        /// Queue a link watch on a worker's command queue, and return where its events
+        /// land. Queued before the worker starts, it is the first command the worker
+        /// takes.
+        fn queue_watch(tx: &mpsc::Sender<Cmd>) -> mpsc::Receiver<Value> {
+            let (channel, events) = watch();
+            watch_link(tx.clone(), channel).expect("the command queue is open");
+            events
         }
 
         // A failure the idle pump meets ends the session the way a command's device-lost
@@ -2784,10 +2767,9 @@ mod imp {
         fn a_failure_the_idle_pump_meets_answers_every_later_command() {
             let (link, mut peer) = vdp_link();
             let (tx, rx) = mpsc::channel();
+            let events = queue_watch(&tx);
             let worker =
                 std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
-            let (channel, events) = watch();
-            assert_eq!(take_watch(&tx, channel), Ok(()));
 
             // Idle, so only the pump reads it.
             send(&mut peer, synchronize("lost"));
@@ -2808,15 +2790,8 @@ mod imp {
                 reply,
             })
             .expect("the worker is serving");
-            assert_eq!(
-                wait.recv_timeout(Duration::from_secs(10)),
-                Ok(Err(reason.clone()))
-            );
+            assert_eq!(wait.recv_timeout(Duration::from_secs(10)), Ok(Err(reason)));
             assert!(asked.elapsed() < Duration::from_secs(1));
-
-            // A watch taken now would wait for an event that has already been.
-            let (channel, _) = watch();
-            assert_eq!(take_watch(&tx, channel), Err(reason));
 
             let (done, closed) = mpsc::channel();
             tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
@@ -2845,6 +2820,7 @@ mod imp {
             let (link, mut peer) = vdp_link();
             let counters = Arc::new(LinkCounters::default());
             let (tx, rx) = mpsc::channel();
+            let events = queue_watch(&tx);
             let worker = {
                 let counters = Arc::clone(&counters);
                 std::thread::spawn(move || serve(link, rx, counters))
@@ -2867,8 +2843,6 @@ mod imp {
                 "a get put on the socket is counted"
             );
 
-            let (channel, events) = watch();
-            assert_eq!(take_watch(&tx, channel), Ok(()));
             send(&mut peer, synchronize("lost"));
             events
                 .recv_timeout(Duration::from_secs(10))
@@ -2933,10 +2907,9 @@ mod imp {
         fn a_closed_link_is_latched_once_and_the_pump_stops_there() {
             let (link, peer) = vdp_link();
             let (tx, rx) = mpsc::channel();
+            let events = queue_watch(&tx);
             let worker =
                 std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
-            let (channel, events) = watch();
-            assert_eq!(take_watch(&tx, channel), Ok(()));
 
             drop(peer);
             let event = events
