@@ -2,44 +2,63 @@ import type { Page } from "@playwright/test";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "../src/core/control/firmware";
 import type { ModelId } from "../src/models/types";
 
-type AnswerLater = (answer: Promise<unknown>) => Promise<unknown>;
+type AnswerLater = (cmd: string, answer: Promise<unknown>) => Promise<unknown>;
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 declare global {
   interface Window {
-    /** Settles a stub's answer through the queue `installAnswerQueue` puts on the page. */
+    /** Settles a stub's answer to `cmd` through the queue `installAnswerQueue` puts on the page. */
     __urxAnswerLater: AnswerLater;
+    /** Every command whose answer the queue has handed the app on this page, in the order handed. */
+    __urxAnswered: string[];
   }
 }
 
 /**
  * The answer queue every Tauri stub settles through: each answer settles on a message-port
  * task of its own, in the order asked, as the shell's IPC answers — never in the microtask
- * that sent the command. What a command records (a write, a dialog, a read's value) is taken
- * when it is sent; only the answer waits. Installed as an init script of its own beside each
- * stub and looked up when a command is sent, since Playwright does not order init scripts.
- * A spec's own stub installs it on the same page or context and hands each answer to
- * `window.__urxAnswerLater`; `answerTimingOf` pins that it does.
+ * that sent the command. An answer never settles ahead of one asked before it that is already
+ * in; one still out (a held read, a scripted latency) holds back nothing asked after it. What a
+ * command records (a write, a dialog, a read's value) is taken when it is sent; only the answer
+ * waits. Installed as an init script of its own beside each stub and looked up when a command
+ * is sent, since Playwright does not order init scripts. A spec's own stub installs it on the
+ * same page or context and hands each answer to `window.__urxAnswerLater` with the command it
+ * answers; `answerTimingOf` pins that it does. Each answer handed over is recorded in
+ * `window.__urxAnswered`, which is what `untilAnswered` waits on.
  */
 export function installAnswerQueue(): void {
-  const w = window as unknown as { __urxAnswerLater?: AnswerLater };
+  const w = window as unknown as { __urxAnswerLater?: AnswerLater; __urxAnswered?: string[] };
   if (w.__urxAnswerLater) return;
+  const answered: string[] = [];
+  w.__urxAnswered = answered;
   // One message-port task per answer, with no timer clamp between them.
   const port = new MessageChannel();
-  const due: Array<() => void> = [];
-  port.port1.onmessage = () => due.shift()?.();
-  const queue = (settle: () => void): void => {
-    due.push(settle);
+  let asked = 0;
+  const due: Array<{ ticket: number; cmd: string; settle: () => void }> = [];
+  // Each answer that comes in posts one message, and each message settles the earliest-asked
+  // answer in, recording its command on the task that hands it over.
+  port.port1.onmessage = () => {
+    let first = 0;
+    for (let i = 1; i < due.length; i++) if (due[i].ticket < due[first].ticket) first = i;
+    const [next] = due.splice(first, 1);
+    if (!next) return;
+    answered.push(next.cmd);
+    next.settle();
+  };
+  const queue = (ticket: number, cmd: string, settle: () => void): void => {
+    due.push({ ticket, cmd, settle });
     port.port2.postMessage(null);
   };
   // The handlers are attached at once, so a refusal is never an unhandled rejection while it waits.
-  w.__urxAnswerLater = (answer) =>
-    new Promise((resolve, reject) => {
+  w.__urxAnswerLater = (cmd, answer) => {
+    const ticket = ++asked;
+    return new Promise((resolve, reject) => {
       answer.then(
-        (v) => queue(() => resolve(v)),
-        (e: unknown) => queue(() => reject(e)),
+        (v) => queue(ticket, cmd, () => resolve(v)),
+        (e: unknown) => queue(ticket, cmd, () => reject(e)),
       );
     });
+  };
 }
 
 /**
@@ -82,6 +101,7 @@ export async function stubTauriBoot(page: Page, commands: Record<string, unknown
       invoke: (cmd: string) => {
         invokes.push(cmd);
         return window.__urxAnswerLater(
+          cmd,
           cmd in responses
             ? Promise.resolve(responses[cmd])
             : Promise.reject(new Error(`stub: unhandled command ${cmd}`)),
@@ -307,7 +327,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       // through the queue.
       const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__;
       const answer = internals.invoke;
-      internals.invoke = (cmd, args) => window.__urxAnswerLater(answer(cmd, args));
+      internals.invoke = (cmd, args) => window.__urxAnswerLater(cmd, answer(cmd, args));
     },
     { ...opts, firmware },
   );
@@ -335,6 +355,12 @@ export const answerTimingOf = (page: Page, cmds: string[]): Promise<{ inSendingT
     await Promise.all(answers);
     return { inSendingTask, order };
   }, cmds);
+
+/** Wait until the queue has handed the app an answer to `cmd` on this page. That answer's task
+ *  has run by then, and with it the app's own continuation of the answer up to its next await,
+ *  so an absence asserted next is asserted after the point the answer would have produced it. */
+export const untilAnswered = (page: Page, cmd: string): Promise<unknown> =>
+  page.waitForFunction((c) => window.__urxAnswered.includes(c), cmd);
 
 /** Every command the stub was invoked with, in order (`stubTauriBoot` only). */
 export const invokesOf = (page: Page): Promise<string[]> =>

@@ -1,6 +1,6 @@
 import { test, expect, scrollsByWheel, textContrast } from "./fixtures";
 import type { Page } from "./fixtures";
-import { LIVE_COMMANDS, answerTimingOf, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import { LIVE_COMMANDS, answerTimingOf, stubTauriBoot, stubTauriDevice, untilAnswered } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 
 // Preferences modal (toolbar gear). The gear is an independent entry available
@@ -253,6 +253,7 @@ async function recordKeepAwake(page: Page, refuse = false): Promise<void> {
       calls.push(Boolean((rest[0] as { on?: boolean })?.on));
       // Recorded when it is sent; the answer settles through the stub's queue.
       return window.__urxAnswerLater(
+        cmd,
         deny ? Promise.reject(new Error("PowerCreateRequest failed")) : Promise.resolve(null),
       );
     };
@@ -289,6 +290,8 @@ test("the toggle stores the preference off-line without asking the OS (stubbed T
   expect(await keepAwakeCalls(page)).toEqual([]);
   await page.reload();
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  // Asked once the boot's launch-flag answer has reached the app.
+  await untilAnswered(page, "experimental_enabled");
   expect(await keepAwakeCalls(page)).toEqual([]);
 });
 
@@ -298,7 +301,9 @@ test("Live sync takes the hold and ending it releases (stubbed device)", async (
   await recordKeepAwake(page);
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
-  // Nothing held while the board is off-line, however the preference reads.
+  // Nothing held while the board is off-line, however the preference reads — asked once the
+  // boot's launch-flag answer has reached the app.
+  await untilAnswered(page, "experimental_enabled");
   expect(await keepAwakeCalls(page)).toEqual([]);
   await page.click("#btn-device");
   await page.click("#btn-live");

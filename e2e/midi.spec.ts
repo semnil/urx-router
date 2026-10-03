@@ -1,6 +1,6 @@
 import { test, expect, colorToken, contrastRatio, type Page } from "./fixtures";
 import { planParamZ } from "./plan-param";
-import { LIVE_COMMANDS, answerTimingOf, installAnswerQueue } from "./tauri-stub";
+import { LIVE_COMMANDS, answerTimingOf, installAnswerQueue, untilAnswered } from "./tauri-stub";
 import { pickBand, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
 import { selectWire } from "./graph-helpers";
@@ -309,7 +309,7 @@ test.beforeEach(async ({ page }) => {
     // settles through the queue.
     const answer = internals.invoke;
     internals.invoke = (cmd, args) => {
-      const settled = window.__urxAnswerLater(answer(cmd, args));
+      const settled = window.__urxAnswerLater(cmd, answer(cmd, args));
       // Counted as the answer reaches the app, ahead of the app's own continuation.
       if (cmd === "midi_open_ports")
         settled.then(
@@ -333,6 +333,9 @@ test("MIDI control is available without --experimental; only the self-test is ga
   await page.click("#btn-device");
   await expect(page.locator("#btn-fetch")).toBeVisible(); // the menu itself is open
   await expect(page.locator("#btn-midi")).toBeVisible();
+  // The flag's answer has reached the app, which is where a launch that sets it reveals
+  // the self-test.
+  await untilAnswered(page, "experimental_enabled");
   await expect(page.locator("#btn-selftest")).toBeHidden();
 });
 
@@ -1019,8 +1022,9 @@ test("feedback follows UI edits out of the output port", async ({ page }) => {
   // PLAN's values, and until a Live-sync readback settles those are whatever was loaded
   // rather than what the unit holds. On a shared bus that push is another listener's
   // incoming gesture, which is how a second instance of this app rewrote CH 1's gain.
+  // The open's answer has reached the app, and a pass the open sends goes out with it.
   await pickOutputPort(page, win);
-  await page.waitForTimeout(300);
+  await untilAnswered(page, "midi_open_output");
   expect(await page.evaluate(() => window.__midiTest.sent.length)).toBe(0);
 
   // The session's readback is what opens it, and every binding is resynced there.
@@ -1113,7 +1117,10 @@ test("a device fetch does not open the output port; the live session does", asyn
   await page.click("#btn-device");
   await page.click("#btn-fetch");
   await expect(readLevel(page, "CH 1")).toHaveText("0.0"); // the fetch landed
-  await page.waitForTimeout(300); // past the feedback debounce
+  // The fetch has released the link and that answer has reached the app. The output side
+  // opens only with a pass that re-sends every binding at once, so a fetch that opened it
+  // has sent by now.
+  await untilAnswered(page, "vd_disconnect");
   expect(await page.evaluate(() => window.__midiTest.sent.length)).toBe(0);
 
   // The positive control: the same value goes out the moment a session establishes it,
@@ -1140,8 +1147,9 @@ test("Live sync start pushes every assignment to the controller, not just what c
   await setLearn(page, win, false);
   await pickOutputPort(page, win);
 
-  // Nothing at all until the session: the port opening states no values of its own.
-  await page.waitForTimeout(300);
+  // Nothing at all until the session: the port opening states no values of its own. The
+  // open's answer has reached the app, and a pass the open sends goes out with it.
+  await untilAnswered(page, "midi_open_output");
   expect(await page.evaluate(() => window.__midiTest.sent.length)).toBe(0);
 
   await page.click("#btn-device");

@@ -1063,10 +1063,14 @@ test.describe("Tzb tail", () => {
     const trace = await traceOf(page);
     const all = spans(trace);
     const idle: number[] = [];
+    // Each cycle's meter commands, in the order issued.
+    const meterRuns: Span[][] = [];
     for (let i = 0; i < LOOPS; i++) {
       const from = markTime(trace, `loop-${i}-quiet`)!;
       const to = i + 1 < LOOPS ? markTime(trace, `loop-${i + 1}-on`)! : Number.POSITIVE_INFINITY;
       idle.push(all.filter((s) => s.cmd.startsWith("vd_") && s.start > from && s.start < to).length);
+      const on = markTime(trace, `loop-${i}-on`)!;
+      meterRuns.push(all.filter((s) => s.cmd.startsWith("vd_meters_") && s.start > on && s.start < from));
     }
 
     // The last cycle's idle phase, stated as the analyzer states it: nothing armed
@@ -1084,22 +1088,33 @@ test.describe("Tzb tail", () => {
     }
 
     for (const [i, s] of samples.entries()) {
-      // One connection per cycle, and both registrations released with it: a session
-      // that left either behind would show as a growing imbalance rather than as a
-      // failure inside the cycle that leaked it.
+      // One connection per cycle, and both registrations released with it. The param one is
+      // taken once and released once, so a session that left it behind would show as a
+      // growing imbalance rather than as a failure inside the cycle that leaked it.
       expect(s.counters.connects).toBe(i + 1);
       expect(s.counters.subscribes).toBe(i + 1);
       expect(s.counters.unsubscribes).toBe(s.counters.subscribes);
-      expect(s.counters.meterUnsubs).toBe(s.counters.meterSubs);
+      // The meter slot is handed between the console and the tuning screen inside the
+      // session, and a screen closed before its own registration has been answered is
+      // replaced by the console's with no unsubscribe of its own — a subscribe replaces the
+      // registration wholesale — so the meter half is read from the order rather than from
+      // the counts: the session never sits unregistered (every unsubscribe inside it is
+      // followed by a subscribe), and the cycle's last meter command is the unsubscribe its
+      // end issued.
+      const offAt = markTime(trace, `loop-${i}-off`)!;
+      const inSession = meterRuns[i].filter((m) => m.start < offAt);
+      expect(inSession[0]?.cmd).toBe("vd_meters_subscribe");
+      for (const [k, m] of inSession.entries())
+        if (m.cmd === "vd_meters_unsubscribe") expect(inSession[k + 1]?.cmd).toBe("vd_meters_subscribe");
+      expect(meterRuns[i].at(-1)?.cmd).toBe("vd_meters_unsubscribe");
+      expect(meterRuns[i].at(-1)!.start).toBeGreaterThan(offAt);
       // The history is bounded: 130 entries were offered, 100 is the cap, and the
       // stack does not carry the surplus across a cycle either.
       expect(s.undo).toBe(MAX_ENTRIES);
       // Nothing armed inside the session fires after it.
       expect(idle[i]).toBe(0);
     }
-    // The meter slot is taken and released once per cycle plus once per screen
-    // handover, and never accumulates: the count grows with the loop, the imbalance
-    // does not.
+    // The meter slot is taken in every cycle, so the count grows with the loop.
     expect(samples[LOOPS - 1].counters.meterSubs).toBeGreaterThan(samples[0].counters.meterSubs);
   });
 });

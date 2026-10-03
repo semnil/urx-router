@@ -857,6 +857,7 @@ test("the Preferences modal shows every section in both the browser and the desk
     internals.invoke = (cmd: string, ...rest: unknown[]) => {
       if (cmd === "plugin:updater|check")
         return window.__urxAnswerLater(
+          cmd,
           new Promise((resolve, reject) => {
             w.__releaseUpdate = () => {
               if (w.__update === "none") resolve(null);
@@ -866,9 +867,9 @@ test("the Preferences modal shows every section in both the browser and the desk
           }),
         );
       // Declining the offered update keeps the modal open on the version note.
-      if (cmd === "plugin:dialog|confirm") return window.__urxAnswerLater(Promise.resolve(false));
+      if (cmd === "plugin:dialog|confirm") return window.__urxAnswerLater(cmd, Promise.resolve(false));
       if (cmd === "set_keep_awake")
-        return window.__urxAnswerLater(Promise.reject(new Error("PowerCreateRequest failed")));
+        return window.__urxAnswerLater(cmd, Promise.reject(new Error("PowerCreateRequest failed")));
       return invoke(cmd, ...rest);
     };
   });
@@ -1183,7 +1184,7 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
     // The switch above records and answers a command when it is sent; the answer itself
     // settles through the queue the shared stubs settle through.
     const answer = internals.invoke;
-    internals.invoke = (cmd, args) => window.__urxAnswerLater(answer(cmd, args));
+    internals.invoke = (cmd, args) => window.__urxAnswerLater(cmd, answer(cmd, args));
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
   }, mappings);
 

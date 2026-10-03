@@ -45,7 +45,7 @@ async function stubFailingWrites(page: Page): Promise<void> {
     // The table above records and answers a command when it is sent; the answer itself
     // settles through the queue.
     const answer = internals.invoke;
-    internals.invoke = (cmd, args) => window.__urxAnswerLater(answer(cmd, args));
+    internals.invoke = (cmd, args) => window.__urxAnswerLater(cmd, answer(cmd, args));
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
   });
 }

@@ -321,11 +321,17 @@ test.describe("T6 teardown", () => {
     await mark(page, "during-reconcile");
 
     const dialogsBefore = (await dialogsOf(page)).length;
+    const openDialogCount = async (): Promise<number> =>
+      spans(await traceOf(page)).filter((s) => s.cmd === "plugin:dialog|open").length;
+    // Each flow goes on once its confirm's answer reaches it, a task after the click, and the
+    // held read is still holding when it does: waited on rather than read at the click.
     await fileMenu(page, "btn-open"); // cancels (the fake answers the open dialog null)
-    const openDialogs = spans(await traceOf(page)).filter((s) => s.cmd === "plugin:dialog|open").length;
+    await expect.poll(openDialogCount).toBeGreaterThan(0);
+    const openDialogs = await openDialogCount();
     const pickerLocked = await page.locator("#model-picker").isDisabled();
     const pickerDuring = await page.locator("#model-picker").inputValue();
     await fileMenu(page, "btn-new");
+    await expect(page.locator("#statusbar")).toContainText("Created a new plan");
     const statusDuring = await statusText(page);
     const dialogsDuring = (await dialogsOf(page)).length;
     await mark(page, "flows-done");
@@ -627,8 +633,8 @@ test.describe("T6 teardown", () => {
     await pushNotify(page, [[...CH1_HPF_FREQ, 40]]);
     await page.waitForFunction(() => window.__urxFake.blocked(), null, { timeout: 20_000 });
 
-    // Release and tear down in the same tick: the held read resolves on a microtask,
-    // so every remaining read of the node is issued after the session ended.
+    // Release and tear down in the same task: the held read's answer reaches the app on a
+    // later task, so every remaining read of the node is issued after the session ended.
     await page.evaluate(() => {
       const f = window.__urxFake;
       f.release();
