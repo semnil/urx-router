@@ -1633,8 +1633,8 @@ describe("notes", () => {
 
   it("opens the floating editor from the add button and writes as it is typed", () => {
     fx = graphFixture();
-    const add = nodeEl(fx.host, "ch4")?.querySelector(".note-add");
-    if (!add) return;
+    const add = nodeEl(fx.host, "ch4")!.querySelector(".note-add")!;
+    expect(add).not.toBeNull();
     add.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 0, clientY: 0, bubbles: true }));
     const ta = fx.host.querySelector<HTMLTextAreaElement>("textarea.note-edit-overlay")!;
     expect(ta).not.toBeNull();

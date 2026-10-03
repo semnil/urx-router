@@ -896,8 +896,8 @@ describe("insert FX", () => {
     renderInspector(panel, model, plan, nodeSel(id), act);
     const sel = [...panel.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
       [...s.options].some((o) => Number(o.value) === INSERT_FX_NONE),
-    );
-    if (!sel) return;
+    )!;
+    expect(sel).toBeDefined();
     const real = [...sel.options].find((o) => Number(o.value) !== INSERT_FX_NONE);
     if (real) {
       sel.value = real.value;
@@ -1023,8 +1023,8 @@ describe("insert FX", () => {
     renderInspector(panel, model, plan, nodeSel(id), act);
     const sel = [...panel.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
       [...s.options].some((o) => Number(o.value) === INSERT_FX_NONE),
-    );
-    if (!sel) return;
+    )!;
+    expect(sel).toBeDefined();
     sel.value = String(INSERT_FX_NONE);
     sel.dispatchEvent(new Event("change", { bubbles: true }));
     const patch = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)![1];
@@ -1038,8 +1038,8 @@ describe("section fold state", () => {
     const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
     renderInspector(panel, model, plan, nodeSel("ch1"), act);
-    const first = [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find((d) => d.open);
-    if (!first) return;
+    const first = [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find((d) => d.open)!;
+    expect(first).toBeDefined();
     const title = first.querySelector(".sec-title")!.textContent!;
     first.open = false;
     first.dispatchEvent(new Event("toggle"));
@@ -1054,8 +1054,8 @@ describe("section fold state", () => {
     const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
     renderInspector(panel, model, plan, nodeSel("ch1"), act);
-    const first = [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find((d) => d.open);
-    if (!first) return;
+    const first = [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find((d) => d.open)!;
+    expect(first).toBeDefined();
     const title = first.querySelector(".sec-title")!.textContent!;
     first.open = false;
     first.dispatchEvent(new Event("toggle"));
@@ -1085,13 +1085,20 @@ describe("live-connected presentation", () => {
   it("locks a CH to FX tap only while live", () => {
     const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
-    const toFx = plan.connections.find((c) => c.kind === "send" && c.to.startsWith("bus.fx"));
-    if (!toFx) return;
+    const toFx = plan.connections.find((c) => c.kind === "send" && c.to.startsWith("bus.fx"))!;
+    expect(toFx).toBeDefined();
+    const tap = (): boolean[] =>
+      [...panel.querySelectorAll<HTMLButtonElement>("button")]
+        .filter((b) => /^(PRE|POST)$/.test(b.textContent ?? ""))
+        .map((b) => b.disabled);
+    const disabled = (): number =>
+      [...panel.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.disabled).length;
     renderInspector(panel, model, plan, connSel(toFx.from, toFx.to), act, [], false);
-    const offline = [...panel.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.disabled).length;
+    expect(tap()).toEqual([false, false]);
+    expect(disabled()).toBe(0);
     renderInspector(panel, model, plan, connSel(toFx.from, toFx.to), act, [], true);
-    const live = [...panel.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.disabled).length;
-    expect(live).toBeGreaterThanOrEqual(offline);
+    expect(tap()).toEqual([true, true]);
+    expect(disabled()).toBe(2);
   });
 });
 
@@ -1151,8 +1158,8 @@ describe("coverage sweep: every control of every selection", () => {
   // shape is asserted too, since `not.toThrow()` passes over a surface that has gone empty.
   it("offers a launcher for the families the screen shows, and an editor for the one it does not", () => {
     const model = getModel("URX44V");
-    const id = model.nodes.find((n) => insertFxControl(model, n.id))?.id;
-    if (!id) return;
+    const id = model.nodes.find((n) => insertFxControl(model, n.id))?.id as string;
+    expect(id).toBeDefined();
     for (const { option } of insertFxMenu(model, defaultPlan("URX44V"), id)) {
       const plan = defaultPlan("URX44V");
       plan.nodeParams[id] = { ...plan.nodeParams[id], insertFx: option.value, insertFxOn: true };
