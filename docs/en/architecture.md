@@ -3489,6 +3489,13 @@ PDF exports.
 - **Edit** — once a node is selected, clicking its open note area edits it; the header (outside the
   note) still drags the node, and an unselected node drags from anywhere. Editing is canvas-only —
   the inspector has no note field.
+- **An open editor across a redraw** — a redraw of the board (`render()`: a device-follow full reflect,
+  an undo, an OS appearance flip in Auto theme mode) leaves the editor open, focused and over its node's
+  panel, an IME composition in it included, for as long as that node is drawn; a node shelved or no
+  longer in the model takes the editor with it. Handing the board a plan (`setModel`: Fetch, the
+  Live-sync read, a `.urxf` import, a file, a model switch) closes it together with the selection. A
+  key pressed during an IME composition (`isComposing`, or `keyCode` 229) is the composition's, so
+  `Escape` and `Ctrl/Cmd+Enter` close the editor only outside one.
 - **Minimize / expand** — a noted node shows a `+` / `−` button (`makeNoteToggle`): `−` minimizes
   the note to the header, `+` re-expands it. The minimized state persists per node.
 - **Persistence & layout** — notes persist as `plan.notes` (node id → text) and the minimized set as
@@ -3690,7 +3697,7 @@ per drag, and each report crosses the IPC boundary to set a native item's state.
 | `Ctrl/Cmd+Z` | Undo (macOS: also Edit ▸ Undo) |
 | `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y` | Redo (macOS: also Edit ▸ Redo) |
 | `Delete`, `Backspace` | Delete the graph's selection (GRAPH view only, and not past a modal) |
-| `Escape` | Clear the graph's selection; dismiss a dismissable overlay; close the note editor |
+| `Escape` | Clear the graph's selection; dismiss a dismissable overlay; close the note editor (not during an IME composition) |
 | `Shift` (hold, or latch) | Fine-tuning mode ([above](#node-notes) — `ui/fine.ts`); not a Shift typed into a text field or pressed during an IME composition |
 
 The undo branch runs before the `Delete` / `Escape` handling and applies its own target test, because

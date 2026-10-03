@@ -417,6 +417,9 @@ export class Graph {
       this.lastNodeClick = null;
       this.endAllPointers();
     }
+    // The note being edited goes with the selection: a Fetch, the Live-sync read and a .urxf
+    // import re-author the plan's values here, and a file or a model switch replaces it.
+    this.dropNoteEditor();
     this.model = model;
     this.plan = plan;
     this.selection = null;
@@ -609,6 +612,9 @@ export class Graph {
     ta.addEventListener("input", () => this.setNote(id, ta.value));
     ta.addEventListener("keydown", (e) => {
       e.stopPropagation();
+      // A key pressed during an IME composition belongs to the composition: Escape cancels
+      // the conversion and Enter commits it, and neither closes the editor.
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
         e.preventDefault();
         this.closeNoteEditor();
@@ -629,14 +635,21 @@ export class Graph {
   }
 
   private closeNoteEditor(): void {
-    const ed = this.noteEditor;
-    if (!ed) return;
-    this.noteEditor = null;
-    ed.el.remove();
+    if (!this.dropNoteEditor()) return;
     // Restore the panel text now that its editor is gone.
     this.renderNodes();
     this.redrawWires();
     this.highlightSelectedNode();
+  }
+
+  /** Remove the editor without repainting, for a caller that draws the board itself next.
+   *  Answers whether there was one. */
+  private dropNoteEditor(): boolean {
+    const ed = this.noteEditor;
+    if (!ed) return false;
+    this.noteEditor = null;
+    ed.el.remove();
+    return true;
   }
 
   /** Center and scale the diagram to fit the current viewport. */
@@ -807,9 +820,12 @@ export class Graph {
   // --- rendering -----------------------------------------------------------
 
   render(): void {
-    this.closeNoteEditor();
     this.nodeById.clear();
     for (const node of this.model.nodes) this.nodeById.set(node.id, node);
+    // An open note editor stays open, focus and any IME composition with it, for as long as
+    // its node is drawn; applyTransform below puts it back over the node's panel.
+    const ed = this.noteEditor;
+    if (ed && (!this.nodeById.has(ed.id) || this.isHidden(ed.id))) this.dropNoteEditor();
     this.applyTransform();
     this.renderNodes();
     // redrawWires ends with refreshPortStates, so the port glow is restored there.

@@ -137,3 +137,20 @@ test("notes and collapse state round-trip through save and open", async ({ page 
   await node(page, "ch1").locator(".note-toggle").click();
   await expect(node(page, "ch1").locator(".note-panel")).toHaveCount(1);
 });
+
+// An OS appearance flip in Auto theme mode redraws the board; the note being typed stays
+// open, focused and holding what was typed.
+test("an appearance flip in Auto mode leaves an open note editor open", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "auto"));
+  await page.reload();
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await node(page, "ch1").locator(".note-add").click();
+  await expect(overlay(page)).toBeFocused();
+  await page.keyboard.type("mic ch");
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(overlay(page)).toBeFocused();
+  await page.keyboard.type("eck");
+  await expect(overlay(page)).toHaveValue("mic check");
+});

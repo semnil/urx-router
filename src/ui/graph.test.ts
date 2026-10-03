@@ -1645,6 +1645,66 @@ describe("notes", () => {
     expect(fx.host.querySelector("textarea.note-edit-overlay")).toBeNull();
   });
 
+  describe("an open editor across a redraw", () => {
+    const open = (id: string): HTMLTextAreaElement => {
+      (fx.graph as unknown as { openNoteEditor: (id: string) => void }).openNoteEditor(id);
+      return fx.host.querySelector<HTMLTextAreaElement>("textarea.note-edit-overlay")!;
+    };
+    const type = (ta: HTMLTextAreaElement, text: string): void => {
+      ta.value = text;
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const key = (ta: HTMLTextAreaElement, init: KeyboardEventInit): void =>
+      void ta.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init }));
+
+    // A device-follow full reflect (refresh) and an OS appearance flip in Auto mode
+    // (setTheme) both redraw the board through render(); the note being typed stays open.
+    it("keeps the editor open, focused and unchanged through refresh and a theme switch", () => {
+      fx = graphFixture();
+      const ta = open("ch1");
+      type(ta, "mic ch");
+      fx.graph.refresh();
+      expect(ta.isConnected).toBe(true);
+      expect(document.activeElement).toBe(ta);
+      fx.graph.setTheme("light");
+      expect(ta.isConnected).toBe(true);
+      expect(document.activeElement).toBe(ta);
+      expect(fx.plan.notes?.["ch1"]).toBe("mic ch");
+      // The panel under it stays the one being edited: its text is not drawn behind it.
+      expect(nodeEl(fx.host, "ch1")!.querySelector(".note-panel text")).toBeNull();
+    });
+
+    it("closes the editor once its node is no longer drawn", () => {
+      fx = graphFixture();
+      const ta = open("ch1");
+      fx.graph.hideNode("ch1");
+      expect(ta.isConnected).toBe(false);
+    });
+
+    // rerenderPlan (Fetch, the Live-sync read, a .urxf import) and a file or a model switch
+    // all hand the board a plan, and the selection the editor belongs to goes with it.
+    it("closes the editor when the board is handed a plan, the same one included", () => {
+      fx = graphFixture();
+      let ta = open("ch1");
+      fx.graph.setModel(getModel("URX44V"), fx.plan);
+      expect(ta.isConnected).toBe(false);
+      ta = open("ch1");
+      fx.graph.setModel(getModel("URX44V"), defaultPlan("URX44V"));
+      expect(ta.isConnected).toBe(false);
+    });
+
+    it("leaves a key pressed during an IME composition to the composition", () => {
+      fx = graphFixture();
+      const ta = open("ch1");
+      key(ta, { key: "Escape", isComposing: true });
+      key(ta, { key: "Enter", metaKey: true, isComposing: true });
+      key(ta, { key: "Escape", keyCode: 229 });
+      expect(ta.isConnected).toBe(true);
+      key(ta, { key: "Escape" });
+      expect(ta.isConnected, "the control: a plain Escape closes it").toBe(false);
+    });
+  });
+
   // A note panel resizing shifts every node hung under it.
   it("shifts a hung child when the parent's note panel grows", () => {
     fx = graphFixture();
