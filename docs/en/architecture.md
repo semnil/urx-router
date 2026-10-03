@@ -3932,9 +3932,10 @@ what the desktop app offers.
 - **Application version** — the running version, the launch update-check toggle, and a manual
   "Check now". The outcome lands inline beside the version — the modal stays open, so a "no
   update" answer is seen where it was asked for — and while the check is in flight every
-  dismissal locks (Close disables, an outside press and Escape are inert), bounded by the
-  check's 10 s timeout. Only an accepted update closes the modal, since the scrim would hide
-  the download status.
+  dismissal locks (Close disables, an outside press and Escape are inert), for the check and its
+  confirm only, which the check's request timeout and the operator's answer bound. Only an accepted
+  update closes the modal, since the scrim would hide the download status, and the download runs
+  after the lock is released, so a Preferences reopened during it closes as usual.
 - **Warnings** — visibility of the untested-firmware confirm and the sample-rate / Ducker-bypass
   warning cards. Display-only: the behavior locks (rate-disabled nodes, the stereo-EQ force-off)
   stay on regardless.
@@ -4407,8 +4408,11 @@ to date, or check failed). The Tauri updater / process plugins are registered
 in `src-tauri/` on desktop only, and the frontend calls `plugin:updater|check` /
 `plugin:updater|download_and_install` / `plugin:process|restart` directly from `src/core/platform.ts`, the
 same way as the dialog calls (no added npm runtime dependency). When an update exists it shows a confirm
-dialog, then downloads, installs, and restarts. Browser / demo builds disable this via the `DEMO` branch,
-which is eliminated as dead code.
+dialog, then downloads, installs, and restarts. The download carries a total deadline
+(`UPDATE_DOWNLOAD_TIMEOUT_MS` in `platform.ts`), passed to the plugin as its request timeout — the update
+a check returns carries none of its own, so a stalled download would otherwise never settle; a download
+that outlives it fails and is reported like any other. Browser / demo builds disable this via the `DEMO`
+branch, which is eliminated as dead code.
 
 Distribution rides on GitHub Releases. Enabling `bundle.createUpdaterArtifacts` in `tauri.conf.json` makes
 `tauri-action` emit signed bundles plus a `latest.json`, served from the

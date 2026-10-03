@@ -359,7 +359,7 @@ describe("command wrappers", () => {
     defaultArgs.onEvent.onmessage({ event: "Finished" });
     expect(harness.invoke).toHaveBeenCalledWith(
       "plugin:updater|download_and_install",
-      { onEvent: expect.any(FakeChannel), rid: 5 },
+      { onEvent: expect.any(FakeChannel), rid: 5, timeout: 600_000 },
       undefined,
     );
   });

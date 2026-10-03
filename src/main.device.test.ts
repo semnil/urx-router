@@ -6652,6 +6652,26 @@ describe("the update check", () => {
     await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
     expect(errors(shell).at(-1)).toBe(t().prefs.updateCheckFailed);
   });
+
+  // The Preferences lock covers the check and its confirm, not the download an accepted update
+  // runs after it: a modal reopened while the bundle is still downloading closes as any other.
+  it("leaves a Preferences reopened during an accepted download closable", SLOW, async () => {
+    const shell = await bootDevice({
+      "plugin:updater|check": { rid: 7, version: "9.9.9" },
+      "plugin:updater|download_and_install": () => new Promise(() => {}),
+    });
+    // The launch check runs first and takes its own accept; a second, from Preferences, is
+    // the one this case is about.
+    await invoked(shell, "plugin:updater|download_and_install");
+    $("btn-prefs").click();
+    $<HTMLButtonElement>("prefs-update-now").click();
+    await invoked(shell, "plugin:updater|download_and_install", 2);
+    expect($("prefs-modal").hidden).toBe(true);
+    $("btn-prefs").click();
+    expect($("prefs-modal").hidden).toBe(false);
+    $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
+    expect($("prefs-modal").hidden).toBe(true);
+  });
 });
 
 describe("the Follow USB badge", () => {

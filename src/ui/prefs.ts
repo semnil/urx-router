@@ -82,7 +82,9 @@ export class PrefsPanel {
   // While a manual update check is in flight, every dismissal path locks (the
   // Close button disables, outside press and Escape are ignored): the outcome
   // has nowhere to land once the modal is gone, and the same lock is what makes
-  // a second press impossible. Bounded by the check's 10 s timeout.
+  // a second press impossible. Held for the check and its confirm, which the
+  // check's timeout and the operator's answer bound; an accepted update's
+  // download runs after the hook has answered, outside the lock.
   private checking = false;
   // Outside press / Escape dismissal (the MIDI panel's idiom — every setting
   // applies immediately, so leaving this way loses nothing). `keep`: only a

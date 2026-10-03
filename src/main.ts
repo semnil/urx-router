@@ -146,6 +146,7 @@ import {
   vdWatchLink,
   type Connection,
   type DeviceSummary,
+  type UpdateInfo,
 } from "./core/platform";
 import {
   applyDeviceState,
@@ -5018,31 +5019,39 @@ async function requireConsent(): Promise<void> {
   await exitApp();
 }
 
+// The check and its confirm. Answers once the operator has answered, so the Preferences lock
+// (which waits on this) covers the check only: an accepted update's download runs after it.
 async function checkForUpdates(): Promise<UpdateCheckOutcome> {
-  let accepted = false;
+  let update: UpdateInfo | null;
   try {
-    const update = await checkUpdate();
+    update = await checkUpdate();
     if (!update) return { kind: "upToDate" };
     if (!(await confirmDialog(t().confirm.update(update.version)))) {
       return { kind: "declined", version: update.version };
     }
-    accepted = true;
-    // An accepted update is the one outcome that leaves the Preferences modal:
-    // the scrim would hide the download status. No-op at the launch check.
-    prefs.close();
-    setStatus(t().status.updateDownloading);
+  } catch {
+    // Best-effort — offline, or no release published yet: the launch check stays silent
+    // and a manual check reports it through the Preferences inline note.
+    return { kind: "failed" };
+  }
+  // An accepted update is the one outcome that leaves the Preferences modal:
+  // the scrim would hide the download status. No-op at the launch check.
+  prefs.close();
+  setStatus(t().status.updateDownloading);
+  void installAccepted(update);
+  return { kind: "installing" };
+}
+
+// Download, install, and relaunch into the new bundle. "Downloading update…" is on screen with
+// the modal closed, so a failure has to clear that status and surface — otherwise it reads as a
+// download that never ends.
+async function installAccepted(update: UpdateInfo): Promise<void> {
+  try {
     await installUpdate(update.rid);
     // The new bundle is installed; relaunch into it. Nothing runs past here.
     await restartApp();
-    return { kind: "installing" };
   } catch {
-    // Before the accept this is best-effort — offline, or no release published yet:
-    // the launch check stays silent and a manual check reports it through the
-    // Preferences inline note. But once accepted, "Downloading update…" is on screen
-    // with the modal closed, so a download/install failure has to clear that stuck
-    // status and surface — otherwise it reads as a download that never ends.
-    if (accepted) showError(t().prefs.updateCheckFailed);
-    return { kind: "failed" };
+    showError(t().prefs.updateCheckFailed);
   }
 }
 

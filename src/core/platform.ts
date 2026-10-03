@@ -630,11 +630,22 @@ export async function checkUpdate(): Promise<UpdateInfo | null> {
   return invoke<UpdateInfo | null>("plugin:updater|check", { timeout: UPDATE_CHECK_TIMEOUT_MS });
 }
 
+/** The whole download's deadline, from the request starting to the last byte of the bundle:
+ *  the updater plugin's request timeout is a total one, and the update a check returns carries
+ *  none of its own, so a download whose response stalls is otherwise never settled. A deadline
+ *  rather than an idle bound, so it is set for a slow link carrying the whole bundle. */
+const UPDATE_DOWNLOAD_TIMEOUT_MS = 600_000;
+
 /** Download and install a pending update, reporting progress. The app must be
- * restarted afterwards (see restartApp) for the new bundle to take effect. */
+ * restarted afterwards (see restartApp) for the new bundle to take effect. Rejects
+ * when the download outlives UPDATE_DOWNLOAD_TIMEOUT_MS. */
 export function installUpdate(rid: number, onProgress?: (e: DownloadEvent) => void): Promise<void> {
   const channel = newChannel<DownloadEvent>(onProgress ?? (() => {}));
-  return invoke<void>("plugin:updater|download_and_install", { onEvent: channel, rid });
+  return invoke<void>("plugin:updater|download_and_install", {
+    onEvent: channel,
+    rid,
+    timeout: UPDATE_DOWNLOAD_TIMEOUT_MS,
+  });
 }
 
 /** Restart the app (process plugin) to launch the freshly installed bundle. */
