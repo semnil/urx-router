@@ -494,9 +494,10 @@ fn prepare_modified_requested() -> bool {
     take_launch_action(&TAKEN, "--prepare-modified")
 }
 
-// True when launched with --reset-storage: the frontend clears its localStorage
-// (theme / model / meter points / consent gate / …) once on startup before reading
-// any of it, then boots clean. The browser dev app uses the ?reset URL instead.
+// True when launched with --reset-storage: the frontend asks this at the top of its
+// startup, clears its localStorage (theme / model / meter points / consent gate / …)
+// once the answer arrives, and reloads to boot clean. The browser dev app uses the
+// ?reset URL instead.
 // The window geometry is the one remembered thing that is not in localStorage;
 // `reset_window_state_plugin` clears that half, before any window is created.
 #[tauri::command]

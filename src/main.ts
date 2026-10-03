@@ -214,8 +214,15 @@ import type { DeviceSetup } from "./core/control/device-setup";
 // files / inspector sections / user preferences) when the browser dev app is opened with ?reset (or
 // #reset) — done synchronously here, before anything below reads localStorage, and
 // the flag is stripped so a later manual reload doesn't clear again. The desktop
-// app uses the --reset-storage launch flag instead (handled async in boot()).
+// app uses the --reset-storage launch flag instead, whose answer arrives async.
 resetStorageFromUrl();
+
+// The desktop flag's query is started here, ahead of every reader below, and boot()
+// awaits it. A stored value that makes the synchronous init below throw then still gets
+// its clear and its reload: the query is already in flight, and its answer runs the clear
+// whether or not the rest of this module finished.
+const RESET_DONE_KEY = "urx-reset-done";
+const resetGate = resetStorageIfRequested();
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -4799,14 +4806,14 @@ void loadPlanFromUrl();
 // at runtime there since it has no device control. The call is at the end of the
 // module so CONSENT_KEY (a const requireConsent reads) is already initialized.
 async function boot(): Promise<void> {
-  await resetStorageIfRequested();
+  await resetGate;
   await requireConsent();
   if (!DEMO) {
     if (getSettings().updateCheck) await checkForUpdates();
   }
 }
 
-// Desktop --reset-storage: the flag arrives async (after the synchronous init above
+// Desktop --reset-storage: the flag arrives async (after the synchronous init has
 // already read localStorage), so clear it and reload once to re-init clean. A
 // sessionStorage guard stops the still-present flag from looping the reload.
 async function resetStorageIfRequested(): Promise<void> {
@@ -4827,8 +4834,6 @@ async function resetStorageIfRequested(): Promise<void> {
   location.reload();
   await new Promise(() => {}); // hold boot() until the reload takes over
 }
-
-const RESET_DONE_KEY = "urx-reset-done";
 
 const CONSENT_KEY = "urx-disclaimer-accepted";
 

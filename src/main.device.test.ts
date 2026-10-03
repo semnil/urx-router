@@ -17,6 +17,7 @@ import { resolve } from "node:path";
 import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
 import {
   $,
+  APP_BODY,
   bootApp,
   currentShell,
   deviceCommands,
@@ -7757,6 +7758,23 @@ describe("the --reset-storage launch", () => {
     // …and boot() never ran past the reset, so nothing downstream of it happened.
     await new Promise((r) => setTimeout(r, 100));
     expect(shell.count("plugin:updater|check")).toBe(0);
+  });
+
+  // A startup that throws before it reaches boot(). The markup is the one the app cannot
+  // start on (no rate picker, which its init fills unguarded), standing in for any store
+  // value that breaks the synchronous init: the reset is what recovers from those, so it
+  // cannot wait for the init to finish.
+  it("clears storage when the app's own startup throws", SLOW, async () => {
+    sessionStorage.clear();
+    const shell = (await bootApp({
+      tauri: deviceCommands({ reset_storage_requested: true }),
+      body: APP_BODY.replace('<select id="rate-picker"></select>', ""),
+      initThrows: true,
+    }))!;
+    await vi.waitFor(() => expect(sessionStorage.getItem("urx-reset-done")).toBe("1"), { timeout: 10_000 });
+    expect(shell.count("reset_storage_requested")).toBe(1);
+    expect(localStorage.getItem("urx-model")).toBeNull();
+    sessionStorage.clear();
   });
 
   // The flag is still set on the launch that follows the reload, so without the guard the

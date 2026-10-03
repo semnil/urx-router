@@ -336,6 +336,13 @@ export interface BootOptions {
    *  is the only way to reach the gate: seeding cannot express it, because the
    *  pre-accept below writes the key after the seed. */
   consent?: boolean;
+  /** Markup installed in place of the app's own (`APP_BODY`). */
+  body?: string;
+  /** The module's own startup is expected to THROW. The boot then resolves once the import
+   *  has settled instead of waiting for a board that is never painted, and it rejects when
+   *  the startup did not throw, so a case written for a failing startup cannot pass on one
+   *  that succeeded. */
+  initThrows?: boolean;
 }
 
 let releaseAppListeners: (() => void) | undefined;
@@ -356,7 +363,7 @@ function trackAppListeners(): void {
 /** Install the markup and the globals, then run the module top to bottom. */
 export async function bootApp(opts: BootOptions = {}): Promise<TauriShell | null> {
   trackAppListeners();
-  document.body.innerHTML = APP_BODY; // innerHTML does not execute the <script type=module>
+  document.body.innerHTML = opts.body ?? APP_BODY; // innerHTML does not execute the <script type=module>
   localStorage.clear();
   localStorage.setItem("urx-lang", "en");
   localStorage.setItem("urx-model", "URX44V");
@@ -370,6 +377,14 @@ export async function bootApp(opts: BootOptions = {}): Promise<TauriShell | null
   const shell = opts.tauri === false ? null : tauriShell(opts.tauri ?? {});
 
   vi.resetModules();
+  if (opts.initThrows) {
+    const threw = await import("./main").then(
+      () => false,
+      () => true,
+    );
+    if (!threw) throw new Error("the app's startup was expected to throw and did not");
+    return shell;
+  }
   await import("./main");
   // The board rather than the status line: a boot that lands on an error (a malformed
   // `?plan=`, say) never writes the "Loaded …" line, and waiting for it would time out
