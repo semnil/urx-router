@@ -1865,6 +1865,10 @@ there (`offerModelSwitch`), and the switch is refused for the read's duration by
 The other order is refused at the read: a Fetch or a Live-sync start whose connect lands while a file flow is
 already running — a Save or Open dialog up, a document being read, a discard confirm unanswered — reads nothing
 and lets the link go (`status.busyFileFlow`), since that flow holds the plan as it stood when it began.
+A **write** holds the plan the same way: it converges the plan it was confirmed for and re-reads it after
+every await, so while a write holds the link every wholesale replacement — New, Open, a recent row, a dropped
+plan, the model picker — is refused (`status.deviceLinkBusy`), at its entry, or at `loadPlan` for a flow
+that entered before the write took the link.
 Follow USB is the one exception in the other direction: a live **session** lends it the session's
 link (its handler writes over that link rather than opening one, and measured on a URX44V the session
 survives the re-clock), so it stays usable while live and greys for every other holder — including a live

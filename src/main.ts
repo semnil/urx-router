@@ -2359,6 +2359,13 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
     setStatus(t().status.busyDeviceRead);
     return null;
   }
+  // A write converges the plan it was confirmed for and re-reads it after every await, so
+  // a document replacing it mid-write is the one the write would put on the unit. A file
+  // flow that entered before the write took the link reaches here and is refused.
+  if (deviceLinkHolder === "write") {
+    setStatus(t().status.deviceLinkBusy);
+    return null;
+  }
   // Replacing the whole plan invalidates the live snapshot; leave sync first.
   // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
   deactivateLive();
@@ -2628,17 +2635,20 @@ function showLoadError(err: unknown): void {
 // null when nothing was attempted (canceled, another file flow in flight, the
 // replacement refused, or the plan's problem is on screen for the operator to decide on).
 async function openPlanFrom(read: () => Promise<{ text: string; path?: string } | null>): Promise<boolean | null> {
-  return fileFlow(async () => {
-    if (!(await confirmDiscard())) return null;
-    try {
-      const doc = await read();
-      if (!doc) return null;
-      return loadFromText(doc.text, doc.path);
-    } catch (err) {
-      showLoadError(err);
-      return false;
-    }
-  });
+  return fileFlow(
+    async () => {
+      if (!(await confirmDiscard())) return null;
+      try {
+        const doc = await read();
+        if (!doc) return null;
+        return loadFromText(doc.text, doc.path);
+      } catch (err) {
+        showLoadError(err);
+        return false;
+      }
+    },
+    { replaces: true },
+  );
 }
 
 async function openRecent(path: string): Promise<void> {
@@ -2684,7 +2694,16 @@ const flow = new FileFlowLatch({
   // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
   onReleased: () => midi?.gateReleased(),
 });
-const fileFlow = <T>(run: () => Promise<T>): Promise<T | null> => flow.run(run);
+// `replaces`: the flow replaces the plan wholesale (New, Open, a recent row, a drop, the model
+// picker). Refused at its entry while a write holds the link, for the reason loadPlan refuses
+// one that entered before the write did.
+const fileFlow = <T>(run: () => Promise<T>, { replaces = false }: { replaces?: boolean } = {}): Promise<T | null> => {
+  if (replaces && deviceLinkHolder === "write") {
+    setStatus(t().status.deviceLinkBusy);
+    return Promise.resolve(null);
+  }
+  return flow.run(run);
+};
 
 // Warn before touching a unit whose System firmware differs from the version this
 // build was validated against — the parameter mappings may not match. Returns true
@@ -2760,16 +2779,19 @@ picker.addEventListener("change", async () => {
   if (next === modelId) return;
   // The same shared latch File > New / Open / drop / recent use: the switch runs the
   // one discard confirm + a wholesale plan replacement, so it must not stack with
-  // another file flow, and it is refused while a device read holds the plan.
-  const switched = await fileFlow(async () => {
-    if (!(await confirmDiscard())) return false;
-    // A refusal said why; the picker goes back to the model still on screen.
-    if (!loadPlan(newPlanAtLastRate(next))) return false;
-    setStatus(t().status.switchedModel(next));
-    return true;
-  });
-  // Declined discard, another file flow held the latch (null), or a device read
-  // refused it: restore the picker to the model still on screen.
+  // another file flow, and it is refused while a device read or a write holds the plan.
+  const switched = await fileFlow(
+    async () => {
+      if (!(await confirmDiscard())) return false;
+      // A refusal said why; the picker goes back to the model still on screen.
+      if (!loadPlan(newPlanAtLastRate(next))) return false;
+      setStatus(t().status.switchedModel(next));
+      return true;
+    },
+    { replaces: true },
+  );
+  // Declined discard, another file flow held the latch (null), or a device read or a
+  // write refused it: restore the picker to the model still on screen.
   if (!switched) picker.value = modelId;
 });
 
@@ -2787,11 +2809,14 @@ ratePicker.addEventListener("change", () => {
 $("btn-new").addEventListener(
   "click",
   () =>
-    void fileFlow(async () => {
-      if (!(await confirmDiscard())) return;
-      if (!loadPlan(newPlanAtLastRate(modelId))) return;
-      setStatus(t().status.newPlan);
-    }),
+    void fileFlow(
+      async () => {
+        if (!(await confirmDiscard())) return;
+        if (!loadPlan(newPlanAtLastRate(modelId))) return;
+        setStatus(t().status.newPlan);
+      },
+      { replaces: true },
+    ),
 );
 
 $("btn-open").addEventListener(

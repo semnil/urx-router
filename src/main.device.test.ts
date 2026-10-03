@@ -8199,6 +8199,90 @@ describe("a tuning screen open across a fetch", () => {
   });
 });
 
+// A write converges the plan it was confirmed for, re-reading it after every await, so a plan
+// replaced during the write is the one it would put on the unit. Every wholesale replacement is
+// refused while a write holds the link — at its entry, and at loadPlan for a flow that entered
+// before the write did. Each case holds the write's first device read.
+describe("replacing the plan while a write holds the link", () => {
+  const heldWrite = (
+    over: Record<string, unknown> = {},
+  ): { tauri: Record<string, unknown>; release: () => void; reading: Promise<void> } => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked!: () => void;
+    const reading = new Promise<void>((r) => (asked = r));
+    const table = deviceCommands({ "plugin:dialog|message": "Ok", ...over });
+    const vdGet = table.vd_get as (a: Record<string, unknown>) => unknown;
+    let first = true;
+    return {
+      release,
+      reading,
+      tauri: {
+        ...table,
+        vd_get: async (a: Record<string, unknown>) => {
+          if (first) {
+            first = false;
+            asked();
+            await held;
+          }
+          return vdGet(a);
+        },
+      },
+    };
+  };
+  const writeEnded = (): Promise<void> =>
+    vi.waitFor(() => expect($("btn-write").textContent).toBe(t().toolbar.writeDevice), { timeout: 20_000 });
+
+  it("refuses New during a write and takes it once the write is done", SLOW, async () => {
+    const unit = heldWrite();
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    $("btn-write").click();
+    await unit.reading;
+    $("btn-new").click();
+    expect(statusText()).toBe(t().status.deviceLinkBusy);
+    unit.release();
+    await writeEnded();
+    await invoked(shell, "vd_disconnect");
+    $("btn-new").click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.newPlan), { timeout: 10_000 });
+  });
+
+  it("refuses a dropped plan during a write without reading it", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const unit = heldWrite({ read_text_file: () => serialize(defaultPlan("URX44V")) });
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    $("btn-write").click();
+    await unit.reading;
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/dropped.json"] })).toBe(1);
+    expect(statusText()).toBe(t().status.deviceLinkBusy);
+    unit.release();
+    await writeEnded();
+    expect(shell.count("read_text_file")).toBe(0);
+  });
+
+  it("refuses a model switch whose confirm was answered once the write had begun", SLOW, async () => {
+    let answer!: (v: string) => void;
+    const discard = new Promise<string>((r) => (answer = r));
+    const unit = heldWrite({
+      "plugin:dialog|message": (a: Record<string, unknown>) => (a.message === t().confirm.discard ? discard : "Ok"),
+    });
+    await bootApp({ tauri: unit.tauri });
+    chooseRate(96_000); // unsaved, so the switch asks the discard confirm
+    const picker = $<HTMLSelectElement>("model-picker");
+    picker.value = "URX22";
+    picker.dispatchEvent(new Event("change"));
+    $("btn-write").click();
+    await unit.reading;
+    answer("Ok");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.deviceLinkBusy), { timeout: 10_000 });
+    // The picker names the model still on screen.
+    expect(picker.value).toBe("URX44V");
+    expect($("graph-host").querySelector('g.node[data-id="ch_11_12"]')).not.toBeNull();
+    unit.release();
+    await writeEnded();
+  });
+});
+
 // A file flow that is already running when a Fetch's connect lands holds the plan as it stood
 // when the flow began. The read does not start under it; the flow finishes on the plan it began
 // with. Each case holds the connect, starts the file flow, then lets the connect land — and holds
