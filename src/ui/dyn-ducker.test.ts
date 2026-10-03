@@ -387,6 +387,36 @@ describe("on screen", () => {
     expect(withGr[0].querySelector(".gt-cap-label")?.textContent).toBe(t().dynTuning.laneOut);
   });
 
+  // A stereo key reaches the detector summed, so its lane is ONE bar reading that sum —
+  // not two bars, and not one bar reading the L side alone.
+  it("reads a stereo key as the sum the detector takes, on one bar", async () => {
+    const plan = defaultPlan("URX44V");
+    plan.connections.find((c) => c.kind === "key" && c.to === ref(DUCKER, "in"))!.from = ref("bus.stereo", "out");
+    host = dynHost({ live: true, plan });
+    const screen = new DynScreen(host.hooks);
+    screen.open(DUCKER_DYN, DUCKER);
+    const key = DUCKER_DYN.bind(ctxFor(DUCKER, plan))!.lanes[0];
+    expect(key.tap?.r, "the premise: the key tap has two sides").toBeTruthy();
+    await new Promise((r) => setTimeout(r, 0));
+    const [store, , onUpdate] = meterMocks.subscribe.mock.calls.at(-1)! as [
+      { apply(m: { meterId: number; x: number; value: number }): void },
+      unknown,
+      ((m: { meterId: number; x: number; value: number }) => void) | undefined,
+    ];
+    const [l, r] = [key.tap!.l, key.tap!.r!];
+    for (const f of [
+      { meterId: l[0], x: l[1], value: -200 },
+      { meterId: r[0], x: r[1], value: -400 },
+    ]) {
+      store.apply(f);
+      onUpdate?.(f);
+    }
+    for (let i = 0; i < 5; i++) host.frame();
+    const lane = host.box.querySelectorAll(".gt-slot")[0];
+    expect(lane.querySelectorAll(".gt-bar")).toHaveLength(1);
+    expect(readouts(host.box)[0].value).toBe(duckerKeyDb(-20, -40).toFixed(1));
+  });
+
   it("subscribes the key, the level pair and the reduction", () => {
     host = dynHost({ live: true });
     const screen = new DynScreen(host.hooks);
