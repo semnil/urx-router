@@ -1041,7 +1041,7 @@ export const ja: Messages = {
       `Follow USB を OFF にできませんでした (${message})。何も書き込んでいません。`,
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
-      `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,
+      `接続中のデバイスは ${device} ですが、${ui} を選択中です。先にその機種の計画を開くか切り替えてください。`,
     notWhileLive:
       "先にライブ同期を停止してください — 取り込みは全設定を一度に置き換えるため、ライブ同期中は追従できません。",
     notPlanFile: "URX Router の計画ファイルではありません",

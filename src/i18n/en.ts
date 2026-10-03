@@ -1329,7 +1329,7 @@ export const en = {
       `Follow USB could not be turned off (${message}). Nothing was written.`,
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
-      `The connected device is ${device}, but ${ui} is selected. Open or switch to the matching plan before writing.`,
+      `The connected device is ${device}, but ${ui} is selected. Open or switch to a plan for that model first.`,
     notWhileLive: tr(
       "Stop Live sync first — importing replaces every setting at once, which a live session cannot follow.",
     ),

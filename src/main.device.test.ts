@@ -4145,6 +4145,18 @@ describe("Write to device", () => {
     await invoked(shell, "vd_disconnect");
   });
 
+  // The same guard on an action that only READS: its refusal names the mismatch and the
+  // remedy, and says nothing about writing, since the action never writes.
+  it("refuses to read Device setup from a device of another model without naming a write", SLOW, async () => {
+    const shell = await bootDevice(connectAs("URX22"));
+    $("btn-device-setup").click();
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+    expect(errors(shell)).toEqual([t().error.deviceSetupRead(t().error.modelMismatch("URX22", "URX44V"))]);
+    expect(errors(shell)[0]).not.toMatch(/writ/i);
+    expect(shell.count("vd_set")).toBe(0);
+    await invoked(shell, "vd_disconnect");
+  });
+
   // "Wrote N" and "wrote, but N did not take" are both reached with writes on the
   // wire, so a case that counts `vd_set` cannot tell them apart — and against a stub
   // that answers every read 0 it is the SECOND one that runs, every time, since the

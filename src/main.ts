@@ -2706,8 +2706,9 @@ function applyModelSwitch(next: Plan): boolean {
 }
 
 // Refuse to act on a device whose model differs from the plan's — the plan's
-// channels would map onto the wrong hardware. Shared by write and compare, which
-// (unlike fetch / Live sync) cannot offer to switch: they act on the plan as it is.
+// channels would map onto the wrong hardware. Shared by withCheckedDevice's four call
+// sites (write, compare, device setup read, device setup apply), which (unlike fetch /
+// Live sync) cannot offer to switch: they act on the plan as it is.
 // `wrap` builds the action-specific error message from the mismatch text. Returns
 // true to proceed, false when it refused (having surfaced the error).
 function refuseModelMismatch(device: DeviceSummary, wrap: (message: string) => string): boolean {
