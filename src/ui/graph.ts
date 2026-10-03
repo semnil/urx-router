@@ -519,6 +519,8 @@ export class Graph {
     // redrawWires ends with refreshPortStates, so the port glow is restored there.
     this.redrawWires();
     this.highlightSelectedNode();
+    // The rebuilt nodes' jacks come back at rest, so a connect drag under way lights them again.
+    this.repaintCandidates();
   }
 
   /** Rebuild one node's <g> in place. makeNode re-registers this node's nodeEls /
@@ -2348,11 +2350,12 @@ export class Graph {
    *  tap for a USB / microSD target and its output otherwise.
    *
    *  Its own method because the highlight state lives ONLY in these elements, and a
-   *  render replaces every one of them: a device-follow reflect landing mid-drag left
+   *  render or a fine-grained repaint replaces them: a device-follow reflect landing mid-drag left
    *  the operator finishing the connection with no legality cues at all — the drag
    *  itself survives (the state is ref-based and elementFromPoint resolves the fresh
    *  hit discs), so nothing failed, it just went dark. On a dense board those cues are
-   *  the whole affordance. `repaintCandidates` re-runs it after a render. */
+   *  the whole affordance. `repaintCandidates` re-runs it after a render and after
+   *  `repaintDirtyNodes`. */
   private paintCandidates(from: string, dir: PortDirection, legal: Set<string>, possible: Set<string>): void {
     this.clearPortHighlights();
     for (const r of possible) {

@@ -1090,6 +1090,50 @@ describe("a USB output's linked-pair drop across a render", () => {
   });
 });
 
+// A device-follow direct notify or a MIDI move repaints only the nodes it touched; their jacks
+// come back at rest, and a connect drag under way has to light them again.
+describe("connect candidates across a fine-grained repaint", () => {
+  const down = (el: Element, x: number): void =>
+    void el.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: x, clientY: 0, bubbles: true }));
+  const move = (el: Element, x: number): void =>
+    void el.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: x, clientY: 0, bubbles: true }));
+  const cancel = (el: Element): void =>
+    void el.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
+  const jack = (sel: string): Element => fx.host.querySelector(sel)!.previousElementSibling!;
+
+  it("keeps a legal source lit on a repainted node", () => {
+    const USB_B = "out.usbmain_b:in";
+    fx = graphFixture({ seed: (plan) => void (plan.connections = plan.connections.filter((c) => c.to !== USB_B)) });
+    const from = portHit(fx.host, USB_B)!;
+    down(from, 0);
+    move(from, 60);
+    const tap = (): Element => jack('[data-tap-pin="ch1"]');
+    const mixOut = (): Element => jack('[data-pin="bus.mix1:out"]');
+    expect(tap().getAttribute("fill"), "the control: lit before the repaint").toBe(PALETTES.dark.legalFill);
+    fx.graph.repaintDirtyNodes(["ch1", "bus.mix1"]);
+    for (const el of [tap(), mixOut()]) {
+      expect(el.getAttribute("r")).toBe("8");
+      expect(el.getAttribute("fill")).toBe(PALETTES.dark.legalFill);
+    }
+    cancel(from);
+  });
+
+  it("keeps an occupied target outlined on a repainted node", () => {
+    fx = graphFixture();
+    const from = portHit(fx.host, "ch1:out")!;
+    down(from, 0);
+    move(from, 60);
+    const stereo = (): Element => jack('[data-pin="bus.stereo:in"]');
+    expect(stereo().getAttribute("stroke"), "the control: outlined before the repaint").toBe(
+      PALETTES.dark.possibleStroke,
+    );
+    fx.graph.repaintDirtyNodes(["bus.stereo"]);
+    expect(stereo().getAttribute("r")).toBe("8");
+    expect(stereo().getAttribute("stroke")).toBe(PALETTES.dark.possibleStroke);
+    cancel(from);
+  });
+});
+
 describe("node drag", () => {
   it("moves a node and reports the change exactly once", () => {
     fx = graphFixture();

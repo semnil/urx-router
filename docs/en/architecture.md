@@ -852,7 +852,7 @@ same as clicking the wire itself; on a USB output holding a pair it selects the 
 **Drawing another source onto STREAMING replaces the wire it holds**, in one change and so one undo step:
 the unit's source list for STREAMING has no None, so the board never leaves it empty
 (`DeviceModel.requiredSources`, asked through `requiresSource`). That drop is lit as legal, in the same
-set a render mid-drag relights (`connectCandidates` serves the drag's start and the repaint alike), which
+set a render or a fine-grained repaint (`repaintDirtyNodes`) mid-drag relights (`connectCandidates` serves the drag's start and the repaint alike), which
 also lets a drag open from STREAMING's own input; a click there still selects its wire. Its last wire is
 kept: the board's Delete key reaches `deleteConnection`, which refuses it with a status message, and the
 Inspector offers no delete for it — a hint in that refusal's own words instead (`isLastRequiredSource` is
