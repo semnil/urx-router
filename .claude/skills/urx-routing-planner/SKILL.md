@@ -225,8 +225,9 @@ Reason codes:
      the pair's two channels.
    - `duplicate` — the same `from -> to` is listed twice. Drop the repeat.
    - `notPlanFile` / `planVersionUnsupported` / `unknownModel` — the document
-     itself is refused, before the routing is even looked at: `format` must be
-     exactly `urx-router-plan`, `version` must not exceed what `plan_tool.py`'s
+     itself is refused, before the routing is even looked at: the text must be
+     JSON (`NaN` and `Infinity` are not — an off / -∞ level is `-96.5`), `format`
+     must be exactly `urx-router-plan`, `version` must not exceed what `plan_tool.py`'s
      `PLAN_VERSION` currently accepts (its `planVersionUnsupported` message states
      the exact bound), and `modelId` must be one of the three models.
 
