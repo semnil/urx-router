@@ -579,6 +579,38 @@ describe("the device table the desktop cases run on", () => {
     expect(second).toBeGreaterThan(first);
   });
 
+  // A reader or writer a case supplies says what the unit HOLDS, and the connection rule is
+  // still the table's: answered regardless, a read issued after the link was released
+  // succeeds here and fails on every real unit.
+  it("refuses a case's own reader and writer on the same rule", () => {
+    const table = deviceCommands({ vd_get: () => 7, vd_set: () => undefined });
+    const write = { ...CH1, value: 1 };
+    expect(() => call(table, "vd_get", CH1)).toThrow(/not-connected/);
+    expect(() => call(table, "vd_set", write)).toThrow(/not-connected/);
+
+    const { epoch } = call(table, "vd_connect") as { epoch: number };
+    expect(call(table, "vd_get", CH1)).toBe(7);
+    expect(call(table, "vd_set", write)).toBeUndefined();
+
+    call(table, "vd_disconnect", { epoch });
+    expect(() => call(table, "vd_get", CH1)).toThrow(/not-connected/);
+    expect(() => call(table, "vd_set", write)).toThrow(/not-connected/);
+  });
+
+  // …and the same for one a case installs on the shell once the app is up.
+  it("refuses a reader a case answers on the booted shell", async () => {
+    const shell = await bootDevice();
+    shell.answer("vd_get", 7);
+    const invoke = (
+      window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a?: object) => Promise<unknown> } }
+    ).__TAURI_INTERNALS__.invoke;
+    await expect(invoke("vd_get", CH1)).rejects.toThrow(/not-connected/);
+    const { epoch } = (await invoke("vd_connect")) as { epoch: number };
+    await expect(invoke("vd_get", CH1)).resolves.toBe(7);
+    await invoke("vd_disconnect", { epoch });
+    await expect(invoke("vd_get", CH1)).rejects.toThrow(/not-connected/);
+  });
+
   // …and a connect that FAILS installs nothing, which is what the cases stubbing a broken
   // link rest on.
   it("stays disconnected when the connect itself fails", () => {
