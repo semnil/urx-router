@@ -51,6 +51,7 @@ import {
   stereoLinkedPass,
   summarizeVerdicts,
   unlinkedPassesFor,
+  type SelfTestReport,
 } from "./selftest";
 
 const model = getModel("URX44V");
@@ -1608,6 +1609,94 @@ describe("unverified-guess workflow (URX22)", () => {
     ).toEqual([]);
     expect(report.refusal).toBe("sideEffectUnheld");
     expect(report.unverified.filter((u) => u.outcome === "confirmed" || u.outcome === "roundTripped")).toEqual([]);
+  });
+
+  // UNEXERCISED: no pass that completed wrote and read every address of the guess, and no pass left
+  // one of them different or unread. Each case below reaches it a different way, and asserts it on
+  // the guesses the run left no difference at, beside the premise that no pass completed.
+  const ch1Fader = (id: number, y: number): boolean => id === PARAMS.CH_FADER.id && y === channelControl(m22, "ch1")!.y;
+  const untouchedGuesses = (report: SelfTestReport): SelfTestReport["unverified"] => {
+    const differed = new Set(report.residual.map((r) => r.unverifiedKey));
+    return report.unverified.filter((u) => !differed.has(u.key));
+  };
+
+  // A read that fails once the sweep has started stops each pass, so nothing it wrote counts as
+  // round-tripped; the failed read is CH 1's fader, which no guess holds, so no guess is unread.
+  it("leaves a guess unexercised when a failed read stops every pass", async () => {
+    installMock22(seed22());
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let writing = false;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      writing = true;
+      return realSet(id, x, y, v);
+    });
+    vi.mocked(vdGet).mockImplementation((id, x, y) =>
+      writing && ch1Fader(id, y) ? Promise.reject(new Error("read timeout")) : realGet(id, x, y),
+    );
+    expect(
+      [...unverifiedAddresses(m22)].filter(([addr]) => ch1Fader(...(addr.split(":").map(Number) as [number, number]))),
+      "the premise: no guess holds the address",
+    ).toEqual([]);
+
+    const report = await runSelfTest(m22, 0);
+
+    for (let pass = 0; pass < passesFor(m22); pass++) {
+      expect(report.errors, `the premise: pass ${pass} stopped on the read`).toContain(
+        `p${pass} read: CH_FADER: read timeout`,
+      );
+    }
+    const untouched = untouchedGuesses(report);
+    expect(untouched.length, "the premise: a guess no pass left different").toBeGreaterThan(0);
+    for (const u of untouched) expect(u.outcome, u.key).toBe("unexercised");
+  });
+
+  // The write side: CH 1's fader takes the first write a pass sends it and keeps nothing, then
+  // refuses the second, so each pass stops in its second round — after the guesses' addresses
+  // took their values in the first, which leaves them out of the difference the stop reports.
+  it("leaves a guess unexercised when a refused write stops every pass after it converged", async () => {
+    const table = installMock22(seed22());
+    let faderWrites = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (ch1Fader(id, y)) {
+        faderWrites += 1;
+        return faderWrites % 2 === 0 ? Promise.reject(new Error("device busy")) : Promise.resolve();
+      }
+      table.set(`${id}:${x}:${y}`, v);
+      return Promise.resolve();
+    });
+
+    const report = await runSelfTest(m22, 0);
+
+    for (let pass = 0; pass < passesFor(m22); pass++) {
+      expect(
+        report.errors.some((e) => e.startsWith(`p${pass} `) && e.endsWith("device busy")),
+        `the premise: pass ${pass} stopped on the refusal`,
+      ).toBe(true);
+    }
+    const untouched = untouchedGuesses(report);
+    expect(untouched.length, "the premise: a guess no pass left different").toBeGreaterThan(0);
+    for (const u of untouched) expect(u.outcome, u.key).toBe("unexercised");
+  });
+
+  // A cancel inside the first pass leaves no pass completed and nothing in the residual.
+  it("leaves every guess unexercised when the run is cancelled inside the first pass", async () => {
+    installMock22(seed22());
+    const controller = new AbortController();
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      controller.abort();
+      return realSet(id, x, y, v);
+    });
+
+    const report = await runSelfTest(m22, 0, controller.signal);
+
+    expect(report.aborted, "the premise: the run was cancelled").toBe(true);
+    expect(vi.mocked(vdSet), "the premise: the first pass had started writing").toHaveBeenCalled();
+    expect(report.residual).toEqual([]);
+    expect(report.unverified.map((u) => [u.key, u.outcome])).toEqual(
+      UNVERIFIED_MAPPINGS.filter((m) => m.models.includes("URX22")).map((m) => [m.key, "unexercised"]),
+    );
   });
 
   // Param 22 carries the MONO IN channels' sources; a stereo channel's go out on 209 / 210.

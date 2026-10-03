@@ -146,8 +146,9 @@ export interface SelfTestMismatch {
  *               read fine. Naming the cause here printed exactly those two lies. The
  *               cause is in Issues, and the difference under "Not settled"
  *   unexercised not every one of its addresses was written and read back in a pass that
- *               completed: the guess has none on this model, or no pass emitted one (a
- *               capture that could not read its node leaves the plan nothing to write there)
+ *               completed, and no pass left one of them different or unread: the guess has
+ *               none on this model, or the passes that wrote them all stopped — on a refused
+ *               write or a failed read at another address — or the run was cancelled first
  *   collision   a confirmed param already owns the guessed id (static audit; the
  *               guess is wrong, and its writes were suppressed for safety)
  *
@@ -1330,7 +1331,7 @@ export function formatSelfTestReport(report: SelfTestReport): string {
         incomplete:
           "COULD NOT TEST — it differed in a pass that did not finish; the difference is under Not settled, and what stopped the run under Issues",
         unexercised:
-          "COULD NOT TEST — not every one of its addresses was written and read back (none on this model, or the capture left a pass nothing to write there)",
+          "COULD NOT TEST — not every one of its addresses was written and read back in a pass that completed (none on this model, or every pass that wrote them stopped, or the run was canceled)",
         confirmed: "CONFIRMED — round-tripped on the device",
         roundTripped:
           "ROUND-TRIPPED — every address held what was written, which cannot say which channel or meaning it reached; this does not confirm it",
