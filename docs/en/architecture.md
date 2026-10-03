@@ -3936,8 +3936,11 @@ what the desktop app offers.
   "Check now". The outcome lands inline beside the version — the modal stays open, so a "no
   update" answer is seen where it was asked for — and while the check is in flight every
   dismissal locks (Close disables, an outside press and Escape are inert), for the check and its
-  confirm only, which the check's request timeout and the operator's answer bound. Only an accepted
-  update closes the modal, since the scrim would hide the download status, and the download runs
+  confirm only, which the check's request timeout and the operator's answer bound. Every control of
+  the two columns is disabled for the same span, "Check now" among them, so no setting changes under
+  a panel that is not redrawn; when the check settles the modal is drawn again — a language switch
+  or a live-sync lock that arrived meanwhile lands there — the outcome is written into the fresh row
+  and focus returns to "Check now". Only an accepted update closes the modal, since the scrim would hide the download status, and the download runs
   after the lock is released, so a Preferences reopened during it closes as usual.
 - **Warnings** — visibility of the untested-firmware confirm and the sample-rate / Ducker-bypass
   warning cards. Display-only: the behavior locks (rate-disabled nodes, the stereo-EQ force-off)

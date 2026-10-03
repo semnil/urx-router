@@ -208,9 +208,17 @@ test("every dismissal locks while a check is in flight (stubbed Tauri)", async (
   await page.keyboard.press("Escape");
   await expect(page.locator("#prefs-modal")).toBeVisible();
   await expect(page.locator("#prefs-modal .consent-btn-secondary")).toBeDisabled();
-  // Settled: the outcome lands and every dismissal returns.
+  // The grid's controls are disabled for the flight, Check now among them.
+  await expect(page.locator("#prefs-lang")).toBeDisabled();
+  await expect(page.locator("#prefs-device-scope button").first()).toBeDisabled();
+  await expect(page.locator("#prefs-update-now")).toBeDisabled();
+  // Settled: the outcome lands and every dismissal and control returns.
   await expect(page.locator("#prefs-update-note")).toHaveText("Already up to date.");
   await expect(page.locator("#prefs-modal .consent-btn-secondary")).toBeEnabled();
+  await expect(page.locator("#prefs-lang")).toBeEnabled();
+  await expect(page.locator("#prefs-device-scope button").first()).toBeEnabled();
+  await expect(page.locator("#prefs-update-now")).toBeEnabled();
+  await expect(page.locator("#prefs-update-now")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.locator("#prefs-modal")).toBeHidden();
 });

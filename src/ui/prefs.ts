@@ -86,8 +86,8 @@ export class PrefsPanel {
   private readonly box: HTMLElement;
   // While a manual update check is in flight, every dismissal path locks (the
   // Close button disables, outside press and Escape are ignored): the outcome
-  // has nowhere to land once the modal is gone, and the same lock is what makes
-  // a second press impossible. Held for the check and its confirm, which the
+  // has nowhere to land once the modal is gone. The grid's controls disable with
+  // it, the Check now button among them. Held for the check and its confirm, which the
   // check's timeout and the operator's answer bound; an accepted update's
   // download runs after the hook has answered, outside the lock.
   private checking = false;
@@ -138,7 +138,7 @@ export class PrefsPanel {
 
   /** Re-render in place (a setting or the live-sync lock changed while open).
    *  Deferred while a check is in flight — a rebuild would lift the dismissal
-   *  lock and detach the row the outcome lands on. */
+   *  lock and the disabled controls — and taken when the check settles. */
   refresh(): void {
     if (this.isOpen() && !this.checking) this.render();
   }
@@ -321,7 +321,7 @@ export class PrefsPanel {
         const note = el("span", "prefs-update-note");
         note.id = "prefs-update-note";
         wrap.append(ver, note);
-        const check = this.button(m.updateNow, () => void this.runUpdateCheck(check, note));
+        const check = this.button(m.updateNow, () => void this.runUpdateCheck(note));
         check.id = "prefs-update-now";
         verRow.append(wrap, check);
       } else {
@@ -349,17 +349,20 @@ export class PrefsPanel {
   // open, so a "no update" answer is seen where it was asked for instead of on
   // a status line hidden behind the scrim. Only an accepted update leaves the
   // modal (the shell closes it before the download status takes over).
-  private async runUpdateCheck(check: HTMLButtonElement, note: HTMLElement): Promise<void> {
-    const m = t().prefs;
+  private async runUpdateCheck(note: HTMLElement): Promise<void> {
     // The Close button's disabled face makes the requestClose lock visible;
     // refresh() is deferred while checking, so the node cannot be swapped
-    // out from under the flight.
+    // out from under the flight. Every control of the grid is disabled with it: a
+    // setting changed now would be stored and not drawn until the render below.
     const closeBtn = this.box.querySelector<HTMLButtonElement>(".consent-btn-secondary")!;
     this.checking = true;
     closeBtn.disabled = true;
-    check.disabled = true;
+    for (const control of this.box.querySelectorAll<HTMLButtonElement | HTMLSelectElement | HTMLInputElement>(
+      ".prefs-grid button, .prefs-grid select, .prefs-grid input",
+    ))
+      control.disabled = true;
     note.classList.remove("warn");
-    note.textContent = m.checking;
+    note.textContent = t().prefs.checking;
     // The hook resolves with an outcome for every expected path; a rejection
     // (an unexpected throw) must still land on a defined state — never leave
     // the row stuck on "Checking…" with a dead button.
@@ -370,14 +373,22 @@ export class PrefsPanel {
       outcome = { kind: "failed" };
     } finally {
       this.checking = false;
-      closeBtn.disabled = false;
     }
     // The accepted-update path closes the modal mid-flight (the shell calls
-    // `close` before the download); a reopen there rebuilds the box and
-    // detaches these elements, and the fresh render starts the row clean, so
-    // a stale report has no home.
-    if (!note.isConnected) return;
-    check.disabled = false;
+    // `close` before the download), and the next open renders it fresh.
+    if (!this.isOpen()) return;
+    // Rendered again at the settle: the grid's controls come back, and a refresh asked
+    // for during the flight — a language switch, the live-sync lock — lands. The
+    // outcome is written into the fresh row, in the language that row was drawn in.
+    // Focus goes back to Check now: the press that started the flight was its last
+    // place, and nothing in the modal could take it while every control was disabled.
+    this.render();
+    const fresh = this.box.querySelector<HTMLElement>("#prefs-update-note");
+    if (!fresh) return;
+    note = fresh;
+    if (!this.box.contains(document.activeElement))
+      this.box.querySelector<HTMLButtonElement>("#prefs-update-now")?.focus({ preventScroll: true });
+    const m = t().prefs;
     if (outcome.kind === "upToDate") {
       note.textContent = m.upToDate;
     } else if (outcome.kind === "declined") {

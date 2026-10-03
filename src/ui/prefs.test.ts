@@ -14,6 +14,8 @@ vi.mock("./fine", () => ({ resetFine: mocks.resetFine }));
 import { getSettings, resetSettingsCache, SETTINGS_DEFAULTS, updateSettings } from "../core/settings";
 import type { AppSettings } from "../core/settings";
 import { setLang, t } from "../i18n";
+import { en } from "../i18n/en";
+import { ja } from "../i18n/ja";
 import { PrefsPanel, type PrefsHooks, type UpdateCheckOutcome } from "./prefs";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -265,8 +267,45 @@ describe("PrefsPanel", () => {
     (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
     await vi.waitFor(() => expect(document.querySelector("#prefs-update-note")?.textContent).toBe(""));
 
+    vi.mocked(hooks.checkUpdates).mockResolvedValueOnce({ kind: "busy" });
+    (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(document.querySelector("#prefs-update-note")?.textContent).toBe(t().status.deviceLinkBusy),
+    );
+    expect(document.querySelector("#prefs-update-note")?.classList.contains("warn")).toBe(true);
+
     panel.requestClose();
     expect(panel.isOpen()).toBe(false);
+  });
+
+  it("disables the grid while a check is in flight and renders what changed meanwhile at the settle", async () => {
+    const flight = deferred<UpdateCheckOutcome>();
+    const { panel, hooks, setLive } = install();
+    vi.mocked(hooks.checkUpdates).mockReturnValueOnce(flight.promise);
+    panel.open();
+    const controls = () => [
+      ...document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(".prefs-grid button, .prefs-grid select"),
+    ];
+    expect(controls().filter((c) => !c.disabled).length).toBeGreaterThan(0);
+
+    (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
+    expect(controls().filter((c) => !c.disabled)).toEqual([]);
+
+    // What the shell does on a language switch and on a live-sync change while open.
+    setLang("ja");
+    setLive(true);
+    panel.refresh();
+    expect(document.querySelector("#prefs-title")?.textContent).toBe(en.prefs.title);
+
+    flight.resolve({ kind: "upToDate" });
+    await vi.waitFor(() => expect(document.querySelector("#prefs-update-note")?.textContent).toBe(t().prefs.upToDate));
+    expect(document.querySelector("#prefs-title")?.textContent).toBe(ja.prefs.title);
+    expect((document.querySelector("#prefs-lang") as HTMLSelectElement).disabled).toBe(false);
+    expect((document.querySelector("#prefs-update-now") as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      [...document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")].every((b) => b.disabled),
+    ).toBe(true);
+    expect((document.querySelector(".consent-btn-secondary") as HTMLButtonElement).disabled).toBe(false);
   });
 });
 
