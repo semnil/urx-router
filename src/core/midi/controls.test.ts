@@ -962,6 +962,21 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(slotVal("bus.stereo", "mbc", th)).not.toBe(100);
   });
 
+  // The band bypasses are switches, bound through their own setter: the slider case above says
+  // nothing about them. They are the only toggles the 1-knob drives.
+  it.each(MBC_BANDS.map((b) => [b.band, b.bypass] as const))(
+    "refuses the %s band's bypass while the 1-knob drives it, and takes it back",
+    (_band, slot) => {
+      const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${slot}`);
+      holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 1, [slot]: 0 }, "mbc");
+      expect(push(cid, 1), "while the knob is on").toBe(false);
+      expect(slotVal("bus.stereo", "mbc", slot)).toBe(0);
+      holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [slot]: 0 }, "mbc");
+      expect(push(cid, 1), "with the knob off").toBe(true);
+      expect(slotVal("bus.stereo", "mbc", slot)).toBe(1);
+    },
+  );
+
   // A controller is told the switch the way the write sends it, which is the question the lock
   // above asks of the same slot: a value the write sends as 0, or not at all, reads OFF here
   // and leaves the bands writable, rather than lighting the switch over unlocked bands.
