@@ -3131,8 +3131,10 @@ scope in Preferences is how the app draws the same line the other way.
 edit → apply:
 
 1. Opening connects, confirms the firmware, refuses a model mismatch, reads the whole set, and
-   disconnects. A read failure leaves the screen **unopened** — a half-established baseline would invite
-   applying a diff against values that were never read (see "Aborting on failure").
+   disconnects. The set includes the User Defined Knobs bank the unit is on, and the knob tabs open on
+   it. A read failure — that bank's included — leaves the screen **unopened** — a half-established
+   baseline would invite applying a diff against values that were never read (see "Aborting on
+   failure").
 2. Edits accumulate in the modal. A row whose value differs from what the device reported takes the
    accent dot, and the footer counts the pending settings. Each edit and each bank tab rebuilds the
    modal, keeping the focused control and the grid's scroll offset as Preferences does. The screen
@@ -3165,7 +3167,11 @@ from 76 onward.
 free-form strings (`Function` / `Parameter 1` / `Parameter 2`) that the device stores verbatim and never
 validates, so the app owns the exact user-guide spelling: picking a function re-seeds both parameter
 columns from the catalog, and all three are always written together. A partial write is not reconciled by
-the device — it would leave the unit showing a triple no menu could have produced.
+the device — it would leave the unit showing a triple no menu could have produced. The bank tabs open on the
+bank the unit is on (`769`, raw 0..3 = banks 1..4, read on every model with the rest of the set), and on bank
+1 for a reading that names none of the four. That address is read and never written: the catalog flags it
+**`readOnly`**, which keeps it out of `WritableParamName` and so out of every setup write, and moving between
+the tabs is the screen's own and changes nothing on the unit.
 
 ## Window geometry
 

@@ -104,11 +104,13 @@ export class DeviceSetupPanel {
 
   /** Open on values just read from the device, as the unit reported them: a value the
    *  app's catalog does not have is shown as unknown rather than as the nearest entry.
-   *  Both copies start equal, so the screen opens with nothing pending. */
+   *  Both copies start equal, so the screen opens with nothing pending. The knob tabs open
+   *  on the bank the unit is on, and on bank 1 for a reading that names none of the four. */
   open(setup: DeviceSetup): void {
     this.baseline = structuredClone(setup);
     this.draft = structuredClone(setup);
-    this.bank = 0;
+    this.bank =
+      Number.isInteger(setup.knobBank) && setup.knobBank >= 0 && setup.knobBank < UDK_BANKS.length ? setup.knobBank : 0;
     this.render();
     this.releaseInert ??= holdAppInert(this.scrim);
     this.scrim.hidden = false;

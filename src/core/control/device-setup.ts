@@ -17,7 +17,7 @@
 import type { DeviceModel } from "../../models/types";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
-import type { ParamName } from "./params";
+import type { ParamName, WritableParamName } from "./params";
 import { clamp } from "./vd";
 import { TIME_ZONE_CITIES } from "./timezones";
 
@@ -105,6 +105,9 @@ export interface DeviceSetup {
   language: number;
   usbSuppression: number;
   knobs: UdkAssignment[];
+  /** The User Defined Knobs bank the unit is on, 0..3 = banks 1..4: the bank the screen
+   *  opens on. Read and never written, so no change is ever made of it. */
+  knobBank: number;
 }
 
 /** Which SETUP pages the model actually has, derived from the hardware it is fitted
@@ -135,6 +138,7 @@ export function defaultDeviceSetup(): DeviceSetup {
     language: 0,
     usbSuppression: 0,
     knobs: Array.from({ length: UDK_SLOTS }, () => ({ ...UDK_UNASSIGNED })),
+    knobBank: 0,
   };
 }
 
@@ -175,8 +179,8 @@ export function coerceDeviceSetupFields(patch: Partial<DeviceSetup>, reading: De
 /** One pending hardware write. `y` is the parameter instance (0 for every global,
  *  the knob slot for the User Defined Knobs strings). */
 export type SetupWrite =
-  | { kind: "num"; name: ParamName; y: number; value: number }
-  | { kind: "str"; name: ParamName; y: number; value: string };
+  | { kind: "num"; name: WritableParamName; y: number; value: number }
+  | { kind: "str"; name: WritableParamName; y: number; value: string };
 
 /** Read the whole screen from the connected device. Rejects on the first failure:
  *  a partial read cannot be diffed against without inviting a write of values that
@@ -197,6 +201,7 @@ export async function readDeviceSetup(model: DeviceModel): Promise<DeviceSetup> 
   setup.autoPowerOffTime = await num("AUTO_POWER_OFF_TIME");
   setup.language = await num("DEVICE_LANGUAGE");
   setup.usbSuppression = await num("USB_SUPPRESSION");
+  setup.knobBank = await num("UDK_BANK");
   if (support.hdmi) {
     setup.hdcp = (await num("HDMI_HDCP")) !== 0;
     setup.hdmiChannels = await num("HDMI_INPUT_CHANNELS");
@@ -213,7 +218,7 @@ export async function readDeviceSetup(model: DeviceModel): Promise<DeviceSetup> 
     // (Monitor / Phones); elsewhere — and for Parameter 2, which never offers more
     // than one value — normalizeUdk would overwrite whatever came back, so reading
     // it would cost a round trip for a value that is discarded. On a factory unit
-    // (every knob No Assign) that skips 32 of the 58 reads this screen makes.
+    // (every knob No Assign) that skips 32 of the 59 reads this screen makes.
     const chooses = entry !== undefined && entry.p1.length > 1;
     const p1 = chooses ? await str("UDK_PARAM1", y) : "";
     // A Function the catalog does not have is kept as the unit holds it, so the screen
@@ -230,7 +235,7 @@ export async function readDeviceSetup(model: DeviceModel): Promise<DeviceSetup> 
 }
 
 /** Which row a change belongs to: a scalar field, or one User Defined Knobs slot. */
-export type SetupField = Exclude<keyof DeviceSetup, "knobs"> | `knob${number}`;
+export type SetupField = Exclude<keyof DeviceSetup, "knobs" | "knobBank"> | `knob${number}`;
 
 export const knobField = (slot: number): SetupField => `knob${slot}`;
 
@@ -254,7 +259,7 @@ export function deviceSetupChanges(model: DeviceModel, current: DeviceSetup, nex
   const support = setupSupport(model);
   const to = coerceDeviceSetup(next);
   const changes: SetupChange[] = [];
-  const num = (field: SetupField, name: ParamName, a: number, b: number, sent: number): void => {
+  const num = (field: SetupField, name: WritableParamName, a: number, b: number, sent: number): void => {
     if (a !== b) changes.push({ field, writes: [{ kind: "num", name, y: 0, value: sent }] });
   };
   const bit = (v: boolean): number => (v ? 1 : 0);
