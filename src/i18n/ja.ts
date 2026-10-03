@@ -1038,8 +1038,8 @@ export const ja: Messages = {
       `デバイスのサンプルレートと Follow USB の状態を読み取れませんでした (${message})。計画のレートを実機と照合していないため、何も書き込んでいません。`,
     trackCountUnread: (message: string): string =>
       `microSD レコーダーの Track Count を読み取れませんでした (${message})。レート変更はこの値を元に戻せない形で下げることがあるため、何も書き込んでいません。`,
-    followUsbWrite: (message: string): string =>
-      `Follow USB を OFF にできませんでした (${message})。何も書き込んでいません。`,
+    followUsbWrite: (message: string, on = false): string =>
+      `Follow USB を ${on ? "ON" : "OFF"} にできませんでした (${message})。何も書き込んでいません。`,
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `接続中のデバイスは ${device} ですが、${ui} を選択中です。先にその機種の計画を開くか切り替えてください。`,

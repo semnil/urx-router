@@ -6604,6 +6604,42 @@ describe("the Follow USB badge", () => {
     expect(followUsbWrites(shell)).toHaveLength(1);
   });
 
+  // The confirm is window-modal, so the session can end behind it — here its link drops — and
+  // the write the operator then confirms has no session to go out on. It fails, and the
+  // failure is reported as that write's, since the session's own teardown said nothing of it.
+  it("reports a confirmed write that failed because the session ended behind its confirm", SLOW, async () => {
+    let answer!: (v: string) => void;
+    const held = new Promise<string>((r) => (answer = r));
+    const shell = await bootDevice({
+      vd_get: clockReads(false, 48_000),
+      "plugin:dialog|message": (a: Record<string, unknown>) =>
+        a.buttons === "OkCancel" && String(a.message ?? "").startsWith(t().confirm.followUsbOn) ? held : "Ok",
+    });
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    expect(badge().dataset.state).toBe("off");
+
+    badge().click();
+    await vi.waitFor(() => expect(confirms(shell).some((m) => m.startsWith(t().confirm.followUsbOn))).toBe(true), {
+      timeout: 10_000,
+    });
+    // The link drops while the confirm is up.
+    const watch = shell.args[shell.invokes.indexOf("vd_watch_link")] as {
+      channel: { onmessage: (d: unknown) => void };
+    };
+    watch.channel.onmessage({ reason: "device-lost" });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
+    await invoked(shell, "vd_disconnect");
+    const before = errors(shell).length;
+
+    answer("Ok");
+    await vi.waitFor(() => expect(errors(shell).length).toBe(before + 1), { timeout: 10_000 });
+    expect(errors(shell).at(-1)).toBe(
+      t().status.writeError(t().error.followUsbWrite(t().error.shell.notConnected, true)),
+    );
+    expect(badge().dataset.state).not.toBe("on");
+  });
+
   // A Fetch and a Live-sync start read Follow USB on their own connection, and that read
   // aborts its caller like every other device read on the link: nothing merged, the badge
   // left as it was. Each refusal case is paired with the same flow answering, which is what

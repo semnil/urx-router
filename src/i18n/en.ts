@@ -1326,8 +1326,8 @@ export const en = {
       `The device's sample rate and Follow USB state could not be read (${message}), so the plan's rate was not checked against the unit. Nothing was written.`,
     trackCountUnread: (message: string): string =>
       `The microSD recorder's Track Count could not be read (${message}), and a rate change can lower it for good. Nothing was written.`,
-    followUsbWrite: (message: string): string =>
-      `Follow USB could not be turned off (${message}). Nothing was written.`,
+    followUsbWrite: (message: string, on = false): string =>
+      `Follow USB could not be turned ${on ? "on" : "off"} (${message}). Nothing was written.`,
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Open or switch to a plan for that model first.`,

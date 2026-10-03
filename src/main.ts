@@ -3233,6 +3233,13 @@ if (!DEMO) {
         try {
           await apply();
         } catch (err) {
+          // The confirm leaves the window running, so the session can have ended behind it,
+          // and its teardown reported its own cause and nothing about this write. A write
+          // that failed with no session left is reported as this write's failure.
+          if (!liveSessionUp) {
+            showError(t().status.writeError(t().error.followUsbWrite(errorText(err), next)));
+            return;
+          }
           stopLiveOnError(errorText(err));
         }
         return;
