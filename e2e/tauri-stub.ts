@@ -15,31 +15,41 @@ declare global {
 /**
  * The answer queue every Tauri stub settles through: each answer settles on a message-port
  * task of its own, in the order asked, as the shell's IPC answers — never in the microtask
- * that sent the command. What a command records (a write, a dialog, a read's value) is taken
- * when it is sent; only the answer waits. Installed as an init script of its own beside each
- * stub and looked up when a command is sent, since Playwright does not order init scripts.
- * A spec's own stub installs it on the same page or context and hands each answer to
- * `window.__urxAnswerLater`; `answerTimingOf` pins that it does.
+ * that sent the command. An answer never settles ahead of one asked before it that is already
+ * in; one still out (a held read, a scripted latency) holds back nothing asked after it. What a
+ * command records (a write, a dialog, a read's value) is taken when it is sent; only the answer
+ * waits. Installed as an init script of its own beside each stub and looked up when a command
+ * is sent, since Playwright does not order init scripts. A spec's own stub installs it on the
+ * same page or context and hands each answer to `window.__urxAnswerLater`; `answerTimingOf`
+ * pins that it does.
  */
 export function installAnswerQueue(): void {
   const w = window as unknown as { __urxAnswerLater?: AnswerLater };
   if (w.__urxAnswerLater) return;
   // One message-port task per answer, with no timer clamp between them.
   const port = new MessageChannel();
-  const due: Array<() => void> = [];
-  port.port1.onmessage = () => due.shift()?.();
-  const queue = (settle: () => void): void => {
-    due.push(settle);
+  let asked = 0;
+  const due: Array<{ ticket: number; settle: () => void }> = [];
+  // Each answer that comes in posts one message, and each message settles the earliest-asked answer in.
+  port.port1.onmessage = () => {
+    let first = 0;
+    for (let i = 1; i < due.length; i++) if (due[i].ticket < due[first].ticket) first = i;
+    due.splice(first, 1)[0]?.settle();
+  };
+  const queue = (ticket: number, settle: () => void): void => {
+    due.push({ ticket, settle });
     port.port2.postMessage(null);
   };
   // The handlers are attached at once, so a refusal is never an unhandled rejection while it waits.
-  w.__urxAnswerLater = (answer) =>
-    new Promise((resolve, reject) => {
+  w.__urxAnswerLater = (answer) => {
+    const ticket = ++asked;
+    return new Promise((resolve, reject) => {
       answer.then(
-        (v) => queue(() => resolve(v)),
-        (e: unknown) => queue(() => reject(e)),
+        (v) => queue(ticket, () => resolve(v)),
+        (e: unknown) => queue(ticket, () => reject(e)),
       );
     });
+  };
 }
 
 /**

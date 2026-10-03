@@ -496,9 +496,9 @@ test.describe("T5 drop", () => {
     const all = spans(trace);
     const writeAt = markTime(trace, "write")!;
     // Split the two attempts at the rejected command's SEQUENCE number, not at a
-    // wall-clock mark: the retry's whole re-diff (795 reads) resolves inside one task
-    // at zero read latency, so the retry's first write lands ~4 ms after the failure —
-    // sooner than any driver round trip could stamp a mark between them.
+    // wall-clock mark: the retry follows the failure inside the app's own flow — the fake
+    // answers the retry offer itself — so no driver step lands between the two to stamp
+    // a mark there.
     const sets = all.filter((s) => s.cmd === "vd_set" && s.start > writeAt);
     const failedIdx = sets.findIndex((s) => s.detail === "transport");
     expect(failedIdx).toBeGreaterThanOrEqual(0);

@@ -229,6 +229,7 @@ single source of truth. This table states what each case measures.
 
 | id | Surface | What it measures |
 | --- | --- | --- |
+| `baseline-fake-answer-timing` | harness | That the fake answers every command on a later task than the one that sent it, in the order asked, and that a held read holds back no answer from outside the worker (contract item s) |
 | `baseline-quiescent-floor` | mixed | That an idle live session produces no plan write and no readback. Every other verdict is a difference against this trace |
 | `baseline-single-edit-latency-ladder` | console | One edit at four latencies: the canonical timeline every phase offset is measured against, and how much lateness is the link |
 | `baseline-graph-surface-sweep` | graph | That every GRAPH gesture is reachable by the driver's vocabulary, and that gestures which should write nothing really do not |
@@ -401,6 +402,7 @@ windows above exists. The fake must provide the following.
 | p | The same window on the NAME path: `staleAfterWrite` applies to a string address too, so the next `n` reads of it after a `vd_set_str` answer the name it replaced. Measured on a URX44V — 81 ms, so the string path is not exempt and the fake modelled it as exempt for its whole life. **The announcement follows item o's rule too, and both halves of it are measured on this path rather than carried over**: a name write that changes the reported name is announced `announceMs` after its ack and closes the window (32 writes over two runs announced after their own ack, 32/32, at ack+1-102 ms — most of them 66-102, with 2 of the 32 under 10 ms, a low tail the numeric spread does not have and whose cause is not identified), and a same-value name write announces nothing (acked in 0 ms, silent for 2000 ms, bracketed by a changing write on each side so a dead stream could not pass for a silent device). The app hears it, because name addresses joined the registration set when the follow learned to carry a device-side rename; Sweet Spot Data (param 91) joined it too — the SSMCS mode change's own flush subscribes to it (`t2b-shape-change`). `t1d-name-window` is the case that needed the window |
 | q | Pan Link's silent rewrites, for the groups a case names (`installFake`'s `panLink: [{ link, source, sends }]`): writing the switch on sets every send pan in the group to its source's pan; while it is on, a source written carries the sends and a send written moves the source (and the other sends) to that value; writing it off leaves them where they are. None of it is announced — only the written address is, by item o's rule. The unit settles a send-pan write about 2 s after it; the fake settles it at the queue point, the stricter of the two for a case asking whether a send pan was written at all. Where the group names its MIX's BUS Type address (`busType`), a write of FIXED there turns the switch off, unannounced as well; a write of VARI leaves it. A `seedMem` of the switch is a state and rewrites nothing. `shape-pan-link-send-pans` is the case that needed it |
 | r | The state map's starting contents: every address a node-param leaf is written to holds the model's factory value — `defaultPlan`'s node params emitted through `planToCommands`, kept where `planToCommandOrigins` names a node-param leaf as the command's source — so a read there answers what a unit nobody has written holds, and the app finds nothing to bound. Every other address nothing wrote reads 0 — routing selectors, wire params (a channel's fader and pan are its STEREO send's), colours — except STREAMING's source (705 / 706), which starts on the factory STEREO. A case that needs another state seeds it (`setMemAt`, or a spec's own `seedMem`) |
+| s | Answer timing: every answer settles on a later task than the one that sent the command, never in its microtasks, through the same queue the ordinary stubs settle through (`installAnswerQueue` in `e2e/tauri-stub.ts`) — and never ahead of an answer to a command asked before it that is already in. Latency, a barrier, a refusal and the device-lost latch all run their course before an answer joins that queue, and an answer still held back holds back nothing asked after it: a read held on the worker does not delay an answer from outside it. The `ipc-end` is traced, and a write's announcement armed (item o's ack), as the answer reaches the app. `baseline-fake-answer-timing` pins it |
 Plus a **barrier**: `blockAt({ cmd, nth })` holds a specific command, and `release()` lets it through.
 
 Items n, o and p are the ones the fake lived **without** for its whole life, and the omission was not neutral — see
@@ -444,11 +446,11 @@ makes a range that is neither.
 
 This is also what the overtake above has to be spelled out about, because merging is what bounds it. An overtake is a
 WINDOW rather than merely a late announcement — between the superseding write's ISSUE, where the app's snapshot
-moves, and its ACK, where the fake cancels — and that window is exactly `latency.set` wide, so at the default of 0
-there is none and no overtake can happen at all. `late echo of an overtaken write` therefore sets a set latency of
-its own, and ASSERTS that the first write's announcement both went out and arrived after the second write was
-issued. Without that assertion it passes on a run where nothing was overtaken: every other assertion in it says
-nothing went wrong, and nothing going wrong is also what an empty run looks like.
+moves, and its ACK, where the fake cancels — and that window is `latency.set` wide plus the task the ack takes to
+reach the app (item s), so at the default of 0 it is one task wide. `late echo of an overtaken write` therefore
+sets a set latency of its own, and ASSERTS that the first write's announcement both went out and arrived after the
+second write was issued. Without that assertion it passes on a run where nothing was overtaken: every other
+assertion in it says nothing went wrong, and nothing going wrong is also what an empty run looks like.
 
 **Coercion is deliberately not modelled at all.** `diverge` bends READS and leaves `mem` alone, so nothing the unit
 reports has moved and there is nothing for it to announce; making it announce its asserted value instead would be a
@@ -747,12 +749,13 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
-**The current array.** `[48, 48, 87]` is the array derived from the race run of the 179-case corpus
-(2026-09-29), `[44, 48, 87]`, with the four cases of `t1e-held-repaint.spec.ts` — collected inside its
-first shard — added to that shard, so every cut falls on the case it fell on in that run. That run timed
+**The current array.** `[49, 48, 87]` is the array derived from the race run of the 179-case corpus
+(2026-09-29), `[44, 48, 87]`, with the four cases of `t1e-held-repaint.spec.ts` and the one of
+`baseline-fake-answer-timing` — all collected inside its first shard — added to that shard, so every cut
+falls on the case it fell on in that run. That run timed
 172 of its cases and left the 7 declared skips at zero. Measured against its durations, under the
 two-worker model, its three shards ran 284 / 305 / 305 s, against 286 s for a division with no contiguity
-constraint at all, and the runner reproduced the plan case for case. The four added cases are in no
+constraint at all, and the runner reproduced the plan case for case. The five added cases are in no
 reading: the first shard's cut is the residue of that edit. The point of re-deriving is not the remaining
 gap but that the cut is a duration reading again, since nothing reports an array whose durations have
 moved.
@@ -1736,6 +1739,23 @@ not repeat them.
   is a compile error, while a closure reference is not. It
   entered `main` with the pull request that wrote it and survived three further merges before a
   version bump ran the harness again
+- **The fake answered a command with no latency of its own inside the task that sent it, and two cases
+  leaned on that.** The shell answers every `invoke` on a later task; the fake resolved such a command in
+  the microtasks of the sending task, so a flow whose next step waited on one of those answers had run to
+  its end before the driver's next step could look. `teardown-flow-refusals`'s unguarded half read File >
+  Open's native dialog and File > New's status straight after the clicks, while both flows go on only
+  once their confirm has been answered. `stress-long-session-quiescence` equated the meter subscribe and
+  unsubscribe counts, which holds only while each tuning screen's registration is answered before the
+  screen closes: a screen closed inside its own pending registration is replaced by the console's
+  subscribe with no unsubscribe of its own, which `subscribeMeters`' generation stamp makes correct, since
+  a subscribe replaces the registration wholesale. With answers on a later task (contract item s), the
+  first read no open dialog, and the second read 3 subscribes against 2 unsubscribes in each of the ten
+  cycles of one tier run, and in 7, 9 and 9 of the ten in three runs of the case alone. The first now waits for each flow
+  to land while the read is still held. The second reads the release from the order instead — every
+  unsubscribe inside a session is followed by a subscribe, and the cycle's last meter command is the
+  unsubscribe its end issued — which also fails a stale release that cancels the new owner's stream: with
+  the generation check removed from that release, the counts read 30 / 30 at the tenth cycle and the
+  order assertion was red
 
 Across two audit rounds these accounted for **24 vacuous assertions and 28 over-stated claims**, all
 fixed or withdrawn.

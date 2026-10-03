@@ -1,6 +1,7 @@
 import { expect } from "@playwright/test";
 import { FAKE_LAUNCH_FLAGS_OFF } from "./fake-flags";
 import type { Locator, Page } from "@playwright/test";
+import { installAnswerQueue } from "../tauri-stub";
 import { getModel } from "../../src/models";
 import { defaultPlan } from "../../src/models/initial-state";
 import type { ModelId } from "../../src/models/types";
@@ -15,7 +16,9 @@ import { nodeParamContestPath, walkParamLeaves } from "../../src/core/plan-histo
 // a race case run against those stubs is green for the wrong reason. This one has
 // configurable per-command latency, a real state map, a scriptable notify stream,
 // refusal injection and command barriers, and it timestamps every IPC in one ordered
-// trace the analyzer reads.
+// trace the analyzer reads. Its answers settle through the same queue as theirs
+// (`installAnswerQueue`): on a later task than the one that sent the command, in the order
+// asked, once any latency, barrier or refusal has run its course.
 //
 // It is installed with addInitScript, so it is in place before the bundle resolves
 // window.__TAURI_INTERNALS__ (src/core/platform.ts re-reads that global on every
@@ -318,6 +321,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
   };
   // On the CONTEXT, not the page: MIDI control is a second window, which is a second
   // page here, and it needs the same bridge before its bundle resolves.
+  await page.context().addInitScript(installAnswerQueue);
   await page.context().addInitScript(
     ([config, storage, flagsOff]: [FakeConfig, Record<string, string>, string[]]) => {
       localStorage.setItem("urx-lang", "en");
@@ -765,18 +769,11 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         cmd.startsWith("vd_") && cmd !== "vd_connect" && cmd !== "vd_link_stats";
       /** What `handle` settled at the queue point and `serve` answers with. */
       interface Served {
+        /** Names the detail the command's `ipc-end` carries. */
         done: (detail?: string) => void;
         sampled: number;
         sampledStr: string;
         held: Promise<void> | null;
-        /** Arms the write's own announcement, deliberately NOT armed at the queue point:
-         *  the measured notify follows the ACK (30/30, ack+58-151 ms), and `latency.set`
-         *  is a case's knob that can be set above the announcement window. Armed there,
-         *  a case with a slow link would receive the unit's word about a write before the
-         *  app was told the write landed — an ordering the unit never produces, which the
-         *  app then reads as a device-side change to an address whose snapshot entry it
-         *  has not written yet. */
-        announce?: () => void;
       }
       let workQueue: Promise<void> = Promise.resolve();
       const enqueue = (run: () => Promise<unknown>): Promise<unknown> => {
@@ -795,7 +792,10 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           addr: isAddr ? key(args) : undefined,
           value: cmd === "vd_set" ? Number(args.value) : undefined,
         });
-        const done = (detail?: string): void => void put("ipc-end", { cmd, of: start, detail });
+        let endDetail: string | undefined;
+        const done = (detail?: string): void => {
+          endDetail = detail;
+        };
 
         // Queue-point effects, taken before the barrier and before the latency: the
         // broker is an in-order queue, so a read issued before a write is answered
@@ -919,8 +919,23 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           if (barrier.hit >= barrier.nth) held = barrier.gate;
         }
 
-        const ctx: Served = { done, sampled, sampledStr, held, announce: pending };
-        return onWorker(cmd) ? enqueue(() => serve(cmd, args, ctx)) : serve(cmd, args, ctx);
+        const ctx: Served = { done, sampled, sampledStr, held };
+        const answered = window.__urxAnswerLater(
+          onWorker(cmd) ? enqueue(() => serve(cmd, args, ctx)) : serve(cmd, args, ctx),
+        );
+        // The `ipc-end` is traced as the answer reaches the app, ahead of the app's own
+        // continuation, and so is the ack a write's announcement is armed from. Armed at the
+        // queue point instead, a case with a slow link would receive the unit's word about a
+        // write before the app was told the write landed — an ordering the unit never
+        // produces (the notify follows the ack, ack+58-151 ms, 30/30), which the app then
+        // reads as a device-side change to an address whose snapshot entry it has not
+        // written yet. A refused or lost write is not acked, so it announces nothing.
+        const end = (): void => void put("ipc-end", { cmd, of: start, detail: endDetail });
+        answered.then(() => {
+          end();
+          pending?.();
+        }, end);
+        return answered;
       }
 
       /** Everything that happens once the worker has TAKEN the command: the barrier it
@@ -1109,12 +1124,12 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             return sampledStr;
           case "vd_set":
           case "vd_set_str":
+            // Announced after the ack, never before it — `handle` arms it as the answer
+            // reaches the app. One arm for both, because that ordering rule is one rule:
+            // measured on the numeric path (ack+58-151 ms, 30/30) and on the string path
+            // (ack+1-102 ms, 32/32).
             await wait(cmd === "vd_set" ? config.latency.set : config.latency.setStr);
             done();
-            // After the ack, never before it — see Served.announce. One arm for both,
-            // because that ordering rule is one rule: measured on the numeric path
-            // (ack+58-151 ms, 30/30) and on the string path (ack+1-102 ms, 32/32).
-            ctx.announce?.();
             return null;
           case "vd_params_subscribe":
             // Installed at the queue point; only the reply is outstanding here.
@@ -1165,7 +1180,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           if (cmd === "plugin:event|listen") {
             const cb = callbacks.get(args?.handler as number);
             if (cb) listeners.set(String(args?.event), cb);
-            return Promise.resolve(0);
+            return window.__urxAnswerLater(Promise.resolve(0));
           }
           if (cmd === "vd_watch_link") {
             const ch = args?.channel as { onmessage: (d: unknown) => void } | undefined;
@@ -1512,9 +1527,10 @@ export const divergeAt = (page: Page, addr: string, value: number): Promise<void
  * one it replaced for 81 ms — and the fake modelled it as exempt for its whole life.
  *
  * Which read spends it is a matter of ORDER, not of time: at DEFAULT_LATENCY a run of
- * queued commands drains as one microtask burst, so a case that needs a SPECIFIC read to
- * be the stale one either scripts a non-zero `latency.get` or picks an address only that
- * read touches.
+ * queued reads is answered one task after the next, in the order asked, with no delay
+ * between them, so where a driver step lands in that run is not something a case
+ * controls. A case that needs a SPECIFIC read to be the stale one either scripts a
+ * non-zero `latency.get` or picks an address only that read touches.
  *
  * The window is closed by the write's own announcement, which the fake makes for every
  * value-changing write with or without this (ANNOUNCE_MS). A case does not push it and
