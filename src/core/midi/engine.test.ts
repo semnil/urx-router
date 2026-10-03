@@ -469,7 +469,7 @@ describe("feedback", () => {
     clock += 10;
     engine.onMessage(encodeCc(0, 20, 127)); // the echo — dropped
     expect(mute.value).toBe(1);
-    clock += 100; // still well inside the window
+    clock += 20; // still inside the window (ECHO_WINDOW below)
     engine.onMessage(encodeCc(0, 20, 127)); // a real press
     expect(mute.value).toBe(0);
     expect(applied).toEqual(["ch1/mute"]);
@@ -503,7 +503,7 @@ describe("feedback", () => {
 
     // Something else clears it — an app-side edit, which does not re-arm the guard.
     mute.value = 0;
-    clock += 100; // still well inside the 300 ms window
+    clock += 20; // still inside the window (ECHO_WINDOW below)
 
     engine.onMessage(encodeCc(0, 20, 127)); // the same bytes again: a real press this time
     expect(mute.value).toBe(1); // …which lands only because the echo disarmed the guard
