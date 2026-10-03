@@ -2619,7 +2619,8 @@ can still read, with the unreadable ones listed as gaps that leave the compariso
 **Its scope is exactly what the plan would write**, since it walks `planToCommands` (plus the names). Two kinds of
 parameter fall outside it: the ones the app reads and never emits — the microSD Rec Track Count (839) and the CH →
 FX send tap (193) — and the device-wide settings that are not in the plan at all (`planExternal`: Follow USB and the
-thirteen SETUP > GENERAL addresses, which the unit's own settings screen reads and writes). Neither kind can ever be
+fourteen SETUP > GENERAL addresses, which the unit's own settings screen reads and, all but the knob bank,
+writes). Neither kind can ever be
 reported as a difference, and neither is in the compared count. That is a different silence from the read failures
 above, which are listed as gaps: here nothing was read, and nothing says so.
 
