@@ -102,9 +102,12 @@ Each phase-offset value sits on the edge of one of these measured constants.
   a **whole-device** reconcile 900 ms later. There is no "scoped only" path in this code
 - `REFLECT_MIN_MS` is a leading-edge rate limit, not a 50 ms coalesce delay. With no reflect in the
   previous 50 ms the wait is 0
-- `isEcho` has no time window, and the flush writes its snapshot entry **after** the ack. The
-  discriminating variable is whether an echo beats its own ack — there is no late echo here, only an
-  early one
+- `isEcho` takes a notify carrying a value this session was acked for at that address within the last
+  300 ms (the pending queue, `SETTLE_TIMEOUT_MS` long) or the value the snapshot holds, and the flush
+  writes both **after** the ack. An echo that beats its own ack is neither: it lands while the write
+  is in flight, so the follow layer takes it as superseded (`hasUnannouncedWrite`) — nothing is
+  applied, the node is re-read once the write is announced — and the idle net still sweeps the whole
+  device. The discriminating variable is whether an echo beats its own ack
 
 ## Invariants
 
@@ -134,8 +137,9 @@ an address nothing in the run ever sent, so the next diff measures from a value 
 is the VALUE form — the address WAS sent and the entry holds something else. That is the shape post-write read
 staleness produces: the flush wrote X, a read inside the staleness window answered the pre-write value, and the
 `capture` after it put that value in the snapshot over the one the same flush wrote there. Beyond the next diff's
-blind spot, it also makes the unit's own notify for X arrive as a foreign change (`live.ts`'s `isEcho` is bare
-snapshot equality), costing a scoped reconcile and an idle sweep nobody asked for. Clause B runs only when a case
+blind spot, the unit's own notify for X is an echo only while X is still in the pending queue (300 ms after the
+ack, `live.ts`'s `isEcho`); arriving later it is a foreign change, costing a scoped reconcile and an idle sweep
+nobody asked for. Clause B runs only when a case
 supplies `deviceState` (`memOf`, read at the same instant as `snapshot`), because it needs two exonerations without
 which it is a false-positive machine: a value **the app itself sent** at some point in the run is its own write
 coming back in another order, and a value **the unit holds** is the quantise case — `capture()` moves snapshot
@@ -881,8 +885,10 @@ agreement, zero findings.
 - **Converge-latch starvation**: with a converge param still in the diff and edits closer together
   than 120 ms, **not one command leaves the app for five seconds**. Nothing is lost, but the unit plays
   the old value for the whole gesture
-- **Echo versus ack**: a broker that echoes faster than it acks makes the app apply its own write as a
-  device-side change and escalate to a whole-device readback — several hundred reads per echoed write
+- **Echo versus ack**: a broker that echoes faster than it acks delivers the echo while the write is in
+  flight. The app takes it as superseded rather than applying it, re-reads the node once the write is
+  announced, and the idle net escalates to a whole-device readback — several hundred reads per echoed
+  write
 - **A flush wrote a device-authored value back at the device — fixed.** With the send loop held at CH 1's
   fader and a pan notify delivered while it was held, the loop reached CH 1's pan — one command behind —
   and sent the **pre-notify** value: the device was left holding `0` after reporting `24`, and the idle
