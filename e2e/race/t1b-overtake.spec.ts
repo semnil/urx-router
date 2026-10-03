@@ -73,10 +73,10 @@ const insFxFirstFree = (page: Page) =>
 const pickFirstInsFx = (page: Page, label: string): Promise<void> => pickInsertFx(page, label, insFxFirstFree(page));
 
 /** Pre-load the device's memory before the session's readback. Used to put the insert-FX
- *  selectors at the broker's "no effect" sentinel: the fake answers an unwritten address
- *  with 0, which decodes to an effect that IS selected, and the console's INS FX chip
- *  then only toggles the bypass (a plain param) instead of writing the selector (a
- *  converge param). Seeding the sentinel is what makes the chip a converge trigger. */
+ *  selectors at the broker's "no effect" sentinel — their factory value, which the fake
+ *  starts them at, seeded here as the precondition it is: on a strip holding an effect the
+ *  console's INS FX chip only toggles the bypass (a plain param) instead of writing the
+ *  selector (a converge param), and the sentinel is what makes the chip a converge trigger. */
 const seedMem = (page: Page, entries: Record<string, number>): Promise<void> =>
   page.evaluate((e) => {
     Object.assign(window.__urxFake.mem, e);
@@ -148,7 +148,7 @@ const PAN_SAMPLE = "__panShown";
 const FADER_SAMPLE = "__faderShown";
 
 /** A CH 1 HPF frequency a device-side change moves to: 100 Hz, on the unit's 20 Hz grid
- *  and away from the 40 Hz floor the fake's unwritten 0 decodes to. */
+ *  and away from the factory 80 Hz the fake starts it at. */
 const MOVED_HPF = 1000;
 
 /** The "→ device (N)" lines the status bar printed, in order — one per flush that sent

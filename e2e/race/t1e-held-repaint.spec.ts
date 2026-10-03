@@ -29,7 +29,11 @@ import { chooseOption } from "../choose-option";
 // operates the bypass. What it asserts is the write that lands: one, on the bypass address,
 // carrying OFF — and the HPF frequency on screen, which is the held rebuild arriving after
 // the gesture rather than in place of it. The click pair is the differential: the control
-// run has nothing arrive while the select is focused.
+// run has nothing arrive while the select is focused, which also needs the selection's own
+// write to take nothing back into CH 1's params — a value taken back marks the node changed
+// and its repaint is held behind the select the same way. The fake starts each address a
+// node-param leaf is written to at its factory value, so its converge confirms nothing out of
+// range; the setup asserts that from the line the write reports.
 
 const CH1_INSERT_FX_ON = "134:0:0";
 
@@ -48,6 +52,13 @@ async function selectFocusedWithEffect(page: Page, follow: boolean): Promise<voi
   await mark(page, "select-compander");
   await chooseOption(sel, { label: "Compander-H" });
   await settleAfter(page, "select-compander", 1800);
+  const trace = await traceOf(page);
+  const at = markTime(trace, "select-compander")!;
+  const sent = trace
+    .filter((e) => e.kind === "status" && e.t > at && (e.detail ?? "").startsWith("→ device"))
+    .map((e) => e.detail);
+  expect(sent.length, "the selection's write reported its line").toBeGreaterThan(0);
+  for (const line of sent) expect(line, "the selection's write took nothing back").toMatch(/^→ device \(\d+\)$/);
   if (follow) {
     await setMemAt(page, { [CH1_HPF_ADDR]: MOVED_HPF });
     await mark(page, "hpf-notify");

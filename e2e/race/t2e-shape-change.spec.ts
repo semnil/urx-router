@@ -126,8 +126,9 @@ const setsAfter = (trace: TraceEvent[], at: number): ReturnType<typeof setsOf> =
 /**
  * The writes of the FLUSH alone. A `sideEffect: "converge"` param (INSERT_FX is one)
  * makes the flush re-read the whole device and push the diff back, and against this fake
- * that diff is large — every address the readback does not cover still holds the fake's
- * zero while the plan holds a factory default, so the converge round writes it. That is a
+ * that diff is not empty — an address the readback does not cover and the fake holds no
+ * factory value at (a routing selector: the fake seeds node-param leaves alone) still reads
+ * 0 while the plan holds a factory default, so the converge round writes it. That is a
  * property of the fake, not a result, so it is excluded rather than reported: the flush is
  * everything issued before the converge's first read.
  *
@@ -712,8 +713,8 @@ test.describe("T2e shape-change", () => {
   }) => {
     // Both sessions start from the same device state: ch1 holding Compander-H (so the
     // "compander" slot is taken and the engine array is in the write set), ch2..ch4 on
-    // No Effect. The fake answers an insert-FX address nothing wrote with 0, and 0 is not an
-    // insert-FX option — the sentinel has to be explicit or every channel reads as "some effect".
+    // No Effect. The fake starts each insert-FX selector at the factory No Effect; seeding the
+    // three sentinels beside Compander-H states the whole starting state in one place.
     const seed = (p: Page): Promise<void> =>
       seedMem(p, {
         [insertFxAddr(0)]: COMPANDER_H,
