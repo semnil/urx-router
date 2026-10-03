@@ -1,6 +1,8 @@
 // Sample-rate-dependent feature limits. Transcribed from device-model.md
-// ("Sample-rate-dependent constraints"): above 96 kHz the insert FX and the FX2
-// bus are unavailable, and the stereo channels' EQ drops out at 176.4 / 192 kHz.
+// ("Sample-rate-dependent constraints"): above 96 kHz the FX2 bus is unavailable and
+// the stereo channels' EQ drops out (176.4 / 192 kHz), and each insert effect stops at
+// its own ceiling (`maxRate` in params.ts) — Pitch Fix above 48 kHz, every other one
+// above 96 kHz.
 // Phase 2 surfaces these as warnings only; it does not forbid the connections
 // themselves. Language-agnostic — the UI maps codes to messages.
 
@@ -28,7 +30,8 @@ export interface RateConstraints {
 
 const FX2_NODE = "bus.fx2";
 
-/** Rate above which the >96 kHz feature drops (INS FX, FX2, stereo EQ) kick in. */
+/** Rate above which FX2 and the stereo channels' EQ drop out and the recorder's Track Count
+ *  falls to 2. Insert-FX availability is each option's own `maxRate`, not this. */
 const HI_RATE_HZ = 96000;
 
 // The microSD recorder's Track Count is capped by the sample rate: 16 tracks at 44.1 /

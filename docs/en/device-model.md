@@ -474,7 +474,8 @@ refused at load.
 
 | Constraint | Condition |
 | --- | --- |
-| INS FX unavailable | sample rate above 96 kHz |
+| Every INS FX unavailable | sample rate above 96 kHz |
+| Pitch Fix (INS FX) unavailable | sample rate above 48 kHz (88.2 / 96 kHz; the user guide's Effect list) |
 | Stereo channel (CH 5/6–11/12) EQ unavailable | sample rate 176.4 / 192 kHz |
 | FX2 unavailable | sample rate above 96 kHz |
 

@@ -448,7 +448,8 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
 
 | 制約 | 条件 |
 | --- | --- |
-| INS FX 利用不可 | サンプルレート 96 kHz 超 |
+| すべての INS FX 利用不可 | サンプルレート 96 kHz 超 |
+| Pitch Fix (INS FX) 利用不可 | サンプルレート 48 kHz 超 (88.2 / 96 kHz。ユーザーガイドの Effect list) |
 | ステレオ ch (CH 5/6–11/12) の EQ 利用不可 | サンプルレート 176.4 / 192 kHz |
 | FX2 利用不可 | サンプルレート 96 kHz 超 |
 
