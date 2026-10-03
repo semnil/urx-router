@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { selectWire } from "./graph-helpers";
 
 // A muted node (CH_ON off) reads as inactive: the faceplate dims and every fixed
 // send bound to it recedes — the same off-send treatment a bypassed ducker's key
@@ -68,6 +69,19 @@ test("re-enabling a muted channel restores the lit node and send style", async (
   // The send returns to the full on-send opacity with no leftover off-dash.
   await expect(stereoSend(page)).toHaveAttribute("opacity", "0.85");
   await expect(stereoSend(page)).not.toHaveAttribute("stroke-dasharray", "1.5 4");
+});
+
+// A send at -inf is drawn as off, so a level edit that crosses it moves the wire's look while
+// the wire stays selected and the slider keeps the pointer.
+test("a send level slid to -inf in the panel draws the wire as off, and slid back up as on", async ({ page }) => {
+  await selectWire(page, "ch1:out", "bus.stereo:in");
+  const painted = stereoSend(page).last();
+  await expect(painted).not.toHaveAttribute("stroke-dasharray", "1.5 4");
+  const level = page.locator("#inspector .param", { hasText: "Level" }).locator("input[type=range]").first();
+  await level.fill((await level.getAttribute("min"))!);
+  await expect(painted).toHaveAttribute("stroke-dasharray", "1.5 4");
+  await level.fill((await level.getAttribute("max"))!);
+  await expect(painted).not.toHaveAttribute("stroke-dasharray", "1.5 4");
 });
 
 test("two muted channels both dim while a third stays lit", async ({ page }) => {

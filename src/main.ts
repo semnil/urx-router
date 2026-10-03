@@ -26,6 +26,7 @@ import {
   PlanError,
   processorOn,
   SDREC_NODE_ID,
+  LEVEL_MIN_DB,
   serialize,
   setPlanSampleRate,
   SSMCS_INITIAL,
@@ -1713,6 +1714,7 @@ const inspectorActions = {
       refreshInspector();
       return;
     }
+    const wasOff = (conn.params?.level ?? 0) <= LEVEL_MIN_DB;
     conn.params = { ...conn.params, ...patch };
     // A STEREO-linked pair moves as one: copy the same send change to the partner
     // channel. The pan goes with it in BAL, where it is the pair's one shared balance,
@@ -1721,11 +1723,19 @@ const inspectorActions = {
     const mirrored = mirrorLinkedPair(getModel(modelId), plan, source);
     // A linked MIX's send pans from this source (and a mirrored partner) follow its position.
     markChanged("ui", alignLinkedSendPans(plan, withLinkedPartner(getModel(modelId), plan, source)));
-    // A PRE/POST change flips the wire's pre-fader marker; a send ON/OFF or an OSC
-    // L/R assign change flips the wire's (and its jacks') off-state dimming. Repaint
-    // when any is in play. Level/pan carry no on-canvas marker, so they keep mutating
-    // in place (slider keeps focus).
-    if (patch.tap !== undefined || patch.on !== undefined || patch.oscL !== undefined || patch.oscR !== undefined)
+    // A PRE/POST change flips the wire's pre-fader marker; a send ON/OFF, an OSC L/R
+    // assign change, or a level that crosses -∞ flips the wire's (and its jacks') off-state
+    // dimming. Those repaint the wire layer, which leaves the panel and the slider holding
+    // the pointer alone; a level move that stays on one side of -∞ and a pan move change
+    // nothing drawn there.
+    const crossedOff = patch.level !== undefined && wasOff !== patch.level <= LEVEL_MIN_DB;
+    if (
+      patch.tap !== undefined ||
+      patch.on !== undefined ||
+      patch.oscL !== undefined ||
+      patch.oscR !== undefined ||
+      crossedOff
+    )
       graph.repaintWires();
     // Refresh the console so a mirrored partner keeps up (a no-op while hidden).
     if (mirrored) consoleView.refresh();

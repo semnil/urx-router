@@ -29,7 +29,7 @@ import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/cont
 import { downloadText, exportSvgToPdf, exportSvgToPng, saveTextDocument } from "./core/storage";
 import { t } from "./i18n";
 import { $, APP_SETTLE, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
-import { faceplate } from "./ui/graph.test-util";
+import { faceplate, press, wireHit } from "./ui/graph.test-util";
 
 const nodes = (): number => $("graph-host").querySelectorAll("g.node[data-id]").length;
 
@@ -1346,6 +1346,33 @@ describe("editing a node through the inspector", () => {
     await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_COMP)), APP_SETTLE);
     // …and the stage that no longer exists is off the list, so it cannot be chosen again.
     expect([...recPoint().options].map((o) => o.value)).not.toContain(String(REC_POINT_PRE_EQ));
+  });
+});
+
+// A send at -∞ is drawn as off (a dotted, receded wire), so a level edit that crosses -∞ moves
+// the wire's look while the wire stays selected and the slider keeps the pointer.
+describe("a send level edited across -∞ in the panel", () => {
+  // The painted path, which a selected wire draws after its halo.
+  const wire = (): SVGPathElement | undefined =>
+    [
+      ...$("graph-host").querySelectorAll<SVGPathElement>(
+        'g:has(> .wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]) > path:not(.wire-hit)',
+      ),
+    ].at(-1);
+  const slide = (to: "min" | "max"): void => {
+    const slider = row(t().inspector.level).querySelector<HTMLInputElement>('input[type="range"]')!;
+    slider.value = to === "min" ? slider.min : slider.max;
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  it("redraws the wire as off at -∞ and as on again above it", async () => {
+    await boot();
+    press(wireHit($("graph-host"), "ch1:out", "bus.stereo:in")!);
+    expect(wire()!.getAttribute("stroke-dasharray"), "the premise: the main send ships live").toBeNull();
+    slide("min");
+    expect(wire()!.getAttribute("stroke-dasharray")).toBe("1.5 4");
+    slide("max");
+    expect(wire()!.getAttribute("stroke-dasharray")).toBeNull();
   });
 });
 
