@@ -2072,19 +2072,16 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
   message lands on `max` — DUCKER decay 5000, GATE hold 1960, GATE decay and COMP release 999 — against
   slider tops of 4999.3, 1959.02 and 998.3 (measured in Chromium and WebKit). Bounding rather than
   snapping down to that grid value is what keeps a reading the UNIT reports at its own ceiling a fixed
-  point: `vdToHold(196000)` is 1960, and a codec answering 1959.02 for it would let a 14-bit feedback
-  echo move it. `controls.test.ts` holds both halves.
+  point: `vdToHold(196000)` is 1960, and a write of the position it reads at lands back on 1960 rather
+  than on 1959.02. `controls.test.ts` holds both halves.
 - **…except where the control is finer than the wire, and then the WIRE's grid wins.** The Mono Delay
   time runs 1..27000 by 1, which is 27000 settings against a 14-bit controller's 16384 positions, so
   several of its values share a position. Its codec snaps the READING to the wire's grid as well as the
-  writing, which keeps the exactness the engine's echo decision rests on (`core/midi/engine.ts`) true of
-  the reading. **It does not make it true of the value**: an echo of the app's own feedback moves an
-  off-grid setting to the nearest addressable one — one raw, 0.1 ms, once, after which it is idempotent
-  — and that move stays visible rather than silent, since a cc14 arrives as two messages and the
-  intermediate value fires the engine's applied path, so it reaches the dirty flag and the undo ledger
-  like any other edit. What it costs otherwise is resolution over MIDI and nothing else: one notch moves
-  0.165 ms against the 0.1 ms a pointer, a wheel or an arrow key still reaches, and a controller
-  addresses 16384 of the 27000 settings. The step itself is not free to coarsen — it is the only one
+  writing, so a position written reads back as that position. A setting between two positions reads at
+  the nearer one, and the echo of the app's own feedback for it carries exactly that position, which
+  the engine refuses as no edit (`core/midi/engine.ts`): the setting stays where it is. What it costs is
+  resolution over MIDI and nothing else: one notch moves 0.165 ms against the 0.1 ms a pointer, a wheel
+  or an arrow key still reaches, and a controller addresses 16384 of the 27000 settings. The step itself is not free to coarsen — it is the only one
   that puts both official ends and the factory default on the grid.
 - **The screen opens while learn is on.** The `▸` opener is not itself assignable, so it passes the
   arming guard through rather than arming instead of opening.

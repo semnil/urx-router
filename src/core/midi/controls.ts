@@ -324,17 +324,12 @@ function linearCodec(min: number, max: number, step: number): { get(x: number): 
 const WIRE_14_BIT_MAX = (1 << 14) - 1;
 
 /**
- * A codec whose normalized domain IS the 14-bit grid.
- *
- * The engine leaves 14-bit feedback unguarded against its own echo, and that is only safe
- * while every 14-bit round trip is exact — the case in `controls.test.ts` pins it and says
- * why. A control with more settings than the wire has positions cannot satisfy that on a
- * plain linear codec: several of its values share a position, so the value read back after
- * an echo is not the value set, and under Live sync that difference reaches the unit.
- *
- * Snapping the READING to the same grid the writing lands on makes the trip exact again.
- * What it costs is resolution over MIDI and nothing else: the control keeps every setting
- * for a pointer, a wheel and an arrow key, and a controller reaches 16384 of them.
+ * A codec whose normalized domain IS the 14-bit grid, for a control with more settings than
+ * the wire has positions. Several of its values share a position, and its READING snaps to the
+ * same grid its writing lands on, so a position written reads back as that position
+ * (`controls.test.ts` pins the round trip). What it costs is resolution over MIDI and
+ * nothing else: the control keeps every setting for a pointer, a wheel and an
+ * arrow key, and a controller reaches 16384 of them.
  */
 function wireGridCodec(min: number, max: number, step: number): { get(x: number): number; set(v: number): number } {
   const span = max - min;

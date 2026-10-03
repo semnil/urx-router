@@ -1584,9 +1584,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   (known-issues.md "The unit lets +48V and HI-Z be on together; the app does not").
 - **Engine (`engine.ts`)** — routes incoming events onto bound controls. Take-in modes are per-mapping:
   absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
-  pair (n / n+32); an LSB that arrives while the pair's MSB is unknown — none received since the mappings
-  were last set, which a boot, a learn, an edit of the list and a plan load all do — edits nothing and is
-  kept for the MSB that follows. Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
+  pair (n / n+32); an LSB that arrives while the pair's MSB is unknown — none received, and none sent by a feedback
+  pass, since the mappings were last set, which a boot, a learn, an edit of the list and a plan load all do —
+  edits nothing and is kept for the MSB that follows. Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
   SENDER's button type (the controller-side setting the user reads): the default "Momentary" (edge — flips
   on each on-value: a note-on or a CC ≥ 64, the release ignored; not a rising-edge test, so a push button
   that sends a fixed on-value per press with no release-to-0 between still flips every press, not just the
@@ -1642,13 +1642,21 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   neighbouring detent, so the echo moves the value and — while live — writes it to the unit, once per
   feedback pass and so once per Live-sync start. The comparison is made in the domain the message was
   actually SENT in, since a note address carries on/off whatever position the sent cache holds; a fader
-  bound to a note echoes back as full scale, which is the worst case in the family. The **14-bit forms are
-  deliberately unguarded**: a cc14 echo arrives as two 7-bit halves that cannot be matched, and needs no
-  matching, because at 14 bits every control round-trips onto the same plan value (pinned in
-  `core/midi/controls.test.ts`; measured 2026-09-23, at 7 bits 97 of 311 controls on a URX44V do not — the
-  tuning screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack /
-  decay. COMP **ratio** is not on that list because its field is the unit's own stop ladder — the ladder holds
-  fewer stops than the wire holds positions, so a 7-bit echo decodes onto the stop it left from).
+  bound to a note echoes back as full scale, which is the worst case in the family. The **14-bit forms carry
+  no echo guard** — a cc14 echo arrives as two 7-bit halves that cannot be matched — and are kept from
+  editing another way: an incoming 14-bit position equal to the one the control's plan value encodes to edits
+  nothing, and a feedback pass that sends a cc14 records both halves as the pair's state, so each echoed half
+  assembles to the position that was sent rather than against a stale half. That covers the values a plan
+  holds off the codec's grid — the factory capture and a value read from the unit (GATE attack 20.17 ms against
+  its 0.1 ms steps, 1000 Hz between two of an EQ band's log positions), a 0.1 dB fine-mode gain, a setting
+  finer than the wire (the Mono Delay time, the companders' Release) — which the echo would otherwise move
+  and, while live, write to the unit (`core/midi/controls.test.ts` drives it through the engine on the continuous
+  controls the factory plan lists, the morphing bank's, and those of each insert effect and each FX type). Only a pass that actually sends records the
+  pair: one that delivers nothing tells the controller nothing. At 7 bits the codecs alone would not hold
+  the value either (measured 2026-09-23, 97 of 311 controls on a URX44V do not round-trip — the tuning
+  screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack / decay. COMP
+  **ratio** is not on that list because its field is the unit's own stop ladder — the ladder holds fewer stops
+  than the wire holds positions, so a 7-bit echo decodes onto the stop it left from).
   Setting `localStorage["urx-midi-log"]` traces every rx/tx
   byte string and the engine's per-message decision (drop/ignore/apply) to the console; a dev build also
   carries `window.__urxMidiProbe` (`ui/midi-probe.ts`), which records the same stream **with timestamps** on

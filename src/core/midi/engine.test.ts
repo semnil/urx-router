@@ -633,23 +633,64 @@ describe("feedback", () => {
     expect(applied).toEqual([c.id]);
   });
 
-  it("leaves a 14-bit echo unguarded, because at 14 bits it re-enters the same value", () => {
-    // A cc14 echo arrives as two 7-bit halves that cannot be matched against the
-    // 14-bit cache, and does not need to be: the round trip is exact for every
-    // control (pinned in controls.test.ts), so applying it changes nothing. Pinned
-    // here is that the guard does not pretend otherwise — the halves reach `apply`
-    // and re-enter the same value rather than being swallowed by a stale arm.
-    const c = fake("ch1/level", "continuous", 0.5, FINE);
+  // A plan holds values its codec's grid does not: a factory or device-read value, a
+  // fine-mode step. 0.3 is one here (off the 1/256 grid), and its 14-bit position carries a
+  // non-zero LSB, so an MSB half assembled against an LSB of 0 would apply an intermediate
+  // value and the full pair would land on the grid — a move nobody made, twice reported.
+  const OFF_GRID = 0.3;
+
+  it("edits nothing on a cc14 echo of the position the plan already holds", () => {
+    const c = fake("ch1/level", "continuous", OFF_GRID, FINE);
     controls.set(c.id, c);
     map(c.id, { type: "cc14", channel: 0, controller: 7 });
     engine.feedback();
-    const raw = Math.round(0.5 * 16383);
+    const raw = Math.round(OFF_GRID * 16383);
+    expect(raw & 0x7f, "the case needs a non-zero LSB").not.toBe(0);
     expect(sent).toEqual([encodeCc(0, 7, (raw >> 7) & 0x7f), encodeCc(0, 39, raw & 0x7f)]);
     clock += 5;
     engine.onMessage(encodeCc(0, 7, (raw >> 7) & 0x7f));
     engine.onMessage(encodeCc(0, 39, raw & 0x7f));
-    expect(c.value).toBe(0.5);
-    expect(applied).toEqual([]); // re-entered the same value, so nothing was reported
+    expect(c.value).toBe(OFF_GRID);
+    expect(applied).toEqual([]);
+    // The refusal is about the position, not about the message having been an echo: one
+    // position away is an edit, and lands on the grid.
+    engine.onMessage(encodeCc(0, 39, (raw + 1) & 0x7f));
+    expect(c.value).not.toBe(OFF_GRID);
+    expect(applied).toEqual([c.id]);
+  });
+
+  it("edits nothing on a pitch-bend echo of the position the plan already holds", () => {
+    const c = fake("ch1/level", "continuous", OFF_GRID, FINE);
+    controls.set(c.id, c);
+    map(c.id, { type: "pitchbend", channel: 0 });
+    engine.feedback();
+    expect(sent).toHaveLength(1);
+    clock += 5;
+    engine.onMessage(sent[0]);
+    expect(c.value).toBe(OFF_GRID);
+    expect(applied).toEqual([]);
+  });
+
+  // The pair state a send records is a claim about what the controller was TOLD. A pass
+  // that delivers nothing (no output port, or no settled readback) tells it nothing, so an
+  // LSB the controller moves alone afterwards still has no MSB to assemble against.
+  it("records a cc14 pair's halves on a send, and not on a pass that delivers nothing", () => {
+    const c = fake("ch1/level", "continuous", OFF_GRID, FINE);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc14", channel: 0, controller: 7 });
+    engine.feedback(false, false);
+    expect(sent).toEqual([]);
+    engine.onMessage(encodeCc(0, 39, 1)); // an LSB alone, with no MSB sent or received
+    expect(c.value).toBe(OFF_GRID);
+    expect(applied).toEqual([]);
+
+    clock += 400; // past RECENT_MS: the LSB above deferred this address' next pass
+    engine.feedback(true, true);
+    const raw = Math.round(OFF_GRID * 16383);
+    expect(sent).toEqual([encodeCc(0, 7, (raw >> 7) & 0x7f), encodeCc(0, 39, raw & 0x7f)]);
+    engine.onMessage(encodeCc(0, 39, 1)); // the same LSB, against the MSB just sent
+    expect(c.value).toBeCloseTo(Math.round((((raw >> 7) << 7) | 1) / 16383 / FINE) * FINE, 9);
+    expect(applied).toEqual([c.id]);
   });
 
   it("resync forgets the sent cache and re-emits everything", () => {

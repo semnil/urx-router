@@ -264,6 +264,33 @@ describe("feedback to the controller", () => {
     expect(hooks.onApplied).toHaveBeenCalledTimes(1); // the crossing alone
   });
 
+  // A pass with no output port runs, and tells the controller nothing — so it records no
+  // 14-bit pair state either. An LSB the controller moves alone then has no MSB to be
+  // assembled against, and edits nothing rather than taking the app's own value as one.
+  // GATE attack, whose grid is fine enough that one LSB step moves it.
+  it("records no 14-bit pair state on a pass with no output port open", async () => {
+    const addr = { type: "cc14", channel: 0, controller: 7 };
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({ models: { URX44V: [{ control: "ch1/attack@gate", addr, mode: "absolute" }] } }),
+    );
+    const { control, hooks } = install();
+    await attached();
+    await openInput();
+    const attack = (): number | undefined => hooks.getPlan().nodeParams.ch1?.gate?.attack;
+    const parked = attack();
+    control.liveReadSettled(); // a full pass: everything a port would have been sent
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+
+    mocks.inputReceiver!([0xb0, 39, 1]);
+    expect(attack()).toBe(parked);
+    expect(hooks.onApplied).not.toHaveBeenCalled();
+    // The positive control: once an MSB has arrived, the same LSB alone moves it.
+    mocks.inputReceiver!([0xb0, 7, 10]);
+    mocks.inputReceiver!([0xb0, 39, 1]);
+    expect(attack()).not.toBe(parked);
+  });
+
   // Live sync ending is not a claim that the plan is wrong, but nothing keeps the two
   // together from there — so the output side closes again rather than going on stating
   // values whose provenance has run out.

@@ -8,11 +8,12 @@ import {
   COMP_EQ_COMP_FIRST,
   COMP_EQ_SSMCS,
   EQ_TYPE_PASS,
+  INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   PAN_BAL_BAL,
   PAN_BAL_PAN,
 } from "../control/params";
-import { channelDynamics, planToCommands, DUCKER_FIELDS } from "../control/translate";
+import { channelDynamics, insertFxControl, planToCommands, DUCKER_FIELDS } from "../control/translate";
 import type { DynField } from "../control/translate";
 import {
   bindControl,
@@ -45,6 +46,7 @@ import {
   type InsertFxFamily,
 } from "../control/insert-fx-effect";
 import { wireRaw, wireSteps } from "./mapping";
+import { FX_CHANNEL_NODE_INDEX, fxEffectTypes } from "../control/fx-effect";
 
 const model = getModel("URX44V");
 let plan: Plan;
@@ -605,16 +607,16 @@ describe("every writable control reaches the device", () => {
   });
 });
 
-// The property the engine's echo guard is built on. A feedback message crosses the
-// wire at 7 or 14 bits; if the decoded value snaps to a DIFFERENT plan value, the echo
-// of that message is an edit rather than a no-op, and under Live sync it reaches the
-// unit. The engine therefore guards the 7-bit forms and deliberately leaves the 14-bit
-// ones unguarded — a cc14 echo arrives as two halves it cannot match anyway. That
-// exclusion is only safe while the 14-bit round trip is exact for EVERY control, which
-// is what this pins. At 7 bits a whole class of controls fails the same check (the tuning
-// screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER
-// attack / decay), which is why the guard exists at all; architecture.md "External MIDI
-// control" carries the reading.
+// What a feedback message crossing the wire does to the value it left from. If the decoded
+// value snaps to a DIFFERENT plan value, the echo of that message is an edit rather than a
+// no-op, and under Live sync it reaches the unit. At 7 bits a whole class of controls does
+// (the tuning screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release,
+// DUCKER attack / decay), which is why the engine arms a one-shot echo guard on the 7-bit
+// forms; architecture.md "External MIDI control" carries the reading. At 14 bits the engine
+// refuses an incoming position equal to the one the plan's value encodes to, and the last
+// case here drives that through the engine on the values a plan holds. The cases before it
+// pin the codecs: a position `set` lands on reads back as that position, a field's own
+// maximum holds, and a stop table is hit at every position.
 describe("feedback round trip", () => {
   const STEPS = 257; // finer than 7-bit, so every CC bucket is entered from both sides
   /** Any 14-bit address; `wireRaw` reads only its resolution here. */
@@ -630,11 +632,12 @@ describe("feedback round trip", () => {
     return p;
   };
 
-  // What that sweep cannot see, stated where it is blind. It compares `c.get()` either side
-  // of the trip, and the FX delay time's codec snaps its READING to the wire's grid — so a
-  // value between two positions round-trips as "unchanged" there while the plan underneath
-  // it has moved. The control is offered all the same (a controller reaches 16384 of its
-  // 27000 settings), so what is pinned is the SIZE of the move and that it happens once.
+  // What the round-trip sweep cannot see, stated where it is blind. It compares `c.get()`
+  // either side of the trip, and the FX delay time's codec snaps its READING to the wire's
+  // grid — so a value between two positions reads as unchanged there while a write of that
+  // position moves the plan underneath it. Pinned here at the codec: that write moves it by
+  // at most one raw, and a second lands where the first did. Through the engine, a message at
+  // the position a value already reads at edits nothing (the held-value case below).
   it("snaps the FX delay time to the wire grid once, and no further", () => {
     const m = getModel("URX44V");
     const plan = seeded("URX44V");
@@ -660,9 +663,10 @@ describe("feedback round trip", () => {
   // FALL SHORT and it is the last value on the grid, like every other position. OVERSHOOT and
   // `linearCodec` bounds it to the field's own maximum rather than snapping down to that grid
   // value — and which of the two it lands on is not a detail of the bound: the unit reports its
-  // own ceiling AS that maximum (`vdToHold(196000)` is 1960), so a codec answering the grid
-  // value for it would let a 14-bit echo move a value nobody moved. The sweep below cannot see
-  // that: it only ever offers values `set` produced, and the unit's ceiling is not one of them.
+  // own ceiling AS that maximum (`vdToHold(196000)` is 1960), so full scale on a controller is
+  // the unit's own ceiling, and a write of the position that ceiling reads at leaves it there.
+  // The sweep below cannot see that: it only ever offers values `set` produced, and the unit's
+  // ceiling is not one of them.
   it.each(["URX22", "URX44", "URX44V"] as const)("holds a field's own maximum through an echo on %s", (id) => {
     const m = getModel(id);
     const p = seeded(id);
@@ -781,6 +785,128 @@ describe("feedback round trip", () => {
       }
     }
     expect([...offenders]).toEqual([]);
+  });
+
+  // The engine's own decision, asked of the values a plan HOLDS rather than of values `set`
+  // produced: a feedback pass at 14 bits with every byte it sends fed straight back, the way a
+  // reflecting transport returns it, on each continuous control in turn. The populations are
+  // the factory capture (what a unit at its factory state reads back as), the morphing bank, a
+  // 0.1 dB fine-mode step on every COMP and EQ band gain, every insert effect on every node that
+  // offers it and every FX type — most of them off the codec's grid, so applying an echo would
+  // move the value, and while live write the move to the unit.
+  it.each(["URX22", "URX44", "URX44V"] as const)("edits nothing on a 14-bit echo of a held value, %s", (id) => {
+    const m = getModel(id);
+    type Addr = { type: "cc14"; channel: 0; controller: 7 } | { type: "pitchbend"; channel: 0 };
+    const ADDRS: Addr[] = [
+      { type: "cc14", channel: 0, controller: 7 },
+      { type: "pitchbend", channel: 0 },
+    ];
+    type Variant = { name: string; seed: (p: Plan) => void; pick: (cid: string) => boolean };
+    const variants: Variant[] = [
+      { name: "factory", seed: () => {}, pick: () => true },
+      {
+        name: "SSMCS",
+        seed: (p) => void (p.nodeParams.ch1 = { ...p.nodeParams.ch1, compEqType: COMP_EQ_SSMCS }),
+        pick: (cid) => cid.includes("@ssmcs"),
+      },
+      {
+        name: "fine gains",
+        seed: (p) => {
+          for (const np of Object.values(p.nodeParams)) {
+            if (!np) continue;
+            if (np.comp) np.comp = { ...np.comp, gain: 2.3 };
+            if (np.eqBands) np.eqBands = np.eqBands.map((b) => ({ ...b, gain: 2.3 }));
+          }
+        },
+        pick: (cid) => /\/gain@(comp|eq\.)/.test(cid),
+      },
+    ];
+    const effects = new Set<number>();
+    for (const n of m.nodes) for (const o of insertFxControl(m, n.id)?.options ?? []) effects.add(o.value);
+    effects.delete(INSERT_FX_NONE);
+    for (const value of effects) {
+      variants.push({
+        name: `insert effect ${value}`,
+        seed: (p) => {
+          for (const n of m.nodes) {
+            if (!insertFxControl(m, n.id)?.options.some((o) => o.value === value)) continue;
+            p.nodeParams[n.id] = { ...p.nodeParams[n.id], insertFx: value, insertFxOn: true };
+          }
+        },
+        pick: (cid) => cid.includes(`@${INSFX_SCOPE}.`),
+      });
+    }
+    for (const [node, index] of Object.entries(FX_CHANNEL_NODE_INDEX)) {
+      if (!m.nodes.some((n) => n.id === node)) continue;
+      for (const type of fxEffectTypes(index)) {
+        variants.push({
+          name: `${node} ${type.label}`,
+          seed: (p) => void (p.nodeParams[node] = { ...p.nodeParams[node], fxEffect: { type: type.value } }),
+          pick: (cid) => cid.startsWith(`${node}/fx@${FX_SCOPE}.`),
+        });
+      }
+    }
+
+    const fresh = (v: Variant): Plan => {
+      const p = defaultPlan(id);
+      ensureFixedConnections(m, p);
+      v.seed(p);
+      return p;
+    };
+    /** Feed back what one 14-bit pass sends for `cid`, through `shift` (the identity for an
+     *  echo), and answer whether the plan moved or `applied` fired. */
+    const moves = (p: Plan, cid: string, addr: Addr, shift: (bytes: number[]) => number[] = (b) => b): boolean => {
+      const before = JSON.stringify(p);
+      const sent: number[][] = [];
+      let applied = 0;
+      const engine = new MidiEngine({
+        resolve: (x) => bindControl(m, p, x),
+        gate: () => null,
+        refused: () => {},
+        applied: () => void applied++,
+        send: (bytes) => void sent.push(bytes),
+        learned: () => {},
+        learnPending: () => {},
+        now: () => 0,
+      });
+      engine.setMappings([{ control: cid, addr, mode: "absolute" }]);
+      engine.feedback(true, true);
+      expect(sent.length, `${cid} sent nothing on ${addr.type}`).toBeGreaterThan(0);
+      for (const bytes of sent) engine.onMessage(shift(bytes));
+      return applied > 0 || JSON.stringify(p) !== before;
+    };
+
+    // The positive control: the same wiring sees a move when the message is NOT the echo — a
+    // pitch bend 64 positions away from what was sent, on a control fine enough to take it.
+    const away = (bytes: number[]): number[] => {
+      const v = Math.min(16383, (bytes[1] | (bytes[2] << 7)) + 64);
+      return [bytes[0], v & 0x7f, v >> 7];
+    };
+    expect(moves(fresh(variants[0]), controlId("ch1", "attack", GATE_SCOPE), ADDRS[1], away)).toBe(true);
+
+    const offenders: string[] = [];
+    const swept = new Set<string>();
+    for (const v of variants) {
+      let p = fresh(v);
+      const ids = listControls(m, p)
+        .filter((d) => d.kind === "continuous" && v.pick(d.id))
+        .map((d) => d.id);
+      expect(ids.length, `${v.name} lists no control to sweep`).toBeGreaterThan(0);
+      for (const cid of ids) {
+        swept.add(cid);
+        for (const addr of ADDRS) {
+          if (!moves(p, cid, addr)) continue;
+          offenders.push(`${v.name} / ${addr.type} / ${cid}`);
+          p = fresh(v);
+        }
+      }
+    }
+    // The populations the factory plan does not reach, named so a seeding that stops listing
+    // them fails here rather than passing on a smaller sweep.
+    expect([...swept].some((cid) => cid.endsWith(`@${INSFX_SCOPE}.compander.9`))).toBe(true);
+    expect([...swept].some((cid) => cid.includes(`@${FX_SCOPE}.delay`))).toBe(true);
+    expect([...swept].some((cid) => cid.includes("@ssmcs"))).toBe(true);
+    expect(offenders).toEqual([]);
   });
 });
 
