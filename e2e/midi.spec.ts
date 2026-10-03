@@ -534,6 +534,29 @@ test("one physical control can gang several console controls", async ({ page }) 
   await expect(readLevel(page, "CH 2")).toHaveText("-∞");
 });
 
+// A gang holds one kind of control: a fader learned onto the MIDI control a MUTE chip is
+// bound to is refused, on both status lines, and the list stays as it was.
+test("a fader cannot join the MIDI control a switch is bound to", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  const muteChip = () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" });
+  await learnBinding(page, win, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
+  await expect(mapRow(win, "ch1/mute")).toContainText("CH 1 CC 20");
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 20, 100],
+    [0xb0, 20, 101],
+  );
+  await expect(win.locator(".mw-status")).toContainText("Not assigned: CH 1 CC 20");
+  await expect(page.locator("#statusbar")).toContainText("Not assigned: CH 1 CC 20");
+  await expect(mapRow(win, "ch1/level")).toHaveCount(0);
+  await expect(win.locator(".mw-list tbody tr")).toHaveCount(1);
+  // Nothing is left armed: the next click arms afresh.
+  await expect(strip(page, "CH 1").locator(".con-fader")).not.toHaveClass(/\bmidi-armed\b/);
+});
+
 test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);

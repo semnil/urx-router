@@ -759,6 +759,12 @@ export class MidiControl {
     // Absolute on an address nothing is bound to yet.
     const key = addrKey(addr);
     const mode = all.find((m) => addrKey(m.addr) === key)?.mode ?? "absolute";
+    const refusal = this.gangRefusal(id, addr, all);
+    if (refusal !== null) {
+      this.hooks.onLearnChanged(); // the armed ring comes off
+      this.say(refusal);
+      return;
+    }
     const next = all.filter((m) => m.control !== id);
     next.push({ control: id, addr, mode });
     this.applyMappings(next);
@@ -779,17 +785,70 @@ export class MidiControl {
     return typeof raw === "object" && raw !== null ? raw : {};
   }
 
+  /** This model's saved mappings, with every gang that mixes the two kinds of control set to
+   *  Absolute — saved back, and said on the status line. */
   private loadMappings(): MidiMapping[] {
-    return sanitizeMappings(this.store().models?.[this.hooks.getModel().id]);
+    const loaded = sanitizeMappings(this.store().models?.[this.hooks.getModel().id]);
+    const { list, addrs } = this.absoluteOnMixedGangs(loaded);
+    if (addrs.length === 0) return loaded;
+    this.saveMappings(list);
+    this.say(t().midi.mixedGangAbsolute(addrs.join(", ")));
+    return list;
+  }
+
+  private saveMappings(list: MidiMapping[]): void {
+    const s = this.store();
+    s.models = { ...s.models, [this.hooks.getModel().id]: list };
+    saveJson(STORE_KEY, s);
   }
 
   private applyMappings(next: MidiMapping[]): void {
     this.engine.setMappings(next);
-    const s = this.store();
-    s.models = { ...s.models, [this.hooks.getModel().id]: next };
-    saveJson(STORE_KEY, s);
+    this.saveMappings(next);
     this.pushState();
     this.scheduleFeedback();
+  }
+
+  /**
+   * Why `id` may not join the bindings already on `addr`, or null when it may.
+   *
+   * A gang holds one kind of control. Pickup engages only behind a continuous head, and a
+   * gang's head is whichever member resolves first, so a switch ganged with a continuous
+   * control can come to stand in front of it and leave its Pickup never engaging. A member
+   * whose kind cannot be resolved now — one the current plan or model does not carry — and
+   * an armed control that has stopped resolving cannot be compared, and refuse as well.
+   */
+  private gangRefusal(id: string, addr: MidiAddr, all: MidiMapping[]): string | null {
+    const key = addrKey(addr);
+    const members = all.filter((m) => m.control !== id && addrKey(m.addr) === key);
+    if (members.length === 0) return null;
+    const kind = this.resolve(id)?.kind;
+    const kinds = members.map((m) => this.resolve(m.control)?.kind);
+    const m = t().midi;
+    if (kind === undefined || kinds.includes(undefined)) return m.learnUnresolved(this.labelOf(id), addrLabel(addr));
+    if (kinds.some((k) => k !== kind)) return m.learnKindMismatch(this.labelOf(id), addrLabel(addr));
+    return null;
+  }
+
+  /** `list` with every binding on an address whose bindings resolve to both kinds set to
+   *  Absolute, and the addresses that changed. A binding the plan does not resolve now has no
+   *  kind to count. */
+  private absoluteOnMixedGangs(list: MidiMapping[]): { list: MidiMapping[]; addrs: string[] } {
+    const kinds = new Map<string, Set<ControlKind>>();
+    for (const x of list) {
+      const kind = this.resolve(x.control)?.kind;
+      if (kind === undefined) continue;
+      const key = addrKey(x.addr);
+      kinds.set(key, (kinds.get(key) ?? new Set<ControlKind>()).add(kind));
+    }
+    const changed = new Map<string, MidiAddr>();
+    const out = list.map((x): MidiMapping => {
+      const key = addrKey(x.addr);
+      if ((kinds.get(key)?.size ?? 0) < 2 || x.mode === "absolute") return x;
+      changed.set(key, x.addr);
+      return { ...x, mode: "absolute" };
+    });
+    return { list: out, addrs: [...changed.values()].map(addrLabel) };
   }
 
   private savePorts(): void {
@@ -977,17 +1036,23 @@ export class MidiControl {
     // A take-in mode is a property of the physical control, not of one binding. The
     // engine owns pickup state per ADDRESS and only the head ever creates it, so a
     // member set to Pickup behind an Absolute head reads `engaged = false` for ever and
-    // never moves at all — no indication, nothing to retry. (A toggle head is the same
-    // shape: `isHead` is hard-false for toggles.) The window offers the select on every
-    // row including linked ones, so the fix is to make the choice mean what the engine
+    // never moves at all — no indication, nothing to retry. The window offers the select on
+    // every row including linked ones, so the choice is made to mean what the engine
     // assumes it means: one mode for everything on that address.
+    //
+    // A SWITCH head is a different shape, which one mode does not cover: a switch never runs
+    // the pickup engagement at all, so no mode makes a continuous member behind it engage.
+    // That is why a gang holds one kind of control (`gangRefusal`), and why a saved gang that
+    // mixes the two is put back to Absolute here as it is on load, and said.
     //
     // `button` is deliberately NOT ganged: it decides how one binding reads an incoming
     // press, and two controls behind one button may legitimately want edge and state.
     const at = patch.mode !== undefined ? all.find((x) => x.control === control) : undefined;
     const gangKey = at ? addrKey(at.addr) : null;
     const hit = (x: MidiMapping): boolean => x.control === control || (gangKey !== null && addrKey(x.addr) === gangKey);
-    this.applyMappings(all.map((x) => (hit(x) ? { ...x, ...patch } : x)));
+    const { list, addrs } = this.absoluteOnMixedGangs(all.map((x) => (hit(x) ? { ...x, ...patch } : x)));
+    this.applyMappings(list);
+    if (addrs.length > 0) this.say(t().midi.mixedGangAbsolute(addrs.join(", ")));
   }
 }
 

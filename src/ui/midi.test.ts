@@ -667,6 +667,76 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     expect(storedModes()["ch4/level"]).toBe("absolute");
   });
 
+  // A gang holds one kind of control: a switch at its head never runs the pickup engagement,
+  // so a continuous member behind it in Pickup would never move. Refused in either order,
+  // and said, since the control simply stays unassigned otherwise.
+  it.each([
+    ["a continuous control onto a switch", "ch1/mute", "ch2/level", "CH 2 · Level"],
+    ["a switch onto a continuous control", "ch1/level", "ch2/mute", "CH 2 · MUTE"],
+  ])("refuses learning %s, and says so", async (_label, first, second, secondLabel) => {
+    const { control, hooks } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await learnOnto(control, first, 20);
+    expect(control.isMapped(first)).toBe(true);
+    await learnOnto(control, second, 20);
+    expect(control.isMapped(second)).toBe(false);
+    expect(control.armedId()).toBeNull();
+    expect(Object.keys(storedModes())).toEqual([first]);
+    expect(vi.mocked(hooks.onStatus).mock.calls.at(-1)?.[0]).toBe(
+      t().midi.learnKindMismatch(secondLabel, "CH 1 CC 20"),
+    );
+  });
+
+  // A member the current plan cannot resolve has no kind to compare, so the learn is refused
+  // rather than guessed at.
+  it("refuses learning onto an address whose binding the plan does not carry", async () => {
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: {
+          URX44V: [{ control: "gone/level", addr: { type: "cc", channel: 0, controller: 20 }, mode: "absolute" }],
+        },
+      }),
+    );
+    const { control, hooks } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await learnOnto(control, "ch2/level", 20);
+    expect(control.isMapped("ch2/level")).toBe(false);
+    expect(Object.keys(storedModes())).toEqual(["gone/level"]);
+    expect(vi.mocked(hooks.onStatus).mock.calls.at(-1)?.[0]).toMatch(/^Not assigned: CH 2 · Level cannot be compared/);
+  });
+
+  // A gang that mixes the two kinds was savable before the refusal above existed. On load it is
+  // put back to Absolute — the one mode a continuous member can work in there — and said.
+  it("sets a saved gang mixing a switch and a continuous control to Absolute, and says so", async () => {
+    const cc7 = { type: "cc", channel: 0, controller: 7 };
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: {
+          URX44V: [
+            { control: "ch1/mute", addr: cc7, mode: "pickup" },
+            { control: "ch2/level", addr: cc7, mode: "pickup" },
+            { control: "ch3/level", addr: { type: "cc", channel: 0, controller: 9 }, mode: "pickup" },
+          ],
+        },
+      }),
+    );
+    const { control, hooks } = install();
+    expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.mixedGangAbsolute("CH 1 CC 7"));
+    expect(storedModes()).toEqual({ "ch1/mute": "absolute", "ch2/level": "absolute", "ch3/level": "pickup" });
+    await attached();
+    dispatch({ type: "ready" });
+    // …and a Pickup chosen for it in the window is put back the same way.
+    vi.mocked(hooks.onStatus).mockClear();
+    dispatch({ type: "mode", control: "ch2/level", mode: "pickup" });
+    expect(storedModes()["ch2/level"]).toBe("absolute");
+    expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.mixedGangAbsolute("CH 1 CC 7"));
+    void control;
+  });
+
   // Read before the control's own binding is dropped: re-learning the one control an address
   // carries keeps the mode that address was given.
   it("keeps the take-in mode when the only control on an address is learned onto it again", async () => {

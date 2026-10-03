@@ -267,6 +267,17 @@ export const en = {
       ),
     },
     bound: (control: string, addr: string): string => `Assigned ${addr} to ${control}`,
+    // A learn refused because a gang holds one kind of control: a switch and a continuous
+    // control behind one physical control leave the continuous one's Pickup unable to engage.
+    learnKindMismatch: (control: string, addr: string): string =>
+      `Not assigned: ${addr} already drives a different kind of control than ${control} — a switch and a continuous control cannot share one MIDI control`,
+    // …and one refused because what the address already drives is not in the current plan
+    // (or the armed control has stopped being in it), so the two kinds cannot be compared.
+    learnUnresolved: (control: string, addr: string): string =>
+      `Not assigned: ${control} cannot be compared with what ${addr} already drives — not all of it is in the current plan`,
+    // Saved gangs that mixed the two kinds, put back to Absolute when they were read.
+    mixedGangAbsolute: (addrs: string): string =>
+      `Take-in mode set to Absolute on ${addrs}: switches and continuous controls share it, and Pickup does not engage behind a switch`,
     windowError: (message: string): string => `Could not open the MIDI control window: ${message}`,
     inputError: (message: string): string => `MIDI input error: ${message}`,
     outputError: (message: string): string => `MIDI output error: ${message}`,

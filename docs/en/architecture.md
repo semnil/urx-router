@@ -1606,7 +1606,12 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   after a 500 ms quiet gap. One binding per console control (a new binding replaces the control's previous
   one), but a physical control may drive several controls: learning it to more than one gangs them — one
   message moves all of them — and the first-learned owns that address' feedback (the assignment list tags the
-  later rows "Linked"). A control on a hung node (a ducker, which sits under its stereo channel and is labeled
+  later rows "Linked"). A gang holds one kind of control: Pickup engages only behind a continuous head, and a
+  switch ganged with a continuous control can come to head it, so a learn that would put a switch and a
+  continuous control on one MIDI control is refused with the reason on the status line — as is a learn onto
+  one whose bindings include a control the current plan or model does not carry, whose kind cannot be
+  compared. A saved gang that mixes the two kinds is set to Absolute when the mappings load, and a Pickup
+  chosen for it in the window is put back the same way; both say so on the status line. A control on a hung node (a ducker, which sits under its stereo channel and is labeled
   only "Ducker") is named by its parent channel in the list, so the binding reads e.g. `CH 5/6 · DUCKER`.
   Replacing the plan or model (a model switch, a plan load) cancels an in-flight
   learn, dropping the armed control instead of committing it under the new model's mapping key.

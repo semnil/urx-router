@@ -1056,8 +1056,15 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
   const inv = inventoryOf("midiWindow");
   const mappings = everyControlMapping();
   // Two mappings on one address: the second is a gang member, which is the only
-  // state that prints the Linked marker and its explanation.
+  // state that prints the Linked marker and its explanation. The two are a fader and
+  // a switch saved in Pickup, which the load puts back to Absolute and says so on the
+  // window's status line — the only state that prints that line.
+  expect([mappings[0].control, mappings[1].control]).toEqual(["ch1/level", "ch1/mute"]);
+  mappings[0] = { ...mappings[0], mode: "pickup" };
   mappings.push({ ...mappings[0], control: mappings[1].control });
+  // A binding no control of this model answers to, on an address of its own: a learn onto
+  // it cannot be checked against it, which is the only state that prints that refusal.
+  mappings.push({ control: "gone/level", addr: { type: "cc", channel: 14, controller: 0 }, mode: "absolute" });
 
   await page.context().addInitScript((list) => {
     localStorage.setItem("urx-lang", "en");
@@ -1146,6 +1153,7 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
   await win.goto("/midi.html");
   await expect(win.locator(".mw-title")).toHaveText("MIDI CONTROL");
   await expect(win.locator(".mw-list tr").first()).toBeVisible();
+  await expect(win.locator(".mw-status")).toContainText("Take-in mode set to Absolute on CH 1 CC 0");
   await inv.take(win, "#midi-window");
 
   // Learn on with nothing armed, then armed at a control: three hints in all,
@@ -1162,11 +1170,35 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
   await expect(win.locator(".mw-hint")).toContainText("Move a MIDI control");
   await inv.take(win, "#midi-window");
   // The binding lands, and its confirmation is mirrored onto the window's status
-  // line — the only place that message is ever printed here.
-  await page.evaluate(() => {
-    window.__midiTest.inChannel!.onmessage([{ bytes: [0xb0, 100, 64] }, { bytes: [0xb0, 100, 65] }]);
-  });
+  // line — the only place that message is ever printed here. On channel 16, which no
+  // seeded binding uses: the address is a new one rather than a gang to join.
+  const fader = page.locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) }).locator(".con-fader");
+  const move = (bytes: number[][]) =>
+    page.evaluate((list) => window.__midiTest.inChannel!.onmessage(list.map((b) => ({ bytes: b }))), bytes);
+  await move([
+    [0xbf, 100, 64],
+    [0xbf, 100, 65],
+  ]);
   await expect(win.locator(".mw-status")).toContainText("Assigned");
+  await inv.take(win, "#midi-window");
+  // A learn the gang rule refuses: CH 1 CC 100 drives a switch (a seeded binding), and the
+  // fader is continuous.
+  await fader.click();
+  await expect(win.locator(".mw-hint")).toContainText("Move a MIDI control");
+  await move([
+    [0xb0, 100, 64],
+    [0xb0, 100, 65],
+  ]);
+  await expect(win.locator(".mw-status")).toContainText("Not assigned: CH 1 CC 100");
+  await inv.take(win, "#midi-window");
+  // …and one onto the binding this model does not carry.
+  await fader.click();
+  await expect(win.locator(".mw-hint")).toContainText("Move a MIDI control");
+  await move([
+    [0xbe, 0, 64],
+    [0xbe, 0, 65],
+  ]);
+  await expect(win.locator(".mw-status")).toContainText("cannot be compared");
   await inv.take(win, "#midi-window");
 
   // The empty list, whose own line replaces the table. The window is a view — the
