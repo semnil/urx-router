@@ -258,6 +258,7 @@ single source of truth. This table states what each case measures.
 | `overtake-direct-scoped-coalesce-boundary` | console | Whether a reconcile resolving inside the coalesce upgrades an unrelated direct reflect |
 | `overtake-drag-flush-backpressure` | console | A realistic gesture on a realistic link, and the convergence latency an operator perceives |
 | `overtake-refetch-reads-before-the-write-settles` | tuning | The one window the fake had no state for: a write the unit accepted and cannot yet report. `t1c-refetch-stale.spec.ts` |
+| `overtake-held-repaint-vs-the-next-gesture` | inspector | A device change the inspector holds while a select keeps the focus, released by the operator's next click, Tab or tap: whether that gesture still lands — its write sent, its focus on a control the rebuild kept. `t1e-held-repaint.spec.ts` |
 
 ### T2 shape-change — params that reshape the writable address set
 
@@ -745,12 +746,15 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
-**The current array.** `[44, 48, 87]` is derived from the race run of the 179-case corpus
-(2026-09-29), which timed 172 of them and left the 7 declared skips at zero. Measured against that
-run's durations, under the two-worker model, its three shards run 284 / 305 / 305 s, against 286 s for
-a division with no contiguity constraint at all, and the runner reproduced the plan case for case. The
-point of re-deriving is not that remaining gap but that the cut is a duration reading again rather than
-the residue of an edit, since nothing reports an array whose durations have moved.
+**The current array.** `[48, 48, 87]` is the array derived from the race run of the 179-case corpus
+(2026-09-29), `[44, 48, 87]`, with the four cases of `t1e-held-repaint.spec.ts` — collected inside its
+first shard — added to that shard, so every cut falls on the case it fell on in that run. That run timed
+172 of its cases and left the 7 declared skips at zero. Measured against its durations, under the
+two-worker model, its three shards ran 284 / 305 / 305 s, against 286 s for a division with no contiguity
+constraint at all, and the runner reproduced the plan case for case. The four added cases are in no
+reading: the first shard's cut is the residue of that edit. The point of re-deriving is not the remaining
+gap but that the cut is a duration reading again, since nothing reports an array whose durations have
+moved.
 
 A log assembled from two runs is the case none of that reaches on its own: where the halves overlap, a
 case timed twice with no retry between them gives it away, but halves that do not overlap cover the
@@ -902,6 +906,14 @@ agreement, zero findings.
   — and with it the three stages leave in order: `135:0:0=1793`, `689:0:6=-990`, `134:0:0=1`. The case asserts
   on the writes rather than on the screen, because at 192 kHz every option is rate-locked and the inspector row
   stops being a select; that the effect is still the plan's is read from the screen once the rate comes back
+
+- **A device change held behind a focused select was released inside the next gesture — fixed.** Choosing
+  Compander-H on CH 1 leaves its select focused, a device-side change to CH 1's HPF frequency is then held, and a
+  press on the bypass OFF button ends the hold with its `focusout`. The rebuild ran inside that `focusout`, so the
+  button the press began on was gone by the release: no click was dispatched and nothing was written (Chromium and
+  WebKit). A Tab from the select left the focus on the body (Chromium), and a tap lost its click the same way
+  (Chromium and WebKit). Measured 2026-10-03 at `39ae84ea`, and the click in Chromium on main at `9b808411`; §15
+  below carries the fix
 
 **T2 — address-set shape**
 
@@ -1486,6 +1498,29 @@ and the gesture ends there; in the second the drag writes to the end, over the r
 and the read after the release takes what the unit then holds. In both, the screen ends on the unit's
 value, which the cases assert with the recall taken into the fake's state at the instant it is
 announced, so a later write lands on it as it does on the unit.
+
+### 15. Running a held inspector rebuild after the gesture that releases it (`inspector.ts` / `dom.ts`)
+
+The inspector's gate holds a rebuild while a select in the panel is focused, and the `focusout` that ends that
+hold ran the held rebuild at once. The `focusout` fires partway through the gesture that moves the focus, so the
+rebuild replaced the control that gesture was going to: a mouse press on the bypass OFF button lost its click, a
+Tab from the select lost its focus and a tap lost its click (the T1 finding above).
+
+The fix: the `focusout` runs the release in the next task, once the focus has landed, and a press that began inside
+the panel is a fourth thing the gate holds for — from its `pointerdown` until its click has reached the target's own
+handlers, or, for a press that produces no click in the panel, until the task after the next pointer release, or the
+window coming back from a release it never heard. A press on a `<select>` is left to the picker's own hold. The press
+does not wait for the app-wide count of pointers down that `dom.ts` keeps for the inert holds to reach zero: the
+ordinary tier's `selectWire` dispatches a `pointerdown` no release follows. Measured 2026-10-03: with the hold released
+on that count, four ordinary-tier cases failed (two in `directout.spec.ts`, one in `midi.spec.ts`, one in
+`inventory.spec.ts`); in the first `directout.spec.ts` case the `pointerdown` was still counted when the panel stopped
+rebuilding, and a window `focus` dispatched before the press, which clears the count, made it pass. Released on any
+release, the same four pass, in a run of those three spec files whole. `overtake-held-repaint-vs-the-next-gesture` drives the click pair (a
+device change held, and a control run with none) in Chromium and WebKit, and the Tab and the tap in Chromium, and
+asserts the one bypass write and the device's HPF value on screen. Measured 2026-10-03 at `39ae84ea`: with the gate
+change reverted, the click pair, the Tab and the tap fail; with the node-param take-back of `74c4b97e` reverted as
+well, the control run passes and the other cases fail; with only the next-task release reverted, the Tab and the tap
+fail in Chromium; with only the press hold removed, the click pair fails in WebKit.
 
 ## What the harness itself got wrong
 

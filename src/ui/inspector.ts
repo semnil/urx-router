@@ -246,6 +246,7 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
 export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean; reset: () => void } {
   let composing = false;
   let pending = false;
+  let pressing = false;
   // Runs the held rebuild once the gate is no longer busy — asked on the event that
   // ENDS the busy state, by which point it has already ended. A composition clears its
   // own flag here.
@@ -262,7 +263,7 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // launcher appears, which between them are the whole route to the tuning screen.
   const flush = (pickerClosed = false): void => {
     if (!pending) return;
-    if (composing || isHoldingInert() || (!pickerClosed && openPicker())) return;
+    if (composing || pressing || isHoldingInert() || (!pickerClosed && openPicker())) return;
     pending = false;
     rebuild();
   };
@@ -284,12 +285,18 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   const openPicker = (): boolean =>
     document.activeElement instanceof HTMLSelectElement && host.contains(document.activeElement);
   // A row held inert is the third kind of in-flight input a rebuild destroys, and the
-  // worst of the three: replacing it hands the still-held pointer a live control, which
-  // is the state the hold exists to prevent. Same seam, one more reason.
-  const busy = (): boolean => composing || openPicker() || isHoldingInert();
-  // …and the only one of the three with no end event of its own: a hold ends on a pointer
-  // release this host never sees, so nothing here would fire and a rebuild held during it
-  // would wait for whatever the operator happened to do next. `flush` rather than `end`,
+  // worst of them: replacing it hands the still-held pointer a live control, which is the
+  // state the hold exists to prevent. Same seam, one more reason.
+  //
+  // A press that began inside the host is the fourth. The click a press produces is
+  // dispatched at its release, to the element the press began on, so a rebuild between
+  // the two removes that element and the click reaches nothing — a button, a segmented
+  // bar's segment, a section header, the field a press was focusing. Held from the
+  // pointerdown until that click has reached its target's own handlers.
+  const busy = (): boolean => composing || pressing || openPicker() || isHoldingInert();
+  // …and the hold has no end event of its own: a hold ends on a pointer release this host
+  // never sees, so nothing here would fire and a rebuild held during it would wait for
+  // whatever the operator happened to do next. `flush` rather than `end`,
   // which also clears `composing` — a backstop the two input kinds need and this one must
   // not take, since a hold can end while a composition is genuinely still in flight.
   // Each of these is wrapped rather than passed straight in: `flush` and `end` now take
@@ -297,12 +304,49 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // object, so every one of them would read as "the picker closed" and the check the
   // other two paths depend on would be gone.
   onInertHoldsEnd(() => flush());
+  // A press ends at its click, on this host's bubble phase — after the target's own
+  // handlers, so the rebuild the click itself asks for runs there once — and, for a press
+  // that produces no click here (released outside the host, a secondary button, a handler
+  // that stops the click), in the task after the next pointer release anywhere, or when the
+  // window comes back from a release it never heard. The click is dispatched in the same
+  // task as the release producing it, so that task comes after it. Any release ends it
+  // rather than the app-wide count of pointers down reaching zero: a pointer that count
+  // never sees released would hold this panel for as long as the window keeps its focus.
+  // A press on a `<select>` is left out: the picker it opens holds the panel by focus,
+  // and its `change` releases that hold whether or not the page hears the press's release.
+  const release = (): void => {
+    if (!pressing) return;
+    pressing = false;
+    flush();
+  };
+  const releaseNextTask = (): void => void setTimeout(release, 0);
+  host.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (e.target instanceof Element && e.target.closest("select")) return;
+      pressing = true;
+    },
+    true,
+  );
+  host.addEventListener("click", release);
+  window.addEventListener("pointerup", releaseNextTask, true);
+  window.addEventListener("pointercancel", releaseNextTask, true);
+  window.addEventListener("focus", release);
   host.addEventListener("compositionstart", () => {
     composing = true;
   });
   host.addEventListener("compositionend", () => end());
   host.addEventListener("change", () => end(true));
-  host.addEventListener("focusout", () => end());
+  // A focus move releases the hold in the NEXT task rather than inside the focusout. The
+  // focusout fires partway through the gesture that moves the focus — a Tab before the
+  // focus lands on the next control, a click or a tap before the click event — and a
+  // rebuild there removes the control the gesture is going to: the Tab's focus lands on
+  // nothing, and the click on nothing. One task later the focus has landed, which is what
+  // the rebuild carries across, and a pointer press still down holds it as above.
+  host.addEventListener("focusout", () => {
+    composing = false;
+    setTimeout(() => flush(), 0);
+  });
   return {
     held: () => {
       if (!busy()) return false;
@@ -318,7 +362,8 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
     // the caller rebuilds without asking, which removes the composing field, and the end
     // event for a composition whose field is gone may never arrive. Left set, `composing`
     // would latch for the rest of the session and the panel would stop updating at all —
-    // the failure this file's header names.
+    // the failure this file's header names. A press stays held: the caller's rebuild does
+    // not end it, and its own release does.
     reset: () => {
       composing = false;
       pending = false;
