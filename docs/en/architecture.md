@@ -3334,6 +3334,15 @@ an export) as rail-colored chips; clicking a chip restores that one, and "Show a
   resurrect what was just undone ([below](#undo--redo)).
 - The bulk "hide" and "show all" re-fit the diagram to reclaim space; while the shelf is open `fitView`
   frames the content above it, and a single restored node is parked at the viewport center.
+- **Show all restacks a returning node that lands on another one** (`restackReturning`). Arrange packs
+  a column over the nodes on the board, so a shelved node comes back to a row that has since been given
+  to another node, and a member snapped beside its STEREO partner lands on whatever Arrange put below
+  that partner. Such a node moves to the foot of its column — below every free-standing node standing
+  across that column, advanced by each one's `rowsFor`, the step Arrange takes — together with its
+  linked partner when it has one on the board (the pair keeps its slot, so a later `alignLinkedPairs`
+  leaves it there). "Lands on" is an overlap of more than the sub-pixel tolerance `inPairSlot` uses,
+  and only a node that came back from the shelf is asked: a unit whose returning nodes stand clear stays
+  where it is, and a Show all with nothing to restack writes no position.
 
 ## Hung nodes (ducker, microSD Rec slots)
 

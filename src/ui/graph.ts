@@ -2669,10 +2669,68 @@ export class Graph {
       this.snapToLinkedPartner(id);
     }
     this.alignLinkedPairs();
+    this.restackReturning(returning);
     this.render();
     this.fitView();
     this.cb.onChange();
     this.cb.onStatus(t().status.shownAll);
+  }
+
+  /** Move each returning unit that lands on another node to the foot of its column.
+   *
+   *  Arrange packs a column over the nodes on the board, so a shelved node comes back to a row
+   *  that has since been given to another one, and a member snapped beside its STEREO partner
+   *  lands on whatever Arrange put below that partner. A unit is a returning free-standing node
+   *  with its linked partner on the board, whether that partner returned too or is the one it
+   *  was snapped to; its hung children come with it. A unit moves when a node of it that came
+   *  back from the shelf stands on a node outside it; one whose returning nodes stand clear
+   *  stays where it is, so a Show all with nothing to restack writes no position. */
+  private restackReturning(returning: ReadonlySet<string>): void {
+    const placed = new Set<string>();
+    for (const node of this.model.nodes) {
+      if (!returning.has(node.id) || node.attachTo || placed.has(node.id)) continue;
+      const partner = this.linkedPartnerOnBoard(node.id);
+      const members = (partner ? [node.id, partner] : [node.id]).sort(
+        (a, b) => defaultLayoutPos(this.nodeById.get(a)!).y - defaultLayoutPos(this.nodeById.get(b)!).y,
+      );
+      for (const id of members) placed.add(id);
+      const unit = new Set(members.flatMap((id) => [id, ...this.attachedDescendants(id)]));
+      const others = this.model.nodes.filter((n) => !unit.has(n.id) && !this.isHidden(n.id)).map((n) => n.id);
+      const back = [...unit].filter((id) => returning.has(id) && !this.isHidden(id));
+      const lands = back.some((id) => others.some((o) => this.boxesMeet(this.boxOf([id])!, this.boxOf([o])!)));
+      if (!lands) continue;
+      const col = this.nodeById.get(members[0])!.pos.col;
+      const x = MARGIN + col * COL_GAP;
+      let y = this.columnFoot(x, unit);
+      for (const id of members) {
+        this.plan.positions[id] = { x, y };
+        y += this.rowsFor(id) * ROW_GAP;
+      }
+    }
+  }
+
+  /** Where the next free row starts below every free-standing node standing across the
+   *  column at `x`, outside `skip`: each node's own row plus the rows Arrange advances past it
+   *  for its note and hung children. */
+  private columnFoot(x: number, skip: ReadonlySet<string>): number {
+    let foot = MARGIN;
+    for (const node of this.model.nodes) {
+      if (node.attachTo || skip.has(node.id) || this.isHidden(node.id)) continue;
+      const p = this.posOf(node.id);
+      if (p.x >= x + NODE_W - ALIGN_SLOP || x >= p.x + NODE_W - ALIGN_SLOP) continue;
+      foot = Math.max(foot, p.y + this.rowsFor(node.id) * ROW_GAP);
+    }
+    return foot;
+  }
+
+  /** Whether two drawn boxes overlap by more than float drift. */
+  private boxesMeet(a: { x: number; y: number; w: number; h: number }, b: typeof a): boolean {
+    return (
+      a.x < b.x + b.w - ALIGN_SLOP &&
+      b.x < a.x + a.w - ALIGN_SLOP &&
+      a.y < b.y + b.h - ALIGN_SLOP &&
+      b.y < a.y + a.h - ALIGN_SLOP
+    );
   }
 
   private commitHidden(): void {

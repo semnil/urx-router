@@ -469,13 +469,16 @@ describe("hide and show", () => {
   // A restored member of a STEREO-linked pair lands beside its partner rather than
   // under the viewport: the tie is drawn the moment both are on the board, so parking
   // it wherever the operator happens to be looking opens the pair stretched.
-  const linkedPair = (kept: string): GraphOptions => ({
+  const linkedPair = (kept: string, at = { x: 500, y: 300 }): GraphOptions => ({
     seed: (plan) => {
       plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
       plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
-      plan.positions[kept] = { x: 500, y: 300 };
+      plan.positions[kept] = at;
     },
   });
+  // Right of the last column, where a pair stands on no other node: x = 500 lies across the
+  // bus column, and Show all moves a returning member that lands on a node there.
+  const CLEAR = { x: 1400, y: 300 };
 
   it("lands a restored STEREO partner beside the primary already on the board", () => {
     fx = graphFixture(linkedPair("ch1"));
@@ -501,13 +504,13 @@ describe("hide and show", () => {
   // when it is the PRIMARY, where a primary-keeping sweep would drag the visible partner
   // to a coordinate only the shelved node was carrying.
   it("moves the member Show all brought back, not the one already on the board", () => {
-    fx = graphFixture(linkedPair("ch2"));
+    fx = graphFixture(linkedPair("ch2", CLEAR));
     fx.plan.positions["ch1"] = { x: 40, y: 40 }; // stale: where ch1 sat before it was shelved
     fx.graph.hideNode("ch1");
     fx.graph.showAll();
-    expect(fx.plan.positions["ch2"]).toEqual({ x: 500, y: 300 });
-    expect(fx.plan.positions["ch1"]!.x).toBe(500);
-    expect(fx.plan.positions["ch1"]!.y).toBeLessThan(300);
+    expect(fx.plan.positions["ch2"]).toEqual(CLEAR);
+    expect(fx.plan.positions["ch1"]!.x).toBe(CLEAR.x);
+    expect(fx.plan.positions["ch1"]!.y).toBeLessThan(CLEAR.y);
   });
 
   // A node placed beside its partner goes wherever that partner is, and the chip's own status
@@ -650,14 +653,86 @@ describe("hide and show", () => {
 
   // Show all can bring several members back at once, so it closes the gap the way a
   // load does — keeping the primary — rather than moving whichever node arrived.
+  describe("Show all after Arrange", () => {
+    type Geometry = {
+      posOf: (id: string) => { x: number; y: number };
+      nodeHeight: (id: string) => number;
+      isHidden: (id: string) => boolean;
+    };
+    // Every pair of drawn nodes whose boxes overlap by more than float drift.
+    const collisions = (modelId: ModelId = "URX44V"): string[] => {
+      const g = fx.graph as unknown as Geometry;
+      const ids = getModel(modelId)
+        .nodes.map((n) => n.id)
+        .filter((id) => !g.isHidden(id));
+      const out: string[] = [];
+      for (const [i, a] of ids.entries())
+        for (const b of ids.slice(i + 1)) {
+          const pa = g.posOf(a);
+          const pb = g.posOf(b);
+          const meet =
+            pa.x < pb.x + 184 - 0.01 &&
+            pb.x < pa.x + 184 - 0.01 &&
+            pa.y < pb.y + g.nodeHeight(b) - 0.01 &&
+            pb.y < pa.y + g.nodeHeight(a) - 0.01;
+          if (meet) out.push(`${a} x ${b}`);
+        }
+      return out;
+    };
+
+    it("moves a node brought back onto an arranged one to the foot of its column", () => {
+      fx = graphFixture();
+      fx.graph.hideNode("ch2");
+      fx.graph.autoLayout();
+      fx.graph.showAll();
+      expect(collisions()).toEqual([]);
+      const g = fx.graph as unknown as Geometry;
+      const channels = getModel("URX44V").nodes.filter((n) => n.pos.col === 1 && !n.attachTo && n.id !== "ch2");
+      expect(g.posOf("ch2").x).toBe(g.posOf("ch1").x);
+      expect(channels.every((n) => g.posOf(n.id).y < g.posOf("ch2").y)).toBe(true);
+    });
+
+    it.each(["URX44V", "URX44", "URX22"] as ModelId[])("leaves no node on another after Hide unused (%s)", (m) => {
+      fx = graphFixture({ modelId: m });
+      fx.graph.hideUnused();
+      fx.graph.autoLayout();
+      fx.graph.showAll();
+      expect(collisions(m)).toEqual([]);
+    });
+
+    // A member snapped beside its STEREO partner lands on what Arrange put below that partner;
+    // the pair goes to the foot of the column together and stays in its slot.
+    it("moves a linked pair together when the member snapped into it lands on a node", () => {
+      fx = graphFixture({ seed: (plan) => void (plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, stereoLink: true }) });
+      fx.graph.hideNode("ch2");
+      fx.graph.hideNode("ch4");
+      fx.graph.autoLayout();
+      fx.graph.showAll();
+      expect(collisions()).toEqual([]);
+      const g = fx.graph as unknown as Geometry;
+      expect(g.posOf("ch4").x).toBe(g.posOf("ch3").x);
+      expect(g.posOf("ch4").y).toBeGreaterThan(g.posOf("ch3").y);
+      expect(fx.graph.alignLinkedPairs(), "already in the pair's slot").toBe(false);
+    });
+
+    // A position carried with float error touches its neighbour by ~1e-13 px; that is not
+    // landing on it, and the node keeps the place it was given.
+    it("leaves a node that meets its neighbour only by float drift where it is", () => {
+      fx = graphFixture({ seed: (plan) => void (plan.positions["ch2"] = { x: 296, y: 40 + 44 - 1e-13 }) });
+      fx.graph.hideNode("ch2");
+      fx.graph.showAll();
+      expect(fx.plan.positions["ch2"]).toEqual({ x: 296, y: 40 + 44 - 1e-13 });
+    });
+  });
+
   it("closes a linked pair's gap when Show all brings its member back", () => {
-    fx = graphFixture(linkedPair("ch1"));
+    fx = graphFixture(linkedPair("ch1", CLEAR));
     fx.plan.positions["ch2"] = { x: 900, y: 620 };
     fx.graph.hideNode("ch2");
     fx.graph.showAll();
-    expect(fx.plan.positions["ch1"]).toEqual({ x: 500, y: 300 });
-    expect(fx.plan.positions["ch2"]!.x).toBe(500);
-    expect(fx.plan.positions["ch2"]!.y).toBeGreaterThan(300);
+    expect(fx.plan.positions["ch1"]).toEqual(CLEAR);
+    expect(fx.plan.positions["ch2"]!.x).toBe(CLEAR.x);
+    expect(fx.plan.positions["ch2"]!.y).toBeGreaterThan(CLEAR.y);
   });
 
   // The negative control: without the link there is no tie to keep short, so the node does
