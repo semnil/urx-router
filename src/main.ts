@@ -1483,12 +1483,28 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   if (status) setStatus(status);
 }
 
+// A Live-sync start from live.begin() until the session counts as up, and the first
+// failure reported inside that window. The session is not up there, so nothing is torn
+// down for it yet; the start throws the recorded cause instead of declaring the session up.
+let liveStarting = false;
+let liveStartFailure: string | null = null;
+
 // A live/follow runtime error: stop sync, drop the connection, and surface the
 // cause as a dialog (a mirror that did not complete). Several errors can arrive in
 // one teardown (live + follow); deactivateLive clears liveSessionUp synchronously,
 // so the second and later calls return here before re-showing the dialog.
 function stopLiveOnError(message: string): void {
-  if (!liveSessionUp) return;
+  if (!liveSessionUp) {
+    // Inside a start's window: recorded for the start to report, and the live half ended
+    // now, so a flush waiting behind a failed read stops at its generation check rather
+    // than sending the write the read was in front of. Outside one (a release still
+    // running after its session) a late failure has nobody to report to.
+    if (liveStarting && liveStartFailure === null) {
+      liveStartFailure = message;
+      live?.end();
+    }
+    return;
+  }
   deactivateLive(undefined, "error");
   // The badge asserts something about the device on the other end of a link that
   // just went away, so it goes back to unknown rather than keeping a claim about
@@ -4063,6 +4079,10 @@ if (!DEMO) {
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
         liveAdopted = 0;
+        // From here until the session is declared up, a failure is recorded rather than
+        // dropped (stopLiveOnError).
+        liveStartFailure = null;
+        liveStarting = true;
         // The copy the starting read ran against: without it an edit made during the
         // multi-second read is snapshotted as a value the device was already given.
         live.begin(merged.deviceView);
@@ -4081,6 +4101,10 @@ if (!DEMO) {
         // the app says "Live sync on" over a follow that discards every notify, and
         // nothing restarts it.
         if (follow && !follow.isActive()) throw new Error(t().error.liveFollowStopped);
+        // …and the live half is still sending: a flush that failed in the same window, or a
+        // read in front of a write that failed there, recorded its cause and ended it.
+        if (liveStartFailure !== null || !live.isActive())
+          throw new Error(liveStartFailure ?? t().error.liveSyncStopped);
         // Remember which generation the session holds, so deactivateLive releases
         // exactly this one even when its disconnect lands after a later connect.
         liveEpoch = device.epoch;
@@ -4098,6 +4122,7 @@ if (!DEMO) {
       } catch (err) {
         await failLive(t().status.liveError(errorText(err)));
       } finally {
+        liveStarting = false;
         flow.deviceReadInFlight = false;
         switchRead = null;
         // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).

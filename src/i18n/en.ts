@@ -1306,6 +1306,9 @@ export const en = {
     liveFollowStopped: tr(
       "Device follow stopped while the session was starting, so a change made on the device would not reach the plan. Live sync was not started.",
     ),
+    liveSyncStopped: tr(
+      "Sending edits to the device stopped while the session was starting, so an edit would not reach the device. Live sync was not started.",
+    ),
     followReadHeld: (cause: string, unrunnable: number, source: number): string =>
       [
         cause,

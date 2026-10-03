@@ -2738,10 +2738,14 @@ session counts as started, and the worker replies only once every address is reg
 refused registration ends the attempt rather than starting a session that cannot do its job. A THIRD registration
 can be refused in that window and is not awaited by anything: `live.begin()` runs first, so a structural edit can
 flush while the notify stream is still being registered, and that flush asks the follow layer to re-register. Its
-refusal stops follow and reports through `stopLiveOnError`, which returns without doing anything while the session
-is not yet up — so the session checks that follow is still following immediately before declaring itself started,
-and fails the attempt when it is not. Without it the app reports "Live sync on" over a follow that discards every
-notify for the rest of the session.
+refusal stops follow and reports through `stopLiveOnError`, which tears nothing down while the session is not yet
+up — so the session checks that follow is still following immediately before declaring itself started, and fails
+the attempt when it is not. Without it the app reports "Live sync on" over a follow that discards every notify for
+the rest of the session. The live half is checked the same way. A flush can fail in that window, and so can the
+read a head write parks behind; inside the start's window `stopLiveOnError` records the first such failure and ends
+the live half at once, so a flush waiting behind a failed read stops at its generation check and the head it was
+in front of is never sent. The start then fails with the recorded cause instead of declaring a session whose edits
+would go nowhere.
 
 Everything **outside** the device link keeps a softer rule — salvage what can be salvaged, but never in silence. A
 failed MIDI feedback send drops the engine's sent-cache so the next pass re-sends (a one-off heals; a port that

@@ -3115,6 +3115,97 @@ describe("the live session", () => {
     await invoked(shell, "vd_disconnect", disconnects + 1);
   });
 
+  // The LIVE half of the same window. A flush the operator's edit started inside it fails, and
+  // its report reaches `stopLiveOnError` while the session is not up yet: recorded there and
+  // thrown by the start, rather than dropped with the session declared up over a sync that
+  // has stopped.
+  it("refuses to start a session whose first flush failed on the way up", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    let refuse = false;
+    const table = deviceCommands({
+      "plugin:dialog|message": "Ok",
+      vd_params_subscribe: async () => {
+        if (++calls === 1) await held;
+        return null;
+      },
+    });
+    const set = table.vd_set as (a: Record<string, unknown>) => unknown;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_set: (a: Record<string, unknown>) => {
+          if (refuse) throw new Error("write refused");
+          return set(a);
+        },
+      },
+    }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(calls).toBe(1), { timeout: 25_000 });
+
+    refuse = true;
+    const sets = shell.count("vd_set");
+    selectNode("bus.stereo");
+    const fader = row(t().inspector.level).querySelector<HTMLInputElement>("input[type=range]")!;
+    fader.value = String(Number(fader.value) - 3);
+    fader.dispatchEvent(new Event("input", { bubbles: true }));
+    await invoked(shell, "vd_set", sets + 1);
+    release();
+
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    expect(errors(shell)).toContain(t().status.liveError("write refused"));
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
+  });
+
+  // A head write's park read that fails in the same window: the head it was in front of must
+  // not go out, and the start reports the read's failure.
+  it("sends no effect type behind a park read that failed on the way up", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    let refuse = false;
+    const table = deviceCommands({
+      "plugin:dialog|message": "Ok",
+      vd_params_subscribe: async () => {
+        if (++calls === 1) await held;
+        return null;
+      },
+    });
+    const get = table.vd_get as (a: Record<string, unknown>) => unknown;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_get: (a: Record<string, unknown>) => {
+          if (refuse) throw new Error("read refused");
+          return get(a);
+        },
+      },
+    }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(calls).toBe(1), { timeout: 25_000 });
+
+    refuse = true;
+    const at = shell.invokes.length;
+    const reads = shell.count("vd_get");
+    pressNode("bus.fx1");
+    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+    sel.value = String([...sel.options].map((o) => o.value).find((v) => v !== sel.value));
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    // The park asked the unit, and was refused.
+    await invoked(shell, "vd_get", reads + 1);
+    await new Promise((r) => setTimeout(r, 300));
+    release();
+
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
+    const typeWrites = shell.invokes
+      .slice(at)
+      .filter((cmd, i) => cmd === "vd_set" && shell.args[at + i]?.paramId === PARAMS.FX_EFFECT_TYPE.id);
+    expect(typeWrites).toEqual([]);
+  });
+
   // The undo history survives a reconcile that authored nothing.
   //
   // Pinned HERE rather than only in the race tier because that tier uploads no
