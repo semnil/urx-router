@@ -121,18 +121,34 @@ jobs:
             exit 1
           fi
           echo "version ${prev} -> ${version} (prerelease=${shape})"
-          # An existing tag means the release already happened (a re-run of this
-          # workflow, or a tag pushed by hand). Moving it would repoint a published
-          # release at a different commit, so stop instead.
-          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
-            echo "${tag} already exists — leaving it alone"
+          # A tag already on the remote is never moved: it may be what a published release
+          # points at. One at another commit stops the job. One at this commit is this
+          # release's own tag — pushed by an earlier attempt of this run, or by hand — and
+          # release.yml is dispatched on it unless a release.yml run on that ref exists, so a
+          # re-run after a failed dispatch starts the build the first attempt never started.
+          # A remote that cannot be read stops the job rather than reading as "no tag".
+          # An annotated tag lists twice, and its peeled `^{}` line names the commit.
+          listed=$(git ls-remote --tags origin "refs/tags/${tag}" "refs/tags/${tag}^{}")
+          peeled=$(printf '%s\n' "${listed}" | awk -v ref="refs/tags/${tag}^{}" '$2 == ref { print $1 }')
+          direct=$(printf '%s\n' "${listed}" | awk -v ref="refs/tags/${tag}" '$2 == ref { print $1 }')
+          existing=${peeled:-${direct}}
+          if [[ -z "${existing}" ]]; then
+            # Lightweight, matching what `git tag vX.Y.Z` produces by hand; no committer
+            # identity is needed for one.
+            git tag "${tag}" "${HEAD_SHA}"
+            git push origin "refs/tags/${tag}"
+            echo "tagged ${tag} at ${HEAD_SHA}"
+          elif [[ "${existing}" != "${HEAD_SHA}" ]]; then
+            echo "${tag} already exists at ${existing}, not ${HEAD_SHA} — leaving it alone"
             exit 0
+          else
+            runs=$(gh run list --workflow release.yml --branch "${tag}" --json databaseId --jq length)
+            if (( runs > 0 )); then
+              echo "${tag} already names ${HEAD_SHA} and release.yml has run on it — leaving it alone"
+              exit 0
+            fi
+            echo "${tag} already names ${HEAD_SHA} and release.yml has not run on it"
           fi
-          # Lightweight, matching what `git tag vX.Y.Z` produces by hand; no committer
-          # identity is needed for one.
-          git tag "${tag}" "${HEAD_SHA}"
-          git push origin "refs/tags/${tag}"
-          echo "tagged ${tag} at ${HEAD_SHA}"
           gh workflow run release.yml --ref "${tag}"
           echo "dispatched release.yml on ${tag}"
           # pages.yml is NOT dispatched here. It runs on `release: published`, so the
