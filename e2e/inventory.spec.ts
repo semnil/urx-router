@@ -2,7 +2,7 @@ import { test, expect } from "./fixtures";
 import { allItems, composedKey, Inventory, itemsFor, itemsUnder, type ComposedEntry, type Item } from "./inventory";
 import { pickBand } from "./dyn-helpers";
 import { en } from "../src/i18n/en";
-import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import { LIVE_COMMANDS, answerTimingOf, installAnswerQueue, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
 import { planParam, planParamZ } from "./plan-param";
 import { listControls } from "../src/core/midi/controls";
 import { getModel } from "../src/models";
@@ -852,24 +852,30 @@ test("the Preferences modal shows every section in both the browser and the desk
     // The outcome is read per call and the answer is HELD until the test releases
     // it, so the in-flight wording is on screen for exactly as long as the test
     // needs rather than for a guessed number of milliseconds.
+    // Its own answers settle through the stub's queue, as the stub's do.
     const w = window as unknown as { __update: string; __releaseUpdate: () => void };
     internals.invoke = (cmd: string, ...rest: unknown[]) => {
       if (cmd === "plugin:updater|check")
-        return new Promise((resolve, reject) => {
-          w.__releaseUpdate = () => {
-            if (w.__update === "none") resolve(null);
-            else if (w.__update === "fail") reject(new Error("network unreachable"));
-            else resolve({ version: "9.9.9", currentVersion: "1.0.0" });
-          };
-        });
+        return window.__urxAnswerLater(
+          new Promise((resolve, reject) => {
+            w.__releaseUpdate = () => {
+              if (w.__update === "none") resolve(null);
+              else if (w.__update === "fail") reject(new Error("network unreachable"));
+              else resolve({ version: "9.9.9", currentVersion: "1.0.0" });
+            };
+          }),
+        );
       // Declining the offered update keeps the modal open on the version note.
-      if (cmd === "plugin:dialog|confirm") return Promise.resolve(false);
-      if (cmd === "set_keep_awake") return Promise.reject(new Error("PowerCreateRequest failed"));
+      if (cmd === "plugin:dialog|confirm") return window.__urxAnswerLater(Promise.resolve(false));
+      if (cmd === "set_keep_awake")
+        return window.__urxAnswerLater(Promise.reject(new Error("PowerCreateRequest failed")));
       return invoke(cmd, ...rest);
     };
   });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  const ownAnswers = ["plugin:dialog|confirm", "set_keep_awake", "experimental_enabled"];
+  expect(await answerTimingOf(page, ownAnswers)).toEqual({ inSendingTask: [], order: ownAnswers });
   await page.click("#btn-prefs");
   await expect(page.locator("#prefs-modal")).toBeVisible();
   await inv.take(page, "#prefs-modal");
@@ -1096,6 +1102,7 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
   // it cannot be checked against it, which is the only state that prints that refusal.
   mappings.push({ control: "gone/level", addr: { type: "cc", channel: 14, controller: 0 }, mode: "absolute" });
 
+  await page.context().addInitScript(installAnswerQueue);
   await page.context().addInitScript((list) => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-theme", "dark");
@@ -1124,9 +1131,9 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
     class Channel {
       onmessage: (data: unknown) => void = () => {};
     }
-    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+    const internals = {
       Channel,
-      invoke: (cmd: string, args: Record<string, unknown>) => {
+      invoke: (cmd: string, args: Record<string, unknown>): Promise<unknown> => {
         switch (cmd) {
           case "experimental_enabled":
           case "self_test_requested":
@@ -1173,10 +1180,17 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
         }
       },
     };
+    // The switch above records and answers a command when it is sent; the answer itself
+    // settles through the queue the shared stubs settle through.
+    const answer = internals.invoke;
+    internals.invoke = (cmd, args) => window.__urxAnswerLater(answer(cmd, args));
+    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
   }, mappings);
 
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  const cmds = ["midi_list_inputs", "stub_unknown_command", "midi_window_open"];
+  expect(await answerTimingOf(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
   await page.click("#btn-device");
   await page.click("#btn-midi");
   const win = await page.context().newPage();
@@ -1187,7 +1201,9 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
   await inv.take(win, "#midi-window");
 
   // Learn on with nothing armed, then armed at a control: three hints in all,
-  // and only one of them is on screen at a time.
+  // and only one of them is on screen at a time. The port is chosen once the refresh
+  // that lists it has been answered.
+  await expect(win.locator(".mw-in option")).toHaveCount(2); // None + Stub In
   await chooseOption(win.locator(".mw-in"), "Stub In");
   await win.locator(".mw-learnbtn").click();
   await expect(win.locator(".mw-learnbtn")).toHaveAttribute("aria-pressed", "true");

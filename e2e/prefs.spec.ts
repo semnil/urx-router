@@ -1,6 +1,6 @@
 import { test, expect, scrollsByWheel, textContrast } from "./fixtures";
 import type { Page } from "./fixtures";
-import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import { LIVE_COMMANDS, answerTimingOf, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 
 // Preferences modal (toolbar gear). The gear is an independent entry available
@@ -251,10 +251,22 @@ async function recordKeepAwake(page: Page, refuse = false): Promise<void> {
     internals.invoke = (cmd: string, ...rest: unknown[]) => {
       if (cmd !== "set_keep_awake") return (invoke as (...a: unknown[]) => Promise<unknown>)(cmd, ...rest);
       calls.push(Boolean((rest[0] as { on?: boolean })?.on));
-      return deny ? Promise.reject(new Error("PowerCreateRequest failed")) : Promise.resolve(null);
+      // Recorded when it is sent; the answer settles through the stub's queue.
+      return window.__urxAnswerLater(
+        deny ? Promise.reject(new Error("PowerCreateRequest failed")) : Promise.resolve(null),
+      );
     };
   }, refuse);
 }
+
+test("the keep-awake recorder answers on a later task, in the order asked (stubbed Tauri)", async ({ page }) => {
+  await stubTauriBoot(page);
+  await recordKeepAwake(page, true);
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  const cmds = ["set_keep_awake", "experimental_enabled"];
+  expect(await answerTimingOf(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
+});
 
 const keepAwakeCalls = (page: Page): Promise<boolean[]> =>
   page.evaluate(() => (window as unknown as { __urxKeepAwake: boolean[] }).__urxKeepAwake);
