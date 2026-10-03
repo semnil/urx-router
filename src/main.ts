@@ -77,7 +77,7 @@ import {
   REC_POINT_PRE_EQ,
 } from "./core/control/params";
 import { Graph } from "./ui/graph";
-import type { LabelSource, Selection, ThemeName } from "./ui/graph";
+import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
 import { ownsNativeUndo } from "./ui/keys";
@@ -1816,6 +1816,18 @@ const inspectorActions = {
   // these actions, so it cannot be constructed until they exist.
   onOpenDynScreen: (kind: DynKind, id: string) => dynScreen.open(DYN_PROCESSORS[kind], id),
   onClose: () => graph.clearSelection(),
+  connectOrigins: (id: string) => graph.connectOrigins(id),
+  onConnect: (origin: ConnectOrigin, other: string) => graph.connectTo(origin, other),
+  wireDrawn: (from: string, to: string) => graph.wireDrawn(from, to),
+  // The routing row that was pressed goes with the node's panel, so the wire's panel takes
+  // the focus: its first control, the mobile close button aside.
+  onSelectConnection: (from: string, to: string) => {
+    graph.selectConnection(from, to);
+    if (selection?.type !== "conn") return;
+    focusables(inspectorHost)
+      .find((el) => !el.classList.contains("inspector-close"))
+      ?.focus({ preventScroll: true });
+  },
 };
 graph.setTheme(theme);
 graph.setLabelSource(labelSource);
@@ -1961,12 +1973,13 @@ const guarded = (run: () => Promise<void>): (() => void) =>
  *  label is the discriminator (Pan vs Level), taken from the `data-param-label`
  *  paramBlock stamps while building the row rather than searched for again here: this
  *  runs once per candidate control on a path that repeats at ~20 Hz during device
- *  follow. No match on the rebuilt panel = focus is dropped, which is the wanted
- *  outcome. */
+ *  follow. A control whose text changes with the plan — a connect picker's options —
+ *  stamps a `data-focus-key` that stands in for that text. No match on the rebuilt panel =
+ *  focus is dropped, which is the wanted outcome. */
 function inspectorFocusKey(el: HTMLElement): string {
   const label = el.closest<HTMLElement>(".param")?.dataset.paramLabel ?? "";
   const type = el instanceof HTMLInputElement ? el.type : "";
-  return [label, el.tagName, type, el.className, el.textContent?.slice(0, 24) ?? ""].join("|");
+  return [label, el.tagName, type, el.className, el.dataset.focusKey ?? el.textContent?.slice(0, 24) ?? ""].join("|");
 }
 
 /**

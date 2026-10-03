@@ -3765,6 +3765,16 @@ selected node, for as long as the board draws the same plan: measured on macOS's
 the focused group moved focus to `<body>`, and Tab reached `<g tabindex="0">` with the OS keyboard-navigation setting
 at its default (off).
 
+**Wiring from the keyboard goes through the Inspector.** A node's Routing section lists its wires, and each one the
+board draws is a button that selects it as a press on the wire does (`selectConnection`): focus moves into the wire's
+panel, whose delete removes it, and a wire the board does not draw — an end on the shelf, an off send the declutter
+toggle hides — stays a plain row. Each of the node's jacks — its input, its output, a channel's Rec Point tap — gets a
+picker of the ports a drag from that jack would be taken on (`connectOrigins`, which asks the drag's own
+`connectCandidates`), and the choice commits through the drag's own `finishConnect` (`connectTo`), so a source chosen for
+STREAMING replaces the one it holds, and a linked channel brings its partner onto a USB output, as the drag does. The
+picker keeps the focus across the rebuild the new wire causes (`data-focus-key`, which `inspectorFocusKey` in `main.ts`
+reads in place of a control's text).
+
 ## Preferences
 
 The toolbar gear opens the Preferences modal (`ui/prefs.ts`), available in every build. It is the

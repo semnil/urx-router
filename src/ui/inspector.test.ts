@@ -497,6 +497,10 @@ const actions = (): InspectorActions => ({
   onHideNode: vi.fn(),
   onOpenDynScreen: vi.fn(),
   onClose: vi.fn(),
+  connectOrigins: vi.fn(() => []),
+  onConnect: vi.fn(),
+  wireDrawn: vi.fn(() => true),
+  onSelectConnection: vi.fn(),
 });
 
 let panel: HTMLElement;
@@ -1149,6 +1153,54 @@ describe("level stepping from an off-grid value", () => {
     renderInspector(panel, model, plan, connSel(conn.from, conn.to), act);
     key("ArrowDown");
     expect(vi.mocked(act.onUpdateParams).mock.calls.at(-1)?.[2]).toEqual({ level: -16 });
+  });
+});
+
+// The Routing section is the keyboard's way to wire: a drawn wire's row selects it, and each
+// jack the board offers origins for gets a picker of where it can go.
+describe("routing from the keyboard", () => {
+  const routing = (): HTMLDetailsElement => sectionByTitle(t().inspector.routing)!;
+  const picker = (label: string): HTMLSelectElement | null =>
+    [...routing().querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === label)
+      ?.querySelector("select") ?? null;
+
+  it("makes a drawn wire's row a button that selects it, and leaves an undrawn one a row", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const drawn = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    vi.mocked(act.wireDrawn).mockImplementation((from, to) => from === drawn.from && to === drawn.to);
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    const rows = [...routing().querySelectorAll<HTMLElement>(".conn-row")];
+    const buttons = rows.filter((r) => r instanceof HTMLButtonElement);
+    expect(buttons.map((b) => b.textContent)).toEqual(["→ STEREO (MAIN)"]);
+    expect(rows.length).toBeGreaterThan(1);
+    buttons[0].click();
+    expect(act.onSelectConnection).toHaveBeenCalledWith(drawn.from, drawn.to);
+  });
+
+  it("offers each origin's targets by name and connects the one chosen", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const out = { ref: "ch1:out", dir: "out" as const, tap: false, targets: ["out.ducker1:in"] };
+    const tap = { ref: "ch1:out", dir: "out" as const, tap: true, targets: ["out.usbmain_b:in", "out.sdrec.t7:in"] };
+    const into = { ref: "ch1:in", dir: "in" as const, tap: false, targets: [] };
+    vi.mocked(act.connectOrigins).mockReturnValue([into, out, tap]);
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    expect(act.connectOrigins).toHaveBeenCalledWith("ch1");
+    expect(picker(t().inspector.connectSource), "an origin with nowhere to go has no picker").toBeNull();
+    const sel = picker(t().inspector.connectRecPoint)!;
+    expect([...sel.options].map((o) => o.textContent)).toEqual([
+      t().inspector.connectChoose,
+      "USB MAIN OUT B",
+      "Track 13/14",
+    ]);
+    expect(sel.value).toBe("");
+    expect(sel.getAttribute("aria-labelledby")).not.toBeNull();
+    sel.value = "out.usbmain_b:in";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(act.onConnect).toHaveBeenCalledWith(tap, "out.usbmain_b:in");
+    expect(picker(t().inspector.connectOutput)).not.toBeNull();
   });
 });
 

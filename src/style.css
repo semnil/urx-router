@@ -1018,6 +1018,15 @@ input[type="range"]:focus-visible,
   color: var(--text);
 }
 
+/* A drawn wire's row is a button that selects the wire; it keeps the row's look. */
+#inspector button.conn-row {
+  width: 100%;
+  margin-top: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
 .conn-row .dot {
   width: 9px;
   height: 9px;

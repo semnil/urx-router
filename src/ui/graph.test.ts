@@ -566,6 +566,87 @@ describe("keyboard", () => {
   });
 });
 
+// The Inspector's keyboard path to wire, through the drag's own candidates and commit.
+describe("connecting without a drag", () => {
+  const USB_B = "out.usbmain_b:in";
+  const STREAM = "bus.stream:in";
+  const freeUsbB = (plan: Plan): void => {
+    plan.connections = plan.connections.filter((c) => c.to !== USB_B);
+  };
+  const origin = (nodeId: string, dir: "in" | "out", tap = false) =>
+    fx.graph.connectOrigins(nodeId).find((o) => o.dir === dir && o.tap === tap)!;
+  const into = (to: string): string[] => fx.plan.connections.filter((c) => c.to === to).map((c) => c.from);
+
+  it("offers a channel's input, its output and its Rec Point tap, each with its own targets", () => {
+    fx = graphFixture({ seed: freeUsbB });
+    const origins = fx.graph.connectOrigins("ch1");
+    expect(origins.map((o) => [o.ref, o.dir, o.tap])).toEqual([
+      ["ch1:in", "in", false],
+      ["ch1:out", "out", false],
+      ["ch1:out", "out", true],
+    ]);
+    expect(origin("ch1", "out", true).targets).toContain(USB_B);
+    expect(origin("ch1", "out", false).targets).not.toContain(USB_B);
+  });
+
+  // STREAMING never goes without a source, so a drop there replaces its wire: the keyboard
+  // path offers it and commits it the same way, from either end.
+  it("replaces STREAMING's source from the source's side and from STREAMING's", () => {
+    fx = graphFixture();
+    expect(into(STREAM)).toEqual(["bus.stereo:out"]);
+    const fromMix2 = origin("bus.mix2", "out");
+    expect(fromMix2.targets).toContain(STREAM);
+    fx.graph.connectTo(fromMix2, STREAM);
+    expect(into(STREAM)).toEqual(["bus.mix2:out"]);
+    const fromStream = origin("bus.stream", "in");
+    expect(fromStream.targets).toContain("bus.mix1:out");
+    fx.graph.connectTo(fromStream, "bus.mix1:out");
+    expect(into(STREAM)).toEqual(["bus.mix1:out"]);
+    expect(statuses().at(-1)).toBe(t().status.connected);
+  });
+
+  // From an input, a channel offered as a source is reached through the jack the route leaves
+  // from — the Rec Point tap for a USB output — without the operator naming it.
+  it("draws a direct out from the USB output's side through the channel's Rec Point", () => {
+    fx = graphFixture({ seed: freeUsbB });
+    const fromUsb = origin("out.usbmain_b", "in");
+    expect(fromUsb.targets).toContain("ch1:out");
+    fx.graph.connectTo(fromUsb, "ch1:out");
+    expect(into(USB_B)).toEqual(["ch1:out"]);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes nothing when the host refuses the edit", () => {
+    fx = graphFixture({ seed: freeUsbB });
+    fx.cb.mayEdit.mockReturnValue(false);
+    fx.graph.connectTo(origin("ch1", "out", true), USB_B);
+    expect(into(USB_B)).toEqual([]);
+  });
+
+  it("offers nothing from, and nothing onto, a node on the shelf", () => {
+    fx = graphFixture({ seed: freeUsbB });
+    fx.graph.hideNode("out.usbmain_b");
+    expect(origin("ch1", "out", true).targets).not.toContain(USB_B);
+    expect(fx.graph.connectOrigins("out.usbmain_b")).toEqual([]);
+  });
+
+  it("selects a wire the board draws, and leaves one it does not draw unselected", () => {
+    fx = graphFixture();
+    fx.graph.selectConnection("ch1:out", "bus.stereo:in");
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "conn", from: "ch1:out", to: "bus.stereo:in" });
+    fx.graph.hideNode("bus.mix1");
+    expect(fx.graph.wireDrawn("ch1:out", "bus.mix1:in")).toBe(false);
+    fx.cb.onSelect.mockClear();
+    fx.graph.selectConnection("ch1:out", "bus.mix1:in");
+    expect(fx.cb.onSelect).not.toHaveBeenCalled();
+    // An off send the declutter toggle hides is not drawn either.
+    const off = fx.plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix2:in")!;
+    expect(fx.graph.wireDrawn(off.from, off.to)).toBe(true);
+    fx.graph.setHideOffSends(true);
+    expect(fx.graph.wireDrawn(off.from, off.to)).toBe(false);
+  });
+});
+
 describe("hide and show", () => {
   it("shelves a node and gives it a chip", () => {
     fx = graphFixture();

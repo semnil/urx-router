@@ -260,7 +260,9 @@ export const ja: Messages = {
       "ノードをドラッグして配置し、出力ポート (右) から入力ポート (左) へ" +
       "ドラッグして結線します。接続可能なポートは結線中に緑でハイライトされます。" +
       "チャンネルのダイレクト出力・録音は、上辺の Rec Point タップから配線します。" +
-      "ノード右上のペンでノートを追加し、ノートをクリックすると編集できます。",
+      "ノード右上のペンでノートを追加し、ノートをクリックすると編集できます。" +
+      "キーボードでは Tab で盤面に入り、矢印キーでノード間を移動し、Enter で選択します。" +
+      "選択したノードのルーティング欄からポートを結線し、結線を選択できます。",
     type: "種別",
     // 実機の CH SETTING 画面が持つ行。実機は表示言語を日本語にしても英語のままなので訳さない。
     name: "Name",
@@ -282,6 +284,10 @@ export const ja: Messages = {
     inputsFrom: (n: number): string => `接続元から (${n})`,
     outputsTo: (n: number): string => `接続先へ (${n})`,
     routing: "ルーティング",
+    connectSource: "ソースを接続",
+    connectOutput: "出力の接続先",
+    connectRecPoint: "Rec Point の接続先",
+    connectChoose: "選択…",
     connection: "接続",
     from: "元",
     to: "先",

@@ -1,4 +1,6 @@
 import { test, expect, colorToken, type Page } from "./fixtures";
+import { chooseOption } from "./choose-option";
+import { wire } from "./graph-helpers";
 
 // The node graph from the keyboard alone: one node of the board is in the tab order, Enter
 // selects it as a press does, the arrow keys walk the board, and the focused node wears the
@@ -57,4 +59,47 @@ test("a node selected with the pointer is the board's tab stop", async ({ page }
   await node(page, "bus.mix1").click();
   await expect(node(page, "bus.mix1")).toHaveAttribute("tabindex", "0");
   await expect(page.locator('#graph-host g.node[tabindex="0"]')).toHaveCount(1);
+});
+
+// Wiring without a drag: a node's Routing section offers each jack's targets, and choosing
+// one draws the wire through the board's own commit — so STREAMING, which never goes without
+// a source, takes the new one in place of the old. Focus stays on the picker.
+test("the Inspector connects a wire from the keyboard, replacing STREAMING's source", async ({ page }) => {
+  await node(page, "bus.mix2").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#inspector h2").first()).toHaveText("MIX 2");
+  const routing = page.locator("#inspector details.insp-section", {
+    has: page.locator("summary", { hasText: "Routing" }),
+  });
+  await routing.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(routing).toHaveJSProperty("open", true);
+  const picker = routing.locator(".param", { hasText: "Connect the output to" }).locator("select");
+  await picker.focus();
+  await chooseOption(picker, { value: "bus.stream:in" });
+  await expect(wire(page, "bus.mix2:out", "bus.stream:in")).toHaveCount(1);
+  await expect(wire(page, "bus.stereo:out", "bus.stream:in")).toHaveCount(0);
+  await expect(page.locator("#inspector .param", { hasText: "Connect the output to" }).locator("select")).toBeFocused();
+});
+
+// Disconnecting: a drawn wire's Routing row selects it, focus moves into its panel, and the
+// panel's delete removes it.
+test("the Inspector selects and deletes a wire from the keyboard", async ({ page }) => {
+  await node(page, "ch1").focus();
+  await page.keyboard.press("Enter");
+  const routing = page.locator("#inspector details.insp-section", {
+    has: page.locator("summary", { hasText: "Routing" }),
+  });
+  await routing.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  const row = routing.locator("button.conn-row", { hasText: "MIC/LINE 1/2" });
+  await row.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#inspector h2").first()).toHaveText("Connection");
+  await expect(page.locator("#inspector")).toContainText("MIC/LINE 1/2");
+  await expect(page.locator("#inspector :focus")).toHaveCount(1);
+  const del = page.getByRole("button", { name: "Delete this connection" });
+  await del.focus();
+  await page.keyboard.press("Enter");
+  await expect(wire(page, "in.micline_1_2:out", "ch1:in")).toHaveCount(0);
 });

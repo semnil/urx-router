@@ -1273,7 +1273,7 @@ test.describe("ducker", () => {
     // lane's caption names the source channel, not the stage.
     test("registers the key tap the source's Rec Point names", async ({ page }) => {
       await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
-      await chooseOption(page.locator("#inspector .param", { hasText: "Rec Point" }).locator("select"), {
+      await chooseOption(page.locator("#inspector").getByLabel("Rec Point", { exact: true }), {
         label: "PRE GATE",
       });
       await openDucker(page);

@@ -257,6 +257,15 @@ export const PALETTES: Record<ThemeName, Palette> = {
 
 export type Selection = { type: "node"; id: string } | { type: "conn"; from: string; to: string } | null;
 
+/** A jack a wire can be drawn from — a port, or a channel's Rec Point tap (`tap`, which
+ *  carries the channel's own `out` ref) — with the ports a drag from it can end on. */
+export interface ConnectOrigin {
+  ref: string;
+  dir: PortDirection;
+  tap: boolean;
+  targets: string[];
+}
+
 export interface GraphCallbacks {
   onSelect: (sel: Selection) => void;
   onStatus: (message: string) => void;
@@ -2469,6 +2478,46 @@ export class Graph {
   }
 
   // --- connecting ----------------------------------------------------------
+
+  /** Every jack of a drawn node a wire can be drawn from, each with the drawn ports a drag
+   *  from it would be taken on: the drag's own candidates (`connectCandidates`), so an
+   *  occupied receiver the drop replaces the wire on — STREAMING's source — is among them. */
+  connectOrigins(nodeId: string): ConnectOrigin[] {
+    const node = this.nodeById.get(nodeId);
+    if (!node || node.header || this.isHidden(nodeId)) return [];
+    const origins: ConnectOrigin[] = [];
+    for (const port of node.ports) {
+      const r = ref(nodeId, port.id);
+      for (const tap of port.direction === "out" && this.hasTapJack(node) ? [false, true] : [false]) {
+        const { legal } = this.connectCandidates(r, port.direction, tap);
+        const targets = [...legal].filter((t) => !this.isHidden(parseRef(t).nodeId));
+        origins.push({ ref: r, dir: port.direction, tap, targets });
+      }
+    }
+    return origins;
+  }
+
+  /** Draw a wire from `origin` to `other` through the drag's own commit, as a drag from that
+   *  jack released on that port does — refusals, a replaced source and a completed linked
+   *  pair included. */
+  connectTo(origin: ConnectOrigin, other: string): void {
+    if (!this.cb.mayEdit()) return;
+    const tapUsed = origin.dir === "out" ? origin.tap : this.isRecPointTap(other, origin.ref);
+    this.finishConnect(origin.ref, origin.dir, other, tapUsed);
+  }
+
+  /** Whether the board draws this wire: both its nodes are on the board, and the declutter
+   *  toggle is not hiding it as an off send. */
+  wireDrawn(from: string, to: string): boolean {
+    const conn = this.plan.connections.find((c) => c.from === from && c.to === to);
+    return !!conn && this.isWireShown(conn) && !(this.hideOffSends && this.isOffSend(conn));
+  }
+
+  /** Select a wire the board draws, as a press on it does; one it does not draw stays
+   *  unselected. */
+  selectConnection(from: string, to: string): void {
+    if (this.wireDrawn(from, to)) this.select({ type: "conn", from, to });
+  }
 
   // Enter connect mode from `ref`, highlighting the legal ports on the opposite
   // side and starting a rubber-band wire. Returns false (doing nothing) when the

@@ -353,7 +353,9 @@ export const en = {
         "input port (left) to connect. Connectable ports are highlighted in green " +
         "while connecting. A channel's direct outs and recordings start at the Rec " +
         "Point tap on its top edge instead. Click the pen on a node to add a note, " +
-        "then click the note to edit it.",
+        "then click the note to edit it. From the keyboard, Tab reaches the board, the " +
+        "arrow keys move between nodes and Enter selects one; its Routing section " +
+        "then connects its ports and selects its wires.",
     ),
     type: tr("Type"),
     name: dev("Name"),
@@ -377,6 +379,10 @@ export const en = {
     inputsFrom: (n: number): string => `Inputs (${n})`,
     outputsTo: (n: number): string => `Outputs (${n})`,
     routing: tr("Routing"),
+    connectSource: tr("Connect a source"),
+    connectOutput: tr("Connect the output to"),
+    connectRecPoint: tr("Connect the Rec Point to"),
+    connectChoose: tr("Choose…"),
     connection: tr("Connection"),
     from: tr("From"),
     to: tr("To"),

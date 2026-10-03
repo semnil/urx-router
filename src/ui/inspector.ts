@@ -2,7 +2,7 @@
 // parameters (level/pan/pre-post), removes a connection, and (no selection)
 // lists recent plans for quick reopen.
 
-import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
+import type { DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
 import { clipNodeName, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_INITIAL } from "../core/plan";
@@ -88,7 +88,7 @@ import {
 } from "../core/constraints";
 import { getSettings } from "../core/settings";
 import type { RecentEntry } from "../core/storage";
-import type { Selection } from "./graph";
+import type { ConnectOrigin, Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
 import { holdInertOnBlur, isHoldingInert, labelId, onInertHoldsEnd, onWheelStep, wheelStep } from "./dom";
@@ -118,6 +118,15 @@ export interface InspectorActions {
   /** Open the GATE tuning screen for a MONO IN channel. */
   onOpenDynScreen: (kind: DynKind, id: string) => void;
   onClose: () => void;
+  /** The node's jacks a wire can be drawn from, with where each can go: the keyboard's way
+   *  to connect, offered in the Routing section. */
+  connectOrigins: (id: string) => ConnectOrigin[];
+  /** Draw the wire from `origin` to `other`, as the board's drag does. */
+  onConnect: (origin: ConnectOrigin, other: string) => void;
+  /** Whether the board draws this wire; only such a wire is selectable from the panel. */
+  wireDrawn: (from: string, to: string) => boolean;
+  /** Select a wire, as a press on it does: the keyboard's way to its panel and its Delete. */
+  onSelectConnection: (from: string, to: string) => void;
 }
 
 // HA gain slider position shown for a channel whose gain has not been fetched or
@@ -518,12 +527,28 @@ export function renderInspector(
     // Routing lists default collapsed — wiring is done on the canvas, so the
     // inspector keeps this folded away behind a count summary. A header node
     // (microSD Rec) takes no direct wire of its own, so it shows no routing list.
+    // It is also the keyboard's way to wire: each wire the board draws is a button that
+    // selects it (its panel carries the delete), and each jack offers what it can connect
+    // to.
     if (!node.header) {
       const { el, body } = section(m.inspector.routing, { open: false, key: "routing" });
+      const origins = actions.connectOrigins(node.id);
+      const connect = (origin: ConnectOrigin): void => {
+        if (!origin.targets.length) return;
+        const label =
+          origin.dir === "in"
+            ? m.inspector.connectSource
+            : origin.tap
+              ? m.inspector.connectRecPoint
+              : m.inspector.connectOutput;
+        body.append(connectControl(label, origin, endpointLabel, actions, m));
+      };
       body.append(subheading(m.inspector.inputsFrom(incoming.length)));
-      for (const c of incoming) body.append(connRow(`${endpointLabel(c.from)} →`, c.kind));
+      for (const c of incoming) body.append(connRow(`${endpointLabel(c.from)} →`, c, actions));
+      for (const o of origins) if (o.dir === "in") connect(o);
       body.append(subheading(m.inspector.outputsTo(outgoing.length)));
-      for (const c of outgoing) body.append(connRow(`→ ${endpointLabel(c.to)}`, c.kind));
+      for (const c of outgoing) body.append(connRow(`→ ${endpointLabel(c.to)}`, c, actions));
+      for (const o of origins) if (o.dir === "out") connect(o);
       host.append(el);
     }
 
@@ -1889,15 +1914,54 @@ function legendRow(color: string, label: string, square = false): HTMLElement {
   return row;
 }
 
-function connRow(text: string, kind: ConnectionKind): HTMLElement {
-  const row = document.createElement("div");
+// A wire the board draws is a button that selects it, as a press on the wire does; one it
+// does not draw (an end on the shelf, an off send the declutter toggle hides) stays a row.
+function connRow(text: string, conn: PlanConnection, actions: InspectorActions): HTMLElement {
+  const drawn = actions.wireDrawn(conn.from, conn.to);
+  const row = document.createElement(drawn ? "button" : "div");
   row.className = "conn-row";
+  if (row instanceof HTMLButtonElement) {
+    row.type = "button";
+    row.addEventListener("click", () => actions.onSelectConnection(conn.from, conn.to));
+  }
   const dot = document.createElement("span");
   // The dot wears the wire's family, not its kind: the routing list and the board
   // have to agree, and the board is drawn from WIRE_GROUP.
-  dot.className = `dot dot-${WIRE_GROUP[kind]}`;
+  dot.className = `dot dot-${WIRE_GROUP[conn.kind]}`;
   const t = document.createElement("span");
   t.textContent = text;
   row.append(dot, t);
+  return row;
+}
+
+// One jack's connect picker: the ports a drag from it would be taken on, by name. Choosing
+// one draws that wire through the board's own commit.
+function connectControl(
+  label: string,
+  origin: ConnectOrigin,
+  endpointLabel: (ref: string) => string,
+  actions: InspectorActions,
+  m: Messages,
+): HTMLElement {
+  const { row, labelId: id } = paramBlock(label, "");
+  const sel = document.createElement("select");
+  sel.dataset.focusKey = `connect:${origin.ref}:${origin.tap ? "tap" : origin.dir}`;
+  nameBy(sel, id);
+  const prompt = document.createElement("option");
+  prompt.value = "";
+  prompt.textContent = m.inspector.connectChoose;
+  prompt.disabled = true;
+  prompt.selected = true;
+  sel.append(prompt);
+  for (const target of origin.targets) {
+    const opt = document.createElement("option");
+    opt.value = target;
+    opt.textContent = endpointLabel(target);
+    sel.append(opt);
+  }
+  sel.addEventListener("change", () => {
+    if (sel.value) actions.onConnect(origin, sel.value);
+  });
+  row.append(sel);
   return row;
 }
