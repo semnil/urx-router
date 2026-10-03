@@ -111,9 +111,11 @@ const STORE_KEY = "urx-midi";
 
 /** Which behaviour control an assignment row offers. A toggle bound to a pitch bend
  *  or a 14-bit CC pair offers none: `toggleTarget` refuses both, so the binding is
- *  permanently inert and a button-behaviour select would suggest otherwise. */
-function optionOf(kind: ControlKind, m: MidiMapping): "mode" | "button" | undefined {
-  if (kind === "continuous") return "mode";
+ *  permanently inert and a button-behaviour select would suggest otherwise. A continuous
+ *  control on an address a switch also drives (`mixed`) offers none either: Absolute is the
+ *  one take-in mode it works in there, so a select would offer a Pickup that never engages. */
+function optionOf(kind: ControlKind, m: MidiMapping, mixed: boolean): "mode" | "button" | undefined {
+  if (kind === "continuous") return mixed ? undefined : "mode";
   return m.addr.type === "pitchbend" || m.addr.type === "cc14" ? undefined : "button";
 }
 
@@ -836,10 +838,9 @@ export class MidiControl {
     return null;
   }
 
-  /** `list` with every binding on an address whose bindings resolve to both kinds set to
-   *  Absolute, and the addresses that changed. A binding the plan does not resolve now has no
-   *  kind to count. */
-  private absoluteOnMixedGangs(list: MidiMapping[]): { list: MidiMapping[]; addrs: string[] } {
+  /** The address keys in `list` whose bindings resolve to both kinds of control, against the
+   *  plan as it is now. A binding the plan does not resolve now has no kind to count. */
+  private mixedGangs(list: MidiMapping[]): Set<string> {
     const kinds = new Map<string, Set<ControlKind>>();
     for (const x of list) {
       const kind = this.resolve(x.control)?.kind;
@@ -847,14 +848,30 @@ export class MidiControl {
       const key = addrKey(x.addr);
       kinds.set(key, (kinds.get(key) ?? new Set<ControlKind>()).add(kind));
     }
+    return new Set([...kinds].filter(([, k]) => k.size > 1).map(([key]) => key));
+  }
+
+  /** `list` with every binding on a mixed gang (`mixedGangs`) set to Absolute, and the
+   *  addresses that changed. */
+  private absoluteOnMixedGangs(list: MidiMapping[]): { list: MidiMapping[]; addrs: string[] } {
+    const mixed = this.mixedGangs(list);
     const changed = new Map<string, MidiAddr>();
     const out = list.map((x): MidiMapping => {
       const key = addrKey(x.addr);
-      if ((kinds.get(key)?.size ?? 0) < 2 || x.mode === "absolute") return x;
+      if (!mixed.has(key) || x.mode === "absolute") return x;
       changed.set(key, x.addr);
       return { ...x, mode: "absolute" };
     });
     return { list: out, addrs: [...changed.values()].map(addrLabel) };
+  }
+
+  /** The behaviour control the window offers on `control`'s row (`optionOf`), or undefined
+   *  when it offers none or nothing binds `control`. */
+  private optionFor(control: string): "mode" | "button" | undefined {
+    const all = this.engine.getMappings();
+    const m = all.find((x) => x.control === control);
+    if (!m) return undefined;
+    return optionOf(this.resolve(control)?.kind ?? "toggle", m, this.mixedGangs(all).has(addrKey(m.addr)));
   }
 
   private savePorts(): void {
@@ -969,8 +986,17 @@ export class MidiControl {
       // `sanitizeMappings` then fails `oneOf(TAKE_MODES, …)` and drops the whole
       // binding with nothing said. Refused here instead, where the value is still
       // attributable to the message that carried it.
+      //
+      // A mode for a row this side does not offer the select on — a mixed gang's, which a
+      // window that has not repainted yet can still be showing one for — is refused as
+      // well, and the window is repainted from what this side holds.
       case "mode":
-        if (TAKE_MODES.includes(intent.mode)) this.patchMapping(intent.control, { mode: intent.mode });
+        if (!TAKE_MODES.includes(intent.mode)) return;
+        if (this.optionFor(intent.control) !== "mode") {
+          this.pushState();
+          return;
+        }
+        this.patchMapping(intent.control, { mode: intent.mode });
         return;
       case "button":
         if (BUTTON_MODES.includes(intent.button)) this.patchMapping(intent.control, { button: intent.button });
@@ -988,13 +1014,18 @@ export class MidiControl {
    *  tens of rows and the window rebuilds from it, so there is no diff to get wrong. */
   private pushState(): void {
     if (!this.windowOpen) return;
+    const mappings = this.engine.getGangedMappings();
+    const mixed = this.mixedGangs(mappings);
     const state: MidiUiState = {
       inputs: this.inputs,
       outputs: this.outputs,
       input: this.inputPort,
       output: this.outputPort,
-      rows: this.engine.getGangedMappings().map((m) => {
-        const control = this.resolve(m.control);
+      rows: mappings.map((m) => {
+        // An unbindable id (a mapping saved for another model) still has to be
+        // listed and removable, so it falls back to the toggle column.
+        const kind = this.resolve(m.control)?.kind ?? "toggle";
+        const option = optionOf(kind, m, mixed.has(addrKey(m.addr)));
         const linked = this.engine.isLinkedMember(m);
         return {
           control: m.control,
@@ -1002,10 +1033,8 @@ export class MidiControl {
           // A gang member shares the head's physical control, so it carries no
           // address of its own — the window prints its "Linked" marker instead.
           ...(linked ? {} : { addr: addrLabel(m.addr) }),
-          // An unbindable id (a mapping saved for another model) still has to be
-          // listed and removable, so it falls back to the toggle column.
-          kind: control?.kind ?? "toggle",
-          ...(optionOf(control?.kind ?? "toggle", m) ? { option: optionOf(control?.kind ?? "toggle", m) } : {}),
+          kind,
+          ...(option ? { option } : {}),
           mode: m.mode,
           ...(m.button ? { button: m.button } : {}),
           linked,
@@ -1047,22 +1076,21 @@ export class MidiControl {
     // engine owns pickup state per ADDRESS and only the head ever creates it, so a
     // member set to Pickup behind an Absolute head reads `engaged = false` for ever and
     // never moves at all — no indication, nothing to retry. The window offers the select on
-    // every row including linked ones, so the choice is made to mean what the engine
+    // linked rows as well as on heads, so the choice is made to mean what the engine
     // assumes it means: one mode for everything on that address.
     //
     // A SWITCH head is a different shape, which one mode does not cover: a switch never runs
     // the pickup engagement at all, so no mode makes a continuous member behind it engage.
-    // That is why a gang holds one kind of control (`gangRefusal`), and why a saved gang that
-    // mixes the two is put back to Absolute here as it is on load, and said.
+    // That is why a gang holds one kind of control (`gangRefusal`), why a saved gang that
+    // mixes the two is put back to Absolute on load, and why the window offers no take-in
+    // mode on such a gang's rows (`optionOf`) — a mode for one stops in `onIntent`.
     //
     // `button` is deliberately NOT ganged: it decides how one binding reads an incoming
     // press, and two controls behind one button may legitimately want edge and state.
     const at = patch.mode !== undefined ? all.find((x) => x.control === control) : undefined;
     const gangKey = at ? addrKey(at.addr) : null;
     const hit = (x: MidiMapping): boolean => x.control === control || (gangKey !== null && addrKey(x.addr) === gangKey);
-    const { list, addrs } = this.absoluteOnMixedGangs(all.map((x) => (hit(x) ? { ...x, ...patch } : x)));
-    this.applyMappings(list);
-    if (addrs.length > 0) this.say(t().midi.mixedGangAbsolute(addrs.join(", ")));
+    this.applyMappings(all.map((x) => (hit(x) ? { ...x, ...patch } : x)));
   }
 }
 

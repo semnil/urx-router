@@ -603,6 +603,27 @@ test("a fader cannot join the MIDI control a switch is bound to", async ({ page 
   await expect(strip(page, "CH 1").locator(".con-fader")).not.toHaveClass(/\bmidi-armed\b/);
 });
 
+// A gang saved before that rule existed can still mix the two kinds. Its fader row offers no
+// take-in mode — Absolute is the one a fader works in behind a switch — while the switch keeps
+// its button behaviour and a fader on a MIDI control of its own keeps the select.
+test("the MIDI window offers no take-in mode on a fader that shares a switch's MIDI control", async ({ page }) => {
+  await page.addInitScript(() => {
+    const cc = (controller: number) => ({ type: "cc", channel: 0, controller });
+    const URX44V = [
+      { control: "ch1/mute", addr: cc(20), mode: "pickup" },
+      { control: "ch2/level", addr: cc(20), mode: "pickup" },
+      { control: "ch3/level", addr: cc(21), mode: "pickup" },
+    ];
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V } }));
+  });
+  await page.reload();
+  const win = await openMidiWindow(page);
+  await expect(mapRow(win, "ch2/level")).toHaveClass(/\blinked\b/);
+  await expect(mapRow(win, "ch2/level").locator(".mw-mode, .mw-btn")).toHaveCount(0);
+  await expect(mapRow(win, "ch1/mute").locator(".mw-btn")).toHaveCount(1);
+  await expect(mapRow(win, "ch3/level").locator(".mw-mode")).toHaveValue("pickup");
+});
+
 test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);

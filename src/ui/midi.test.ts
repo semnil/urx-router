@@ -750,17 +750,29 @@ describe("MidiControl, the races and vocabularies around a port", () => {
         },
       }),
     );
-    const { control, hooks } = install();
+    const { hooks } = install();
     expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.mixedGangAbsolute("CH 1 CC 7"));
     expect(storedModes()).toEqual({ "ch1/mute": "absolute", "ch2/level": "absolute", "ch3/level": "pickup" });
     await attached();
     dispatch({ type: "ready" });
-    // …and a Pickup chosen for it in the window is put back the same way.
+    // The window offers no take-in mode on that gang's continuous row, while the switch keeps
+    // its button behaviour and a continuous control on an address of its own keeps its mode.
+    const option = (control: string) => lastState().rows.find((r) => r.control === control)?.option;
+    expect(option("ch2/level")).toBeUndefined();
+    expect(option("ch1/mute")).toBe("button");
+    expect(option("ch3/level")).toBe("mode");
+    // A Pickup that reaches this side for that row all the same — from a window not yet
+    // repainted — changes nothing and says nothing; the window is repainted instead.
     vi.mocked(hooks.onStatus).mockClear();
+    mocks.midiUiToWindow.mockClear();
     dispatch({ type: "mode", control: "ch2/level", mode: "pickup" });
     expect(storedModes()["ch2/level"]).toBe("absolute");
-    expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.mixedGangAbsolute("CH 1 CC 7"));
-    void control;
+    expect(hooks.onStatus).not.toHaveBeenCalled();
+    expect(option("ch2/level")).toBeUndefined();
+    // …while the same intent on the lone continuous control is taken, which is what makes the
+    // refusal above about the gang rather than about the intent.
+    dispatch({ type: "mode", control: "ch3/level", mode: "absolute" });
+    expect(storedModes()["ch3/level"]).toBe("absolute");
   });
 
   // Read before the control's own binding is dropped: re-learning the one control an address

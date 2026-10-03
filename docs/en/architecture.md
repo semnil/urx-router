@@ -1661,8 +1661,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   switch ganged with a continuous control can come to head it, so a learn that would put a switch and a
   continuous control on one MIDI control is refused with the reason on the status line — as is a learn onto
   one whose bindings include a control the current plan or model does not carry, whose kind cannot be
-  compared. A saved gang that mixes the two kinds is set to Absolute when the mappings load, and a Pickup
-  chosen for it in the window is put back the same way; both say so on the status line. A control on a hung node (a ducker, which sits under its stereo channel and is labeled
+  compared. A saved gang that mixes the two kinds is set to Absolute when the mappings load, and says so on
+  the status line; the window offers no take-in mode on such a gang's continuous rows, Absolute being the one
+  they work in there, and refuses a mode it receives for one. A control on a hung node (a ducker, which sits under its stereo channel and is labeled
   only "Ducker") is named by its parent channel in the list, so the binding reads e.g. `CH 5/6 · DUCKER`.
   Replacing the plan or model (a model switch, a plan load) cancels an in-flight
   learn, dropping the armed control instead of committing it under the new model's mapping key.
