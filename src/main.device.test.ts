@@ -8199,6 +8199,127 @@ describe("a tuning screen open across a fetch", () => {
   });
 });
 
+// A file flow that is already running when a Fetch's connect lands holds the plan as it stood
+// when the flow began. The read does not start under it; the flow finishes on the plan it began
+// with. Each case holds the connect, starts the file flow, then lets the connect land — and holds
+// the read's first round trip as well, so a read that did start is still in flight when the
+// file flow finishes.
+describe("a Fetch that connects while a file flow runs", () => {
+  /** The connect and the first device read, each held until released. */
+  const held = (
+    over: Record<string, unknown>,
+  ): {
+    tauri: Record<string, unknown>;
+    connect: () => void;
+    read: () => void;
+  } => {
+    let connect!: () => void;
+    const connected = new Promise<void>((r) => (connect = r));
+    let read!: () => void;
+    const readHeld = new Promise<void>((r) => (read = r));
+    const table = deviceCommands({ "plugin:dialog|message": "Ok", ...over });
+    const vdConnect = table.vd_connect as (a: Record<string, unknown>) => unknown;
+    const vdGet = table.vd_get as (a: Record<string, unknown>) => unknown;
+    let first = true;
+    return {
+      connect,
+      read,
+      tauri: {
+        ...table,
+        vd_connect: async (a: Record<string, unknown>) => {
+          await connected;
+          return vdConnect(a);
+        },
+        vd_get: async (a: Record<string, unknown>) => {
+          if (first) {
+            first = false;
+            await readHeld;
+          }
+          return vdGet(a);
+        },
+      },
+    };
+  };
+  /** The Fetch has reached its decision: it read, or it let the link go. */
+  const fetchDecided = (shell: TauriShell): Promise<void> =>
+    vi.waitFor(() => expect(shell.count("vd_get") + shell.count("vd_disconnect")).toBeGreaterThan(0), {
+      timeout: 10_000,
+    });
+
+  it("does not read under a Save whose dialog is open", SLOW, async () => {
+    let save!: (path: string) => void;
+    const saving = new Promise<string>((r) => (save = r));
+    const unit = held({ "plugin:dialog|save": () => saving, write_text_file: null });
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_connect");
+    $("btn-save").click();
+    await invoked(shell, "plugin:dialog|save");
+    unit.connect();
+    await fetchDecided(shell);
+    unit.read();
+    await invoked(shell, "vd_disconnect");
+    expect(shell.count("vd_get")).toBe(0);
+    expect(statusText()).toBe(t().status.busyFileFlow);
+    save("C:/urx/saved.json");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.savedTo("saved.json")), { timeout: 10_000 });
+  });
+
+  it("lets a model switch whose confirm is open finish on the model it named", SLOW, async () => {
+    let answerA!: (v: string) => void;
+    const confirmA = new Promise<string>((r) => (answerA = r));
+    let discards = 0;
+    const unit = held({
+      "plugin:dialog|message": (a: Record<string, unknown>) =>
+        a.message === t().confirm.discard && ++discards === 1 ? confirmA : "Ok",
+    });
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    chooseRate(96_000); // unsaved, so the switch asks the discard confirm
+    $("btn-fetch").click();
+    await invoked(shell, "vd_connect");
+    const picker = $<HTMLSelectElement>("model-picker");
+    picker.value = "URX22";
+    picker.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(discards).toBe(1), { timeout: 10_000 });
+    unit.connect();
+    await fetchDecided(shell);
+    answerA("Ok");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.switchedModel("URX22")), { timeout: 10_000 });
+    unit.read();
+    await fetchEnded();
+    expect(picker.value).toBe("URX22");
+    // The board is the URX22's: the URX44V's CH 11/12 is not drawn.
+    expect($("graph-host").querySelector('g.node[data-id="ch_11_12"]')).toBeNull();
+    expect(shell.count("vd_get")).toBe(0);
+  });
+
+  it("keeps a recent entry whose file opens while the Fetch connects", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    let readFile!: () => void;
+    const reading = new Promise<void>((r) => (readFile = r));
+    const unit = held({
+      read_text_file: async () => {
+        await reading;
+        return serialize(defaultPlan("URX44V"));
+      },
+    });
+    const entry = { path: "C:/urx/recent.json", name: "recent.json", modelId: "URX44V" };
+    const shell = (await bootApp({ tauri: unit.tauri, seed: { "urx-recent": JSON.stringify([entry]) } }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_connect");
+    $("inspector").querySelector<HTMLButtonElement>(".recent-row")!.click();
+    await invoked(shell, "read_text_file");
+    unit.connect();
+    await fetchDecided(shell);
+    readFile();
+    await vi.waitFor(() => expect(statusText()).not.toBe(t().status.fetchConnecting), { timeout: 10_000 });
+    unit.read();
+    await fetchEnded();
+    expect(localStorage.getItem("urx-recent")).toContain("recent.json");
+    expect($("inspector").querySelector(".recent-row")).not.toBeNull();
+  });
+});
+
 describe("the --reset-storage launch", () => {
   // The flag arrives async — after the synchronous init has already read localStorage —
   // so the only way to re-init clean is to clear and reload once. jsdom cannot navigate

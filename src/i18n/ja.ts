@@ -680,6 +680,7 @@ export const ja: Messages = {
     pdfExported: "PDF を出力しました",
     arranged: "既定レイアウトに整列しました",
     busyDeviceRead: "本体から読み取り中です — 完了してからもう一度お試しください",
+    busyFileFlow: "ファイルを開くか保存している最中です — 完了してからもう一度お試しください",
     busySwitchRead: "この計画はデバイスの機種の計画に差し替え中です — 読み取りが終わってからもう一度お試しください",
     deviceLinkBusy: "別のデバイス操作が接続を掴んでいます — 完了してからもう一度お試しください",
     fetchConnecting: "デバイスに接続しています…",

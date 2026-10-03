@@ -2342,23 +2342,22 @@ function newPlanAtLastRate(id: ModelId): Plan {
   return next;
 }
 
-/** Replace the open document. Returns false when the replacement did not happen — a
- *  device read holds the plan, or the new one could not be drawn — and the caller must
- *  not then report the load as having happened. Both refusals report themselves, so no
- *  caller needs a failure surface of its own.
+/** Replace the open document. Returns true when it did; null when it was refused before
+ *  anything was attempted (a device read holds the plan); false when the new one could not
+ *  be drawn. A caller must not report the load as having happened unless it is true. Both
+ *  refusals report themselves, so no caller needs a failure surface of its own.
  *
  *  `readHoldsLatch` is the device read that holds the latch replacing the plan with the
  *  one it read into — the model switch a Fetch or Live-sync start offered, applied once
  *  its read has landed complete — and is the one replacement the latch does not refuse. */
-function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boolean } = {}): boolean {
+function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boolean } = {}): boolean | null {
   // A device read (fetch / Live-sync start) is merging into the module `plan`;
-  // replacing it now would strand the merge (see deviceReadInFlight). Every external
-  // entry point is already blocked at fileFlow / the model picker, so this is the
-  // backstop — and it says so, because its one reachable caller went on to announce a
-  // load that never happened.
+  // replacing it now would strand the merge (see deviceReadInFlight). A file flow that
+  // entered before the read raised the latch reaches here with the latch up, so this is
+  // where that flow is refused, and it says so.
   if (flow.deviceReadInFlight && !readHoldsLatch) {
     setStatus(t().status.busyDeviceRead);
-    return false;
+    return null;
   }
   // Replacing the whole plan invalidates the live snapshot; leave sync first.
   // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
@@ -2481,7 +2480,7 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
 // as a recent plan. Returns true on success and false on failure (which sets the
 // error status); null when the plan carries a problem the operator has been asked
 // about — nothing has loaded and nothing has failed, and the load runs from the
-// report modal if they proceed.
+// report modal if they proceed — and null when the replacement was refused.
 function loadFromText(text: string, path?: string): boolean | null {
   try {
     const doc = deserializeDocument(text);
@@ -2553,10 +2552,12 @@ function loadFromText(text: string, path?: string): boolean | null {
         }
       }
     }
-    const finishLoad = (): boolean => {
-      // Refused (a device read holds the plan): loadPlan said so, and the caller must
-      // not go on to remember a recent path and announce a document that never opened.
-      if (!loadPlan(next)) return false;
+    const finishLoad = (): boolean | null => {
+      // Refused (null: nothing was attempted) or failed to draw (false): loadPlan said so,
+      // and the caller must not go on to remember a recent path and announce a document
+      // that never opened. A refusal is not a file that fails to load.
+      const loaded = loadPlan(next);
+      if (loaded !== true) return loaded;
       // LEADS the line rather than trailing it. The status bar is one ellipsized line and a
       // file name has no length limit, so a notice placed after the name is off screen for a
       // long one. This is the only thing said about a document the loader changed, and a
@@ -2624,8 +2625,8 @@ function showLoadError(err: unknown): void {
 // all three share. `read` resolves null when its dialog was canceled; `path` is
 // what the plan is remembered by, so it is absent for a browser pick or drop.
 // Resolves true on success, false when the load was attempted and failed, and
-// null when nothing was attempted (canceled, another file flow in flight, or the
-// plan's problem is on screen for the operator to decide on).
+// null when nothing was attempted (canceled, another file flow in flight, the
+// replacement refused, or the plan's problem is on screen for the operator to decide on).
 async function openPlanFrom(read: () => Promise<{ text: string; path?: string } | null>): Promise<boolean | null> {
   return fileFlow(async () => {
     if (!(await confirmDiscard())) return null;
@@ -2739,7 +2740,7 @@ function readTarget(switchTo: Plan | null): () => Plan {
 // badge back to unknown for the new model; the read's own Follow USB value is set after
 // this.
 function applyModelSwitch(next: Plan): boolean {
-  return loadPlan(next, { readHoldsLatch: true });
+  return loadPlan(next, { readHoldsLatch: true }) === true;
 }
 
 // Refuse to act on a device whose model differs from the plan's — the plan's
@@ -2762,7 +2763,8 @@ picker.addEventListener("change", async () => {
   // another file flow, and it is refused while a device read holds the plan.
   const switched = await fileFlow(async () => {
     if (!(await confirmDiscard())) return false;
-    loadPlan(newPlanAtLastRate(next));
+    // A refusal said why; the picker goes back to the model still on screen.
+    if (!loadPlan(newPlanAtLastRate(next))) return false;
     setStatus(t().status.switchedModel(next));
     return true;
   });
@@ -2787,7 +2789,7 @@ $("btn-new").addEventListener(
   () =>
     void fileFlow(async () => {
       if (!(await confirmDiscard())) return;
-      loadPlan(newPlanAtLastRate(modelId));
+      if (!loadPlan(newPlanAtLastRate(modelId))) return;
       setStatus(t().status.newPlan);
     }),
 );
@@ -3310,6 +3312,13 @@ if (!DEMO) {
         }
         if (switchTo === "canceled") {
           setStatus(t().status.canceled);
+          return;
+        }
+        // A file flow that is already running (a save or open dialog the operator has up,
+        // a document being read) holds the plan as it stood when it began: the read would
+        // replace that plan under it, so the read does not start.
+        if (flow.busy) {
+          setStatus(t().status.busyFileFlow);
           return;
         }
         // Hold off every wholesale plan replacement for the duration of the read and
@@ -4001,6 +4010,8 @@ if (!DEMO) {
           return await failLive(t().status.liveError(t().error.unknownModel(device.model)));
         }
         if (switchTo === "canceled") return await abort(t().status.canceled);
+        // Not while a file flow runs, as for a fetch.
+        if (flow.busy) return await abort(t().status.busyFileFlow);
         // Hold off every wholesale plan replacement until the session is established
         // (cleared in the finally below). The read mutates `plan` in place and
         // live.begin() snapshots it as device truth, so a New/Open/switch landing in

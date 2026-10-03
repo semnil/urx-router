@@ -890,6 +890,7 @@ export const en = {
     pdfExported: tr("PDF exported"),
     arranged: tr("Arranged to the default layout"),
     busyDeviceRead: tr("Reading from the device — try that again when it finishes"),
+    busyFileFlow: tr("A file is being opened or saved — try that again when it finishes"),
     busySwitchRead: tr(
       "This plan is being replaced by one for the device's model — try that again when the read finishes",
     ),
