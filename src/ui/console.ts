@@ -2182,7 +2182,7 @@ export class Console {
 
   // STREAMING strip: a live meter only — no fader, no set-level readout, no chips
   // (the device offers no level/EQ here, just a source select + delay). One meter
-  // point (pre/post-DELAY read the same level), so no tap selector either.
+  // point (the device exposes only the post-DELAY meter), so no tap selector either.
   private buildMeterOnlyStrip(m: StripModel): HTMLElement {
     // OSC rests off by default, so its strip is dimmed until switched on (via the
     // scribble power LED) — the same inactive dim as every other strip. STREAMING has

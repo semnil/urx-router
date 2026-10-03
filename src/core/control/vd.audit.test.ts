@@ -130,8 +130,11 @@ describe("SSMCS / preset codec defensive edges (documents current behavior)", ()
   });
 
   it("levelToVd rounds sub-centi-dB inputs to the nearest broker step", () => {
-    // Non-integer plan dB below the codec resolution round rather than truncate.
-    expect(levelToVd(-6)).toBe(-600);
+    // Non-integer plan dB below the codec resolution round rather than truncate. Each input's
+    // ×100 is not exact in binary, so truncating lands one step short of the rounded raw.
+    expect(levelToVd(-81.85)).toBe(-8185);
+    expect(levelToVd(-72.1)).toBe(-7210);
+    expect(levelToVd(-6.006)).toBe(-601);
     expect(levelToVd(LEVEL_MIN_DB)).toBe(LEVEL_MIN_DB * 100); // -96.0 is a real value
   });
 });

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MidiEngine } from "./engine";
 import type { MidiAddr, MidiMapping } from "./mapping";
-import { encodeCc, encodeNote } from "./message";
+import { encodeCc, encodeNote, encodePitchBend } from "./message";
 import { fake, type Fake } from "./fake-control.test-util";
 
 let controls: Map<string, Fake>;
@@ -135,20 +135,6 @@ describe("incoming application", () => {
     expect(n.value).toBe(0);
   });
 
-  it("pickup swallows input until the physical value reaches or crosses the plan value", () => {
-    const c = fake("ch1/level", "continuous", 0.5);
-    controls.set(c.id, c);
-    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
-    engine.onMessage(encodeCc(0, 7, 20)); // far below → swallowed
-    expect(c.value).toBe(0.5);
-    engine.onMessage(encodeCc(0, 7, 40)); // still below → swallowed
-    expect(c.value).toBe(0.5);
-    engine.onMessage(encodeCc(0, 7, 70)); // crossed 0.5 → engaged, applies
-    expect(c.value).toBeCloseTo(0.55, 5); // 70/127 snapped to the 1/40 grid
-    engine.onMessage(encodeCc(0, 7, 20)); // engaged: tracks anywhere now
-    expect(c.value).toBeCloseTo(0.15, 5);
-  });
-
   // A held pass (the output side shut until a Live-sync readback settles) still owes the
   // receive side its bookkeeping: the plan value moved, so a non-motorized fader no
   // longer matches it and has to pick it up again. Skipping the pass entirely left the
@@ -244,25 +230,6 @@ describe("incoming application", () => {
     engine.onMessage(encodeCc(0, 7, 100));
     engine.onMessage(encodeCc(0, 39, 42));
     expect(c.value).toBeCloseTo(((100 << 7) | 42) / 16383, 6);
-  });
-
-  it("pickup engages on an exact touch of the plan value, then tracks", () => {
-    const c = fake("ch1/level", "continuous", 0.5);
-    controls.set(c.id, c);
-    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
-    engine.onMessage(encodeCc(0, 7, 64)); // 64/127 ≈ 0.504, within the ±2-step window → engaged
-    engine.onMessage(encodeCc(0, 7, 127)); // now tracks anywhere
-    expect(c.value).toBe(1);
-  });
-
-  it("pickup engages when the physical value crosses the plan value from above", () => {
-    const c = fake("ch1/level", "continuous", 0.5);
-    controls.set(c.id, c);
-    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
-    engine.onMessage(encodeCc(0, 7, 90)); // far above → swallowed, records the position
-    expect(c.value).toBe(0.5);
-    engine.onMessage(encodeCc(0, 7, 20)); // sweeps down through 0.5 → engaged, applies
-    expect(c.value).toBeCloseTo(0.15, 5); // 20/127 snapped to the 1/40 grid
   });
 
   it("drives a continuous control from a note as a momentary full / zero switch", () => {
@@ -834,17 +801,75 @@ describe("gang (several controls on one address)", () => {
     engine.onMessage(encodeCc(0, 20, 127)); // a real press past the window flips both
     expect([a.value, b.value]).toEqual([0, 0]);
   });
+});
 
-  it("engages pickup from the head; members cross over together", () => {
+// Pickup is decided after the address kind has turned a message into a position, so each
+// continuous kind has to reach it: a plain CC, a 14-bit pair (both halves) and a pitch bend.
+// Positions are on the fake's 1/40 grid, so a value that is applied reads back exactly.
+const PICKUP_ADDRS: Array<[string, MidiAddr, (pos: number) => number[][]]> = [
+  ["CC", { type: "cc", channel: 0, controller: 7 }, (pos) => [encodeCc(0, 7, Math.round(pos * 127))]],
+  [
+    "14-bit CC",
+    { type: "cc14", channel: 0, controller: 7 },
+    (pos) => {
+      const raw = Math.round(pos * 16383);
+      return [encodeCc(0, 7, raw >> 7), encodeCc(0, 39, raw & 0x7f)];
+    },
+  ],
+  ["pitch bend", { type: "pitchbend", channel: 0 }, (pos) => [encodePitchBend(0, Math.round(pos * 16383))]],
+];
+
+describe.each(PICKUP_ADDRS)("pickup on a %s address", (_kind, addr, at) => {
+  const move = (pos: number): void => {
+    for (const msg of at(pos)) engine.onMessage(msg);
+  };
+
+  it("swallows input until the physical value reaches or crosses the plan value", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, addr, "pickup");
+    move(0.15); // far below → swallowed
+    expect(c.value).toBe(0.5);
+    move(0.3); // still below → swallowed
+    expect(c.value).toBe(0.5);
+    expect(applied).toEqual([]);
+    move(0.55); // crossed 0.5 → engaged, applies
+    expect(c.value).toBeCloseTo(0.55, 5);
+    move(0.15); // engaged: tracks anywhere now
+    expect(c.value).toBeCloseTo(0.15, 5);
+  });
+
+  it("engages on an exact touch of the plan value, then tracks", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, addr, "pickup");
+    move(0.5); // within the ±2-step window → engaged
+    move(1); // now tracks anywhere
+    expect(c.value).toBe(1);
+  });
+
+  it("engages when the physical value crosses the plan value from above", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, addr, "pickup");
+    move(0.7); // far above → swallowed, records the position
+    expect(c.value).toBe(0.5);
+    expect(applied).toEqual([]);
+    move(0.15); // sweeps down through 0.5 → engaged, applies
+    expect(c.value).toBeCloseTo(0.15, 5);
+  });
+
+  it("engages from a gang's head; members cross over together", () => {
     const a = fake("ch1/level@bus.mix1", "continuous", 0.5);
     const b = fake("ch2/level@bus.mix1", "continuous", 0.5);
     controls.set(a.id, a);
     controls.set(b.id, b);
-    map(a.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
-    map(b.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
-    engine.onMessage(encodeCc(0, 7, 20)); // below the head value → both swallowed
+    map(a.id, addr, "pickup");
+    map(b.id, addr, "pickup");
+    move(0.15); // below the head value → both swallowed
     expect([a.value, b.value]).toEqual([0.5, 0.5]);
-    engine.onMessage(encodeCc(0, 7, 70)); // crosses the head value → both engage
+    expect(applied).toEqual([]);
+    move(0.55); // crosses the head value → both engage
     expect(a.value).toBeCloseTo(0.55, 5);
     expect(b.value).toBeCloseTo(0.55, 5);
   });
@@ -857,29 +882,56 @@ describe("gang (several controls on one address)", () => {
 // wrote it to the unit while live. Its own corrective feedback then echoed back into
 // the fader's unguarded LSB half.
 describe("cc14 feedback and a plain-CC binding on the same controller", () => {
-  it("arms the plain-CC guards the emission actually touches", () => {
+  // The knob on either half: CC 7 takes the MSB byte, CC 39 the LSB byte.
+  it.each([
+    [7, 64],
+    [39, 32],
+  ])("arms the plain-CC guards the emission actually touches (knob on CC %i)", (knobCc, echoed) => {
     const fader = fake("ch1/level", "continuous", 0, 1 / 16383);
-    const knob = fake("ch2/level", "continuous", 0.5);
+    const knob = fake("ch2/level", "continuous", 0.2);
     controls.set(fader.id, fader);
     controls.set(knob.id, knob);
     map(fader.id, { type: "cc14", channel: 0, controller: 7 });
-    map(knob.id, { type: "cc", channel: 0, controller: 39 });
+    map(knob.id, { type: "cc", channel: 0, controller: knobCc });
 
     // A first pass sends both, so each address' cache holds its own value.
     engine.feedback();
     sent.length = 0;
 
-    // Now only the FADER moves: the pass emits the cc14 pair alone, and its LSB byte
-    // goes out on CC 39 — the knob's address, which the knob itself did not send.
+    // Now only the FADER moves: the pass emits the cc14 pair alone, and one of its bytes
+    // goes out on the knob's address, which the knob itself did not send.
     fader.value = ((64 << 7) | 32) / 16383;
     engine.feedback();
     expect(sent).toEqual([encodeCc(0, 7, 64), encodeCc(0, 39, 32)]);
 
-    // That LSB coming back off a reflecting bus must not edit the knob.
+    // That byte coming back off a reflecting bus must not edit the knob.
     const before = knob.value;
     clock += 5;
-    engine.onMessage(encodeCc(0, 39, 32));
+    engine.onMessage(encodeCc(0, knobCc, echoed));
     expect(knob.value).toBe(before);
     expect(applied).not.toContain(knob.id);
+  });
+
+  // A held pass sends nothing, so neither half has an echo to expect: a press carrying the
+  // byte the pass would have sent is the operator's.
+  it.each([
+    [7, 64],
+    [39, 32],
+  ])("does not arm them on a held pass (knob on CC %i)", (knobCc, pressed) => {
+    const fader = fake("ch1/level", "continuous", 0, 1 / 16383);
+    const knob = fake("ch2/level", "continuous", 0.2);
+    controls.set(fader.id, fader);
+    controls.set(knob.id, knob);
+    map(fader.id, { type: "cc14", channel: 0, controller: 7 });
+    map(knob.id, { type: "cc", channel: 0, controller: knobCc });
+
+    fader.value = ((64 << 7) | 32) / 16383;
+    engine.feedback(false, false);
+    expect(sent).toEqual([]);
+
+    clock += 5;
+    engine.onMessage(encodeCc(0, knobCc, pressed));
+    expect(knob.value).not.toBe(0.2);
+    expect(applied).toContain(knob.id);
   });
 });

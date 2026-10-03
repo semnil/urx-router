@@ -353,10 +353,9 @@ export class DeviceFollow {
     // Our own write (or a value we already hold) coming back — not a change. Ahead of
     // the rename branch, and it covers that branch too: the unit announces every name
     // write it accepts, so the OPERATOR's own rename in the app echoes back, and
-    // counting that echo as a followed change armed the idle net — a full reconcile
-    // whose reflect ends in `planHistory.reset()`, so one rename during Live sync cost
-    // ~800 reads 900 ms later and took its own undo entry with it. The host dispatches
-    // this hook on `valueStr` because the two snapshots are separate maps.
+    // counted as a followed change that echo would arm the idle net — a whole-device
+    // read 900 ms later. The host dispatches this hook on `valueStr` because the two
+    // snapshots are separate maps.
     if (this.hooks.isEcho(p)) return;
     this.hooks.onDeviceParam?.(p);
     const superseded = this.hooks.isSuperseded?.(p) === true;

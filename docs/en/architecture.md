@@ -228,7 +228,8 @@ carries a one-line map of the same directories and points here.
     flush's refetch await, and not learn),
     reported to the status line once per gated window rather than once per message; MIDI-learn state
     machine, feedback (diff against a sent cache + 300 ms echo suppression while receiving + a one-shot
-    receive-side echo guard for toggles); several mappings sharing one address form a gang (`byKey`) — one
+    receive-side echo guard on every 7-bit address, toggles and continuous controls alike, the plain-CC
+    halves a 14-bit emission lands on included); several mappings sharing one address form a gang (`byKey`) — one
     physical control drives every member (incoming messages fan out to all), while the gang's HEAD owns
     feedback/echo/pickup (`headOf`: the first learned member the current plan can resolve, not simply the
     first learned one, so a mapping for a processor this node no longer holds does not take the role and
@@ -2106,9 +2107,13 @@ is the boundary rather than an estimate of it. From the write's issue the window
 polled every 4 ms; the ack tells nothing about it (one write acked in 2 ms stayed stale for another 31 ms), and it
 is always the ack that lands first. The parameter's class is
 irrelevant: the same behaviour was measured on a `sideEffect` head, a `follow: "direct"` scalar, plain storage and
-the PEQ band gains. Two consequences bound any repair. A side effect goes readable **1-2 ms after** the address that
-caused it, so no separate wait is needed for what a write makes the unit recompute; and a write of a value the unit
-already holds emits **no notify at all**, so a wait for one has to be able to end on a timer.
+the PEQ band gains. Two consequences bound any repair. What a `sideEffect: "refetch"` head makes the unit recompute
+goes readable within a few milliseconds of the head's own notify — **1-2 ms after** it for the EQ 1-knob LEVEL, 2-4 ms
+for the preset its TYPE loads, and announced behind the head within a millisecond for SSMCS Morphing, Sweet Spot Data,
+the COMP 1-knob and its Level, and the insert-FX drivers (the multi-band compressor's 1-knob and Level, Pitch Fix's
+MIDI Control), while the EQ 1-knob ON recomputes no band — so no separate wait is needed for what those writes make
+the unit recompute; and a write of a value the unit already holds emits **no notify at all**, so a wait for one has to
+be able to end on a timer.
 
 `core/control/settle.ts` is that wait, and the whole of it is one sentence: **the answer for an address this flush
 wrote is the value the DEVICE ANNOUNCED for it, never the value that was sent.** An acked write the unit silently
@@ -2308,7 +2313,7 @@ as invariant 4 (channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
-has ever been measured — the 1-2 ms figure above belongs to the `refetch` family, which never reaches this loop. Its
+has ever been measured — the figures above belong to the `refetch` heads, which never reach this loop. Its
 round also sends `roundCommands`, whole groups, so a wait that ended at the read diff's own notifies would return
 while the rest of a group was still inside its window.
 
@@ -2403,7 +2408,7 @@ it read included; a reconcile reads the names of the nodes it covers and takes t
 | Session start | `begin` from the starting read's clone | `reset` |
 | App edit, `markChanged` | per address, as its own write returns | entry opened, closed at the gesture boundary |
 | Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands, and an entry already recorded takes a nested `nodeParams` / `connParams` leaf only where its `before` AND its `after` both hold what the read measured from — both sides then take the read's value, and a whole field is never folded |
-| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect |
+| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect, when the read authored at least one key (`followAuthored`) |
 | Side-effect refetch | `capture` from the read's clone for the nodes it read, their names excepted since the read carries none, then the same journal replay | `absorb` of the device-authored keys only |
 | Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel | untouched |
 
@@ -2438,9 +2443,10 @@ sequenceDiagram
 ```
 
 The reflect is coalesced across *producers*, so it cannot know what the device authored — which is why the
-history is settled at each producer's own site (see the table above) and not here. Its full branch does call
-`PlanHistory.reset`, because a readback of any breadth re-authored the plan's values and no earlier entry
-describes a state it can return to.
+history is settled at each producer's own site (see the table above) and not here. Its full branch calls
+`PlanHistory.reset` when the reconciles behind it authored at least one key (`followAuthored`), because such a
+readback re-authored the plan's values and no earlier entry describes a state it can return to; a reconcile that
+agreed with the plan at every key leaves both stacks as they were.
 
 #### What is discarded, and where
 
@@ -3745,9 +3751,10 @@ An undo is refused, with the reason on the status line and **without spending th
   full reconciles and Live sync's 1-knob refetch do the same. A converge round is not one of them —
   it reads the whole write scope but writes nothing back into the plan. The refusal is taken before
   the open entry is **closed**, not merely before it is consumed, so the press is exact when it is
-  retried; note that the two reconciles reset the history in their reflect a moment later, so for
-  those the refused entry is one the operator loses — visibly, rather than as an edit that may or may
-  not have reached the unit. Those three deliberately do **not** refuse a file flow: they start on
+  retried. A reconcile whose read changed a value resets the history in its reflect a moment later, so
+  there the refused entry is one the operator loses — visibly, rather than as an edit that may or may
+  not have reached the unit; a reconcile that agreed with the plan at every key leaves the entry for the
+  retry. Those three deliberately do **not** refuse a file flow: they start on
   their own and nothing on screen names them, so the plan-replacement side is handled at the read
   instead (`loadPlan` ends the session and abandons the read; the read is bound to the plan it was
   issued for and drops its result if that plan is gone). The 1-knob refetch holds the refusal
@@ -3786,8 +3793,9 @@ Both stacks are dropped, and the baseline re-taken, when no earlier entry descri
 can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent row / the model picker
 / the model switch a Fetch or Live-sync start offers, applied once its read has landed complete / the `?plan=`
 deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch, Live-sync start
-and the `.urxf` import; plus device-follow's full reconcile). A one-node follow readback only re-takes
-the baseline, keeping the entries already recorded. A read that refuses a +48V / HI-Z ON — made while it was in
+and the `.urxf` import; plus device-follow's reconciles, scoped or full, once their read has authored at least one
+key). A side-effect refetch only takes the keys the device authored into the baseline, keeping the entries already
+recorded. A read that refuses a +48V / HI-Z ON — made while it was in
 flight, or held back by a live flush and never sent — takes that one edit out instead (`PlanHistory.retract`):
 the newest entry carrying each key it took back loses the key when that entry still holds the refused value, an
 entry left empty leaves the stack, and the baseline takes the refusal so it is not recorded as an edit of its own.
@@ -3964,7 +3972,7 @@ what the desktop app offers.
 ```jsonc
 {
   "format": "urx-router-plan",
-  "version": 1,
+  "version": 4,
   "modelId": "URX44V",
   "sampleRate": 48000,
   "positions": { "ch1": { "x": 1, "y": 0 } },
@@ -4005,7 +4013,9 @@ keeps the plan dirty. A recent-plans entry whose file no longer loads (moved / d
 corrupted) is dropped from the list automatically — keeping it would only reproduce the same
 error — and the status line says so; declining the discard confirm attempts nothing and keeps
 the entry. The `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
-`noteCollapsed` fields are optional (a file without them gets their defaults on load). Loading (`deserialize`) is tolerant of
+`noteCollapsed` fields are optional (a file without them gets their defaults on load). `version` is the format
+the file was written in (`PLAN_VERSION` in `src/core/plan.ts`): a newer one is refused (`planVersionUnsupported`),
+an absent or non-numeric one is read as the current format, and an older one is migrated forward on load. Loading (`deserialize`) is tolerant of
 corrupt input at two levels. A collection that is not the right container at all falls back to its
 empty default (`positions` included, symmetrically); within a collection each element is validated on
 its own and a non-conforming one is dropped rather than the document refused — a wire that is null,

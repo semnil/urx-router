@@ -165,6 +165,27 @@ describe("LiveSync sideEffect converge", () => {
   // against the live plan would be joining one moment's addresses to another moment's keys.
   it("hands the confirmed addresses over with the plan they came from", async () => {
     const plan = basePlan();
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024 } };
+    // A unit that keeps what it is sent, holding the plan as it stands before the edit.
+    const key = (id: number, x: number, y: number): string => `${id}:${x}:${y}`;
+    const table = new Map(planToCommands(model, plan).map((c) => [key(c.paramId, c.x, c.y), c.vdValue]));
+    // The COMP/EQ type head moves the ch1 fader on the unit as it lands, so the converge finds
+    // an address that differs, sends it again and reads it back: a confirmed address.
+    const fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      table.set(key(id, x, y), v);
+      if (id === PARAMS.COMP_EQ_TYPE.id) table.set(key(fader.paramId, fader.x, fader.y), fader.vdValue + 100);
+      return Promise.resolve();
+    });
+    // The FX2 effect type moves on the converge's first read, after its plan was frozen.
+    let edited = false;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      if (!edited) {
+        edited = true;
+        plan.nodeParams["bus.fx2"] = { fxEffect: { type: 768 } };
+      }
+      return Promise.resolve(table.get(key(id, x, y)) ?? 0);
+    });
     const seen: Array<{ addrs: ReadonlySet<number>; sent: Plan }> = [];
     const live = new LiveSync({
       getModel: () => model,
@@ -180,13 +201,13 @@ describe("LiveSync sideEffect converge", () => {
     await vi.advanceTimersByTimeAsync(120);
     await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
 
+    expect(edited, "the premise: the edit landed inside the converge").toBe(true);
     expect(seen, "a sideEffect param converges, so the hook fires").toHaveLength(1);
-    // Not the live plan — the clone. Handed the live one, every address would be read against
-    // whatever the plan holds by the time the caller uses them.
-    expect(seen[0]!.sent).not.toBe(plan);
-    // What the set CONTAINS is the device flow's question (main.device.test.ts) — this mock's
-    // converge re-reads a device that already agrees, so it sends nothing and confirms nothing.
-    expect(seen[0]!.addrs).toBeInstanceOf(Set);
+    expect(seen[0]!.addrs.has(cmdAddr(fader)), "the address the converge sent again and read back").toBe(true);
+    // The plan as the converge froze it, not one taken when the hook fires: the effect type the
+    // confirmed addresses were laid out by is the one before the edit.
+    expect(seen[0]!.sent.nodeParams["bus.fx2"]?.fxEffect?.type).toBe(1024);
+    expect(plan.nodeParams["bus.fx2"]?.fxEffect?.type).toBe(768);
   });
 
   // The park in front of the converge. Three families announce nothing when the unit's own

@@ -1,5 +1,5 @@
 import { test, expect, colorToken, textContrast, type Page } from "./fixtures";
-import { selectWire } from "./graph-helpers";
+import { drag, port, selectWire, wire } from "./graph-helpers";
 import { panelHeight, pickBand, pickPlot, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
 import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
@@ -1185,9 +1185,11 @@ test.describe("ducker", () => {
     // coordinate — so the lane folds to that one number instead of drawing L and R.
     await selectWire(page, "ch1:out", "out.ducker1:in");
     await page.keyboard.press("Delete");
-    await page.locator('[data-ref="bus.stereo:out"]').dispatchEvent("pointerdown");
-    await page.locator('[data-ref="out.ducker1:in"]').dispatchEvent("pointerup");
+    await drag(page, port(page, "bus.stereo:out"), port(page, "out.ducker1:in"));
+    // The premise: the key is wired from the stereo bus, and the screen names it.
+    await expect(wire(page, "bus.stereo:out", "out.ducker1:in")).toHaveCount(1);
     await openDucker(page);
+    await expect(screenBox(page).locator(".gt-cap-label:not([aria-hidden])").first()).toContainText("STEREO");
     const keySlot = screenBox(page).locator(".gt-slot").first();
     await expect(keySlot.locator(".gt-bar")).toHaveCount(1);
   });

@@ -206,6 +206,16 @@ export function deviceCommands(
     "plugin:dialog|message": "Cancel",
     ...over,
   };
+  // The same goes for the commands the shell refuses while disconnected: a case that
+  // supplies its own reader or writer says what the unit HOLDS, and the connection rule
+  // stays the table's. Kept on the table as well, so `TauriShell.answer` applies it to a
+  // replacement made after the boot.
+  const guard =
+    (v: unknown): unknown =>
+    (a: Record<string, unknown>) =>
+      live(() => (typeof v === "function" ? (v as (x: Record<string, unknown>) => unknown)(a) : v));
+  for (const cmd of DEVICE_TRAFFIC) if (cmd in over) table[cmd] = guard(over[cmd]);
+  (table as Record<symbol, unknown>)[GUARD] = guard;
   // The bookkeeping is applied AFTER `over`, so a case that says what the unit reports at
   // connect (a model, a firmware, a throw) still gets a connection. Replacing the whole
   // command with a plain answer drops it, and every read after such a connect is then
@@ -219,6 +229,23 @@ export function deviceCommands(
   };
   return table;
 }
+
+/** The commands the shell sends through `sender()` (`vd.rs`), which answers "not-connected"
+ *  while no worker is installed. */
+const DEVICE_TRAFFIC = [
+  "vd_get",
+  "vd_get_str",
+  "vd_set",
+  "vd_set_str",
+  "vd_params_subscribe",
+  "vd_params_unsubscribe",
+  "vd_meters_subscribe",
+  "vd_meters_unsubscribe",
+  "vd_watch_link",
+];
+
+/** Where a device table keeps its connection guard for the shell it is installed in. */
+const GUARD = Symbol("device traffic guard");
 
 /** The shell most recently installed on the page, for a teardown that has to drain the
  *  app still driving it. A case returns as soon as its own assertion holds, but the flow
@@ -242,6 +269,7 @@ let epoch = 0;
  */
 export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
   const table: Record<string, unknown> = { ...BASE_COMMANDS, ...commands };
+  const guard = (commands as Record<symbol, unknown>)[GUARD] as ((v: unknown) => unknown) | undefined;
   const once = new Map<string, unknown>();
   const invokes: string[] = [];
   const args: Array<Record<string, unknown> | undefined> = [];
@@ -303,7 +331,7 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     invokes,
     args,
     channels,
-    answer: (cmd, value) => void (table[cmd] = value),
+    answer: (cmd, value) => void (table[cmd] = guard && DEVICE_TRAFFIC.includes(cmd) ? guard(value) : value),
     failOnce: (cmd, err) => void once.set(cmd, err),
     count: (cmd) => invokes.filter((c) => c === cmd).length,
     emit: (event, payload) => {

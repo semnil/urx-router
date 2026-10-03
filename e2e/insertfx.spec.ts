@@ -9,7 +9,12 @@ import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
 // round-trip through save/open. Slots/encodings: core/control/insert-fx-effect.ts.
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
-const insertSelect = (page: Page) => page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select");
+// The EFFECT TYPE selector, with its section opened first: the section folds with its own ON
+// state, so a node holding nothing ships with the selector unrendered.
+const insertSelect = async (page: Page) => {
+  await openInsertFxSection(page);
+  return page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select");
+};
 // Insert FX is a collapsible on-state section like GATE / COMP / EQ, so its bypass row is
 // the section's own toggle and carries NO label — the header is its name. Reached through
 // the section rather than by a row label, the way the panel's other sections are.
@@ -94,7 +99,7 @@ test("every INS FX family and face lays out at one height, in Japanese", async (
 
 test("guitar amp (Clean) reveals common params + cabinet list", async ({ page }) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Clean" });
+  await chooseOption(await insertSelect(page), { label: "Clean" });
   await openScreen(page);
   // Common params appear. Slot 7 reads Volume here and Gain on the other three amps —
   // the unit's own labelling, and the one row whose name depends on the type.
@@ -106,7 +111,9 @@ test("guitar amp (Clean) reveals common params + cabinet list", async ({ page })
   // The cabinet is on the SAME face, between the amp and Output — where the effect guide's
   // own common table puts it — so both halves are reachable without a switch.
   await expect(screenRow(page, "Gate Level")).toBeVisible();
-  await expect(screenBox(page).locator(".gt-facebar button")).toHaveCount(0);
+  // No bar to a second face: the bar's space holds the reserved, inert one alone.
+  await expect(screenBox(page).locator(".gt-modes.inert")).toHaveCount(1);
+  await expect(screenBox(page).locator(".gt-modes button:not([disabled])")).toHaveCount(0);
   // SP Type lists the eight cabinets in order.
   await expect(screenSelect(page, "SP Type").locator("option")).toHaveText([
     "BS 4x12",
@@ -127,7 +134,7 @@ test("guitar amp (Clean) reveals common params + cabinet list", async ({ page })
 // last row above it.
 test("a guitar amp's modulation group starts a row of its own", async ({ page }) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Clean" });
+  await chooseOption(await insertSelect(page), { label: "Clean" });
   await openScreen(page);
   const grid = screenBox(page).locator(".gt-knobs");
   const box = async (row: string) => (await screenRow(page, row).boundingBox())!;
@@ -155,7 +162,7 @@ test("a guitar amp's modulation group starts a row of its own", async ({ page })
 // assertion in this file passed while the panel looked nothing like the design.
 test("a guitar amp's values are knobs, on one face with no bar", async ({ page }) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Clean" });
+  await chooseOption(await insertSelect(page), { label: "Clean" });
   await openScreen(page);
 
   // Every continuous value is a knob. Counted rather than sampled: one knob among eleven
@@ -181,9 +188,11 @@ test("a guitar amp's values are knobs, on one face with no bar", async ({ page }
   // Distortion ships at its minimum and Blend at mid, so the two must not point the same way.
   expect(await rot("Distortion")).not.toBe(await rot("Blend"));
 
-  // No bar at all: the cabinet joined the amp on one face, and a bar with one item is a
-  // control that does nothing. The display column is still the lane rack.
-  await expect(screenBox(page).locator(".gt-facebar button")).toHaveCount(0);
+  // No bar to reach: the cabinet joined the amp on one face, and a bar with one item is a
+  // control that does nothing, so the bar's space holds the reserved, inert one alone. The
+  // display column is still the lane rack.
+  await expect(screenBox(page).locator(".gt-modes.inert")).toHaveCount(1);
+  await expect(screenBox(page).locator(".gt-modes button:not([disabled])")).toHaveCount(0);
   await expect(screenBox(page).locator(".gt-splitdisplay, .gt-ladderbox").first()).toBeVisible();
   await closeScreen(page);
 });
@@ -243,7 +252,7 @@ test("every control on a guitar face is a card in the one panel", async ({ page 
   // browser case at all before this.
   for (const type of ["Clean", "Crunch", "Lead", "Drive"]) {
     await node(page, "ch1").click();
-    await chooseOption(insertSelect(page), { label: type });
+    await chooseOption(await insertSelect(page), { label: type });
     await openScreen(page);
 
     {
@@ -288,7 +297,7 @@ test("every control on a guitar face is a card in the one panel", async ({ page 
 // the guitar amp rather than a change to every screen.
 test("a compander keeps horizontal sliders and gains its transfer curve", async ({ page }) => {
   await node(page, "bus.stereo").click();
-  await chooseOption(insertSelect(page), { label: "Compander-H" });
+  await chooseOption(await insertSelect(page), { label: "Compander-H" });
   await openScreen(page);
   await expect(screenBox(page).locator(".gt-knob")).toHaveCount(0);
   await expect(screenBox(page).locator(".prefs-row input[type=range]")).toHaveCount(6);
@@ -312,13 +321,13 @@ test("a compander keeps horizontal sliders and gains its transfer curve", async 
 
 test("switching guitar amp type swaps the type-specific control", async ({ page }) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Clean" });
+  await chooseOption(await insertSelect(page), { label: "Clean" });
   await openScreen(page);
   await expect(screenRow(page, "Blend")).toBeVisible();
   // The selector is outside the screen, so the type changes underneath an open one and
   // the same modal re-binds — which is the whole reason the screen carries no Type row.
   await closeScreen(page);
-  await chooseOption(insertSelect(page), { label: "Drive" });
+  await chooseOption(await insertSelect(page), { label: "Drive" });
   await openScreen(page);
   await expect(screenRow(page, "Blend")).toHaveCount(0);
   await expect(screenRow(page, "Amp Type")).toBeVisible(); // Drive-only
@@ -330,7 +339,7 @@ test("switching guitar amp type swaps the type-specific control", async ({ page 
 
 test("compander on the STEREO master reveals dynamics params", async ({ page }) => {
   await node(page, "bus.stereo").click();
-  await chooseOption(insertSelect(page), { label: "Compander-H" });
+  await chooseOption(await insertSelect(page), { label: "Compander-H" });
   await openScreen(page);
   await expect(screenRow(page, "Threshold")).toBeVisible();
   await expect(screenRow(page, "Ratio")).toBeVisible();
@@ -358,7 +367,7 @@ test("no family has an editor left in the inspector", async ({ page }) => {
     ["bus.stereo", "M.B.Comp", "L-M Xover"],
   ] as const) {
     await node(page, id).click();
-    await chooseOption(insertSelect(page), { label: effect });
+    await chooseOption(await insertSelect(page), { label: effect });
     await expect(page.locator("#btn-insfx-screen"), effect).toBeVisible();
     await expect(param(page, row), effect).toHaveCount(0);
     // The row that is still there, on the same panel, read with the same locator.
@@ -368,7 +377,7 @@ test("no family has an editor left in the inspector", async ({ page }) => {
 
 test("multi-band comp splits into what the bands share and what each band is", async ({ page }) => {
   await node(page, "bus.mix1").click();
-  await chooseOption(insertSelect(page), { label: "M.B.Comp" });
+  await chooseOption(await insertSelect(page), { label: "M.B.Comp" });
   await openScreen(page);
   // MAIN: the levels the three bands are mixed back at, then Out Gain, then the two
   // crossovers that decide what each band hears. Sixteen values on one panel fits and is
@@ -507,7 +516,7 @@ test("the MBC 1-knob Level follows a drag rather than stepping once", async ({ p
 // there clears the mask and takes the Scale to Custom. The app does what the unit does.
 test("pitch MIDI Control is written, and the mask it clears becomes the unit's", async ({ page }) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Pitch Fix" });
+  await chooseOption(await insertSelect(page), { label: "Pitch Fix" });
   await openScreen(page);
   const mode = screenSelect(page, "MIDI Control");
   await expect(mode).toBeEnabled();
@@ -535,7 +544,7 @@ test("pitch MIDI Control is written, and the mask it clears becomes the unit's",
 
 test("pitch fix reveals key + scale keyboard", async ({ page }) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Pitch Fix" });
+  await chooseOption(await insertSelect(page), { label: "Pitch Fix" });
   await openScreen(page);
   // One face: what the correction does to a note and what it is aimed at are both on it.
   await expect(screenRow(page, "Coarse")).toBeVisible();
@@ -554,7 +563,7 @@ const noteToggle = (page: Page, note: string) =>
 
 test("pitch scale select seeds the note keyboard, and a note edit persists as Custom", async ({ page }, testInfo) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Pitch Fix" });
+  await chooseOption(await insertSelect(page), { label: "Pitch Fix" });
   await openScreen(page);
   // Defaults to Chromatic. Every preset is selectable: the unit derives the twelve notes
   // for each of them from the Key, and the app now authors the same pattern.
@@ -607,7 +616,7 @@ test("a device-preset pitch scale (Pentatonic) loaded from a plan displays verba
 
 test("MBC crossover knobs expose the per-band valid ranges", async ({ page }) => {
   await node(page, "bus.stereo").click();
-  await chooseOption(insertSelect(page), { label: "M.B.Comp" });
+  await chooseOption(await insertSelect(page), { label: "M.B.Comp" });
   await openScreen(page);
   // L-M 21.2 Hz..4 kHz (raw 6..97), M-H 42.5 Hz..8 kHz (raw 18..109): the device
   // splits the crossover ranges so the bands cannot cross.
@@ -629,7 +638,7 @@ test("insert FX option set depends on node kind (input vs output)", async ({ pag
   // the STEREO / MIX outputs carry the output effects (MBC / companders). Neither
   // family leaks into the other's selector.
   await node(page, "ch1").click();
-  await expect(insertSelect(page).locator("option")).toHaveText([
+  await expect((await insertSelect(page)).locator("option")).toHaveText([
     "No Effect",
     "Clean",
     "Crunch",
@@ -640,7 +649,7 @@ test("insert FX option set depends on node kind (input vs output)", async ({ pag
     "Compander-S",
   ]);
   await node(page, "bus.stereo").click();
-  await expect(insertSelect(page).locator("option")).toHaveText([
+  await expect((await insertSelect(page)).locator("option")).toHaveText([
     "No Effect",
     "Compander-H",
     "Compander-S",
@@ -650,61 +659,61 @@ test("insert FX option set depends on node kind (input vs output)", async ({ pag
 
 test("guitar-amp slot is 1-of-N: taken on one channel disables it on another", async ({ page }) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Clean" });
+  await chooseOption(await insertSelect(page), { label: "Clean" });
   await node(page, "ch2").click();
   // The four guitar-amp types share one device-wide slot, now held by CH1.
   for (const amp of ["Clean", "Crunch", "Lead", "Drive"]) {
-    await expect(insertSelect(page).locator("option", { hasText: amp })).toBeDisabled();
+    await expect((await insertSelect(page)).locator("option", { hasText: amp })).toBeDisabled();
   }
   // Pitch Fix and the companders sit in other slots, so they stay selectable.
-  await expect(insertSelect(page).locator("option", { hasText: "Pitch Fix" })).toBeEnabled();
-  await expect(insertSelect(page).locator("option", { hasText: "Compander-H" })).toBeEnabled();
+  await expect((await insertSelect(page)).locator("option", { hasText: "Pitch Fix" })).toBeEnabled();
+  await expect((await insertSelect(page)).locator("option", { hasText: "Compander-H" })).toBeEnabled();
 });
 
 test("output dynamics slot is 1-of-N across MIX and STEREO outputs", async ({ page }) => {
   await node(page, "bus.mix1").click();
-  await chooseOption(insertSelect(page), { label: "M.B.Comp" });
+  await chooseOption(await insertSelect(page), { label: "M.B.Comp" });
   await node(page, "bus.stereo").click();
   // MBC and both companders share the single out-dyn slot, now held by MIX 1.
   for (const fx of ["M.B.Comp", "Compander-H", "Compander-S"]) {
-    await expect(insertSelect(page).locator("option", { hasText: fx })).toBeDisabled();
+    await expect((await insertSelect(page)).locator("option", { hasText: fx })).toBeDisabled();
   }
-  await expect(insertSelect(page).locator("option", { hasText: "No Effect" })).toBeEnabled();
+  await expect((await insertSelect(page)).locator("option", { hasText: "No Effect" })).toBeEnabled();
 });
 
 test("sample-rate ceilings gate the insert FX options", async ({ page }) => {
   await chooseOption(page.locator("#rate-picker"), "48000");
   await node(page, "ch1").click();
-  await expect(insertSelect(page).locator("option", { hasText: "Pitch Fix" })).toBeEnabled();
+  await expect((await insertSelect(page)).locator("option", { hasText: "Pitch Fix" })).toBeEnabled();
 
   // Pitch Fix tops out at 48 kHz; the guitar amps run to 96 kHz.
   await chooseOption(page.locator("#rate-picker"), "96000");
-  await expect(insertSelect(page).locator("option", { hasText: "Pitch Fix" })).toBeDisabled();
-  await expect(insertSelect(page).locator("option", { hasText: "Clean" })).toBeEnabled();
+  await expect((await insertSelect(page)).locator("option", { hasText: "Pitch Fix" })).toBeDisabled();
+  await expect((await insertSelect(page)).locator("option", { hasText: "Clean" })).toBeEnabled();
 
   // Above 96 kHz every insert effect drops out.
   await chooseOption(page.locator("#rate-picker"), "192000");
   for (const fx of ["Clean", "Pitch Fix", "Compander-H"]) {
-    await expect(insertSelect(page).locator("option", { hasText: fx })).toBeDisabled();
+    await expect((await insertSelect(page)).locator("option", { hasText: fx })).toBeDisabled();
   }
 });
 
 test("selecting No Effect removes the effect parameter editor", async ({ page }) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Clean" });
+  await chooseOption(await insertSelect(page), { label: "Clean" });
   await openScreen(page);
   await expect(screenRow(page, "Treble")).toBeVisible();
   await closeScreen(page);
-  await chooseOption(insertSelect(page), { label: "No Effect" });
+  await chooseOption(await insertSelect(page), { label: "No Effect" });
   // Nothing to tune, so the way in goes with the effect rather than opening on an
   // empty panel.
   await expect(page.locator("#btn-insfx-screen")).toHaveCount(0);
-  await expect(insertSelect(page)).toHaveValue("-1");
+  await expect(await insertSelect(page)).toHaveValue("-1");
 });
 
 test("insert-fx param round-trips through save and open", async ({ page }, testInfo) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Clean" });
+  await chooseOption(await insertSelect(page), { label: "Clean" });
   await openScreen(page);
   await chooseOption(screenSelect(page, "SP Type"), { label: "JC 2x12" });
   await expect(screenSelect(page, "SP Type")).toHaveValue("8");
@@ -718,13 +727,13 @@ test("insert-fx param round-trips through save and open", async ({ page }, testI
   await page.click("#btn-file");
   await page.click("#btn-new");
   await node(page, "ch1").click();
-  await expect(insertSelect(page)).toHaveValue("-1"); // No Effect after reset
+  await expect(await insertSelect(page)).toHaveValue("-1"); // No Effect after reset
 
   await page.click("#btn-file");
   const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
   await chooser.setFiles(saved);
   await node(page, "ch1").click();
-  await expect(insertSelect(page)).toHaveValue("256"); // Clean
+  await expect(await insertSelect(page)).toHaveValue("256"); // Clean
   await openScreen(page);
   // One face: the amp's rows and the cabinet's are both on it, so a reopened screen shows
   // the saved cabinet without a switch to find first.
@@ -735,7 +744,7 @@ test("insert-fx param round-trips through save and open", async ({ page }, testI
 test("selecting an effect reveals the ON/OFF (bypass) toggle; bypass keeps the selection", async ({ page }) => {
   await node(page, "ch1").click();
   await expect(insertFxBypass(page)).toHaveCount(0); // hidden under No Effect
-  await chooseOption(insertSelect(page), { label: "Compander-S" });
+  await chooseOption(await insertSelect(page), { label: "Compander-S" });
   const onRow = insertFxBypass(page);
   await expect(onRow.locator("button.on")).toHaveText("ON"); // ships engaged
   await onRow.getByRole("button", { name: "OFF", exact: true }).click();
@@ -744,10 +753,10 @@ test("selecting an effect reveals the ON/OFF (bypass) toggle; bypass keeps the s
   const lamp = insertFxSection(page).locator(".sec-led");
   await expect(lamp).not.toHaveClass(/\bon\b/);
   await expect(insertFxSection(page)).toHaveJSProperty("open", false);
-  await expect(insertSelect(page)).toHaveValue("1794"); // bypass never clears the selector
+  await expect(await insertSelect(page)).toHaveValue("1794"); // bypass never clears the selector
   // Re-selecting an effect mirrors the device's auto-engage.
   await openInsertFxSection(page);
-  await chooseOption(insertSelect(page), { label: "Compander-H" });
+  await chooseOption(await insertSelect(page), { label: "Compander-H" });
   await expect(insertFxBypass(page).locator("button.on")).toHaveText("ON");
   await expect(lamp).toHaveClass(/\bon\b/);
 });
@@ -770,7 +779,7 @@ test("choosing an insert effect reveals its ON switch and launcher without leavi
   await expect(launcher).toHaveCount(0);
   await openInsertFxSection(page);
 
-  await chooseOption(insertSelect(page), { label: "Clean" });
+  await chooseOption(await insertSelect(page), { label: "Clean" });
   // Asked of the PANEL rather than of the element: the rebuild this case is about replaces
   // that select and restores focus to the fresh one, so comparing identity would report the
   // fix as a failure to keep focus.
@@ -798,7 +807,7 @@ test("choosing an insert effect reveals its ON switch and launcher without leavi
 test("selecting another node updates the panel on the first press, with a select still focused", async ({ page }) => {
   await node(page, "ch1").click();
   await openInsertFxSection(page);
-  await chooseOption(insertSelect(page), { label: "Clean" });
+  await chooseOption(await insertSelect(page), { label: "Clean" });
   await expect(page.locator("#inspector h2")).toHaveText("CH 1");
   // The focus a real dropdown dismissal leaves behind is what the case turns on.
   expect(
@@ -863,7 +872,7 @@ test("the console INS FX pair chooses an effect and opens its screen", async ({ 
   await expect(opener).toHaveText("+");
   await page.click("#btn-view-graph");
   await node(page, "ch1").click();
-  await expect(insertSelect(page)).toHaveValue("-1");
+  await expect(await insertSelect(page)).toHaveValue("-1");
 });
 
 // From the keyboard the disclosure puts the focus on the list's checked row — the list sits
@@ -908,7 +917,7 @@ test("the console launcher is inert on a strip holding nothing, and opens on one
   // …and the multi-band compressor, which is the family that used to be the dead one.
   await page.click("#btn-view-graph");
   await node(page, "bus.stereo").click();
-  await chooseOption(insertSelect(page), { label: "M.B.Comp" });
+  await chooseOption(await insertSelect(page), { label: "M.B.Comp" });
   await page.click("#btn-view-console");
   await strip.locator(".con-ifxopen").click();
   await expect(open).not.toHaveClass(/\boff\b/);
@@ -920,7 +929,7 @@ test("the console launcher is inert on a strip holding nothing, and opens on one
 
 test("the console INS FX chip bypasses without clearing the selection", async ({ page }) => {
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Compander-S" });
+  await chooseOption(await insertSelect(page), { label: "Compander-S" });
   await page.click("#btn-view-console");
   const chip = page
     .locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) })
@@ -934,7 +943,7 @@ test("the console INS FX chip bypasses without clearing the selection", async ({
   // The selection survived the bypass round-trip.
   await page.click("#btn-view-graph");
   await node(page, "ch1").click();
-  await expect(insertSelect(page)).toHaveValue("1794");
+  await expect(await insertSelect(page)).toHaveValue("1794");
 });
 
 // Two nodes holding the same insert-FX family write ONE engine array (addressed
@@ -1021,7 +1030,7 @@ test("every semitone button meets the desktop minimum target, at the smallest wi
   // out as.
   await page.setViewportSize({ width: 960, height: 640 });
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Pitch Fix" });
+  await chooseOption(await insertSelect(page), { label: "Pitch Fix" });
   await openScreen(page);
   const buttons = page.locator("#dyn-screen-box .gt-notes button");
   await expect(buttons).toHaveCount(12);
@@ -1062,7 +1071,7 @@ test("every semitone button meets the desktop minimum target, at the smallest wi
 test("Pitch Fix keeps each of its three groups on one row", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   await node(page, "ch1").click();
-  await chooseOption(insertSelect(page), { label: "Pitch Fix" });
+  await chooseOption(await insertSelect(page), { label: "Pitch Fix" });
   await openScreen(page);
   const rowOf = async (label: string): Promise<number> => {
     const box = await screenRow(page, label).boundingBox();

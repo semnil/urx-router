@@ -24,6 +24,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, getsOf, type Span } from "./analyze";
 import { MAX_ENTRIES } from "../../src/core/plan-history";
+import { DEBOUNCE_MS } from "../../src/core/control/live";
 import { CH1_FADER, CH2_FADER, deviceLevelText, faderOf, faderReadout, strip } from "./ui";
 import { chooseOption } from "../choose-option";
 
@@ -44,11 +45,10 @@ const CH4_FADER = "139:0:3";
 const P_CH_PAN = 141; // direct-follow: applied into the plan with no readback at all
 const MIDI_CC_LEVEL = 7;
 /** How long a plan edit can still be leaving after the edit itself: LiveSync's own
- *  `DEBOUNCE_MS` (120) plus slack for a loaded runner. A set on the wire this soon after
- *  a gesture ended belongs to an edit the gesture had already made; anything later is the
- *  gesture still running. Copied rather than imported — `live.ts` is inside the module
- *  cycle the harness cannot enter (see `deviceLevelText` in ./ui). */
-const FLUSH_TAIL_MS = 300;
+ *  `DEBOUNCE_MS` plus slack for a loaded runner. A set on the wire this soon after a
+ *  gesture ended belongs to an edit the gesture had already made; anything later is the
+ *  gesture still running. */
+const FLUSH_TAIL_MS = DEBOUNCE_MS + 180;
 
 /** Click a File menu item (the menu opens on its trigger and closes on the item). */
 async function fileMenu(page: Page, id: string): Promise<void> {

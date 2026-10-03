@@ -351,10 +351,12 @@ test.describe("T1b overtake", () => {
   // ---------------------------------------------------------------------------
   // overtake-notify-echo-vs-genuine-during-flush
   //
-  // isEcho is a value comparison against the live snapshot, and the flush writes the
-  // snapshot entry AFTER its vd_set resolves. So the discriminating variable is not
-  // whether the message is genuine — it is whether it arrived before or after our own
-  // ack. Three runs hold the address fixed and move only that:
+  // isEcho takes a value the flush was acked for (its pending queue, 300 ms) or the one the
+  // live snapshot holds, and the flush writes both AFTER its vd_set resolves; a notify
+  // that lands while that vd_set is in flight is superseded instead. So the
+  // discriminating variable is not whether the message is genuine — it is whether it
+  // arrived before or after our own ack. Three runs hold the address fixed and move only
+  // that:
   //
   //   early-echo   the exact value being written, delivered while its vd_set is held
   //   genuine      a different value for the same address, at the same instant
@@ -453,10 +455,11 @@ test.describe("T1b overtake", () => {
 
       if (variant === "early-echo") {
         // PINNED DEFECT. The message is our own write coming back, but it overtook our
-        // ack, so the snapshot still held the pre-edit value and isEcho said "no". The
-        // app applied its own value as a device-side change and then paid for it: the
-        // idle net escalated to a WHOLE-DEVICE readback. The price of a broker that
-        // echoes faster than it acks is several hundred reads per echoed write.
+        // ack: nothing is pending for it yet and the snapshot still holds the pre-edit
+        // value, so isEcho says "no". The write is in flight, so the notify is superseded
+        // rather than applied — the node is re-read once the write is announced — and the
+        // idle net escalates to a WHOLE-DEVICE readback. The price of a broker that echoes
+        // faster than it acks is several hundred reads per echoed write.
         expect(readsAfter.length).toBeGreaterThan(100);
         // The value itself is unharmed — it is the same value either way — so nothing
         // but the read volume distinguishes this from a correct classification.
@@ -465,10 +468,11 @@ test.describe("T1b overtake", () => {
         expect(finalReadout).toBe(editedReadout);
       } else if (variant === "genuine") {
         // The device really moved, on the same address and at the same instant as the
-        // echo above. Here the classification is right: the direct apply takes the new
-        // value into the plan, the screen follows, and the idle net re-reads afterwards
-        // and confirms it. The app pays the same several-hundred-read escalation it paid
-        // for its own echo — which is the point of holding delta-t and address fixed.
+        // echo above. It is superseded the same way — not applied while our write is in
+        // flight — and the screen follows through the node's re-read and the idle net's
+        // whole-device read after it. The app pays the same several-hundred-read
+        // escalation it paid for its own echo — which is the point of holding delta-t and
+        // address fixed.
         expect(finalReadout).not.toBe(editedReadout);
         expect(readsAfter.length).toBeGreaterThan(100);
       } else {

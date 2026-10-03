@@ -18,7 +18,8 @@ import type { Locator } from "@playwright/test";
 export type OptionChoice = string | { label: string } | { value: string } | { index: number };
 
 /**
- * Pick `choice` in `select` and leave focus on it.
+ * Pick `choice` in `select` and leave focus on it. The select has to be one the operator can
+ * reach — rendered, enabled and able to take focus — or this throws.
  *
  * Fires `input` then `change`, and does so even when the value did not move: that is what
  * `selectOption` does, and a case that re-picks the value already there is asking whether
@@ -28,6 +29,9 @@ export type OptionChoice = string | { label: string } | { value: string } | { in
  * otherwise a silent no-op followed by an assertion about something unrelated.
  */
 export async function chooseOption(select: Locator, choice: OptionChoice): Promise<void> {
+  // What the operator can reach: a select that is not rendered — in a folded section, under
+  // a hidden ancestor — waits here and fails at the bound, rather than being written to.
+  await select.waitFor({ state: "visible" });
   await select.evaluate((el, wanted) => {
     if (!(el instanceof HTMLSelectElement)) throw new Error(`chooseOption: not a <select> but <${el.tagName}>`);
     if (el.disabled) throw new Error("chooseOption: the select is disabled");
@@ -49,6 +53,10 @@ export async function chooseOption(select: Locator, choice: OptionChoice): Promi
     // Focus first, so the events are dispatched in the state a dismissal leaves behind
     // rather than in whatever state the previous step happened to end in.
     el.focus();
+    // A select that cannot take focus is one the operator cannot open either: folded away,
+    // or inside an app a modal has made inert.
+    if (document.activeElement !== el)
+      throw new Error("chooseOption: the select did not take focus (hidden, folded or inert)");
     el.value = want.value;
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));

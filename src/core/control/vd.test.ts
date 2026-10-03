@@ -66,6 +66,28 @@ describe("level encoding (shared by faders, sends and the monitor)", () => {
   });
 });
 
+// A value read from the unit is diffed against what the plan re-encodes it to, so a raw that does
+// not come back as itself after a decode is a write the next flush sends over the unit's own value.
+describe("every raw in a codec's range re-encodes to itself", () => {
+  const sweep = (lo: number, hi: number, encode: (v: number) => number, decode: (r: number) => number): number[] => {
+    const broken: number[] = [];
+    for (let r = lo; r <= hi; r++) if (encode(decode(r)) !== r) broken.push(r);
+    return broken;
+  };
+
+  it("level", () => {
+    expect(sweep(LEVEL_MIN_DB * 100, VD_LEVEL_MAX, levelToVd, vdToLevel)).toEqual([]);
+  });
+
+  it("EQ band gain", () => {
+    expect(sweep(EQ_GAIN_MIN_DB * 100, EQ_GAIN_MAX_DB * 100, eqGainToVd, vdToEqGain)).toEqual([]);
+  });
+
+  it("EQ band Q", () => {
+    expect(sweep(EQ_Q_MIN * 100, EQ_Q_MAX * 100, qToVd, vdToQ)).toEqual([]);
+  });
+});
+
 describe("GATE range encoding (param 30: -∞ notch below the -72 dB floor)", () => {
   it("maps the -∞ notch to the off sentinel and dB to centi-dB", () => {
     expect(gateRangeToVd(GATE_RANGE_OFF_DB)).toBe(VD_LEVEL_OFF); // -73 (-∞) → off

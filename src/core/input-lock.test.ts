@@ -235,6 +235,17 @@ describe("+48V and HI-Z against what the unit holds", () => {
     ).toEqual([{ nodeId: "ch3", key: "hiZ" }]);
   });
 
+  // The same rule from the other switch: the session sent HI-Z ON and the read found +48V on.
+  it("names nothing the unit is known to hold on, whichever switch the session sent", () => {
+    const sent = (nodeId: string, key: string): boolean => nodeId === "ch3" && key === "hiZ";
+    expect(
+      readRefusedSwitches(unitWith({ phantom: true, hiZ: false }), planWith({ phantom: true, hiZ: true }), sent),
+    ).toEqual([]);
+    expect(
+      readRefusedSwitches(unitWith({ phantom: false, hiZ: true }), planWith({ phantom: true, hiZ: true }), sent),
+    ).toEqual([{ nodeId: "ch3", key: "phantom" }]);
+  });
+
   it("names the HI-Z command an A.Gain at +40 dB waits with, on the channel's own A.Gain only", () => {
     const cc = channelControl(model, "ch3")!;
     const gain = { name: "HA_GAIN" as const, paramId: cc.gain!.param, x: 0, y: cc.y };

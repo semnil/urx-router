@@ -547,6 +547,15 @@ describe("channel tuning screen parameters", () => {
     expect(bindControl(model, plan, "ch_5_6/oneKnob@eq")!.set(1)).toBe(false);
     // A mono channel's EQ is unaffected by the rate.
     expect(bindControl(model, plan, "ch1/gain@eq.low")!.set(0.25)).toBe(true);
+    // The 1-knob Level carries a lock of its own (the knob being off), which the rate joins.
+    // With the knob on, the rate is the only thing that refuses it.
+    plan.nodeParams.ch_5_6 = { ...plan.nodeParams.ch_5_6, eqOneKnob: { on: true, type: 0, level: 20 } };
+    const level = (): boolean => bindControl(model, plan, "ch_5_6/oneKnobLevel@eq")!.set(0.4);
+    expect(level(), "at 192 kHz with the knob on").toBe(false);
+    expect(plan.nodeParams.ch_5_6?.eqOneKnob?.level).toBe(20);
+    plan.sampleRate = 48000;
+    expect(level(), "at 48 kHz with the knob on").toBe(true);
+    expect(plan.nodeParams.ch_5_6?.eqOneKnob?.level).not.toBe(20);
   });
 
   it("drops COMP entirely in SSMCS mode, keeping GATE and losing the EQ", () => {
@@ -961,6 +970,21 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(push(cid, 0.75), "with the knob off").toBe(true);
     expect(slotVal("bus.stereo", "mbc", th)).not.toBe(100);
   });
+
+  // The band bypasses are switches, bound through their own setter: the slider case above says
+  // nothing about them. They are the only toggles the 1-knob drives.
+  it.each(MBC_BANDS.map((b) => [b.band, b.bypass] as const))(
+    "refuses the %s band's bypass while the 1-knob drives it, and takes it back",
+    (_band, slot) => {
+      const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${slot}`);
+      holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 1, [slot]: 0 }, "mbc");
+      expect(push(cid, 1), "while the knob is on").toBe(false);
+      expect(slotVal("bus.stereo", "mbc", slot)).toBe(0);
+      holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [slot]: 0 }, "mbc");
+      expect(push(cid, 1), "with the knob off").toBe(true);
+      expect(slotVal("bus.stereo", "mbc", slot)).toBe(1);
+    },
+  );
 
   // A controller is told the switch the way the write sends it, which is the question the lock
   // above asks of the same slot: a value the write sends as 0, or not at all, reads OFF here

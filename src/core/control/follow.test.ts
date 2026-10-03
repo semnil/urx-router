@@ -42,8 +42,12 @@ const ADDR: [number, number, number] = [139, 0, 0];
 // node-scoped read; direct/escalation tests override lookup.
 const SCOPED: FollowAddr = { name: "CH_FADER", node: "ch1", direct: false };
 
+// Every session a case starts, ended after it: `writeSettle` is module state, and a sink a
+// case leaves armed is one the next case's settle reports are delivered to.
+const made: DeviceFollow[] = [];
+
 function followFor(overrides: Partial<DeviceFollowHooks> = {}): DeviceFollow {
-  return new DeviceFollow({
+  const follow = new DeviceFollow({
     addrs: () => [ADDR],
     isEcho: () => false,
     lookup: () => SCOPED,
@@ -56,6 +60,8 @@ function followFor(overrides: Partial<DeviceFollowHooks> = {}): DeviceFollow {
     onError: () => {},
     ...overrides,
   });
+  made.push(follow);
+  return follow;
 }
 
 function notify(value: number): void {
@@ -82,6 +88,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const follow of made.splice(0)) follow.end();
   vi.useRealTimers();
 });
 
@@ -837,6 +844,34 @@ describe("DeviceFollow", () => {
     await follow.refresh();
     expect(h.subscribeCalls, "the premise: the set moved, so the sink was armed again").toBe(2);
     await settled;
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 900);
+    expect(reconcileAll).toHaveBeenCalledTimes(1);
+    follow.end();
+  });
+
+  // The gap itself: while the refresh's registration is at the broker, no sink is armed at
+  // all, and a flush landing then watches its writes with nobody listening. The sink armed
+  // once the registration lands is the one the report reaches.
+  it("delivers a settle report armed while a re-registration is at the broker", async () => {
+    const reconcileAll = vi.fn(async () => {});
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const follow = followFor({ reconcileAll, addrs: () => addrs });
+    await follow.begin();
+    let release!: (v: () => void) => void;
+    const stalled = new Promise<() => void>((r) => (release = r));
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (a, onUpdate) => {
+      void real(a, onUpdate);
+      return stalled;
+    });
+    addrs = [ADDR, [9003, 0, 0]];
+    const refreshed = follow.refresh();
+    expect(h.subscribeCalls, "the premise: the registration is at the broker").toBe(2);
+    const k = addrKey(9003, 0, 0);
+    writeSettle.watch(new Map([[k, writeSettle.mark()]]), new Set([k]));
+    release(() => {});
+    await refreshed;
     await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 900);
     expect(reconcileAll).toHaveBeenCalledTimes(1);
     follow.end();

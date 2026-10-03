@@ -239,7 +239,9 @@ test.describe("the tuning screen's three faces", () => {
   // minHeight 640), and a floor is only safe if it yields there. `.consent-box` clamps
   // itself to the viewport, and the action row carrying Close is its last child, so a grid
   // that refuses to shrink pushes Close past the fold — measured before the floor learned
-  // to yield: 68px past the box's own edge.
+  // to yield: 68px past the box's own edge. That run is a constrained window holding its
+  // layout, so it is tagged @webkit as well: the floor has to give way to the chrome around
+  // the grid, and that chrome is the engine's to lay out.
   const RUNS = [
     { lang: "en", size: null },
     { lang: "ja", size: null },
@@ -247,7 +249,9 @@ test.describe("the tuning screen's three faces", () => {
   ] as const;
   for (const run of RUNS) {
     const at = `${run.lang}, ${run.size ? `${run.size.width}x${run.size.height}` : "the default window"}`;
-    test(`every face is one height with its display panel at one top edge (${at})`, async ({ page }) => {
+    test(`every face is one height with its display panel at one top edge (${at})${run.size ? " @webkit" : ""}`, async ({
+      page,
+    }) => {
       if (run.size) await page.setViewportSize(run.size);
       if (run.lang !== "en") {
         // A second init script rather than a write plus a reload: the suite's own init

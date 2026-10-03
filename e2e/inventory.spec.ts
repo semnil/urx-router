@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { allItems, Inventory, itemsFor, itemsUnder, type Item } from "./inventory";
+import { allItems, composedKey, Inventory, itemsFor, itemsUnder, type ComposedEntry, type Item } from "./inventory";
 import { pickBand } from "./dyn-helpers";
 import { en } from "../src/i18n/en";
 import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
@@ -45,8 +45,9 @@ interface Surface {
   neverShown?: Record<string, string>;
   /** Messages the app shows only through a label attribute (see InventoryOptions). */
   viaAttribute?: string[];
-  /** Messages rendered inside a larger run (see InventoryOptions). */
-  composed?: string[];
+  /** Messages rendered inside a larger run, with the separators their composer joins
+   *  with where those are not the default ones (see InventoryOptions). */
+  composed?: ComposedEntry[];
 }
 
 // Named up front so `elsewhere` can be typed by them: a note that hands a message
@@ -69,6 +70,20 @@ const SURFACE_NAMES = [
 ] as const;
 type SurfaceName = (typeof SURFACE_NAMES)[number];
 
+// The load's notes and its own message, joined with " — " into one status run.
+const LOAD_STATUS = [
+  "status.booleanParamsConverted",
+  "status.paramsBounded",
+  "status.paramsDropped",
+  "status.streamingSourceSupplied",
+  "status.sendLevelsSupplied",
+  "status.linkedPairsAligned",
+  "status.linkedSendPansAligned",
+  "status.colorsDropped",
+  "status.textsRewritten",
+  "status.planLoaded",
+];
+
 const SURFACES: Record<SurfaceName, Surface> = {
   consent: {
     roots: ["consent"],
@@ -87,21 +102,10 @@ const SURFACES: Record<SurfaceName, Surface> = {
   },
   // What the status line says about a document the load repaired. The namespace as a whole is
   // OUT_OF_SCOPE; these are the notes a load leads the line with, each said nowhere else, joined
-  // into one run ahead of the load's own message.
+  // into one run ahead of the load's own message — so every one of them is composed.
   loadStatus: {
-    keys: [
-      "status.booleanParamsConverted",
-      "status.paramsBounded",
-      "status.paramsDropped",
-      "status.streamingSourceSupplied",
-      "status.sendLevelsSupplied",
-      "status.linkedPairsAligned",
-      "status.linkedSendPansAligned",
-      "status.colorsDropped",
-      "status.textsRewritten",
-      "status.planLoaded",
-    ],
-    composed: ["status.streamingSourceSupplied", "status.planLoaded"],
+    keys: LOAD_STATUS,
+    composed: LOAD_STATUS,
   },
   rateChoice: {
     roots: ["rateChoice"],
@@ -121,7 +125,10 @@ const SURFACES: Record<SurfaceName, Surface> = {
     roots: ["deviceSetup"],
     elsewhere: { "deviceSetup.menuItem": "toolbar" },
     // The Date/Time section prints its two notes as one paragraph.
-    composed: ["deviceSetup.clockNote", "deviceSetup.timeZoneNote"],
+    composed: [
+      { key: "deviceSetup.clockNote", sep: [" "] },
+      { key: "deviceSetup.timeZoneNote", sep: [" "] },
+    ],
   },
   dynScreen: {
     roots: ["dynTuning"],
@@ -132,7 +139,7 @@ const SURFACES: Record<SurfaceName, Surface> = {
     // the same shape ("FX EFFECT — Rev-X Hall") for the same reason, and unlike INS FX it
     // is not also a chip label anywhere: the strip's face reads EFFECT, since the scribble
     // above it already says which FX channel this is.
-    composed: ["dynTuning.peakPrefix", "dynTuning.insfx.title", "dynTuning.fx.title"],
+    composed: [{ key: "dynTuning.peakPrefix", sep: [" "] }, "dynTuning.insfx.title", "dynTuning.fx.title"],
   },
   prefs: {
     roots: ["prefs"],
@@ -141,7 +148,7 @@ const SURFACES: Record<SurfaceName, Surface> = {
     viaAttribute: ["prefs.title"],
     // Under --experimental the scope note gains a sentence about the diagnostics,
     // printed as one paragraph with the note it extends.
-    composed: ["prefs.diagNote"],
+    composed: [{ key: "prefs.diagNote", sep: [" "] }],
     neverShown: {
       "prefs.planNoteShare": "the demo bundle only, and this suite serves the desktop-shaped one",
     },
@@ -294,7 +301,10 @@ test("every message in the catalog is claimed by a surface or excused by name", 
   // The same for the other two escapes: a key a surface reads from an attribute, or
   // composes into a larger run, has to be one the catalog still carries — a message, or
   // a namespace of them (a composed vocabulary is named by its namespace).
-  const escapes = names.flatMap((n) => [...(SURFACES[n].viaAttribute ?? []), ...(SURFACES[n].composed ?? [])]);
+  const escapes = names.flatMap((n) => [
+    ...(SURFACES[n].viaAttribute ?? []),
+    ...(SURFACES[n].composed ?? []).map(composedKey),
+  ]);
   const carried = (k: string): boolean => live.has(k) || [...live].some((l) => l.startsWith(`${k}.`));
   expect(escapes.filter((k) => !carried(k))).toEqual([]);
   expect(Object.keys(OUT_OF_SCOPE).filter((ns) => !(ns in en))).toEqual([]);
@@ -675,6 +685,7 @@ test("the channel tuning screens show every processor, both displays and their n
   // selected, and the launcher's own wording is only on screen from that moment.
   const openInsFx = async (id: string, effect: string, faces: string[] = [], bypass = false): Promise<void> => {
     await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
+    await openInsertFxSection(page);
     await chooseOption(page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select"), {
       label: effect,
     });

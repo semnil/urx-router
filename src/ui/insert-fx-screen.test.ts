@@ -362,7 +362,8 @@ describe("the rendered screen", () => {
       const sw = h.box.querySelector<HTMLButtonElement>(".gt-knobs .prefs-switch")!;
       expect(sw.textContent, type).toBe(t().inspector.off);
       expect(h.box.querySelector(".gt-knobs .prefs-toggle"), type).toBeNull();
-      expect(h.box.querySelector(".gt-facebar button"), type).toBeNull();
+      expect(h.box.querySelector(".gt-modes.inert"), type).not.toBeNull();
+      expect(h.box.querySelector(".gt-modes button:not([disabled])"), type).toBeNull();
       screen.close();
     }
     // …and the modulation selector's WORDING, which the list above cannot pin: every
@@ -702,7 +703,8 @@ describe("moving between the faces", () => {
     // The panel takes the flexible column and the meters the narrow one, and there is no
     // bar to a second face.
     expect(h.box.querySelector<HTMLElement>(".prefs-grid")!.classList.contains("gt-paramsleft")).toBe(true);
-    expect(h.box.querySelector(".gt-facebar button")).toBeNull();
+    expect(h.box.querySelector(".gt-modes.inert")).not.toBeNull();
+    expect(h.box.querySelector(".gt-modes button:not([disabled])")).toBeNull();
     expect(h.box.querySelector(".gt-ladders")).not.toBeNull();
     // …and no second copy of the twelve notes: one grid of them, not two.
     expect(h.box.querySelectorAll(".gt-notes").length).toBe(1);

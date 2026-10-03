@@ -1221,6 +1221,27 @@ describe("readIntoPlan and the +48V / HI-Z rule", () => {
       expect(merged!.refusedOn).toEqual([]);
     });
 
+    // The other switch: HI-Z ON sent with the A.Gain it lowered, and +48V turned on at the panel
+    // before the read reached the channel.
+    it("keeps a HI-Z ON the session sent after the read sampled it, where the unit turned +48V on", async () => {
+      const plan = planWith({ phantom: false, hiZ: false, gain: 60 });
+      const witness = new PlanWriteWitness(() => plan);
+      const merged = await readIntoPlan(
+        () => plan,
+        async (into) => {
+          edit(witness, plan, { hiZ: true, gain: 40 }); // sent by the flush, after the read sampled HI-Z
+          setCh3(into, { phantom: true });
+          return OK;
+        },
+        witness,
+        undefined,
+        undefined,
+        session(["ch3.hiZ"], ["ch3.hiZ"]),
+      );
+      expect(ch3(plan)).toEqual({ phantom: true, hiZ: true, gain: 40 });
+      expect(merged!.refusedOn).toEqual([]);
+    });
+
     it("reports an ON the unit never received that the merge took back, with the gain it carried", async () => {
       // HI-Z pressed before the read was issued, and held by the flush with the A.Gain it lowered.
       const plan = planWith({ phantom: false, hiZ: true, gain: 40 });
