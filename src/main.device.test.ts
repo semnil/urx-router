@@ -7898,6 +7898,65 @@ describe("a linked MIX's send pans on load", () => {
   });
 });
 
+// A tuning screen left open over a read that re-authors the plan in place. The screen draws a
+// snapshot of the plan it was built from, so the read has to tell it to draw again — and to
+// close when the read moved the channel onto a processor the screen does not edit.
+describe("a tuning screen open across a fetch", () => {
+  /** The unit's answer to every read, with Follow USB — the read's first — held until released,
+   *  so the screen can be opened while the read is in flight. */
+  const heldRead = (
+    rest: (a: Record<string, unknown>) => number,
+  ): { reading: Promise<void>; release: () => void; vd_get: (a: Record<string, unknown>) => unknown } => {
+    let asked = (): void => {};
+    const reading = new Promise<void>((r) => (asked = r));
+    let release = (): void => {};
+    const answered = new Promise<void>((r) => (release = r));
+    return {
+      reading,
+      release: () => release(),
+      vd_get: (a) => {
+        if (a.paramId !== PARAMS.FOLLOW_USB.id) return rest(a);
+        asked();
+        return answered.then(() => 0);
+      },
+    };
+  };
+  const threshold = (): HTMLInputElement =>
+    $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="threshold"]')!;
+  const ch1 = (paramId: number) => (a: Record<string, unknown>) => a.paramId === paramId && a.x === 0 && a.y === 0;
+
+  it("draws the values the read brought in", SLOW, async () => {
+    const isThreshold = ch1(PARAMS.COMP_THRESHOLD.id);
+    const unit = heldRead((a) => (isThreshold(a) ? -1000 : unwrittenRead(a)));
+    const shell = await bootDevice({ vd_get: unit.vd_get });
+    $("btn-fetch").click();
+    await unit.reading;
+    selectNode("ch1");
+    $("btn-comp-screen").click();
+    const before = threshold().value;
+    expect(before).not.toBe("-10");
+    unit.release();
+    await fetchEnded();
+    expect(shell.count("vd_disconnect")).toBe(1);
+    expect($("dyn-screen-modal").hidden).toBe(false);
+    expect(threshold().value).toBe("-10");
+  });
+
+  it("closes the screen when the read moved the channel to SSMCS", SLOW, async () => {
+    const isType = ch1(PARAMS.COMP_EQ_TYPE.id);
+    const unit = heldRead((a) => (isType(a) ? COMP_EQ_SSMCS : unwrittenRead(a)));
+    await bootDevice({ vd_get: unit.vd_get });
+    $("btn-fetch").click();
+    await unit.reading;
+    selectNode("ch1");
+    $("btn-comp-screen").click();
+    expect($("dyn-screen-modal").hidden).toBe(false);
+    unit.release();
+    await fetchEnded();
+    await vi.waitFor(() => expect($("dyn-screen-modal").hidden).toBe(true), { timeout: 10_000 });
+  });
+});
+
 describe("the --reset-storage launch", () => {
   // The flag arrives async — after the synchronous init has already read localStorage —
   // so the only way to re-init clean is to clear and reload once. jsdom cannot navigate
@@ -8316,8 +8375,8 @@ describe("an edit funnel against a device read", () => {
     thr.dispatchEvent(new Event("change", { bubbles: true }));
     await invoked(shell, "vd_disconnect");
 
-    // Read the plan back through a save: the open screen does not repaint on a read, so
-    // its DOM would answer for the render rather than for the merge.
+    // Read the plan back through a save: the saved document is the plan itself, so it answers
+    // for the merge rather than for the screen's render of it.
     const before = shell.count("write_text_file");
     $("btn-save").click();
     await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });

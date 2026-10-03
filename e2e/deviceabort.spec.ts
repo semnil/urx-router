@@ -258,6 +258,33 @@ test("a tuning-screen slider held while a switched fetch reads leaves the switch
   await expect(page.locator("#statusbar")).toContainText("Nothing to undo");
 });
 
+// A tuning screen opened while a fetch reads is drawn from the plan the read is about to
+// replace, so once the read lands the screen shows what it brought in. CH 1's COMP threshold
+// (param 35, centi-dB) is the one value the unit answers apart from its clock here.
+test("a tuning screen open across a fetch draws the values the read brought in", async ({ page }) => {
+  await stubTauriDevice(page, { values: { 766: 48000, 848: 0 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+
+  await setDeviceValue(page, 35, 0, -1000);
+  await setHeldReads(page, [848]);
+  await page.click("#btn-device"); // the device actions live in a menu
+  await page.click("#btn-fetch");
+  await expect.poll(() => heldReadsOf(page)).toBe(1);
+  await page.locator('#graph-host g.node[data-id="ch1"]').click();
+  const comp = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^COMP$/ }) });
+  if (!(await comp.evaluate((el) => (el as HTMLDetailsElement).open))) await comp.locator("summary").click();
+  await comp.locator("#btn-comp-screen").click();
+  const threshold = page.locator('#dyn-screen-box input[data-dyn="threshold"]');
+  await expect(threshold).toBeVisible();
+  await expect(threshold).not.toHaveValue("-10");
+
+  await setHeldReads(page, []);
+  await expect(page.locator("#statusbar")).toContainText("Fetched", { timeout: 20_000 });
+  await expect(page.locator("#dyn-screen-modal")).toBeVisible();
+  await expect(threshold).toHaveValue("-10");
+});
+
 // The keyboard's counterpart. A key held down goes on repeating into whatever holds the focus,
 // and the CONSOLE hands the focus on across a rebuild of its strips. A key held on CH 1's fader
 // while a switched fetch or live start reads is refused, and once the switch applies its repeats

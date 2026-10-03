@@ -2190,6 +2190,10 @@ function rerenderPlan(): void {
   graph.setModel(getModel(modelId), plan);
   selection = null;
   syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
+  // An open tuning screen draws what it was built from, and every value under it was just
+  // re-authored. Refresh redraws it, and closes it when the channel no longer carries the
+  // processor it edits.
+  dynScreen.refresh();
   // Every value here was re-authored — by the device or by the settings file — so the
   // entries recorded against the old contents describe states this plan cannot return
   // to.

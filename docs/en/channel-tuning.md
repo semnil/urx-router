@@ -1864,8 +1864,10 @@ anything the app can name — so each one added has to bring its own measured ax
 
 A plan can be loaded — dropped, opened, recalled from the recents — with a tuning screen open over it,
 so `loadPlan` refreshes the screen: it reads the plan through a closure and so holds the new values,
-but nothing else tells it to redraw. The refresh re-resolves the binding too, so a screen whose node or
-processor the new plan does not have closes itself instead of writing into something that is gone.
+but nothing else tells it to redraw. A read that re-authors the plan in place — a Fetch, the Live-sync
+start's read, a `.urxf` import — refreshes it the same way (`rerenderPlan`). The refresh re-resolves the
+binding too, so a screen whose node or processor the new plan does not have closes itself instead of
+writing into something that is gone.
 
 **A close ends the gesture under it.** Escape, and a processor taken away by a follow, both close the
 screen while the button can still be down on the threshold cap or the plot, whose drags hold the pointer
