@@ -3467,7 +3467,9 @@ an export) as rail-colored chips; clicking a chip restores that one, and "Show a
   that partner. Such a node moves to the foot of its column — below every free-standing node standing
   across that column, advanced by each one's `rowsFor`, the step Arrange takes — together with its
   linked partner when it has one on the board (the pair keeps its slot, so a later `alignLinkedPairs`
-  leaves it there). "Lands on" is an overlap of more than the sub-pixel tolerance `inPairSlot` uses,
+  leaves it there). A hung child takes its place from its parent, so one that comes back onto another node
+  moves its parent there with it — DUCKER 1 brought back after an Arrange that gave its row to CH 7/8 takes
+  CH 5/6 to the foot of the channel column. "Lands on" is an overlap of more than the sub-pixel tolerance `inPairSlot` uses,
   and only a node that came back from the shelf is asked: a unit whose returning nodes stand clear stays
   where it is, and a Show all with nothing to restack writes no position.
 

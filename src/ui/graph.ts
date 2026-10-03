@@ -2898,17 +2898,22 @@ export class Graph {
    *
    *  Arrange packs a column over the nodes on the board, so a shelved node comes back to a row
    *  that has since been given to another one, and a member snapped beside its STEREO partner
-   *  lands on whatever Arrange put below that partner. A unit is a returning free-standing node
-   *  with its linked partner on the board, whether that partner returned too or is the one it
-   *  was snapped to; its hung children come with it. A unit moves when a node of it that came
-   *  back from the shelf stands on a node outside it; one whose returning nodes stand clear
-   *  stays where it is, so a Show all with nothing to restack writes no position. */
+   *  lands on whatever Arrange put below that partner. A unit is a free-standing node that
+   *  returned, or that a returning hung child hangs from, with its linked partner on the board,
+   *  whether that partner returned too or is the one it was snapped to; its hung children come
+   *  with it. A hung child takes its place from its parent, so one that comes back onto another
+   *  node moves its parent with it. A unit moves when a node of it that came back from the shelf
+   *  stands on a node outside it; one whose returning nodes stand clear stays where it is, so a
+   *  Show all with nothing to restack writes no position. */
   private restackReturning(returning: ReadonlySet<string>): void {
     const placed = new Set<string>();
     for (const node of this.model.nodes) {
-      if (!returning.has(node.id) || node.attachTo || placed.has(node.id)) continue;
-      const partner = this.linkedPartnerOnBoard(node.id);
-      const members = (partner ? [node.id, partner] : [node.id]).sort(
+      if (!returning.has(node.id)) continue;
+      let root = node.id;
+      for (let up = this.parentOf(root); up !== undefined; up = this.parentOf(root)) root = up;
+      if (placed.has(root) || this.isHidden(root)) continue;
+      const partner = this.linkedPartnerOnBoard(root);
+      const members = (partner ? [root, partner] : [root]).sort(
         (a, b) => defaultLayoutPos(this.nodeById.get(a)!).y - defaultLayoutPos(this.nodeById.get(b)!).y,
       );
       for (const id of members) placed.add(id);

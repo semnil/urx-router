@@ -992,6 +992,23 @@ describe("hide and show", () => {
       expect(channels.every((n) => g.posOf(n.id).y < g.posOf("ch2").y)).toBe(true);
     });
 
+    // A hung child takes its place from its parent, and Arrange packs the column without the row
+    // a shelved one reserved: DUCKER 1 comes back onto CH 7/8. Its parent goes to the foot of the
+    // column with it, and the child stays hung under the parent.
+    it("moves the parent of a hung child brought back onto an arranged node", () => {
+      fx = graphFixture();
+      fx.graph.hideNode("out.ducker1");
+      fx.graph.autoLayout();
+      const g = fx.graph as unknown as Geometry;
+      const was = g.posOf("ch_5_6");
+      fx.graph.showAll();
+      expect(collisions()).toEqual([]);
+      const channels = getModel("URX44V").nodes.filter((n) => n.pos.col === 1 && !n.attachTo && n.id !== "ch_5_6");
+      expect(g.posOf("ch_5_6").x).toBe(was.x);
+      expect(channels.every((n) => g.posOf(n.id).y < g.posOf("ch_5_6").y)).toBe(true);
+      expect(g.posOf("out.ducker1").y).toBeGreaterThan(g.posOf("ch_5_6").y);
+    });
+
     it.each(["URX44V", "URX44", "URX22"] as ModelId[])("leaves no node on another after Hide unused (%s)", (m) => {
       fx = graphFixture({ modelId: m });
       fx.graph.hideUnused();
