@@ -19,6 +19,7 @@ const TIME_ZONE = 831;
 const UDK_FUNCTION = 770;
 const UDK_PARAM1 = 771;
 const UDK_PARAM2 = 772;
+const UDK_BANK = 769;
 
 /** A device whose reported settings differ from the factory defaults, so the
  *  screen has to show what it read rather than what it assumed. */
@@ -193,6 +194,28 @@ test("a knob's Parameter 1 off the catalog opens as unknown, and the one picked 
     [UDK_PARAM1, 0, "Monitor 1"],
     [UDK_PARAM2, 0, "Level"],
   ]);
+});
+
+// The knob tabs open on the bank the unit is on, read with the rest of the screen, and the
+// bank is read only: applying an edit on it writes the knob's slot and never the bank.
+test("opens the knob tabs on the bank the unit is on, and writes the bank never", async ({ page }) => {
+  await stubTauriDevice(page, { values: { ...DEVICE_VALUES, [UDK_BANK]: 2 } });
+  await page.goto("/");
+  await openSetup(page);
+
+  const banks = page.locator("#device-setup-banks button");
+  await expect(banks.nth(2)).toHaveAttribute("aria-pressed", "true");
+  await expect(banks.nth(0)).toHaveAttribute("aria-pressed", "false");
+  // Bank 3, knob A = slot 8.
+  await chooseOption(page.locator(".udk-row").nth(0).locator("select").first(), "Oscillator");
+  await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
+  expect(await strWritesOf(page)).toEqual([
+    [UDK_FUNCTION, 8, "Oscillator"],
+    [UDK_PARAM1, 8, "Level"],
+    [UDK_PARAM2, 8, ""],
+  ]);
+  expect(await writesOf(page)).toEqual([]);
 });
 
 test("switching banks addresses the knob slots behind it", async ({ page }) => {

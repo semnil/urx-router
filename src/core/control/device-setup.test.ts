@@ -22,7 +22,7 @@ import {
   setupSupport,
   udkSlot,
 } from "./device-setup";
-import type { DeviceSetup } from "./device-setup";
+import type { DeviceSetup, SetupWrite } from "./device-setup";
 import { PARAMS } from "./params";
 import type { ParamSpec } from "./params";
 import { planToCommands } from "./translate";
@@ -51,6 +51,19 @@ describe("device setup catalog", () => {
       const emitted = planToCommands(getModel(id), defaultPlan(id));
       expect(emitted.filter((c) => external.has(c.paramId))).toEqual([]);
     }
+  });
+
+  // A read-only address is one the app never writes, so it has no business anywhere a write
+  // can come from: it is outside the plan, and the setup writer's name type leaves it out.
+  it("keeps every read-only param outside the plan", () => {
+    const readOnly = Object.entries(PARAMS as Record<string, ParamSpec>).filter(([, spec]) => spec.readOnly === true);
+    expect(readOnly.map(([name]) => name)).toContain("UDK_BANK");
+    for (const [name, spec] of readOnly) expect(spec.planExternal, name).toBe(true);
+    // The type half, which `tsc` (pnpm build) asks: the directive is an error the day the
+    // name stops being read-only.
+    // @ts-expect-error UDK_BANK is read-only, so no setup write can name it.
+    const write: SetupWrite = { kind: "num", name: "UDK_BANK", y: 0, value: 0 };
+    expect(write.kind).toBe("num");
   });
 
   it("gates the pages from the hardware the model is fitted with", () => {
@@ -251,6 +264,7 @@ describe("readDeviceSetup", () => {
     numFor.set(PARAMS.DATE_FORMAT.id, 1);
     numFor.set(PARAMS.TIME_FORMAT.id, 1);
     numFor.set(PARAMS.TIME_ZONE.id, 30);
+    numFor.set(PARAMS.UDK_BANK.id, 2);
 
     const setup = await readDeviceSetup(V);
     expect(setup).toMatchObject({
@@ -264,8 +278,32 @@ describe("readDeviceSetup", () => {
       dateFormat: 1,
       timeFormat: 1,
       timeZone: 30,
+      knobBank: 2,
     });
     expect(setup.knobs).toHaveLength(UDK_SLOTS);
+  });
+
+  // The bank the unit is on is read on every model, like the knob assignments, and is never a
+  // change: the screen opens on it and nothing writes it, however the bank tabs are moved.
+  it("reads the knob bank the unit is on, and makes no change of it", async () => {
+    for (const id of MODELS) {
+      numFor.set(PARAMS.UDK_BANK.id, 3);
+      expect((await readDeviceSetup(getModel(id))).knobBank, id).toBe(3);
+    }
+    expect(diffDeviceSetup(V, setup({ knobBank: 0 }), setup({ knobBank: 3 }))).toEqual([]);
+    expect(diffDeviceSetup(V, setup({ knobBank: 0 }), setup({ knobBank: 3, brightness: 2 }))).toEqual([
+      { kind: "num", name: "BRIGHTNESS", y: 0, value: 2 },
+    ]);
+  });
+
+  // The bank read is part of the one read the screen opens on, so it fails the way every
+  // other read does: the whole read rejects and nothing after it is asked.
+  it("rejects the whole read when the knob bank cannot be read", async () => {
+    vi.mocked(vdGet).mockImplementation((id) =>
+      id === PARAMS.UDK_BANK.id ? Promise.reject(new Error("timeout")) : Promise.resolve(0),
+    );
+    await expect(readDeviceSetup(V)).rejects.toThrow("timeout");
+    expect(vi.mocked(vdGetStr)).not.toHaveBeenCalled();
   });
 
   // Booleans come back as broker numbers; anything non-zero is on.

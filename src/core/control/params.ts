@@ -1,10 +1,12 @@
 // Catalog of the control parameters live control writes and reads. Each entry
 // binds a semantic name to the broker's numeric param_id and the value encoding
 // (see vd.ts). An address is listed under CLAUDE.md Conventions "Write only
-// confirmed parameters": a value written to it is read back from the unit. The
-// URX44V map is the confirmed one; an address that is still a guess on another
-// model is registered in UNVERIFIED_MAPPINGS (translate.ts), which the self-test
-// reports a verdict for.
+// confirmed parameters": a value written to it is read back from the unit. An
+// address the app only reads is flagged `readOnly`, which keeps it out of every
+// writer's name type, and is listed once its reading follows what the unit's own
+// panel sets. The URX44V map is the confirmed one; an address that is still a
+// guess on another model is registered in UNVERIFIED_MAPPINGS (translate.ts),
+// which the self-test reports a verdict for.
 
 /** Value encoding, mapping to the converters in vd.ts. */
 export type ParamEncoding =
@@ -126,10 +128,16 @@ export interface ParamSpec {
    * `device-setup.test.ts` derives its "never emitted" guarantee from, instead of a
    * hand-copied list that fails nothing when someone forgets to extend it.
    *
-   * Every plan-external param is also scene-external (the device holds it outside
-   * any scene), but not the reverse: SAMPLE_RATE is scene-external and emitted.
+   * Every plan-external param the app writes is also scene-external (the device holds
+   * it outside any scene), but not the reverse: SAMPLE_RATE is scene-external and
+   * emitted. A `readOnly` one carries no scene claim, since nothing writes it.
    */
   planExternal?: true;
+  /**
+   * The app reads this address and never writes it. `WritableParamName` leaves it out,
+   * so a writer that names its address by that type cannot be handed it.
+   */
+  readOnly?: true;
 }
 
 // Confirmed anchors. Validated: their ids match both the original sniff and the
@@ -693,6 +701,10 @@ export const PARAMS = {
    *  Function / Parameter 1 / Parameter 2 triple, as strings. The device performs
    *  no validation — it stores whatever is written, verbatim — so the writer owns
    *  the exact user-guide spelling, and the three are always written together. */
+  /** SETUP > User Defined Knobs: the bank the unit is on (global, y0), raw 0..3 =
+   *  banks 1..4. The unit's own bank switch moves it and nothing else. Read so the
+   *  screen opens on that bank; never written. */
+  UDK_BANK: { id: 769, encoding: "raw", planExternal: true, readOnly: true },
   UDK_FUNCTION: { id: 770, encoding: "raw", sceneExternal: true, planExternal: true },
   UDK_PARAM1: { id: 771, encoding: "raw", sceneExternal: true, planExternal: true },
   UDK_PARAM2: { id: 772, encoding: "raw", sceneExternal: true, planExternal: true },
@@ -719,6 +731,11 @@ export const PARAMS = {
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;
+
+/** A catalog name the app may write: every name but a `readOnly` one. */
+export type WritableParamName = {
+  [K in ParamName]: (typeof PARAMS)[K] extends { readOnly: true } ? never : K;
+}[ParamName];
 
 // Device CH SETTING color palette (input_ch / pad_color step list), in the
 // broker's index order — the array position IS the palette index. The broker

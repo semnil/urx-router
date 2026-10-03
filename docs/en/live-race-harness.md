@@ -1049,7 +1049,7 @@ agreement, zero findings.
 - **A notify on a SETUP > GENERAL address buys NOTHING — the notify never crosses the bridge.** The
   Rust bridge's `Subs::absorb` (`src-tauri/src/vd.rs`) forwards a param notify to the frontend only
   when it is in the registered set (`param_addrs`) or is `BULK_CHANGE`. **An address in no
-  registration is undeliverable for the whole session**, and the thirteen SETUP > GENERAL addresses
+  registration is undeliverable for the whole session**, and the fourteen SETUP > GENERAL addresses
   are the largest family in that position. **Which addresses those are is no longer "the ones the
   plan never emits"**: the registration was that set once, and addresses have been added to it by
   hand since — the string-path addresses and the follow-only cases, which the unit announces and the
