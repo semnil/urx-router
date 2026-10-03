@@ -71,7 +71,7 @@ import {
   recPointOptionsFor,
 } from "./params";
 import type { ParamSpec } from "./params";
-import { diffNames, reachedAndFailed, sendConverging, sendNames, sendPresetsAndReconverge } from "./client";
+import { diffNames, diffPlan, reachedAndFailed, sendConverging, sendNames, sendPresetsAndReconverge } from "./client";
 import type { NameOutcome, SendOutcome } from "./client";
 import { SETTLE_TIMEOUT_MS } from "./settle";
 import type { ConvergeRound } from "./client";
@@ -225,8 +225,9 @@ export interface SelfTestReport {
   /** True when the device was returned to its original captured state. */
   restored: boolean;
   /** Params that still differ from what the unit held before the run: the converging
-   *  restore's residual PLUS the addresses that write has no command for, read before
-   *  the sweep and written back after it (restoreUnsent), PLUS the node names and Sweet
+   *  restore's residual PLUS the addresses that write has no command for or only a default
+   *  for (the capture could not read them), read before the sweep and written back after
+   *  it (restoreUnsent), PLUS the node names and Sweet
    *  Spot presets that still differ, or could not be read, after the string write-back. ⚠️ Still bounded by the app's
    *  parameter catalogue: a run also perturbs the unit's 1-knob base save-off, which
    *  has no entry and so cannot be read, written or counted (measured on a URX44V,
@@ -253,6 +254,11 @@ export interface SelfTestReport {
     /** Addresses the sweep wrote that the restore's command set does not carry. Empty
      *  means the restore does emit them, and the residue has another cause. */
     unrestorable: string[];
+    /** Addresses where the captured plan would write something other than what the unit
+     *  held before the sweep, or which that comparison could not read: a read the capture
+     *  could not make leaves the plan's default there. Written back after the restore with
+     *  `unrestorable`. */
+    captureUnheld: string[];
     /** Per round of the converging restore: how much went out, how much of it was the
      *  PEQ and the 1-knob chain, and how much still differed on the re-read. A 1-knob
      *  group re-sent in the last round reloads the preset over the bands. */
@@ -690,7 +696,7 @@ export async function runSelfTest(
     restoreResidual: 0,
     errors: [],
     phase: "connect",
-    diag: { unrestorable: [], restoreRounds: [], bandsAfterRestore: [] },
+    diag: { unrestorable: [], captureUnheld: [], restoreRounds: [], bandsAfterRestore: [] },
   };
   // Run one phase's round-trips, returning its result — or undefined if the user
   // cancelled (the inner loops throw via signal.throwIfAborted). A cancel is
@@ -789,22 +795,32 @@ export async function runSelfTest(
         if (!captured.has(cmdAddr(c))) unrestorable.set(cmdAddr(c), c);
       }
     }
+    // Addresses the captured plan names but holds no reading for. A read the capture could
+    // not make leaves the plan's own default there — no source on a selector, unity on a
+    // fader, -inf on a send — and the restore would converge the unit onto that default. A
+    // diff of the captured plan against the unit, before anything is perturbed, finds each
+    // of them whichever group the failed read was in, and they join the addresses above:
+    // read before the sweep, written back after the restore.
+    const held = await phaseStep(diffPlan(model, original, { signal, emit: RESTORE_EMIT }));
+    if (!held) return report; // cancelled during the diff
+    const writeBack = new Map(unrestorable);
+    for (const command of [...held.diffs.map((d) => d.command), ...held.unread]) {
+      writeBack.set(cmdAddr(command), command);
+      report.diag.captureUnheld.push(`${command.name} ${formatAddrKey(cmdAddr(command))}`);
+    }
     // Through phaseStep like every other await here: a cancel inside this loop is a
     // cancel, and without it the abort escapes runSelfTest and reaches the user as a
     // self-test ERROR dialog instead.
-    const preSweep = await phaseStep(readPreSweep(unrestorable, signal, report));
+    const preSweep = await phaseStep(readPreSweep(writeBack, signal, report));
     if (!preSweep) return report; // cancelled during the pre-sweep read
     // An address in this set has no other record of what it held: the captured plan has
-    // no command for it, so a read failure here means the run could perturb it and never
-    // put it back. Nothing has been written yet, so the honest answer is not to start —
-    // counting it in the residual afterwards leaves the unit changed and only says so.
-    //
-    // This is not the "aggregate instead of stopping" exception (architecture.md). That
-    // one is about a partial CAPTURE, whose addresses the restore still writes; these are
-    // the addresses it cannot. `errors` already names each one.
-    if (preSweep.size !== unrestorable.size) {
+    // no command for it, or a default where the unit's value should be, so a read failure
+    // here means the run could perturb it and never put it back. Nothing has been written
+    // yet, so the honest answer is not to start — counting it in the residual afterwards
+    // leaves the unit changed and only says so. `errors` already names each one.
+    if (preSweep.size !== writeBack.size) {
       report.errors.push(
-        `refusing to sweep: ${unrestorable.size - preSweep.size} address(es) the restore cannot reach could not be read first`,
+        `refusing to sweep: ${writeBack.size - preSweep.size} address(es) the restore cannot put back could not be read first`,
       );
       report.phase = "refused";
       return report;
@@ -1035,12 +1051,12 @@ export async function runSelfTest(
         // is the pre-write diff, so those params are already counted there.
         report.errors.push(...sendFailureLines(back.outcomes, "restore"));
 
-        // Then the addresses that write has no command for, put back from what the unit
-        // held before the sweep. Last, so the converging write's side-effect resets have
-        // already landed. After a refused preset nothing more is written: they are only
+        // Then the addresses that write has no command for, or only the captured plan's
+        // default for, put back from what the unit held before the sweep. Last, so the
+        // converging write's side-effect resets have already landed. After a refused preset nothing more is written: they are only
         // read, and what still differs is counted as not put back.
         const unsent = await phaseStep(
-          restoreUnsent(unrestorable, preSweep, settleMs, signal, report, { writeBack: !presetRefused }),
+          restoreUnsent(writeBack, preSweep, settleMs, signal, report, { writeBack: !presetRefused }),
         );
         if (unsent === undefined) return report; // cancelled during the write-back
         report.restoreResidual += unsent;
@@ -1139,8 +1155,8 @@ function sendFailureLines(outcomes: readonly SendOutcome[], prefix: string): str
 }
 
 /**
- * Write back the addresses the converging restore has no command for, and report how
- * many did not take. `before` is what the unit answered for each ahead of the sweep; an
+ * Write back the addresses the converging restore has no command for, or writes a default
+ * to because the capture could not read them, and report how many did not take. `before` is what the unit answered for each ahead of the sweep; an
  * address missing from it was unreadable then, so there is nothing to put back and its
  * failure is already in `errors`.
  *

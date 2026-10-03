@@ -259,6 +259,80 @@ describe("runSelfTest with STREAMING's source not captured", () => {
   });
 });
 
+// A read the capture could not make leaves the captured plan's default at that address — no
+// source on a selector, unity on a fader, -inf on a send — and the restore converges the unit
+// onto it. So those addresses are read again before the sweep and the unit's own value is
+// written back after the restore; one that cannot be read then is a run that does not start.
+describe("runSelfTest after a partial capture", () => {
+  /** A unit answering `seed`, whose read of each address in `once` fails the first time. */
+  function failingOnce(seed: Plan, once: readonly string[]): Map<string, number> {
+    const table = installMockDevice(seed);
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    const failed = new Set<string>();
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      const k = `${id}:${x}:${y}`;
+      if (!once.includes(k) || failed.has(k)) return answer(id, x, y);
+      failed.add(k);
+      return Promise.reject(new Error("read timeout"));
+    });
+    return table;
+  }
+
+  it("puts back a channel whose fader the capture could not read, not the plan's unity", async () => {
+    const y = channelControl(model, "ch1")!.y;
+    const seed = populatedPlan();
+    const main = seed.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    main.params = { ...main.params, level: -Infinity, pan: 30, on: false };
+    const at = (name: keyof typeof PARAMS): string => `${PARAMS[name].id}:0:${y}`;
+    const table = failingOnce(seed, [at("CH_FADER")]);
+    const held = (["CH_FADER", "CH_PAN", "STEREO_ASSIGN_ON"] as const).map((n) => table.get(at(n)));
+    expect(held, "the premise: silenced, panned and off the STEREO bus").toEqual([VD_LEVEL_OFF, 30, 0]);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("done");
+    expect(report.errors).toEqual(["CH 1: read timeout"]);
+    expect((["CH_FADER", "CH_PAN", "STEREO_ASSIGN_ON"] as const).map((n) => table.get(at(n)))).toEqual(held);
+    expect(report.restored).toBe(true);
+  });
+
+  it("puts back an output patch the capture could not read, not NONE", async () => {
+    const seed = populatedPlan();
+    seed.connections.push({ from: "bus.stereo:out", to: "out.main:in", kind: "patch" });
+    const table = failingOnce(seed, [`${PARAMS.OUT_PATCH_MAIN.id}:0:1`]);
+    const patch = [0, 1].map((y) => table.get(`${PARAMS.OUT_PATCH_MAIN.id}:0:${y}`));
+    expect(
+      patch.every((v) => v !== undefined && v !== PORT_REF_NONE),
+      "the premise: the main outputs are patched",
+    ).toBe(true);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("done");
+    expect([0, 1].map((y) => table.get(`${PARAMS.OUT_PATCH_MAIN.id}:0:${y}`))).toEqual(patch);
+    expect(report.restored).toBe(true);
+  });
+
+  // …and an address that cannot be read before the sweep either has no record of what it
+  // held at all, so the run declines to start and writes nothing.
+  it("does not start when an address the capture could not read cannot be read before the sweep", async () => {
+    const y = channelControl(model, "ch1")!.y;
+    const table = installMockDevice(populatedPlan());
+    const before = new Map(table);
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) =>
+      id === PARAMS.CH_FADER.id && yy === y ? Promise.reject(new Error("read timeout")) : answer(id, x, yy),
+    );
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("refused");
+    expect(report.written).toBe(0);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect([...table]).toEqual([...before]);
+  });
+});
+
 describe("passesFor (model-driven sweep count)", () => {
   // Port refs the input-source sweep writes over `passes` passes (NONE sentinel
   // excluded) — the physical ports the run actually exercises.
@@ -856,8 +930,9 @@ describe("runSelfTest", () => {
     expect(report.errors.some((e) => e.startsWith("restore ch1: its Sweet Spot preset rebuilt the strip"))).toBe(true);
     // The refused preset, the node the accepted one left unconfirmed, and each address the
     // restore did not write back that the sweep had left different.
+    const writtenBack = [...report.diag.unrestorable, ...report.diag.captureUnheld];
     const leftBehind = report.residual.filter(
-      (m) => m.pass === -1 && report.diag.unrestorable.some((u) => u.endsWith(` ${m.paramId}:${m.x}:${m.y}`)),
+      (m) => m.pass === -1 && writtenBack.some((u) => u.endsWith(` ${m.paramId}:${m.x}:${m.y}`)),
     );
     expect(leftBehind.length).toBeGreaterThan(0);
     expect(report.restoreResidual).toBe(2 + leftBehind.length);

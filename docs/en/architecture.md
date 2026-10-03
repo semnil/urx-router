@@ -2729,7 +2729,13 @@ listed here so they are not proposed as gaps:
    **One selector a partial capture leaves alone instead: STREAMING's source.** A capture that did not read it
    (`ReadbackResult.sourceUnread`) keeps no STREAMING wire in the plan it restores from, so no pass and not the
    restore write that selector — the unit keeps the source it held — and the report says so among its issues.
-   Every other address of a partial capture is still swept and restored as above.
+   Every other address of a partial capture is still swept, and **put back from the unit's own value rather
+   than from the plan's default**: a read the capture could not make leaves the captured plan's default there
+   (no source on a selector, unity on a fader, -inf on a send), which the restore would converge the unit
+   onto. So before the sweep the captured plan is diffed against the unit, and every address it finds
+   different or cannot read joins the ones the restore has no command for — read before the sweep and
+   written back after the restore, with an address that cannot be read then refusing the run (`diag.captureUnheld`
+   lists them).
 2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
    a coerced in-range value is a better outcome than an out-of-range one reaching the unit. The clamp is
    deliberately NOT applied to the readout beside it: the panel shows what the plan holds, which after a
