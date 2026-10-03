@@ -359,6 +359,30 @@ describe("selection", () => {
   });
 });
 
+describe("path trace", () => {
+  const trace = (id: string): void =>
+    (fx.graph as unknown as { highlightPath: (id: string) => void }).highlightPath(id);
+  const fadedNodes = (): string[] =>
+    [...fx.host.querySelectorAll<SVGGElement>("g.node[data-id]")]
+      .filter((g) => Number(g.getAttribute("opacity")) < 0.35)
+      .map((g) => g.dataset.id ?? "");
+
+  // Fetch, the Live-sync read and a .urxf import redraw the same plan through setModel; a
+  // file, New and the model picker hand it another. Either way the selection the trace
+  // was taken from is gone, and the board comes up unfaded.
+  it("drops a trace when the board is handed a plan", () => {
+    fx = graphFixture();
+    trace("bus.stereo");
+    expect(fadedNodes().length).toBeGreaterThan(0);
+    fx.graph.setModel(getModel("URX44V"), fx.plan);
+    expect(fadedNodes()).toEqual([]);
+    trace("bus.stereo");
+    fx.graph.setModel(getModel("URX22"), defaultPlan("URX22"));
+    expect(fadedNodes()).toEqual([]);
+    expect(fx.host.querySelectorAll('.wire-hit + path[opacity="0.16"]').length).toBe(0);
+  });
+});
+
 describe("hide and show", () => {
   it("shelves a node and gives it a chip", () => {
     fx = graphFixture();

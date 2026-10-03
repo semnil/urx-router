@@ -418,6 +418,8 @@ export class Graph {
     this.plan = plan;
     this.selection = null;
     this.selectedNodes.clear();
+    // A trace belongs to the selection it was taken from, which goes here too.
+    this.pathNodes.clear();
     this.adoptPlanState();
     // Before the draw and the fit: a document arriving with a pair already STEREO-linked
     // had no edit funnel to snap its partner, so this is where the two loading paths

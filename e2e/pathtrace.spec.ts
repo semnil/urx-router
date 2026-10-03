@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { drag, faceplate, port } from "./graph-helpers";
+import { chooseOption } from "./choose-option";
 
 // Long-pressing a node traces the live signal path feeding it: every upstream
 // input / channel / bus reached through live wiring lights up, the rest fade.
@@ -133,4 +134,14 @@ test("a path trace clears when the selection is dropped", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(wire(page, "in.aux:out", "ch_5_6:in")).toHaveAttribute("opacity", "0.85");
   await expect(node(page, "in.aux")).toHaveAttribute("opacity", "1");
+});
+
+test("a path trace does not outlive the plan it was traced on", async ({ page }) => {
+  // The fixed CH -> STEREO sends alone give STEREO an upstream path on the empty board.
+  await longPress(page, "bus.stereo");
+  await expect(node(page, "in.aux")).toHaveAttribute("opacity", "0.3");
+  // Another model is another plan: its board comes up with nothing faded.
+  await chooseOption(page.locator("#model-picker"), "URX22");
+  await expect(page.locator("#model-picker")).toHaveValue("URX22");
+  await expect(page.locator('#graph-host g.node[opacity="0.3"]')).toHaveCount(0);
 });
