@@ -1218,3 +1218,94 @@ describe("the arrow keys inside a popover's list", () => {
     expect(focused()).toBe(rows[(start + 1) % rows.length]);
   });
 });
+
+// SEND PAN holds knobs rather than rows: Up / Down walk them, wrapping at the ends, while Left /
+// Right step the focused knob's value. A knob a lock took out of the tab order is passed over, and
+// the keys the walk does not take stay with the knob.
+describe("the arrow keys inside SEND PAN", () => {
+  const panBtn = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-panbtn")!;
+  const knobs = (): HTMLElement[] => [...h.host.querySelectorAll<HTMLElement>(".con-spop .con-knob")];
+  const knobFor = (label: string): HTMLElement =>
+    h.host.querySelector<HTMLElement>(`.con-spop .con-knob[aria-label="${label}"]`)!;
+  const focused = (): HTMLElement => document.activeElement as HTMLElement;
+  const pans = (): number[] =>
+    ["bus.mix1", "bus.mix2"].map((target) => sendConnection(h.plan, "ch1", target)?.params?.pan ?? 0);
+  /** Open CH 1's popover the way Enter on the PAN button does, which puts the focus inside it. */
+  const openFromKeyboard = (): void => {
+    panBtn("ch1").focus();
+    panBtn("ch1").dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+  };
+
+  it("walk the knobs on Down / Up, wrapping at the ends, and step no value", () => {
+    h = consoleHost();
+    openFromKeyboard();
+    const ks = knobs();
+    expect(
+      ks.map((k) => k.getAttribute("aria-label")),
+      "the premise: two knobs to walk",
+    ).toEqual(["MIX 1", "MIX 2"]);
+    expect(focused()).toBe(ks[0]);
+    const before = pans();
+
+    expect(key(focused(), "ArrowDown").defaultPrevented).toBe(true);
+    expect(focused()).toBe(ks[1]);
+    expect(pans(), "the walk stepped nothing").toEqual(before);
+    key(focused(), "ArrowDown");
+    expect(focused(), "down from the last knob is the first").toBe(ks[0]);
+    expect(pans()).toEqual(before);
+    key(focused(), "ArrowUp");
+    expect(focused(), "up from the first knob is the last").toBe(ks[1]);
+    expect(pans()).toEqual(before);
+    key(focused(), "ArrowUp");
+    expect(focused()).toBe(ks[0]);
+    expect(pans()).toEqual(before);
+  });
+
+  it("step the focused knob's value on Left / Right and keep the focus on it", () => {
+    h = consoleHost();
+    openFromKeyboard();
+    key(focused(), "ArrowDown");
+    const mix2 = knobFor("MIX 2");
+    expect(focused()).toBe(mix2);
+    const [mix1At, mix2At] = pans();
+
+    expect(key(mix2, "ArrowRight").defaultPrevented).toBe(true);
+    expect(pans()).toEqual([mix1At, mix2At + 1]);
+    expect(mix2.getAttribute("aria-valuenow")).toBe(String(mix2At + 1));
+    key(mix2, "ArrowLeft");
+    key(mix2, "ArrowLeft");
+    expect(pans()).toEqual([mix1At, mix2At - 1]);
+    expect(focused()).toBe(mix2);
+    expect(mix2.getAttribute("aria-orientation")).toBe("horizontal");
+  });
+
+  it("leave Home / End, Page Up / Down and a key held with a command modifier where they were", () => {
+    h = consoleHost();
+    openFromKeyboard();
+    const knob = focused();
+    const before = pans();
+    for (const k of ["Home", "End", "PageUp", "PageDown"]) {
+      expect(key(knob, k).defaultPrevented, k).toBe(false);
+    }
+    expect(key(knob, "ArrowDown", { metaKey: true }).defaultPrevented).toBe(false);
+    expect(focused()).toBe(knob);
+    expect(pans()).toEqual(before);
+  });
+
+  it("pass over a knob Pan Link locked", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], panLink: true };
+    h = consoleHost({ plan });
+    openFromKeyboard();
+    const mix2 = knobFor("MIX 2");
+    expect(knobFor("MIX 1").tabIndex, "the premise: MIX 1 is out of the tab order").toBe(-1);
+    expect(focused()).toBe(mix2);
+    const before = pans();
+    key(mix2, "ArrowDown");
+    expect(focused()).toBe(mix2);
+    expect(pans(), "the walk stepped nothing").toEqual(before);
+    key(mix2, "ArrowUp");
+    expect(focused()).toBe(mix2);
+    expect(pans()).toEqual(before);
+  });
+});

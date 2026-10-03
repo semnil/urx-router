@@ -198,8 +198,9 @@ still claims is given back — and that is the state an operator most needs to r
 - **Inside a popover's list the arrow keys walk the rows** (meter point, INS FX type, FX effect type),
   as the toolbar menus answer them: Down / Up to the next / previous row, wrapping at the ends, Home /
   End to the first / last, and a row that cannot be picked is passed over. A key held with a command
-  modifier is left alone, and Tab still walks the rows. SEND PAN holds knobs rather than rows, and a
-  knob's own arrow keys step its value, so its popover is walked by Tab.
+  modifier is left alone, and Tab still walks the rows. SEND PAN holds knobs rather than rows: Up /
+  Down walk them the same way, wrapping at the ends and passing over a knob a lock took out of the tab
+  order, Left / Right step the focused knob's value, and Home / End take no part in the walk.
 - **An ordinary control is carried by its own identity, not by its place.** Each control is built
   with a `data-ctl` (its MIDI id where it has one, else a fixed name), and a rebuild looks that
   identity up among the controls the rebuilt strip — or the re-opened popover — offers to the
