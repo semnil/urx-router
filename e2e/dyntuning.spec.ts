@@ -3,13 +3,15 @@ import { drag, port, selectWire, wire } from "./graph-helpers";
 import { panelHeight, pickBand, pickPlot, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
 import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
+import { answerTimingOf, installAnswerQueue } from "./tauri-stub";
 
 // Channel tuning screens (GATE / COMP / EQ). The meter half needs a live session,
 // which is desktop-only, so this spec stubs the Tauri IPC bridge before boot — and
 // unlike the other specs it keeps the meter channel, so it can push readings in and
 // assert what the screen makes of them. That is the only way to cover the parts the
 // measurements decided: GR's two idle values, and "no frame yet" printing "—"
-// rather than a number.
+// rather than a number. Each command is recorded when it is sent and answered on a
+// later task, through the queue the shared stubs settle through, as the shell's IPC answers.
 //
 // Both processors run on one host, so the two halves below share every helper.
 
@@ -103,6 +105,7 @@ const openFromInspector = async (page: Page, id: string, kind: keyof typeof SECT
 };
 
 test.beforeEach(async ({ page }) => {
+  await page.addInitScript(installAnswerQueue);
   await page.addInitScript(() => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-theme", "dark");
@@ -130,9 +133,9 @@ test.beforeEach(async ({ page }) => {
     class Channel {
       onmessage: (data: unknown) => void = () => {};
     }
-    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+    const internals = {
       Channel,
-      invoke: (cmd: string, args: Record<string, unknown>) => {
+      invoke: (cmd: string, args: Record<string, unknown>): Promise<unknown> => {
         switch (cmd) {
           case "experimental_enabled":
           case "self_test_requested":
@@ -182,9 +185,19 @@ test.beforeEach(async ({ page }) => {
         }
       },
     };
+    // The switch above records and answers a command when it is sent; the answer itself
+    // settles through the queue.
+    const answer = internals.invoke;
+    internals.invoke = (cmd, args) => window.__urxAnswerLater(answer(cmd, args));
+    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
   });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+});
+
+test("this spec's stub answers each command on a later task, in the order asked", async ({ page }) => {
+  const cmds = ["experimental_enabled", "stub_unknown_command", "vd_get_str"];
+  expect(await answerTimingOf(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
 });
 
 test("gate: opens from the inspector for a mono channel, scoped to that channel", async ({ page }) => {

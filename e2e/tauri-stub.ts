@@ -5,14 +5,23 @@ import type { ModelId } from "../src/models/types";
 type AnswerLater = (answer: Promise<unknown>) => Promise<unknown>;
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
+declare global {
+  interface Window {
+    /** Settles a stub's answer through the queue `installAnswerQueue` puts on the page. */
+    __urxAnswerLater: AnswerLater;
+  }
+}
+
 /**
- * The answer queue both stubs below settle through: each answer settles on a message-port
+ * The answer queue every Tauri stub settles through: each answer settles on a message-port
  * task of its own, in the order asked, as the shell's IPC answers — never in the microtask
  * that sent the command. What a command records (a write, a dialog, a read's value) is taken
  * when it is sent; only the answer waits. Installed as an init script of its own beside each
  * stub and looked up when a command is sent, since Playwright does not order init scripts.
+ * A spec's own stub installs it on the same page or context and hands each answer to
+ * `window.__urxAnswerLater`; `answerTimingOf` pins that it does.
  */
-function installAnswerQueue(): void {
+export function installAnswerQueue(): void {
   const w = window as unknown as { __urxAnswerLater?: AnswerLater };
   if (w.__urxAnswerLater) return;
   // One message-port task per answer, with no timer clamp between them.
@@ -39,7 +48,8 @@ function installAnswerQueue(): void {
  * or overrides the responses per spec — values must be serializable constants.
  * For a spec that needs a connected device (reads, writes, dialogs), use
  * stubTauriDevice below. Specs needing genuinely stateful handlers (midi.spec.ts
- * captures the input channel and records sent bytes) keep their own stub.
+ * captures the input channel and records sent bytes) keep their own stub, answering
+ * through the same queue.
  *
  * Every answer settles on a later task (`installAnswerQueue`). A microtask answer would
  * settle between two listeners of the native event whose handler sent the command, so a
@@ -71,8 +81,7 @@ export async function stubTauriBoot(page: Page, commands: Record<string, unknown
       },
       invoke: (cmd: string) => {
         invokes.push(cmd);
-        const later = (window as unknown as { __urxAnswerLater: AnswerLater }).__urxAnswerLater;
-        return later(
+        return window.__urxAnswerLater(
           cmd in responses
             ? Promise.resolve(responses[cmd])
             : Promise.reject(new Error(`stub: unhandled command ${cmd}`)),
@@ -298,12 +307,34 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       // through the queue.
       const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__;
       const answer = internals.invoke;
-      internals.invoke = (cmd, args) =>
-        (window as unknown as { __urxAnswerLater: AnswerLater }).__urxAnswerLater(answer(cmd, args));
+      internals.invoke = (cmd, args) => window.__urxAnswerLater(answer(cmd, args));
     },
     { ...opts, firmware },
   );
 }
+
+/** Send each of `cmds` once through whichever stub the page carries, and report which answers
+ *  settled inside the task that sent them and the order all of them settled in. A stub that
+ *  answers through the queue settles none inside that task and all of them in the order sent.
+ *  The probe's commands reach the stub like the app's, so pick ones whose answer records
+ *  nothing; a refusal settles like any other answer. */
+export const answerTimingOf = (page: Page, cmds: string[]): Promise<{ inSendingTask: string[]; order: string[] }> =>
+  page.evaluate(async (list) => {
+    const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string) => Promise<unknown> } })
+      .__TAURI_INTERNALS__;
+    const order: string[] = [];
+    const answers = list.map((cmd) =>
+      internals.invoke(cmd).then(
+        () => order.push(cmd),
+        () => order.push(cmd),
+      ),
+    );
+    // A chain of microtasks keeps the sending task running, so nothing a later task settles lands inside it.
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+    const inSendingTask = [...order];
+    await Promise.all(answers);
+    return { inSendingTask, order };
+  }, cmds);
 
 /** Every command the stub was invoked with, in order (`stubTauriBoot` only). */
 export const invokesOf = (page: Page): Promise<string[]> =>

@@ -1,27 +1,9 @@
 import { test, expect, type Page } from "./fixtures";
-import { stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import { answerTimingOf, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
 
 // The shell answers a command on a later task, never in the microtasks of the task that sent it,
 // and in the order the commands were asked. Both shared stubs answer the same way, refusals
 // included, so a case is not run against an order the app never meets.
-const settling = (page: Page, cmds: string[]): Promise<{ inSendingTask: string[]; order: string[] }> =>
-  page.evaluate(async (list) => {
-    const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string) => Promise<unknown> } })
-      .__TAURI_INTERNALS__;
-    const order: string[] = [];
-    const answers = list.map((cmd) =>
-      internals.invoke(cmd).then(
-        () => order.push(cmd),
-        () => order.push(cmd),
-      ),
-    );
-    // A chain of microtasks keeps the sending task running, so nothing a later task settles lands inside it.
-    for (let i = 0; i < 50; i++) await Promise.resolve();
-    const inSendingTask = [...order];
-    await Promise.all(answers);
-    return { inSendingTask, order };
-  }, cmds);
-
 const STUBS: Array<[string, (page: Page) => Promise<void>]> = [
   ["stubTauriBoot", (page) => stubTauriBoot(page)],
   ["stubTauriDevice", (page) => stubTauriDevice(page)],
@@ -33,6 +15,6 @@ for (const [name, stub] of STUBS) {
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
     const cmds = ["experimental_enabled", "stub_unknown_command", "reset_storage_requested"];
-    expect(await settling(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
+    expect(await answerTimingOf(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
   });
 }

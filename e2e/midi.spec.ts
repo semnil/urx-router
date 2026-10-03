@@ -1,6 +1,6 @@
 import { test, expect, colorToken, contrastRatio, type Page } from "./fixtures";
 import { planParamZ } from "./plan-param";
-import { LIVE_COMMANDS } from "./tauri-stub";
+import { LIVE_COMMANDS, answerTimingOf, installAnswerQueue } from "./tauri-stub";
 import { pickBand, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
 import { selectWire } from "./graph-helpers";
@@ -8,7 +8,9 @@ import { selectWire } from "./graph-helpers";
 // External MIDI control is desktop-only (isTauri gate), so these tests stub the
 // Tauri IPC bridge before the app boots: invoke() answers the boot-time queries,
 // captures the MIDI input channel (so the test can push messages into the app),
-// and records outgoing midi_send bytes (so feedback is observable).
+// and records outgoing midi_send bytes (so feedback is observable). Each command is
+// recorded when it is sent and answered on a later task, through the queue the shared
+// stubs settle through, as the shell's IPC answers.
 //
 // MIDI control is a second OS window, which is a second PAGE here. The stub is
 // installed on the context rather than the page so both get it, and the relay the
@@ -86,8 +88,12 @@ const openMidiWindow = async (page: Page): Promise<Page> => {
   return win;
 };
 
+/** Wait until the window offers the stub's input ports, which it does once the refresh that
+ *  lists them has been answered. */
+const portsListed = (win: Page) => expect(win.locator(".mw-in option")).toHaveCount(3); // None + Stub In + Broken In
+
 const pickInputPort = async (page: Page, win: Page) => {
-  await expect(win.locator(".mw-in option")).toHaveCount(3); // None + Stub In + Broken In
+  await portsListed(win);
   await chooseOption(win.locator(".mw-in"), "Stub In");
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
 };
@@ -136,6 +142,7 @@ const LOCKED_UNDER_A_RUN = [
 test.beforeEach(async ({ page }) => {
   // The Live-sync registrations are taken from the shared stub rather than copied,
   // so this stub cannot fall behind what a session actually asks the shell for.
+  await page.context().addInitScript(installAnswerQueue);
   await page.context().addInitScript((extra: Record<string, unknown>) => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-theme", "dark");
@@ -171,9 +178,9 @@ test.beforeEach(async ({ page }) => {
       if (e.data.dir === "main") toMain?.onmessage(e.data.payload);
       else toWindow?.onmessage(e.data.payload);
     };
-    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+    const internals = {
       Channel,
-      invoke: (cmd: string, args: Record<string, unknown>) => {
+      invoke: (cmd: string, args: Record<string, unknown>): Promise<unknown> => {
         switch (cmd) {
           // MIDI control ships without the flag (only the self-test is gated), so this
           // is off unless a test asks for it — through localStorage, which is the same
@@ -197,16 +204,11 @@ test.beforeEach(async ({ page }) => {
           // port "from the shell" the way the page-load teardown once did.
           case "midi_open_ports": {
             // The answer describes the moment it is taken, and the app receives it
-            // later: `openPortsDelayMs` opens that gap on purpose, so a test can let a
-            // port be opened inside the round trip and see whether the stale answer
-            // wins. Zero by default, which is one task's delay — as it is in Tauri.
+            // later: `openPortsDelayMs` holds it before it joins the queue, so a test can
+            // let a port be opened inside the round trip and see whether the stale answer
+            // wins. Zero by default, which leaves the queue's own later task.
             const answer: [string | null, string | null] = [state.inputPort, state.outputPort];
-            return new Promise((r) =>
-              setTimeout(() => {
-                state.openPortsAnswered++;
-                r(answer);
-              }, state.openPortsDelayMs),
-            );
+            return new Promise((r) => setTimeout(() => r(answer), state.openPortsDelayMs));
           }
           case "midi_open_input":
             if (args.port === "Broken In") return Promise.reject(new Error("port busy"));
@@ -303,6 +305,20 @@ test.beforeEach(async ({ page }) => {
         }
       },
     };
+    // The switch above records and answers a command when it is sent; the answer itself
+    // settles through the queue.
+    const answer = internals.invoke;
+    internals.invoke = (cmd, args) => {
+      const settled = window.__urxAnswerLater(answer(cmd, args));
+      // Counted as the answer reaches the app, ahead of the app's own continuation.
+      if (cmd === "midi_open_ports")
+        settled.then(
+          () => state.openPortsAnswered++,
+          () => {},
+        );
+      return settled;
+    };
+    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
   }, LIVE_COMMANDS);
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
@@ -318,6 +334,11 @@ test("MIDI control is available without --experimental; only the self-test is ga
   await expect(page.locator("#btn-fetch")).toBeVisible(); // the menu itself is open
   await expect(page.locator("#btn-midi")).toBeVisible();
   await expect(page.locator("#btn-selftest")).toBeHidden();
+});
+
+test("this spec's stub answers each command on a later task, in the order asked", async ({ page }) => {
+  const cmds = ["midi_list_inputs", "stub_unknown_command", "midi_window_open"];
+  expect(await answerTimingOf(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
 });
 
 // Learn mode's marks are state graphics on the panel, so each reads at 3:1 there in the
@@ -1227,6 +1248,7 @@ test("a port that fails to open reverts its select to none and reports the error
   // another app); the select must fall back to "none" instead of keeping a
   // choice that is not actually open.
   const win = await openMidiWindow(page);
+  await portsListed(win);
   await chooseOption(win.locator(".mw-in"), "Broken In");
   await expect(page.locator("#statusbar")).toContainText("MIDI input error");
   await expect(win.locator(".mw-in")).toHaveValue("");
@@ -1274,7 +1296,11 @@ test("a port opened while the shell is being asked survives the answer", async (
   // this reconcile exists to remove, caused by the reconcile. Standing down while an
   // open is in flight is not enough on its own: an open that begins and ends inside the
   // round trip puts the in-flight count back to zero before the answer lands.
+  const answeredAtOpen = await page.evaluate(() => window.__midiTest.openPortsAnswered);
   const win = await openMidiWindow(page);
+  // The window's first refresh is answered before the hold is set, so the answer held below
+  // is the reopen's own, and the ports that refresh listed are what the reopened window offers.
+  await expect.poll(() => page.evaluate(() => window.__midiTest.openPortsAnswered)).toBeGreaterThan(answeredAtOpen);
   await page.evaluate(() => {
     window.__midiTest.openPortsDelayMs = 600;
   });

@@ -9,8 +9,8 @@ import { nodeParamContestPath, walkParamLeaves } from "../../src/core/plan-histo
 
 // Fake URX device for the live-sync race harness (docs/{en,ja}/live-race-harness.md).
 //
-// The existing e2e stubs resolve every command on the next microtask, so none of the
-// windows the app's timing machinery opens (the 120 ms flush throttle, the 300 ms
+// The ordinary e2e stubs answer a command on a later task with no latency of their own, so
+// none of the windows the app's timing machinery opens (the 120 ms flush throttle, the 300 ms
 // reconcile settle, the 900 ms idle net, a multi-second readback) exists under them —
 // a race case run against those stubs is green for the wrong reason. This one has
 // configurable per-command latency, a real state map, a scriptable notify stream,
