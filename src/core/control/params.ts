@@ -1133,23 +1133,17 @@ export const DELAY_FRAME_RATE_OPTIONS = [
 ];
 export const DELAY_FRAME_RATE_DEFAULT = 5;
 
-// Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each
-// stereo channel has its own dedicated param, written to both L/R instances
-// (y = 0 and 1) which the device keeps linked. The block is the consecutive ids
-// 9..17 (all ±2400 centi-dB = ±24 dB range); URX44V occupies {9,13,14,15},
-// confirmed by a live broker probe (per-id sentinel write → on-device D.Gain
-// readout: CH5/6=9, CH7/8=13, CH9/10=14, CH11/12=15). URX44 shares that map.
+// Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain). The unit keeps
+// one D.Gain per INPUT SOURCE, not per channel — ids 9 and 11..17, ±2400 centi-dB (±24 dB) —
+// and every channel reading a source shows and applies that source's value. The app writes
+// y = 0 and 1, which the unit keeps linked.
 //
-// Keyed by MODEL because the broker indexes stereo channels by pair POSITION, not
-// by displayed label. The URX22 meter verification on real hardware (PR #173)
-// showed the stereo meter address is the pair position (URX22's CH5/6 is position
-// 1, NOT the same slot as URX44V's CH5/6 = position 0), and the stereo fader/ON/pan
-// (266/267/268) and source (209/210) blocks are already position-indexed. So the
-// D.Gain block is very likely positional too: URX22's four stereo pairs (CH3/4,
-// CH5/6, CH7/8, CH9/10 = positions 0..3) reuse the SAME confirmed ids {9,13,14,15}
-// BY POSITION — CH3/4 = 9, retiring the old free-slot guess (11). This is the
-// leading, meter-corroborated hypothesis but is NOT yet confirmed on a real URX22:
-// tracked in UNVERIFIED_MAPPINGS ("dgain-urx22"). A self-test round trip shows the ids
+// These maps send a stereo channel's gain to the D.Gain of the source that channel reads at
+// the factory — on URX44V and URX44, CH5/6 = AUX IN (9), CH7/8 = USB MAIN A (13), CH9/10 =
+// USB MAIN B (14), CH11/12 = USB MAIN C (15) — so a write reaches the channel only while it
+// reads that source, and reaches every other channel reading the same source. URX22's map
+// puts the same ids on its stereo pairs by position (CH3/4 = 9 … CH9/10 = 15) and is
+// registered in UNVERIFIED_MAPPINGS ("dgain-urx22"). A self-test round trip shows the ids
 // take a value, not which channel each one reaches.
 const D_GAIN_URX44V: Record<string, number> = {
   ch_5_6: 9,
