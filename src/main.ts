@@ -188,7 +188,7 @@ import {
   type SendOutcome,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
-import { cmdAddr, collisionOwners, unnamedNodes } from "./core/control/translate";
+import { cmdAddr, collisionOwners, planToCommands, planToNameWrites, unnamedNodes } from "./core/control/translate";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
@@ -4392,10 +4392,14 @@ if (!DEMO) {
       try {
         await withCheckedDevice("compare", t().status.compareConnecting, t().status.compareError, async (device) => {
           const model = getModel(modelId);
+          // Both halves are taken from the plan on screen NOW: the numeric sweep spans
+          // seconds, and the plan read again after it can be another document.
+          const commands = planToCommands(model, plan);
+          const names = planToNameWrites(model, plan);
           const startedAt = performance.now();
-          const { entries, errors } = await comparePlan(model, plan, signal);
+          const { entries, errors } = await comparePlan(commands, signal);
           signal.throwIfAborted();
-          const { entries: nameEntries, errors: nameErrors } = await compareNames(model, plan);
+          const { entries: nameEntries, errors: nameErrors } = await compareNames(names);
           const elapsedMs = Math.round(performance.now() - startedAt);
           const reads = [...errors, ...nameErrors];
           const { compared, differ } = compareCounts(entries, nameEntries);

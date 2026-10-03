@@ -843,8 +843,8 @@ export interface NameCompareEntry {
 }
 
 /**
- * Read every parameter the plan implies and record the device's value beside the
- * plan's — the full, auditable form of `diffPlan`, which keeps only the
+ * Read every parameter in `commands` (a plan's `planToCommands`) and record the device's
+ * value beside the plan's — the full, auditable form of `diffPlan`, which keeps only the
  * mismatches. The read-only "Compare with device" uses this so the report can
  * show that every parameter was actually read, not just the ones that differ (a
  * comparison that returns "matches" instantly is otherwise indistinguishable from
@@ -852,15 +852,18 @@ export interface NameCompareEntry {
  * parameter left out of `entries`, so "matched" and "could not be read" stay
  * distinct. Reads all — no stopOnError — so one dead parameter does not truncate
  * the audit. The caller must have connected first.
+ *
+ * Takes the list rather than the plan, as `compareNames` does, so a caller builds both
+ * from one plan before the first read: the sweep spans seconds, and a plan read again
+ * after it can be another document.
  */
 export async function comparePlan(
-  model: DeviceModel,
-  plan: Plan,
+  commands: readonly VdCommand[],
   signal?: AbortSignal,
 ): Promise<{ entries: CompareEntry[]; errors: string[] }> {
   const entries: CompareEntry[] = [];
   const errors: string[] = [];
-  for (const command of planToCommands(model, plan)) {
+  for (const command of commands) {
     signal?.throwIfAborted();
     try {
       const device = await vdGet(command.paramId, command.x, command.y);
@@ -872,14 +875,14 @@ export async function comparePlan(
   return { entries, errors };
 }
 
-/** The CH SETTING name analogue of comparePlan (string params, via the string IPC). */
+/** The CH SETTING name analogue of comparePlan (string params, via the string IPC), over a
+ *  plan's `planToNameWrites`. */
 export async function compareNames(
-  model: DeviceModel,
-  plan: Plan,
+  writes: readonly NameWrite[],
 ): Promise<{ entries: NameCompareEntry[]; errors: string[] }> {
   const entries: NameCompareEntry[] = [];
   const errors: string[] = [];
-  for (const write of planToNameWrites(model, plan)) {
+  for (const write of writes) {
     try {
       const device = (await vdGetStr(write.param, 0, write.y)).trimEnd();
       entries.push({ write, device, match: device === write.value });

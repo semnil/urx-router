@@ -6261,6 +6261,35 @@ describe("Compare with device", () => {
     await vi.waitFor(() => expect($("load-report").hidden).toBe(false), { timeout: 10_000 });
   });
 
+  // The sweep spans seconds, and the plan on screen can be replaced while it runs. Both
+  // halves of the report describe the plan the compare started on.
+  it("compares the names of the plan it started on when another replaces it mid-sweep", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let first = true;
+    const shell = await bootExperimental({
+      vd_get: async (a: Record<string, unknown>) => {
+        if (first) {
+          first = false;
+          await held;
+        }
+        return unwrittenRead(a);
+      },
+    });
+    selectNode("ch1");
+    const field = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.value = "Vocal";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+
+    (await compare()).click();
+    await invoked(shell, "vd_get");
+    $("btn-new").click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.newPlan), { timeout: 10_000 });
+    release();
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), { timeout: 15_000 });
+    expect($("load-report").textContent).toContain("Vocal");
+  });
+
   // The button doubles as its own cancel while a run is in flight, and the label says
   // which of the two it currently is.
   it("turns into its own cancel while it runs", SLOW, async () => {
