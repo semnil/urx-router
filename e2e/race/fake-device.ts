@@ -921,6 +921,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
 
         const ctx: Served = { done, sampled, sampledStr, held };
         const answered = window.__urxAnswerLater(
+          cmd,
           onWorker(cmd) ? enqueue(() => serve(cmd, args, ctx)) : serve(cmd, args, ctx),
         );
         // The `ipc-end` is traced as the answer reaches the app, ahead of the app's own
@@ -1180,7 +1181,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           if (cmd === "plugin:event|listen") {
             const cb = callbacks.get(args?.handler as number);
             if (cb) listeners.set(String(args?.event), cb);
-            return window.__urxAnswerLater(Promise.resolve(0));
+            return window.__urxAnswerLater(cmd, Promise.resolve(0));
           }
           if (cmd === "vd_watch_link") {
             const ch = args?.channel as { onmessage: (d: unknown) => void } | undefined;
