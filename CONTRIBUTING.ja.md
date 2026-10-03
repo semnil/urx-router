@@ -129,6 +129,7 @@ UPDATE_SKILL=1 pnpm test skill-export
 - マージは `ci-required` / `docs-required` / `format` / `race-required` の 4 つを待つ。いずれもすべての
   プルリクエストで結果を返すため、対象外としてスキップされた変更でも「永久に来ないチェック」
   ではなく緑のチェックが付く。これを保つのが `pnpm check:gates` で、`.github/workflows/`
-  配下を編集したら実行する。
+  配下を編集したら実行する。GitHub の外から取得するステップがステップ自身の `timeout-minutes` を
+  持たない場合と、まだ分類していないアクションをステップが使う場合も失敗にする。
 
 コントリビュートすることで、その成果物が [MIT ライセンス](LICENSE)の下で提供されることに同意したものとする。

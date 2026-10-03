@@ -144,6 +144,8 @@ CI diffs the generated files, so an out-of-date bundle fails the build.
 - A merge waits for `ci-required`, `docs-required`, `format` and `race-required`. Each
   reports on every pull request, so a change that skips the work behind one of them still
   gets a green check rather than a check that never arrives. `pnpm check:gates` is what
-  keeps that true; run it after editing anything under `.github/workflows/`.
+  keeps that true; run it after editing anything under `.github/workflows/`. It also fails a
+  step that fetches from outside GitHub without a `timeout-minutes` of its own, and a step
+  that uses an action it does not yet classify.
 
 By contributing, you agree that your work is licensed under the [MIT license](LICENSE).

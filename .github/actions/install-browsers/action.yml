@@ -66,6 +66,12 @@ description: >
 # 10-minute bound is about twice that stretch's slowest rather than several times 86 s, so a
 # run that slow still passes.
 #
+# This action's own calls carry a 10-minute step bound, above its `timeout` input (300 s by
+# default), so the failure the script below names is the one that fires. `pnpm check:gates`
+# fails a step that uses an action in the table, or this one, or runs a command in it, with
+# no `timeout-minutes` of its own, and refuses an action it classifies neither as such a fetch
+# nor as one of the GitHub-only ones below (scripts/check-merge-gates.mjs).
+#
 # Not bounded, because what they fetch is GitHub's: actions/setup-node (Node from the
 # runner's tool cache, which a job container mounts too, and the pnpm store from GitHub's
 # cache service), swatinem/rust-cache (GitHub's cache service), and the artifact and Pages

@@ -312,6 +312,7 @@ jobs:
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       # Already in the image; kept as the self-healing no-op described in the action.
       - uses: ./.github/actions/install-browsers
+        timeout-minutes: 10 # hang detector above the action's own bound — see .github/actions/install-browsers
         with:
           browser: chromium
           with-deps: "false"
@@ -379,6 +380,7 @@ jobs:
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       # Already in the image; kept as the self-healing no-op described in the action.
       - uses: ./.github/actions/install-browsers
+        timeout-minutes: 10 # hang detector above the action's own bound — see .github/actions/install-browsers
         with:
           browser: webkit
           with-deps: "false"
