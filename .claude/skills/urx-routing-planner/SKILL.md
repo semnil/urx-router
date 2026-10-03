@@ -204,7 +204,8 @@ Ducker params placed on a non-ducker node (move them to the channel's `out.ducke
 id), and for the parameters that need care on hardware (see step 6).
 
 **5. Self-correct from the report.** If validation fails, the report lists each
-illegal wire in the same format the app's viewer shows — so a report pasted back
+illegal wire (and each STEREO-linked pair whose insert effect disagrees with
+itself) in the same format the app's viewer shows — so a report pasted back
 by the user is directly actionable:
 
 ```
@@ -224,6 +225,11 @@ Reason codes:
      source nor the two channels of one MONO IN pair. Keep one source, or exactly
      the pair's two channels.
    - `duplicate` — the same `from -> to` is listed twice. Drop the repeat.
+   - `insertFxPair` — a STEREO-linked MONO IN pair whose two members disagree
+     about its insert effect; the row names the pair and the keys
+     (`[insertFxPair] ch1 / ch2: <keys>`). Give both members the same `insertFx`,
+     `insertFxOn` and `insertFxParams`, or leave all three out on both — an effect
+     on one member alone disagrees, since the other is filled with No Effect.
    - `notPlanFile` / `planVersionUnsupported` / `unknownModel` — the document
      itself is refused, before the routing is even looked at: the text must be
      JSON (`NaN` and `Infinity` are not — an off / -∞ level is `-96.5`), `format`
@@ -330,7 +336,7 @@ app and tooling parse, not prose:
   names each name it would shorten),
 - the `?plan=` deep link,
 - the validator's reason codes (`noRule`, `singleInput`, `monoPairOnly`,
-  `duplicate`, and the document-level ones in step 5).
+  `duplicate`, `insertFxPair`, and the document-level ones in step 5).
 
 The desktop app's menu labels follow whatever UI language the user has selected,
 so name a menu in the user's language and you may add the English label in

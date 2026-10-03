@@ -236,10 +236,11 @@ or inside a group — is written `true` / `false`: a number there loads converte
   The unit keeps ONE selector, one bypass and one engine for such a pair, so
   **`insertFx`, `insertFxOn` and `insertFxParams` must all three match across the two
   members** — author them on both or on neither. Omitting one side is not "on
-  neither": the app fills the absent member with the factory value (No Effect) and
-  the write then clears the pair. A pair that disagrees describes no state the unit
-  can be in, so the app REFUSES the document and `plan_tool.py validate` exits
-  non-zero naming the keys. WHICH effect is legal there it still cannot see: the bundled
+  neither": the app compares the pair as the fill leaves it, which gives the absent
+  member the factory value (No Effect), so the two members disagree. A pair that
+  disagrees describes no state the unit can be in, so the app REFUSES the document —
+  nothing is loaded or written — and `plan_tool.py validate` exits non-zero naming
+  the keys (`[insertFxPair]`). WHICH effect is legal there it still cannot see: the bundled
   data carries each selector's engine slots, not the menu a node or a linked pair may
   choose from.
   Changing `stereoLink` in either direction clears the pair's insert effect on the unit.
