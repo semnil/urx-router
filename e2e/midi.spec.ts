@@ -379,6 +379,20 @@ test("the MIDI window keeps keyboard focus and its status line across a state pu
   await expect(mode).toBeFocused();
 });
 
+// The armed ring is a picture: what it means — this control's keys now arm rather than
+// edit — is said on the main window's status line, which is a live region.
+test("learn on, the armed control and learn off are said on the main status line", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  const status = page.locator("#statusbar");
+  await expect(status).toHaveAttribute("role", "status");
+  await setLearn(page, win, true);
+  await expect(status).toHaveText("Click a control on the console or a tuning screen to arm it for binding.");
+  await strip(page, "CH 1").locator(".con-fader").click();
+  await expect(status).toHaveText("Move a MIDI control to bind CH 1 · Level…");
+  await setLearn(page, win, false);
+  await expect(status).toHaveText("Learn is off: the console and the tuning screens edit again.");
+});
+
 test("closing the MIDI window drops learn mode", async ({ page }) => {
   const win = await openMidiWindow(page);
   await setLearn(page, win, true);

@@ -158,6 +158,7 @@ const SURFACES: Record<SurfaceName, Surface> = {
       "midi.inputError": "the main window's status line",
       "midi.outputError": "the main window's status line",
       "midi.outputStalled": "the main window's status line",
+      "midi.learnOff": "the main window's status line",
     },
   },
   toolbar: {

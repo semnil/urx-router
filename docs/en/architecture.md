@@ -1601,7 +1601,10 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
 - **Learn** — turning the window's Learn on gives armable controls a dashed target ring, on the CONSOLE
   strips and on an open tuning screen alike (`ui/midi-learn.ts` holds the one treatment and the one arming
   path, so the two surfaces cannot drift); clicking one arms it (pulsing outline; already-bound controls carry
-  an amber dot) and the next MIDI input binds. On a tuning screen the target is the row's control cell, and
+  an amber dot) and the next MIDI input binds. The ring is not the only report: learn turning on from the
+  window, the control an arming names and learn turning off are each said on the main window's status line,
+  a live region — while armed, a control's keys arm rather than edit. A learn dropped by a plan replacement
+  or by the window closing says nothing there, since that line belongs to whatever replaced the plan. On a tuning screen the target is the row's control cell, and
   the press is taken in the capture phase so the slider never starts a drag; the wheel is gated for the same
   reason. A tuning screen opens normally while learn is on — its `▸` opener is not itself assignable, so it
   passes the arming guard through. A CC

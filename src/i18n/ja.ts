@@ -157,6 +157,7 @@ export const ja: Messages = {
       "ラーンをオンにしてコンソールまたは調整画面のコントロールをクリックし、MIDI 機器のコントロールを動かします。",
     hintLearn: "割り当てるコンソールまたは調整画面のコントロールをクリックしてください。",
     hintArmed: (control: string): string => `${control} に割り当てる MIDI コントロールを動かしてください…`,
+    learnOff: "ラーンをオフにしました: コンソールと調整画面は再び値を編集します。",
     mappings: "割り当て",
     noMappings: "割り当てはまだありません。",
     remove: "割り当てを削除",

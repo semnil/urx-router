@@ -378,6 +378,10 @@ export class MidiControl {
     this.engine.startLearn();
     this.hooks.onLearnChanged();
     this.pushState();
+    // Said on the main window's status line (a live region) as well as shown by the ring:
+    // while armed, the control's keys arm rather than edit. The MIDI window's hint already
+    // names it, so its own status line is left alone.
+    this.hooks.onStatus(t().midi.hintArmed(this.labelOf(id)));
   }
 
   // ---- app integration ----
@@ -946,6 +950,10 @@ export class MidiControl {
         return;
       case "learn":
         this.setLearn(intent.on);
+        // The operator's own switch, said on the main window's status line. Not in setLearn,
+        // which a plan replacement and the window closing also reach, and whose status lines
+        // are their own.
+        this.hooks.onStatus(intent.on ? t().midi.hintLearn : t().midi.learnOff);
         return;
       case "remove":
         this.applyMappings(this.engine.getMappings().filter((x) => x.control !== intent.control));

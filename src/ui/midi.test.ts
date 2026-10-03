@@ -209,6 +209,32 @@ describe("MidiControl", () => {
     expect(hooks.onLearnChanged).toHaveBeenCalled();
   });
 
+  // Arming is a state the main window shows only as a ring on the control, and while it lasts
+  // that control's keys arm rather than edit. So learn turning on, a control being armed and
+  // learn turning off are each said on the main window's status line, which is a live region.
+  // A learn dropped by a plan replacement is not: that line belongs to the replacement.
+  it("says on the status line that learn turned on, what it armed, and that it turned off", async () => {
+    const { control, hooks } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    const said = (): unknown => vi.mocked(hooks.onStatus).mock.calls.at(-1)?.[0];
+
+    dispatch({ type: "learn", on: true });
+    expect(said()).toBe(t().midi.hintLearn);
+    control.arm("ch1/level");
+    expect(said()).toBe(t().midi.hintArmed("CH 1 · Level"));
+    // The window's own line is not the place for it: its hint already says the same.
+    expect(lastState().status).toBe("");
+    dispatch({ type: "learn", on: false });
+    expect(said()).toBe(t().midi.learnOff);
+
+    dispatch({ type: "learn", on: true });
+    vi.mocked(hooks.onStatus).mockClear();
+    control.onModelChanged();
+    expect(control.learnActive()).toBe(false);
+    expect(hooks.onStatus).not.toHaveBeenCalledWith(t().midi.learnOff);
+  });
+
   it("opens, reconciles and closes ports while persisting only live selections", async () => {
     const { hooks } = install();
     await attached();

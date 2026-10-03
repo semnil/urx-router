@@ -228,6 +228,8 @@ export const en = {
     ),
     hintLearn: tr("Click a control on the console or a tuning screen to arm it for binding."),
     hintArmed: (control: string): string => `Move a MIDI control to bind ${control}…`,
+    // Said on the main window's status line when learn is turned off from the MIDI window.
+    learnOff: tr("Learn is off: the console and the tuning screens edit again."),
     mappings: tr("Assignments"),
     noMappings: tr("No assignments yet."),
     remove: tr("Remove assignment"),
