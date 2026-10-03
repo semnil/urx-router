@@ -34,6 +34,7 @@ import { SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
 import { trackCountCeiling } from "../core/constraints";
 import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
 import { sendlessNote } from "./send-fields";
+import { isChord } from "./keys";
 import { t } from "../i18n";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -346,6 +347,13 @@ export class Graph {
   // stale size during construction) and on window resize while this stays true.
   private autoFit = true;
   private selection: Selection = null;
+  // The node the board puts in the tab order (the only one with tabindex 0): the one keyboard
+  // focus last rested on or that was last selected, else the first drawn.
+  private focusNode: string | null = null;
+  // The plan the node layer was last built for. Keyboard focus is carried across a rebuild of
+  // the same plan only: the node it stood on belongs to a replaced plan, and a key still held
+  // there must reach nothing in the one that took its place.
+  private builtFor: Plan | null = null;
   // Ctrl/Cmd-click builds a multi-selection of nodes to shelve together. The
   // anchor (shown in the inspector) is selection.id; this set holds it plus any
   // others. Empty whenever selection is a connection or null.
@@ -554,10 +562,13 @@ export class Graph {
     if (this.isHidden(id)) return;
     const node = this.nodeById.get(id);
     if (!node) return;
+    const focused = this.focusedNodeId() === id;
     const old = this.nodeEls.get(id);
     const g = this.makeNode(node);
     if (old) old.replaceWith(g);
     else this.nodeLayer.append(g);
+    this.syncRovingNode();
+    if (focused) this.refocusNode(id);
   }
 
   /** Set or clear a node's free-text note and repaint its in-frame panel. */
@@ -701,6 +712,8 @@ export class Graph {
     this.svg.setAttribute("height", "100%");
     this.svg.style.display = "block";
     this.svg.style.touchAction = "none";
+    this.svg.setAttribute("role", "group");
+    this.svg.setAttribute("aria-label", t().toolbar.viewGraphHint);
 
     this.svg.append(makeGlowDefs());
 
@@ -741,6 +754,11 @@ export class Graph {
     // down. A suite that builds several takes them back through `recordWindowListeners`.
     window.addEventListener("blur", () => this.endAllPointers());
     this.svg.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
+    this.svg.addEventListener("keydown", (e) => this.onBoardKey(e));
+    this.svg.addEventListener("focusin", (e) => {
+      const id = this.nodeIdOf(e.target);
+      if (id !== null) this.setRovingNode(id);
+    });
 
     // The initial fitView() in the constructor can measure a stale viewport size
     // before the webview has applied its stylesheet/layout (notably WKWebView in
@@ -860,6 +878,7 @@ export class Graph {
    *  select bar, plus the node/wire layers, whose SVG tooltips and wire <title>s
    *  bake the language in at paint time. */
   relocalizeChrome(): void {
+    this.svg.setAttribute("aria-label", t().toolbar.viewGraphHint);
     this.renderNodes();
     this.redrawWires();
     this.renderShelf();
@@ -868,6 +887,7 @@ export class Graph {
   }
 
   private renderNodes(): void {
+    const focused = this.focusedNodeId();
     this.drawnGated = this.gatedSlots();
     this.nodeLayer.replaceChildren();
     this.nodeEls.clear();
@@ -887,7 +907,67 @@ export class Graph {
       if (this.isHidden(a) || this.isHidden(b)) continue;
       this.redrawStereoLink(a, b);
     }
+    this.syncRovingNode();
+    this.refocusNode(focused);
+    this.builtFor = this.plan;
     this.repaintCandidates();
+  }
+
+  // --- keyboard ------------------------------------------------------------
+
+  /** The id of the board node `target` is, or sits in; null for anything else. */
+  private nodeIdOf(target: EventTarget | null): string | null {
+    const g = target instanceof Element ? target.closest<SVGGElement>("g.node") : null;
+    return g && this.nodeLayer.contains(g) ? (g.dataset.id ?? null) : null;
+  }
+
+  /** The board node keyboard focus is on, if it is on one. */
+  private focusedNodeId(): string | null {
+    return this.nodeIdOf(document.activeElement);
+  }
+
+  /** Put focus back on the node drawn for `id` after its element was replaced or moved,
+   *  for the plan the board was built for only. */
+  private refocusNode(id: string | null): void {
+    if (id === null || this.plan !== this.builtFor) return;
+    this.nodeEls.get(id)?.focus({ preventScroll: true });
+  }
+
+  private setRovingNode(id: string): void {
+    this.focusNode = id;
+    this.syncRovingNode();
+  }
+
+  /** One node of the board is in the tab order at a time. */
+  private syncRovingNode(): void {
+    const anchor = this.selection?.type === "node" ? this.selection.id : null;
+    const pick =
+      [this.focusNode, anchor].find((id): id is string => id !== null && this.nodeEls.has(id)) ??
+      this.nodeEls.keys().next().value ??
+      null;
+    for (const [id, el] of this.nodeEls) el.setAttribute("tabindex", id === pick ? "0" : "-1");
+  }
+
+  /** Enter / Space select the focused node as a press does; the arrow keys walk focus through
+   *  the drawn nodes in the model's order (Right / Down onward, Left / Up back, wrapping at the
+   *  ends) and pan the one reached into view. */
+  private onBoardKey(e: KeyboardEvent): void {
+    const id = this.nodeIdOf(e.target);
+    if (id === null || isChord(e)) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      this.select({ type: "node", id });
+      return;
+    }
+    const step =
+      e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const ids = [...this.nodeEls.keys()];
+    const next = ids[(ids.indexOf(id) + step + ids.length) % ids.length];
+    this.setRovingNode(next);
+    this.nodeEls.get(next)?.focus({ preventScroll: true });
+    this.panIntoView(next, []);
   }
 
   /** Re-light the connect-drag candidates after every port element has been replaced.
@@ -1166,6 +1246,10 @@ export class Graph {
     const g = document.createElementNS(SVGNS, "g");
     g.classList.add("node");
     g.dataset.id = node.id;
+    g.setAttribute("role", "button");
+    g.setAttribute("aria-label", this.labelOf(node.id));
+    g.setAttribute("aria-pressed", String(this.selectedNodes.has(node.id)));
+    g.setAttribute("tabindex", "-1");
     const pos = this.posOf(node.id);
     g.setAttribute("transform", `translate(${pos.x} ${pos.y})`);
 
@@ -1350,6 +1434,21 @@ export class Graph {
       badge.append(...badges);
       g.append(body, badge);
     }
+
+    // The keyboard focus ring, outside the body a badge splits off and so clear of its dim:
+    // stroked by the stylesheet only while the node holds :focus-visible, and stroke-less in
+    // an export, which carries no stylesheet.
+    const ring = document.createElementNS(SVGNS, "rect");
+    ring.classList.add("focus-ring");
+    ring.setAttribute("x", "-4");
+    ring.setAttribute("y", "-4");
+    ring.setAttribute("width", String(NODE_W + 8));
+    ring.setAttribute("height", String(h + 8));
+    ring.setAttribute("rx", "10");
+    ring.setAttribute("fill", "none");
+    ring.setAttribute("stroke", "none");
+    ring.style.pointerEvents = "none";
+    g.append(ring);
 
     this.nodeEls.set(node.id, g);
     return g;
@@ -1781,7 +1880,10 @@ export class Graph {
     this.selection = sel;
     this.selectedNodes.clear();
     this.clearTrace();
-    if (sel?.type === "node") this.selectedNodes.add(sel.id);
+    if (sel?.type === "node") {
+      this.selectedNodes.add(sel.id);
+      this.focusNode = sel.id;
+    }
     this.redrawWires();
     this.highlightSelectedNode();
     this.renderSelBar();
@@ -1884,6 +1986,7 @@ export class Graph {
       // a re-highlight restores it instead of reverting an unread node to normal.
       const unread = !on && !onPath && !disabled && this.unreadNodes.has(id) && !this.isNodeInactive(node);
       el.classList.toggle("selected", on);
+      el.setAttribute("aria-pressed", String(on));
       rect.setAttribute("stroke-width", on ? "2.5" : onPath ? "2" : disabled ? "1.5" : unread ? "1.2" : "1");
       rect.setAttribute(
         "stroke",
@@ -1893,10 +1996,16 @@ export class Graph {
       else if (unread) rect.setAttribute("stroke-dasharray", "2 3");
       else rect.removeAttribute("stroke-dasharray");
     }
-    // Raise the anchor node so its note panel sits above any neighbor below it.
+    this.syncRovingNode();
+    // Raise the anchor node so its note panel sits above any neighbor below it. Moving the
+    // element takes keyboard focus off it, so a focused anchor is focused again.
     if (anchor) {
       const el = this.nodeEls.get(anchor);
-      if (el) this.nodeLayer.append(el);
+      if (el) {
+        const focused = this.focusedNodeId() === anchor;
+        this.nodeLayer.append(el);
+        if (focused) el.focus({ preventScroll: true });
+      }
     }
   }
 

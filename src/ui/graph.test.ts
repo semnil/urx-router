@@ -473,6 +473,99 @@ describe("path trace", () => {
   });
 });
 
+describe("keyboard", () => {
+  const stops = (): string[] =>
+    [...fx.host.querySelectorAll<SVGGElement>('g.node[tabindex="0"]')].map((g) => g.dataset.id ?? "");
+  const focused = (): string | null => (document.activeElement as SVGGElement | null)?.dataset?.id ?? null;
+  const key = (id: string, k: string, init: KeyboardEventInit = {}): void =>
+    void nodeEl(fx.host, id)!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
+    );
+  const focus = (id: string): void => nodeEl(fx.host, id)!.focus();
+
+  it("names the board and every node, and puts one node in the tab order", () => {
+    fx = graphFixture();
+    expect(fx.svg.getAttribute("role")).toBe("group");
+    expect(fx.svg.getAttribute("aria-label")).toBe(t().toolbar.viewGraphHint);
+    const nodes = [...fx.host.querySelectorAll<SVGGElement>("g.node")];
+    expect(nodes.every((g) => g.getAttribute("role") === "button")).toBe(true);
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("aria-label")).toBe("CH 1");
+    expect(nodes.every((g) => g.getAttribute("aria-pressed") === "false")).toBe(true);
+    expect(stops()).toEqual([nodes[0].dataset.id]);
+  });
+
+  it("selects the focused node on Enter and on Space, as a press does", () => {
+    fx = graphFixture();
+    focus("ch1");
+    key("ch1", "Enter");
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "node", id: "ch1" });
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("aria-pressed")).toBe("true");
+    expect(focused(), "raising the selected node keeps focus on it").toBe("ch1");
+    focus("ch2");
+    key("ch2", " ");
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "node", id: "ch2" });
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("walks focus through the nodes with the arrow keys, moving the tab stop with it", () => {
+    fx = graphFixture();
+    const ids = nodeIds(fx.host);
+    const i = ids.indexOf("ch1");
+    focus("ch1");
+    key("ch1", "ArrowDown");
+    expect(focused()).toBe(ids[i + 1]);
+    expect(stops()).toEqual([ids[i + 1]]);
+    key(ids[i + 1], "ArrowLeft");
+    key("ch1", "ArrowUp");
+    expect(focused()).toBe(ids[i - 1]);
+    // A chord is left to whoever owns it.
+    key(ids[i - 1], "ArrowDown", { metaKey: true });
+    expect(focused()).toBe(ids[i - 1]);
+    expect(fx.cb.onSelect).not.toHaveBeenCalled();
+  });
+
+  // A device-follow full reflect, a fine-grained one and a theme switch each rebuild the
+  // focused node's element; focus stays on the node.
+  it("keeps focus on its node through refresh, a fine-grained repaint and a theme switch", () => {
+    fx = graphFixture();
+    focus("ch3");
+    fx.graph.refresh();
+    expect(focused()).toBe("ch3");
+    fx.graph.repaintDirtyNodes(["ch3"]);
+    expect(focused()).toBe("ch3");
+    fx.graph.setTheme("light");
+    expect(focused()).toBe("ch3");
+    expect(document.activeElement).toBe(nodeEl(fx.host, "ch3"));
+  });
+
+  it("carries focus across a redraw of the same plan only", () => {
+    fx = graphFixture();
+    focus("ch3");
+    fx.graph.setModel(getModel("URX44V"), fx.plan);
+    expect(focused(), "the same plan, read again").toBe("ch3");
+    fx.graph.setModel(getModel("URX44V"), defaultPlan("URX44V"));
+    expect(focused(), "a replaced plan").toBeNull();
+  });
+
+  it("follows a selection made with the pointer with the tab stop", () => {
+    fx = graphFixture();
+    press(faceplate(fx.host, "bus.mix1")!);
+    expect(stops()).toEqual(["bus.mix1"]);
+  });
+
+  it("draws a focus ring every node carries, stroke-less outside the stylesheet", () => {
+    fx = graphFixture({ seed: (plan) => void (plan.unreadNodes = new Set(["ch1"])) });
+    for (const g of fx.host.querySelectorAll<SVGGElement>("g.node")) {
+      const ring = g.querySelector(":scope > .focus-ring")!;
+      expect(ring, g.dataset.id).not.toBeNull();
+      expect(ring.getAttribute("stroke")).toBe("none");
+      expect(g.lastElementChild).toBe(ring);
+    }
+    // A badged node's ring sits beside its dimmed body, not in it.
+    expect(nodeEl(fx.host, "ch1")!.querySelector(":scope > .node-body > .focus-ring")).toBeNull();
+  });
+});
+
 describe("hide and show", () => {
   it("shelves a node and gives it a chip", () => {
     fx = graphFixture();

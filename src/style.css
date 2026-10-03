@@ -749,6 +749,17 @@ select:focus-visible,
   outline-offset: 2px;
 }
 
+/* A board node takes the same amber ring as an SVG stroke around its panel: an outline
+   on an SVG group is not painted by every engine. */
+#graph-host g.node:focus-visible {
+  outline: none;
+}
+#graph-host g.node:focus-visible > .focus-ring {
+  stroke: var(--led);
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+}
+
 /* The second focus vocabulary, and the reason there are three: an amber ring is
    invisible on an amber face. A white outline with a dark halo reads on any of
    them, and the halo is what makes it read in the light theme too — white alone

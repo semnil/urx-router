@@ -3739,6 +3739,9 @@ per drag, and each report crosses the IPC boundary to set a native item's state.
 | `Delete`, `Backspace` | Delete the graph's selection (GRAPH view only, and not past a modal) |
 | `Escape` | Clear the graph's selection; dismiss a dismissable overlay; close the note editor (not during an IME composition) |
 | `Shift` (hold, or latch) | Fine-tuning mode ([above](#node-notes) — `ui/fine.ts`); not a Shift typed into a text field or pressed during an IME composition |
+| `Tab` | Reaches the board through one node: the one focus last rested on or last selected, else the first drawn |
+| `Enter`, `Space` (a board node focused) | Select that node, as a press does |
+| Arrow keys (a board node focused) | Move focus to the next (`→` `↓`) or previous (`←` `↑`) node in the model's order, wrapping at the ends, and pan it into view |
 
 The undo branch runs before the `Delete` / `Escape` handling and applies its own target test, because
 that handler's broader "focus is in a field" bail is wrong for the shortcut: a focused range slider or
@@ -3749,6 +3752,18 @@ macOS: the page receives `Cmd+Z` even with the native Edit menu installed, and c
 `preventDefault` is what suppresses WebKit's own field undo. The listener is registered in the bubble
 phase like the rest of that handler, which is what lets the note editor's `stopPropagation` shield an
 in-progress note from the shortcut.
+
+**The board from the keyboard.** The board's `<svg>` is a `group` named after the GRAPH view, and each node a
+`button` named by its label (the CH SETTING name in device-label mode) whose `aria-pressed` says whether it is
+selected. One node at a time carries `tabindex="0"` (a roving tab stop, `syncRovingNode` in `graph.ts`), so the
+board is one stop in the page's Tab order however many nodes it draws. The focused node wears the amber ring as an
+SVG stroke — a `.focus-ring` rect drawn last in the node, stroked by the stylesheet under `:focus-visible` and
+stroke-less in an export — because an outline on an SVG group is not painted in WebKit; a node dimmed as a whole
+dims its ring with it, while a badged node's ring sits beside its dimmed body. Focus is carried by node id across
+every rebuild of the node layer (`renderNodes`), a single node's (`repaintNode`) and the re-append that raises the
+selected node, for as long as the board draws the same plan: measured on macOS's WKWebView (2026-10-03), re-appending
+the focused group moved focus to `<body>`, and Tab reached `<g tabindex="0">` with the OS keyboard-navigation setting
+at its default (off).
 
 ## Preferences
 
