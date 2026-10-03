@@ -4440,7 +4440,10 @@ the plain text as is and the user must accept it to proceed. The macOS `.dmg` is
 agreement page, so a **first-run consent gate** covers it: `src/ui/consent.ts` shows the same disclaimer in
 a full-screen modal and, once accepted, records it in `localStorage` (`urx-disclaimer-accepted`) so it is
 never shown again (no re-consent after an auto-update). Declining quits the app (`plugin:process|exit`). The
-gate runs only on the desktop (`isTauri()`); the browser/demo never sees it.
+gate runs only on the desktop (`isTauri()`); the browser/demo never sees it. The headless launch actions
+(`--self-test`, `--prepare-modified`) wait on the same consent: a profile that has not accepted it shows the gate,
+logs `[self-test] waiting for first-run consent` (or `[prepare-modified] …`), and runs nothing until the gate is
+accepted — they reach the device layer with nothing on screen to press, so the inert app does not hold them.
 
 ## Third-party licenses
 

@@ -4635,32 +4635,42 @@ if (!DEMO) {
       if (await confirmDialog(t().confirm.selfTest)) await runDeviceSelfTest();
     });
     // Headless trigger: when launched with --self-test, run it once on startup
-    // (no dialog), so it can be driven from the command line without the UI.
-    void selfTestRequested().then((auto) => {
-      if (auto) void runDeviceSelfTest(true);
-    });
+    // (no dialog), so it can be driven from the command line without the UI. Behind the
+    // first-run consent like every device write, and its one-shot flag is read once the
+    // reset gate has passed, so a --reset-storage reload cannot take the flag with it.
+    void resetGate
+      .then(() => selfTestRequested())
+      .then(async (auto) => {
+        if (!auto) return;
+        if (!consentSettled) console.warn("[self-test] waiting for first-run consent");
+        if (await consented) void runDeviceSelfTest(true);
+      });
 
     // Headless trigger (audit): --prepare-modified writes a distinctive silent
     // state to the device and leaves it (no restore), so a scene SAVE/RECALL audit
     // can save and diff it. Reports go to the dev-server log like the self-test.
-    void prepareModifiedRequested().then(async (auto) => {
-      if (!auto) return;
-      if (!holdDeviceLink("run")) return;
-      setStatus(t().status.selfTestRunning);
-      try {
-        const report = await runPrepareModified(getModel(modelId));
-        console.warn(`[prepare-modified] ${report.aborted ? "CANCELLED" : "DONE"}`, JSON.stringify(report));
-        if (report.errors.length) console.warn("[prepare-modified] issues:", JSON.stringify(report.errors));
-        setStatus(`prepare-modified: wrote ${report.written}, residual ${report.residual}`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn("[prepare-modified] ERROR", message);
-        showError(connectFailureStatus(err, t().status.selfTestError));
-      } finally {
-        releaseDeviceLink("run");
-        midi?.gateReleased();
-      }
-    });
+    void resetGate
+      .then(() => prepareModifiedRequested())
+      .then(async (auto) => {
+        if (!auto) return;
+        if (!consentSettled) console.warn("[prepare-modified] waiting for first-run consent");
+        if (!(await consented)) return;
+        if (!holdDeviceLink("run")) return;
+        setStatus(t().status.selfTestRunning);
+        try {
+          const report = await runPrepareModified(getModel(modelId));
+          console.warn(`[prepare-modified] ${report.aborted ? "CANCELLED" : "DONE"}`, JSON.stringify(report));
+          if (report.errors.length) console.warn("[prepare-modified] issues:", JSON.stringify(report.errors));
+          setStatus(`prepare-modified: wrote ${report.written}, residual ${report.residual}`);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn("[prepare-modified] ERROR", message);
+          showError(connectFailureStatus(err, t().status.selfTestError));
+        } finally {
+          releaseDeviceLink("run");
+          midi?.gateReleased();
+        }
+      });
   });
 }
 
@@ -4963,11 +4973,26 @@ async function resetStorageIfRequested(): Promise<void> {
 
 const CONSENT_KEY = "urx-disclaimer-accepted";
 
+// The first-run consent's outcome: true once it was given (or where no gate applies), false
+// when it was declined. The headless launch actions wait on it, since they reach the device
+// layer without anything on screen to press.
+let consentSettled = false;
+let settleConsent: (agreed: boolean) => void = () => {};
+const consented = new Promise<boolean>((resolve) => {
+  settleConsent = (agreed) => {
+    consentSettled = true;
+    resolve(agreed);
+  };
+});
+
 // First-run consent: the Windows installer shows the same notice, but the macOS
 // drag-install and auto-updates bypass it, so gate the desktop app once. Stored
 // acceptance survives updates, so an updated user is not asked again.
 async function requireConsent(): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    settleConsent(true);
+    return;
+  }
   let accepted = false;
   try {
     accepted = localStorage.getItem(CONSENT_KEY) === "1";
@@ -4975,16 +5000,21 @@ async function requireConsent(): Promise<void> {
     // Storage unavailable: treat as not yet accepted and ask again, rather than
     // letting a throw reject boot() and leave the app running un-gated.
   }
-  if (accepted) return;
+  if (accepted) {
+    settleConsent(true);
+    return;
+  }
   if (await showConsent()) {
     try {
       localStorage.setItem(CONSENT_KEY, "1");
     } catch {
       // ignore (storage may be unavailable; consent will be asked again next launch)
     }
+    settleConsent(true);
     return;
   }
   // Declined: the app must not start without consent.
+  settleConsent(false);
   await exitApp();
 }
 

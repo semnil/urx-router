@@ -3915,6 +3915,9 @@ macOS の `.dmg` はドラッグインストールで同意ページを持たな
 `src/ui/consent.ts` が全画面モーダルで同じ免責文を表示し、同意すると `localStorage`
 (`urx-disclaimer-accepted`) に記録して以後は表示しない (自動更新後も再同意は不要)。拒否するとアプリを
 終了する (`plugin:process|exit`)。ゲートはデスクトップ (`isTauri()`) 時のみ動き、ブラウザ / デモには出ない。
+ヘッドレスの起動アクション (`--self-test`・`--prepare-modified`) も同じ同意を待つ: 同意していないプロファイルでは
+ゲートを表示し、`[self-test] waiting for first-run consent` (または `[prepare-modified] …`) をログに出し、ゲートに
+同意するまで何も実行しない — 画面上に押すものが無いままデバイス層に届くので、操作不能にしたアプリでは止まらないため。
 
 ## サードパーティライセンス
 

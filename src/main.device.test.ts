@@ -6497,6 +6497,36 @@ describe("the first-run consent gate", () => {
       consent: false,
     }) as Promise<TauriShell>;
 
+  // The headless launch actions reach the device layer with nothing on screen to press, so
+  // the gate's inert app does not hold them: they wait on the consent itself, and say so.
+  for (const [flag, tag] of [
+    ["self_test_requested", "self-test"],
+    ["prepare_modified_requested", "prepare-modified"],
+  ] as const) {
+    it(`holds the --${tag} launch until the gate is accepted`, SLOW, async () => {
+      const log = captureWarnings();
+      try {
+        const shell = await bootUngated({ experimental_enabled: true, [flag]: true });
+        await vi.waitFor(() => expect(log.lines).toContain(`[${tag}] waiting for first-run consent`), {
+          timeout: 10_000,
+        });
+        expect($("consent").hidden).toBe(false);
+        expect(shell.count("vd_connect")).toBe(0);
+
+        $("consent-agree").click();
+        await invoked(shell, "vd_connect");
+        await vi.waitFor(
+          () => expect(log.lines.some((l) => /^\[(self-test|prepare-modified)\] [A-Z]/.test(l))).toBe(true),
+          {
+            timeout: 25_000,
+          },
+        );
+      } finally {
+        log.restore();
+      }
+    });
+  }
+
   it("blocks the launch until it is accepted, then remembers", SLOW, async () => {
     const shell = await bootUngated();
     await vi.waitFor(() => expect($("consent").hidden).toBe(false), { timeout: 10_000 });
