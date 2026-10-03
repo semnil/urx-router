@@ -568,6 +568,8 @@ describe("the modals", () => {
     await boot();
     $("btn-licenses").click();
     await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled(), APP_SETTLE);
+    const framing = t().licenses.error("");
+    expect(String(vi.mocked(alert).mock.calls.at(-1)![0]).slice(0, framing.length)).toBe(framing);
     expect($("licenses-modal").hidden).toBe(true);
   });
 });

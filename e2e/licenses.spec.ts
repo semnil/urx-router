@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
-import { stubTauriBoot } from "./tauri-stub";
+import { dialogsOf, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import { en } from "../src/i18n/en";
 
 // The third-party license notice ships as a Tauri resource, so the File menu
 // entry is desktop-only: the stubbed shell serves the generated page, which the
@@ -91,13 +92,16 @@ test("closing the notice opened from the keyboard returns focus to the File trig
 });
 
 test("an unparseable notice lands in the error dialog, not an empty modal", async ({ page }) => {
-  await stubTauriBoot(page, { third_party_licenses: "<h1>not a notice</h1>", "plugin:dialog|message": null });
+  // The device stub records each dialog's message, which is what tells the notice's own
+  // framing apart from the generic one a failure escaping the flow is reported with.
+  await stubTauriDevice(page, { commands: { third_party_licenses: "<h1>not a notice</h1>" } });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-file");
   await page.click("#btn-licenses");
-  // The stubbed message dialog resolves immediately; the modal must never show.
-  await page.waitForTimeout(300);
+  const framing = en.licenses.error("");
+  await expect.poll(async () => (await dialogsOf(page)).map((m) => m.slice(0, framing.length))).toEqual([framing]);
+  // The dialog is the flow's end, so the modal not showing is now an observation.
   await expect(page.locator("#licenses-modal")).toBeHidden();
 });
 
