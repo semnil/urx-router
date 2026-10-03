@@ -64,6 +64,30 @@ describe("parseUrxf", () => {
     expect(() => parseUrxf(bytes)).toThrow(expect.objectContaining({ code: "lengthMismatch" }));
   });
 
+  // A zero element size spans no bytes whatever the count says, so both length checks
+  // still balance — and each 8-byte descriptor would decode into up to 65535 values.
+  it("rejects a descriptor whose element size is zero", () => {
+    const bytes = buildUrxf([
+      {
+        chunk: "CURRENT",
+        block: "CSF_BACKUP",
+        label: "",
+        fields: [
+          { id: 18, typecode: 4, elemSize: 1, values: ["", ""] },
+          { id: 96, typecode: 1, elemSize: 2, values: [0] },
+        ],
+      },
+    ]);
+    const view = new DataView(bytes.buffer);
+    const fPayload = FILE_HEADER + CHUNK_HEADER + BLOCK_HEADER;
+    // The ASCII array record (8 bytes): elemSize 0, count 65535. The scalar record after
+    // it (6 bytes) widens to 4 so the values block, 2 + 2 bytes, still balances.
+    view.setUint16(fPayload + 4, 0, false);
+    view.setUint16(fPayload + 6, 0xffff, false);
+    view.setUint16(fPayload + 8 + 4, 4, false);
+    expect(() => parseUrxf(bytes)).toThrow(expect.objectContaining({ code: "badDescriptor" }));
+  });
+
   // The model string and a chunk's label are read at fixed offsets inside their
   // record's extra block. Bounding them against the BUFFER only says the bytes exist
   // somewhere in the file: a header declaring `extraLen: 0` parsed cleanly with `model`

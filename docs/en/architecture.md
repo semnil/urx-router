@@ -4073,7 +4073,9 @@ Format notes that shape the reader (full spec: the private reference repository)
 - **Endianness alternates by level.** Record headers and the F descriptor records are big-endian;
   block headers and every value in the D block are little-endian.
 - **D is a frameless concatenation** walked only with its own F table. `Σ(elemSize × count) == D
-  length` and `record bytes == F length` are the file's only integrity checks, so both are asserted.
+  length` and `record bytes == F length` are the file's only integrity checks, so both are asserted. A
+  descriptor with an element size of 0 is refused: it spans no bytes whatever its count says, so it would
+  pass both checks while turning one descriptor into up to 65535 values.
 - **Branch on `typecode`, never on element size** — a 4-byte unsigned bitmask and a 4-byte ASCII
   field are the same width, and reading either by width alone gives a wrong value silently.
 - **An x axis is stored flattened onto consecutive ids** (id + band), folded back into an `(id, x)`
