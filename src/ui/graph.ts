@@ -2064,6 +2064,13 @@ export class Graph {
   }
 
   private onPointerMove(e: PointerEvent): void {
+    // A mouse moving with no button held has released whatever it pressed, whether or not
+    // the release reached the page — the native context menu takes the right button's —
+    // so the press it started ends here rather than following the cursor.
+    if (e.pointerType === "mouse" && e.buttons === 0) {
+      if (this.pointers.has(e.pointerId)) this.endLostPress(e.pointerId);
+      return;
+    }
     if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (this.pinch) {
       this.updatePinch();
@@ -2221,6 +2228,18 @@ export class Graph {
     // other interaction already torn down. In the pinch branch this also puts the
     // rebuild before beginPinch's own measurement rather than after it.
     this.endNodeDrag();
+  }
+
+  /** End the press of a pointer whose release never arrived: a pan stops where it is, a
+   *  connect drag draws nothing, and a moved node is reported once. */
+  private endLostPress(pointerId: number): void {
+    this.pointers.delete(pointerId);
+    try {
+      this.svg.releasePointerCapture(pointerId);
+    } catch {
+      /* pointer was not captured */
+    }
+    this.cancelInteraction();
   }
 
   private onPointerCancel(e: PointerEvent): void {

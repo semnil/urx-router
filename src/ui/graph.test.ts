@@ -1618,6 +1618,63 @@ describe("view transform", () => {
     });
   });
 
+  // The native context menu takes the right button's release, so the page sees the press and
+  // then moves with no button held. A press whose release never arrived ends at that move.
+  describe("a press whose release never arrived", () => {
+    const mouse = (type: string, x: number, init: PointerEventInit = {}): PointerEvent =>
+      new PointerEvent(type, {
+        pointerId: 1,
+        pointerType: "mouse",
+        clientX: x,
+        clientY: x,
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+    const pan = (): { x: number; y: number } => ({ ...(fx.graph as unknown as { pan: { x: number; y: number } }).pan });
+
+    it("does not pan on a buttonless move after a right press on the empty canvas", () => {
+      fx = graphFixture();
+      const before = pan();
+      fx.svg.dispatchEvent(mouse("pointerdown", 5, { button: 2, buttons: 2 }));
+      fx.svg.dispatchEvent(mouse("pointermove", 80, { buttons: 0 }));
+      fx.svg.dispatchEvent(mouse("pointermove", 160, { buttons: 0 }));
+      expect(pan()).toEqual(before);
+    });
+
+    it("pans while the button is held, the control", () => {
+      fx = graphFixture();
+      const before = pan();
+      fx.svg.dispatchEvent(mouse("pointerdown", 5, { buttons: 1 }));
+      fx.svg.dispatchEvent(mouse("pointermove", 80, { buttons: 1 }));
+      expect(pan()).not.toEqual(before);
+    });
+
+    it("stops a node drag at the buttonless move, reporting the move once", () => {
+      fx = graphFixture();
+      const rect = faceplate(fx.host, "ch1")!;
+      rect.dispatchEvent(mouse("pointerdown", 100, { buttons: 1 }));
+      rect.dispatchEvent(mouse("pointermove", 200, { buttons: 1 }));
+      const placed = { ...fx.plan.positions["ch1"] };
+      rect.dispatchEvent(mouse("pointermove", 300, { buttons: 0 }));
+      rect.dispatchEvent(mouse("pointermove", 400, { buttons: 0 }));
+      expect(fx.plan.positions["ch1"]).toEqual(placed);
+      expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("draws nothing for a connect drag whose release never arrived", () => {
+      fx = graphFixture();
+      const from = portHit(fx.host, "ch1:out")!;
+      from.dispatchEvent(mouse("pointerdown", 0, { buttons: 1 }));
+      from.dispatchEvent(mouse("pointermove", 60, { buttons: 1 }));
+      expect(fx.host.querySelector(".overlay-temp")).not.toBeNull();
+      const wires = fx.plan.connections.length;
+      from.dispatchEvent(mouse("pointermove", 90, { buttons: 0 }));
+      expect(fx.host.querySelector(".overlay-temp")).toBeNull();
+      expect(fx.plan.connections.length).toBe(wires);
+    });
+  });
+
   it("pans the canvas from a drag on empty space", () => {
     fx = graphFixture();
     const before = { ...(fx.graph as unknown as { pan: { x: number; y: number } }).pan };

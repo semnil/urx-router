@@ -3241,6 +3241,16 @@ The 150 ms sits between the longest gap measured inside one trackpad gesture, mo
 (78 ms, over four gestures), and a deliberate second flick after the first had visibly stopped, which
 arrived 250 ms after the first one's last event (one sample).
 
+**A press ends at a mouse move with no button held.** A pan, a node drag or a connect drag on the
+board follows the pointer only while a mouse button is down: a mouse `pointermove` whose `buttons` is
+0 ends the press there — a pan stops, a connect drag draws nothing, a moved node is reported once —
+so a release lost on any route leaves nothing running. The route that was measured is the native
+context menu: on macOS's WKWebView (2026-10-03, a page-side pointer probe beside an OS-level event
+tap), a right press on the empty board delivered `pointerdown` (button 2), `gotpointercapture` and
+`contextmenu`, and no `pointerup`, `pointercancel` or `lostpointercapture` followed; with the menu
+dismissed by Escape the pan it started went on following the buttonless cursor until the next click,
+and only where a window `blur` arrived (`endAllPointers` in `graph.ts`) did it stop.
+
 **A select takes the comfortable target as a height.** The same breakpoint gives the rack's and the
 inspector's controls a 40px minimum height, and a `<select>` does not take it that way: WebKit keeps these
 selects at the platform's own height whatever `min-height` says. It does take a `height`, and keeps the

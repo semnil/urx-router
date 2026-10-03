@@ -172,6 +172,26 @@ test.describe("graph board", () => {
     expect((await transform(page)).scale).toBe(before.scale);
   });
 
+  // The native context menu takes the right button's release, so the page sees the press and
+  // then a move with no button held. Headless Chromium opens no menu, so that move is
+  // dispatched here; the press, and the held-button move after it, are real.
+  test("a right press whose release never arrived leaves no pan following the cursor", async ({ page }) => {
+    const box = (await page.locator("#graph-host").boundingBox())!;
+    await page.mouse.move(box.x + 12, box.y + 12);
+    await page.mouse.down({ button: "right" });
+    const before = await viewport(page).getAttribute("transform");
+    await page.locator("#graph-host svg").dispatchEvent("pointermove", {
+      pointerId: 1,
+      pointerType: "mouse",
+      buttons: 0,
+      clientX: box.x + 200,
+      clientY: box.y + 150,
+    });
+    await page.mouse.move(box.x + 300, box.y + 200, { steps: 4 });
+    expect(await viewport(page).getAttribute("transform")).toBe(before);
+    await page.mouse.up({ button: "right" });
+  });
+
   test("an upward wheel zooms the board in", async ({ page }) => {
     await hoverBoard(page);
     const before = await transform(page);
