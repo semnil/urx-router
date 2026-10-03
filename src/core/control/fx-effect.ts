@@ -790,25 +790,31 @@ export function migrateFxEffectParams(
   const params = fx.params;
   // A map that is not an object is left for the load-time repair, which drops it.
   if (typeof params !== "object" || params === null || Array.isArray(params)) return;
-  const type = resolveFxEffectType(fxIndex, fx.type);
-  const owned = new Set(fxParams(type).map((d) => d.key));
-  const rename = (from: string, to: string): void => {
-    if (!(from in params) || !owned.has(to)) return;
+  if (version >= 2) return;
+  for (const [from, to] of legacyFxRenames(fxIndex, fx.type)) {
+    if (!(from in params)) continue;
     // The old key goes either way. It addresses nothing once the type owns another
     // name for that parameter, so leaving it would carry a value no build reads into
     // every later save of the plan.
     if (!(to in params)) params[to] = params[from];
     delete params[from];
-  };
-  if (version < 2) {
-    const prefix: string = fxFamilyOf(type);
-    for (const legacy of LEGACY_FX_PARAM_KEYS) {
-      rename(legacy, prefix + legacy[0].toUpperCase() + legacy.slice(1));
-    }
-    // Both re-keyings ride the same version, because both landed before any build that
-    // writes one shipped: the released app is version 1. From 2 on, a `delay` key beside
-    // a Ping Pong type is the MONO value parked under its own name, so re-keying it then
-    // would be the re-interpretation the split exists to prevent.
-    rename(MONO_DELAY_KEY, PINGPONG_DELAY_KEY);
   }
+}
+
+/** The renames a version-1 document's FX parameters take on load (`migrateFxEffectParams` says
+ *  why version 1 alone), as (stored key, key the build reads) pairs, for the type `typeValue`
+ *  resolves to on FX channel `fxIndex` — only those onto a key that type owns. The skill's
+ *  validator carries the same pairs (`skill-export.ts`). */
+export function legacyFxRenames(fxIndex: number, typeValue: number | undefined): Array<[string, string]> {
+  const type = resolveFxEffectType(fxIndex, typeValue);
+  const owned = new Set(fxParams(type).map((d) => d.key));
+  const prefix: string = fxFamilyOf(type);
+  const pairs: Array<[string, string]> = [
+    ...LEGACY_FX_PARAM_KEYS.map((legacy): [string, string] => [
+      legacy,
+      prefix + legacy[0].toUpperCase() + legacy.slice(1),
+    ]),
+    [MONO_DELAY_KEY, PINGPONG_DELAY_KEY],
+  ];
+  return pairs.filter(([, to]) => owned.has(to));
 }

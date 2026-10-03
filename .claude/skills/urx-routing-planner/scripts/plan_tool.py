@@ -44,6 +44,11 @@ loads the plan as authored":
 - a nameable node the document leaves unnamed is given its factory name on load
   (models.json `factory.nodeNames`; core/plan-validate.ts `completeNodeNames`), and the
   write sends it, which is reported as a warning,
+- a `sampleRate` the unit does not run at loads as the default rate, and a recorder Track
+  Count above the ceiling at the rate the plan loads at is lowered to it (models.json
+  `rates`), and a version-1 document's FX parameters stored under their old shared names
+  are renamed (models.json `fxChannels[...].legacyRenames`) before every check below reads
+  them — each reported as a warning,
 - every node-param leaf the write bounds (models.json `leafRules`, and the insert-FX
   engine slots of `insertFxParamSpace`) is bounded on load to the value the write
   sends (core/plan-validate.ts `paramRangeProblems`), which is reported as a
@@ -259,8 +264,10 @@ def validate(plan, models):
             model.get("hiZ"),
             (model.get("factory") or {}).get("nodeParams"),
             model.get("leafRules"),
+            version if is_number(version) else PLAN_VERSION,
         )
     )
+    warnings.extend(rate_warnings(view, model.get("rates")))
     problems.extend(insert_fx_pair_problems(view, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
 
     return problems, warnings
@@ -1049,6 +1056,62 @@ def fx_admitted(spec, value):
     return v
 
 
+def legacy_fx_renamed(fx, channel):
+    """One FX channel's effect section as a version-1 document's load leaves it
+    (core/control/fx-effect.ts `migrateFxEffectParams`), and the renames it took: each parameter
+    stored under its old shared name moves to the name the build reads, from models.json
+    `fxChannels[...].legacyRenames` for the type the section resolves to — its `type` where the
+    channel's menu offers it, the channel's `defaultType` otherwise. A key already held under the
+    new name keeps that value, and the old one goes either way."""
+    params = fx.get("params")
+    if not isinstance(params, dict) or not isinstance(channel, dict):
+        return fx, []
+    stored = fx.get("type")
+    resolved = stored if is_number(stored) and stored in (channel.get("types") or []) else channel.get("defaultType")
+    if not is_number(resolved):
+        return fx, []
+    pairs = (channel.get("legacyRenames") or {}).get(str(int(resolved))) or []
+    moved = dict(params)
+    renamed = []
+    for old, new in pairs:
+        if old not in moved:
+            continue
+        if new not in moved:
+            moved[new] = moved[old]
+        del moved[old]
+        renamed.append((old, new))
+    return ({**fx, "params": moved} if renamed else fx), renamed
+
+
+def rate_warnings(plan, rates):
+    """The two document-level rewrites the rate makes (core/plan.ts `deserializeDocument` and
+    `setPlanSampleRate`): a `sampleRate` the unit does not run at is read as models.json
+    `rates.defaultRate`, and a Track Count on the recorder (`rates.recorder`) above the ceiling at
+    the rate the document loads at is lowered to it."""
+    if not isinstance(rates, dict):
+        return []
+    out = []
+    written = plan.get("sampleRate")
+    known = is_number(written) and written in rates["rates"]
+    rate = written if known else rates["defaultRate"]
+    if "sampleRate" in plan and not known:
+        out.append(
+            f"sampleRate: the app loads this plan at {rates['defaultRate']} — {written!r} is not one of the "
+            f"rates the unit runs at ({', '.join(str(r) for r in rates['rates'])})"
+        )
+    node_params = plan.get("nodeParams")
+    recorder = rates["recorder"]
+    sdrec = node_params.get(recorder) if isinstance(node_params, dict) else None
+    count = sdrec.get("sdRecTrackCount") if isinstance(sdrec, dict) else None
+    ceiling = rates["trackCountCeiling"].get(str(int(rate)))
+    if is_number(count) and is_number(ceiling) and count > ceiling:
+        out.append(
+            f"node param {recorder}.sdRecTrackCount: the app lowers this to {ceiling} on load — the "
+            f"recorder holds no more tracks at {int(rate)} Hz"
+        )
+    return out
+
+
 def fx_catalogue_warnings(node_id, fx, channel, out, bounded):
     """The two FX repairs that need the channel's own catalogue: a `type` its menu does not
     offer, which the app DROPS (a menu has no nearest member to move to), and a finite number
@@ -1638,7 +1701,15 @@ def hi_z_bounds(node_id, params, hi_z, bounded):
 
 
 def node_param_warnings(
-    plan, nodes, pairs, fx_channels, param_space=None, hi_z=None, factory=None, leaf_rules=None
+    plan,
+    nodes,
+    pairs,
+    fx_channels,
+    param_space=None,
+    hi_z=None,
+    factory=None,
+    leaf_rules=None,
+    version=PLAN_VERSION,
 ):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
@@ -1686,6 +1757,14 @@ def node_param_warnings(
         params = with_paths(params, kind_paths)
         scalar_only_drops(node_id, params, dropped, param_space)
         bounded = []
+        if version < 2 and isinstance(params.get("fxEffect"), dict):
+            fx, renamed = legacy_fx_renamed(params["fxEffect"], (fx_channels or {}).get(node_id))
+            for old, new in renamed:
+                out.append(
+                    f"node param {node_id}.fxEffect.params.{old}: the app renames this to {new} on load — "
+                    "a version-1 document's name for it"
+                )
+            params = {**params, "fxEffect": fx}
         if "fxEffect" in params:
             gone = fx_effect_warnings(node_id, params["fxEffect"], dropped)
             if not gone:

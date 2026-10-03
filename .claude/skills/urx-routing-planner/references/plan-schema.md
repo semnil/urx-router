@@ -41,11 +41,14 @@ the unit and edit that.
   refuses the document before it looks at the routing.
 - `version` — always `4` for a plan written today. A document tagged newer than
   the app's version is refused; an older one is migrated forward on load, and an
-  absent one reads as current.
+  absent one reads as current. A version-1 document's FX parameters stored under
+  their old shared names (`lpf`, `hpf`, … and a Ping Pong `delay`) move to the names
+  the build reads; the validator names each one.
 - `modelId` — `"URX22"`, `"URX44"`, or `"URX44V"`. Any other string is refused.
 - `sampleRate` — Hz, one of `44100, 48000, 88200, 96000, 176400, 192000`
-  (default `48000`). Some features (insert FX, FX2, stereo-channel EQ) warn/disable
-  above 96 kHz — the app shows those notes; the plan still loads.
+  (default `48000`; any other value, `96` written in kHz included, loads as `48000`,
+  which the validator says). Some features (insert FX, FX2, stereo-channel EQ)
+  warn/disable above 96 kHz — the app shows those notes; the plan still loads.
 - `scope` — **never author it**; it appears only on a plan the user saved
   scene-scoped (Preferences → *Plan files* → *Save scope*, which also applies to
   the share URL and the JSON download). Such a document carries `"scope": "scene"`
@@ -246,7 +249,9 @@ or inside a group — is written `true` / `false`: a number there loads converte
 - `sdRecTrackCount` — even 2–16. **Never written to the device**: a write does
   reach the unit, but the broker refuses every value above two tracks, so the app
   reads it back and emits nothing. Set it on the unit's front panel. In a plan it
-  only gates how many record-track slots show.
+  only gates how many record-track slots show. The rate caps it — 16 up to 48 kHz,
+  8 at 88.2 / 96 kHz, 2 above — and a count above the cap at the plan's rate loads
+  lowered to it (the validator says so).
 
 **Raw-encoded — author with caution (see warnings):**
 - `ssmcs` — the SSMCS channel-strip values are RAW broker integers on a non-public

@@ -34,6 +34,7 @@ import {
   PAN_BAL_PAN,
 } from "../src/core/control/params";
 import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
+import { fxParams } from "../src/core/control/fx-effect";
 import { atLeast, newestPython } from "./python.test-util.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -1700,6 +1701,90 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     }
     expect(seen.yes).toBeGreaterThan(0);
     expect(seen.no).toBeGreaterThan(0);
+  });
+
+  // Three rewrites belong to the document rather than to a node's own values: a rate the unit does
+  // not run at loads as the default, a recorder Track Count above the ceiling at the rate the plan
+  // loads at is lowered, and a version-1 document's FX parameters move from their old shared names
+  // (and are then bounded like any other). Each document is asked whether the app's load leaves the
+  // field as written, and whether the tool says anything about it — the two answers must agree,
+  // with a control beside each case that the app keeps.
+  it("agrees with the app about the rate, the Track Count and a version-1 document's FX keys", async () => {
+    const revxLpf = fxParams(0).find((d) => d.key === "revxLpf");
+    const base = { format: "urx-router-plan", modelId: "URX44V", connections: [] };
+    const sdrec = (count) => ({ "out.sdrec": { sdRecTrackCount: count } });
+    const fx1 = (params, type = 0) => ({ "bus.fx1": { fxEffect: { type, params } } });
+    const corpus = [
+      ["a rate in kHz", { ...base, version: PLAN_VERSION, sampleRate: 96 }, (p) => p.sampleRate, (d) => d.sampleRate],
+      [
+        "a rate the unit runs at",
+        { ...base, version: PLAN_VERSION, sampleRate: 96000 },
+        (p) => p.sampleRate,
+        (d) => d.sampleRate,
+      ],
+      [
+        "a rate written as text",
+        { ...base, version: PLAN_VERSION, sampleRate: "96000" },
+        (p) => p.sampleRate,
+        () => "96000",
+      ],
+      ...[
+        [192000, 16],
+        [96000, 16],
+        [48000, 16],
+        [96000, 8],
+      ].map(([rate, count]) => [
+        `${count} tracks at ${rate}`,
+        { ...base, version: PLAN_VERSION, sampleRate: rate, nodeParams: sdrec(count) },
+        (p) => p.nodeParams["out.sdrec"]?.sdRecTrackCount,
+        (d) => d.nodeParams["out.sdrec"].sdRecTrackCount,
+      ]),
+      [
+        "a version-1 lpf in the window",
+        { ...base, version: 1, nodeParams: fx1({ lpf: revxLpf.rawMax }) },
+        (p) => JSON.stringify(p.nodeParams["bus.fx1"].fxEffect.params),
+        (d) => JSON.stringify(d.nodeParams["bus.fx1"].fxEffect.params),
+      ],
+      [
+        "a version-1 lpf below the window",
+        { ...base, version: 1, nodeParams: fx1({ lpf: revxLpf.rawMin - 1 }) },
+        (p) => JSON.stringify(p.nodeParams["bus.fx1"].fxEffect.params),
+        (d) => JSON.stringify(d.nodeParams["bus.fx1"].fxEffect.params),
+      ],
+      [
+        "a version-1 Ping Pong delay",
+        { ...base, version: 1, nodeParams: { "bus.fx2": { fxEffect: { type: 1025, params: { delay: 100 } } } } },
+        (p) => JSON.stringify(p.nodeParams["bus.fx2"].fxEffect.params),
+        (d) => JSON.stringify(d.nodeParams["bus.fx2"].fxEffect.params),
+      ],
+      [
+        "the same keys at the current version",
+        { ...base, version: PLAN_VERSION, nodeParams: fx1({ revxLpf: revxLpf.rawMax }) },
+        (p) => JSON.stringify(p.nodeParams["bus.fx1"].fxEffect.params),
+        (d) => JSON.stringify(d.nodeParams["bus.fx1"].fxEffect.params),
+      ],
+    ];
+    const seen = { rewritten: 0, kept: 0 };
+    for (const [name, plan, loadedOf, writtenOf] of corpus) {
+      const loaded = await appLoad(plan, false);
+      const rewritten = String(loadedOf(loaded)) !== String(writtenOf(plan));
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, `${name}\n${r.stdout}`).toBe(0);
+      const said = r.stderr
+        .split(/\r?\n/)
+        .some(
+          (l) =>
+            l.startsWith("WARNING: sampleRate:") ||
+            l.startsWith("WARNING: node param out.sdrec.sdRecTrackCount:") ||
+            /^WARNING: node param bus\.fx[12]\.fxEffect\.params\./.test(l),
+        );
+      expect(said, `${name}\n${r.stderr}`).toBe(rewritten);
+      seen[rewritten ? "rewritten" : "kept"]++;
+    }
+    expect(seen.rewritten).toBeGreaterThan(0);
+    expect(seen.kept).toBeGreaterThan(0);
   });
 
   // The trailing whitespace the load strips is the JavaScript set, not Python's: a byte-order mark

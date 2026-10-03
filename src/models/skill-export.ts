@@ -17,7 +17,14 @@ import {
   OUTPUT_INSERT_FX_OPTIONS,
   PAN_BAL_BAL,
 } from "../core/control/params";
-import { fixedConnection, isPlainRecord, SEND_LEVEL_UNNAMED_DB, type ConnParams, type NodeParams } from "../core/plan";
+import {
+  fixedConnection,
+  isPlainRecord,
+  SDREC_NODE_ID,
+  SEND_LEVEL_UNNAMED_DB,
+  type ConnParams,
+  type NodeParams,
+} from "../core/plan";
 import { factoryNodeColors, factoryNodeNames, factoryNodeParams } from "./initial-state";
 import { INSERT_FX_PAIR_KEYS, monoPairsInto, PAIR_OWN_NODE_KEYS } from "../core/routing";
 import { isRackSend } from "../core/plan-validate";
@@ -30,7 +37,14 @@ import {
   type LeafRule,
 } from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
-import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
+import {
+  FX_CHANNEL_NODE_INDEX,
+  fxEffectTypes,
+  fxParams,
+  legacyFxRenames,
+  resolveFxEffectType,
+} from "../core/control/fx-effect";
+import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES, trackCountCeiling } from "../core/constraints";
 import {
   insertFxDefaults,
   insertFxDeviceDriven,
@@ -101,8 +115,17 @@ export interface SkillModel {
     {
       types: number[];
       params: Record<string, { control: string; rawMin?: number; rawMax?: number; options?: number[] }>;
+      /** The type an absent `type`, or one the menu does not offer, resolves to. */
+      defaultType: number;
+      /** Per type, the renames a version-1 document's parameters take on load
+       *  (`legacyFxRenames`), as [stored key, key the build reads] pairs. */
+      legacyRenames: Record<string, Array<[string, string]>>;
     }
   >;
+  /** The rates a plan may name (`SAMPLE_RATES`) — the load reads any other as `defaultRate` —
+   *  and, per rate, the Track Count ceiling the load lowers the recorder's count to
+   *  (`trackCountCeiling`), the recorder being the node `recorder`. */
+  rates: { rates: number[]; defaultRate: number; trackCountCeiling: Record<string, number>; recorder: string };
   /** The channels carrying the HI-Z switch, and A.Gain's upper bound while it is on. With HI-Z
    *  on, the load turns +48V off and bounds A.Gain to that value. */
   hiZ: { channels: string[]; gainMaxDb: number };
@@ -163,6 +186,12 @@ function skillModel(model: DeviceModel): SkillModel {
     rackSends: model.rules.filter((r) => isRackSend(model, r.from, r.to)).map((r) => `${r.from} -> ${r.to}`),
     insertFxParamSpace: insertFxParamSpaceBySelector(),
     fxChannels: fxChannelCatalogue(),
+    rates: {
+      rates: [...SAMPLE_RATES],
+      defaultRate: DEFAULT_SAMPLE_RATE,
+      trackCountCeiling: Object.fromEntries(SAMPLE_RATES.map((r) => [String(r), trackCountCeiling(r)])),
+      recorder: SDREC_NODE_ID,
+    },
     hiZ: {
       channels: model.nodes.filter((n) => hasHiZInput(model.id, n.id)).map((n) => n.id),
       gainMaxDb: HI_Z_A_GAIN_MAX_DB,
@@ -273,7 +302,13 @@ function fxChannelCatalogue(): SkillModel["fxChannels"] {
         };
       }
     }
-    out[nodeId] = { types: fxEffectTypes(fxIndex).map((o) => o.value), params };
+    const types = fxEffectTypes(fxIndex).map((o) => o.value);
+    out[nodeId] = {
+      types,
+      params,
+      defaultType: resolveFxEffectType(fxIndex, undefined),
+      legacyRenames: Object.fromEntries(types.map((t) => [String(t), legacyFxRenames(fxIndex, t)])),
+    };
   }
   return out;
 }
