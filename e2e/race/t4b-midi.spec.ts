@@ -602,9 +602,11 @@ test.describe("T4b midi", () => {
     await mark(page, "cc39");
     await pushMidi(page, [cc(39, 127)]);
     // One physical message, two address semantics: CH 2 reads it as a 7-bit CC at
-    // full scale, CH 1 reads it as the LSB half of a 14-bit pair whose MSB is 0.
+    // full scale, CH 1 reads it as the LSB half of a 14-bit pair whose MSB has not
+    // arrived, which edits nothing. Both readouts are read after CH 2's has moved, so
+    // CH 1's is taken once the message has been applied.
     await expect(faderReadout(page, "CH 2")).toHaveText("+10.0");
-    await expect(faderReadout(page, "CH 1")).toHaveText("-∞");
+    await expect(faderReadout(page, "CH 1")).toHaveText("0.0");
 
     const win = await openMidiWindow(page);
     const rows = win.locator(".mw-list tbody tr");

@@ -96,7 +96,9 @@ export class MidiEngine {
   private mappings: MidiMapping[] = [];
   private byKey = new Map<string, MidiMapping[]>();
   private pickup = new Map<string, PickupState>();
-  private pair = new Map<string, { msb: number; lsb: number }>(); // cc14 assembly
+  /** cc14 assembly per pair: the last MSB and LSB received. `msb` is null until an MSB has
+   *  arrived since the last reset. */
+  private pair = new Map<string, { msb: number | null; lsb: number }>();
   private lastSent = new Map<string, number>(); // last raw value fed back per address
   /** The plan value each address carried at the last pass, whether or not that pass put
    *  anything on the wire. Separate from `lastSent`, which is a claim about the
@@ -516,7 +518,9 @@ export class MidiEngine {
     if (ev.type === "pitchbend") {
       incoming = ev.value / 16383;
     } else if (mapping.addr.type === "cc14") {
-      incoming = this.assemblePair(mapping.addr.channel, mapping.addr.controller, ev) / 16383;
+      const raw = this.assemblePair(mapping.addr.channel, mapping.addr.controller, ev);
+      if (raw === null) return null;
+      incoming = raw / 16383;
     } else {
       incoming = ev.value / 127;
     }
@@ -531,14 +535,16 @@ export class MidiEngine {
   }
 
   // 14-bit CC pair assembly: keep the last MSB/LSB per pair and combine on every
-  // half, so an MSB-only sweep still moves coarsely and MSB+LSB is exact.
-  private assemblePair(channel: number, msbController: number, ev: CcEvent): number {
+  // half, so an MSB-only sweep still moves coarsely and MSB+LSB is exact. An LSB that
+  // arrives while the pair's MSB is unknown (none received since the last reset) is kept
+  // for the MSB that follows and edits nothing on its own (null).
+  private assemblePair(channel: number, msbController: number, ev: CcEvent): number | null {
     const key = `${channel}:${msbController}`;
-    const st = this.pair.get(key) ?? { msb: 0, lsb: 0 };
+    const st = this.pair.get(key) ?? { msb: null, lsb: 0 };
     if (ev.controller === msbController) st.msb = ev.value;
     else st.lsb = ev.value;
     this.pair.set(key, st);
-    return (st.msb << 7) | st.lsb;
+    return st.msb === null ? null : (st.msb << 7) | st.lsb;
   }
 
   // Pickup: swallowed until the physical value reaches (±eps) or crosses the

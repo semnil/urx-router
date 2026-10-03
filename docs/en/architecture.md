@@ -1584,7 +1584,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   (known-issues.md "The unit lets +48V and HI-Z be on together; the app does not").
 - **Engine (`engine.ts`)** — routes incoming events onto bound controls. Take-in modes are per-mapping:
   absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
-  pair (n / n+32). Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
+  pair (n / n+32); an LSB that arrives while the pair's MSB is unknown — none received since the mappings
+  were last set, which a boot, a learn, an edit of the list and a plan load all do — edits nothing and is
+  kept for the MSB that follows. Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
   SENDER's button type (the controller-side setting the user reads): the default "Momentary" (edge — flips
   on each on-value: a note-on or a CC ≥ 64, the release ignored; not a rising-edge test, so a push button
   that sends a fixed on-value per press with no release-to-0 between still flips every press, not just the

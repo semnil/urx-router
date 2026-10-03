@@ -219,13 +219,31 @@ describe("incoming application", () => {
   });
 
   it("assembles a 14-bit CC pair regardless of arrival order (LSB before MSB)", () => {
-    const c = fake("ch1/level", "continuous", 0, 1 / 16383);
+    const c = fake("ch1/level", "continuous", 0.5, 1 / 16383);
     controls.set(c.id, c);
     map(c.id, { type: "cc14", channel: 0, controller: 7 });
-    engine.onMessage(encodeCc(0, 39, 32)); // LSB first: MSB still 0 → tiny value
-    expect(c.value).toBeCloseTo(32 / 16383, 6);
-    engine.onMessage(encodeCc(0, 7, 64)); // MSB completes the pair
+    engine.onMessage(encodeCc(0, 39, 32)); // LSB first: no MSB yet, so nothing is edited
+    expect(c.value).toBe(0.5);
+    expect(applied).toEqual([]);
+    engine.onMessage(encodeCc(0, 7, 64)); // MSB completes the pair with the LSB it kept
     expect(c.value).toBeCloseTo(((64 << 7) | 32) / 16383, 6);
+    expect(applied).toEqual([c.id]);
+  });
+
+  // A sender may move the LSB alone on a fine move. With no MSB received since the engine
+  // came up, there is nothing to assemble it against: it edits nothing, rather than taking
+  // an MSB of 0 and putting the control at the bottom of its range.
+  it("edits nothing on an LSB alone before any MSB has arrived", () => {
+    const c = fake("ch1/level", "continuous", 0.75, 1 / 16383);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc14", channel: 0, controller: 7 });
+    engine.onMessage(encodeCc(0, 39, 41));
+    expect(c.value).toBe(0.75);
+    expect(applied).toEqual([]);
+    // …and once an MSB arrives, an LSB alone refines it.
+    engine.onMessage(encodeCc(0, 7, 100));
+    engine.onMessage(encodeCc(0, 39, 42));
+    expect(c.value).toBeCloseTo(((100 << 7) | 42) / 16383, 6);
   });
 
   it("pickup engages on an exact touch of the plan value, then tracks", () => {
@@ -276,8 +294,10 @@ describe("incoming application", () => {
     expect(c.value).toBeCloseTo((127 << 7) / 16383, 6);
     // Replace the mappings (same address): the retained MSB must not survive.
     engine.setMappings([{ control: c.id, addr: { type: "cc14", channel: 0, controller: 7 }, mode: "absolute" }]);
-    engine.onMessage(encodeCc(0, 39, 64)); // LSB only → assembles against a fresh MSB 0
-    expect(c.value).toBeCloseTo(64 / 16383, 6);
+    engine.onMessage(encodeCc(0, 39, 64)); // LSB only: the MSB is unknown again, so no edit
+    expect(c.value).toBeCloseTo((127 << 7) / 16383, 6);
+    engine.onMessage(encodeCc(0, 7, 3)); // a fresh MSB assembles with the LSB it kept
+    expect(c.value).toBeCloseTo(((3 << 7) | 64) / 16383, 6);
   });
 });
 
