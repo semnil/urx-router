@@ -3760,12 +3760,14 @@ An undo is refused, with the reason on the status line and **without spending th
   references in its own closures that the repaint would rebuild from under it;
 - a modal is open — none of them edits the plan, except the channel tuning screen, which is exactly
   what its sliders do, so an undo taken with that one open belongs to the plan behind it;
-- the patch touches `sampleRate` while a live session is up, which is why the rate picker is locked
-  for the same reason. A patch is applied atomically, so the refusal takes the **whole** entry: when
-  the entry carries more than the rate, the status line says so (`undoRateLiveMixed`, chosen by
-  whether the entry's field set is nothing but `sampleRate`). Either way the entry is held back, not
-  lost — the refusal runs on a peeked entry and nothing consumes it, and leaving the session makes
-  the same press work;
+- the patch touches `sampleRate` while any device action holds the link — the rate picker is locked
+  for the same holders and the same reason: a live session holds the rate at the unit's, and a write
+  settles the rate once and then converges the plan it re-reads every round, so a rate the plan took
+  after the settle would re-clock the unit with no confirm and no Track Count warning. A patch is
+  applied atomically, so the refusal takes the **whole** entry: when the entry carries more than the
+  rate, the status line says so (`undoRateLockedMixed`, chosen by whether the entry's field set is
+  nothing but `sampleRate`). Either way the entry is held back, not lost — the refusal runs on a peeked
+  entry and nothing consumes it, and once the action ends the same press works;
 - the host refuses the state the patch would leave behind (`patchBlocked`) — today the +48V / HI-Z
   exclusion, which an entry can otherwise walk around, since its patch is applied whole and nothing
   between the edit that recorded it and this asks what the two switches end up at. Asked of the state

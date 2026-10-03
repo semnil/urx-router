@@ -1000,9 +1000,9 @@ export const en = {
     undoBusyDrag: tr("Finish the current drag before undoing"),
     undoDeviceBusy: tr("Busy with the device — undo is unavailable until it finishes"),
     undoModal: tr("Close the open dialog before undoing"),
-    undoRateLive: tr("The sample rate follows the device while Live sync is on — it cannot be undone here"),
-    undoRateLiveMixed: tr(
-      "This step also changes the sample rate, which follows the device while Live sync is on — the whole step is held back, not lost; it works again with Live sync off",
+    undoRateLocked: tr("The sample rate cannot be undone while a device operation is running"),
+    undoRateLockedMixed: tr(
+      "This step also changes the sample rate, which cannot be undone while a device operation is running — the whole step is held back, not lost; it works again once that operation ends",
     ),
     // The step is held back rather than taken: the same press works once the channel holds
     // one of the two.

@@ -1082,7 +1082,7 @@ agreement, zero findings.
   be retried" was overstated: `deactivateLive` does not reset the history, so leaving the session makes
   the same press work. The refusal is a deferral, not a discard; the entry is only lost if the DEVICE
   moves the rate first, which is the full reconcile's `reset()`, a separate question. **The wording gap
-  is now closed**: an entry carrying more than the rate gets its own string (`undoRateLiveMixed`, chosen
+  is now closed**: an entry carrying more than the rate gets its own string (`undoRateLockedMixed`, chosen
   by whether the entry's field set is nothing but `sampleRate`), and both strings say the entry is held
   back rather than lost
 

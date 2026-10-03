@@ -488,17 +488,15 @@ describe("refusals", () => {
     expect(h.plan.nodeParams.ch1).toBeUndefined();
   });
 
-  it("refuses a rate change while a live session holds the rate", () => {
+  it("refuses a rate change while a device action holds the rate", () => {
     const h = harness();
     h.edit((p) => (p.sampleRate = 96000));
     idle();
     h.rateLocked = true;
     h.history.undo();
-    expect(h.statuses.at(-1)).toBe(
-      "The sample rate follows the device while Live sync is on — it cannot be undone here",
-    );
+    expect(h.statuses.at(-1)).toBe("The sample rate cannot be undone while a device operation is running");
     expect(h.plan.sampleRate).toBe(96000);
-    // Not consumed: turning the session off makes the same press work.
+    // Not consumed: once the action ends the same press works.
     h.rateLocked = false;
     h.history.undo();
     settle();
@@ -517,11 +515,11 @@ describe("refusals", () => {
     h.rateLocked = true;
     h.history.undo();
     expect(h.statuses.at(-1)).toBe(
-      "This step also changes the sample rate, which follows the device while Live sync is on — the whole step is held back, not lost; it works again with Live sync off",
+      "This step also changes the sample rate, which cannot be undone while a device operation is running — the whole step is held back, not lost; it works again once that operation ends",
     );
     expect(h.plan.sampleRate).toBe(96000);
     expect(h.plan.nodeParams.ch1).toEqual({ hpf: true });
-    // Not consumed either: the same press works with the session off.
+    // Not consumed either: the same press works once the action ends.
     h.rateLocked = false;
     h.history.undo();
     settle();
@@ -529,7 +527,7 @@ describe("refusals", () => {
     expect(h.plan.nodeParams.ch1).toBeUndefined();
   });
 
-  it("allows an undo that does not touch the rate while live", () => {
+  it("allows an undo that does not touch the rate while the rate is held", () => {
     const h = harness();
     h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
     idle();

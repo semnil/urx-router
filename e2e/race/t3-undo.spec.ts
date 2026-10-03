@@ -1049,11 +1049,11 @@ test.describe("T3 undo", () => {
     expect(verdicts[5]).toBe(DRAG_REFUSAL); // (e)
     expect(verdicts[6]).toBe(BUSY_REFUSAL); // (h)
     expect(verdicts[7]).toBe(BUSY_REFUSAL); // (g)
-    // (i) — PINNED as an unreachable refusal. The rate change above IS undoable while
-    // offline (probed), and activating a session runs the readback's rerenderPlan,
-    // which resets BOTH stacks; the picker is disabled from then on. So no sampleRate
-    // entry can exist while live, and the undoRateLive message has no path from the UI
-    // at all. Recorded as what the app does, not as what it intends.
+    // (i) — PINNED as an unreachable refusal while live. The rate change above IS
+    // undoable while offline (probed), and activating a session runs the readback's
+    // rerenderPlan, which resets BOTH stacks; the picker is disabled from then on. So no
+    // sampleRate entry can exist while live. The refusal is reached from an offline
+    // write instead (src/main.device.test.ts, "the sample rate during a write").
     expect(rateLocked).toBe(true);
     expect(verdicts[8]).toBe(NOTHING_TO_UNDO);
     expect(verdicts[9]).toMatch(UNDO_APPLIED); // (j) permissive

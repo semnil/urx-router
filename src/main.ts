@@ -3082,7 +3082,9 @@ planHistory = new PlanHistory({
         : modalOpen() && !dynScreen.isOpen()
           ? t().status.undoModal
           : null,
-  rateLocked: () => liveSessionUp,
+  // Every holder, as the rate picker locks: a write converges the plan it re-reads each
+  // round, and a session holds the rate at the unit's.
+  rateLocked: () => deviceLinkHolder !== null,
   // Asked of the state the entry would leave behind rather than of the keys it carries: an
   // undo turns a switch on as much as the gesture it reverses did, and which of the two an
   // entry moved does not decide the answer. The patch is applied to a copy, which is the
@@ -3502,16 +3504,13 @@ if (!DEMO) {
   // last authored, which would both miss real drops and invent false ones. A read that
   // fails throws, and the settle that asked aborts the write on it, as it does on a clock
   // read that fails.
-  // What the settle decided a rate change would cost the recorder, held until the write
-  // either sends the rate or does not. NOT a flag set at the confirm: the operator can
-  // approve the re-clock and then decline the change count, and the write then sends
-  // nothing at all — re-reading there would apply the unit's UNCHANGED count over a plan
-  // whose rate had already moved, leaving a count the rate cannot carry and an Inspector
-  // whose menu does not contain its own value.
-  let pendingTrackCost: { from: number; to: number } | null = null;
-  // Set once the rate has actually gone out, and consumed after the write: the unit does
+  // Set once a rate has actually gone out, and consumed after the write: the unit does
   // the lowering itself, and whether it announces one is not something this app has
   // measured, so the plan is re-read rather than left to a notify that may never come.
+  // Set by the send rather than by the settle's confirm: the operator can approve the
+  // re-clock and then decline the change count, and the write then sends nothing at all —
+  // re-reading there would apply the unit's UNCHANGED count over a plan whose rate had
+  // already moved.
   let trackCountMayHaveDropped = false;
 
   async function trackCountCost(nextRate: number): Promise<{ from: number; to: number } | null> {
@@ -3569,10 +3568,7 @@ if (!DEMO) {
       // plain yes/no: the plan's rate is the one that sticks.
       const cost = trackCost ? t().confirm.trackCountDrop(trackCost.from, trackCost.to) : "";
       const ask = [t().confirm.reclock(deviceRate, planRate), cost].filter(Boolean).join(" ");
-      if (await confirmDialog(ask)) {
-        pendingTrackCost = trackCost;
-        return true;
-      }
+      if (await confirmDialog(ask)) return true;
       setStatus(t().status.canceled);
       return false;
     }
@@ -3613,9 +3609,6 @@ if (!DEMO) {
       return false;
     }
     setFollowUsbBadge(false);
-    // Only this arm writes the plan's rate. `adopt` takes the DEVICE's, which the recorder
-    // is already living with, so it costs the Track Count nothing.
-    pendingTrackCost = trackCost;
     return true;
   }
 
@@ -3658,7 +3651,6 @@ if (!DEMO) {
           // Scene scope drops SAMPLE_RATE from the write set, so there is no
           // rate to settle — the device keeps running at its own.
           const scope = getSettings().deviceScope;
-          pendingTrackCost = null;
           if (scope !== "scene" && !(await settleSampleRate())) return;
           // One attempt of the whole diff → confirm → send sequence. Returns the
           // sent/not-sent split when the send stopped part-way (so the caller can
@@ -3776,9 +3768,11 @@ if (!DEMO) {
                 // the recorder would never be re-read. Everything but an explicit refusal
                 // arms it: the shell sends before it waits, so a write whose answer never
                 // came may have landed and taken the Track Count down with it, and the
-                // recorder would then be left showing a count the unit no longer has.
+                // recorder would then be left showing a count the unit no longer has. Any
+                // rate that goes out arms it, whatever put it in the plan, on a model that
+                // has the recorder.
                 onSent: (o: SendOutcome) => {
-                  if (pendingTrackCost !== null && o.result !== "refused" && o.command.name === "SAMPLE_RATE") {
+                  if (o.result !== "refused" && o.command.name === "SAMPLE_RATE" && hasRecorder(device.model)) {
                     trackCountMayHaveDropped = true;
                   }
                 },

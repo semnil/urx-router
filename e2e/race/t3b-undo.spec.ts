@@ -1411,7 +1411,7 @@ test.describe("T3b undo", () => {
   // readback's rerenderPlan, which resets both stacks, and the rate picker is disabled
   // from then on. t3-undo.spec.ts's refusal ladder already probes both halves of that
   // (the offline rate change IS undoable; the picker IS locked while live) and pins
-  // `undoRateLive` as an unreachable refusal. There is no second route into the state
+  // `undoRateLocked` as an unreachable refusal while live. There is no second route into the state
   // — a ?plan= link and a file load both go through loadPlan, which resets too — so
   // there is nothing here that could fail.
   //

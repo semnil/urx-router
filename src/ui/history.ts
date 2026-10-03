@@ -62,7 +62,8 @@ export interface PlanHistoryHooks {
    *  the edit that recorded it and this asks what the two switches end up at. Asked on the
    *  PEEKED entry, so a refusal leaves it where it is. */
   patchBlocked: (patch: PlanPatch) => string | null;
-  /** True while a live session holds the sample rate at the device's value. */
+  /** True while a device action holds the sample rate — a live session at the unit's value,
+   *  a write converging the plan's. */
   rateLocked: () => boolean;
   /** Display name for a node id, for the status line. */
   labelOf: (nodeId: string) => string;
@@ -321,7 +322,7 @@ export class PlanHistory {
     // entry is held back rather than lost: this runs on a peeked entry, before
     // op.take(), and leaving the session makes the same press work.
     if (touch.fields.has("sampleRate") && this.hooks.rateLocked()) {
-      this.hooks.onStatus(touch.fields.size === 1 ? s.undoRateLive : s.undoRateLiveMixed);
+      this.hooks.onStatus(touch.fields.size === 1 ? s.undoRateLocked : s.undoRateLockedMixed);
       return;
     }
     // …and the same for a state the app does not put the plan into, whichever key of the

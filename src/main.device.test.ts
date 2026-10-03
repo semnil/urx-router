@@ -8359,6 +8359,81 @@ describe("replacing the plan while a write holds the link", () => {
   });
 });
 
+// A write settles the sample rate once, at its start, and then converges the plan it re-reads
+// every round — so a rate the plan takes after the settle goes out with no re-clock confirm and
+// no Track Count warning. Undo is where that can come from, and it is refused for the rate while
+// any device action holds the link, as the rate picker is.
+describe("the sample rate during a write", () => {
+  /** A press and release on the window: it closes the open undo entry one macrotask later. */
+  const boundary = async (): Promise<void> => {
+    window.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 9 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 9 }));
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const rateWrites = (shell: TauriShell): number[] =>
+    shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.SAMPLE_RATE.id ? [shell.args[i]!.value as number] : [],
+    );
+
+  it("refuses to undo a rate change while a write holds the link", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked!: () => void;
+    const diffing = new Promise<void>((r) => (asked = r));
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" }, { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 });
+    const vdGet = table.vd_get as (a: Record<string, unknown>) => unknown;
+    let gets = 0;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        // The clock's two reads answer; the diff's first is held.
+        vd_get: async (a: Record<string, unknown>) => {
+          if (++gets === 3) {
+            asked();
+            await held;
+          }
+          return vdGet(a);
+        },
+      },
+    }))!;
+    chooseRate(96_000);
+    await boundary();
+    chooseRate(48_000);
+    await boundary();
+
+    $("btn-write").click();
+    await diffing;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(statusText()).toBe(t().status.undoRateLocked);
+    expect($<HTMLSelectElement>("rate-picker").value).toBe("48000");
+    release();
+    await vi.waitFor(() => expect($("btn-write").textContent).toBe(t().toolbar.writeDevice), { timeout: 20_000 });
+    expect(rateWrites(shell)).not.toContain(96_000);
+  });
+
+  it("re-reads the recorder after a rate the write sends, a count that fits it included", SLOW, async () => {
+    const shell = await bootDevice({}, true, {
+      [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000,
+      [TRACK_COUNT_SEED]: 2,
+    });
+    chooseRate(96_000);
+    $("btn-write").click();
+    await vi.waitFor(() => expect($("btn-write").textContent).toBe(t().toolbar.writeDevice), { timeout: 20_000 });
+    await invoked(shell, "vd_disconnect");
+    expect(rateWrites(shell)).toContain(96_000);
+    const sentAt = shell.invokes.findIndex(
+      (cmd, i) => cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.SAMPLE_RATE.id,
+    );
+    const readAfter = shell.invokes.some(
+      (cmd, i) =>
+        i > sentAt &&
+        cmd === "vd_get" &&
+        `${shell.args[i]?.paramId}:${shell.args[i]?.x}:${shell.args[i]?.y}` === TRACK_COUNT_ADDR,
+    );
+    expect(readAfter).toBe(true);
+  });
+});
+
 // A MIDI edit is an app edit: it goes through the history like any other, so it is undoable
 // and its keys are recorded as the operator's — which is what keeps the write confirm from
 // naming the strip the operator moved as one carrying "settings you did not edit".
