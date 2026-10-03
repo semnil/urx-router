@@ -326,6 +326,18 @@ describe("WriteSettle unannounced report", () => {
     expect(reported).toEqual([]);
   });
 
+  // The re-registration gap: the notify source has released its sink and not yet armed it
+  // again when the watch is armed, so nobody was listening then. The report goes to whoever
+  // is listening at the bound.
+  it("reports to a source that arms after a watch armed while nobody listened", async () => {
+    const settle = new WriteSettle();
+    const reported: number[][] = [];
+    settle.watch(wrote(settle, ADDR), new Set([ADDR]));
+    settle.arm((addrs) => reported.push([...addrs]));
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+    expect(reported).toEqual([[ADDR]]);
+  });
+
   // Two writes to ONE address with nothing arriving between them — the shape a second
   // move of the same fader takes, since a flush goes out more often than an announcement
   // comes back. The unit answers the run with ONE notify carrying the value it ended up
