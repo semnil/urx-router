@@ -1,8 +1,8 @@
 // The stops the GATE, COMP and DUCKER time controls turn through, in a module of its own for
 // the reason `comp-ratio.ts` is one: `vd.ts` bounds its encoders by the tables' ends and
-// `translate.ts` builds its field tables from them, both at module scope inside an import
-// cycle, and a binding read there is only reliable when the module it comes from imports
-// nothing.
+// `translate.ts`, which is inside an import cycle, builds its field tables from them, both at
+// module scope, and a binding read there is only reliable when the module it comes from
+// imports nothing.
 //
 // Each table is written in its parameter's raw unit, the integer the unit writes at that
 // stop, and exported in the plan's milliseconds.
